@@ -9,7 +9,7 @@
 
   Actually paid:               ~$0.0013 (from trace)  (saves 71% vs cost without caching)
   Cost without caching:        ~$0.0046
-  Cost on rerun (within TTL):  ~$0.0013  (saves 71% vs cost without caching)
+  Cost on rerun (within TTL), modeled rerun vs warm-cache trace:  ~$0.0013  (saves 71% vs cost without caching)
 
 ## Per-call cache report
   How to read each row:

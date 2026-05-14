@@ -1,6 +1,12 @@
 """Shared validation utilities for pflow."""
 
-from typing import Any
+from typing import Any, Final
+
+VALIDATION_PLACEHOLDER: Final[str] = "__validation_placeholder__"
+"""Sentinel value substituted for unresolved declared inputs during
+structural validation, cache-key prediction, and cross-workflow walker
+compile passes. Consumers that handle real workflow values must short-
+circuit when they see this string — it is never a meaningful payload."""
 
 
 def generate_dummy_parameters(inputs: dict[str, Any]) -> dict[str, Any]:
@@ -20,13 +26,7 @@ def generate_dummy_parameters(inputs: dict[str, Any]) -> dict[str, Any]:
         >>> generate_dummy_parameters(inputs)
         {"api_key": "__validation_placeholder__", "repo": "__validation_placeholder__"}
     """
-    dummy_params = {}
-
-    for key, _input_spec in inputs.items():
-        # Use validation placeholder
-        dummy_params[key] = "__validation_placeholder__"
-
-    return dummy_params
+    return dict.fromkeys(inputs, VALIDATION_PLACEHOLDER)
 
 
 def is_valid_parameter_name(name: str) -> bool:

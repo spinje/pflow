@@ -9,6 +9,8 @@ import json
 import logging
 from typing import Any
 
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
+
 logger = logging.getLogger(__name__)
 
 
@@ -273,6 +275,15 @@ def coerce_workflow_input(
         {'a': 1}
     """
     if declared_type is None:
+        return value
+
+    # Pass through the validation sentinel without trying to coerce it.
+    # generate_dummy_parameters() injects this string in place of unresolved
+    # declared inputs during structural validation, cache-key prediction, and
+    # cross-workflow walker compile passes; treating it as a real value
+    # produces stderr warnings like
+    # ``Cannot coerce '__validation_placeholder__' to integer``.
+    if value == VALIDATION_PLACEHOLDER:
         return value
 
     log_context: dict[str, Any] = {"input": input_name} if input_name else {}

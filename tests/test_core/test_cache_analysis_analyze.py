@@ -7073,12 +7073,62 @@ def test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent(
     assert result.summary.actually_paid_usd is not None
     assert result.summary.actually_paid_usd == pytest.approx(0.015, abs=1e-6)
 
-    # Disclosure Note must name both paths and use unambiguous wording
-    # (describes the trace file's stored value, not an action taken).
-    scope_notes = [n for n in result.notes if "trace file references workflow" in n]
-    assert len(scope_notes) == 1, f"expected exactly one scope-mismatch note, got: {result.notes}"
-    assert parent_path in scope_notes[0] or os.path.realpath(parent_path) in scope_notes[0]
-    assert str(child_path) in scope_notes[0]
+    # S#9: when the analyzed workflow runs as a sub-workflow inside the
+    # trace's root, the disclosure becomes a redirect hint pointing the
+    # agent at the trace root so they can get full attribution.
+    redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
+    assert len(redirect_notes) == 1, f"expected one redirect note, got: {result.notes}"
+    assert str(child_path) in redirect_notes[0]
+    assert parent_path in redirect_notes[0] or os.path.realpath(parent_path) in redirect_notes[0]
+    assert "pflow analyze-cache" in redirect_notes[0]
+
+
+def test_scope_mismatch_emits_generic_note_when_analyzed_workflow_absent_from_trace(
+    tmp_path: Path,
+) -> None:
+    """S#9 negative: when the analyzed workflow does NOT appear inside the
+    trace at all (different workflow, different file), the generic
+    scope-mismatch disclosure fires — not the redirect hint, which would be
+    misleading because the trace root doesn't actually contain this
+    workflow.
+
+    Mutation contract:
+      - If ``_workflow_appears_as_child`` returns True unconditionally,
+        this test fails because the redirect note fires for unrelated
+        workflows.
+    """
+    analyzed_path = str(tmp_path / "unrelated.pflow.md")
+    other_path = str(tmp_path / "other.pflow.md")
+    analyzed_ir = {
+        "nodes": [
+            {
+                "id": "analyzed-llm",
+                "type": "llm",
+                "params": {"prompt": "x", "model": "anthropic/claude-sonnet-4-5"},
+            }
+        ]
+    }
+
+    builder = TraceFixtureBuilder()
+    # Trace records a different workflow with a different node; the
+    # analyzed workflow never appears as a child.
+    other_llm = builder.llm_event("other-llm", cost_usd=0.01, input_tokens=100, output_tokens=10)
+    trace_dict = builder.trace(other_path, [other_llm])
+    trace_file = tmp_path / "other-trace.json"
+    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+
+    result = analyze(
+        analyzed_ir,
+        workflow_path=analyzed_path,
+        trace_path=trace_file,
+        memo_cache=None,
+    )
+
+    # Generic disclosure must fire; redirect hint must NOT.
+    generic_notes = [n for n in result.notes if "trace file references workflow" in n]
+    redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
+    assert len(generic_notes) == 1, f"expected generic note, got: {result.notes}"
+    assert len(redirect_notes) == 0, f"unexpected redirect note: {result.notes}"
 
 
 def test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow(

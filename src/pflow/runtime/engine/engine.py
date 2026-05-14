@@ -20,6 +20,7 @@ from typing import Any, Optional
 from pflow.core.cache_render import CacheRenderContext
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_capabilities import get_min_cache_tokens
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
     FAILURE_CATEGORY_HTTP,
@@ -144,7 +145,7 @@ def _should_disable_below_min_prewarm(
     if model_raw is None:
         return False
     model = _resolve_template_string(model_raw, shared)
-    if model is None or model == "__validation_placeholder__":
+    if model is None or model == VALIDATION_PLACEHOLDER:
         return False
 
     prompt_raw = config.template_config.template_params.get("prompt") or config.template_config.static_params.get(

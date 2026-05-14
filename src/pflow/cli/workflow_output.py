@@ -454,16 +454,19 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
 
     # Warn about models with unavailable pricing
     if not total_metrics.get("pricing_available", True):
+        from pflow.core.metrics import format_unavailable_models_phrase
+
         unavailable = total_metrics.get("unavailable_models", [])
-        models_str = ", ".join(unavailable)
+        unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
+        models_phrase = format_unavailable_models_phrase(unavailable, unavailable_unnamed_count)
         partial = total_metrics.get("partial_cost_usd")
         if partial is not None:
             click.echo(
-                f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_str})",
+                f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})",
                 err=True,
             )
         else:
-            click.echo(f"⚠️  Cost unavailable — pricing data missing for: {models_str}", err=True)
+            click.echo(f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}", err=True)
         return
 
     if total_cost is None or total_cost <= 0:

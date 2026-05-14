@@ -182,11 +182,13 @@ class TestDisplayCostSummary:
         pricing_available: bool = True,
         unavailable_models: list[str] | None = None,
         partial_cost_usd: float | None = None,
+        unavailable_models_unnamed_count: int = 0,
     ) -> dict:
         total: dict = {"tokens_input": 10, "tokens_output": 5, "tokens_total": 15, "cost_usd": None}
         if not pricing_available:
             total["pricing_available"] = False
             total["unavailable_models"] = unavailable_models or []
+            total["unavailable_models_unnamed_count"] = unavailable_models_unnamed_count
             if partial_cost_usd is not None:
                 total["partial_cost_usd"] = partial_cost_usd
         return {"metrics": {"total": total, "workflow": {"total_tokens": 15}}}
@@ -245,3 +247,40 @@ class TestDisplayCostSummary:
         runner = click.testing.CliRunner()
         cli_result = runner.invoke(cmd)
         assert cli_result.output.strip() == ""
+
+    def test_unnamed_only_shows_count_not_unknown(self) -> None:
+        """Regression: genuinely-unrecorded calls render as a clear count
+        rather than the opaque literal ``"unknown"``."""
+        result = self._make_formatted_result(
+            pricing_available=False,
+            unavailable_models=[],
+            unavailable_models_unnamed_count=3,
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(None, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert "3 calls without recorded model" in cli_result.output
+        assert "unknown" not in cli_result.output
+
+    def test_named_plus_unnamed_shows_both(self) -> None:
+        """A mix surfaces both real model names and the unnamed-count
+        tally in the rendered phrase."""
+        result = self._make_formatted_result(
+            pricing_available=False,
+            unavailable_models=["my-custom-model"],
+            unavailable_models_unnamed_count=2,
+            partial_cost_usd=0.01,
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(None, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert "my-custom-model" in cli_result.output
+        assert "2 calls without recorded model" in cli_result.output

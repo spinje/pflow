@@ -3,7 +3,8 @@
 import time
 from unittest.mock import patch
 
-from pflow.core.metrics import MetricsCollector
+from pflow.core.metrics import MetricsCollector, format_unavailable_models_phrase
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 
 class TestMetricsCollector:
@@ -129,18 +130,22 @@ class TestMetricsCollector:
     def test_missing_fields_in_llm_usage_handled_gracefully(self):
         """Test that missing fields in LLM usage data are handled gracefully.
 
-        Calls without ``cost_usd`` set surface in ``unavailable_models``;
-        calls with ``cost_usd`` contribute to ``partial_cost_usd``. Tokens
-        accumulate from every entry regardless of cost availability.
+        Calls without ``cost_usd`` and WITH a real model name surface in
+        ``unavailable_models``; calls without a recorded model accumulate
+        into ``unavailable_models_unnamed_count`` (never the opaque
+        ``"unknown"`` string). Calls with ``cost_usd`` contribute to
+        ``partial_cost_usd``. Tokens accumulate from every entry regardless
+        of cost availability.
         """
         collector = MetricsCollector()
 
-        # Test various incomplete data scenarios
+        # Test various incomplete data scenarios. Empty dicts are skipped
+        # via the ``if not call:`` guard, so they don't contribute anywhere.
         llm_calls = [
-            {},  # Empty dict
-            {"model": "gpt-4o-mini"},  # Missing token counts AND cost_usd → unavailable
-            {"input_tokens": 100},  # Missing model AND cost_usd → unavailable as "unknown"
-            {"output_tokens": 50},  # Missing model AND cost_usd → unavailable as "unknown"
+            {},  # Empty dict — skipped by the falsy guard
+            {"model": "gpt-4o-mini"},  # Missing token counts AND cost_usd → unavailable (named)
+            {"input_tokens": 100},  # Missing model AND cost_usd → unnamed count
+            {"output_tokens": 50},  # Missing model AND cost_usd → unnamed count
             {  # Complete entry with explicit cost (as the adapter sets it)
                 "model": "gpt-4o-mini",
                 "input_tokens": 200,
@@ -152,16 +157,22 @@ class TestMetricsCollector:
         cost_data = collector.calculate_costs(llm_calls)
         assert cost_data["pricing_available"] is False  # Some calls lack cost_usd
         assert cost_data["total_cost_usd"] is None
-        assert "unknown" in cost_data["unavailable_models"]
+        # The "unknown" opaque sentinel is GONE — real names land in
+        # unavailable_models, genuinely-unrecorded calls are counted instead.
+        assert "unknown" not in cost_data["unavailable_models"]
         assert "gpt-4o-mini" in cost_data["unavailable_models"]
+        # 2 unnamed: {input_tokens}, {output_tokens} (the empty {} is skipped)
+        assert cost_data["unavailable_models_unnamed_count"] == 2
         assert cost_data["partial_cost_usd"] == 0.00009  # Only the priced entry contributes
 
         # Test summary generation - tokens from all entries are summed
         summary = collector.get_summary(llm_calls)
         assert summary["total_cost_usd"] is None  # Because some calls lack cost
         assert summary["pricing_available"] is False
+        assert summary["unavailable_models_unnamed_count"] == 2
         assert summary["metrics"]["total"]["tokens_input"] == 300  # 0 + 100 + 0 + 200
         assert summary["metrics"]["total"]["tokens_output"] == 150  # 0 + 0 + 50 + 100
+        assert summary["metrics"]["total"]["unavailable_models_unnamed_count"] == 2
 
     def test_cost_rounding_to_six_decimal_places(self):
         """``calculate_costs`` rounds the summed total to 6 decimal places."""
@@ -272,3 +283,110 @@ class TestMetricsCollector:
         assert workflow_metrics["tokens_output"] == 0
         assert workflow_metrics["tokens_total"] == 0
         assert workflow_metrics["models_used"] == []
+
+
+class TestUnnamedCallTracking:
+    """Genuinely-unrecorded model calls go into the unnamed counter, not the
+    opaque ``"unknown"`` string in ``unavailable_models``.
+    """
+
+    def test_call_without_model_goes_to_unnamed_count(self):
+        """A call dict with no ``model`` field but ``cost_usd: None`` lands
+        in ``unavailable_models_unnamed_count``, NOT ``unavailable_models``."""
+        collector = MetricsCollector()
+
+        llm_calls = [
+            # Genuinely unrecorded — no model field
+            {"input_tokens": 100, "output_tokens": 50, "cost_usd": None},
+        ]
+
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["pricing_available"] is False
+        assert cost_data["total_cost_usd"] is None
+        assert cost_data["unavailable_models"] == []
+        assert cost_data["unavailable_models_unnamed_count"] == 1
+
+    def test_empty_string_model_treated_as_unnamed(self):
+        """An empty string ``model`` value is treated as unnamed."""
+        collector = MetricsCollector()
+
+        llm_calls = [{"model": "", "cost_usd": None}]
+
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["unavailable_models"] == []
+        assert cost_data["unavailable_models_unnamed_count"] == 1
+
+    def test_validation_placeholder_treated_as_unnamed(self):
+        """A call carrying the S#4 ``__validation_placeholder__`` sentinel
+        for ``model`` is treated as unnamed (the sentinel must never surface
+        to users)."""
+        collector = MetricsCollector()
+
+        llm_calls = [{"model": VALIDATION_PLACEHOLDER, "cost_usd": None}]
+
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["unavailable_models"] == []
+        assert cost_data["unavailable_models_unnamed_count"] == 1
+        # Sentinel must not appear in the displayed models_used list either
+        summary = collector.get_summary(llm_calls)
+        workflow_metrics = summary["metrics"].get("workflow")
+        if workflow_metrics is not None:
+            assert VALIDATION_PLACEHOLDER not in workflow_metrics["models_used"]
+
+    def test_mixed_named_and_unnamed_split_correctly(self):
+        """A real-name unpriced call and a no-model unpriced call land in
+        their respective tracks; both contribute to the unavailability
+        signal."""
+        collector = MetricsCollector()
+
+        llm_calls = [
+            {"model": "anthropic/claude-future"},  # named, unpriced
+            {"input_tokens": 5},  # unnamed, unpriced
+        ]
+
+        cost_data = collector.calculate_costs(llm_calls)
+        assert cost_data["unavailable_models"] == ["anthropic/claude-future"]
+        assert cost_data["unavailable_models_unnamed_count"] == 1
+
+    def test_workflow_trace_accumulator_unnamed_call_path(self):
+        """The trace accumulator mirrors the same behavior — no ``"unknown"``
+        sentinel in its ``unavailable_models``; unnamed calls increment the
+        count instead."""
+        from pflow.runtime.workflow_trace import _LLMSummaryAccumulator
+
+        agg = _LLMSummaryAccumulator()
+        agg.add_leaf({"input_tokens": 100, "cost_usd": None})  # no model
+        agg.add_leaf({"model": "ollama/llama3.2", "cost_usd": None})  # real name
+        agg.add_leaf({"model": VALIDATION_PLACEHOLDER, "cost_usd": None})  # sentinel
+
+        result = agg.as_dict()
+        assert result["pricing_available"] is False
+        assert result["unavailable_models"] == ["ollama/llama3.2"]
+        assert result["unavailable_models_unnamed_count"] == 2
+        assert VALIDATION_PLACEHOLDER not in result["models_used"]
+
+
+class TestFormatUnavailableModelsPhrase:
+    """Tests for the shared rendering helper."""
+
+    def test_named_models_only(self):
+        phrase = format_unavailable_models_phrase(["gpt-5", "claude-future"], 0)
+        assert phrase == "gpt-5, claude-future"
+
+    def test_unnamed_count_only_singular(self):
+        phrase = format_unavailable_models_phrase([], 1)
+        assert phrase == "1 call without recorded model"
+
+    def test_unnamed_count_only_plural(self):
+        phrase = format_unavailable_models_phrase([], 3)
+        assert phrase == "3 calls without recorded model"
+
+    def test_both_named_and_unnamed(self):
+        phrase = format_unavailable_models_phrase(["gpt-5"], 2)
+        assert phrase == "gpt-5; 2 calls without recorded model"
+
+    def test_neither_falls_back_to_placeholder(self):
+        # Defensive: callers should not invoke this when there's nothing
+        # to render, but the helper returns a non-empty string anyway.
+        phrase = format_unavailable_models_phrase([], 0)
+        assert phrase == "no models"

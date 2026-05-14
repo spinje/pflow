@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from pflow.core.diagnostic import Diagnostic
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class _LLMSummaryAccumulator:
     priced_cost: float = 0.0
     models: set[str] = field(default_factory=set)
     unavailable_models: set[str] = field(default_factory=set)
+    unavailable_models_unnamed_count: int = 0
 
     def add_leaf(self, call: dict[str, Any]) -> None:
         self.total_calls += 1
@@ -71,12 +73,16 @@ class _LLMSummaryAccumulator:
         self.total_input_tokens += call.get("input_tokens", 0)
         self.total_output_tokens += call.get("output_tokens", 0)
         cost = call.get("cost_usd")
+        model = call.get("model") or ""
+        is_real_model = bool(model) and model != VALIDATION_PLACEHOLDER
         if cost is None:
-            self.unavailable_models.add(call.get("model") or "unknown")
+            if is_real_model:
+                self.unavailable_models.add(model)
+            else:
+                self.unavailable_models_unnamed_count += 1
         else:
             self.priced_cost += cost
-        model = call.get("model")
-        if model:
+        if is_real_model:
             self.models.add(model)
 
     def as_dict(self) -> dict[str, Any]:
@@ -87,10 +93,11 @@ class _LLMSummaryAccumulator:
             "total_output_tokens": self.total_output_tokens,
             "models_used": sorted(self.models),
         }
-        if self.unavailable_models:
+        if self.unavailable_models or self.unavailable_models_unnamed_count:
             result["total_cost_usd"] = None
             result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None
             result["unavailable_models"] = sorted(self.unavailable_models)
+            result["unavailable_models_unnamed_count"] = self.unavailable_models_unnamed_count
             result["pricing_available"] = False
         else:
             result["total_cost_usd"] = round(self.priced_cost, 6)

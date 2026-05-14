@@ -12,7 +12,7 @@
 
   Actually paid:               ~$2.31 (from trace)  (saves 5% vs cost without caching)
   Cost without caching:        ~$2.42
-  Cost on rerun (within TTL):  ~$2.34  (saves 4% vs cost without caching)
+  Cost on rerun (within TTL), modeled rerun vs warm-cache trace:  ~$2.34  (saves 4% vs cost without caching)
 
   · ~$0.27 of the above was paid by generate-chorus-options but couldn't be analyzed for cache savings (model varies per call). Caching may still apply at runtime if its content repeats across calls.
 

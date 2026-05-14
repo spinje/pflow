@@ -6,8 +6,12 @@ Focus:
 """
 
 import json
+import logging
+
+import pytest
 
 from pflow.core.param_coercion import coerce_param_for_node, coerce_workflow_input
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 
 class TestDictToStringCoercion:
@@ -414,3 +418,26 @@ class TestAnyTypeCoercion:
     def test_any_accepts_nested_complex(self):
         original = {"items": [{"id": 1}, {"id": 2}], "meta": {"ok": True}}
         assert coerce_workflow_input(original, "any") is original
+
+
+class TestValidationPlaceholderPassesThrough:
+    """The structural-validation sentinel must not produce coercion warnings.
+
+    ``generate_dummy_parameters()`` injects ``VALIDATION_PLACEHOLDER`` for
+    unresolved declared inputs during validator pre-pass, cache-key
+    prediction, and the cross-workflow walker compile pass. Earlier the
+    sentinel reached the type coercers and surfaced as
+    ``Cannot coerce '__validation_placeholder__' to integer`` on stderr
+    during ``analyze-cache --from-trace`` on workflows with non-string
+    declared inputs (S#4).
+    """
+
+    @pytest.mark.parametrize(
+        "declared_type",
+        ["string", "integer", "number", "boolean", "object", "array", "any"],
+    )
+    def test_placeholder_passes_through_unchanged(self, declared_type: str, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="pflow.core.param_coercion"):
+            result = coerce_workflow_input(VALIDATION_PLACEHOLDER, declared_type)
+        assert result == VALIDATION_PLACEHOLDER
+        assert caplog.records == []

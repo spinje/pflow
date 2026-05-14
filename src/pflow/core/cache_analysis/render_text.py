@@ -417,6 +417,31 @@ def _render_cost_block(s: AnalysisSummary) -> list[str]:
     return _render_greenfield_no_cache_lines(s)
 
 
+def _rerun_label(
+    summary: AnalysisSummary,
+    *,
+    context: str,
+) -> str:
+    """Return the rerun-within-TTL label appropriate for the trace state.
+
+    When the trace already showed provider cache reads
+    (``trace_provider_cache_read_input_tokens > 0``), the "Cost on rerun"
+    projection models a different scenario than the trace itself — agents
+    should not confuse the two. We append a clarifying suffix so the
+    contrast is explicit.
+
+    Args:
+        summary: Analysis summary carrying trace cache evidence.
+        context: One of ``"truncated"``, ``"complete"``, or ``"greenfield"``.
+                 Selects between "Cost on rerun (executed, within TTL)" and
+                 "Cost on rerun (within TTL)" forms.
+    """
+    base = "Cost on rerun (executed, within TTL)" if context == "truncated" else "Cost on rerun (within TTL)"
+    if context != "greenfield" and summary.trace_provider_cache_read_input_tokens > 0:
+        return f"{base}, modeled rerun vs warm-cache trace"
+    return base
+
+
 def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     """Cost lines when a trace contributed actual costs.
 
@@ -441,23 +466,18 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         tier_annotation=tier,
     )
     local_hits = s.trace_local_memo_llm_hit_count + s.trace_local_in_process_llm_hit_count
-    actual_paren = _format_delta_parenthetical(
-        s.actual_vs_no_cache_delta, local_cache_reuse=bool(local_hits)
-    )
+    actual_paren = _format_delta_parenthetical(s.actual_vs_no_cache_delta, local_cache_reuse=bool(local_hits))
     rerun_paren = _format_delta_parenthetical(s.rerun_delta)
     if s.evidence_scope == "truncated_trace_executed_subset":
         # Truncated branch is structurally different (executed subset is the
         # cohort by construction). Unchanged by Fix 7.
         no_cache_str = _format_cost(s.no_cache_hypothetical_usd, False, s.unavailable_models)
         rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, False, s.unavailable_models)
+        rerun_label = _rerun_label(s, context="truncated")
         lines = [
-            _append_parenthetical(
-                f"  Actually paid (executed trace):       {actually_paid_str}", actual_paren
-            ),
+            _append_parenthetical(f"  Actually paid (executed trace):       {actually_paid_str}", actual_paren),
             f"  Cost without caching (executed):      {no_cache_str}",
-            _append_parenthetical(
-                f"  Cost on rerun (executed, within TTL): {rerun_str}", rerun_paren
-            ),
+            _append_parenthetical(f"  {rerun_label}: {rerun_str}", rerun_paren),
         ]
         lines.extend(_format_trace_cache_layer_lines(s))
         return lines
@@ -479,10 +499,11 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         )
         no_cache_str = _format_cost(no_cache_folded, False, s.unavailable_models)
         rerun_str = _format_cost(rerun_folded, False, s.unavailable_models)
+        rerun_label = _rerun_label(s, context="complete")
         lines = [
             _append_parenthetical(f"  Actually paid:               {actually_paid_str}", actual_paren),
             f"  Cost without caching:        {no_cache_str}",
-            _append_parenthetical(f"  Cost on rerun (within TTL):  {rerun_str}", rerun_paren),
+            _append_parenthetical(f"  {rerun_label}:  {rerun_str}", rerun_paren),
         ]
         footnote = _format_passthrough_footnote(s, excluded_total)
         if footnote is not None:
@@ -494,12 +515,13 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     projection_partial_marker = s.partial_cost_usd and not s.projection_exclusions
     no_cache_str = _format_cost(s.no_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, projection_partial_marker, s.unavailable_models)
+    rerun_label = _rerun_label(s, context="complete")
     lines = [_append_parenthetical(f"  Actually paid:               {actually_paid_str}", actual_paren)]
     excluded_line = _format_excluded_from_analysis_line(s)
     if excluded_line is not None:
         lines.append(excluded_line)
     lines.append(f"  Cost without caching:        {no_cache_str}")
-    lines.append(_append_parenthetical(f"  Cost on rerun (within TTL):  {rerun_str}", rerun_paren))
+    lines.append(_append_parenthetical(f"  {rerun_label}:  {rerun_str}", rerun_paren))
     lines.extend(_format_trace_cache_layer_lines(s))
     return lines
 
@@ -624,7 +646,9 @@ def _render_greenfield_with_cache_lines(s: AnalysisSummary) -> list[str]:
         "Cost on first run (cache, projected subset)" if s.projection_exclusions else "Cost on first run (cache)"
     )
     rerun_label = (
-        "Cost on rerun (within TTL, projected subset)" if s.projection_exclusions else "Cost on rerun (within TTL)"
+        "Cost on rerun (within TTL, projected subset)"
+        if s.projection_exclusions
+        else _rerun_label(s, context="greenfield")
     )
     first_run_paren = _format_delta_parenthetical(s.first_run_delta)
     rerun_paren = _format_delta_parenthetical(s.rerun_delta)

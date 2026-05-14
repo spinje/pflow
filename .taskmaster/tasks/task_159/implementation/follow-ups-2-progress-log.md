@@ -370,3 +370,76 @@ Baselines:
 
 - F#1 (full shadowed-cache summary math) — closed as misframed
 - F#20 (negative savings wording) — closed by verb-encoded parenthetical
+
+## 2026-05-14 — Bundle 4: trust polish (closes S#4, S#9, F#17 minimal, S#14)
+
+Four independent agent-UX wins that don't touch the analyzer's data model — surgical fixes batched together so the cache-ready-opportunity refactor (the next big sprint) starts on a cleaner foundation. Each item shipped as its own small commit-sized scope; parallel implementation across the four items (two via `code-implementer` subagents) cut wall-clock time roughly in half without introducing file conflicts.
+
+### Items
+
+**S#4 — `__validation_placeholder__` internal sentinel leak.** Running `pflow analyze-cache --from-trace` on a workflow with non-string declared inputs (`integer`/`number`/`boolean`) leaked `WARNING: Cannot coerce '__validation_placeholder__' to integer` to stderr — an internal sentinel injected by `generate_dummy_parameters()` flowing through the type coercers. Fixed at the single entry point (`coerce_workflow_input`, `param_coercion.py:227`) with a one-line short-circuit rather than five duplicated guards across `_coerce_to_*` helpers. Extracted the string literal to a `VALIDATION_PLACEHOLDER: Final[str]` constant in `validation_utils.py` and routed every comparison site (existing `engine.py:147` short-circuit, new `param_coercion.py` guard, and the two `MetricsCollector` / `_LLMSummaryAccumulator` filters added by F#17 below) through that constant. Added a parametrized regression test covering all seven declared types (`string`, `integer`, `number`, `boolean`, `object`, `array`, `any`) asserting no warning fires and the sentinel passes through unchanged. Mutation-verified: removing the entry-point guard reproduces the original `Cannot coerce` warning on `integer`/`number`/`boolean`.
+
+**S#9 — Parent-trace vs child-workflow redirect hint.** Running `pflow analyze-cache <child.pflow.md> --from-trace <parent-trace>` rendered the generic scope-mismatch note even when the child clearly ran as a sub-workflow inside the parent, with the user-visible "0 of N LLM nodes executed" line giving no actionable next step. Added `_workflow_appears_as_child(trace_data, lookup_path, trace_root)` near `_resolve_trace_scope` (`analyze.py:1213`) that walks the existing `TraceTree.walk()` primitive and matches `WalkEvent.workflow_path` against `lookup_path`. When a match is found, `_resolve_trace_scope` emits a redirect note (`` `{lookup_path}` appears as a sub-workflow inside the trace `{trace_root}`. To see full attribution for this run, analyze the trace root instead: `pflow analyze-cache {trace_root} --from-trace <trace-path>`. ``) instead of the generic disclosure. Extended `test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent` (already covered the appears-as-child fixture) with redirect-note assertions; added `test_scope_mismatch_emits_generic_note_when_analyzed_workflow_absent_from_trace` to lock the negative branch (mutation: returning `True` unconditionally trips this test). No new catalog ID — the Notes channel already carries comparable advisories (`_format_rejection_note` precedent).
+
+**F#17 minimal — Name the model in cost summaries.** Paid runs with an unpriced model rendered `pricing unavailable for: unknown` with no actionable next step. The string `"unknown"` was a producer-side sentinel in both parallel data producers (`MetricsCollector.calculate_costs:60` and `_LLMSummaryAccumulator.add_leaf:75`) that masked both genuine model names and the `VALIDATION_PLACEHOLDER` sentinel from S#4 leaks. Top-10% reshape: drop the `"unknown"` literal at both producers; track real model names in `unavailable_models: set[str]` and genuinely-unrecorded calls in `unavailable_models_unnamed_count: int` (additive JSON field; consumers gating on `format_version.startswith("4.")` continue to work). New module-level helper `format_unavailable_models_phrase(unavailable_models, unnamed_count) -> str` in `metrics.py` consumed by all three renderer sites (`workflow_output.py`, `success_formatter.py`, `trace_report.py`) — single source of truth for the wording, no per-site string concatenation drift surface. Rendered output now reads `pricing unavailable for: gemini/gemini-3-flash-preview; 2 calls without recorded model` instead of `pricing unavailable for: unknown` — agent can both name the model and know how many unrecorded calls exist. Per-model call counts (the followups doc's optional second half — `(3 of 237 calls)`) deferred to a separate additive follow-up; minimal scope chosen to keep the bundle small. Both producers also filter `VALIDATION_PLACEHOLDER` so any future upstream propagation gap doesn't leak the sentinel through this path either.
+
+**S#14 — Warm-trace rerun-within-TTL relabel.** The `Cost on rerun (within TTL)` line in `analyze-cache --from-trace` output rendered identically regardless of whether the trace was a cold-cache or warm-cache run. When the trace already showed provider cache reads, the "rerun" projection answers "what would a *future* warm-prefix run cost" — close to actually-paid but conceptually a different scenario from the trace itself, easy to misread as a future-state contrast. Added `_rerun_label(summary, *, context)` helper (`render_text.py:420`) returning the appropriate label given `AnalysisSummary.trace_provider_cache_read_input_tokens` (signal already on the summary, no new aggregation). When the trace is warm, the helper appends `, modeled rerun vs warm-cache trace` to clarify the comparison. Four render sites in `render_text.py` (truncated, complete-folded, complete-fallback, greenfield) now call the helper — single source of truth for the label string. Greenfield context never gets the warm-trace suffix (defensive: greenfield by definition has no trace, but the gate is explicit). Six baselines re-baked (`03-analyze-cache-modes/{05,07,08}`, `10-live-recordings/{03,05}`, `15-run-flag-interactions/01`); all drifts confirmed to be exactly the warm-trace suffix addition, nothing else. Three new tests: warm-trace suffix on complete-trace context, on truncated-trace context, and the negative greenfield-never-suffix branch.
+
+### Why this shape (top-10% simplicity)
+
+Each item chose the same pattern: **single source of truth at the producer/seam, structured data flowing to consumers, no per-site duplicated logic.**
+
+- **S#4**: one short-circuit at the coercion entry point, not five at each coercer. One `VALIDATION_PLACEHOLDER` constant, not five inline string literals.
+- **S#9**: one helper using existing `TraceTree.walk` primitive, not a new traversal abstraction. Note channel precedent reused, not a new catalog ID.
+- **F#17**: one `format_unavailable_models_phrase` helper consumed by three renderers, not three sites of string concatenation. Two structured fields (`unavailable_models` + `unavailable_models_unnamed_count`) consumed downstream, not a pre-baked string that drifts across sites.
+- **S#14**: one `_rerun_label` helper consumed by four sites, not four inline label conditionals. Existing signal (`trace_provider_cache_read_input_tokens`) reused, not a new aggregation.
+
+The wins compound: when the next sprint (cache-ready-opportunity plan) extends the projection model, it operates against a cleaner producer-side surface — `VALIDATION_PLACEHOLDER` short-circuit, named-model truth, scope-redirect note, and label-helper machinery all already in place.
+
+### Verification
+
+- **Full default pytest** (`tests/test_core/` + `tests/test_execution/` + `tests/test_cli/` + `tests/test_runtime/`, excluding the unrelated `test_dry_run_subprocess.py` sandbox flake): **5504 passed, 1 skipped**.
+- **Targeted regression sets** (per item) all green: 7 new parametrized S#4 tests, 3 S#9 tests, ~10 new F#17 tests across 4 files, 3 new S#14 tests.
+- **`make check` equivalent**: `.venv/bin/ruff check src/` + all touched test files clean; `.venv/bin/mypy src/pflow/` clean on 209 source files.
+- **Baseline `verify.sh`**: 85 pass / 1 pre-existing sandbox drift (`15-run-flag-interactions/03-report-with-only`, the documented `/dev/fd/62: Operation not permitted` issue from prior progress log entries — confirmed unchanged by my work via `git diff`).
+- **Baseline drift surface**: 6 expected-stdout.txt files, every diff is exactly the warm-trace suffix addition. 4 unrelated `trace.json` newline-stripping side-effects from `regenerate.sh` were reverted (cosmetic only, no semantic change).
+
+### Implementation efficiency
+
+S#4 and S#9 were implemented serially in the parent agent. F#17 and S#14 were delegated to two parallel `code-implementer` subagents with comprehensive context (file:line refs, decision rationale, definition of done, out-of-scope list). Both subagents shipped clean implementations matching the brief; trust-but-verify code reads confirmed they did what they claimed (helper exists, renderers call it, tests assert real shape, baselines drifted only on expected lines). The parallel approach cut wall-clock time roughly in half — about 35–40 min of subagent runtime instead of 60+ min serial — without introducing file conflicts because the four items touch fully disjoint surface.
+
+### Files touched
+
+Production (10 files):
+- `src/pflow/core/validation_utils.py` (`VALIDATION_PLACEHOLDER` constant, `generate_dummy_parameters` cleanup)
+- `src/pflow/core/param_coercion.py` (entry-point short-circuit)
+- `src/pflow/runtime/engine/engine.py` (constant import, comparison site update)
+- `src/pflow/core/cache_analysis/analyze.py` (`_workflow_appears_as_child` helper, redirect-note branch)
+- `src/pflow/core/metrics.py` (`format_unavailable_models_phrase` helper, named/unnamed tracking)
+- `src/pflow/runtime/workflow_trace.py` (`_LLMSummaryAccumulator` named/unnamed tracking)
+- `src/pflow/cli/workflow_output.py` (helper consumption)
+- `src/pflow/execution/formatters/success_formatter.py` (helper consumption, top-level lift)
+- `src/pflow/core/trace_report.py` (helper consumption)
+- `src/pflow/core/cache_analysis/render_text.py` (`_rerun_label` helper, 4 call site replacements)
+
+Tests (7 files):
+- `tests/test_core/test_param_coercion.py` (7 new parametrized cases)
+- `tests/test_core/test_cache_analysis_analyze.py` (1 updated + 1 new test)
+- `tests/test_core/test_metrics.py` (1 updated + 2 new test classes)
+- `tests/test_core/test_unknown_model_user_experience.py` (1 new regression)
+- `tests/test_execution/formatters/test_success_formatter.py` (extended existing class with 2 new cases)
+- `tests/test_cli/test_direct_execution_helpers.py` (extended existing class with 2 new cases)
+- `tests/test_core/test_cache_analysis_renderers.py` (3 new tests)
+
+Baselines (6 files): expected-stdout.txt warm-trace suffix re-bake under `.taskmaster/tasks/task_159/baseline/{03-analyze-cache-modes/05,07,08, 10-live-recordings/03,05, 15-run-flag-interactions/01}/`.
+
+### Closes
+
+- S#4 (placeholder sentinel leak)
+- S#9 (parent-trace child-workflow redirect)
+- F#17 (pricing unavailable wording) — minimal scope; per-model counts deferred as additive follow-up
+- S#14 (rerun-within-TTL warm-trace relabel)
+
+### What's next
+
+Bundle 5 (`is_below_min_cache` predicate split for claim-vs-suppression contexts at `analyze.py:2928, 2957, 3049` — ~0.5 day) before the cache-ready-opportunity plan starts, so the projection model uses the cleaner predicate from day one.

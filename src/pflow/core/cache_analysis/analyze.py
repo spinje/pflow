@@ -1198,16 +1198,58 @@ def _resolve_trace_scope(
     Path identity uses ``_workflow_paths_refer_to_same`` (resolves relative
     vs absolute via ``os.path.realpath``; ``ir-hash:`` synthetic ids
     compare byte-exact).
+
+    Note wording (S#9): when the analyzed workflow is detected as a
+    sub-workflow inside the trace's root, the emitted note becomes a
+    redirect hint ("analyze the trace root instead") rather than the
+    generic scope disclosure — agents otherwise see "0 of N LLM nodes
+    executed" without an obvious next step.
     """
     raw_trace_root = (trace_data.get("workflow_path") if trace_data else None) or lookup_path
     if trace_data is None or _workflow_paths_refer_to_same(raw_trace_root, lookup_path):
         return lookup_path, False
-    notes.append(
-        f"The trace file references workflow `{raw_trace_root}`, which differs from the "
-        f"analyzed workflow `{lookup_path}`; cost figures show only events attributable "
-        f"to the analyzed workflow and its sub-workflows."
-    )
+    if _workflow_appears_as_child(trace_data, lookup_path, raw_trace_root):
+        notes.append(
+            f"`{lookup_path}` appears as a sub-workflow inside the trace `{raw_trace_root}`. "
+            f"To see full attribution for this run, analyze the trace root instead: "
+            f"`pflow analyze-cache {raw_trace_root} --from-trace <trace-path>`."
+        )
+    else:
+        notes.append(
+            f"The trace file references workflow `{raw_trace_root}`, which differs from the "
+            f"analyzed workflow `{lookup_path}`; cost figures show only events attributable "
+            f"to the analyzed workflow and its sub-workflows."
+        )
     return raw_trace_root, True
+
+
+def _workflow_appears_as_child(
+    trace_data: dict[str, Any],
+    lookup_path: str,
+    trace_root: str,
+) -> bool:
+    """True iff ``lookup_path`` matches any event's ``workflow_path`` in the trace.
+
+    Used by ``_resolve_trace_scope`` to switch the scope-mismatch note from
+    the generic disclosure to an actionable redirect hint. The walker
+    threads ``workflow_path`` through every event via the four-tier
+    resolution documented at ``TraceTree.walk`` — events from a child
+    sub-workflow expose the canonical child path, so a match here proves
+    the analyzed workflow ran as a sub-workflow of ``trace_root``.
+
+    Returns ``False`` (silently) on any ``TraceTree`` construction error
+    — falls back to the generic note rather than crashing the analyzer.
+    """
+    from pflow.core.trace_tree import TraceTree
+
+    try:
+        tree = TraceTree.from_dict(trace_data)
+    except (ValueError, KeyError, TypeError):
+        return False
+    for we in tree.walk(workflow_path=trace_root):
+        if _workflow_paths_refer_to_same(we.workflow_path, lookup_path):
+            return True
+    return False
 
 
 def _scope_workflow_paths(

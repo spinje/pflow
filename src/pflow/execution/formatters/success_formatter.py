@@ -164,6 +164,9 @@ def _mirror_pricing_tri_state(result: dict[str, Any], metrics_summary: dict[str,
     unavailable = metrics_summary.get("unavailable_models")
     if unavailable:
         result["unavailable_models"] = list(unavailable)
+    unnamed_count = metrics_summary.get("unavailable_models_unnamed_count", 0)
+    if unnamed_count:
+        result["unavailable_models_unnamed_count"] = unnamed_count
 
 
 def _collect_outputs(
@@ -295,13 +298,16 @@ def format_success_as_text(  # noqa: C901
     total_metrics = metrics.get("total", {})
 
     if not total_metrics.get("pricing_available", True):
+        from pflow.core.metrics import format_unavailable_models_phrase
+
         unavailable = total_metrics.get("unavailable_models", [])
-        models_str = ", ".join(unavailable)
+        unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
+        models_phrase = format_unavailable_models_phrase(unavailable, unavailable_unnamed_count)
         partial = total_metrics.get("partial_cost_usd")
         if partial is not None:
-            lines.append(f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_str})")
+            lines.append(f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})")
         else:
-            lines.append(f"⚠️  Cost unavailable — pricing data missing for: {models_str}")
+            lines.append(f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}")
     elif total_cost and total_cost > 0:
         workflow_metrics = metrics.get("workflow", {})
         total_tokens = workflow_metrics.get("total_tokens", 0)

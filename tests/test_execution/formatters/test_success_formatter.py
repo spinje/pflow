@@ -512,6 +512,7 @@ class TestPricingUnavailableWarning:
         unavailable_models: list[str] | None = None,
         partial_cost_usd: float | None = None,
         total_cost_usd: float | None = None,
+        unavailable_models_unnamed_count: int = 0,
     ) -> dict:
         metrics: dict = {
             "workflow": {"duration_ms": 100, "nodes_executed": 1, "total_tokens": 10},
@@ -520,6 +521,7 @@ class TestPricingUnavailableWarning:
         if not pricing_available:
             metrics["total"]["pricing_available"] = False
             metrics["total"]["unavailable_models"] = unavailable_models or []
+            metrics["total"]["unavailable_models_unnamed_count"] = unavailable_models_unnamed_count
             if partial_cost_usd is not None:
                 metrics["total"]["partial_cost_usd"] = partial_cost_usd
         return {
@@ -559,6 +561,30 @@ class TestPricingUnavailableWarning:
 
         assert "$0.0500" in text
         assert "Cost unavailable" not in text
+
+    def test_unnamed_only_renders_count_phrase(self):
+        """When all unpriced calls are genuinely-unrecorded, the rendered
+        phrase surfaces the count rather than the literal ``"unknown"``."""
+        result_dict = self._make_result_dict(
+            pricing_available=False,
+            unavailable_models=[],
+            unavailable_models_unnamed_count=2,
+        )
+        text = format_success_as_text(result_dict)
+        assert "2 calls without recorded model" in text
+        assert "unknown" not in text
+
+    def test_named_plus_unnamed_renders_both(self):
+        """A mix of real names and unnamed-count surfaces both in the
+        rendered phrase joined by ``"; "``."""
+        result_dict = self._make_result_dict(
+            pricing_available=False,
+            unavailable_models=["gpt-5"],
+            unavailable_models_unnamed_count=1,
+        )
+        text = format_success_as_text(result_dict)
+        assert "gpt-5" in text
+        assert "1 call without recorded model" in text
 
 
 class TestOnlyNodeDisplay:

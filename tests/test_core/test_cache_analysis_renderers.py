@@ -101,9 +101,7 @@ def _make_analysis(
     first_run_delta = _test_delta(
         no_cache, first_run_with_cache, "no_cache_hypothetical_usd", "first_run_with_cache_hypothetical_usd"
     )
-    rerun_delta = _test_delta(
-        no_cache, rerun, "no_cache_hypothetical_usd", "rerun_within_ttl_hypothetical_usd"
-    )
+    rerun_delta = _test_delta(no_cache, rerun, "no_cache_hypothetical_usd", "rerun_within_ttl_hypothetical_usd")
     actual_delta = _test_delta(no_cache, actually_paid, "no_cache_hypothetical_usd", "actually_paid_usd")
     if actual_delta_unavailable_reason is not None:
         actual_delta = CostDelta(
@@ -1498,6 +1496,72 @@ def test_trace_mode_separates_local_memo_reuse_from_provider_prompt_cache() -> N
     assert payload["summary"]["trace_provider_cache_read_input_tokens"] == 12_345
 
 
+def test_rerun_label_includes_warm_trace_suffix_when_trace_already_cached() -> None:
+    """S#14: when the loaded trace already shows provider cache reads,
+    the ``Cost on rerun (within TTL)`` line carries a clarifying suffix so
+    agents recognize that the projection models a different scenario than
+    the trace itself (the trace was already warm-cache).
+
+    Mutation contract: drop the warm-trace branch in ``_rerun_label`` →
+    the suffix assertion fails. Drop the suffix gating on
+    ``trace_provider_cache_read_input_tokens > 0`` → the
+    ``test_trace_mode_separates_local_memo_reuse_from_provider_prompt_cache``
+    text assertions still pass, but any other trace test would falsely
+    show the suffix.
+    """
+    analysis = _make_analysis(
+        actually_paid=0.09,
+        no_cache=0.37,
+        rerun=0.12,
+        trace_provider_cache_read_input_tokens=12_345,
+    )
+
+    text = render_text(analysis)
+    assert "Cost on rerun (within TTL), modeled rerun vs warm-cache trace:" in text
+
+
+def test_rerun_label_truncated_trace_includes_warm_trace_suffix_when_cached() -> None:
+    """S#14 truncated-trace variant: the truncated cost-line layout uses
+    the ``(executed, within TTL)`` form, and the warm-cache suffix still
+    appends when the trace already showed provider cache reads."""
+    base = _make_analysis(
+        actually_paid=0.09,
+        no_cache=0.37,
+        rerun=0.12,
+        trace_provider_cache_read_input_tokens=12_345,
+    )
+    analysis = CacheAnalysis(**{
+        **base.__dict__,
+        "summary": AnalysisSummary(**{
+            **base.summary.__dict__,
+            "trace_coverage": "truncated",
+            "evidence_scope": "truncated_trace_executed_subset",
+            "trace_llm_nodes_static": 2,
+            "trace_llm_nodes_executed": 1,
+            "trace_unexecuted_llm_rows": (TraceUnexecutedLLMRow("/abs/x.pflow.md", "skipped"),),
+        }),
+    })
+
+    text = render_text(analysis)
+    assert "Cost on rerun (executed, within TTL), modeled rerun vs warm-cache trace:" in text
+
+
+def test_rerun_label_greenfield_never_includes_warm_trace_suffix() -> None:
+    """S#14 boundary: greenfield mode (no trace) never carries the
+    warm-cache suffix even when the field is non-zero (greenfield setup
+    shouldn't produce that field, but defending the helper's contract)."""
+    analysis = _make_analysis(
+        no_cache=0.10,
+        first_run_with_cache=0.09,
+        rerun=0.04,
+        trace_provider_cache_read_input_tokens=12_345,
+    )
+
+    text = render_text(analysis)
+    assert "Cost on rerun (within TTL):" in text
+    assert "modeled rerun vs warm-cache trace" not in text
+
+
 def test_trace_mode_falls_back_to_excluded_line_when_excluded_cost_unknown() -> None:
     """Fix 7 fallback: when any excluded row has ``actual_cost_usd=None``
     (honest-unmeasurable), we can't pass through what we didn't measure.
@@ -2291,9 +2355,7 @@ def test_format_delta_parenthetical_local_cache_reuse_qualifier() -> None:
         baseline="no_cache_hypothetical_usd",
         compared_to="actually_paid_usd",
     )
-    assert _format_delta_parenthetical(delta, local_cache_reuse=False) == (
-        "(saves 26% vs cost without caching)"
-    )
+    assert _format_delta_parenthetical(delta, local_cache_reuse=False) == ("(saves 26% vs cost without caching)")
     assert _format_delta_parenthetical(delta, local_cache_reuse=True) == (
         "(saves 26% vs cost without caching, incl. local cache reuse)"
     )

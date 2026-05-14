@@ -4,6 +4,29 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
+
+
+def format_unavailable_models_phrase(
+    unavailable_models: list[str],
+    unnamed_count: int,
+) -> str:
+    """Format the "pricing unavailable for: ..." phrase from structured data.
+
+    Top-10% rule: a single producer-side function so the three call sites
+    (CLI workflow_output, success formatter, trace report) stay consistent.
+    Names real models when present; surfaces a clear count when calls
+    arrived without a recorded model rather than masking them as
+    ``"unknown"``.
+    """
+    parts: list[str] = []
+    if unavailable_models:
+        parts.append(", ".join(unavailable_models))
+    if unnamed_count > 0:
+        noun = "call" if unnamed_count == 1 else "calls"
+        parts.append(f"{unnamed_count} {noun} without recorded model")
+    return "; ".join(parts) or "no models"
+
 
 @dataclass
 class MetricsCollector:
@@ -40,6 +63,13 @@ class MetricsCollector:
         ``cost_usd`` per call (or ``None`` when LiteLLM has no pricing data).
         Calls without a ``cost_usd`` key are treated the same as ``None``.
 
+        Calls without a recorded ``model`` field (genuinely unrecorded, or
+        carrying the ``__validation_placeholder__`` sentinel) are counted into
+        ``unavailable_models_unnamed_count`` rather than being labelled as
+        ``"unknown"`` — so renderers can surface the actual model names and a
+        clear "N call(s) without recorded model" tally separately, never the
+        opaque string ``"unknown"``.
+
         Args:
             llm_calls: List of LLM call data from trace.collect_llm_calls()
 
@@ -48,6 +78,7 @@ class MetricsCollector:
         """
         total_cost = 0.0
         unavailable_models: set[str] = set()
+        unavailable_models_unnamed_count = 0
 
         for call in llm_calls:
             if not call:
@@ -56,15 +87,19 @@ class MetricsCollector:
             cost = call.get("cost_usd")
             if cost is not None:
                 total_cost += cost
-            else:
-                model = call.get("model", "unknown")
+                continue
+            model = call.get("model") or ""
+            if model and model != VALIDATION_PLACEHOLDER:
                 unavailable_models.add(model)
+            else:
+                unavailable_models_unnamed_count += 1
 
-        if unavailable_models:
+        if unavailable_models or unavailable_models_unnamed_count:
             return {
                 "total_cost_usd": None,
                 "pricing_available": False,
                 "unavailable_models": sorted(unavailable_models),
+                "unavailable_models_unnamed_count": unavailable_models_unnamed_count,
                 "partial_cost_usd": round(total_cost, 6) if total_cost > 0 else None,
             }
         else:
@@ -125,8 +160,11 @@ class MetricsCollector:
         tokens = self._aggregate_token_counts(llm_calls)
         tokens_total = tokens["input"] + tokens["output"]
 
-        # Extract unique models used
-        models = list({call.get("model", "unknown") for call in llm_calls if call})
+        # Extract unique models used (drop the "unknown" fallback so genuinely
+        # unrecorded model fields don't leak into the displayed model list)
+        models = sorted({
+            m for m in (call.get("model") for call in llm_calls if call) if m and m != VALIDATION_PLACEHOLDER
+        })
 
         metrics = {
             "duration_ms": round(duration, 2) if duration else None,
@@ -230,6 +268,7 @@ class MetricsCollector:
         if not cost_data.get("pricing_available", True):
             total_metrics["pricing_available"] = False
             total_metrics["unavailable_models"] = cost_data.get("unavailable_models", [])
+            total_metrics["unavailable_models_unnamed_count"] = cost_data.get("unavailable_models_unnamed_count", 0)
             if cost_data.get("partial_cost_usd") is not None:
                 total_metrics["partial_cost_usd"] = cost_data["partial_cost_usd"]
 
@@ -259,6 +298,7 @@ class MetricsCollector:
         if not cost_data.get("pricing_available", True):
             summary["pricing_available"] = False
             summary["unavailable_models"] = cost_data.get("unavailable_models", [])
+            summary["unavailable_models_unnamed_count"] = cost_data.get("unavailable_models_unnamed_count", 0)
 
         # Add performance summaries
         self._add_cache_performance(summary, total_tokens)

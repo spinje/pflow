@@ -141,3 +141,23 @@ class TestUnknownModelUserExperience:
 
         assert cost_data["pricing_available"] is False
         assert "unknown-model" in cost_data["unavailable_models"]
+
+    def test_call_without_recorded_model_does_not_show_literal_unknown(self):
+        """Regression for F#17: a call dict missing ``model`` must NOT
+        surface as the literal string ``"unknown"`` in
+        ``unavailable_models``. It belongs in the unnamed-count tally so
+        users see actionable model names plus a clear "N calls without
+        recorded model" rather than the opaque sentinel.
+        """
+        collector = MetricsCollector()
+
+        # No model recorded (and no cost_usd) — historically would have
+        # surfaced as the opaque literal ``"unknown"`` in unavailable_models.
+        llm_calls = [{"input_tokens": 100, "output_tokens": 50}]
+
+        cost_data = collector.calculate_costs(llm_calls)
+
+        assert cost_data["pricing_available"] is False
+        assert cost_data["unavailable_models"] == []
+        assert "unknown" not in cost_data["unavailable_models"]
+        assert cost_data["unavailable_models_unnamed_count"] == 1
