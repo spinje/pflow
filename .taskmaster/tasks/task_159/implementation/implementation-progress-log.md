@@ -666,7 +666,7 @@ Sub-phases shipped: **F1.1, F1.2, F1.3, F1.4, F2.1, F2.2, F2.3, F2.4, F3.1, F3.2
 - `src/pflow/core/cache_analysis/token_estimation.py` — 4-tier `estimate_tokens(model, text, *, trace, memo_cache, node_id, workflow_path) -> (int, str)` per DD#31. Lazy-imports `litellm.token_counter`; tier order `trace → memo → estimator → heuristic`. (148 lines)
 - `src/pflow/core/cache_analysis/cross_workflow.py` — Tier 2 walker via `resolve_sub_workflow`. `CrossWorkflowEdge` dataclass + `walk_cross_workflow` with depth limit + cycle detection + the new `notes` parameter (silent-failures H1 fix — surfaces depth/cycle truncations to the analysis output). Reuses `WorkflowValidator._enumerate_child_calls` for batch sub-workflow enumeration. (290 lines)
 - `src/pflow/core/cache_analysis/padding_advisor.py` — `compute_padding_advisories` with sensitivity floors ($0.005/advisory, $0.05 cumulative). (64 lines)
-- `src/pflow/core/cache_analysis/analyze.py` — `analyze(workflow_ir, *, parameters, workflow_path, base_path, trace_path, auto_load_trace, memo_cache) -> CacheAnalysis`. Composes per-call rows, cross-workflow walker, padding advisor, STRICT confidence aggregation per DD#34 line 634 verbatim, 3-note ordering (2.0.0-skip → unparseable-skip → Gemini telemetry), per-node analytical warnings (`cache.below-min-tokens`, `cache.prewarm-no-prefix`). Eager imports `_resolve_chunk_value`, `_resolve_static_prefix_for_cache`, `_CHUNK_ABSENT` from `core.cache_render` (Round 4 high-value fix #2 — locks predicted cache_key byte-identity contract structurally). (704 lines)
+- `src/pflow/core/cache_analysis/analyze.py` — `analyze(workflow_ir, *, parameters, workflow_path, base_path, trace_path, auto_load_trace, memo_cache) -> CacheAnalysis`. Composes per-call rows, cross-workflow walker, padding advisor, STRICT confidence aggregation per DD#34 line 634 verbatim, 3-note ordering (2.0.0-skip → unparseable-skip → Gemini telemetry), per-node analytical warnings (`cache.below-min-predicted`, `cache.prewarm-no-prefix`). Eager imports `_resolve_chunk_value`, `_resolve_static_prefix_for_cache`, `_CHUNK_ABSENT` from `core.cache_render` (Round 4 high-value fix #2 — locks predicted cache_key byte-identity contract structurally). (704 lines)
 - `src/pflow/core/cache_analysis/summarize.py` — `summarize` and `summarize_from_analysis` returning `Diagnostic | None`. None-cost path drops the dollar figure entirely (silent-failures C1 fix). (106 lines)
 - `src/pflow/core/cache_analysis/render_text.py` — section ordering, default-hide-clean per-call rule, `--all-rows` override, cost tri-state (priced / partial / unavailable). (278 lines)
 - `src/pflow/core/cache_analysis/render_json.py` — JSON shape per spec. `format_version` reads from `JSON_FORMAT_VERSION` constant (consumer-rule contract). Empty-array contract for `cross_workflow.*` fields. (128 lines)
@@ -710,9 +710,9 @@ Sub-phases shipped: **F1.1, F1.2, F1.3, F1.4, F2.1, F2.2, F2.3, F2.4, F3.1, F3.2
 
 2. **F2.1 `analyze.py` cost computation is a stub.** All three `*_cost_per_run_usd` summary fields return `None` in v1; full cost integration with `litellm.completion_cost()` + per-call rollup is deferred. The summary `unavailable_models` correctly populates with all-models-in-use when cost is None, surfacing the tri-state through both text and JSON renderers. **Why this defers cleanly:** the silent-failures C1 fix (None-cost path drops the dollar figure from the nudge) means agents see the right message even with stub costs. **What follow-up agents need to know:** wiring real cost requires `(a)` per-call cost from `litellm.completion_cost()` against the resolved model, `(b)` summing priced calls + tracking unpriced ones, `(c)` updating the test goldens/structurals to assert real cost values. v1.x can do this without changing the dataclass shape.
 
-3. **`_estimate_cacheable_tokens` is a 75%-of-prompt heuristic, not a real per-chunk estimator.** Plan F2.1 implies real per-chunk token counts. The v1 stub returns `len(prompt) * 75 // 400` when a node has `prompt_cache:` declared, else 0. **What follow-up agents need to know:** real per-chunk estimation needs the F1.2 `estimate_tokens` helper invoked per declared chunk against the prompt template, then summed. The stub is conservative enough that `cache.below-min-tokens` warnings still fire correctly for small prompts.
+3. **`_estimate_cacheable_tokens` is a 75%-of-prompt heuristic, not a real per-chunk estimator.** Plan F2.1 implies real per-chunk token counts. The v1 stub returns `len(prompt) * 75 // 400` when a node has `prompt_cache:` declared, else 0. **What follow-up agents need to know:** real per-chunk estimation needs the F1.2 `estimate_tokens` helper invoked per declared chunk against the prompt template, then summed. The stub is conservative enough that `cache.below-min-predicted` warnings still fire correctly for small prompts.
 
-4. **`cache.dynamic-before-static`, `cache.shared-context-undeclared`, `cache.padding-advisory` analytical-tier emissions are skeletal.** Plan F2.1 specifies the analyzer detects these patterns. v1 fires `cache.below-min-tokens` and `cache.prewarm-no-prefix` (the cheap structural checks); the more nuanced detections (prompt-template parsing for dynamic-before-static; cross-call shared-context detection; padding advisor net-positive math against real per-chunk costs) are deferred behind the same cost-stub gate. **What follow-up agents need to know:** the framework is in place (`PaddingCandidate` dataclass, `compute_padding_advisories` with sensitivity floors, all helpers eager-imported); v1.x lights up the detection logic.
+4. **`cache.dynamic-before-static`, `cache.shared-context-undeclared`, `cache.padding-advisory` analytical-tier emissions are skeletal.** Plan F2.1 specifies the analyzer detects these patterns. v1 fires `cache.below-min-predicted` and `cache.prewarm-no-prefix` (the cheap structural checks); the more nuanced detections (prompt-template parsing for dynamic-before-static; cross-call shared-context detection; padding advisor net-positive math against real per-chunk costs) are deferred behind the same cost-stub gate. **What follow-up agents need to know:** the framework is in place (`PaddingCandidate` dataclass, `compute_padding_advisories` with sensitivity floors, all helpers eager-imported); v1.x lights up the detection logic.
 
 5. **`_render_per_call` text formatting uses fixed-width padding, not truncation.** Long node IDs / model strings push columns right rather than truncating. Identified by review-silent-failures M2; left as-is per the "polish item, not silent-failure" assessment. **What follow-up agents need to know:** if a workflow with long names produces unreadable output, switch to a real column-width algorithm (e.g., compute max width per column, then render with that width).
 
@@ -758,7 +758,7 @@ Sub-phases shipped: **F1.1, F1.2, F1.3, F1.4, F2.1, F2.2, F2.3, F2.4, F3.1, F3.2
 - **VERIFIED**: golden hash baseline regression (`test_golden_baseline_hashes_match`) PASSED. Segment 4 doesn't touch runtime hash path; verification confirms structural safety.
 - **NEEDS VERIFICATION (v1.x)**: real cost integration. Stub returns None for all `*_cost_per_run_usd` fields; the tri-state degradation correctly fires on this. v1.x lights up `litellm.completion_cost()` per call.
 - **NEEDS VERIFICATION (v1.x)**: real per-chunk token estimation in `_estimate_cacheable_tokens`. Current 75%-of-prompt heuristic is conservative.
-- **NEEDS VERIFICATION (v1.x)**: full prompt-template parsing for `cache.dynamic-before-static` detection. Current implementation fires only `cache.below-min-tokens` and `cache.prewarm-no-prefix` in the analytical tier.
+- **NEEDS VERIFICATION (v1.x)**: full prompt-template parsing for `cache.dynamic-before-static` detection. Current implementation fires only `cache.below-min-predicted` and `cache.prewarm-no-prefix` in the analytical tier.
 - **NEEDS VERIFICATION (production smoke)**: end-to-end `pflow analyze-cache` against the lyrics-generator workflow — requires user permission per agent-handoff out-of-scope reminders.
 
 ### Open user decisions surfaced
@@ -787,7 +787,7 @@ Sub-phases shipped: **F1.1, F1.2, F1.3, F1.4, F2.1, F2.2, F2.3, F2.4, F3.1, F3.2
 **Findings deliberately NOT fixed (per critical-thinking triage):**
 - **silent-failures H2** (trace-skip note level mismatch): minor; the existing logger.debug + info-note pair is functional. Promoting log level requires verifying `cli/logging_config.py` mapping; out of scope for this review pass.
 - **silent-failures M2** (per-call rendering fixed-width): polish, not silent-failure. Defer to v1.x if long names produce unreadable output in practice.
-- **silent-failures L1** (`cache.below-min-tokens` defensive guard): correct under the v1 stub estimator; revisit when real estimator lands.
+- **silent-failures L1** (`cache.below-min-predicted` defensive guard): correct under the v1 stub estimator; revisit when real estimator lands.
 - **impact-completeness W3** (`detect_topics_from_ir` doesn't auto-attach `caching`): low-stakes feature gap. Defer to v1.x if observed adoption shows demand.
 - **test-fidelity W3** (5/9 exit-code conditions covered): the missing 4 are parse-error, schema-error, mode-4 from-trace, no-LLM-only IR. Three are implicit (the existing tests cover them via the same Click error path); one (mode-4 from-trace) waits on discrepancy detection lighting up in v1.x.
 
@@ -889,7 +889,7 @@ workflows.
 their context (`cache.dynamic-before-static`, `cache.shared-context-undeclared`,
 `cache.padding-advisory`, `cache.batch-prewarm-recommended`) are the **3-4
 stubbed analytical warnings** that don't fire in v1. The warnings that DO
-fire (`cache.below-min-tokens`, `cache.prewarm-no-prefix`) don't carry
+fire (`cache.below-min-predicted`, `cache.prewarm-no-prefix`) don't carry
 savings — they're "this won't work" warnings, not "save $X" warnings.
 
 **What an agent sees on lyrics-generator-shaped greenfield workflow today:**
@@ -1214,7 +1214,7 @@ all changes are in tests. 10 test files touched.
   (`cache-source` with hyphen, etc.) the hand-built shape would miss.
 - **M7** `test_analyze_cache_with_workflow_having_warnings_still_exits_zero`
   replaces `if payload["warnings"]: pass` with
-  `assert any(w["id"] == "cache.below-min-tokens" for w in ...)` — surfaces
+  `assert any(w["id"] == "cache.below-min-predicted" for w in ...)` — surfaces
   a "warnings stopped firing" regression instead of silently passing on
   an empty list.
 - **M8** `test_async_tool_wrapping_returns_dict` replaces the shallow
@@ -2352,7 +2352,7 @@ mutation-tests the catch contract.
 
 **Symptom**: nodes with `cache_ratio ≥ 80%` AND analytical warnings
 (`cache.dynamic-before-static`, `cache.batch-prewarm-recommended`,
-`cache.padding-advisory`, `cache.below-min-tokens`) are silently HIDDEN from
+`cache.padding-advisory`, `cache.below-min-predicted`) are silently HIDDEN from
 the default per-call report. Agent reads default output, misses
 high-leverage recommendations.
 
@@ -3524,7 +3524,7 @@ Coalesce expressions (`${a ?? b}`) skipped — semantics don't fit the
   test to fail with a clear false positive. Gate is load-bearing.
 - 4 high-leverage manual fixtures at `/tmp/opaque-regression/0[1-4]-*.pflow.md`:
   direct-opaque (positive), batch-alias-opaque (canonical), inline-shared
-  (false-positive guard), brownfield-mixed (new detector + `cache.below-min-tokens`
+  (false-positive guard), brownfield-mixed (new detector + `cache.below-min-predicted`
   co-fire). All emit expected IDs.
 - song-creator regression diff vs `POST-STAGE1-FINAL-song-creator.txt`:
   identical (1 trailing newline, cosmetic).
@@ -3880,7 +3880,7 @@ from a 3-sentence mechanic explanation to "Used by N LLM nodes. Chunks:
   names both workflows. Snapshots at
   `scratchpads/lyrics-generator-stage1/POST-STAGEB-*.txt`.
 - Brownfield (`/tmp/brownfield-stage-b.pflow.md` with order-mismatch
-  ERROR + below-min-tokens warning) renders correctly with new section
+  ERROR + below-min-predicted warning) renders correctly with new section
   intro.
 
 ### What's next
@@ -4279,7 +4279,7 @@ hierarchy:
   falls through when sum=0 — declared but didn't fire).
 - Tier 2: sum of memo-resolved chunk tokens via `_estimate_ref_tokens`
   (declared OR candidate). Asymmetric fall-through: declared+partial-memo
-  → Tier 3 (preserves `cache.below-min-tokens` fidelity);
+  → Tier 3 (preserves `cache.below-min-predicted` fidelity);
   candidate-only+partial-memo → Tier 4 (Option C honest unmeasurable).
 - Tier 3: `len(prompt) * 75 // 400` heuristic (declared subset only).
 - Tier 4: `(None, "unavailable")`.
@@ -4314,7 +4314,7 @@ through to memo when `cache_creation + cache_read == 0`). Sources:
 estimate). Without this, the `if x > 0 / else 0` form would coerce the
 new `None` returns from Tier 4 into 0 and break visibility.
 
-**`cache.below-min-tokens` gate** in `_per_node_warnings` adds
+**`cache.below-min-predicted` gate** in `_per_node_warnings` adds
 `cacheable_data_source != "trace"` clause: when source is trace and
 cacheable is nonzero, cache demonstrably worked at this size; the
 warning would contradict trace evidence. Analyzer-side consumption
@@ -4353,7 +4353,7 @@ blind spot) with 1 tiered function.
   candidate projection; heterogeneous batch+declared→estimator;
   declared+partial-memo end-to-end fall-through.
 - `test_analyze_summary_counts_warnings_and_info` strengthened to
-  assert specific `cache.below-min-tokens` ID (catches "warning
+  assert specific `cache.below-min-predicted` ID (catches "warning
   disappears" AND "different warning fires for the wrong reason").
 
 **Autouse fixture extended** in `test_per_id_emission.py` to patch
@@ -4440,7 +4440,7 @@ analyze.py-only patch.
    sides of the asymmetry are necessary; collapsing them either way
    regresses real UX.
 
-4. **`cache.below-min-tokens` gate update is a non-deferrable
+4. **`cache.below-min-predicted` gate update is a non-deferrable
    analyzer-side concern.** Initial plan considered renderer-side
    suppression of the warning. That's wrong — the warning lives in
    `analysis.warnings` which agents consume via JSON. Renderer-only
@@ -5049,7 +5049,7 @@ work in Phases 2-6.
    tuple keys.
 
 3. **`affected_workflow` threaded through every node-scoped producer.**
-   Touched: `_per_node_warnings` (cache.below-min-tokens,
+   Touched: `_per_node_warnings` (cache.below-min-predicted,
    cache.prewarm-no-prefix), `_batch_prewarm_recommendations`,
    `_dynamic_before_static_warnings`, `_opaque_prompt_warnings`. Validator-
    shipped diagnostics (`cache.invalid-on-non-llm`,
@@ -5718,7 +5718,7 @@ commit cadence.
    cacheable estimates (~2391 tokens) down to the prompt-body-only size
    (~4 tokens) when ``## Cache`` chunks were referenced by name in
    ``prompt_cache:`` but not inlined in the prompt body. False
-   ``cache.below-min-tokens`` warnings advised agents to remove correct
+   ``cache.below-min-predicted`` warnings advised agents to remove correct
    ``prompt_cache:`` declarations.
 
    **Fix:** make the clamp's invariant structurally true — ``input_tokens``
@@ -5830,7 +5830,7 @@ commit cadence.
 - End-to-end Phase A reproducer verified: workflow with declared
   ``## Cache`` + ``prompt_cache: [context]`` + 19117-char context input
   produces ``input=2395, cacheable=2391, ratio=100%`` (was
-  ``cacheable=4`` pre-fix). Zero ``cache.below-min-tokens`` warnings
+  ``cacheable=4`` pre-fix). Zero ``cache.below-min-predicted`` warnings
   (was 1 pre-fix).
 - Net code change: ``analyze.py`` +~150 LOC (``_predict_cache_keys`` +
   ``_predict_one_workflow`` + ``_PredictScaffold`` + ``_build_predict_scaffold``
@@ -7647,10 +7647,10 @@ Filed GitHub issues for audit trail and follow-up:
 
 ## Stage 2 follow-up — Findings #9/#10 + phantom-savings: unified below-min-token detection (2026-05-06)
 
-Implemented `fix-plans/cache-below-min-tokens-unified-detection-plan.md`. Closes
+Implemented `fix-plans/cache-below-min-predicted-unified-detection-plan.md`. Closes
 two Stage 2 findings plus a correctness bug surfaced during planning:
 
-- **Finding #9 (discoverability gap)** — `cache.below-min-tokens` previously
+- **Finding #9 (discoverability gap)** — `cache.below-min-predicted` previously
   fired only from `analyze-cache`. Agents who ran `pflow run --validate-only`
   saw "Workflow is valid" even when their `prompt_cache:` decoration silently
   no-op'd at the provider. Stage 2 evidence: RUN-HAIKU-RERUN's
@@ -7680,7 +7680,7 @@ two Stage 2 findings plus a correctness bug surfaced during planning:
   established convention from `cache.batch-prewarm-recommended` and
   `cache.dynamic-before-static`.
 
-`cache.below-min-tokens` now has one detector module with two evidence tiers:
+`cache.below-min-predicted` now has one detector module with two evidence tiers:
 analyzer predicted estimates and runtime observed provider telemetry. Analyzer
 emission was refactored through the detector; `LLMNode.post()` now emits a
 catalog-backed `Diagnostic` after calls that declare `prompt_cache:` but report
@@ -7701,7 +7701,7 @@ Closed the phantom-savings paths:
 
 Suggested blocks now carry/render `per_node_thresholds` in text and JSON so
 agents can see whether each proposed `prompt_cache:` subset clears the selected
-model threshold. The `cache.below-min-tokens` catalog entry dispatches message
+model threshold. The `cache.below-min-predicted` catalog entry dispatches message
 text by `evidence_kind` and uses provider-aware notes: Anthropic names
 `cache_control` no-op behavior, Gemini distinguishes explicit cachedContents
 from possible implicit caching, and OpenAI omits the suffix.
@@ -7789,7 +7789,7 @@ Three follow-up issues filed on `spinje/pflow`, all labeled `enhancement`:
   minimum, scan the workflow for unreferenced template refs that could
   bridge the gap and render `Add ${notes} (~1500 tokens) → 4920 tokens`
   hints. ~80 LOC. Most agent-actionable piece of advice the
-  `cache.below-min-tokens` feature could surface; deferred during planning
+  `cache.below-min-predicted` feature could surface; deferred during planning
   via explicit `AskUserQuestion` decision.
 - **#374** — Modernize the `__warnings__` channel: workflow scoping, live
   emission, list-shaped values. Bundles three independent structural
@@ -8869,7 +8869,7 @@ to 0 in `shared["llm_usage"]`. The runtime guard at
 `"cache_creation_input_tokens" not in llm_usage` — but the keys were
 always present, so the guard never fired. Detector then saw
 `observed_total = 0+0 = 0` and emitted false-positive
-`cache.below-min-tokens` for any provider (e.g. cold OpenAI) that
+`cache.below-min-predicted` for any provider (e.g. cold OpenAI) that
 didn't expose cache telemetry.
 
 **Reviewer's reproduction**: OpenAI-shaped response with 5,000 input
@@ -9096,7 +9096,7 @@ Deviations / adaptations:
   decomposition over suppressing complexity, and the final code is simpler.
 - Manual smoke used 1500 repeated words instead of the plan's 500. Clear
   reason: 500 words remained below Anthropic's 1024-token cache minimum, so
-  the threshold gate correctly emitted only `cache.below-min-tokens`.
+  the threshold gate correctly emitted only `cache.below-min-predicted`.
 - Did not keep the scratch smoke workflow. Clear reason: it was a temporary
   verification artifact, and leaving it would add repo noise without becoming
   a maintained test fixture.
@@ -9106,7 +9106,7 @@ Key learnings:
 1. System prompt fragmentation is the same structural detector as model
    fragmentation once the pricing model is parameterized.
 2. Cache-fragmentation warnings should stay threshold-aware; otherwise they
-   compete with `cache.below-min-tokens` and overstate provider behavior.
+   compete with `cache.below-min-predicted` and overstate provider behavior.
 3. Producer-path coverage is a stronger guard than catalog construction alone:
    every real warning ID needs both a minimal context fixture and an actual
    emission path test.
@@ -9155,10 +9155,10 @@ Deviations / adaptations:
 Verification:
 
 - Baseline reproduction before fix: dotted-path case emitted two
-  `cache.below-min-tokens` warnings and cacheable values `[None, 1, 1]`.
+  `cache.below-min-predicted` warnings and cacheable values `[None, 1, 1]`.
 - Manual smoke after fix: dotted-path case emits no warnings and cacheable
   values `[None, None, None]`; parameter-backed scratch workflow still emits
-  `cache.below-min-tokens` with `cacheable_data_source=["parameters"]`;
+  `cache.below-min-predicted` with `cacheable_data_source=["parameters"]`;
   canonical prompt-caching example emits no below-min warnings.
 - Baseline harness: 63/63 passed after regeneration.
 - Targeted tests: `test_cache_analysis_token_estimation.py` 28/28,
@@ -9253,7 +9253,7 @@ items, triaged the combined set into:
 - **Bucket 1** (silent correctness, real-money risk): Bug 1 + F-04. Closed
   in prior commits — Bug 1 (`thinking_effort` silent drop) by review-fix #7
   validator unification surfacing unknown LLM params with `Did you mean
-  'reasoning_effort'?`; F-04 (false-positive `cache.below-min-tokens` on
+  'reasoning_effort'?`; F-04 (false-positive `cache.below-min-predicted` on
   greenfield with node-output chunks) by review-fix #6 deleting the
   cacheable Tier 3 heuristic.
 - **Bucket 2** (cheap, high agent-UX leverage): Tier A (this entry).

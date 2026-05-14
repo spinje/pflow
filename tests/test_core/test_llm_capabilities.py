@@ -135,7 +135,7 @@ def test_gemini_explicit_cache_threshold_is_4096(model: str) -> None:
 
     The implicit-cache mode is free at lower thresholds (1024 Flash / 2048 Pro),
     but pflow's ``cache_control`` markers fire the EXPLICIT path; the threshold
-    used by ``cache.below-min-tokens`` must reflect when the marker won't fire,
+    used by ``cache.below-min-predicted`` must reflect when the marker won't fire,
     which is the explicit minimum.
     """
     from pflow.core.llm_capabilities import get_min_cache_tokens
@@ -216,7 +216,7 @@ def test_get_min_cache_tokens_for_unknown_anthropic_uses_floor_not_zero() -> Non
     """A future-version Anthropic model never returns 0 (would be a silent skip).
 
     Defensive against the regression class where the lookup returns the
-    integer-default of 0 rather than the conservative floor — ``cache.below-min-tokens``
+    integer-default of 0 rather than the conservative floor — ``cache.below-min-predicted``
     would never fire and the user wouldn't know caching is silently no-op.
     """
     from pflow.core.llm_capabilities import get_min_cache_tokens

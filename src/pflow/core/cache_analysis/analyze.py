@@ -67,6 +67,7 @@ from .below_min_tokens_detector import (
     BatchPrewarmBelowMinEvidence,
     BelowMinTokensEvidence,
     detect_batch_prewarm_below_min,
+    is_below_min_cache,
 )
 from .below_min_tokens_detector import (
     detect as detect_below_min_tokens,
@@ -223,6 +224,10 @@ class PerCallRow:
     # row stays node-scoped while these fields preserve exact-model truth.
     observed_models: tuple[str, ...] = ()
     observed_call_count: int = 0
+    # Current-run provider calls for this row, excluding pflow memo/in-process
+    # replays. Trace-only mixed-size detectors must read this instead of
+    # historical cached-event payloads.
+    provider_trace_llm_calls: tuple[dict[str, Any], ...] = ()
     # Resolved declared ``## Cache`` chunk content included in
     # ``input_tokens_estimated``. Consumers that need prompt-body-only costs
     # derive them from the total instead of maintaining a second total.
@@ -742,6 +747,8 @@ def analyze(
         )
         per_call_rows = per_call_result.rows
         warnings = per_call_result.warnings
+
+    warnings.extend(_diagnostics_from_trace_warnings(trace_data))
 
     # Per-node model-drift detection. Replaces the prior whole-trace drift gate
     # (deleted): structural drift (renamed/added/removed nodes) now degrades
@@ -1504,6 +1511,47 @@ def _build_trace_execution_index(
 
 def _empty_trace_execution_index() -> TraceExecutionIndex:
     return TraceExecutionIndex({}, {}, {}, {}, {}, set(), set(), {}, trace_loaded=False)
+
+
+def _diagnostics_from_trace_warnings(trace_data: Mapping[str, Any] | None) -> list[Diagnostic]:
+    """Rehydrate catalog-backed runtime warnings recorded in a trace.
+
+    Runtime producers write ``Diagnostic.to_display_dict()`` through
+    ``WorkflowTraceCollector.set_warnings``. Rebuilding via ``make_diagnostic``
+    keeps ``analyze-cache --from-trace`` on the same catalog contract as live
+    runtime output while preserving measured runtime evidence such as
+    ``cache.below-min-rendered`` token counts.
+    """
+    raw_warnings = trace_data.get("warnings") if trace_data is not None else None
+    if not isinstance(raw_warnings, list):
+        return []
+
+    diagnostics: list[Diagnostic] = []
+    for raw in raw_warnings:
+        if not isinstance(raw, Mapping):
+            continue
+        warning_id = raw.get("id")
+        if not isinstance(warning_id, str) or warning_id not in CACHE_WARNING_CATALOG:
+            continue
+
+        context = raw.get("context")
+        context_kwargs: dict[str, Any] = dict(context) if isinstance(context, Mapping) else {}
+        for key, value in raw.items():
+            if key in {"id", "severity", "message", "source", "title", "suggestions", "node_id", "context"}:
+                continue
+            context_kwargs.setdefault(str(key), value)
+
+        node_id = raw.get("node_id")
+        if not isinstance(node_id, str):
+            node_id = context_kwargs.pop("node_id", None)
+        if not isinstance(node_id, str):
+            node_id = None
+
+        try:
+            diagnostics.append(make_diagnostic(warning_id, node_id=node_id, **context_kwargs))
+        except (KeyError, TypeError, ValueError):
+            logger.debug("Skipping malformed catalog warning in trace: %r", raw, exc_info=True)
+    return diagnostics
 
 
 def _collect_trace_walk_metadata(
@@ -2400,6 +2448,7 @@ def _build_per_call_row(
         did_not_execute_in_trace=did_not_execute_in_trace,
         observed_models=observed_models,
         observed_call_count=observed_call_count,
+        provider_trace_llm_calls=provider_trace_llm_calls,
         cross_workflow_inputs=cross_workflow_inputs,
     )
 
@@ -2721,12 +2770,11 @@ def _per_node_warnings(
         if finding is not None:
             diagnostics.append(
                 make_diagnostic(
-                    "cache.below-min-tokens",
+                    "cache.below-min-predicted",
                     node_id=finding.node_id,
                     affected_workflow=row.workflow_path,
                     model=finding.model,
                     min_tokens=finding.min_tokens,
-                    evidence_kind=finding.evidence_kind,
                     cacheable_tokens=finding.cacheable_tokens,
                     provider_note=finding.provider_note,
                 )
@@ -2750,7 +2798,7 @@ def _per_node_warnings(
     #     ``not row.declared_prompt_cache``: when ``## Cache`` is declared,
     #     prewarm writes that chunk once via the serialized first call —
     #     the prompt-body prefix is irrelevant to whether caching fires,
-    #     and ``cache.below-min-tokens`` handles the declared-cache path.
+    #     and ``cache.below-min-predicted`` handles the declared-cache path.
     prewarm = node.get("prewarm")
     batch = node.get("batch")
     if prewarm is True and isinstance(batch, dict):
@@ -2770,30 +2818,49 @@ def _per_node_warnings(
                     )
                 )
             elif first is not None and first > 0 and not row.declared_prompt_cache:
+                # Unresolved refs in the static prefix make below-min unprovable;
+                # skip the static-analysis emit but fall through so the trace-driven
+                # conditional-warmup detector below can still run.
                 prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
-                if prefix_tokens is None:
-                    return diagnostics
-                prewarm_finding = detect_batch_prewarm_below_min(
-                    BatchPrewarmBelowMinEvidence(
-                        node_id=node_id,
-                        model=row.model,
-                        prefix_tokens=prefix_tokens,
-                        batch_alias=alias,
-                    )
-                )
-                if prewarm_finding is not None:
-                    diagnostics.append(
-                        make_diagnostic(
-                            "cache.batch-prewarm-below-min",
-                            node_id=prewarm_finding.node_id,
-                            affected_workflow=row.workflow_path,
-                            model=prewarm_finding.model,
-                            prefix_tokens=prewarm_finding.prefix_tokens,
-                            min_tokens=prewarm_finding.min_tokens,
-                            batch_alias=prewarm_finding.batch_alias,
-                            provider_note=prewarm_finding.provider_note,
+                if prefix_tokens is not None:
+                    prewarm_finding = detect_batch_prewarm_below_min(
+                        BatchPrewarmBelowMinEvidence(
+                            node_id=node_id,
+                            model=row.model,
+                            prefix_tokens=prefix_tokens,
+                            batch_alias=alias,
                         )
                     )
+                    if prewarm_finding is not None:
+                        diagnostics.append(
+                            make_diagnostic(
+                                "cache.batch-prewarm-below-min",
+                                node_id=prewarm_finding.node_id,
+                                affected_workflow=row.workflow_path,
+                                model=prewarm_finding.model,
+                                prefix_tokens=prewarm_finding.prefix_tokens,
+                                min_tokens=prewarm_finding.min_tokens,
+                                batch_alias=prewarm_finding.batch_alias,
+                                provider_note=prewarm_finding.provider_note,
+                            )
+                        )
+
+        below_min_count = sum(
+            1 for call in row.provider_trace_llm_calls if call.get("cache_skipped_reason") == "below_min"
+        )
+        total_count = len(row.provider_trace_llm_calls)
+        if below_min_count >= 1 and below_min_count < total_count and total_count >= 2:
+            diagnostics.append(
+                make_diagnostic(
+                    "cache.conditional-warmup-recommended",
+                    node_id=node_id,
+                    affected_workflow=row.workflow_path,
+                    model=row.model,
+                    below_min_count=below_min_count,
+                    total_count=total_count,
+                    min_tokens=get_min_cache_tokens(row.model),
+                )
+            )
 
     return diagnostics
 
@@ -2857,7 +2924,7 @@ def _batch_prewarm_recommendations(
             model=row.model,
             ctx=ctx,
         )
-        if measurable_tokens < get_min_cache_tokens(row.model) or not unresolved_refs:
+        if is_below_min_cache(row.model, measurable_tokens) or not unresolved_refs:
             return []
         return [
             make_diagnostic(
@@ -2886,7 +2953,7 @@ def _confident_batch_prewarm_recommendation(
     prefix_tokens: int,
     dynamic_tokens: int,
 ) -> list[Diagnostic]:
-    if prefix_tokens < get_min_cache_tokens(row.model):
+    if is_below_min_cache(row.model, prefix_tokens):
         return []
 
     savings_ratio = ((affected_calls - 1) * 1.15 * prefix_tokens) / (
@@ -2978,7 +3045,7 @@ def _dynamic_before_static_warnings(
         cacheable_tokens = tokenize_prompt_region(prompt[ref.end :], model=row.model, ctx=ctx)
         if cacheable_tokens is None:
             continue
-        if cacheable_tokens < get_min_cache_tokens(row.model):
+        if is_below_min_cache(row.model, cacheable_tokens):
             break
 
         affected_calls = row.batch_size_estimated if row.is_batch and row.batch_size_estimated else 1
@@ -3023,7 +3090,15 @@ def _find_batch_static_tail_after_dynamic(
 
         literal_tail = _literal_spans_after_template(prompt, refs, index)
         stable_tail_tokens = tokenize_prompt_region(literal_tail, model=model, ctx=ctx)
-        if stable_tail_tokens is None or stable_tail_tokens < get_min_cache_tokens(model):
+        # A "move stable content before the dynamic ref" recommendation has no
+        # agent-actionable payoff when stable_tail_tokens is 0 — typical for
+        # heterogeneous-batch prompts like ``prompt: ${item.prompt}`` where
+        # nothing follows the per-item ref. Without this guard, the diagnostic
+        # renders as "move 0 stable tokens" with "projected cache ratio after
+        # fix: 0%" — internally contradictory advice.
+        if stable_tail_tokens is None or stable_tail_tokens <= 0:
+            return None
+        if is_below_min_cache(model, stable_tail_tokens):
             return None
         tokens_before_dynamic = tokenize_prompt_region(prompt[: ref.position], model=model, ctx=ctx)
         return _PromptStaticTailFinding(
@@ -3701,7 +3776,7 @@ def _check_root_for_consolidation(
       - <2 sub-paths (no consolidation case)
       - root already declared/used (redundancy, not consolidation)
       - some sub-path already crosses threshold (caching already works)
-      - root itself wouldn't cross threshold (cache.below-min-tokens covers it)
+      - root itself wouldn't cross threshold (cache.below-min-predicted covers it)
     """
     if len(sub_paths) < 2:
         return None
@@ -3732,7 +3807,7 @@ def _check_root_for_consolidation(
     root_tokens = _estimate_ref_tokens(root, model=model, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx)
     if root_tokens is None or root_tokens < min_tokens:
         # Either no run data for the root (unmeasurable) or even consolidation
-        # wouldn't cross the threshold (``cache.below-min-tokens`` covers
+        # wouldn't cross the threshold (``cache.below-min-predicted`` covers
         # the latter case for declared subsets).
         return None
     return make_diagnostic(
@@ -4044,7 +4119,7 @@ def _compute_fragmentation_costs(
         total_tokens = _sum_chunk_tokens(list(group_shared), model, ctx, ctx.memo_cache, ctx.workflow_path)
         if total_tokens is None:
             return None
-        if total_tokens < get_min_cache_tokens(model):
+        if is_below_min_cache(model, total_tokens):
             continue
         costs[str(group["key"] or "")] = total_tokens * _write_rate_for_ttl(pricing, ttl, model)
     return costs
@@ -4111,7 +4186,7 @@ def _single_call_write_penalty(row: PerCallRow, *, ttl: str | None) -> float | N
     tokens = row.cacheable_tokens_estimated
     if tokens is None:
         return None
-    if row.model and tokens < get_min_cache_tokens(row.model):
+    if is_below_min_cache(row.model, tokens):
         return None
     pricing = get_model_pricing(row.model)
     if pricing is None:
@@ -4383,7 +4458,7 @@ def _emit_partial_declaration_findings(
         ]
         if not findings:
             continue
-        below_threshold = any(_is_below_min_cache_tokens(f.missing_chunks_tokens, f.rep_model) for f in findings)
+        below_threshold = any(is_below_min_cache(f.rep_model, f.missing_chunks_tokens) for f in findings)
         below_threshold_clause = _below_threshold_clause_for_findings(findings) if below_threshold else ""
         savings_usd = (
             None
@@ -4429,15 +4504,11 @@ def _finding_chunks_overlap_with_consolidate(
     return any(_template_root_segment(chunk) in roots for chunk in missing_chunks)
 
 
-def _is_below_min_cache_tokens(tokens: int | None, model: str) -> bool:
-    return tokens is not None and bool(model) and tokens < get_min_cache_tokens(model)
-
-
 def _below_threshold_clause_for_findings(findings: list[_PartialDeclarationFinding]) -> str:
     entries: list[str] = []
     for finding in findings:
         tokens = finding.missing_chunks_tokens
-        if not _is_below_min_cache_tokens(tokens, finding.rep_model) or tokens is None:
+        if not is_below_min_cache(finding.rep_model, tokens) or tokens is None:
             continue
         threshold = get_min_cache_tokens(finding.rep_model)
         entries.append(f"{finding.node_id}: ~{tokens:,} tokens below {finding.rep_model}'s {threshold:,}-token minimum")

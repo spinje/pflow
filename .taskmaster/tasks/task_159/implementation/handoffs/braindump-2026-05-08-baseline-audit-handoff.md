@@ -245,7 +245,7 @@ is rich. Things I noticed but didn't fully write up:
 
 ### Adjacent surfaces I didn't audit
 
-- The runtime-tier `cache.below-min-tokens` emission path (`LLMNode.post()`).
+- The runtime-tier `cache.below-min-predicted` emission path (`LLMNode.post()`).
   My captures use the analyzer-tier emission only. Different code path,
   different output venue (`__warnings__` shared store key, then
   rendered via the engine's diagnostic pipeline).
@@ -512,7 +512,7 @@ implementer).
 
 6. **F-04's wider pattern is "false confidence via heuristic numbers
    that look measured."** The audit should look for this pattern across
-   ALL analyzer fields, not just `cache.below-min-tokens`.
+   ALL analyzer fields, not just `cache.below-min-predicted`.
 
 7. **The `analyzed_at` timestamp**: I normalized it without asking.
    If it has agent-actionable value (stale analysis warning), that's

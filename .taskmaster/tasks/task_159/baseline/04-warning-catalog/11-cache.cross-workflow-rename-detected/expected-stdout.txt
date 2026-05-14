@@ -111,7 +111,7 @@
   "recommended_actions": [
     {
       "rank": 1,
-      "warning_id": "cache.below-min-tokens",
+      "warning_id": "cache.below-min-predicted",
       "node_id": "parent_use",
       "estimated_savings_usd": null,
       "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
@@ -122,7 +122,7 @@
     },
     {
       "rank": 2,
-      "warning_id": "cache.below-min-tokens",
+      "warning_id": "cache.below-min-predicted",
       "node_id": "summarize",
       "estimated_savings_usd": null,
       "scope_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
@@ -226,7 +226,7 @@
       "severity": "warning",
       "message": "parent_use: declared cache content is ~156 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
       "source": "cache_analyzer",
-      "id": "cache.below-min-tokens",
+      "id": "cache.below-min-predicted",
       "title": "Cache Warning",
       "suggestions": [
         "Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from parent_use since the cache won't fire as declared."
@@ -236,7 +236,6 @@
         "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
         "model": "anthropic/claude-sonnet-4-5",
         "min_tokens": 1024,
-        "evidence_kind": "predicted",
         "cacheable_tokens": 156,
         "provider_note": "cache_control markers will silently no-op at the provider",
         "category": "cache_warning",
@@ -250,7 +249,7 @@
       "severity": "warning",
       "message": "summarize: declared cache content is ~156 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
       "source": "cache_analyzer",
-      "id": "cache.below-min-tokens",
+      "id": "cache.below-min-predicted",
       "title": "Cache Warning",
       "suggestions": [
         "Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from summarize since the cache won't fire as declared."
@@ -260,7 +259,6 @@
         "affected_workflow": "<BASELINE_CASE_DIR>/sub/child.pflow.md",
         "model": "anthropic/claude-sonnet-4-5",
         "min_tokens": 1024,
-        "evidence_kind": "predicted",
         "cacheable_tokens": 156,
         "provider_note": "cache_control markers will silently no-op at the provider",
         "category": "cache_warning",

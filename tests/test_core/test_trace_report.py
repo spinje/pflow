@@ -2299,14 +2299,14 @@ class TestRuntimeWarningsInSummary:
             warnings=[
                 {
                     "node_id": "draft",
-                    "id": "cache.below-min-tokens",
+                    "id": "cache.below-min-observed",
                     "message": "draft: declared cache did not fire",
                     "suggestions": ["Increase cache content above 1024 tokens."],
                 },
             ]
         )
         md = _build_summary(trace)
-        assert "[cache.below-min-tokens] **draft**: draft: declared cache did not fire" in md
+        assert "[cache.below-min-observed] **draft**: draft: declared cache did not fire" in md
         assert "  - Increase cache content above 1024 tokens." in md
 
 

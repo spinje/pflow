@@ -312,7 +312,7 @@ These run through `pflow run` validation (structural; fast path per DD#36) and p
 | 03 | `prompt-cache-on-shell-node` | `type: shell` with `prompt_cache: [x]` | Field validation skipped → silent ignore at runtime |
 | 04 | `prompt-cache-empty-list` | `prompt_cache: []` (valid, equivalent to absence) | Reject by mistake → breaks intentional opt-out pattern |
 | 05 | `subworkflow-references-parent-chunk` `ADV` | Sub-workflow's node has `prompt_cache: [parent_chunk]` (parent declared, child didn't) | Cross-workflow reference accepted → false belief that cache shares; must reject (each workflow's prompt_cache scopes to its own ## Cache) |
-| 06 | `cache-content-below-min-tokens` | Cache prose totals < 1024 tokens for sonnet model | Warning suppressed → silent provider no-op, debugged for hours |
+| 06 | `cache-content-below-min-predicted` | Cache prose totals < 1024 tokens for sonnet model | Warning suppressed → silent provider no-op, debugged for hours |
 | 07 | `unused-chunk` | `## Cache: [a, b]` but no node references `b` | Warning dropped → dead cache code accumulates |
 | 08 | `analyze-cache-surfaces-undeclared-name` `ADV` | Same as 02 but verified via `pflow analyze-cache` (after the external review fix in commit `2f4e0d5e`); analyze-cache must surface this as a blocking error, not silently filter | If catalog-ID filter is reintroduced → analyze-cache reports "all clear" on a workflow `pflow run` would reject |
 
@@ -360,7 +360,7 @@ For each of the 20 catalog IDs, a minimal workflow that triggers exactly that ID
 | 06 | `cache.batch-prewarm-recommended` | warning | Batch with size 8, ~2k-token static prefix, no `prewarm:` decl, savings_ratio ≥ 5% |
 | 07 | `cache.dynamic-before-static` | warning | Node prompt has `${dynamic_var}` at top, ~2k-token stable rubric below |
 | 08 | `cache.padding-advisory` | info | Node `prompt_cache: [b]` when master order is `[a, b, c]`; padding to `[a, b]` net-positive |
-| 09 | `cache.below-min-tokens` | warning | `## Cache` declares small chunk (~200 tokens); declared and referenced by sonnet node (1024 min) |
+| 09 | `cache.below-min-predicted` | warning | `## Cache` declares small chunk (~200 tokens); declared and referenced by sonnet node (1024 min) |
 | 10 | `cache.cross-workflow-prose-mismatch` | info | Parent and child both declare chunk `${shared}` but different prose-before |
 | 11 | `cache.cross-workflow-rename-detected` | info | Parent passes `concept_brief` → child input named `creative_brief` |
 | 12 | `cache.discrepancy` | info | Trace mode; predicted ratio 80% but actual 0% (TTL expired or content drift) |

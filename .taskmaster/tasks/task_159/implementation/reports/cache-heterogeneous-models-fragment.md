@@ -141,7 +141,7 @@ draws more attention)
    common cached chunk via their `prompt_cache:` declarations
 3. The shared cached chunks are above each model's
    `get_min_cache_tokens()` threshold (otherwise the chunks no-op
-   anyway and `cache.below-min-tokens` already fires)
+   anyway and `cache.below-min-predicted` already fires)
 
 **Rendering** (text format, mirrors existing recommendation patterns):
 
@@ -415,7 +415,7 @@ Estimated effort: ~150 LOC + tests, 2-3 hours.
    silently paying the fragmentation cost. They have no way to discover
    the issue until they read the trace by hand.
 2. **The fix shape is well-trodden**. It mirrors existing catalog entries
-   (`cache.below-min-tokens`, `cache.unused-chunk`, etc.) — same
+   (`cache.below-min-predicted`, `cache.unused-chunk`, etc.) — same
    detection-plus-recommendation pattern.
 3. **The savings are quantifiable**. Unlike some recommendations
    (`Cross-boundary value undeclared` → "savings unavailable"), this
@@ -434,5 +434,5 @@ Estimated effort: ~150 LOC + tests, 2-3 hours.
   but interacts: the discrepancy attribution path needs to learn
   "trace from different model context" before this warning's accuracy
   can be relied upon when traces are auto-loaded.
-- The provider-aware text update for `cache.below-min-tokens`
+- The provider-aware text update for `cache.below-min-predicted`
   (Finding #10) is independent.

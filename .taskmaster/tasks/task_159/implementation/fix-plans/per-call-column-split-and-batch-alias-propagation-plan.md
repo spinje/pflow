@@ -463,7 +463,7 @@ Apply to all ~12 new tests.
 ```
 01-parser-errors/03-two-vars-in-chunk
 01-parser-errors/09-prompt-body-shadows-cache
-02-validator-errors/06-cache-content-below-min-tokens
+02-validator-errors/06-cache-content-below-min-predicted
 02-validator-errors/07-unused-chunk
 02-validator-errors/08-analyze-cache-surfaces-undeclared-name
 03-analyze-cache-modes/03-steady-state-text

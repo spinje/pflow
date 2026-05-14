@@ -29,7 +29,7 @@ from pflow.runtime.engine.engine import (
     WorkflowEngine,
     build_cache_render_dict,
 )
-from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
+from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
 
 # --- Builder unit tests ----------------------------------------------------
 
@@ -50,6 +50,23 @@ def _make_node_config(
         interface_metadata=None,
         prompt_cache_items=prompt_cache_items,
         prewarm=prewarm,
+    )
+
+
+def _make_prewarm_llm_config(prompt: str) -> NodeConfig:
+    return NodeConfig(
+        node_id="score",
+        node_type_name="LLMNode",
+        template_config=TemplateConfig(
+            template_params={"prompt": prompt},
+            static_params={"model": "anthropic/claude-sonnet-4-5"},
+            expected_types={},
+            resolution_mode="strict",
+        ),
+        batch_config=BatchConfig(items_template="${items}", item_alias="item"),
+        namespaced=True,
+        interface_metadata=None,
+        prewarm=True,
     )
 
 
@@ -77,7 +94,7 @@ def test_builder_includes_llm_node_with_subset() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode", prompt_cache_items=("concept",))},
     )
-    out = build_cache_render_dict(workflow)
+    out = build_cache_render_dict(workflow, {})
     assert set(out.keys()) == {"a"}
     assert out["a"].subset == ("concept",)
     assert out["a"].prewarm is False
@@ -88,7 +105,7 @@ def test_builder_includes_llm_node_with_prewarm() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode", prewarm=True)},
     )
-    out = build_cache_render_dict(workflow)
+    out = build_cache_render_dict(workflow, {})
     assert "a" in out
     assert out["a"].prewarm is True
 
@@ -101,7 +118,7 @@ def test_builder_includes_llm_node_when_workflow_has_cache_block() -> None:
         {"a": _make_node_config("a", "LLMNode")},
         cache_block=block,
     )
-    out = build_cache_render_dict(workflow)
+    out = build_cache_render_dict(workflow, {})
     assert "a" in out
     assert out["a"].cache_block is block
     assert out["a"].subset == ()
@@ -116,7 +133,7 @@ def test_builder_excludes_non_llm_nodes() -> None:
         },
         cache_block=_simple_block("x"),
     )
-    out = build_cache_render_dict(workflow)
+    out = build_cache_render_dict(workflow, {})
     assert set(out.keys()) == {"llm1"}
 
 
@@ -125,7 +142,7 @@ def test_builder_excludes_llm_without_any_cache_state() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode")},
     )
-    assert build_cache_render_dict(workflow) == {}
+    assert build_cache_render_dict(workflow, {}) == {}
 
 
 def test_builder_returns_plain_dict_not_proxy() -> None:
@@ -135,8 +152,39 @@ def test_builder_returns_plain_dict_not_proxy() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode", prompt_cache_items=("x",))},
     )
-    out = build_cache_render_dict(workflow)
+    out = build_cache_render_dict(workflow, {})
     assert isinstance(out, dict)
+
+
+def test_builder_disables_prewarm_when_static_prefix_below_min(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        lambda model, text: (10, "test"),
+    )
+    workflow = _make_workflow({"score": _make_prewarm_llm_config("short prefix ${item.text}")})
+    shared: dict[str, Any] = {"items": [{"text": "a"}, {"text": "b"}], "_pflow_workflow_file": "wf.pflow.md"}
+
+    out = build_cache_render_dict(workflow, shared)
+
+    assert out["score"].prewarm is False
+    warning = shared["__warnings__"]["score"]
+    assert warning.id == "cache.prewarm-disabled-below-min"
+    assert shared["__prewarm_disabled_below_min__"]["score"] == "below_min"
+
+
+def test_builder_keeps_prewarm_when_static_prefix_clears_min(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        lambda model, text: (2_000, "test"),
+    )
+    workflow = _make_workflow({"score": _make_prewarm_llm_config("long prefix ${item.text}")})
+    shared: dict[str, Any] = {"items": [{"text": "a"}, {"text": "b"}]}
+
+    out = build_cache_render_dict(workflow, shared)
+
+    assert out["score"].prewarm is True
+    assert "__warnings__" not in shared
+    assert "__prewarm_disabled_below_min__" not in shared
 
 
 # --- Integration tests: engine save/restore --------------------------------
@@ -354,7 +402,7 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
     # During child execution the child's shell node saw the proxy the child
     # engine built from its OWN compiled workflow — NOT the parent's sentinel.
     # Compare contents against a freshly-built proxy from
-    # ``build_cache_render_dict(child_workflow)``: the child workflow has no
+    # ``build_cache_render_dict(child_workflow, {})``: the child workflow has no
     # LLM node and no ``## Cache`` block, so the dict must be empty (sparse
     # by design — see build_cache_render_dict's docstring).
     child_ir = parse_markdown(_CHILD_PFLOW).ir
@@ -363,7 +411,7 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
         registry,
         initial_params={"text": "hi"},
     )
-    expected_child_render = build_cache_render_dict(child_workflow)
+    expected_child_render = build_cache_render_dict(child_workflow, {})
     assert dict(expected_child_render) == {}, (
         "production builder must produce an empty dict for the child shape — test invariant broken if this fails"
     )
@@ -375,7 +423,7 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
         assert isinstance(child_value, MappingProxyType)
         # The child saw a proxy whose CONTENTS match what its own
         # ``build_cache_render_dict`` produces — proves the install path is
-        # `MappingProxyType(build_cache_render_dict(child_workflow))` and
+        # `MappingProxyType(build_cache_render_dict(child_workflow, {}))` and
         # NOT a leaked parent value.
         assert dict(child_value) == dict(expected_child_render), (
             "child saw a __pflow_cache_render__ that doesn't match its own "

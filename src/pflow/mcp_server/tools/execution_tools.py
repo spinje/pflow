@@ -503,7 +503,11 @@ async def analyze_cache(
       - cache.batch-prewarm-recommended
       - cache.dynamic-before-static
       - cache.padding-advisory
-      - cache.below-min-tokens
+      - cache.below-min-predicted
+      - cache.below-min-observed
+      - cache.below-min-rendered
+      - cache.prewarm-disabled-below-min
+      - cache.conditional-warmup-recommended
       - cache.cross-workflow-prose-mismatch
       - cache.cross-workflow-rename-detected
       - cache.discrepancy

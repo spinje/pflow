@@ -7,8 +7,9 @@ blocks sent to the adapter. Token counts are stubbed via monkeypatching
 ``_count_text_tokens`` so the threshold-vs-measured math is deterministic
 across providers and tokenizer versions.
 
-This is the third evidence tier of ``cache.below-min-tokens`` — joining
-``predicted`` (analyzer-time) and ``observed`` (post-call telemetry).
+This is the runtime ``cache.below-min-rendered`` path, distinct from
+``cache.below-min-predicted`` (analyzer-time) and
+``cache.below-min-observed`` (post-call telemetry).
 """
 
 from __future__ import annotations
@@ -94,21 +95,19 @@ def test_below_min_strips_cache_control_and_emits_warning(mock_llm_client, monke
     assert all("cache_control" not in block for block in sent), f"cache_control should be stripped; got blocks: {sent}"
 
     warning = shared.get("__warnings__", {}).get("write-lyrics")
-    assert warning is not None, "expected a pre_dispatch warning to be emitted"
-    assert warning.id == "cache.below-min-tokens"
-    assert warning.context["evidence_kind"] == "pre_dispatch"
+    assert warning is not None, "expected a rendered below-min warning to be emitted"
+    assert warning.id == "cache.below-min-rendered"
     assert warning.context["cacheable_tokens"] == 500
     assert warning.context["min_tokens"] == 1024
+    assert shared["llm_usage"]["cache_skipped_reason"] == "below_min"
 
 
 # --- (b) Above-min content: marker preserved, no warning ---------------------
 
 
-def test_above_min_keeps_cache_control_no_pre_dispatch_warning(
-    mock_llm_client, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_above_min_keeps_cache_control_no_rendered_warning(mock_llm_client, monkeypatch: pytest.MonkeyPatch) -> None:
     # Stage realistic cache telemetry: provider reported a successful cache
-    # hit, so neither pre_dispatch nor observed-tier warnings fire.
+    # hit, so neither rendered nor observed-tier warnings fire.
     mock_llm_client.set_response("*", None, "ok", cache_creation_input_tokens=1500, cache_read_input_tokens=0)
     _stub_token_counter(monkeypatch, tokens=1500)  # above Anthropic 1024
 
@@ -129,6 +128,18 @@ def test_above_min_keeps_cache_control_no_pre_dispatch_warning(
     )
     warning = shared.get("__warnings__", {}).get("write-lyrics")
     assert warning is None, f"no warning expected when cache fires above min; got: {warning}"
+    assert shared["llm_usage"]["cache_skipped_reason"] is None
+
+
+def test_prewarm_disabled_reason_flows_to_llm_usage(mock_llm_client) -> None:
+    mock_llm_client.set_response("*", None, "ok")
+
+    node = _make_node("write-lyrics", model=ANTHROPIC_1024)
+    shared = {"__prewarm_disabled_below_min__": {"write-lyrics": "below_min"}}
+
+    node.run(shared)
+
+    assert shared["llm_usage"]["prewarm_disabled_reason"] == "below_min"
 
 
 # --- (c) Boundary tests -------------------------------------------------------
@@ -209,11 +220,11 @@ def test_unknown_model_uses_conservative_floor(mock_llm_client, monkeypatch: pyt
 # --- (i) Observed-tier emission does not fire after pre-dispatch strip -------
 
 
-def test_observed_tier_suppressed_after_pre_dispatch_strip(mock_llm_client, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_observed_tier_suppressed_after_rendered_strip(mock_llm_client, monkeypatch: pytest.MonkeyPatch) -> None:
     """After strip, the provider sees no cache_control markers and returns no
     cache telemetry. The observed-tier emission gates on
     ``has_cache_telemetry`` (False when provider didn't report any cache
-    field), so no double-emit. The pre_dispatch warning is the only one."""
+    field), so no double-emit. The rendered warning is the only one."""
     mock_llm_client.set_response(
         "*",
         None,
@@ -229,9 +240,7 @@ def test_observed_tier_suppressed_after_pre_dispatch_strip(mock_llm_client, monk
     node.run(shared)
 
     warning = shared["__warnings__"]["write-lyrics"]
-    assert warning.context["evidence_kind"] == "pre_dispatch", (
-        "only the pre_dispatch warning should be present; observed-tier should not overwrite"
-    )
+    assert warning.id == "cache.below-min-rendered"
 
 
 # --- Heuristic fallback when token_counter raises ----------------------------

@@ -5,7 +5,7 @@
 **Triggers**: `## Cache` declares a chunk that resolves to a tiny string (less
 than the provider's minimum cacheable token count — 1024 for sonnet 4.5).
 
-**Expected behavior**: `pflow analyze-cache` emits `cache.below-min-tokens`
+**Expected behavior**: `pflow analyze-cache` emits `cache.below-min-predicted`
 warning. Workflow is otherwise valid; exit 0. The warning explains that
 markers will silently no-op at the provider — agent-actionable, points at the
 fix (consolidate / pad / accept).

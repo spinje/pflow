@@ -207,7 +207,7 @@ class TestErrorFormattingSurfacesWarnings:
                 "llm-call": Diagnostic(
                     severity=Severity.WARNING,
                     source="cache_analyzer",
-                    id="cache.below-min-tokens",
+                    id="cache.below-min-predicted",
                     message="llm-call: declared cache did not fire",
                 )
             },

@@ -29,7 +29,7 @@ cannot be predicted ahead of an LLM call.
                      candidate subsets). All chunks must resolve; partial
                      resolution falls through to Tier 3.
 3. ``unavailable`` — None propagation (Option C — honest unmeasurable).
-                     Downstream ``cache.below-min-tokens`` naturally
+                     Downstream ``cache.below-min-predicted`` naturally
                      suppresses; runtime-tier observed warning still fires
                      after first run.
 
@@ -162,7 +162,7 @@ def estimate_cacheable_tokens(
 
     Honest unmeasurable contract: the function never fabricates token
     counts when chunks can't be resolved. Downstream
-    ``cache.below-min-tokens`` warnings naturally suppress (the detector
+    ``cache.below-min-predicted`` warnings naturally suppress (the detector
     requires ``estimated_tokens > 0``). The runtime-tier observed
     warning in ``LLMNode.post()`` catches the real failure case after
     first run when the provider exposes cache telemetry (the runtime
@@ -180,7 +180,7 @@ def estimate_cacheable_tokens(
                 trace_total = round(trace_total / max(1, observed_call_count))
             return (trace_total, "trace")
         # Fall through: declared but didn't fire. Tier 2/3 computes
-        # "what was attempted" so cache.below-min-tokens fires correctly.
+        # "what was attempted" so cache.below-min-predicted fires correctly.
 
     # Tier 2: memo-resolved chunk tokenization (declared OR candidate).
     # When ``ctx`` is supplied, parameters fallback fires for workflow-input

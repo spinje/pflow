@@ -35,7 +35,7 @@ The current behavior produces small individual chunks that may fall below the
 provider min-cache threshold (each split chunk's prose-before-var is whatever
 prose preceded that var, so multi-var lines produce small chunks). Authors
 hitting this pattern may silently get sub-threshold cache content and a
-`cache.below-min-tokens` warning rather than a clear "you wrote two vars in
+`cache.below-min-predicted` warning rather than a clear "you wrote two vars in
 one chunk" error.
 
 **Mutation contract**: case `03-two-vars-in-chunk/expected-stdout.txt` locks
@@ -81,20 +81,20 @@ locks the fixed behavior.
 
 ---
 
-## F-04 — `cache.below-min-tokens` false-positive on greenfield analysis when chunks resolve to LLM responses
+## F-04 — `cache.below-min-predicted` false-positive on greenfield analysis when chunks resolve to LLM responses
 
 **Cases**: `12-real-world-lyrics-generator/01-analyze-cache-text/` (5
 warnings on real lyrics-generator), `14-pitfall-19-defenses/01-dotted-path-chunk/`
 (synthetic reproduction).
 
 **Observed**: an LLM node with `prompt_cache: [upstream-llm.response]`
-gets `cache.below-min-tokens` warnings on greenfield analysis (no run
+gets `cache.below-min-predicted` warnings on greenfield analysis (no run
 history). The analyzer computes the chunk's token count from the literal
 `${upstream-llm.response}` template string (~5 tokens), not from the
 actual response content (which would be hundreds or thousands of tokens
 once the upstream node runs).
 
-On the real lyrics-generator, this produces 5 below-min-tokens warnings
+On the real lyrics-generator, this produces 5 below-min-predicted warnings
 that an agent reading the analyzer output would interpret as "my caching
 won't fire." But once the workflow runs once and memo cache is populated,
 re-running analyze-cache shows the real numbers and the warning
@@ -109,7 +109,7 @@ those chunks were always large enough — the changes were unnecessary.
 path (not an input path), the analyzer should label its size as
 `unavailable` rather than estimate from the literal template string.
 Honest-unmeasurable convention applies (DD established pattern).
-Alternatively: emit `cache.below-min-tokens` only when token data has at
+Alternatively: emit `cache.below-min-predicted` only when token data has at
 least Tier-2 (memo) confidence, suppressing on Tier-3/4 alone.
 
 **Severity guess**: medium — wastes agent time on first-encounter

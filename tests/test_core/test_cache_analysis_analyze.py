@@ -711,7 +711,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
     assert result.summary.trace_unexecuted_llm_rows == (TraceUnexecutedLLMRow("x", "skipped"),)
     assert result.summary.actual_vs_no_cache_delta.kind != "unavailable"
     # Per-row suppression: skipped node produces no per-row warnings.
-    assert not any(d.node_id == "skipped" and d.id == "cache.below-min-tokens" for d in result.warnings)
+    assert not any(d.node_id == "skipped" and d.id == "cache.below-min-predicted" for d in result.warnings)
     # cache.first-call-write-penalty would not fire here (2 nodes, not 1), so
     # we don't assert its absence; the dedicated truncated-filter test owns that.
     assert result.suggested_blocks == ()
@@ -1096,7 +1096,7 @@ def test_filter_consults_catalog_flag_not_severity() -> None:
     unflagged_warning = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",  # IR-derived; no flag
+        id="cache.below-min-predicted",  # IR-derived; no flag
         node_id="x",
         message="below-min finding",
     )
@@ -1113,7 +1113,7 @@ def test_filter_consults_catalog_flag_not_severity() -> None:
     assert "cache.first-call-write-penalty" not in filtered_ids
     # IR-derived findings flow regardless of severity.
     assert "cache.cross-workflow-rename-detected" in filtered_ids
-    assert "cache.below-min-tokens" in filtered_ids
+    assert "cache.below-min-predicted" in filtered_ids
     # Diagnostics with no id (un-catalog'd) flow — no catalog lookup possible.
     assert error_no_id in filtered
 
@@ -1907,7 +1907,7 @@ def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block
     ``prompt_cache:`` (not inlined in the prompt body) must contribute their
     resolved token count to ``input_tokens_estimated``. Without this the
     ``min(cacheable, input)`` clamp truncated correct cacheable values to
-    the prompt-body-only size and ``cache.below-min-tokens`` falsely fired.
+    the prompt-body-only size and ``cache.below-min-predicted`` falsely fired.
     """
     workflow_ir = {
         "inputs": {"context": {"type": "string"}},
@@ -1937,7 +1937,7 @@ def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block
     )
     # input_tokens must include cache content; otherwise the clamp truncates cacheable.
     assert row.input_tokens_estimated >= row.cacheable_tokens_estimated
-    assert "cache.below-min-tokens" not in {d.id for d in result.warnings}
+    assert "cache.below-min-predicted" not in {d.id for d in result.warnings}
 
 
 def test_per_call_row_body_plus_chunks_invariant() -> None:
@@ -2227,12 +2227,12 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
         "cache": {"items": [{"name": "concept", "var": "concept", "prose_before": "P\n\n"}]},
     }
     result = analyze(workflow_ir, parameters={"concept": "hi"}, workflow_path="x", auto_load_trace=False)
-    # cache.below-min-tokens fires from parameters-tier evidence
+    # cache.below-min-predicted fires from parameters-tier evidence
     # (small chunk, anthropic min=1024).
     # Tighter assertion: lock the specific id so a different warning firing
     # for the wrong reason fails the test (not just total count).
-    assert any(w.id == "cache.below-min-tokens" for w in result.warnings), (
-        f"Expected cache.below-min-tokens; got: {[w.id for w in result.warnings]}"
+    assert any(w.id == "cache.below-min-predicted" for w in result.warnings), (
+        f"Expected cache.below-min-predicted; got: {[w.id for w in result.warnings]}"
     )
     sum_ = result.summary
     assert sum_.warnings_count + sum_.info_count >= 1
@@ -3666,7 +3666,7 @@ def test_blocking_errors_filters_out_warnings_and_info() -> None:
 
     actions = build_blocking_errors([
         _make_diag("cache.order-mismatch", Severity.ERROR),
-        _make_diag("cache.below-min-tokens", Severity.WARNING),
+        _make_diag("cache.below-min-predicted", Severity.WARNING),
         _make_diag("cache.shared-context-undeclared", Severity.INFO),
     ])
     assert [a.warning_id for a in actions] == ["cache.order-mismatch"]
@@ -4444,8 +4444,8 @@ def test_heterogeneous_batch_with_declared_cache_falls_through_to_unavailable(
     assert row.model_is_heterogeneous is True
     assert row.cacheable_tokens_estimated is None
     assert row.cacheable_data_source == "unavailable"
-    # No false-positive below-min-tokens warning.
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    # No false-positive below-min-predicted warning.
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, f"unexpected warnings: {[w.id for w in analysis.warnings]}"
 
 
@@ -4453,7 +4453,7 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``cache.below-min-tokens`` MUST NOT fire when ``cacheable_data_source``
+    """``cache.below-min-predicted`` MUST NOT fire when ``cacheable_data_source``
     is ``"trace"``: trace evidence (cache_creation + cache_read > 0) shows
     the cache demonstrably worked at this size, so the warning would
     contradict reality.
@@ -4516,9 +4516,9 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     assert row.cacheable_data_source == "trace"
     assert row.cacheable_tokens_estimated == 800
     # The contract: warning MUST NOT fire when trace shows cache worked.
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, (
-        f"cache.below-min-tokens fired despite trace showing cache fired (cacheable=800, "
+        f"cache.below-min-predicted fired despite trace showing cache fired (cacheable=800, "
         f"src=trace). Gate ``cacheable_data_source != 'trace'`` regression. "
         f"warnings: {[w.id for w in analysis.warnings]}"
     )
@@ -4647,9 +4647,9 @@ def test_below_min_tokens_fires_when_memo_data_shows_below_min(
     assert row.cacheable_data_source == "memo"
     assert row.cacheable_tokens_estimated is not None
     assert row.cacheable_tokens_estimated < 1024
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert len(below_min) == 1, (
-        f"cache.below-min-tokens should fire when memo says below threshold; got: {[w.id for w in analysis.warnings]}"
+        f"cache.below-min-predicted should fire when memo says below threshold; got: {[w.id for w in analysis.warnings]}"
     )
 
 
@@ -4663,7 +4663,7 @@ def test_f04_greenfield_node_output_chunk_does_not_emit_false_below_min_warning(
     node output (``${produce.response}``) AND no memo data exists would
     fall through Tier 1 (no trace) → Tier 2 (no memo) → Tier 3 heuristic
     → fabricated ~``len(prompt) * 75 // 400`` token count → false-positive
-    ``cache.below-min-tokens`` warning ("declared cache content is ~1
+    ``cache.below-min-predicted`` warning ("declared cache content is ~1
     tokens, below ... minimum of 1024").
 
     Post-fix: Tier 3 is deleted; the path lands at Tier 4 unavailable.
@@ -4711,9 +4711,9 @@ def test_f04_greenfield_node_output_chunk_does_not_emit_false_below_min_warning(
     consume_row = next(r for r in analysis.per_call if r.node_path == "consume")
     assert consume_row.cacheable_tokens_estimated is None
     assert consume_row.cacheable_data_source == "unavailable"
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, (
-        f"F-04 regression: cache.below-min-tokens fired on greenfield "
+        f"F-04 regression: cache.below-min-predicted fired on greenfield "
         f"node-output chunk. Warnings: {[w.id for w in analysis.warnings]}"
     )
 
@@ -4770,7 +4770,7 @@ def test_partial_input_resolution_with_node_output_chunk_returns_unavailable(
     downstream_row = next(r for r in analysis.per_call if r.node_path == "downstream")
     assert downstream_row.cacheable_data_source == "unavailable"
     assert downstream_row.cacheable_tokens_estimated is None
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min
 
 
@@ -4780,12 +4780,12 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
 ) -> None:
     """Declared subset + 2.1.0 trace recording cache_creation=0, cache_read=0
     (cache declared but didn't fire — sub-threshold etc.). Tier 1 MUST fall
-    through; Tier 2 fires via memo; ``cache.below-min-tokens`` MUST fire
+    through; Tier 2 fires via memo; ``cache.below-min-predicted`` MUST fire
     because the gate's ``cacheable_data_source != "trace"`` clause is now
     True.
 
     This is the matrix Case 9 — the case that exists specifically to
-    preserve ``cache.below-min-tokens`` fidelity when cache fails to engage.
+    preserve ``cache.below-min-predicted`` fidelity when cache fails to engage.
     Without Tier 1 fall-through (e.g., short-circuit returning
     ``(0, "trace")`` per the disputed review-silent-failures C1 finding),
     cacheable_data_source would be ``"trace"``, the gate would suppress the
@@ -4795,7 +4795,7 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
     Mutation contracts:
       A. Replace Tier 1 fall-through with ``return (0, "trace")`` —
          cacheable_data_source becomes ``"trace"``, the gate at
-         ``analyze.py:778`` suppresses, ``cache.below-min-tokens`` fails to
+         ``analyze.py:778`` suppresses, ``cache.below-min-predicted`` fails to
          fire. This test catches it.
       B. Drop the ``> 0`` precondition (use ``>= 0``) — cacheable becomes
          0 with source ``"trace"`` for the 0+0 case, same outcome as A.
@@ -4807,7 +4807,7 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
 
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     # Lock memo tokenization to a deterministic value BELOW Sonnet 4.5's
-    # 1024-token threshold so cache.below-min-tokens fires for genuine
+    # 1024-token threshold so cache.below-min-predicted fires for genuine
     # sub-threshold cache content.
     monkeypatch.setattr("litellm.token_counter", lambda model, text: 500)
 
@@ -4876,9 +4876,9 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
         f"expected memo-tier value of 500; got {row.cacheable_tokens_estimated}"
     )
     # The whole point of the fall-through: warning fires correctly.
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert below_min, (
-        f"cache.below-min-tokens did NOT fire for declared-but-cache-didn't-fire "
+        f"cache.below-min-predicted did NOT fire for declared-but-cache-didn't-fire "
         f"sub-threshold case. Tier 1 fall-through regression. "
         f"warnings: {[w.id for w in analysis.warnings]}"
     )
@@ -5517,6 +5517,7 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
     ${items}`` rows have no static size even when trace observed repeated calls.
     """
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
     token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
     monkeypatch.setattr(
@@ -5525,10 +5526,11 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
         lambda _model, text, **_kwargs: (len(text.split()), "test"),
     )
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(below_min_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
     model = "anthropic/claude-haiku-4-5"
-    prefix = "Shared rubric:\n" + ("stable context sentence. " * 40)
+    prefix = "Shared rubric:\n" + ("stable context sentence. " * 1600)
     prompt = f"{prefix}\n${{item.dynamic}}"
     workflow_path = str(tmp_path / "dynamic-batch-prewarm.pflow.md")
     workflow_ir = {
@@ -5556,9 +5558,9 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
                                 "success": True,
                                 "llm_call": {
                                     "model": model,
-                                    "input_tokens": 1_000,
+                                    "input_tokens": 20_000,
                                     "output_tokens": 10,
-                                    "total_tokens": 1_010,
+                                    "total_tokens": 20_010,
                                     "cost_usd": 0.01,
                                 },
                             }

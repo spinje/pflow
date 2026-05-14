@@ -218,7 +218,7 @@ def test_plan_node_renders_cache_into_hash() -> None:
     cache_config = cache_workflow.node_configs["gen"]
     shared_with_cache: dict[str, Any] = {
         "concept": "x",
-        "__pflow_cache_render__": build_cache_render_dict(cache_workflow),
+        "__pflow_cache_render__": build_cache_render_dict(cache_workflow, {}),
     }
     plan_with_cache = plan_node(cache_node, cache_config, shared_with_cache)
 
@@ -300,7 +300,7 @@ def test_render_cache_for_hash_filters_absent_chunks() -> None:
     # Note: absent_input is NOT in shared. get_node_status returns ABSENT.
     shared: dict[str, Any] = {
         "concept": "the concept value",
-        "__pflow_cache_render__": build_cache_render_dict(workflow),
+        "__pflow_cache_render__": build_cache_render_dict(workflow, {}),
     }
 
     rendered = _render_cache_for_hash(config, shared)
@@ -338,7 +338,7 @@ def test_render_cache_for_hash_returns_none_on_empty_subset() -> None:
     config = workflow.node_configs["gen"]
     shared: dict[str, Any] = {
         "concept": "x",
-        "__pflow_cache_render__": build_cache_render_dict(workflow),
+        "__pflow_cache_render__": build_cache_render_dict(workflow, {}),
     }
     assert _render_cache_for_hash(config, shared) is None
 
@@ -346,7 +346,7 @@ def test_render_cache_for_hash_returns_none_on_empty_subset() -> None:
 # --- Pre-dispatch strip vs hash byte-identity (DD#19) ----------------------
 
 
-def test_pre_dispatch_strip_does_not_mutate_text_bytes() -> None:
+def test_rendered_strip_does_not_mutate_text_bytes() -> None:
     """The runtime pre-dispatch strip removes ``cache_control`` markers
     when rendered content is below the provider minimum, but it must NOT
     mutate the underlying text content of any block. Text bytes are what

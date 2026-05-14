@@ -26,7 +26,7 @@
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
 
-  1. Cache content below provider minimum on summarize                   savings unavailable
+  1. Declared cache content below provider minimum on summarize          savings unavailable
      summarize
      summarize: declared cache content is ~1 tokens, below anthropic/claude-haiku-4-5's minimum of 4096; cache_control markers will silently no-op at the provider
      → Increase cache content above 4096 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from summarize since the cache won't fire as declared.
@@ -38,7 +38,7 @@
   node       model                       input  could_cache  ratio  notes
   ------------------------------------------------------------------
 
-  summarize  anthropic/claude-haiku-4-5     12            1     8%  below-min-tokens; prompt-body-duplicates-cache
+  summarize  anthropic/claude-haiku-4-5     12            1     8%  below-min-predicted; prompt-body-duplicates-cache
 
   Token estimate confidence:
     · Projected input tokens for: summarize.

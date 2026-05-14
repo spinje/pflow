@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from pflow.core.cache_render import CacheRenderContext
 from pflow.core.exceptions import CompilationError
+from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
     FAILURE_CATEGORY_HTTP,
@@ -31,6 +32,7 @@ from pflow.runtime.node_state import (
     get_node_failure,
     mark_node_failed,
 )
+from pflow.runtime.template_resolver import TemplateResolver
 
 from .api_warning_detector import detect_api_warning
 from .batch_executor import execute_batch
@@ -68,7 +70,10 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 _EMPTY_CACHE_RENDER: Mapping[str, CacheRenderContext] = MappingProxyType({})
 
 
-def build_cache_render_dict(workflow: CompiledWorkflow) -> dict[str, CacheRenderContext]:
+def build_cache_render_dict(
+    workflow: CompiledWorkflow,
+    shared: dict[str, Any],
+) -> dict[str, CacheRenderContext]:
     """Build the per-node ``CacheRenderContext`` map for one engine.run.
 
     Includes only LLM nodes that have at least one cache-relevant declaration
@@ -84,13 +89,18 @@ def build_cache_render_dict(workflow: CompiledWorkflow) -> dict[str, CacheRender
             continue
         if not (config.prompt_cache_items or config.prewarm or cache_block):
             continue
-        out[node_id] = _make_cache_render_context(config, cache_block)
+        prewarm = config.prewarm
+        if _should_disable_below_min_prewarm(node_id, config, shared):
+            prewarm = False
+        out[node_id] = _make_cache_render_context(config, cache_block, prewarm=prewarm)
     return out
 
 
 def _make_cache_render_context(
     config: NodeConfig,
     cache_block: Any,
+    *,
+    prewarm: bool | None = None,
 ) -> CacheRenderContext:
     """Build one node's ``CacheRenderContext`` from its ``NodeConfig``.
 
@@ -102,9 +112,11 @@ def _make_cache_render_context(
     alias = None
     node_inputs = None
     if config.batch_config and config.template_config:
-        unresolved = config.template_config.template_params.get("prompt")
+        unresolved = config.template_config.template_params.get("prompt") or config.template_config.static_params.get(
+            "prompt"
+        )
         alias = config.batch_config.item_alias
-        raw_inputs = config.template_config.template_params.get("inputs")
+        raw_inputs = _node_inputs_from_config(config)
         if isinstance(raw_inputs, Mapping):
             # Snapshot + freeze for parallel-batch safety. CacheRenderContext
             # is shared by batch workers, so the immutability contract is
@@ -113,11 +125,88 @@ def _make_cache_render_context(
     return CacheRenderContext(
         cache_block=cache_block,
         subset=config.prompt_cache_items,
-        prewarm=config.prewarm,
+        prewarm=config.prewarm if prewarm is None else prewarm,
         unresolved_batch_prompt=unresolved,
         batch_alias=alias,
         node_inputs=node_inputs,
     )
+
+
+def _should_disable_below_min_prewarm(
+    node_id: str,
+    config: NodeConfig,
+    shared: dict[str, Any],
+) -> bool:
+    if not config.prewarm or config.batch_config is None or config.template_config is None:
+        return False
+
+    model_raw = config.template_config.template_params.get("model") or config.template_config.static_params.get("model")
+    if model_raw is None:
+        return False
+    model = _resolve_template_string(model_raw, shared)
+    if model is None or model == "__validation_placeholder__":
+        return False
+
+    prompt_raw = config.template_config.template_params.get("prompt") or config.template_config.static_params.get(
+        "prompt"
+    )
+    if not isinstance(prompt_raw, str):
+        return False
+
+    from pflow.core.cache_analysis.below_min_tokens_detector import is_below_min_cache, provider_note
+    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.cache_analysis.token_estimation import tokenize_prompt_region_lower_bound
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_refs import first_per_item_position
+
+    alias = config.batch_config.item_alias
+    first = first_per_item_position(prompt_raw, alias, _node_inputs_from_config(config))
+    if first is None or first <= 0:
+        return False
+
+    ctx = AnalysisContext.build(
+        workflow_ir={},
+        parameters=shared,
+        memo_cache=shared.get("__memoization_cache__"),
+        workflow_path=shared.get("_pflow_workflow_file"),
+    )
+    prefix_tokens, _unresolved_refs = tokenize_prompt_region_lower_bound(prompt_raw[:first], model=model, ctx=ctx)
+    if not is_below_min_cache(model, prefix_tokens):
+        return False
+
+    diagnostic = make_diagnostic(
+        "cache.prewarm-disabled-below-min",
+        node_id=node_id,
+        affected_workflow=shared.get("_pflow_workflow_file") or "<unknown>",
+        model=model,
+        cacheable_tokens=prefix_tokens,
+        min_tokens=get_min_cache_tokens(model),
+        provider_note=provider_note(model),
+        alias=alias,
+    )
+    shared.setdefault("__warnings__", {})[node_id] = diagnostic
+    shared.setdefault("__prewarm_disabled_below_min__", {})[node_id] = "below_min"
+    return True
+
+
+def _node_inputs_from_config(config: NodeConfig) -> Mapping[str, Any] | None:
+    template_config = config.template_config
+    if template_config is None:
+        return None
+    raw_inputs = template_config.template_params.get("inputs") or template_config.static_params.get("inputs")
+    return raw_inputs if isinstance(raw_inputs, Mapping) else None
+
+
+def _resolve_template_string(raw: Any, shared: dict[str, Any]) -> str | None:
+    if not isinstance(raw, str):
+        return str(raw) if raw is not None else None
+    try:
+        resolved = TemplateResolver.resolve_template(raw, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(resolved, str) or TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+        return None
+    return resolved
 
 
 def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:
@@ -253,7 +342,7 @@ class WorkflowEngine:
         # (saved_trace overwritten, finally never fires).
         saved_trace = shared.get("__trace_collector__")
         saved_cache_render = shared.get("__pflow_cache_render__")
-        new_cache_render = MappingProxyType(build_cache_render_dict(workflow))
+        new_cache_render = MappingProxyType(build_cache_render_dict(workflow, shared))
         if self.trace is not None:
             shared["__trace_collector__"] = self.trace
         shared["__pflow_cache_render__"] = new_cache_render

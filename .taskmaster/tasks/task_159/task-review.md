@@ -116,7 +116,7 @@ The arc that mattered:
 | `src/pflow/runtime/compilation/compiler.py` | `_extract_prompt_cache_items` (rejects `tuple("string")` silent-splat via explicit `isinstance(raw, list)` precondition). `_build_cache_block` produces frozen `CacheBlockIR`. |
 | `src/pflow/runtime/engine/engine.py` | `_build_cache_render_dict` (sparse — LLM nodes with cache state only). Save/restore `__pflow_cache_render__` mirroring `__trace_collector__` pattern. |
 | `src/pflow/runtime/workflow_executor.py` | Inline comment block above `_PROPAGATED_KEYS` documenting that `__pflow_cache_render__` is INTENTIONALLY excluded (sub-workflow isolation). |
-| `src/pflow/nodes/llm/llm.py` | Imports `_resolve_chunk_value`, `_ChunkAbsentSentinel`, `_build_cache_control_marker`, `CacheRenderContext` from `core.cache_render` as **local module bindings** (divergence-injection meta-test depends on this — verified at the test-injection seam). New helpers: `_assemble_cache_prep`, `_build_user_message_blocks`, `_build_system_blocks`, `_emit_observed_below_min_cache_warning` (runtime-tier `cache.below-min-tokens` emission). |
+| `src/pflow/nodes/llm/llm.py` | Imports `_resolve_chunk_value`, `_ChunkAbsentSentinel`, `_build_cache_control_marker`, `CacheRenderContext` from `core.cache_render` as **local module bindings** (divergence-injection meta-test depends on this — verified at the test-injection seam). New helpers: `_assemble_cache_prep`, `_build_user_message_blocks`, `_build_system_blocks`, `_emit_observed_below_min_cache_warning` (runtime-tier `cache.below-min-predicted` emission). |
 | `src/pflow/execution/runner.py` | Removed `_resolve_file_references` method (Path 1 — boundary contract). `_build_cache_nudge` for `--dry-run` integration. |
 | `src/pflow/execution/workflow_resolver.py` | `_resolve_file_refs_at_boundary` helper. Module docstring documents the boundary contract. **`ResolvedWorkflow.ir` is now fully file-resolved by contract.** |
 | `src/pflow/execution/plan.py` | `_create_planner_shared` → public `create_planner_shared` (alias kept for backward-compat). `PlanEntry.cache_key` propagated. |
@@ -150,7 +150,7 @@ The arc that mattered:
 
 | Component | Interface |
 |---|---|
-| `pflow run` (validation pre-execution) | `validate_data_flow()` returns cache diagnostics. Structural cache errors (`cache.order-mismatch`, `cache.invalid-on-non-llm`) block run; analytical findings (`cache.below-min-tokens`, etc.) never block per DD#36. |
+| `pflow run` (validation pre-execution) | `validate_data_flow()` returns cache diagnostics. Structural cache errors (`cache.order-mismatch`, `cache.invalid-on-non-llm`) block run; analytical findings (`cache.below-min-predicted`, etc.) never block per DD#36. |
 | `pflow save` | Round-trips `## Cache` block byte-for-byte (parser is deterministic). |
 | `pflow run --dry-run` | `Runner._build_cache_nudge` calls `cache_analysis.analyze(...) → summarize_from_analysis(...)` and appends `Diagnostic(id="cache.opportunities-available")` to plan. Silent on already-optimal. |
 | `pflow analyze-cache` | CLI calls `cache_analysis.analyze()` + `render_text()` / `render_json()`. |
@@ -158,7 +158,7 @@ The arc that mattered:
 | `pflow guide <workflow>` | Auto-detects `caching` from root or child workflows when it sees `ir["cache"]`, `prompt_cache`, or `prewarm`; saved-name and file-path forms share the tree walker. |
 | `pflow report` | Trace 2.1.0+ fields (`cache_source`, `cache_age_sec`, `cache_chunks_skipped`) surface in per-node report pages via `core/trace_report.py`. |
 | `pflow visualize` | Cache section is invisible to mermaid (correct — graph topology unchanged). |
-| `LLMNode.post()` | Emits runtime-tier `cache.below-min-tokens` via `_emit_observed_below_min_cache_warning` when provider telemetry shows 0 cache_creation/read despite declared `prompt_cache:`. |
+| `LLMNode.post()` | Emits runtime-tier `cache.below-min-predicted` via `_emit_observed_below_min_cache_warning` when provider telemetry shows 0 cache_creation/read despite declared `prompt_cache:`. |
 
 ### Outgoing (what this task depends on)
 
@@ -177,7 +177,7 @@ The arc that mattered:
 |---|---|---|
 | `__pflow_cache_render__` | `MappingProxyType` outer wrap; sparse dict `{node_id: CacheRenderContext}`. Read-only per node. | Save/restore in `WorkflowEngine.run` mirroring `__trace_collector__`. **Intentionally NOT in `_PROPAGATED_KEYS`** — sub-workflows get their own render context from their own compiled workflow. |
 | `__cache_chunks_skipped__` (in prep_res) | List of chunk names that resolved to `_CHUNK_ABSENT`. | Threaded from `LLMNode.prep` → `post` (success path) and through 4 error wrap sites (`_call_llm` LLMCallError, `exec` FuturesTimeoutError, `exec_fallback`, `post` JSON-parse). `_propagate_error_to_shared` preserves it when zeroing `llm_usage`. |
-| `__warnings__[node_id]` | Runtime-emitted warnings (e.g., prewarm-disabled-no-images, observed below-min-tokens). | GH #374 filed for cross-cutting modernization (workflow scoping, list-shaped values, live emission). |
+| `__warnings__[node_id]` | Runtime-emitted warnings (e.g., prewarm-disabled-no-images, observed below-min-predicted). | GH #374 filed for cross-cutting modernization (workflow scoping, list-shaped values, live emission). |
 | `_pflow_workflow_file` | Used by trace writer to derive `workflow_path` field on save. | For inline runs: `synthesize_inline_workflow_id(ir) → "ir-hash:<md5>"`. |
 | `_pflow_child_workflow_paths` | Per-item dynamic workflow batch handoff: runtime records the canonical resolved child workflow path for each item so TraceTree/analyzer can attribute child rows correctly. | Lives in the per-item shared store; avoids node instance state and preserves stateless-node assumptions. |
 
@@ -210,7 +210,7 @@ The arc that mattered:
 
 **6. Evidence-basis principle.** Predictive warnings about state comparisons fire only when the state to compare against exists. `cache.cross-workflow-rename-detected` requires at least one side to declare `## Cache` (the rename's premise — diverging prose labels would break byte-level cache match — is hypothetical without `## Cache` blocks). `child_count == 0` filter on cross-workflow value-flow findings (suppress when child has no LLM consumers of the value).
 
-**7. Producer-side actionability gate.** A `cache.shared-context-undeclared` is emitted ONLY when a paste-ready `SuggestedBlock` can accompany it (clears below-min-tokens, ≥2 reusable LLM nodes, known model+tokens). Speculative or not-yet-actionable shared refs go in `Notes`, not `Recommended actions`. Single producer-side gate; no renderer-side suppression.
+**7. Producer-side actionability gate.** A `cache.shared-context-undeclared` is emitted ONLY when a paste-ready `SuggestedBlock` can accompany it (clears below-min-predicted, ≥2 reusable LLM nodes, known model+tokens). Speculative or not-yet-actionable shared refs go in `Notes`, not `Recommended actions`. Single producer-side gate; no renderer-side suppression.
 
 **8. Two-pass analyzer.** `analyze()` runs cheap detector first (`_detect_candidate_subsets` walks IR for shared template references — no tokenization), then heavy row build (`_build_per_call_rows_and_warnings` reads memo + tokenizes prompts). Order matters: Tier 2 of `estimate_cacheable_tokens` needs the candidate list to project from on greenfield workflows.
 
@@ -273,7 +273,7 @@ See **Test Files** table above. The 6 most load-bearing regression gates are the
 
 4. **Trace JSON top-level events list is keyed `"nodes"`, not `"events"`.** Pre-fix the analyzer's token_estimation tier-1 walker read `trace.get("events")` → silent fall-through to estimator/heuristic. Synthetic test fixtures matched the buggy reader → all tests passed. One-character typo. (Pitfall #19 instance #3.)
 
-5. **`MockLLMClient` always populates cache token fields.** Default 0 cache_creation/read. Once Stage 2 added runtime-tier `cache.below-min-tokens` emission via `LLMNode.post()`, the mock default became "cache definitively did not fire" instead of "we don't know." `test_prompt_cache_fires_under_no_cache_flag` had to be updated to stage nonzero mock telemetry. GH #375 filed for `usage_present` toggle.
+5. **`MockLLMClient` always populates cache token fields.** Default 0 cache_creation/read. Once Stage 2 added runtime-tier `cache.below-min-predicted` emission via `LLMNode.post()`, the mock default became "cache definitively did not fire" instead of "we don't know." `test_prompt_cache_fires_under_no_cache_flag` had to be updated to stage nonzero mock telemetry. GH #375 filed for `usage_present` toggle.
 
 6. **`SchemaValidationError` and `WorkflowValidationError` are SIBLING subclasses of `PflowError`, not related to each other.** Decision 1's `params={}` early-return covered the common case but didn't catch other `compile_workflow` failure modes (wrong input type, empty required-non-empty value, etc.). Bug A from the post-recommendations adversarial drill.
 
@@ -318,7 +318,7 @@ See **Test Files** table above. The 6 most load-bearing regression gates are the
 - **Pre-computed views as data-model citizens.** Stage A → Stage 0 collapsed `recommended_actions`, `cross_workflow.{rename,prose,value_flow}` from `CacheAnalysis` fields → derived projections from `analysis.warnings` (single source of truth). External JSON shape preserved via on-demand filtering. Pre-computed views invite duplication and drift.
 - **Filter at consumer if signal correctness depends on data.** Stage B's `child_count == 0` filter operated on broken IRs (Path 1 missed `resolve_sub_workflow`). Path 2 architectural fix: extend the boundary contract; consumer-side filters become defensible against a clean signal.
 - **Synthetic test fixtures matching buggy code shapes.** Pitfall #19 has bitten this branch ≥8 times. Defense: every regression gate test must drive a real production code path.
-- **Fabricating cacheable evidence.** The deleted Tier-3 cacheable heuristic created false `cache.below-min-tokens` findings. For cacheable tokens, unavailable is better than an estimated number unless the estimator is tied to actual resolved bytes.
+- **Fabricating cacheable evidence.** The deleted Tier-3 cacheable heuristic created false `cache.below-min-predicted` findings. For cacheable tokens, unavailable is better than an estimated number unless the estimator is tied to actual resolved bytes.
 - **Rendering internal taxonomies.** Late sweeps removed `case=refactor`, `cw=...`, diagnostic IDs in suggestions, and "Discrepancy detection" jargon. If a string exists mainly for analyzer internals, keep it in JSON/context or tests, not first-contact text.
 
 ## Breaking Changes
@@ -398,7 +398,7 @@ See **Test Files** table above. The 6 most load-bearing regression gates are the
 2. **Hash-vs-prep render symmetry breakage.** If you touch cache rendering, both `plan_node._render_cache_for_hash` AND `LLMNode._build_system_blocks` must use the SAME helper from `core.cache_render` as local module bindings.
 3. **Catalog drift between validator and analyzer.** Three IDs (`cache.order-mismatch`, `cache.unused-chunk`, `cache.invalid-on-non-llm`) have producers in BOTH `data_flow.py` AND `warning_catalog.py`. Templates were carefully matched; if you change one side, both must change in lockstep.
 4. **C901 suppressions should be exceptional.** Decompose into helpers first. The constants-driven-loop pattern at `_entry_to_dict._OPTIONAL_SCALAR_FIELDS` is the canonical decomposition shape.
-5. **`MockLLMClient` cache token defaults are no longer neutral.** With runtime-tier `cache.below-min-tokens` emission, default 0 cache_creation/read means "cache did not fire." Tests that exercise cache-declaring LLM calls must explicitly stage telemetry.
+5. **`MockLLMClient` cache token defaults are no longer neutral.** With runtime-tier `cache.below-min-predicted` emission, default 0 cache_creation/read means "cache did not fire." Tests that exercise cache-declaring LLM calls must explicitly stage telemetry.
 6. **Telemetry absent vs zero.** Use `has_cache_telemetry` and optional ints; don't infer provider "cache did not fire" from missing cache-token fields.
 7. **Don't add `resolve_file_references()` calls at consumer sites.** Path 1 boundary contract: extend `resolve_workflow` / `resolve_sub_workflow`. Contract test catches regressions.
 8. **`see_also=["caching"]` literal**: the repo-wide `test_all_see_also_literals_resolve_to_real_guide_topics` test enforces that the topic exists. The `caching` topic is now registered; future see_also additions must register their topics first.

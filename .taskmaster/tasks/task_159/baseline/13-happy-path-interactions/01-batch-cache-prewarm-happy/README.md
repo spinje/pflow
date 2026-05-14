@@ -8,7 +8,7 @@ sonnet 4.5 (1024 min, easily cleared).
 
 **Expected**: NO `cache.batch-prewarm-recommended` warning (decision is
 already made). NO `cache.prewarm-no-prefix` (there IS a static prefix —
-the cached `${context}` chunk). NO `cache.below-min-tokens` (long content
+the cached `${context}` chunk). NO `cache.below-min-predicted` (long content
 clears 1024). The analyzer should treat this as the optimal shape.
 
 **Why this complements surface 04 cases**: surface 04 cases test

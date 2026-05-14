@@ -103,7 +103,7 @@ def test_normalize_runtime_warning_preserves_diagnostic_shape() -> None:
     diagnostic = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",
+        id="cache.below-min-predicted",
         node_id="draft",
         message="draft: declared cache did not fire",
         suggestions=["Increase cache content above 1024 tokens."],
@@ -113,7 +113,7 @@ def test_normalize_runtime_warning_preserves_diagnostic_shape() -> None:
     message, context = normalize_runtime_warning(diagnostic)
 
     assert message == "draft: declared cache did not fire"
-    assert context["id"] == "cache.below-min-tokens"
+    assert context["id"] == "cache.below-min-predicted"
     assert context["severity"] == "warning"
     assert context["suggestions"] == ["Increase cache content above 1024 tokens."]
     assert context["category"] == "cache_warning"

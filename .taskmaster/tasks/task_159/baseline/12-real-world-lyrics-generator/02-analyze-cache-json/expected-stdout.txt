@@ -52,8 +52,8 @@
     "trace_llm_nodes_executed": 0,
     "trace_unexecuted_llm_rows": [],
     "blocking_errors": 0,
-    "actionable_opportunities": 19,
-    "warnings_count": 0,
+    "actionable_opportunities": 23,
+    "warnings_count": 4,
     "info_count": 19,
     "total_llm_nodes_estimated": 25,
     "total_llm_invocations_estimated": null,
@@ -399,6 +399,54 @@
   "recommended_actions": [
     {
       "rank": 1,
+      "warning_id": "cache.dynamic-before-static",
+      "node_id": "write-lyrics",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "message": "write-lyrics: dynamic `${choose-chorus.chorus_guide}` reference at line 68 appears before ~1002 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${choose-chorus.chorus_guide}` in the prompt template.",
+        "Projected cache ratio after fix: ?%."
+      ]
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.dynamic-before-static",
+      "node_id": "rewrite-emotional",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "message": "rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~2028 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${write-lyrics.response}` in the prompt template.",
+        "Projected cache ratio after fix: ?%."
+      ]
+    },
+    {
+      "rank": 3,
+      "warning_id": "cache.dynamic-before-static",
+      "node_id": "rewrite-craft",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "message": "rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~2170 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${extract-emotional-lyrics.result.lyrics}` in the prompt template.",
+        "Projected cache ratio after fix: ?%."
+      ]
+    },
+    {
+      "rank": 4,
+      "warning_id": "cache.dynamic-before-static",
+      "node_id": "generate-suno-prompt",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+      "message": "generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1223 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${extract-lyrics.result.lyrics}` in the prompt template.",
+        "Projected cache ratio after fix: 92%."
+      ]
+    },
+    {
+      "rank": 5,
       "warning_id": "cache.sub-workflow-cache-undeclared",
       "node_id": null,
       "estimated_savings_usd": null,
@@ -409,7 +457,7 @@
       ]
     },
     {
-      "rank": 2,
+      "rank": 6,
       "warning_id": "cache.opaque-prompt",
       "node_id": "generate-chorus-options",
       "estimated_savings_usd": null,
@@ -1627,6 +1675,134 @@
     ]
   },
   "warnings": [
+    {
+      "severity": "warning",
+      "message": "write-lyrics: dynamic `${choose-chorus.chorus_guide}` reference at line 68 appears before ~1002 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "source": "cache_analyzer",
+      "id": "cache.dynamic-before-static",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${choose-chorus.chorus_guide}` in the prompt template.",
+        "Projected cache ratio after fix: ?%."
+      ],
+      "node_id": "write-lyrics",
+      "context": {
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "dynamic_ref": "choose-chorus.chorus_guide",
+        "dynamic_line": 68,
+        "cacheable_tokens": 1002,
+        "affected_calls": 1,
+        "savings_usd": null,
+        "projected_ratio_pct": null,
+        "detection_mode": "declared_cache",
+        "min_cache_tokens": 4096,
+        "model": "",
+        "tokens_before_dynamic": null,
+        "template_refs_after_dynamic": 0,
+        "static_tail_excerpt": "## How to Use the Material Palette's Key Sections When you draw from the material palette: - **Kill Moments** \u2014 The son...",
+        "category": "cache_warning",
+        "path": "nodes[id=write-lyrics].prompt"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "warning",
+      "message": "rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~2028 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "source": "cache_analyzer",
+      "id": "cache.dynamic-before-static",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${write-lyrics.response}` in the prompt template.",
+        "Projected cache ratio after fix: ?%."
+      ],
+      "node_id": "rewrite-emotional",
+      "context": {
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "dynamic_ref": "write-lyrics.response",
+        "dynamic_line": 18,
+        "cacheable_tokens": 2028,
+        "affected_calls": 1,
+        "savings_usd": null,
+        "projected_ratio_pct": null,
+        "detection_mode": "declared_cache",
+        "min_cache_tokens": 4096,
+        "model": "",
+        "tokens_before_dynamic": null,
+        "template_refs_after_dynamic": 0,
+        "static_tail_excerpt": "## What You Can Change You have permission to make structural moves that a line-level rewriter cannot: - **Rewrite enti...",
+        "category": "cache_warning",
+        "path": "nodes[id=rewrite-emotional].prompt"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "warning",
+      "message": "rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~2170 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "source": "cache_analyzer",
+      "id": "cache.dynamic-before-static",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${extract-emotional-lyrics.result.lyrics}` in the prompt template.",
+        "Projected cache ratio after fix: ?%."
+      ],
+      "node_id": "rewrite-craft",
+      "context": {
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "dynamic_ref": "extract-emotional-lyrics.result.lyrics",
+        "dynamic_line": 15,
+        "cacheable_tokens": 2170,
+        "affected_calls": 1,
+        "savings_usd": null,
+        "projected_ratio_pct": null,
+        "detection_mode": "declared_cache",
+        "min_cache_tokens": 4096,
+        "model": "",
+        "tokens_before_dynamic": null,
+        "template_refs_after_dynamic": 0,
+        "static_tail_excerpt": "## Rules - **Do NOT restructure sections or move emotional peaks.** The emotional architecture is locked. If a verse bu...",
+        "category": "cache_warning",
+        "path": "nodes[id=rewrite-craft].prompt"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "warning",
+      "message": "generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1223 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "source": "cache_analyzer",
+      "id": "cache.dynamic-before-static",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Move the cacheable content (everything stable across calls) to BEFORE `${extract-lyrics.result.lyrics}` in the prompt template.",
+        "Projected cache ratio after fix: 92%."
+      ],
+      "node_id": "generate-suno-prompt",
+      "context": {
+        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "dynamic_ref": "extract-lyrics.result.lyrics",
+        "dynamic_line": 5,
+        "cacheable_tokens": 1223,
+        "affected_calls": 1,
+        "savings_usd": null,
+        "projected_ratio_pct": 92,
+        "detection_mode": "declared_cache",
+        "min_cache_tokens": 4096,
+        "model": "",
+        "tokens_before_dynamic": 109,
+        "template_refs_after_dynamic": 0,
+        "static_tail_excerpt": "## Output Format \u2014 Three Layers Write THREE things in this exact format, each separated by a single blank line. Order i...",
+        "category": "cache_warning",
+        "path": "nodes[id=generate-suno-prompt].prompt"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
     {
       "severity": "info",
       "message": "generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.",

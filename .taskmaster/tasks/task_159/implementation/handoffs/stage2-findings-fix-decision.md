@@ -144,7 +144,7 @@ When the next agent talks with the user about prioritization, here are the axes 
 - **Finding #2 (rerun_within_ttl ignores memo)**: makes the analyzer's projection wildly wrong. Agents reading it will under-estimate caching value. HIGH.
 - **Finding #11 (heterogeneous-models warning)**: silently fragmenting workflows pay 2-3× the cache cost. The user explicitly wants this. HIGH.
 - **Findings #3, #4, #5 (analyzer correlation, --report cache fields, JSON cache fields)**: data already exists, just isn't surfaced. MEDIUM.
-- **Finding #9 (cache.below-min-tokens not at validate time)**: small surface fix. LOW-MEDIUM.
+- **Finding #9 (cache.below-min-predicted not at validate time)**: small surface fix. LOW-MEDIUM.
 
 ### By fix complexity
 - **Trivial (5–20 LOC + tests)**: Findings #6, #13, #15, #17, #18 — text/rendering tweaks

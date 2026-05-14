@@ -372,8 +372,8 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     )
     assert result.exit_code == 0
     payload = _json_payload(result.output)
-    assert any(w["id"] == "cache.below-min-tokens" for w in payload["warnings"]), (
-        f"expected cache.below-min-tokens to fire on _LLM_WORKFLOW; "
+    assert any(w["id"] == "cache.below-min-predicted" for w in payload["warnings"]), (
+        f"expected cache.below-min-predicted to fire on _LLM_WORKFLOW; "
         f"got warnings={[w['id'] for w in payload['warnings']]}"
     )
 

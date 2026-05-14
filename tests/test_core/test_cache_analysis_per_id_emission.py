@@ -85,6 +85,7 @@ def _patch_pricing(
 @pytest.fixture(autouse=True)
 def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
     token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", _word_count)
     # Mirror the patch in token_estimation.py — analyze.py-resident callers
@@ -95,13 +96,16 @@ def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     # values.
     monkeypatch.setattr(token_estimation_module, "estimate_tokens", _word_count)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(
+        below_min_module, "get_min_cache_tokens", lambda model: analyze_module.get_min_cache_tokens(model)
+    )
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: None)
 
 
 def test_batch_prewarm_recommended_fires_only_when_prewarm_absent(tmp_path: Path) -> None:
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
-    prefix = "stable " * 100
+    prefix = "stable " * 2000
     workflow_path = str(tmp_path / "batch-prewarm.pflow.md")
     workflow_ir = {
         "nodes": [
@@ -148,8 +152,8 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent(tmp_path: Path
     diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-recommended")
     assert diag.context is not None
     assert diag.context["batch_size"] == 34
-    assert diag.context["prefix_tokens_estimated"] == 100
-    assert diag.context["savings_pct"] == 89
+    assert diag.context["prefix_tokens_estimated"] == 200
+    assert diag.context["savings_pct"] >= 5
     assert "cache.batch-prewarm-lower-bound-recommended" not in {d.id for d in result.warnings}
 
     workflow_ir["nodes"][0]["prewarm"] = False
@@ -173,7 +177,7 @@ def test_batch_prewarm_lower_bound_recommended_fires_when_measurable_prefix_clea
                 "type": "llm",
                 "model": "anthropic/claude-sonnet-4-5",
                 "batch": {"items": [{"text": "a"}, {"text": "b"}, {"text": "c"}], "as": "item"},
-                "params": {"prompt": ("stable " * 20) + "${missing.context}\n${item.text}"},
+                "params": {"prompt": ("stable " * 5000) + "${missing.context}\n${item.text}"},
             }
         ],
     }
@@ -217,7 +221,9 @@ def test_batch_prewarm_lower_bound_recommended_silent_when_measurable_prefix_bel
     assert "cache.batch-prewarm-recommended" not in warning_ids
 
 
-def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min() -> None:
+def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Prewarm declared but the static prefix tokenizes below the provider
     minimum — the cache marker will silently no-op at the provider. Fresh
     agent reading ``analyze-cache`` output today sees ``100% cache ratio``;
@@ -227,7 +233,11 @@ def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min(
     the analyzer-patched stub at 10), so the real Sonnet-4-5 threshold of
     1024 applies. A ~5-token prefix is honestly below it.
     """
-    prefix = "tiny "  # 1 word → 1 token under the deterministic word-count tokenizer
+    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
+    capabilities_module = importlib.import_module("pflow.core.llm_capabilities")
+    monkeypatch.setattr(below_min_module, "get_min_cache_tokens", capabilities_module.get_min_cache_tokens)
+
+    prefix = "tiny "  # 1 word -> 1 token under the deterministic word-count tokenizer
     workflow_ir = {
         "nodes": [
             {
@@ -257,7 +267,7 @@ def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min(
 def test_batch_prewarm_below_min_silent_when_prefix_meets_provider_min() -> None:
     """A 2000-token prefix on Sonnet (1024 min) is above the threshold — the
     cache marker will fire at the provider, no warning needed."""
-    prefix = "stable " * 2000  # well above 1024 under word-count tokenizer
+    prefix = "stable " * 50000  # well above 1024 under word-count tokenizer
     workflow_ir = {
         "nodes": [
             {
@@ -323,7 +333,7 @@ def test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present() -> 
     """When ``## Cache`` is declared and the node has ``prompt_cache:``,
     prewarm writes the declared chunk once via the serialized first call.
     The prompt-body prefix length is irrelevant to whether caching fires —
-    the declared chunk is what gets cached. ``cache.below-min-tokens``
+    the declared chunk is what gets cached. ``cache.below-min-predicted``
     handles the declared-cache path (and would fire if the declared chunk
     were below min, which is a separate scenario). The new ID stays silent.
     """
@@ -354,6 +364,172 @@ def test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present() -> 
     assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
 
 
+def test_dynamic_before_static_silent_for_heterogeneous_batch_with_no_stable_tail(tmp_path: Path) -> None:
+    """Regression: heterogeneous-batch nodes (``model: ${item.model}``) whose
+    prompt is essentially a per-item ref (e.g. ``prompt: ${item.prompt}``) used
+    to emit a nonsensical ``cache.dynamic-before-static`` recommendation: 'move
+    stable content before the dynamic ref' when there's no stable content to
+    move and the projected fix yields 0% cache ratio.
+
+    Real-world trigger: ``generate-chorus-options`` in
+    ``chorus-chooser.pflow.md`` (lyrics-generator) — see baseline output 10/05.
+
+    Root cause: ``is_below_min_cache(model="", tokens=0)`` returned False
+    (because ``not ""`` short-circuits to "honest unmeasurable"), so the
+    suppression gate in ``_find_batch_static_tail_after_dynamic`` failed to
+    fire. The conservative-floor variant ``is_likely_below_min_cache`` now
+    gates emission at recommendation-suppression sites.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    workflow_path = str(tmp_path / "hetero.pflow.md")
+    workflow_ir = {
+        "inputs": {"items": {"type": "list"}},
+        "nodes": [
+            {
+                "id": "generate-chorus-options",
+                "type": "llm",
+                "model": "${item.model}",  # heterogeneous → row.model == ""
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "${item.prompt}"},  # whole prompt is per-item
+            }
+        ],
+    }
+
+    # Trace fixture with ≥2 batch items so ``affected_calls`` clears the
+    # "< 2" early-return gate. Two distinct models exercises the
+    # heterogeneous-batch ``row.model = ""`` code path that the bug needed.
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "hetero-trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "generate-chorus-options",
+                        [
+                            {
+                                "index": 0,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "gemini/gemini-2.5-flash",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                },
+                            },
+                            {
+                                "index": 1,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "gemini/gemini-2.5-flash-lite",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                },
+                            },
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path)
+    dynamic_before_static = [d for d in result.warnings if d.id == "cache.dynamic-before-static"]
+    assert not dynamic_before_static, (
+        "expected cache.dynamic-before-static to be suppressed for heterogeneous "
+        f"batch with no stable tail; got: {[(d.context or {}).get('cacheable_tokens') for d in dynamic_before_static]}"
+    )
+
+
+def test_conditional_warmup_recommended_fires_when_static_prefix_has_unresolvable_refs(tmp_path: Path) -> None:
+    """Regression: `cache.conditional-warmup-recommended` must fire from trace
+    evidence even when the static-analysis prefix tokenization fails.
+
+    The detector reads ``row.provider_trace_llm_calls`` (current-run events) for
+    ``cache_skipped_reason == "below_min"`` evidence — that signal is independent
+    of whether the analyzer can tokenize the static prefix. A prior implementation
+    early-returned from ``_per_node_warnings`` when ``tokenize_prompt_region``
+    returned ``None`` (unresolved ``${upstream.*}`` refs in the static prefix),
+    silently suppressing the conditional-warmup signal exactly in the scenario
+    it was designed for.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    # Static prefix references an UPSTREAM node output, unresolvable at analysis time.
+    # ``first_per_item_position`` still finds ``${item.text}`` at a non-zero offset,
+    # so the batch-prewarm-below-min branch executes; ``tokenize_prompt_region``
+    # returns None because of the unresolvable ref. Without the fix, this kills
+    # the conditional-warmup detector that lives just below.
+    workflow_ir: dict[str, Any] = {
+        "inputs": {"items": {"type": "list"}},
+        "nodes": [
+            {
+                "id": "upstream-data",
+                "type": "shell",
+                "params": {"command": "echo hi"},
+            },
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "${upstream-data.summary} ${item.text}"},
+            },
+        ],
+        "edges": [],
+    }
+
+    workflow_path = str(tmp_path / "mixed-size.pflow.md")
+    trace_path = tmp_path / "mixed-size-trace.json"
+
+    builder = TraceFixtureBuilder()
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "anthropic/claude-sonnet-4-5",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                    **({"cache_skipped_reason": "below_min"} if index in {0, 1} else {}),
+                                },
+                            }
+                            for index in range(4)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path)
+    ids = {d.id for d in result.warnings}
+    assert "cache.conditional-warmup-recommended" in ids, (
+        f"expected cache.conditional-warmup-recommended in {sorted(ids)}"
+    )
+    diag = next(d for d in result.warnings if d.id == "cache.conditional-warmup-recommended")
+    assert diag.context is not None
+    assert diag.context["below_min_count"] == 2
+    assert diag.context["total_count"] == 4
+
+
 def test_inputs_indirection_keeps_batch_prefix_projection_but_suppresses_unmeasurable_recommendation() -> None:
     """Mutation contract: removing prompt-ref dealiasing loses batch_prefix evidence.
 
@@ -381,7 +557,7 @@ def test_inputs_indirection_keeps_batch_prefix_projection_but_suppresses_unmeasu
 
 
 def test_batch_static_tail_after_dynamic_emits_recommended_action() -> None:
-    stable_tail = "rubric " * 20
+    stable_tail = "rubric " * 2000
     workflow_ir = {
         "nodes": [
             {
@@ -414,7 +590,7 @@ def test_batch_static_tail_after_dynamic_matches_alias_bracket_form() -> None:
                 "type": "llm",
                 "model": "anthropic/claude-sonnet-4-5",
                 "batch": {"items": [[{"text": "a"}], [{"text": "b"}]], "as": "item"},
-                "params": {"prompt": "${item[0].text}\n" + ("rubric " * 20)},
+                "params": {"prompt": "${item[0].text}\n" + ("rubric " * 2000)},
             }
         ],
     }
@@ -5347,7 +5523,7 @@ def test_consolidate_to_root_advisory_silent_when_root_below_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Suppression: even the consolidated root would be below threshold —
-    consolidation wouldn't help; ``cache.below-min-tokens`` covers this case.
+    consolidation wouldn't help; ``cache.below-min-predicted`` covers this case.
 
     Mutation test: remove the ``if root_tokens < min_tokens: continue`` guard;
     this test fails because the advisory fires for a useless consolidation.
@@ -5462,7 +5638,7 @@ def test_fragmentation_fires_for_two_exact_models_sharing_chunks(monkeypatch: py
             },
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     found = [d for d in analysis.warnings if d.id == "cache.heterogeneous-models-fragment-cache"]
     assert found, f"fragmentation warning missing: ids={[d.id for d in analysis.warnings]}"
     ctx = found[0].context
@@ -5502,7 +5678,7 @@ def test_fragmentation_silent_when_single_model(monkeypatch: pytest.MonkeyPatch)
             },
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
 
 
@@ -5573,7 +5749,7 @@ def test_fragmentation_skips_heterogeneous_batch_rows(monkeypatch: pytest.Monkey
             },
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
 
 
@@ -5605,7 +5781,7 @@ def test_fragmentation_skips_when_any_group_cost_is_none(monkeypatch: pytest.Mon
             },
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
 
 
@@ -5640,7 +5816,7 @@ def test_fragmentation_skips_when_shared_chunk_tokens_unmeasurable(monkeypatch: 
             },
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
 
 
@@ -5681,7 +5857,7 @@ def test_fragmentation_suppresses_when_only_one_model_group_meets_threshold(
         ],
     }
 
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
 
     assert "cache.heterogeneous-models-fragment-cache" not in {d.id for d in analysis.warnings}
 
@@ -5707,7 +5883,7 @@ def test_write_penalty_fires_for_single_call_with_declared_cache(monkeypatch: py
             }
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     found = [d for d in analysis.warnings if d.id == "cache.first-call-write-penalty"]
     assert found, f"write-penalty warning missing: ids={[d.id for d in analysis.warnings]}"
     ctx = found[0].context
@@ -5741,7 +5917,7 @@ def test_write_penalty_silent_when_declared_cache_below_threshold(monkeypatch: p
         ],
     }
 
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
 
     assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
 
@@ -5773,7 +5949,7 @@ def test_write_penalty_silent_when_group_size_gt_one(monkeypatch: pytest.MonkeyP
             },
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
 
 
@@ -5799,7 +5975,7 @@ def test_write_penalty_silent_when_prewarm_true(monkeypatch: pytest.MonkeyPatch)
             }
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
 
 
@@ -5824,7 +6000,7 @@ def test_write_penalty_silent_for_gemini_implicit_cache(monkeypatch: pytest.Monk
             }
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     assert "cache.first-call-write-penalty" not in {d.id for d in analysis.warnings}
 
 
@@ -5865,7 +6041,7 @@ def test_fragmentation_and_write_penalty_coemit_when_one_group_has_size_one(
             },
         ],
     }
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 20}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
     ids = {d.id for d in analysis.warnings}
     assert "cache.heterogeneous-models-fragment-cache" in ids
     assert "cache.first-call-write-penalty" in ids
@@ -5916,7 +6092,7 @@ def test_system_fragmentation_fires_for_two_distinct_system_prompts(
         ],
     }
 
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
 
     found = [d for d in analysis.warnings if d.id == "cache.system-prompts-fragment-cache"]
     assert found, f"system-fragmentation warning missing: ids={[d.id for d in analysis.warnings]}"
@@ -5962,7 +6138,7 @@ def test_system_fragmentation_silent_when_uniform_system(monkeypatch: pytest.Mon
         ],
     }
 
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
 
     assert "cache.system-prompts-fragment-cache" not in {d.id for d in analysis.warnings}
 
@@ -6053,7 +6229,7 @@ def test_system_fragmentation_skips_when_groups_have_heterogeneous_models(
         ],
     }
 
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
 
     ids = {d.id for d in analysis.warnings}
     assert "cache.system-prompts-fragment-cache" not in ids
@@ -6092,7 +6268,7 @@ def test_system_fragmentation_fires_when_one_node_has_no_system(
         ],
     }
 
-    analysis = analyze(workflow_ir, parameters={"context": "stable " * 200}, auto_load_trace=False)
+    analysis = analyze(workflow_ir, parameters={"context": "stable " * 5000}, auto_load_trace=False)
 
     assert "cache.system-prompts-fragment-cache" in {d.id for d in analysis.warnings}
 

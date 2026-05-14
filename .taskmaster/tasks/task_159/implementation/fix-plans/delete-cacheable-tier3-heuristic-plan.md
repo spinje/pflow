@@ -2,7 +2,7 @@
 
 ## Context
 
-**Problem**: `pflow analyze-cache` produces false-positive `cache.below-min-tokens` warnings on greenfield workflows. When a `## Cache` chunk references a value not yet computable (a node-output reference like `${produce.response}` with no memo data, OR a workflow-input reference like `${article}` with no `--inputs` provided), the analyzer falls back to a Tier 3 heuristic at `src/pflow/core/cache_analysis/token_estimation.py:174-176` that fabricates a token count from `len(prompt) * 75 // 400`.
+**Problem**: `pflow analyze-cache` produces false-positive `cache.below-min-predicted` warnings on greenfield workflows. When a `## Cache` chunk references a value not yet computable (a node-output reference like `${produce.response}` with no memo data, OR a workflow-input reference like `${article}` with no `--inputs` provided), the analyzer falls back to a Tier 3 heuristic at `src/pflow/core/cache_analysis/token_estimation.py:174-176` that fabricates a token count from `len(prompt) * 75 // 400`.
 
 This heuristic is **conceptually wrong for declared `prompt_cache:` chunks**. pflow renders cache chunks as **prepended content blocks**, not as substrings of the prompt body. A 75%-of-prompt-body estimate has no relationship to the actual cache content size when the prompt body is small (e.g., `Summarize.`) and the cache is the bulk content.
 
@@ -33,7 +33,7 @@ This heuristic is **conceptually wrong for declared `prompt_cache:` chunks**. pf
 **Delete lines 174-176** (the entire Tier 3 block):
 
 ```python
-# Tier 3: estimator (declared subset only — heuristic; preserves below-min-tokens).
+# Tier 3: estimator (declared subset only — heuristic; preserves below-min-predicted).
 if declared_subset:
     return (max(0, len(prompt) * 75 // 400), "estimator")
 ```
@@ -67,7 +67,7 @@ After deletion, the function flows directly from Tier 2 to Tier 4 (renamed to Ti
 
     Honest unmeasurable contract: the function never fabricates token
     counts when chunks can't be resolved. Downstream
-    ``cache.below-min-tokens`` warnings naturally suppress (the detector
+    ``cache.below-min-predicted`` warnings naturally suppress (the detector
     requires ``estimated_tokens > 0``). The runtime-tier observed
     warning in ``LLMNode.post()`` catches the real failure case after
     first run **when the provider exposes cache telemetry** (the runtime
@@ -83,7 +83,7 @@ After deletion, the function flows directly from Tier 2 to Tier 4 (renamed to Ti
 
 **Replace these lines**:
 ```python
-        # Fall through to Tier 3 for declared (preserves below-min-tokens fidelity).
+        # Fall through to Tier 3 for declared (preserves below-min-predicted fidelity).
         # For candidate-only, fall through to Tier 4 (Option C — honest unmeasurable).
 ```
 
@@ -110,7 +110,7 @@ After deletion, the function flows directly from Tier 2 to Tier 4 (renamed to Ti
                     candidate subsets). Partial memo data: declared subsets
                     fall through to Tier 3; candidate-only returns Tier 4.
 3. ``estimator``  — heuristic on raw prompt template (declared subset only —
-                    preserves ``cache.below-min-tokens`` warning fidelity).
+                    preserves ``cache.below-min-predicted`` warning fidelity).
 4. ``unavailable`` — None propagation (Option C — honest unmeasurable).
 ```
 
@@ -128,7 +128,7 @@ After deletion, the function flows directly from Tier 2 to Tier 4 (renamed to Ti
                      candidate subsets). All chunks must resolve; partial
                      resolution falls through to Tier 3.
 3. ``unavailable`` — None propagation (Option C — honest unmeasurable).
-                     Downstream ``cache.below-min-tokens`` naturally
+                     Downstream ``cache.below-min-predicted`` naturally
                      suppresses; runtime-tier observed warning still fires
                      after first run.
 ```
@@ -359,8 +359,8 @@ def test_heterogeneous_batch_with_declared_cache_falls_through_to_unavailable(
     assert row.model_is_heterogeneous is True
     assert row.cacheable_tokens_estimated is None
     assert row.cacheable_data_source == "unavailable"
-    # No false-positive below-min-tokens warning.
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    # No false-positive below-min-predicted warning.
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, f"unexpected warnings: {[w.id for w in analysis.warnings]}"
 ```
 
@@ -437,9 +437,9 @@ def test_below_min_tokens_fires_when_memo_data_shows_below_min(
     assert row.cacheable_data_source == "memo"
     assert row.cacheable_tokens_estimated is not None
     assert row.cacheable_tokens_estimated < 1024
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert len(below_min) == 1, (
-        f"cache.below-min-tokens should fire when memo says below threshold; "
+        f"cache.below-min-predicted should fire when memo says below threshold; "
         f"got: {[w.id for w in analysis.warnings]}"
     )
 ```
@@ -502,7 +502,7 @@ def test_f04_greenfield_node_output_chunk_does_not_emit_false_below_min_warning(
     node output (``${produce.response}``) AND no memo data exists would
     fall through Tier 1 (no trace) → Tier 2 (no memo) → Tier 3 heuristic
     → fabricated ~``len(prompt) * 75 // 400`` token count → false-positive
-    ``cache.below-min-tokens`` warning ("declared cache content is ~1
+    ``cache.below-min-predicted`` warning ("declared cache content is ~1
     tokens, below ... minimum of 1024").
 
     Post-fix: Tier 3 is deleted; the path lands at Tier 4 unavailable.
@@ -550,9 +550,9 @@ def test_f04_greenfield_node_output_chunk_does_not_emit_false_below_min_warning(
     consume_row = next(r for r in analysis.per_call if r.node_path == "consume")
     assert consume_row.cacheable_tokens_estimated is None
     assert consume_row.cacheable_data_source == "unavailable"
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, (
-        f"F-04 regression: cache.below-min-tokens fired on greenfield "
+        f"F-04 regression: cache.below-min-predicted fired on greenfield "
         f"node-output chunk. Warnings: {[w.id for w in analysis.warnings]}"
     )
 ```
@@ -614,7 +614,7 @@ def test_partial_input_resolution_with_node_output_chunk_returns_unavailable(
     downstream_row = next(r for r in analysis.per_call if r.node_path == "downstream")
     assert downstream_row.cacheable_data_source == "unavailable"
     assert downstream_row.cacheable_tokens_estimated is None
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min
 ```
 
@@ -650,7 +650,7 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
         ["analyze-cache", str(workflow_path), "topic=hi", "--no-trace-autoload"],
     )
     assert result.exit_code == 0
-    assert "cache.below-min-tokens" in result.output
+    assert "cache.below-min-predicted" in result.output
 ```
 
 > **Verified**: `cli` is imported at the top of `tests/test_cli/test_analyze_cache.py:17` (`from pflow.cli.main import cli`). The `_write_workflow` helper exists at line 20-23. Both follow the existing convention in this file.
@@ -691,11 +691,11 @@ Replace `trace` / `memo` / `parameters` / `estimator` / `unavailable` with `trac
 **File**: `src/pflow/core/cache_analysis/CLAUDE.md`
 
 Find the section "### token_estimation.py" and the "Asymmetric fall-through for cacheable-token estimation" subsection. Currently includes:
-> "For DECLARED subsets: partial memo data → falls through to Tier 3 (heuristic) to preserve `cache.below-min-tokens` warning fidelity."
+> "For DECLARED subsets: partial memo data → falls through to Tier 3 (heuristic) to preserve `cache.below-min-predicted` warning fidelity."
 > "For CANDIDATE-only (greenfield projection): partial memo data → returns `(None, "unavailable")` (Option C — honest unmeasurable)."
 
 **Replace** the asymmetric fall-through paragraph with:
-> "Symmetric fall-through: when chunks can't be fully resolved (any chunk returns None from `_estimate_ref_tokens`), both DECLARED and CANDIDATE subsets return `(None, "unavailable")`. Honest unmeasurable. The previous declared-subset Tier 3 heuristic was deleted (F-04 fix) — it fabricated `len(prompt) * 75 // 400` token counts that didn't reflect actual cache content size and produced false-positive `cache.below-min-tokens` warnings."
+> "Symmetric fall-through: when chunks can't be fully resolved (any chunk returns None from `_estimate_ref_tokens`), both DECLARED and CANDIDATE subsets return `(None, "unavailable")`. Honest unmeasurable. The previous declared-subset Tier 3 heuristic was deleted (F-04 fix) — it fabricated `len(prompt) * 75 // 400` token counts that didn't reflect actual cache content size and produced false-positive `cache.below-min-predicted` warnings."
 
 Also find any reference to "Tier 1 fall-through" that mentions Tier 3 and update to reflect the new tier set (trace → memo/parameters → unavailable).
 
@@ -736,7 +736,7 @@ This file is consumed by `tests/test_docs/test_example_validation.py` (auto-disc
 
 **File**: `src/pflow/guide/features/caching.md`
 
-No changes required. The `cache.below-min-tokens` row in the catalog table (line 222) reads "declared cache content below provider minimum" — this description remains accurate post-fix (warning still fires when we have real data showing below threshold). The guide doesn't reference the "estimator" tier or Tier 3 heuristic.
+No changes required. The `cache.below-min-predicted` row in the catalog table (line 222) reads "declared cache content below provider minimum" — this description remains accurate post-fix (warning still fires when we have real data showing below threshold). The guide doesn't reference the "estimator" tier or Tier 3 heuristic.
 
 ### Doc 6.5 — Cache analysis package version history
 
@@ -811,11 +811,11 @@ The 7 cases below will have meaningful diffs. Inspect each before committing.
 
 | Case path | Expected diff |
 |---|---|
-| `04-warning-catalog/09-cache.below-min-tokens/expected-stdout.txt` | **Behavior change**: workflow fires warning today via Tier 3. After fix, the warning will not fire unless `--inputs` is provided (this case's workflow already declares an input that needs values for Tier 2). **Action**: update `command.sh` to pass `--inputs` for the relevant declared input so the warning fires legitimately. Update `README.md` mutation contract: "warning fires when memo/parameters data shows below threshold" (was: "fires from heuristic"). |
+| `04-warning-catalog/09-cache.below-min-predicted/expected-stdout.txt` | **Behavior change**: workflow fires warning today via Tier 3. After fix, the warning will not fire unless `--inputs` is provided (this case's workflow already declares an input that needs values for Tier 2). **Action**: update `command.sh` to pass `--inputs` for the relevant declared input so the warning fires legitimately. Update `README.md` mutation contract: "warning fires when memo/parameters data shows below threshold" (was: "fires from heuristic"). |
 | `04-warning-catalog/01-cache.order-mismatch/expected-stdout.txt` | Cacheable changes from `1` to `null`; warning is `cache.order-mismatch` (validator), unaffected. |
 | `04-warning-catalog/02-cache.unused-chunk/expected-stdout.txt` | Cacheable changes from `4` to `null`; primary warning is `cache.unused-chunk`, unaffected. |
 | `04-warning-catalog/18-cache.prompt-body-duplicates-cache/expected-stdout.txt` | Cacheable changes from `6` to `null`; primary warning is `cache.prompt-body-duplicates-cache`, unaffected. |
-| `14-pitfall-19-defenses/01-dotted-path-chunk/expected-stdout.txt` | **Cleanest reproduction of F-04 fix**: cacheable changes from `1` to `null`, two false-positive `cache.below-min-tokens` warnings disappear. Update README: clarify the case still tests Bug #2 (NamespacedSharedStore dotted-path resolution); the previous "cacheable=1" was incidental, not the test's load-bearing assertion. |
+| `14-pitfall-19-defenses/01-dotted-path-chunk/expected-stdout.txt` | **Cleanest reproduction of F-04 fix**: cacheable changes from `1` to `null`, two false-positive `cache.below-min-predicted` warnings disappear. Update README: clarify the case still tests Bug #2 (NamespacedSharedStore dotted-path resolution); the previous "cacheable=1" was incidental, not the test's load-bearing assertion. |
 | `03-analyze-cache-modes/04-steady-state-json/expected-stdout.txt` | Cacheable values for declared subsets become `null` for greenfield rows; warning counts may decrease. |
 | `12-real-world-lyrics-generator/02-analyze-cache-json/expected-stdout.txt` | **Largest diff**: 7 entries with cacheable values 799-2763 become `null`. Manually verify each entry's row corresponds to a declared chunk that references either a node output (no memo) or unresolved input. Don't blanket-accept — review each. |
 
@@ -864,7 +864,7 @@ Confirm the bug currently exists:
 uv run pflow analyze-cache .taskmaster/tasks/task_159/baseline/14-pitfall-19-defenses/01-dotted-path-chunk/workflow.pflow.md --no-trace-autoload --format=json | python -c "import json, sys; d = json.load(sys.stdin); print('warnings:', [w['id'] for w in d['warnings']]); print('cacheable values:', [r['cacheable_tokens_estimated'] for r in d['per_call']])"
 ```
 
-Expected pre-fix: `warnings: ['cache.below-min-tokens', 'cache.below-min-tokens']`, `cacheable values: [None, 1, 1]`.
+Expected pre-fix: `warnings: ['cache.below-min-predicted', 'cache.below-min-predicted']`, `cacheable values: [None, 1, 1]`.
 
 ### Post-implementation verification
 
@@ -950,7 +950,7 @@ Run (note: `analyze-cache` takes positional `key=value` params, NOT a `--inputs`
 uv run pflow analyze-cache /tmp/test-fires.pflow.md topic=hi --no-trace-autoload --format=json | python -c "import json, sys; d = json.load(sys.stdin); print('warnings:', [w['id'] for w in d['warnings']]); print('cacheable_data_source:', [r['cacheable_data_source'] for r in d['per_call']])"
 ```
 
-Expected: `warnings: ['cache.below-min-tokens']`, `cacheable_data_source: ['parameters']`.
+Expected: `warnings: ['cache.below-min-predicted']`, `cacheable_data_source: ['parameters']`.
 
 **C. The canonical example no longer apologizes**:
 
@@ -958,7 +958,7 @@ Expected: `warnings: ['cache.below-min-tokens']`, `cacheable_data_source: ['para
 uv run pflow analyze-cache examples/core/prompt-caching.pflow.md --no-trace-autoload --format=json | python -c "import json, sys; d = json.load(sys.stdin); print('warnings:', [w['id'] for w in d['warnings']])"
 ```
 
-Expected: no `cache.below-min-tokens` (greenfield, node-output ref unmeasurable). Other warnings (e.g., shared-context recommendations) may still fire.
+Expected: no `cache.below-min-predicted` (greenfield, node-output ref unmeasurable). Other warnings (e.g., shared-context recommendations) may still fire.
 
 #### Step 7 — Mutation checks (two layers)
 
@@ -1028,7 +1028,7 @@ UX 1 (undocumented suppression gates), UX 4 (inconsistent catalog-ID surfacing),
 
 2. **`12-real-world-lyrics-generator/02-analyze-cache-json` baseline diff is large** — 7 entries change. Manually inspect each transformation rather than blanket-accepting the regenerated output.
 
-3. **`04-warning-catalog/09-cache.below-min-tokens` case requires `command.sh` update** — it's the only case whose primary purpose was testing the deleted code path. After fix, it tests the same warning via Tier 2 (memo or parameters). Update the case's `command.sh` to pass `--inputs` and update `README.md` mutation contract accordingly.
+3. **`04-warning-catalog/09-cache.below-min-predicted` case requires `command.sh` update** — it's the only case whose primary purpose was testing the deleted code path. After fix, it tests the same warning via Tier 2 (memo or parameters). Update the case's `command.sh` to pass `--inputs` and update `README.md` mutation contract accordingly.
 
 4. **`memo_cache` parameter to `analyze()`** — Test 8 assumes `analyze()` accepts a `memo_cache` keyword argument. Verify against `src/pflow/core/cache_analysis/analyze.py` before writing. If the production signature differs, adapt the test's seeding mechanism (write a real trace file and use `trace_path=`, mirroring the pattern in Test 7's neighboring tests at `test_cache_analysis_analyze.py:2867+`).
 
@@ -1052,8 +1052,8 @@ UX 1 (undocumented suppression gates), UX 4 (inconsistent catalog-ID surfacing),
 - `tests/test_core/test_cache_analysis_token_estimation.py` (6 tests updated/replaced/renamed)
 - `tests/test_core/test_cache_analysis_analyze.py` (4 tests updated/renamed + 2 NEW tests + 1 docstring drive-by)
 - `tests/test_cli/test_analyze_cache.py` (1 test updated — positional params, not `--inputs` flag)
-- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/09-cache.below-min-tokens/command.sh` (add positional `key=value` param)
-- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/09-cache.below-min-tokens/README.md` (mutation contract update)
+- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/09-cache.below-min-predicted/command.sh` (add positional `key=value` param)
+- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/09-cache.below-min-predicted/README.md` (mutation contract update)
 - `.taskmaster/tasks/task_159/baseline/14-pitfall-19-defenses/01-dotted-path-chunk/README.md` (mutation contract clarification)
 - 7 `expected-stdout.txt` files (regenerated via `regenerate.sh`)
 

@@ -15,7 +15,7 @@ from pflow.core.diagnostic import Diagnostic
 logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
-TRACE_FORMAT_VERSION = "2.2.0"
+TRACE_FORMAT_VERSION = "2.3.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -141,8 +141,11 @@ class WorkflowTraceCollector:
     - Top-level ``workflow_path`` (resolved file path or ``ir-hash:<md5>``
       for inline runs).
     - Per-event cache-correlation fields on LLM events: ``cache_key``,
-      ``cache_source``, ``cache_age_sec``, ``cache_chunks_skipped``
-      (flow through ``llm_call`` via the ``llm_usage`` channel).
+      ``cache_source``, ``cache_age_sec``, ``cache_chunks_skipped``,
+      ``cache_skipped_reason`` (``"below_min"`` when a runtime cache marker
+      strip fired), and ``prewarm_disabled_reason`` (``"below_min"`` when
+      workflow-entry pre-flight disabled prewarm for the node). These flow
+      through ``llm_call`` via the ``llm_usage`` channel.
     - Per-event ``llm_system`` capturing the effective system content
       the LLM saw — ``str`` for plain system params, ``list[dict]`` for
       cache-rendered prefixes (with provider-specific ``cache_control``

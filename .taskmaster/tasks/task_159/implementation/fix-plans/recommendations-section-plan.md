@@ -39,7 +39,7 @@ The structural backbone (catalog dispatch, `make_diagnostic`, `cache_render.py` 
 These claims drive the algorithm specs below. Re-verify before patching.
 
 **Analyzer surface:**
-- `analyze.py:431-478` — `_per_node_warnings(node, row)` is the per-node integration point. Currently emits `cache.below-min-tokens` + `cache.prewarm-no-prefix`. Called from `analyze.py:223`.
+- `analyze.py:431-478` — `_per_node_warnings(node, row)` is the per-node integration point. Currently emits `cache.below-min-predicted` + `cache.prewarm-no-prefix`. Called from `analyze.py:223`.
 - `analyze.py:202` — `suggested_blocks: list[SuggestedBlock] = []` initialized empty, never appended.
 - `analyze.py:516-560` — `_build_cross_workflow_findings`: `prose_mismatches=()` and `value_flow_opportunities=()` stubbed at lines 558-559.
 - `analyze.py:661-695` — `_build_recommended_actions(warnings)` does NOT filter by severity, NOT dedupe, NOT cap. Sub-segment C adds aggregation + cap (CRIT-4 from Round 1).

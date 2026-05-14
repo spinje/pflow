@@ -448,7 +448,7 @@ monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthr
 cd .taskmaster/tasks/task_159/baseline
 ./regenerate.sh 01-parser-errors/03-two-vars-in-chunk
 ./regenerate.sh 01-parser-errors/09-prompt-body-shadows-cache
-./regenerate.sh 02-validator-errors/06-cache-content-below-min-tokens
+./regenerate.sh 02-validator-errors/06-cache-content-below-min-predicted
 ./regenerate.sh 02-validator-errors/07-unused-chunk
 ./regenerate.sh 02-validator-errors/08-analyze-cache-surfaces-undeclared-name
 ./regenerate.sh 03-analyze-cache-modes/03-steady-state-text

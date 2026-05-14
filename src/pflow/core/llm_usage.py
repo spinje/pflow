@@ -18,7 +18,7 @@ class NormalizedLiteLLMUsage:
     # ``True`` iff the source provider returned at least one cache-token
     # field. ``False`` means absent telemetry — distinct from "provider
     # reported zero." Consumers that gate observed-tier cache analysis
-    # (e.g. ``cache.below-min-tokens`` runtime emission) MUST check this
+    # (e.g. ``cache.below-min-predicted`` runtime emission) MUST check this
     # before treating zero counts as evidence the cache failed to fire.
     has_cache_telemetry: bool
 

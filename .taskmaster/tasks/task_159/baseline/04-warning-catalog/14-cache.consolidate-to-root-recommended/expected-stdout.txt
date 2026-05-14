@@ -17,20 +17,20 @@
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
 
-  1. Cache content below provider minimum on writer-a                    savings unavailable
+  1. Consolidate sub-paths of `concept` to root in ## Cache              savings unavailable
+     workflow.pflow.md
+     Sub-paths of `concept` (concept.core_idea, concept.title) are individually below anthropic/claude-sonnet-4-5's min-cache threshold (1024 tokens, max sub-path ~2); consolidating to `${concept}` (~6017 tokens) would cross the threshold and actually cache. Sub-path markers silently no-op at the provider as declared.
+     → Replace [concept.core_idea, concept.title] with [concept] in the ## Cache block and in every node's `prompt_cache:` list that currently references any of those sub-paths. Trade-off: each call sends the entire `concept` value (~6017 tokens) instead of just the sub-paths it references; cache write costs 1.25× input rate, reads cost 0.1×, so consolidation pays off after the first read.
+
+  2. Declared cache content below provider minimum on writer-a           savings unavailable
      writer-a
      writer-a: declared cache content is ~4 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider
      → Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from writer-a since the cache won't fire as declared.
 
-  2. Cache content below provider minimum on writer-b                    savings unavailable
+  3. Declared cache content below provider minimum on writer-b           savings unavailable
      writer-b
      writer-b: declared cache content is ~4 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider
      → Increase cache content above 1024 tokens by adding more chunks to ## Cache, OR remove `prompt_cache:` from writer-b since the cache won't fire as declared.
-
-  3. Consolidate sub-paths of `concept` to root in ## Cache              savings unavailable
-     workflow.pflow.md
-     Sub-paths of `concept` (concept.core_idea, concept.title) are individually below anthropic/claude-sonnet-4-5's min-cache threshold (1024 tokens, max sub-path ~2); consolidating to `${concept}` (~6017 tokens) would cross the threshold and actually cache. Sub-path markers silently no-op at the provider as declared.
-     → Replace [concept.core_idea, concept.title] with [concept] in the ## Cache block and in every node's `prompt_cache:` list that currently references any of those sub-paths. Trade-off: each call sends the entire `concept` value (~6017 tokens) instead of just the sub-paths it references; cache write costs 1.25× input rate, reads cost 0.1×, so consolidation pays off after the first read.
 
 ## Per-call cache report
   How to read each row:
@@ -39,8 +39,8 @@
   node      model                        input  could_cache  ratio  notes
   ------------------------------------------------------------------
 
-  writer-b  anthropic/claude-sonnet-4-5      9            4    44%  below-min-tokens
-  writer-a  anthropic/claude-sonnet-4-5      7            4    57%  below-min-tokens
+  writer-b  anthropic/claude-sonnet-4-5      9            4    44%  below-min-predicted
+  writer-a  anthropic/claude-sonnet-4-5      7            4    57%  below-min-predicted
 
   Token estimate confidence:
     · Projected input tokens for: writer-b, writer-a.

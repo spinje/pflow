@@ -38,7 +38,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 26 entries (25 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 30 entries (29 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -71,11 +71,16 @@ def test_catalog_size_matches_v1_inventory() -> None:
       provider minimum but unresolved upstream refs require verification)
     - ``cache.shared-context-undeclared-conditional`` (Task 159 follow-up:
       shared context is structurally reusable, but current values are below
-      provider cache minimums).
+      provider cache minimums)
+    - split below-min provider-threshold IDs:
+      ``cache.below-min-predicted``, ``cache.below-min-observed``,
+      ``cache.below-min-rendered``, and
+      ``cache.prewarm-disabled-below-min``
+    - ``cache.conditional-warmup-recommended`` (mixed-size batch traces).
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 26
+    assert len(CACHE_WARNING_CATALOG) == 30
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -174,17 +179,16 @@ def test_make_diagnostic_order_mismatch_uses_bare_identifier_format() -> None:
 
 def test_make_diagnostic_below_min_tokens() -> None:
     diag = make_diagnostic(
-        "cache.below-min-tokens",
+        "cache.below-min-predicted",
         node_id="rewrite",
         affected_workflow="x.pflow.md",
         model="claude-sonnet-4-5",
         cacheable_tokens=512,
         min_tokens=1024,
-        evidence_kind="predicted",
         provider_note="cache_control markers will silently no-op at the provider",
     )
     assert diag.severity == Severity.WARNING
-    assert diag.id == "cache.below-min-tokens"
+    assert diag.id == "cache.below-min-predicted"
     assert "1024" in diag.message
     assert "claude-sonnet-4-5" in diag.message
     assert "cache_control markers" in diag.message
@@ -192,13 +196,12 @@ def test_make_diagnostic_below_min_tokens() -> None:
 
 def test_make_diagnostic_below_min_tokens_observed_message() -> None:
     diag = make_diagnostic(
-        "cache.below-min-tokens",
+        "cache.below-min-observed",
         node_id="rewrite",
         affected_workflow="x.pflow.md",
         model="gemini/gemini-2.5-pro",
         cacheable_tokens=0,
         min_tokens=4096,
-        evidence_kind="observed",
         provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply",
     )
     assert "did not fire on this call" in diag.message
@@ -206,36 +209,20 @@ def test_make_diagnostic_below_min_tokens_observed_message() -> None:
     assert "Gemini's automatic implicit cache" in diag.message
 
 
-def test_make_diagnostic_below_min_tokens_pre_dispatch_message() -> None:
+def test_make_diagnostic_below_min_tokens_rendered_message() -> None:
     diag = make_diagnostic(
-        "cache.below-min-tokens",
+        "cache.below-min-rendered",
         node_id="rewrite",
         affected_workflow="x.pflow.md",
         model="gemini/gemini-2.5-pro",
         cacheable_tokens=1135,
         min_tokens=4096,
-        evidence_kind="pre_dispatch",
         provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply",
     )
     assert "cache marker stripped before send" in diag.message
     assert "1135 tokens" in diag.message
     assert "ran uncached for this invocation" in diag.message
     assert "Gemini's automatic implicit cache" in diag.message
-
-
-def test_make_diagnostic_below_min_tokens_unknown_evidence_kind_fallback(caplog: pytest.LogCaptureFixture) -> None:
-    diag = make_diagnostic(
-        "cache.below-min-tokens",
-        node_id="rewrite",
-        affected_workflow="x.pflow.md",
-        model="openai/gpt-5",
-        cacheable_tokens=0,
-        min_tokens=1024,
-        evidence_kind="suspected",
-        provider_note="",
-    )
-    assert "declared cache below openai/gpt-5's minimum of 1024" in diag.message
-    assert "unknown evidence_kind" in caplog.text
 
 
 def test_make_diagnostic_batch_prewarm_below_min_anthropic() -> None:
@@ -525,12 +512,11 @@ def test_make_diagnostic_node_id_without_affected_workflow_raises() -> None:
     """
     with pytest.raises(KeyError, match="affected_workflow"):
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="rewrite",
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         )
 
@@ -539,13 +525,12 @@ def test_make_diagnostic_node_id_with_affected_workflow_none_raises() -> None:
     """The workflow-scope guard validates value shape, not just key presence."""
     with pytest.raises(KeyError, match="affected_workflow"):
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="rewrite",
             affected_workflow=None,
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         )
 
@@ -787,14 +772,46 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "suggested_subset": ["a", "b"],
             "savings_usd": 0.04,
         },
-        "cache.below-min-tokens": {
+        "cache.below-min-predicted": {
             "node_id": "rewrite",
             "affected_workflow": "x.pflow.md",
             "model": "claude-sonnet-4-5",
             "cacheable_tokens": 512,
             "min_tokens": 1024,
-            "evidence_kind": "predicted",
             "provider_note": "",
+        },
+        "cache.below-min-observed": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "cacheable_tokens": 0,
+            "min_tokens": 1024,
+            "provider_note": "",
+        },
+        "cache.below-min-rendered": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "cacheable_tokens": 512,
+            "min_tokens": 1024,
+            "provider_note": "",
+        },
+        "cache.prewarm-disabled-below-min": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "cacheable_tokens": 512,
+            "min_tokens": 1024,
+            "provider_note": "",
+            "alias": "item",
+        },
+        "cache.conditional-warmup-recommended": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "below_min_count": 2,
+            "total_count": 4,
+            "min_tokens": 1024,
         },
         "cache.cross-workflow-prose-mismatch": {
             "parent_workflow": "p.pflow.md",

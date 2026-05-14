@@ -53,7 +53,7 @@ class Diagnostic:
 Matches existing `Severity` enum: `error` / `warning` / `info`. Note: the value is `warning`, not `warn`.
 
 - `error` blocks `pflow run` (e.g. `cache.batch-prewarm-required` for large unprewarmed batches).
-- `warning` allows execution but flags a real issue (e.g. `cache.below-min-tokens` — markers will silently no-op).
+- `warning` allows execution but flags a real issue (e.g. `cache.below-min-predicted` — markers will silently no-op).
 - `info` is advisory (e.g. `cache.padding-advisory` — opportunity to save more).
 
 ### Confidence
@@ -89,7 +89,7 @@ Closed list. New IDs land in v1b or later via design review. Namespace prefix is
 | `cache.batch-prewarm-recommended` | `info` | Batch size between thresholds where prewarm is net-positive but not required. Optional latency-vs-cost tradeoff. |
 | `cache.dynamic-before-static` | `warning` | A node's prompt has a `${var}` reference high up that prevents the rest of the prompt (which IS stable) from caching. Highest-leverage individual fix when it appears. |
 | `cache.padding-advisory` | `info` | A node's `prompt_cache:` subset doesn't start at position 1 of the master order; padding would unlock prefix hits at 0.1× read rate, net-positive. |
-| `cache.below-min-tokens` | `warning` | Declared cache content for a node is below the provider's minimum token threshold. Markers will silently no-op. |
+| `cache.below-min-predicted` | `warning` | Declared cache content for a node is below the provider's minimum token threshold. Markers will silently no-op. |
 | `cache.unused-chunk` | `warning` | A `## Cache` block declares a chunk that no node's `prompt_cache:` references. Suggests removal. |
 | `cache.order-mismatch` | `error` | A node's `prompt_cache:` list doesn't match `## Cache` declaration order. Blocks `pflow run`. |
 | `cache.cross-workflow-prose-mismatch` | `info` | Tier 2: parent and child both declare a chunk with the same identifier but different prose-before-the-`${var}`. Cross-workflow byte-level cache hit won't fire. |
@@ -684,7 +684,7 @@ To prevent advisory drown:
 - **Cross-workflow prose-canonicalization auto-suggestion**. v1 emits the warning; v1b suggests a canonical prose.
 - **Implicit-opportunity n-gram detection** (finding 4k blocks shared across files but not declared). v1 only catches explicit-shared cases (declared in one file, missed in another).
 - **Per-item TTL**. Block-level only.
-- **`cache.below-min-tokens` fix suggestions**. v1 warns; remediation is "add more context or remove `prompt_cache:`."
+- **`cache.below-min-predicted` fix suggestions**. v1 warns; remediation is "add more context or remove `prompt_cache:`."
 
 ---
 

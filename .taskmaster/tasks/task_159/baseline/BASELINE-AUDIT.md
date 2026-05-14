@@ -923,10 +923,10 @@ common-path, then JSON/lower-priority).
 
 - **Severity**: `UX` (JSON-side)
 - **Triage**: `wart`.
-- **What**: `cache.below-min-tokens` warning context carries
+- **What**: `cache.below-min-predicted` warning context carries
   `evidence_kind: "predicted"`. Other warnings don't carry this
   field consistently.
-- **Repro**: `04-warning-catalog/09-cache.below-min-tokens/expected-stdout.txt:143`.
+- **Repro**: `04-warning-catalog/09-cache.below-min-predicted/expected-stdout.txt:143`.
 - **Impact**: An agent dispatching on `evidence_kind` has no
   documented enumeration. Is `"predicted"` vs `"observed"` the only
   values? What about `"trace"`?

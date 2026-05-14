@@ -446,7 +446,7 @@ per-call cross-workflow sums above the threshold check at
 `_apply_cross_workflow_projection:2183-2184`, projecting cacheable values that
 the provider would silently no-op. Post-fix, sub-threshold per-call sums
 correctly skip projection, and `below_min_tokens_detector` emits its
-`cache.below-min-tokens` warning instead. (FINDINGS Bug B — the analogous
+`cache.below-min-predicted` warning instead. (FINDINGS Bug B — the analogous
 `batch_prefix`-source-below-min case — remains open; the detector still gates
 on `declared_prompt_cache` and doesn't yet handle batch_prefix evidence.)
 
@@ -1497,7 +1497,7 @@ latency-sensitive workflows the recommendation can be a net loss.
 ### Root cause investigation
 
 `below_min_tokens_detector.detect` (the existing detector behind
-`cache.below-min-tokens`) gates on `evidence.declared_prompt_cache`
+`cache.below-min-predicted`) gates on `evidence.declared_prompt_cache`
 non-empty. The outer call site at `analyze.py:_per_node_warnings` mirrors
 that gate with `if row.declared_prompt_cache:`. Prewarm-only batches —
 where there is no `## Cache` block but `prewarm: true` is declared — skip
@@ -1513,9 +1513,9 @@ wall-clock factor; no trace per-event duration ever flows into
 
 ### Architectural reasoning
 
-**New catalog ID vs extending `cache.below-min-tokens`.** Considered both;
+**New catalog ID vs extending `cache.below-min-predicted`.** Considered both;
 chose new ID `cache.batch-prewarm-below-min` because the remediation
-prose differs fundamentally. `cache.below-min-tokens` suggests "Increase
+prose differs fundamentally. `cache.below-min-predicted` suggests "Increase
 cache content above {min_tokens} tokens by adding more chunks to
 ## Cache, OR remove `prompt_cache:` from {node_id}" — both phrases
 assume declared cache. The prewarm path's agent has no `prompt_cache:`
@@ -1578,7 +1578,7 @@ inputs_phrase` derivations.
   provider_note)`, two suggestions (restructure prompt OR remove
   `- prewarm: true`).
 - Priority slot 30 — Tier 5 (informational warnings that surface latent
-  issues), peer with `cache.below-min-tokens` and
+  issues), peer with `cache.below-min-predicted` and
   `cache.prewarm-no-prefix`.
 - `cache.batch-prewarm-recommended` `suggestions_template` extended with
   one wall-clock trade-off bullet between the existing "Add `- prewarm:
@@ -1597,7 +1597,7 @@ inputs_phrase` derivations.
     declared chunk via the serialized first call — the prompt-body prefix
     is irrelevant. Caught by the baseline harness on
     `13-happy-path-interactions/01-batch-cache-prewarm-happy` (the
-    "already-optimal" case) before merging. `cache.below-min-tokens`
+    "already-optimal" case) before merging. `cache.below-min-predicted`
     owns the declared-cache below-min path.
 - `prefix_tokens` computed via `estimate_tokens(row.model, prompt[:first])`
   — mirrors `_batch_prewarm_recommendations`'s own boundary tokenization,
@@ -1705,7 +1705,7 @@ dict so `test_every_catalog_id_has_a_kwargs_sample` passes.
 ### Tacit knowledge
 
 **The two-gate pattern in `_per_node_warnings`.** The outer `if
-row.declared_prompt_cache:` block routes to `cache.below-min-tokens`; the
+row.declared_prompt_cache:` block routes to `cache.below-min-predicted`; the
 new `elif first > 0 and not row.declared_prompt_cache:` routes to
 `cache.batch-prewarm-below-min`. The two paths are now symmetric in
 shape and mutually exclusive on declared-cache presence. Future
@@ -2063,7 +2063,7 @@ Key points:
 - Added row-level `below provider min (need ≥N for this model)` notes for
   undeclared projected cacheable rows from `parameters`, `memo`, `batch_prefix`,
   and `cross_workflow_projection`; declared-cache rows stay owned by
-  `cache.below-min-tokens`.
+  `cache.below-min-predicted`.
 - Updated the per-call explainer so small `could_cache` numbers are not read as
   provider-cacheable unless they clear the model minimum.
 - Added MCP docstring/catalog/sample coverage, production emission tests,

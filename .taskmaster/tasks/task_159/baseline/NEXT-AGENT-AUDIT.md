@@ -57,7 +57,7 @@ The cases agents will hit *most often* in their workflow lifecycle:
 | Lifecycle stage | Cases to audit |
 |---|---|
 | **Wrote a workflow, ran `pflow run`, got an error** | `01-parser-errors/01,02,04,06,07` (the most-likely typos: empty cache block, multi-block, duplicate id, bad TTL, unresolved var); `02-validator-errors/01,02,03` (out-of-order, undeclared, on-non-llm) |
-| **Workflow runs but caching feels off** | `02-validator-errors/06,07,08`; `04-warning-catalog/04,09,17,18` (shared-context-undeclared, below-min-tokens, opaque-prompt, prompt-body-duplicates) |
+| **Workflow runs but caching feels off** | `02-validator-errors/06,07,08`; `04-warning-catalog/04,09,17,18` (shared-context-undeclared, below-min-predicted, opaque-prompt, prompt-body-duplicates) |
 | **Asked analyze-cache to evaluate a workflow** | `03-analyze-cache-modes/01,03,07` (greenfield-text, steady-state-text, json-error-envelope) |
 | **Workflow runs in a batch / fan-out** | `04-warning-catalog/13` (prewarm-no-prefix); `05-advisory-cases/01,02,03` (silent-skip + suppression) |
 
@@ -80,7 +80,7 @@ reviews:
 
 1. **Every error includes 4 elements**: WHAT broke, WHY it matters,
    WHERE (file path + line number + node id), HOW to fix.
-2. **Warning IDs in a stable catalog** (e.g. `cache.below-min-tokens`)
+2. **Warning IDs in a stable catalog** (e.g. `cache.below-min-predicted`)
    should be present in the rendered output so agents can grep / filter.
 3. **No magic strings in agent-facing data** — if a value is "unknown",
    the rendering should say so explicitly with a typed state, not an
@@ -244,8 +244,8 @@ The "Recommended actions" section has 2 entries:
 - Sub-workflow cache undeclared
 - Prompt opaque to static analysis
 
-But surface 04 case 09 (`below-min-tokens`) demonstrates that the
-analyzer DOES surface below-min-tokens recommendations under
+But surface 04 case 09 (`below-min-predicted`) demonstrates that the
+analyzer DOES surface below-min-predicted recommendations under
 "Recommended actions" elsewhere. Why are they NOT here? The 5 below-min
 findings I saw in earlier exploration of this same workflow are
 present in `## Per-call cache report` (via the warning column?) but

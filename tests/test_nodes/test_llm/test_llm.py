@@ -568,6 +568,8 @@ class TestLLMNode:
             # populated llm_usage dicts (default empty list when no chunks
             # were skipped). Trace 2.1.0 (E.1) consumes this channel.
             "cache_chunks_skipped": [],
+            "cache_skipped_reason": None,
+            "prewarm_disabled_reason": None,
             "cost_usd": 0.00966,
         }
 

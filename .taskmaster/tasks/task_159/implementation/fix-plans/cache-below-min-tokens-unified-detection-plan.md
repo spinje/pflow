@@ -1,10 +1,10 @@
-# Plan — Unified `cache.below-min-tokens` Detector + Runtime Surface + Phantom-Savings Fix
+# Plan — Unified `cache.below-min-predicted` Detector + Runtime Surface + Phantom-Savings Fix
 
 ## Context
 
 This work closes four related gaps surfaced in Stage 2 verification of pflow's prompt caching feature (Task 159):
 
-**Finding #9 — discoverability gap.** `cache.below-min-tokens` fires only from `analyze-cache`. Agents who run `pflow run --validate-only` see "Workflow is valid" even when their `prompt_cache:` decoration won't fire because rendered cache content is below the model's threshold. Stage 2 evidence: RUN-HAIKU-RERUN's `generate-suno-prompt` had 3,764 tokens against Haiku's 4,096 minimum — wasted cache decoration, zero signal.
+**Finding #9 — discoverability gap.** `cache.below-min-predicted` fires only from `analyze-cache`. Agents who run `pflow run --validate-only` see "Workflow is valid" even when their `prompt_cache:` decoration won't fire because rendered cache content is below the model's threshold. Stage 2 evidence: RUN-HAIKU-RERUN's `generate-suno-prompt` had 3,764 tokens against Haiku's 4,096 minimum — wasted cache decoration, zero signal.
 
 **Finding #10 — misleading message text.** Current warning says "cache_control markers will silently no-op at the provider", which is accurate for Anthropic but misleading for Gemini (whose implicit cache may still fire on stable prefixes regardless of `cache_control` markers).
 
@@ -24,7 +24,7 @@ Close all four gaps with a unified detector pattern. **Single source of truth, m
 ### Architectural decisions (set in stone)
 
 - **Post-call detection** for runtime, NOT pre-call. DD#36 forbids tokenizers in the runtime hot path. Post-call uses provider-reported `cache_creation_input_tokens` / `cache_read_input_tokens` — ground truth, zero new hot-path logic.
-- **One catalog ID** (`cache.below-min-tokens`) used by both drivers with `evidence_kind` context dispatch. NOT two separate IDs.
+- **One catalog ID** (`cache.below-min-predicted`) used by both drivers with `evidence_kind` context dispatch. NOT two separate IDs.
 - **Per-node threshold checks**, not per-block. Each node uses different subsets and possibly different models.
 - **Channel extension via `normalize_runtime_warning`**: extend the seam to accept `Diagnostic` instances directly. ONE warning vocabulary.
 - **Cache-miss vs empty-response collision: empty-response wins via existing emission order.** Documented at the emit site. Cache-miss is observational; empty-response is a critical failure signal. Acceptable v1 trade-off — agents who hit empty-response will likely investigate via `analyze-cache --from-trace` which independently fires the predicted-tier warning.
@@ -164,7 +164,7 @@ The dispatch precedent to follow is **`cache.shared-context-undeclared`** at `ma
 
 Update catalog row:
 ```python
-"cache.below-min-tokens": CacheWarningSpec(
+"cache.below-min-predicted": CacheWarningSpec(
     severity=Severity.WARNING,
     source="cache_analyzer",  # logical source; both drivers emit through the catalog
     category=CACHE_WARNING_CATEGORY,
@@ -192,7 +192,7 @@ Update catalog row:
 
 Add module-level template constants near the existing `_SHARED_CONTEXT_*` constants:
 ```python
-# Message-template dispatch for cache.below-min-tokens.
+# Message-template dispatch for cache.below-min-predicted.
 # Selected by evidence_kind context key. "unknown" is the defensive fallback
 # for forward-compat with future evidence tiers.
 _BELOW_MIN_TOKENS_MESSAGE_PREDICTED = (
@@ -216,12 +216,12 @@ _BELOW_MIN_TOKENS_DISPATCH = {
 
 In `make_diagnostic` (or wherever the existing `cache.shared-context-undeclared` dispatch lives), add the dispatch logic AFTER `_validate_required` succeeds:
 ```python
-if warning_id == "cache.below-min-tokens":
+if warning_id == "cache.below-min-predicted":
     evidence_kind = context_kwargs["evidence_kind"]
     template = _BELOW_MIN_TOKENS_DISPATCH.get(evidence_kind)
     if template is None:
         logger.warning(
-            "cache.below-min-tokens: unknown evidence_kind=%r; falling back to "
+            "cache.below-min-predicted: unknown evidence_kind=%r; falling back to "
             "generic template",
             evidence_kind,
         )
@@ -262,7 +262,7 @@ if row.declared_prompt_cache:  # truthy gate handles both None and empty list
     ))
     if finding is not None:
         diagnostics.append(make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id=finding.node_id,
             affected_workflow=row.workflow_path,  # existing analyzer scope
             model=finding.model,
@@ -299,7 +299,7 @@ from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 # After: shared["llm_usage"] = llm_usage  (~line 918)
 # Before: warnings_list = exec_res.get("warnings") or []  (~line 932)
 
-# Cache-miss observation: emit cache.below-min-tokens (observed tier) when the
+# Cache-miss observation: emit cache.below-min-predicted (observed tier) when the
 # provider reported zero cache activity for a node that declared prompt_cache:.
 # Uses setdefault-twice to PRESERVE any earlier-written warning (e.g. prewarm-
 # disabled from prep()). The empty-response handler below uses subscript
@@ -320,7 +320,7 @@ if declared_prompt_cache and isinstance(llm_usage, dict):
     if finding is not None:
         workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
         diag = make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id=finding.node_id,
             affected_workflow=workflow_path,
             model=finding.model,
@@ -684,7 +684,7 @@ def _block_to_dict(block: SuggestedBlock) -> dict[str, Any]:
 - `src/pflow/core/cache_analysis/render_text.py` — per-node threshold line (~25 LOC delta)
 - `src/pflow/core/cache_analysis/render_json.py` — `per_node_thresholds` projection (~3 LOC delta)
 
-**UPDATED — tests** (every site that constructs `make_diagnostic("cache.below-min-tokens", ...)` needs new context keys: `evidence_kind`, `provider_note`):
+**UPDATED — tests** (every site that constructs `make_diagnostic("cache.below-min-predicted", ...)` needs new context keys: `evidence_kind`, `provider_note`):
 - `tests/test_core/test_below_min_tokens_detector.py` (NEW) — detector unit tests (~120 LOC)
 - `tests/test_core/test_cache_analysis_warnings.py` — UPDATE 4 sites: lines 162-174, 277-282, 289-295, and `_minimal_context_kwargs` at line 495-501. Plus dispatch + provider-clause tests.
 - `tests/test_core/test_cache_analysis_per_id_coverage.py` — UPDATE `_kwargs_for` at lines 91-99.
@@ -695,7 +695,7 @@ def _block_to_dict(block: SuggestedBlock) -> dict[str, Any]:
 - `tests/test_execution/test_runner.py` — `_extract_runtime_warnings` Diagnostic pass-through tests.
 - `tests/test_core/test_trace_report.py` — `_append_runtime_warnings` id + suggestions rendering; legacy dict-shape no-regression tests.
 - `tests/test_nodes/test_llm_node.py` — runtime emit site tests; observed-tier behavior; coexistence with empty-response.
-- `tests/test_execution/test_plan_cache_nudge.py` — verify catalog row update doesn't break the dry-run nudge path which uses `cache.below-min-tokens`.
+- `tests/test_execution/test_plan_cache_nudge.py` — verify catalog row update doesn't break the dry-run nudge path which uses `cache.below-min-predicted`.
 
 **UPDATED — documentation**:
 - `src/pflow/core/cache_analysis/CLAUDE.md` — note the dual emit sites + dispatch table + new detector module + sub-workflow same-id collision caveat.
@@ -779,7 +779,7 @@ With `small_doc` resolving to <4096 tokens. Run:
 ```bash
 uv run pflow run repro.pflow.md --inputs '{"small_doc": "..."}' --report
 ```
-Expected: trace-report markdown contains `## Runtime Warnings` with `[cache.below-min-tokens]` and the **observed-tier** message ("did not fire on this call ... below claude-haiku-4-5's minimum of 4096 tokens; cache_control markers will silently no-op at the provider"). Suggestions bulleted underneath.
+Expected: trace-report markdown contains `## Runtime Warnings` with `[cache.below-min-predicted]` and the **observed-tier** message ("did not fire on this call ... below claude-haiku-4-5's minimum of 4096 tokens; cache_control markers will silently no-op at the provider"). Suggestions bulleted underneath.
 
 **3. Provider-aware text (Finding #10)** — repeat above with Gemini and OpenAI models. Verify Anthropic + Gemini provider notes render correctly; OpenAI omits the note (clean message ending with min_tokens).
 
@@ -822,7 +822,7 @@ Expected: trace-report markdown contains `## Runtime Warnings` with `[cache.belo
 
 11. **`workflow_executor._extract_child_error` (line 528-530)** uses `normalize_runtime_warning` to extract the message. With the new Diagnostic branch, it gets the human-readable message. Verify no test asserts a specific dict-shape repr from this path.
 
-12. **`tests/test_core/test_cache_analysis_warnings.py` `_minimal_context_kwargs`** at line 495-501 is the SSoT for catalog-iteration tests. MUST be updated to include `evidence_kind` and `provider_note` for `cache.below-min-tokens`. Same for `_kwargs_for` in `test_cache_analysis_per_id_coverage.py` at line 91-99.
+12. **`tests/test_core/test_cache_analysis_warnings.py` `_minimal_context_kwargs`** at line 495-501 is the SSoT for catalog-iteration tests. MUST be updated to include `evidence_kind` and `provider_note` for `cache.below-min-predicted`. Same for `_kwargs_for` in `test_cache_analysis_per_id_coverage.py` at line 91-99.
 
 13. **Pre-merge sanity**: `git diff --stat` should show only the files listed in "Files to modify". Any unintended scope creep is a red flag.
 

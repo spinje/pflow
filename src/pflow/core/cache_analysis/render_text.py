@@ -1600,7 +1600,7 @@ def _visible_per_call_rows(
     if not real_data_rows:
         return [], 0, False
     # Analytical detections (cache.dynamic-before-static, cache.padding-advisory,
-    # cache.batch-prewarm-recommended, cache.below-min-tokens, etc.) emit Diagnostic
+    # cache.batch-prewarm-recommended, cache.below-min-predicted, etc.) emit Diagnostic
     # objects to ``analysis.warnings`` rather than populating ``row.warnings``. The
     # default-hide rule MUST consult analysis-wide warnings.
     nodes_with_warnings = set(_warnings_by_row_key(analysis))

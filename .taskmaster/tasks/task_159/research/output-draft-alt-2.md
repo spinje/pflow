@@ -89,7 +89,7 @@ Confidence: low (no trace data — estimates from static analysis only)
   error  cache.batch-prewarm-required  chorus-chooser.score-choruses
          Fix: add `- prewarm: true` or `- prewarm: false`
 
-  warn   cache.below-min-tokens        review-stranger-summary
+  warn   cache.below-min-predicted        review-stranger-summary
          Declared cache content (640 tokens) below sonnet-4-5 minimum (1024).
          Markers will silently no-op. Remove prompt_cache: or add more context.
 
@@ -214,7 +214,7 @@ Confidence: low (no trace data — estimates from static analysis only)
 
 ## Design choices baked into this mockup
 
-- **Stable warning IDs use dotted hierarchy**: `cache.<category>-<specific>`. Greppable, namespace-clean, suppressable. Examples: `cache.shared-context-undeclared`, `cache.batch-prewarm-required`, `cache.padding-advisory`, `cache.below-min-tokens`, `cache.unused-chunk`.
+- **Stable warning IDs use dotted hierarchy**: `cache.<category>-<specific>`. Greppable, namespace-clean, suppressable. Examples: `cache.shared-context-undeclared`, `cache.batch-prewarm-required`, `cache.padding-advisory`, `cache.below-min-predicted`, `cache.unused-chunk`.
 - **Severity levels match pflow's existing Diagnostic**: `error` / `warn` / `info`. ERRORs block `pflow run` (validation-level); warnings and info don't.
 - **Confidence indicator at the top**: never hidden. `low_no_trace` vs `high_from_trace`.
 - **Cost numbers always have unit and magnitude visible**: `~$0.45/run`, `-60%`. Never bare numbers.

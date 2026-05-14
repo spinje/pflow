@@ -100,7 +100,7 @@ Key shape facts:
     { "rank": 2, "warning_id": "cache.prompt-body-duplicates-cache", "node_id": "test-call", "estimated_savings_usd": null, "scope_workflow": "..." }
   ],
   "recommended_actions": [
-    { "rank": 1, "warning_id": "cache.below-min-tokens", "node_id": "test-call", "estimated_savings_usd": null, "scope_workflow": "..." },
+    { "rank": 1, "warning_id": "cache.below-min-predicted", "node_id": "test-call", "estimated_savings_usd": null, "scope_workflow": "..." },
     { "rank": 2, "warning_id": "cache.first-call-write-penalty", "node_id": "test-call", "estimated_savings_usd": null, "scope_workflow": "..." }
   ],
   "warnings": [ /* unchanged: ALL diagnostics raw, with severity per entry */ ],
@@ -286,7 +286,7 @@ Delete `_build_recommended_actions` (lines 3431-3453, ~16 LOC) and its preceding
 
 12. **`tests/test_cli/test_analyze_cache.py`**
     - Remove `payload["format_version"]` assertions + import (lines 192, 199-200).
-    - **Add** assertion that `payload["blocking_errors"]` is present + has the right shape on a fixture with errors (mirror existing `cache.below-min-tokens` test pattern at line 122-142).
+    - **Add** assertion that `payload["blocking_errors"]` is present + has the right shape on a fixture with errors (mirror existing `cache.below-min-predicted` test pattern at line 122-142).
 
 13. **`tests/test_mcp_server/test_analyze_cache_tool.py`**
     - Remove `result["format_version"]` assertions + import across 3 test cases (lines 70, 75, 101, 106, 125, 137).
@@ -365,6 +365,6 @@ Each new firing test should fail with a clear assertion when the production guar
 
 ## Out of scope (filed as follow-ups, not in this PR)
 
-1. **Per-call inline ID severity tags** — the per-call report at the bottom currently shows IDs like `below-min-tokens, first-call-write-penalty, order-mismatch` without severity. Bundling into this commit would expand scope significantly. The structural fix at top is the primary win.
+1. **Per-call inline ID severity tags** — the per-call report at the bottom currently shows IDs like `below-min-predicted, first-call-write-penalty, order-mismatch` without severity. Bundling into this commit would expand scope significantly. The structural fix at top is the primary win.
 2. **Catalog ID brackets on errors** (`[cache.X]` prefix) — Stage-1 final pass dropped them; we keep that decision. Agents who need the catalog id for lookup read JSON `warnings[].id`.
 3. **Renaming `CacheAnalysis.warnings`** to a more accurate name (it holds ALL severities, the "warnings" name is historical) — separate refactor; not blocking this UX fix. Worth a follow-up issue.

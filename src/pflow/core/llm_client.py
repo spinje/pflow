@@ -813,7 +813,7 @@ def _normalize(
 
     # Cache fields preserved as ``int | None`` through normalization so we can
     # distinguish "provider reported zero" from "provider didn't expose cache
-    # telemetry." Load-bearing for the runtime ``cache.below-min-tokens`` guard
+    # telemetry." Load-bearing for the runtime ``cache.below-min-predicted`` guard
     # at ``LLMNode.post()``: zero counts only count as evidence the cache
     # failed to fire when the provider actually reported them. ``_safe_int``
     # collapses None → 0 and is wrong for this seam.

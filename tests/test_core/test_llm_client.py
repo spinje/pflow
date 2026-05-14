@@ -495,7 +495,7 @@ class TestCompleteUsageNormalization:
         assert response.usage["cache_creation_input_tokens"] == 0
         assert response.usage["cache_read_input_tokens"] == 0
         # Provider returned no cache telemetry — ``has_cache_telemetry`` MUST
-        # be False so the runtime ``cache.below-min-tokens`` guard skips
+        # be False so the runtime ``cache.below-min-predicted`` guard skips
         # rather than treat ``0+0`` as evidence of below-threshold cache.
         # Reviewer Finding 2 regression: pre-fix, the adapter normalized
         # absent telemetry to 0 with no presence flag, causing observed-tier

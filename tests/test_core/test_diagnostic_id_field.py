@@ -78,7 +78,7 @@ def test_id_distinguishes_two_different_warning_ids() -> None:
         severity=Severity.WARNING,
         source="cache_analyzer",
         node_id="n",
-        id="cache.below-min-tokens",
+        id="cache.below-min-predicted",
         message="same message",
     )
     assert a != b

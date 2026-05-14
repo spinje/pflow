@@ -132,7 +132,7 @@ def test_runtime_warning_diagnostic_passes_through_without_api_warning_wrapping(
     diagnostic = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",
+        id="cache.below-min-observed",
         node_id="ask",
         message="ask: declared cache did not fire",
         suggestions=["Increase cache content above 1024 tokens."],
@@ -143,7 +143,7 @@ def test_runtime_warning_diagnostic_passes_through_without_api_warning_wrapping(
     warnings = runner._extract_runtime_warnings({"__warnings__": {"ask": diagnostic}})
 
     assert warnings == [diagnostic]
-    assert warnings[0].id == "cache.below-min-tokens"
+    assert warnings[0].id == "cache.below-min-observed"
     assert warnings[0].suggestions == ["Increase cache content above 1024 tokens."]
     assert warnings[0].context == {"category": "cache_warning"}
 
@@ -152,7 +152,7 @@ def test_runtime_warning_diagnostic_missing_node_id_gets_store_key() -> None:
     diagnostic = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",
+        id="cache.below-min-observed",
         message="declared cache did not fire",
     )
     runner = WorkflowRunner()
@@ -192,11 +192,10 @@ def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_
 
     warning = result.shared_after["__warnings__"]["ask"]
     assert isinstance(warning, Diagnostic)
-    assert warning.id == "cache.below-min-tokens"
+    assert warning.id == "cache.below-min-observed"
     assert warning.context is not None
-    assert warning.context["evidence_kind"] == "observed"
     assert result.status == WorkflowStatus.DEGRADED
-    assert any(w.id == "cache.below-min-tokens" for w in result.warnings)
+    assert any(w.id == "cache.below-min-observed" for w in result.warnings)
 
 
 def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(mock_llm_client, monkeypatch) -> None:
@@ -323,7 +322,7 @@ def test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry
 
     Mutation contract: revert the guard to the ``not in llm_usage`` check
     OR set ``has_cache_telemetry=True`` in the fixture; this test fails
-    because ``cache.below-min-tokens`` is incorrectly emitted.
+    because ``cache.below-min-observed`` is incorrectly emitted.
     """
     from types import MappingProxyType
 
@@ -364,7 +363,7 @@ def test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry
 
     assert "__warnings__" not in shared, (
         "Provider returned no cache telemetry — observed-tier detection must skip "
-        "rather than emit a false-positive cache.below-min-tokens warning."
+        "rather than emit a false-positive cache.below-min-observed warning."
     )
 
 

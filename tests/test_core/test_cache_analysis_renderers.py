@@ -258,7 +258,7 @@ class TestMakeAnalysisShapeParity:
                 Diagnostic(
                     severity=Severity.WARNING,
                     source="cache_analyzer",
-                    id="cache.below-min-tokens",
+                    id="cache.below-min-predicted",
                     message="x",
                 ),
                 Diagnostic(
@@ -594,13 +594,13 @@ def test_json_warnings_use_diagnostic_to_dict_shape() -> None:
     diag = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",
+        id="cache.below-min-predicted",
         message="X: declared cache content is ~512 tokens, below claude/min of 1024",
         suggestions=["Add chunks"],
         context={"category": "cache_warning", "model": "claude-sonnet-4-5"},
     )
     result = render_json(_make_analysis(warnings=[diag]))
-    assert result["warnings"][0]["id"] == "cache.below-min-tokens"
+    assert result["warnings"][0]["id"] == "cache.below-min-predicted"
     assert result["warnings"][0]["severity"] == "warning"
 
 
@@ -2523,23 +2523,21 @@ def test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_mu
 
     warnings = [
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="draft",
             affected_workflow="/abs/workflows/parent.pflow.md",
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         ),
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="draft",
             affected_workflow="/abs/workflows/child.pflow.md",
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         ),
     ]
@@ -2554,13 +2552,12 @@ def test_text_recommended_actions_single_workflow_omits_scope_suffix() -> None:
 
     warnings = [
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="rewrite",
             affected_workflow="/abs/x.pflow.md",
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         ),
     ]
@@ -2599,23 +2596,21 @@ def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> N
 
     warnings = [
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="draft",
             affected_workflow="/abs/workflows/parent.pflow.md",
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         ),
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="draft",
             affected_workflow="/abs/workflows/child.pflow.md",
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         ),
     ]
@@ -2623,7 +2618,7 @@ def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> N
     action_scopes = {
         (action["node_id"], action["scope_workflow"])
         for action in result["recommended_actions"]
-        if action["warning_id"] == "cache.below-min-tokens"
+        if action["warning_id"] == "cache.below-min-predicted"
     }
     assert ("draft", "/abs/workflows/parent.pflow.md") in action_scopes
     assert ("draft", "/abs/workflows/child.pflow.md") in action_scopes
@@ -2641,7 +2636,7 @@ def test_json_blocking_errors_array_present_and_excludes_warnings() -> None:
         Diagnostic(
             severity=Severity.WARNING,
             source="cache_analyzer",
-            id="cache.below-min-tokens",
+            id="cache.below-min-predicted",
             node_id="test-call",
             message="Below minimum",
         ),
@@ -3580,7 +3575,7 @@ def test_text_blocking_errors_section_appears_between_summary_and_recommended_ac
         Diagnostic(
             severity=Severity.WARNING,
             source="cache_analyzer",
-            id="cache.below-min-tokens",
+            id="cache.below-min-predicted",
             node_id="test-call",
             message="Below minimum",
         ),
@@ -3595,7 +3590,7 @@ def test_text_blocking_errors_section_omitted_when_no_errors() -> None:
         Diagnostic(
             severity=Severity.WARNING,
             source="cache_analyzer",
-            id="cache.below-min-tokens",
+            id="cache.below-min-predicted",
             node_id="test-call",
             message="Below minimum",
         )
