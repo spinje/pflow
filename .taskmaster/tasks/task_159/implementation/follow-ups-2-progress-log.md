@@ -798,3 +798,120 @@ Baselines: all `expected-stdout.txt` files regenerated (drift was the conditiona
 - P3 (explainer omits `?`/`—` placeholders) — closed, gated on actual usage.
 - U2 (doc prose leaks `cache-active` JSON field name) — closed.
 - P2 (diagnostic_ids hardcoded predicted ID for rendered case) — closed for both declared and prewarm components.
+
+## 2026-05-15 — Cache ready/opportunity closeout: rationale (lifting WHY into the durable artifact)
+
+The implementation plan at `scratchpads/cache-ready-opportunity-plan/implementation-plan.md` is being removed (scratchpads are throwaway per Bundle 3's lesson — the progress log is the lasting artifact). The six prior checkpoint entries trace WHAT shipped phase-by-phase, but the load-bearing WHY lives only in the plan. This entry lifts the rationale before deletion so future contributors (Task 160 architectural refactor, projection-model extensions, anyone wondering why four projection fields exist) read it in the durable artifact.
+
+### The motivating problem
+
+`PerCallRow.cacheable_tokens_estimated` was overloaded. It tried to answer two distinct agent questions with one number:
+
+- **"Where should I spend optimization effort?"** — agents triaging a workflow want maximum unrealized upside.
+- **"What's already cached or one-edit-away?"** — agents validating a fix want to confirm caching is in place.
+
+A single scalar can't answer both. Worse, the old detector's `>=2 shared-ref` rule reported only what could be proven safely from the narrowest evidence — literal stable text and trace-resolved code-node outputs were invisible to it. Result: agents reading `could_cache: 41` on a row with ~900 tokens of provably-cacheable stable prefix would either (a) declare the workflow already-optimized when ~860 tokens of upside remained, or (b) chase the 41-token figure as if it represented total opportunity.
+
+### The two-question split — `cache_ready` vs `cache_opportunity`
+
+The core UX insight that the four-projection model encodes:
+
+- **`cache_ready`**: "Can an agent unlock these tokens with a **direct cache configuration edit**, without moving prompt content?" High when the prompt is already in cache-friendly order (stable content before dynamic refs) and the only missing piece is the cache declaration itself (`prompt_cache:` or `prewarm: true`).
+
+- **`cache_opportunity`**: "What's the **maximum provable unrealized upside** after whatever edit the note names?" Equal to `cache_ready` when the direct edit also yields the maximum upside (stable prefix already first). Higher than `cache_ready` when prompt reordering unlocks more (dynamic ref currently appears before stable content).
+
+The contrast that made this distinction load-bearing:
+
+```text
+Prompt already cache-friendly:                          ready ~= opportunity (both high, add_prewarm)
+                                                          → "add prewarm: true; that's all you need"
+
+Dynamic ref before stable content:                      ready ~= 0,  opportunity high
+                                                          → "move the dynamic ref after stable content"
+```
+
+Both are actionable, but the actions are categorically different. One number can't carry that.
+
+### Measurement-depth shift, not a refactor
+
+`cache_opportunity` is a **fundamentally new measurement**, not a renamed `cacheable_tokens_estimated`. The depth shift across dimensions:
+
+| Evidence source | Old `cacheable_tokens_estimated` | New `cache_opportunity` |
+|---|---|---|
+| Literal stable text before first per-item ref | NOT tokenized | Tokenized via Phase 3 prefix tokenizer |
+| Code-node outputs as stable refs (`${build-X.result.Y}`) | NOT resolvable (old `resolve_ref_value()` didn't read trace event outputs) | Resolved via Phase 3 `trace_outputs_by_key` |
+| Refs used by exactly one LLM node | EXCLUDED by `_detect_candidate_subsets` `>=2` rule | Included via prefix tokenization OR Phase 5 non-batch detector |
+| Post-refactor upside (move dynamic ref later) | NOT modeled | Modeled via `action="move_dynamic_ref_after_stable_prefix"` |
+| Below-provider-min cases | Suppressed at several gates | Always visible with `meets_provider_min=False`, `affects_cost_projection=False` |
+| Aggregation across multiple components per row | Winner-take-all over one scalar | Components collected + aggregated; each carries its own `actionability` |
+
+The `score-choruses` canary captures this concretely. The row went from `could_cache: 41` (old) → `ready ~1,129 / upside ~1,129` (new). The 41 figure wasn't wrong — it was the only thing the narrow candidate detector could prove. The new measurement is wider because it draws on evidence sources the old detector didn't consult. **The shift is intentional measurement deepening, not a bug fix.**
+
+### Wrong-model sites fixed by the additive declared-vs-prewarm decision
+
+Three sites in `analyze.py` encoded a false assumption: that declared `prompt_cache:` and `prewarm: true` were mutually exclusive mechanisms competing for the same cacheable bytes. Runtime evidence is unambiguous — they're disjoint provider breakpoints (DD#11): declared chunks render via `_build_system_blocks` (system role); prewarm prefix renders via `_build_user_message_blocks` (user role). Two separate `cache_control` markers per call, additive.
+
+The three sites and their fixes:
+
+| Site | Old (wrong) shape | Fix |
+|---|---|---|
+| `_per_node_warnings(...)` comment above `cache.batch-prewarm-below-min` | `"when ## Cache is declared, prewarm writes that chunk once via the serialized first call — the prompt-body prefix is irrelevant"` | Deleted. Phase 1's Configured prewarm component directly contradicted it. |
+| `_estimate_batch_prefix_cacheable_tokens(...)` walker guard | `if declared_subset or not isinstance(batch, dict): return None` | Lifted the `declared_subset` portion. Walker now runs for combined nodes so the prewarm component has tokens to claim. |
+| `cache.batch-prewarm-below-min` gate | `... and not row.declared_prompt_cache` | Removed the `not row.declared_prompt_cache` clause. Component-level `meets_provider_min=False` is structured; the catalog warning must still fire so agents learn prewarm won't serve at the provider regardless of declared cache state. |
+
+These were closed bugs, not new features. Future contributors must not re-introduce the wrong mental model.
+
+### Cost-math invariant preserved
+
+Only `cache_active` feeds cost projections. `cache_ready` and `cache_opportunity` are UX prioritization values — they may not reduce `first_run_with_cache_hypothetical_usd` or `rerun_within_ttl_hypothetical_usd`. The no-cache baseline still anchors on `input_tokens_estimated` per Bundle 1's F#1 closeout (counterfactual #1: "same prompt, no discount" — not "delete cache declaration entirely"). Post-review P2 fix verified `diagnostic_ids` match the actually-emitted diagnostic, locking Phase 6's rule that recommended actions reuse catalog IDs rather than synthesizing from row fields.
+
+### Phase coverage audit
+
+All 7 plan phases shipped. Mapping for the audit trail:
+
+| Plan phase | Where it shipped |
+|---|---|
+| Phase 1 — Add component projection model without new detection | 2026-05-15 Phase 1-2 checkpoint |
+| Phase 2 — Move consumers to explicit fields | 2026-05-15 Phase 1-2 checkpoint |
+| Phase 3 — Exact stable-prefix opportunity resolver (dual-producer trace index) | 2026-05-15 Phase 3 checkpoint |
+| Phase 4 — Model reorder opportunities as opportunity, not ready | 2026-05-15 Phases 4-5 checkpoint |
+| Phase 5 — Repeated non-batch stable refs (separate detector, not `>=1` loosening) | 2026-05-15 Phases 4-5 checkpoint |
+| Phase 6 — Recommended actions reuse catalog IDs, never synthesized from row fields | Verified by post-review P2 fix (matched `diagnostic_ids` to actually-emitted diagnostics) |
+| Phase 7 — JSON 5.0, docs, baselines | 2026-05-15 docs/schema checkpoint + final checkpoint |
+
+### Completion criteria verified
+
+The plan's completion checklist, audited against the shipped state:
+
+- ✓ `PerCallRow` has explicit `cache_active`, `cache_ready`, `cache_opportunity` projections.
+- ✓ Text output no longer uses `could_cache` — column renamed to `cached_now` / `ready` / `upside`.
+- ✓ Default row ordering prioritizes opportunity; opportunity does not corrupt cost math.
+- ✓ Recommended actions diagnostic-driven (P2 post-review locked this).
+- ✓ `score-choruses` canary: `ready ~1,129` / `upside ~1,129`, `action="add_prewarm"`, `meets_provider_min=False`, `blocked_reason="below_provider_min"`, `affects_cost_projection=False`, rendered note mentions "add prewarm" + "below Gemini 4,096 min" (final checkpoint).
+- ✓ No regressions in `12-real-world-lyrics-generator/*` outside intended drift; every drift classified before regeneration per the canary protocol.
+- ✓ Cost-math counterfactual preserved: `no_cache_hypothetical_usd` computes from `input_tokens_estimated × rate × invocations`.
+- ✓ Three wrong-model sites fixed (enumerated above).
+- ✓ Dual-producer test exists and passes (Phase 3 checkpoint names it: `test_build_trace_execution_index_collects_top_level_and_batch_node_outputs`).
+- ✓ JSON/MCP docs describe new fields + JSON 5.0 legacy removal (docs/schema checkpoint).
+- ✓ Baselines verify cleanly: 87 pass / 0 drifted / 0 harness errors (final checkpoint).
+- ✓ Progress log documents learnings + deviations.
+
+### What this closeout does NOT capture
+
+Anyone needing the full implementer pre-flight briefing (trace-output dual-producer audit specifics, dangerous shortcuts list, parallel subagent dispatch protocol) should consult Bundles 3 / 4 / 5 progress log entries for the patterns and the cache-analysis CLAUDE.md sections for the current-state semantics:
+
+- `src/pflow/core/cache_analysis/CLAUDE.md` § Projection model
+- `src/pflow/core/cache_analysis/CLAUDE.md` § Per-call Unit Contract
+- `src/pflow/core/cache_analysis/CLAUDE.md` § token_estimation.py (4-tier hierarchy + symmetric fall-through)
+
+### Files removed
+
+- `scratchpads/cache-ready-opportunity-plan/implementation-plan.md` (1,344 lines) — rationale lifted to this entry; scratchpad deleted.
+
+### Backlog report sync
+
+- `.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md` now marks the combined `prewarm: true` + `prompt_cache` additive-evidence item closed. The closeout would otherwise contradict the priority map by saying Phase 1 shipped while the durable backlog still listed that same work as the top open item.
+
+### Closes
+
+- Cache ready/opportunity plan — closed; rationale durable in this entry, scratchpad removed.
