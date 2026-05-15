@@ -53,9 +53,6 @@ Highest-value open items:
    (will be subsumed by cache-ready-opportunity plan Phase 1).
 2. Prewarm recommendation can still ignore provider minimum in one path.
 3. Run output still hides the actionable provider error behind large payloads.
-4. Runtime cost summary `pricing unavailable for: unknown` — partial fix
-   shipped in Bundle 4 (model names + unnamed counts surfaced); per-model
-   call counts (`X of N calls`) remains additive follow-up.
 
 Closed:
 
@@ -69,6 +66,16 @@ Closed:
   test, sub-workflow baseline, stale doc count). Remaining sub-cases (GH #368,
   OpenAI reasoning) gated on empirically-verified failure modes — see section
   21 for reopen criteria.
+- ~~Runtime cost summary `pricing unavailable for: unknown`~~ — closed in
+  Bundle 7 (2026-05-15). Bundle 4 surfaced model names + unnamed counts;
+  Bundle 7 added per-model call counts (`(N calls)` per model) and a
+  `Total LLM calls: N` sibling line on CLI + success_formatter for parity
+  with `trace_report.py`. See section 17 below.
+- ~~"Blocking errors" can include fallback/error-path nodes~~ — closed as
+  misframed in Bundle 7 (2026-05-15). The cache-vs-other split already
+  exists (Task 159 Stage 0 / JSON 4.1); unsynced MCP fallback nodes are
+  genuinely blocking for save/run; F#22 makes the diagnostic actionable.
+  See section 19 below.
 
 ## Analyze-cache Correctness
 
@@ -502,22 +509,52 @@ GitHub tracking: related issue
 [#385](https://github.com/spinje/pflow/issues/385) overlaps on concise batch
 failure context and replacing huge item dumps with a fingerprint/preview.
 
-### 19. "Blocking errors" can include fallback/error-path nodes
+### 19. "Blocking errors" can include fallback/error-path nodes — CLOSED AS MISFRAMED (Bundle 7, 2026-05-15)
 
-Original failure: validation could report an unknown MCP fallback node under
-`Blocking errors` even though that node was only reachable through `on-error`
-and the primary path could run.
+**Status: closed.** Investigation showed two reasons the original framing
+no longer applies:
 
-Trigger shape: fallback/error-path node is invalid or unavailable, but normal
-path analysis can continue.
+**1. The cache-vs-other split already exists.** The analyzer's JSON output
+already exposes two separate arrays for ERROR-severity diagnostics: one
+holds cache-domain errors that block save and run (cache catalog IDs plus
+`llm.thinking-temperature-mismatch`); the other holds non-cache validator
+errors surfaced for awareness. The text renderer adapts its section
+header accordingly — `## Other blocking errors (surfaced for awareness)`
+when cache-blocking errors are also present, `## Blocking errors`
+otherwise. The original framing assumed all ERROR-severity diagnostics
+collapsed into one undifferentiated "Blocking errors" bucket. They do
+not.
 
-Why it matters: "Blocking" implies the whole workflow cannot be analyzed or
-executed, which overstates conditional-path issues.
+A concrete example: an unknown-MCP-node-type diagnostic on a fallback
+node (e.g. `fetch-youtube-mcp` referenced via `- on-error:`) lands in
+the second array, not the first. An agent consuming JSON can tell them
+apart by which array the diagnostic appears in; an agent reading text
+sees the adaptive header.
 
-Desired fix:
+**2. "Conditional path" understates the actual risk.** An unsynced MCP
+fallback node IS genuinely blocking for both `pflow save` (validator
+rejects) and `pflow run` (compilation will fail when the error edge is
+exercised). Treating it as a soft "conditional-path" warning would mask a
+failure mode that fires the moment a fallback path is taken. The current
+ERROR-severity treatment is correct.
 
-- Split truly blocking errors from conditional/error-path limitations.
-- Explain which path is affected.
+**3. Once F#22 lands, the diagnostic is actionable.** Bundle 7's F#22 fix
+adds the `pflow mcp sync <server>` hint to the existing diagnostic for
+the specific failure mode the original framing cited. The agent UX
+problem the framing wanted to solve — "I see a blocking error but can't
+act on it" — is resolved at the suggestion-text layer, not by
+reclassifying severity.
+
+**Reopen criteria** (the closeout is not absolute):
+
+- A concrete failure mode where a non-cache validator ERROR on a node
+  reachable only via an `action="error"` edge genuinely should NOT block
+  `pflow save` / `pflow run`. The fallback-MCP case is not such a mode —
+  the workflow really does break when the error path fires.
+- A reproducible workflow showing user-visible friction the existing
+  two-array split + F#22 suggestion text together do not resolve.
+
+Without those: keep closed.
 
 ### 20. Negative "Actual savings" wording is confusing — CLOSED in Bundle 1 (2026-05-14)
 

@@ -78,6 +78,53 @@ def _add_child_provenance(
     return result
 
 
+def _mcp_sync_hint_for_unknown_node_type(node_type: str) -> tuple[str, str] | None:
+    """Return (server_name, suggestion_text) when an unknown mcp-* node type
+    matches a configured MCP server with zero synced tools. Returns None
+    when the node type isn't MCP-shaped, doesn't parse, isn't a registered
+    server, or has at least one synced tool (in which case the missing tool
+    is the user's real problem — fuzzy-match suggestion is more useful).
+
+    Wraps MCP infrastructure calls in a broad ``except Exception`` so that
+    a corrupted MCP config or settings load never crashes the validator.
+    """
+    if not node_type.startswith("mcp-"):
+        return None
+
+    # Lazy import keeps the core/validator → runtime/ boundary clean.
+    from pflow.core.exceptions import CompilationError
+    from pflow.runtime.compilation.mcp_resolution import _parse_mcp_node_type
+
+    try:
+        server, _tool = _parse_mcp_node_type(node_type)
+    except CompilationError:
+        # Unparseable as an MCP node — not confidently MCP-shaped enough
+        # to suggest a sync. Let the generic fuzzy-match path run.
+        return None
+
+    try:
+        # Lazy imports — MCP infrastructure is optional.
+        from pflow.mcp.manager import MCPServerManager
+        from pflow.mcp.registrar import MCPRegistrar
+
+        if server not in MCPServerManager().list_servers():
+            return None
+        # At least one synced tool means the user has the wrong tool name,
+        # not a missing sync. Fuzzy-match suggestion is more useful.
+        if MCPRegistrar().list_registered_tools(server) != []:
+            return None
+    except Exception:
+        # MCP config corruption, settings load failure, or any other
+        # infrastructure issue must NEVER crash the validator. Fall
+        # back to the generic fuzzy-match path.
+        return None
+
+    return (
+        server,
+        f"Run 'pflow mcp sync {server}' to discover tools for the '{server}' MCP server.",
+    )
+
+
 class WorkflowValidator:
     """Orchestrates all workflow validation checks.
 
@@ -344,6 +391,21 @@ class WorkflowValidator:
                 similar = (
                     find_similar_items(node_type, known_types, max_results=3, method="fuzzy") if known_types else []
                 )
+
+                mcp_sync_hint = _mcp_sync_hint_for_unknown_node_type(node_type)
+
+                suggestions: list[str] | None
+                extra_context: dict[str, Any] = {}
+                if mcp_sync_hint is not None:
+                    server_name, suggestion_text = mcp_sync_hint
+                    suggestions = [suggestion_text]
+                    extra_context["mcp_server"] = server_name
+                    extra_context["mcp_sync_required"] = True
+                elif similar:
+                    suggestions = [f"Did you mean '{similar[0]}'?"]
+                else:
+                    suggestions = None
+
                 diagnostics.append(
                     Diagnostic(
                         severity=Severity.ERROR,
@@ -351,12 +413,13 @@ class WorkflowValidator:
                         title="Validation Error",
                         node_id=node.get("id", "unknown"),
                         message=f"Unknown node type: '{node_type}'",
-                        suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
+                        suggestions=suggestions,
                         context={
                             "category": "validation",
                             "path": f"nodes[{index}].type",
                             "node_type": node_type,
                             "similar_names": similar or None,
+                            **extra_context,
                         },
                     )
                 )

@@ -856,7 +856,8 @@ class TestWorkflowTraceCollector:
             assert summary["total_cost_usd"] is None
             assert summary["pricing_available"] is False
             assert summary["partial_cost_usd"] == pytest.approx(0.05)
-            assert summary["unavailable_models"] == ["ollama/llama3.2"]
+            # F#17 deferred: per-model call counts ride alongside model names.
+            assert summary["unavailable_models"] == [{"name": "ollama/llama3.2", "calls": 1}]
 
     def test_llm_summary_all_unpriced_no_partial(self, collector, temp_home):
         """When every call is unpriced, partial_cost_usd is None (not 0.0)."""
@@ -879,7 +880,7 @@ class TestWorkflowTraceCollector:
             assert summary["total_cost_usd"] is None
             assert summary["partial_cost_usd"] is None
             assert summary["pricing_available"] is False
-            assert summary["unavailable_models"] == ["ollama/llama3.2"]
+            assert summary["unavailable_models"] == [{"name": "ollama/llama3.2", "calls": 1}]
 
     def test_llm_summary_includes_input_output_tokens(self, collector, temp_home):
         """Test that _collect_llm_summary accumulates input/output token breakdown."""
@@ -922,6 +923,44 @@ class TestWorkflowTraceCollector:
             assert summary["total_input_tokens"] == 800
             assert summary["total_output_tokens"] == 350
             assert summary["total_tokens"] == 1150
+
+    def test_llm_summary_unavailable_models_per_model_call_counts(self, collector, temp_home):
+        """F#17 deferred: when the same unpriced model is called multiple
+        times, ``unavailable_models`` carries the per-model count so
+        renderers can show ``model (N calls)``.
+        """
+        with patch("pathlib.Path.home", return_value=temp_home):
+            for idx in range(3):
+                collector.record_node_execution(
+                    node_id=f"unpriced-{idx}",
+                    node_type="LLMNode",
+                    duration_ms=10.0,
+                    success=True,
+                    node_output={
+                        "llm_usage": {"model": "ollama/llama3.2", "total_tokens": 5, "cost_usd": None},
+                    },
+                )
+            collector.record_node_execution(
+                node_id="other-unpriced",
+                node_type="LLMNode",
+                duration_ms=10.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "custom/foo", "total_tokens": 5, "cost_usd": None},
+                },
+            )
+
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            # Sorted by name for determinism
+            assert summary["unavailable_models"] == [
+                {"name": "custom/foo", "calls": 1},
+                {"name": "ollama/llama3.2", "calls": 3},
+            ]
+            assert summary["total_calls"] == 4
 
     def test_optional_fields_omitted_when_none(self, collector):
         """Test that optional fields (node_params, mutations, etc.) are omitted when not provided."""

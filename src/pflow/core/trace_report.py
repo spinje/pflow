@@ -713,12 +713,12 @@ def _build_summary(
         if cost is not None and cost > 0:
             lines.append(f"- Total cost: ${cost:.4f}")
         elif llm.get("pricing_available") is False:
-            from pflow.core.metrics import format_unavailable_models_phrase
+            from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
 
             partial = llm.get("partial_cost_usd")
-            unavailable = llm.get("unavailable_models", [])
+            unavailable_counts = unavailable_models_to_counts(llm.get("unavailable_models", []))
             unavailable_unnamed_count = llm.get("unavailable_models_unnamed_count", 0)
-            models_phrase = format_unavailable_models_phrase(unavailable, unavailable_unnamed_count)
+            models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
             if partial is not None and partial > 0:
                 lines.append(f"- Total cost: — (pricing unavailable for {models_phrase}; partial cost ${partial:.4f})")
             else:

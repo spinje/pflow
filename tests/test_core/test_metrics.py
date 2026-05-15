@@ -38,7 +38,12 @@ class TestMetricsCollector:
         assert cost_data["total_cost_usd"] == round(0.000045 + 0.00009 + 0.0000675, 6)
 
     def test_unknown_model_uses_default_pricing(self):
-        """Test that unknown models are handled gracefully."""
+        """Test that unknown models are handled gracefully.
+
+        Bundle 7 / F#17 deferred: ``unavailable_models`` is now a list of
+        ``{"name": str, "calls": int}`` dicts so renderers can surface
+        per-model call counts.
+        """
         collector = MetricsCollector()
 
         llm_calls = [{"model": "unknown-model-xyz", "input_tokens": 1000, "output_tokens": 500}]
@@ -47,7 +52,7 @@ class TestMetricsCollector:
         cost_data = collector.calculate_costs(llm_calls)
         assert cost_data["pricing_available"] is False
         assert cost_data["total_cost_usd"] is None
-        assert "unknown-model-xyz" in cost_data["unavailable_models"]
+        assert cost_data["unavailable_models"] == [{"name": "unknown-model-xyz", "calls": 1}]
 
     def test_summary_generation_with_workflow_metrics(self):
         """Test summary generation when workflow metrics are present."""
@@ -159,8 +164,9 @@ class TestMetricsCollector:
         assert cost_data["total_cost_usd"] is None
         # The "unknown" opaque sentinel is GONE — real names land in
         # unavailable_models, genuinely-unrecorded calls are counted instead.
-        assert "unknown" not in cost_data["unavailable_models"]
-        assert "gpt-4o-mini" in cost_data["unavailable_models"]
+        names = [entry["name"] for entry in cost_data["unavailable_models"]]
+        assert "unknown" not in names
+        assert "gpt-4o-mini" in names
         # 2 unnamed: {input_tokens}, {output_tokens} (the empty {} is skipped)
         assert cost_data["unavailable_models_unnamed_count"] == 2
         assert cost_data["partial_cost_usd"] == 0.00009  # Only the priced entry contributes
@@ -345,7 +351,7 @@ class TestUnnamedCallTracking:
         ]
 
         cost_data = collector.calculate_costs(llm_calls)
-        assert cost_data["unavailable_models"] == ["anthropic/claude-future"]
+        assert cost_data["unavailable_models"] == [{"name": "anthropic/claude-future", "calls": 1}]
         assert cost_data["unavailable_models_unnamed_count"] == 1
 
     def test_workflow_trace_accumulator_unnamed_call_path(self):
@@ -361,32 +367,126 @@ class TestUnnamedCallTracking:
 
         result = agg.as_dict()
         assert result["pricing_available"] is False
-        assert result["unavailable_models"] == ["ollama/llama3.2"]
+        assert result["unavailable_models"] == [{"name": "ollama/llama3.2", "calls": 1}]
         assert result["unavailable_models_unnamed_count"] == 2
         assert VALIDATION_PLACEHOLDER not in result["models_used"]
 
 
 class TestFormatUnavailableModelsPhrase:
-    """Tests for the shared rendering helper."""
+    """Tests for the shared rendering helper.
 
-    def test_named_models_only(self):
-        phrase = format_unavailable_models_phrase(["gpt-5", "claude-future"], 0)
-        assert phrase == "gpt-5, claude-future"
+    Bundle 7 / F#17 deferred: helper now takes ``Mapping[str, int]`` so it
+    can render per-model call counts; multiple names sort alphabetically
+    for deterministic output.
+    """
+
+    def test_single_named_model_singular(self):
+        # 1 call uses singular noun
+        phrase = format_unavailable_models_phrase({"gpt-5": 1}, 0)
+        assert phrase == "gpt-5 (1 call)"
+
+    def test_single_named_model_plural(self):
+        # Multiple calls use plural noun
+        phrase = format_unavailable_models_phrase({"gpt-5": 3}, 0)
+        assert phrase == "gpt-5 (3 calls)"
+
+    def test_named_models_sort_by_name(self):
+        # Deterministic order regardless of dict insertion order
+        phrase = format_unavailable_models_phrase(
+            {"openai/gpt-5": 4, "anthropic/claude-future": 2},
+            0,
+        )
+        assert phrase == "anthropic/claude-future (2 calls), openai/gpt-5 (4 calls)"
 
     def test_unnamed_count_only_singular(self):
-        phrase = format_unavailable_models_phrase([], 1)
+        phrase = format_unavailable_models_phrase({}, 1)
         assert phrase == "1 call without recorded model"
 
     def test_unnamed_count_only_plural(self):
-        phrase = format_unavailable_models_phrase([], 3)
+        phrase = format_unavailable_models_phrase({}, 3)
         assert phrase == "3 calls without recorded model"
 
     def test_both_named_and_unnamed(self):
-        phrase = format_unavailable_models_phrase(["gpt-5"], 2)
-        assert phrase == "gpt-5; 2 calls without recorded model"
+        phrase = format_unavailable_models_phrase({"gpt-5": 1}, 2)
+        assert phrase == "gpt-5 (1 call); 2 calls without recorded model"
 
-    def test_neither_falls_back_to_placeholder(self):
-        # Defensive: callers should not invoke this when there's nothing
-        # to render, but the helper returns a non-empty string anyway.
-        phrase = format_unavailable_models_phrase([], 0)
-        assert phrase == "no models"
+    def test_neither_returns_empty_string(self):
+        # F#17 deferred: empty + zero unnamed returns empty string (not the
+        # legacy "no models" placeholder — callers gate emission externally).
+        phrase = format_unavailable_models_phrase({}, 0)
+        assert phrase == ""
+
+    def test_legacy_count_zero_renders_bare_name(self):
+        # Defensive: a Mapping carrying count=0 (legacy trace shape after
+        # passing through ``unavailable_models_to_counts``) renders the bare
+        # model name rather than a confusing "(0 calls)".
+        phrase = format_unavailable_models_phrase({"legacy-model": 0}, 0)
+        assert phrase == "legacy-model"
+
+    def test_mixed_singular_and_plural(self):
+        # F#17 wording lock: each model independently picks singular/plural
+        phrase = format_unavailable_models_phrase(
+            {"alpha": 1, "beta": 2},
+            0,
+        )
+        assert phrase == "alpha (1 call), beta (2 calls)"
+
+
+class TestCalculateCostsCounterShape:
+    """Bundle 7 / F#17 deferred: per-model call counts ride through the
+    ``unavailable_models`` JSON shape so renderers don't have to rebuild
+    them from individual call events. Producer-shape tests (not synthetic
+    dicts): drive ``MetricsCollector.calculate_costs`` with realistic call
+    lists.
+    """
+
+    def test_unavailable_models_carries_call_count_per_model(self):
+        collector = MetricsCollector()
+
+        llm_calls = [
+            {"model": "ollama/llama3.2", "cost_usd": None},
+            {"model": "ollama/llama3.2", "cost_usd": None},
+            {"model": "ollama/llama3.2", "cost_usd": None},
+            {"model": "custom/foo", "cost_usd": None},
+        ]
+
+        cost_data = collector.calculate_costs(llm_calls)
+        # Sorted by name for determinism
+        assert cost_data["unavailable_models"] == [
+            {"name": "custom/foo", "calls": 1},
+            {"name": "ollama/llama3.2", "calls": 3},
+        ]
+
+    def test_total_calls_in_summary(self):
+        """``get_summary`` exposes ``total_calls`` at ``metrics.total`` so
+        renderers can surface a ``Total LLM calls: N`` sibling line."""
+        collector = MetricsCollector()
+        collector.record_node_execution("llm-1", 10.0)
+
+        llm_calls = [
+            {"model": "gpt-4", "cost_usd": 0.01, "input_tokens": 100, "output_tokens": 50},
+            {"model": "gpt-4", "cost_usd": 0.02, "input_tokens": 200, "output_tokens": 75},
+            {"model": "ollama/llama3.2", "cost_usd": None, "input_tokens": 50, "output_tokens": 25},
+        ]
+
+        summary = collector.get_summary(llm_calls)
+        assert summary["metrics"]["total"]["total_calls"] == 3
+
+    def test_total_calls_zero_when_no_llm_calls(self):
+        collector = MetricsCollector()
+        summary = collector.get_summary([])
+        assert summary["metrics"]["total"]["total_calls"] == 0
+
+    def test_total_calls_ignores_empty_dicts(self):
+        """Empty/falsy entries are skipped — mirrors ``calculate_costs``'s
+        ``if not call:`` guard so the displayed count never reports
+        phantom invocations."""
+        collector = MetricsCollector()
+        llm_calls = [
+            {},  # skipped
+            {"model": "gpt-4", "cost_usd": 0.01},
+            None,  # skipped (falsy)
+            {"model": "gpt-4", "cost_usd": 0.02},
+        ]
+        summary = collector.get_summary(llm_calls)
+        assert summary["metrics"]["total"]["total_calls"] == 2

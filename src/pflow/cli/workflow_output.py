@@ -445,20 +445,29 @@ def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:
 def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, Any]) -> None:
     """Display LLM cost and token usage summary.
 
+    Renders ``💰 Cost: ...`` (priced) or ``⚠️  Cost unavailable — ...``
+    (unpriced) on the first line, followed by a ``   Total LLM calls: N``
+    sibling line (3-space indent) whenever the run actually made any LLM
+    calls. The sibling line is intentionally suppressed when no LLM calls
+    happened so workflows that never touch an LLM don't see ``Total LLM
+    calls: 0`` (mirrors the "honest unmeasurable" precedent in
+    ``format_dry_run_nudge``).
+
     Args:
         total_cost: Total cost in USD
         formatted_result: Full formatted result containing metrics
     """
     metrics = formatted_result.get("metrics", {})
     total_metrics = metrics.get("total", {})
+    total_llm_calls = int(total_metrics.get("total_calls", 0) or 0)
 
     # Warn about models with unavailable pricing
     if not total_metrics.get("pricing_available", True):
-        from pflow.core.metrics import format_unavailable_models_phrase
+        from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
 
-        unavailable = total_metrics.get("unavailable_models", [])
+        unavailable_counts = unavailable_models_to_counts(total_metrics.get("unavailable_models", []))
         unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
-        models_phrase = format_unavailable_models_phrase(unavailable, unavailable_unnamed_count)
+        models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
         partial = total_metrics.get("partial_cost_usd")
         if partial is not None:
             click.echo(
@@ -467,6 +476,8 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
             )
         else:
             click.echo(f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}", err=True)
+        if total_llm_calls > 0:
+            click.echo(f"   Total LLM calls: {total_llm_calls}", err=True)
         return
 
     if total_cost is None or total_cost <= 0:
@@ -476,8 +487,14 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
     workflow_metrics = metrics.get("workflow", {})
     total_tokens = workflow_metrics.get("total_tokens", 0)
 
+    detail_parts: list[str] = []
+    if total_llm_calls > 0:
+        detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
     if total_tokens > 0:
-        click.echo(f"💰 Cost: ${total_cost:.4f} ({total_tokens:,} tokens)", err=True)
+        detail_parts.append(f"{total_tokens:,} tokens")
+
+    if detail_parts:
+        click.echo(f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})", err=True)
     else:
         click.echo(f"💰 Cost: ${total_cost:.4f}", err=True)
 

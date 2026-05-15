@@ -799,6 +799,234 @@ Baselines: all `expected-stdout.txt` files regenerated (drift was the conditiona
 - U2 (doc prose leaks `cache-active` JSON field name) — closed.
 - P2 (diagnostic_ids hardcoded predicted ID for rendered case) — closed for both declared and prewarm components.
 
+## 2026-05-15 — Bundle 7: three diagnostic-quality wins (closes F#17 deferred, F#22, F#19)
+
+Three independent agent-UX wins shipped as one bundle. Each item investigated in
+parallel (`pflow-codebase-searcher`) before deciding scope; two of the three
+were implemented in parallel `code-implementer` subagents on disjoint file
+surfaces. The third (F#19) turned out to be misframed on investigation — same
+pattern as Bundle 1's F#1 closeout and Bundle 3's F#21 closeout. Total
+wall-clock: ~1.5h dispatch + verification.
+
+### Items
+
+**F#17 deferred — Per-model call counts + `Total LLM calls: N` sibling line.**
+Bundle 4 surfaced model names and unnamed-call counts but the followups doc's
+deferred half was per-model call counts. User picked **D+b** wording: each
+unpriced model gets `(N calls)` inline; CLI cost summary and success_formatter
+get a new `   Total LLM calls: N` sibling line for parity with the trace
+report's existing `- LLM calls: N` line.
+
+Shape changes are producer-side consistent: `unavailable_models: set[str]` →
+`Counter[str]` at both producers (`MetricsCollector.calculate_costs` and
+`_LLMSummaryAccumulator.add_leaf`); JSON shape additively bumped to
+`list[{"name": str, "calls": int}]` (still within `format_version` 4.x —
+consumers gating on `format_version.startswith("4.")` continue to work);
+`metrics.total.total_calls` field added so consumers don't have to traverse
+the per-call list. Single shared normalizer `unavailable_models_to_counts`
+in `metrics.py` handles the legacy `list[str]` shape for forward-compat with
+older traces (legacy entries get `count=0` which renders as the bare model
+name with no parenthetical).
+
+Singular/plural rule applied throughout: `(1 call)` vs `(3 calls)`. Sibling
+line suppressed when `total_calls == 0` (workflow never made an LLM call) —
+same "honest unmeasurable" precedent as `format_dry_run_nudge`.
+
+**F#22 — MCP unknown-node-type suggests `pflow mcp sync`.** When the validator
+emits `Unknown node type: 'mcp-{server}-{tool}'` and the server IS registered
+in `MCPServerManager().list_servers()` but has zero synced tools, the
+suggestion text now reads `Run 'pflow mcp sync {server}' to discover tools
+for the '{server}' MCP server.` instead of the generic fuzzy-match. Helper
+`_mcp_sync_hint_for_unknown_node_type` lazy-imports from
+`runtime/compilation/mcp_resolution`, `mcp/manager`, and `mcp/registrar` to
+keep the `core/validator` → `runtime/`/`mcp/` boundary clean. Broad
+`except Exception` around the MCP infrastructure check so config corruption
+can never crash the validator — falls back to fuzzy-match gracefully.
+
+Critical invariant preserved: the `Diagnostic.message` string format
+(`Unknown node type: '{node_type}'`) is unchanged. Seven pre-existing tests
+across `test_cache_analysis_*.py`, `test_workflow_executor_comprehensive.py`,
+and `test_validation_before_execution.py` pin this string. Only `suggestions`
+and `context` change. Two new context fields (`mcp_server`, `mcp_sync_required`)
+let JSON consumers route on the structured truth; the prose-only consumer
+gets the suggestion text.
+
+**F#19 — Closed as misframed.** Investigation showed two reasons the original
+"Blocking errors can include fallback/error-path nodes" framing no longer
+applies: (1) the cache-vs-other split already exists — Task 159's analyzer
+JSON already exposes `blocking_errors[]` (cache-domain ERRORs) and
+`other_blocking_errors[]` (non-cache ERRORs surfaced for awareness) as
+distinct arrays; an unknown-MCP-fallback-node diagnostic already lands in
+the second array, and the text renderer adapts its section header
+accordingly. (2) "Conditional path" understates the real risk: an unsynced
+MCP fallback node IS genuinely blocking for `pflow save` (validator rejects)
+AND `pflow run` (compilation will fail when the error edge is exercised).
+Once F#22 lands, the diagnostic suggestion text is itself actionable —
+the underlying agent UX concern is resolved at the suggestion layer, not
+by reclassifying severity.
+
+Same pattern as Bundle 1's F#1 closeout and Bundle 3's F#21 closeout: when
+investigation reveals the followups doc framing predates shipped infrastructure
+or misreads severity semantics, the highest-leverage action is documenting
+the closeout reasoning + recording reopen criteria so future contributors
+don't reopen on the same misframing.
+
+### Why this shape (top-10% simplicity)
+
+Each item followed the same pattern shipped throughout follow-ups-2: **single
+source of truth at the producer/seam, structured data flowing to consumers,
+no per-site duplicated logic.**
+
+- **F#17**: one `format_unavailable_models_phrase` helper consumed by three
+  renderer sites (CLI workflow_output, success_formatter text, trace_report
+  markdown); one `unavailable_models_to_counts` normalizer for legacy fallback
+  at all three consumer translation points.
+- **F#22**: one `_mcp_sync_hint_for_unknown_node_type` helper, one branch in
+  the validator emission site. No new module, no new catalog ID, no
+  refactor of the surrounding pipeline.
+- **F#19**: one closeout doc entry + Priority Map update. No production code
+  change required.
+
+### Verification
+
+- **Focused tests**: 254 passed across `test_metrics.py`,
+  `test_unknown_model_user_experience.py`, `test_workflow_validator.py`,
+  `test_success_formatter.py`, `test_direct_execution_helpers.py`,
+  `test_workflow_trace.py`, `test_trace_integration.py`.
+- **Pre-existing message-pinning tests**: 7 passed across `test_cache_analysis_analyze.py`,
+  `test_cache_analysis_renderers.py`, `test_workflow_executor_comprehensive.py`,
+  `test_validation_before_execution.py` — confirms F#22's "Unknown node type"
+  message string contract preserved end-to-end.
+- **Broader sandbox-safe sweep**: 5534 passed, 1 pre-existing sandbox failure
+  (`test_dry_run_subprocess.py` — `error: Failed to spawn pflow` is the
+  environmental `uv subprocess` issue documented in prior bundles, reproduced
+  on stashed-clean working tree to confirm not introduced by Bundle 7).
+- **Full default suite** (implementer): 6862 passed, 1 skipped.
+- **Baseline oracle**: `verify.sh` with sandbox-safe `uv` shim — 87 passed,
+  0 drifted, 0 harness errors.
+- **Targeted `ruff check`** on all 12 touched files: clean.
+- **Full `mypy` on `src/pflow/`**: clean (209 source files).
+- **Mutation verification**: F#17 — mutating `format_unavailable_models_phrase`
+  to always emit `(0 calls)` failed 11 tests across all three render layers
+  (mutation reverted). F#22 — forcing `_mcp_sync_hint_for_unknown_node_type`
+  to return `None` unconditionally failed the registered-zero-tools test;
+  mutating the suggestion text failed the exact-string assertion.
+
+### Fresh-agent cold read (Principle 3 applied)
+
+Per `cli/CLAUDE.md`'s "no internals leak" and "read raw output as fresh agent"
+discipline, the rendered output was read cold post-implementation. All three
+F#17 scenarios + F#22 diagnostic pass: no JSON field names in prose, no
+internal symbols, math is coherent across all three F#17 surfaces (3 + 2 = 5
+unpriced; `Total LLM calls: 7` anchors the denominator). The 3-space indent
+on the `Total LLM calls` sibling line aligns roughly under "Cost:" — reads
+as a continuation, not a stray line.
+
+Borderline phrase noted but left in place: `"without recorded model"` is
+pre-existing wording (Bundle 4 introduced it). Slightly opaque to a fresh
+agent — could mean "API didn't return it" or "pflow failed to record it" —
+but reads as plain English and changing it is scope creep for Bundle 7.
+
+### Files touched
+
+Production (6 files):
+- `src/pflow/core/metrics.py` (+50) — helper signature widened to
+  `Mapping[str, int]`; `unavailable_models_to_counts` normalizer; `Counter`
+  shape at producer; JSON shape upgrade; `total_calls` added to
+  `metrics.total`.
+- `src/pflow/runtime/workflow_trace.py` (+10) — `_LLMSummaryAccumulator`
+  Counter shape + `as_dict()` JSON emission.
+- `src/pflow/cli/workflow_output.py` (+25) — `_display_cost_summary`
+  consumer: integrate `N calls` into priced cost line; add
+  `   Total LLM calls: N` sibling line for unpriced cases.
+- `src/pflow/execution/formatters/success_formatter.py` (+15) — same
+  pattern (CLI/MCP parity contract).
+- `src/pflow/core/trace_report.py` (+2) — translator-only update (consumes
+  new helper signature; the `- LLM calls: N` line was already there).
+- `src/pflow/core/workflow/validator.py` (+64 / −1) — module-level
+  `_mcp_sync_hint_for_unknown_node_type` helper (47 lines); 16 modified
+  lines in `_validate_node_types` emission site for branch order.
+
+Tests (6 files):
+- `tests/test_core/test_metrics.py` — new `TestCalculateCostsCounterShape`
+  class; rewrote `TestFormatUnavailableModelsPhrase` for new signature.
+- `tests/test_core/test_unknown_model_user_experience.py` — assertions
+  migrated; new `test_rendered_phrase_includes_per_model_call_count`.
+- `tests/test_execution/formatters/test_success_formatter.py` — fixture
+  builder accepts new shape; 4 new tests for sibling line.
+- `tests/test_cli/test_direct_execution_helpers.py` — symmetric CLI updates.
+- `tests/test_runtime/test_workflow_trace.py` — new
+  `test_llm_summary_unavailable_models_per_model_call_counts` + existing
+  assertions migrated.
+- `tests/test_core/test_workflow_validator.py` (+205) — new
+  `TestUnknownMcpNodeSyncHint` class with 7 tests covering: registered
+  server with zero tools, registered with synced tools (falls through to
+  fuzzy), unregistered server, non-MCP node type, unparseable name, MCP
+  infrastructure exception, and message-string preservation.
+
+Docs (1 file):
+- `.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md`
+  — F#19 closeout with reasoning + reopen criteria; Priority Map updated;
+  F#17 marked closed.
+
+### Implementation efficiency
+
+Investigation: three parallel `pflow-codebase-searcher` agents reported in
+~70 seconds wall-clock per item (concurrent). Implementation: F#17 and F#22
+in parallel `code-implementer` subagents on disjoint file surfaces (zero
+conflict risk); F#19 handled inline by the parent agent while implementers
+ran (docs-only). Wall-clock dominated by F#17 (~16min — the broader file
+surface) rather than dispatch overhead. F#22 finished in ~7min.
+
+### Key insights / learnings
+
+1. **The "is X open?" question requires reading current code, not the
+   followups doc.** F#19 is the third item this sprint that turned out to
+   be misframed once the current state of shipped infrastructure was
+   inspected (F#1 in Bundle 1, F#21 in Bundle 3). The followups doc is a
+   snapshot artifact, not a live spec; entries can lag behind shipped work
+   for months. When picking up a followups item, investigate the actual
+   current state of the code before scoping the fix.
+
+2. **Fresh-agent cold reading catches what unit tests miss.** Unit tests
+   pin assertion-level behavior; they don't catch "this rendered phrase
+   sounds like pflow internals to a fresh agent." Principle 3 (read raw
+   output as fresh agent before classifying) flagged that `"without
+   recorded model"` is borderline-opaque — out of scope for Bundle 7 but
+   worth flagging for the next sweep.
+
+3. **Producer-side single source of truth compounds across bundles.**
+   Bundle 4 established `format_unavailable_models_phrase` as the one
+   helper for the pricing-unavailable phrase. Bundle 7 extended its
+   signature in a single place; all three consumer sites consumed the
+   change with a one-line translator update. If the wording had been
+   inlined at each consumer, Bundle 7 would have been 3× the diff and a
+   real drift surface.
+
+4. **Lazy imports are the right shape for optional infrastructure.** F#22's
+   helper lazy-imports MCPServerManager, MCPRegistrar, and
+   `_parse_mcp_node_type` so validators in environments without MCP
+   configured don't pay the import cost. The broad `except Exception`
+   around the infrastructure check completes the defensive picture:
+   validation never crashes because of an MCP-side issue.
+
+### Closes
+
+- **F#17 deferred** (per-model call counts) — closed by D+b implementation.
+- **F#22** (MCP sync hint in unknown-node-type) — closed.
+- **F#19** ("Blocking errors" can include fallback/error-path nodes) — closed
+  as misframed; reopen criteria recorded.
+
+### What's next
+
+Per the cache-ready-opportunity-plan handoff: another agent is taking Bundle 6
+(staleness signals + `--list-traces`) in parallel. Remaining followups from
+the original triage that still have open status: F#11 (dynamic-before-static
+late-tail scanning — partially shipped via Phases 4-5), F#5/F#6 (provider TTL
+expiry detection — needs design), F#7 (`--list-traces` — Bundle 6 will close),
+F#8 (iteration diff view), F#10 (greenfield cost gating audit), F#22's
+sibling cross-workflow consumer detection (S#15+S#17+S#20 — its own task).
+
 ## 2026-05-15 — Cache ready/opportunity closeout: rationale (lifting WHY into the durable artifact)
 
 The implementation plan at `scratchpads/cache-ready-opportunity-plan/implementation-plan.md` is being removed (scratchpads are throwaway per Bundle 3's lesson — the progress log is the lasting artifact). The six prior checkpoint entries trace WHAT shipped phase-by-phase, but the load-bearing WHY lives only in the plan. This entry lifts the rationale before deletion so future contributors (Task 160 architectural refactor, projection-model extensions, anyone wondering why four projection fields exist) read it in the durable artifact.

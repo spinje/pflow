@@ -640,3 +640,208 @@ class TestValidatorProducerStructure:
         assert "producer" in diagnostic.context.get("available_fields", [])
         assert diagnostic.context.get("similar_names")
         assert diagnostic.suggestions
+
+
+class TestUnknownMcpNodeSyncHint:
+    """Bundle 7 / F#22: when an unknown ``mcp-<server>-<tool>`` node type
+    matches a configured MCP server that has zero synced tools, the validator
+    emits a ``pflow mcp sync <server>`` suggestion instead of a fuzzy-match.
+
+    The diagnostic ``message`` MUST remain ``Unknown node type: '<type>'`` —
+    several downstream tests pin that exact string. Only ``suggestions`` and
+    ``context`` change.
+    """
+
+    def _make_workflow(self, node_type: str) -> dict:
+        return {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": node_type, "params": {}}],
+            "edges": [],
+            "inputs": {},
+        }
+
+    def test_unknown_mcp_node_type_with_registered_server_zero_tools_suggests_sync(self, registry_with_nodes) -> None:
+        workflow_ir = self._make_workflow("mcp-my-server-some-tool")
+
+        with (
+            patch(
+                "pflow.mcp.manager.MCPServerManager.list_servers",
+                return_value=["my-server"],
+            ),
+            patch(
+                "pflow.mcp.registrar.MCPRegistrar.list_registered_tools",
+                return_value=[],
+            ),
+        ):
+            errors, _warnings = split_validator_diagnostics(
+                workflow_ir,
+                registry=registry_with_nodes,
+                skip_node_types=False,
+            )
+
+        unknown_errors = [d for d in errors if "Unknown node type" in d.message]
+        assert len(unknown_errors) == 1
+        diagnostic = unknown_errors[0]
+        assert diagnostic.suggestions == [
+            "Run 'pflow mcp sync my-server' to discover tools for the 'my-server' MCP server."
+        ]
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("mcp_server") == "my-server"
+        assert diagnostic.context.get("mcp_sync_required") is True
+
+    def test_unknown_mcp_node_type_with_registered_server_with_synced_tools_falls_through_to_fuzzy_match(
+        self, registry_with_nodes
+    ) -> None:
+        workflow_ir = self._make_workflow("mcp-my-server-some-tool")
+
+        with (
+            patch(
+                "pflow.mcp.manager.MCPServerManager.list_servers",
+                return_value=["my-server"],
+            ),
+            patch(
+                "pflow.mcp.registrar.MCPRegistrar.list_registered_tools",
+                return_value=["mcp-my-server-existing-tool"],
+            ),
+        ):
+            errors, _warnings = split_validator_diagnostics(
+                workflow_ir,
+                registry=registry_with_nodes,
+                skip_node_types=False,
+            )
+
+        unknown_errors = [d for d in errors if "Unknown node type" in d.message]
+        assert len(unknown_errors) == 1
+        diagnostic = unknown_errors[0]
+        assert diagnostic.context is not None
+        assert "mcp_sync_required" not in diagnostic.context
+        assert "mcp_server" not in diagnostic.context
+        # Sync hint text must not appear when sync-hint path didn't fire.
+        if diagnostic.suggestions is not None:
+            assert all("pflow mcp sync" not in s for s in diagnostic.suggestions)
+
+    def test_unknown_mcp_node_type_with_unregistered_server_falls_through(self, registry_with_nodes) -> None:
+        workflow_ir = self._make_workflow("mcp-not-a-server-tool")
+
+        # list_servers returns a server, but it doesn't match the parsed server
+        # name from the node_type. _parse_mcp_node_type will raise (no matching
+        # server in the configured list) → helper returns None.
+        with patch(
+            "pflow.mcp.manager.MCPServerManager.list_servers",
+            return_value=["some-other-server"],
+        ):
+            errors, _warnings = split_validator_diagnostics(
+                workflow_ir,
+                registry=registry_with_nodes,
+                skip_node_types=False,
+            )
+
+        unknown_errors = [d for d in errors if "Unknown node type" in d.message]
+        assert len(unknown_errors) == 1
+        diagnostic = unknown_errors[0]
+        assert diagnostic.context is not None
+        assert "mcp_sync_required" not in diagnostic.context
+        if diagnostic.suggestions is not None:
+            assert all("pflow mcp sync" not in s for s in diagnostic.suggestions)
+
+    def test_unknown_non_mcp_node_type_unaffected(self, registry_with_nodes) -> None:
+        """Non-MCP unknown types short-circuit on ``startswith('mcp-')``.
+        The sync-hint branch must NOT fire, the existing fuzzy-match path runs
+        instead (with no MCP-aware context fields added).
+        """
+        workflow_ir = self._make_workflow("shll")  # not MCP-shaped
+
+        errors, _warnings = split_validator_diagnostics(
+            workflow_ir,
+            registry=registry_with_nodes,
+            skip_node_types=False,
+        )
+
+        unknown_errors = [d for d in errors if "Unknown node type" in d.message]
+        assert len(unknown_errors) == 1
+        diagnostic = unknown_errors[0]
+        assert diagnostic.context is not None
+        assert "mcp_sync_required" not in diagnostic.context
+        assert "mcp_server" not in diagnostic.context
+        if diagnostic.suggestions is not None:
+            assert all("pflow mcp sync" not in s for s in diagnostic.suggestions)
+
+    def test_unknown_mcp_node_type_with_unparseable_name_falls_through(self, registry_with_nodes) -> None:
+        """A node type like ``mcp-`` doesn't parse (fewer than 3 dash-segments)
+        → ``_parse_mcp_node_type`` raises ``CompilationError`` → helper
+        returns None → validator emits the diagnostic without the sync hint.
+        """
+        workflow_ir = self._make_workflow("mcp-")
+
+        errors, _warnings = split_validator_diagnostics(
+            workflow_ir,
+            registry=registry_with_nodes,
+            skip_node_types=False,
+        )
+
+        unknown_errors = [d for d in errors if "Unknown node type" in d.message]
+        assert len(unknown_errors) == 1
+        diagnostic = unknown_errors[0]
+        assert diagnostic.context is not None
+        assert "mcp_sync_required" not in diagnostic.context
+        if diagnostic.suggestions is not None:
+            assert all("pflow mcp sync" not in s for s in diagnostic.suggestions)
+
+    def test_mcp_sync_hint_helper_returns_none_on_mcp_infrastructure_exception(self, registry_with_nodes) -> None:
+        """If MCP infrastructure raises (e.g. corrupted config, settings load
+        failure), the helper must swallow the error and the validator must
+        continue running. The diagnostic still gets emitted without the
+        sync hint.
+        """
+        workflow_ir = self._make_workflow("mcp-some-server-some-tool")
+
+        with patch(
+            "pflow.mcp.manager.MCPServerManager.list_servers",
+            side_effect=RuntimeError("config corrupted"),
+        ):
+            errors, _warnings = split_validator_diagnostics(
+                workflow_ir,
+                registry=registry_with_nodes,
+                skip_node_types=False,
+            )
+
+        unknown_errors = [d for d in errors if "Unknown node type" in d.message]
+        assert len(unknown_errors) == 1
+        diagnostic = unknown_errors[0]
+        assert diagnostic.context is not None
+        assert "mcp_sync_required" not in diagnostic.context
+        if diagnostic.suggestions is not None:
+            assert all("pflow mcp sync" not in s for s in diagnostic.suggestions)
+
+    def test_mcp_sync_hint_does_not_change_diagnostic_message(self, registry_with_nodes) -> None:
+        """Locks the message-string contract that pre-existing tests depend on
+        (e.g. test_cache_analysis_analyze.py, test_cache_analysis_renderers.py,
+        test_validation_before_execution.py). Both code branches — sync hint
+        fired and not fired — must produce the exact same message format.
+        """
+        # Branch A: sync hint fires (registered server, zero tools)
+        workflow_a = self._make_workflow("mcp-my-server-some-tool")
+        with (
+            patch(
+                "pflow.mcp.manager.MCPServerManager.list_servers",
+                return_value=["my-server"],
+            ),
+            patch(
+                "pflow.mcp.registrar.MCPRegistrar.list_registered_tools",
+                return_value=[],
+            ),
+        ):
+            errors_a, _ = split_validator_diagnostics(workflow_a, registry=registry_with_nodes, skip_node_types=False)
+
+        # Branch B: sync hint does NOT fire (server not registered)
+        workflow_b = self._make_workflow("mcp-other-server-tool")
+        with patch(
+            "pflow.mcp.manager.MCPServerManager.list_servers",
+            return_value=["something-else"],
+        ):
+            errors_b, _ = split_validator_diagnostics(workflow_b, registry=registry_with_nodes, skip_node_types=False)
+
+        msgs_a = [d.message for d in errors_a if "Unknown node type" in d.message]
+        msgs_b = [d.message for d in errors_b if "Unknown node type" in d.message]
+        assert msgs_a == ["Unknown node type: 'mcp-my-server-some-tool'"]
+        assert msgs_b == ["Unknown node type: 'mcp-other-server-tool'"]

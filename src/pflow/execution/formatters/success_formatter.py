@@ -293,27 +293,40 @@ def format_success_as_text(  # noqa: C901
     # Shell-stderr warnings (CLI/MCP parity — mirrors CLI _display_stderr_warnings)
     lines.extend(format_stderr_warnings(steps))
 
-    # Show cost (matches CLI _display_cost_summary)
+    # Show cost (matches CLI _display_cost_summary). The "Total LLM calls: N"
+    # sibling line below the cost line keeps the call tally visible at all
+    # three surfaces (CLI text, success formatter, trace report); call counts
+    # are also now interpolated into the priced cost line and per-model in
+    # the unpriced phrase (Bundle 7 / F#17 deferred).
     metrics = success_dict.get("metrics", {})
     total_metrics = metrics.get("total", {})
+    total_llm_calls = int(total_metrics.get("total_calls", 0) or 0)
 
     if not total_metrics.get("pricing_available", True):
-        from pflow.core.metrics import format_unavailable_models_phrase
+        from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
 
-        unavailable = total_metrics.get("unavailable_models", [])
+        unavailable_counts = unavailable_models_to_counts(total_metrics.get("unavailable_models", []))
         unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
-        models_phrase = format_unavailable_models_phrase(unavailable, unavailable_unnamed_count)
+        models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
         partial = total_metrics.get("partial_cost_usd")
         if partial is not None:
             lines.append(f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})")
         else:
             lines.append(f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}")
+        if total_llm_calls > 0:
+            lines.append(f"   Total LLM calls: {total_llm_calls}")
     elif total_cost and total_cost > 0:
         workflow_metrics = metrics.get("workflow", {})
         total_tokens = workflow_metrics.get("total_tokens", 0)
 
+        detail_parts: list[str] = []
+        if total_llm_calls > 0:
+            detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
         if total_tokens > 0:
-            lines.append(f"💰 Cost: ${total_cost:.4f} ({total_tokens:,} tokens)")
+            detail_parts.append(f"{total_tokens:,} tokens")
+
+        if detail_parts:
+            lines.append(f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})")
         else:
             lines.append(f"💰 Cost: ${total_cost:.4f}")
 

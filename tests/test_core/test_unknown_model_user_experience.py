@@ -50,7 +50,10 @@ class TestUnknownModelUserExperience:
         # 3. Cost is clearly marked as unavailable
         assert summary["total_cost_usd"] is None
         assert summary["pricing_available"] is False
-        assert "my-custom-ollama-model" in summary["unavailable_models"]
+        # F#17 deferred: ``unavailable_models`` carries per-model call counts
+        # as ``[{"name": str, "calls": int}, ...]``.
+        names = [entry["name"] for entry in summary["unavailable_models"]]
+        assert "my-custom-ollama-model" in names
 
         # 4. Token counts are still tracked (for debugging)
         assert summary["metrics"]["total"]["tokens_input"] == 1000
@@ -95,8 +98,9 @@ class TestUnknownModelUserExperience:
         assert cost_data["partial_cost_usd"] == 0.00045
 
         # The unpriced model is listed as unavailable; the priced one is not
-        assert "future-gpt-5" in cost_data["unavailable_models"]
-        assert "gpt-4o-mini" not in cost_data["unavailable_models"]
+        names = [entry["name"] for entry in cost_data["unavailable_models"]]
+        assert "future-gpt-5" in names
+        assert "gpt-4o-mini" not in names
 
     def test_user_message_is_actionable(self):
         """Test that the error information is actionable for users."""
@@ -113,7 +117,8 @@ class TestUnknownModelUserExperience:
         cost_data = collector.calculate_costs(llm_calls)
 
         # The unavailable_models list tells user exactly which models need pricing
-        assert cost_data["unavailable_models"] == ["anthropic/claude-4-ultra"]
+        # plus how many calls hit each model (F#17 deferred).
+        assert cost_data["unavailable_models"] == [{"name": "anthropic/claude-4-ultra", "calls": 1}]
 
         # With this info, user knows to:
         # 1. Check if the model name is correct
@@ -140,7 +145,8 @@ class TestUnknownModelUserExperience:
         cost_data = collector.calculate_costs(llm_calls)
 
         assert cost_data["pricing_available"] is False
-        assert "unknown-model" in cost_data["unavailable_models"]
+        names = [entry["name"] for entry in cost_data["unavailable_models"]]
+        assert "unknown-model" in names
 
     def test_call_without_recorded_model_does_not_show_literal_unknown(self):
         """Regression for F#17: a call dict missing ``model`` must NOT
@@ -159,5 +165,35 @@ class TestUnknownModelUserExperience:
 
         assert cost_data["pricing_available"] is False
         assert cost_data["unavailable_models"] == []
-        assert "unknown" not in cost_data["unavailable_models"]
+        names = [entry["name"] for entry in cost_data["unavailable_models"]]
+        assert "unknown" not in names
         assert cost_data["unavailable_models_unnamed_count"] == 1
+
+    def test_rendered_phrase_includes_per_model_call_count(self):
+        """F#17 deferred: the rendered pricing-unavailable phrase carries
+        per-model call counts so users can size the missing-pricing impact
+        without drilling into the raw JSON.
+        """
+        from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
+
+        collector = MetricsCollector()
+
+        # 3 calls to a model LiteLLM doesn't have pricing for, 2 calls
+        # without a recorded model (e.g. cached calls that stripped model
+        # before reaching the cost summary path).
+        llm_calls = [
+            {"model": "gemini/gemini-3-flash-preview", "cost_usd": None},
+            {"model": "gemini/gemini-3-flash-preview", "cost_usd": None},
+            {"model": "gemini/gemini-3-flash-preview", "cost_usd": None},
+            {"cost_usd": None},  # unnamed
+            {"cost_usd": None},  # unnamed
+        ]
+
+        cost_data = collector.calculate_costs(llm_calls)
+        counts = unavailable_models_to_counts(cost_data["unavailable_models"])
+        phrase = format_unavailable_models_phrase(
+            counts,
+            cost_data["unavailable_models_unnamed_count"],
+        )
+
+        assert phrase == "gemini/gemini-3-flash-preview (3 calls); 2 calls without recorded model"

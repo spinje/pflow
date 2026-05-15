@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -64,7 +65,7 @@ class _LLMSummaryAccumulator:
     total_output_tokens: int = 0
     priced_cost: float = 0.0
     models: set[str] = field(default_factory=set)
-    unavailable_models: set[str] = field(default_factory=set)
+    unavailable_models: Counter[str] = field(default_factory=Counter)
     unavailable_models_unnamed_count: int = 0
 
     def add_leaf(self, call: dict[str, Any]) -> None:
@@ -77,7 +78,7 @@ class _LLMSummaryAccumulator:
         is_real_model = bool(model) and model != VALIDATION_PLACEHOLDER
         if cost is None:
             if is_real_model:
-                self.unavailable_models.add(model)
+                self.unavailable_models[model] += 1
             else:
                 self.unavailable_models_unnamed_count += 1
         else:
@@ -96,7 +97,13 @@ class _LLMSummaryAccumulator:
         if self.unavailable_models or self.unavailable_models_unnamed_count:
             result["total_cost_usd"] = None
             result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None
-            result["unavailable_models"] = sorted(self.unavailable_models)
+            # Bundle 7 / F#17 deferred: emit per-model call counts so renderers
+            # can render "model (N calls)" without rebuilding the count from
+            # individual call events. Additive within trace 2.x — consumers
+            # gate on ``format_version.startswith("2.")``.
+            result["unavailable_models"] = [
+                {"name": name, "calls": calls} for name, calls in sorted(self.unavailable_models.items())
+            ]
             result["unavailable_models_unnamed_count"] = self.unavailable_models_unnamed_count
             result["pricing_available"] = False
         else:

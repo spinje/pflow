@@ -509,14 +509,27 @@ class TestPricingUnavailableWarning:
     def _make_result_dict(
         self,
         pricing_available: bool = True,
-        unavailable_models: list[str] | None = None,
+        unavailable_models: list[dict[str, object]] | None = None,
         partial_cost_usd: float | None = None,
         total_cost_usd: float | None = None,
         unavailable_models_unnamed_count: int = 0,
+        total_calls: int = 0,
     ) -> dict:
+        """Build a synthetic result dict for cost-display tests.
+
+        ``unavailable_models`` uses the F#17-deferred shape ``list[{name, calls}]``.
+        Tests that need to exercise the legacy ``list[str]`` shape pass that
+        directly; the renderer's normalizer accepts both for forward-compat.
+        """
         metrics: dict = {
             "workflow": {"duration_ms": 100, "nodes_executed": 1, "total_tokens": 10},
-            "total": {"tokens_input": 5, "tokens_output": 5, "tokens_total": 10, "cost_usd": total_cost_usd},
+            "total": {
+                "tokens_input": 5,
+                "tokens_output": 5,
+                "tokens_total": 10,
+                "total_calls": total_calls,
+                "cost_usd": total_cost_usd,
+            },
         }
         if not pricing_available:
             metrics["total"]["pricing_available"] = False
@@ -535,32 +548,52 @@ class TestPricingUnavailableWarning:
 
     def test_unknown_model_shows_warning(self):
         """When all models lack pricing, show warning with model names."""
-        result_dict = self._make_result_dict(pricing_available=False, unavailable_models=["my-custom-model"])
+        result_dict = self._make_result_dict(
+            pricing_available=False,
+            unavailable_models=[{"name": "my-custom-model", "calls": 5}],
+            total_calls=5,
+        )
         text = format_success_as_text(result_dict)
 
         assert "Cost unavailable" in text
-        assert "my-custom-model" in text
+        assert "my-custom-model (5 calls)" in text
+        # F#17 deferred: total LLM calls sibling line
+        assert "Total LLM calls: 5" in text
 
     def test_partial_cost_shows_partial_amount(self):
         """When some models have pricing, show partial cost with disclaimer."""
         result_dict = self._make_result_dict(
             pricing_available=False,
-            unavailable_models=["unknown-model"],
+            unavailable_models=[{"name": "unknown-model", "calls": 2}],
             partial_cost_usd=0.03,
+            total_calls=3,
         )
         text = format_success_as_text(result_dict)
 
         assert "$0.0300+" in text
         assert "partial" in text
-        assert "unknown-model" in text
+        assert "unknown-model (2 calls)" in text
+        assert "Total LLM calls: 3" in text
 
     def test_known_model_shows_normal_cost(self):
         """When pricing is available, show normal cost line."""
-        result_dict = self._make_result_dict(total_cost_usd=0.05)
+        result_dict = self._make_result_dict(total_cost_usd=0.05, total_calls=2)
         text = format_success_as_text(result_dict)
 
         assert "$0.0500" in text
         assert "Cost unavailable" not in text
+        # F#17 deferred: priced multi-call line integrates call count
+        assert "2 calls" in text
+
+    def test_known_model_singular_call_uses_singular_noun(self):
+        """F#17 wording lock: a single LLM call renders as ``1 call`` not
+        ``1 calls`` in the priced cost line.
+        """
+        result_dict = self._make_result_dict(total_cost_usd=0.05, total_calls=1)
+        text = format_success_as_text(result_dict)
+        assert "$0.0500" in text
+        assert "1 call" in text
+        assert "1 calls" not in text
 
     def test_unnamed_only_renders_count_phrase(self):
         """When all unpriced calls are genuinely-unrecorded, the rendered
@@ -569,22 +602,34 @@ class TestPricingUnavailableWarning:
             pricing_available=False,
             unavailable_models=[],
             unavailable_models_unnamed_count=2,
+            total_calls=2,
         )
         text = format_success_as_text(result_dict)
         assert "2 calls without recorded model" in text
         assert "unknown" not in text
+        assert "Total LLM calls: 2" in text
 
     def test_named_plus_unnamed_renders_both(self):
         """A mix of real names and unnamed-count surfaces both in the
         rendered phrase joined by ``"; "``."""
         result_dict = self._make_result_dict(
             pricing_available=False,
-            unavailable_models=["gpt-5"],
+            unavailable_models=[{"name": "gpt-5", "calls": 3}],
             unavailable_models_unnamed_count=1,
+            partial_cost_usd=0.0234,
+            total_calls=4,
         )
         text = format_success_as_text(result_dict)
-        assert "gpt-5" in text
-        assert "1 call without recorded model" in text
+        # Locked wording from F#17 deferred spec
+        assert "gpt-5 (3 calls); 1 call without recorded model" in text
+        assert "Total LLM calls: 4" in text
+
+    def test_total_llm_calls_suppressed_when_zero(self):
+        """Honest unmeasurable: workflows that never invoke an LLM must
+        NOT see a ``Total LLM calls: 0`` line."""
+        result_dict = self._make_result_dict(total_cost_usd=0.0, total_calls=0)
+        text = format_success_as_text(result_dict)
+        assert "Total LLM calls" not in text
 
 
 class TestOnlyNodeDisplay:
