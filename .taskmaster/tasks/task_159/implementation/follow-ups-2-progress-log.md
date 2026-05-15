@@ -540,3 +540,123 @@ Tests (2 files):
 ### What's next
 
 Per user instruction: stop after Bundle 5. The cache-ready-opportunity plan (`scratchpads/cache-ready-opportunity-plan/implementation-plan.md`) is the next major work and will subsume the remaining predicate-overload questions via the component projection model. Bundle 3 (F#21 validation-time provider constraints) is independent and can run in parallel with or after the refactor.
+
+## 2026-05-15 — Bundle 3: F#21 validation-time provider constraints — close for the verified case, tighten the gaps
+
+Five parallel `pflow-codebase-searcher` agents investigating F#21 surfaced the surprise of this sprint: **the most-cited case is already shipped**. The followups doc framed F#21 as "Validation-time provider constraints are not caught" — implying an open gap. Investigation showed the GH #385 case (Anthropic + extended thinking + non-1 temperature) is fully wired end-to-end. The right scope for Bundle 3 was therefore not "build new validation" but "lock the existing behavior against regression + close the followups item with documented reasoning."
+
+### The investigation surprise
+
+Concrete state of the existing implementation:
+
+- **Catalog**: `llm.thinking-temperature-mismatch` at `warning_catalog.py:916-939` (severity ERROR, source `"validator"`, category `LLM_VALIDATION_CATEGORY`).
+- **Validator**: `_extract_thinking_temp_violation` (`data_flow.py:1103-1141`) + `_validate_thinking_temperature_compatibility` (`:1144-1181`). Triggers on Anthropic + `reasoning_effort ∈ {xhigh, high, medium, low, minimal}` + literal `temperature ≠ 1.0`. Skips templated values; defers to runtime when model is `${...}`.
+- **Wired into**: `WorkflowValidator.validate()` step 4 (`_validate_data_flow`); blocks `pflow run` via `WorkflowRunner._validate()`; surfaces in `pflow analyze-cache` "Blocking errors" via the `_is_cache_focused_for_advisory` predicate that hard-codes this ID; listed in the MCP tool docstring at `execution_tools.py:526`.
+- **Provenance**: empirically verified across Opus 4.1/4.5/4.7, Sonnet 4.5/4.6, Haiku 4.5 — see the maintainer note at `data_flow.py:1154-1156` quoting the verbatim provider error.
+- **Tested**: 8 negative tests in `test_prompt_cache_validation.py`, per-id sample at `test_cache_analysis_per_id_coverage.py:363-371`, real-emission test at `:1423-1447`, baseline case at `04-warning-catalog/20-llm.thinking-temperature-mismatch/`.
+
+The followups doc had said *"This item remains broader than both [#385, #368]"* — the broader sub-cases turned out to be either unspecified (GH #368 referenced by issue number only with no constraint shape in-repo) or speculative (OpenAI reasoning rejecting `temperature` is industry knowledge but has zero documentation/tests/examples in this codebase; `tests/test_core/test_prompt_cache_validation.py:1144` explicitly notes Gemini accepts non-1 temperature with no symmetric OpenAI note). Adding constraints without empirical verification across model versions — the bar GH #385 met — would risk false positives.
+
+### The architectural decision (Option A)
+
+Three options presented:
+- **A**: close F#21 as substantially shipped; tighten gaps with regression-locking tests + baseline + doc fixes. ~2.5h, zero risk.
+- **B**: speculatively add OpenAI/Opus 4.7 constraints. ~1 day, false-positive risk without empirical verification.
+- **C**: build a constraint-registry refactor without new constraints. ~0.5d, speculative infrastructure (Bundle 5 Option B precedent rejected this shape).
+
+Selected **A**. Reasoning: this is the same pattern Bundle 1 (F#1 closeout as misframed) and Bundle 5 (Option B scope narrowing) followed — when investigation reveals the issue is already substantially done, the highest-leverage action is locking what works against regression while documenting the closeout reasoning so future contributors don't reopen on the same misframing.
+
+### What the bad shape and rendered error look like
+
+This is the empirically-verified failure mode the validator catches today, end-to-end:
+
+```markdown
+- id: deep-think
+  type: llm
+  params:
+    model: anthropic/claude-opus-4-7
+    reasoning_effort: high          ← turns on Anthropic extended thinking
+    temperature: 0.3                ← but Anthropic REQUIRES temp=1.0 when thinking is enabled
+  prompt: "Think deeply about: ${article}"
+```
+
+`pflow workflow.pflow.md ...` halts at validation, **before any node dispatches**:
+
+```
+Error: Cache validation failed
+  [llm.thinking-temperature-mismatch] Node 'deep-think': temperature 0.3 conflicts
+  with reasoning_effort 'high' on model anthropic/claude-opus-4-7 — Anthropic
+  requires temperature=1.0 when extended thinking is enabled.
+  → Set temperature: 1.0 in this node's params.
+
+(no nodes executed; no money spent)
+```
+
+For sub-workflows, the diagnostic propagates with a step-pointer prefix via `_add_child_provenance`:
+
+```
+[llm.thinking-temperature-mismatch] In step 'invoke-child' sub-workflow:
+  Node 'deep-think': temperature 0.3 conflicts with reasoning_effort 'high'
+  on model anthropic/claude-opus-4-7 — Anthropic requires temperature=1.0
+  when extended thinking is enabled.
+```
+
+Structured JSON shape additionally carries `sub_workflow_step` and `sub_workflow_path` context fields for agent consumption.
+
+### What Bundle 3 tightened
+
+Four independent items shipped — three in parallel via `code-implementer` subagents, one inline. Each guards a specific regression class:
+
+1. **CLI integration test for pre-dispatch blocking** (`tests/test_cli/test_validation_before_execution.py:119-170`, `test_thinking_temperature_mismatch_blocks_before_any_execution`). Mirrors the canonical `test_unknown_node_caught_before_any_execution` pattern at `:75-117` — proof-file marker that the shell node would create *if executed*, asserted absent after `pflow run` fails. **Guards**: a future refactor of `WorkflowRunner` (parallelizing init, reordering pre-flight, etc.) that accidentally lets a node dispatch before validation halts. Unit tests at the validator level cannot catch this. No real LLM call — the validator halts before any LLM dispatch, which is the contract being tested. Mutation-protective: if `_validate_thinking_temperature_compatibility` returned no diagnostics, the workflow would proceed to dispatch the shell node and create `proof_file`, failing the third assertion.
+
+2. **Sub-workflow propagation baseline** (`.taskmaster/tasks/task_159/baseline/04-warning-catalog/20b-llm.thinking-temperature-mismatch-subworkflow/`). Parent workflow invokes a child workflow whose LLM node has the bad shape. Locks the rendered `"In step 'invoke-child' sub-workflow:"` prefix in `blocking_errors[].message` AND the structured `sub_workflow_step`/`sub_workflow_path` context fields. **Guards**: a future refactor of child-IR resolution (cache_render walker, sub-workflow boundary contract, `_add_child_provenance` machinery) that silently loses propagation for this specific catalog ID. Generic sub-workflow propagation tests for OTHER IDs (`cache.invalid-on-non-llm`, `cache.sub-workflow-cache-undeclared`) would not catch an ID-specific regression. Generated by `regenerate.sh` (not handcrafted) so it goes through the same harness `verify.sh` diffs against, byte-identical to canonical output.
+
+3. **Stale CLAUDE.md catalog count** (`src/pflow/core/cache_analysis/CLAUDE.md`). Two locations claimed 26 entries; code has 30 (`EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` at `warning_catalog.py:945`). Replaced hand-counted numbers with a reference to the auto-derived constant + removed the enumerated catalog list that was guaranteed to drift. **Guards**: documentation honesty. Wrong counts erode trust in everything else the doc claims — same hygiene argument that drove Bundle 1's unified `"cost without caching"` terminology.
+
+4. **F#21 closeout in followups doc** (`.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md`). Moved F#21 from "open backlog" framing to documented closeout with: what shipped (catalog + validator + wiring + tests + baseline + empirical verification), what Bundle 3 tightened (the four items above), why broader sub-cases stay open-but-scoped (GH #368 unspecified, OpenAI reasoning unverified, Gemini permissive, `max_tokens` unmodeled), and explicit reopen criteria (concrete failure mode + verbatim provider error + reproducible `.pflow.md` + multi-model verification). **Guards**: a future contributor reopening F#21 on the same misframing — the precedent Bundle 1 set with F#1's closeout.
+
+### Why no scratchpads repro
+
+The original Option A plan included a `scratchpads/pflow-cache-repros/repro-10-thinking-temperature-mismatch.pflow.md` for agent UX. User pointed out scratchpads are throwaway — gitignored by convention, evaporates at PR merge. The lasting artifact is this progress log entry. The "what the bad shape looks like + rendered error" demonstration above replaces what the scratchpad would have provided, in a location that persists to the merged history.
+
+### Verification
+
+- **Focused CLI tests**: `tests/test_cli/test_validation_before_execution.py` → **6 passed in 0.35s** (5 pre-existing + 1 new).
+- **Broader test surface**: `tests/test_cli/` + `tests/test_core/` (excluding subprocess flakes) → **3389 passed in 26.41s**.
+- **`verify.sh` with sandbox-safe `uv` shim**: **86 pass, 1 pre-existing drift** (the documented `/dev/fd/62` sandbox issue at `15-run-flag-interactions/03-report-with-only`; baseline count increased by 1 from the new `20b-...` case).
+- **`ruff check`** on touched files: clean.
+- **Trace.json drift sanity check**: 4 trace.json files showed cosmetic newline-strip side-effects from `regenerate.sh` (same pattern Bundle 4 observed). Reverted via `git checkout` — not Bundle 3's work, no semantic change.
+
+### Files touched
+
+Production (1 file):
+- `src/pflow/core/cache_analysis/CLAUDE.md` (stale count → auto-derived reference)
+
+Tests (1 file):
+- `tests/test_cli/test_validation_before_execution.py` (+52 lines for new test)
+
+Baselines (1 new directory, 7 files):
+- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/20b-llm.thinking-temperature-mismatch-subworkflow/` (workflow.pflow.md, sub/child.pflow.md, command.sh, README.md, expected-stdout.txt, expected-stderr.txt, expected-exit-code.txt)
+
+Docs (1 file):
+- `.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md` (F#21 closeout + Priority Map update + Closed list update)
+
+### Key insights / learnings
+
+1. **Followups doc framing can outlive its scope.** F#21 was filed before `llm.thinking-temperature-mismatch` shipped; the entry then sat in the doc as if still open. This is the second sprint where investigation revealed an item was already substantially done (Bundle 1's F#1 was the first). The pattern: when picking up a followups item, investigate the actual state of the code BEFORE planning the fix. The followups doc is a snapshot, not a live spec.
+
+2. **Empirical-verification-required is its own design discipline.** The Anthropic constraint was shipped after testing across 6 model versions. The "remaining" F#21 sub-cases lack this verification. Adding speculative provider constraints would erode trust in every analyzer diagnostic — agents would have to second-guess whether a "blocking error" is real or a false positive. Setting the reopen criteria explicitly (concrete failure mode + verbatim provider error + reproducible workflow + multi-model verification) protects this trust boundary.
+
+3. **Regression-locking tests are real implementation work, not "just testing."** The CLI integration test and sub-workflow baseline don't add new behavior, but they make existing behavior contracts machine-verifiable end-to-end. The shell-node proof-file pattern proves "zero spend on blocked workflows" as a structural property; the baseline locks "child diagnostic gets a step-pointer prefix" for this specific ID. Both close gaps that unit tests can't see.
+
+4. **The scratchpad/lasting-artifact distinction.** The original Option A plan included a scratchpads repro for agent UX. User correctly observed scratchpads are throwaway. Inlining the bad-shape demonstration into the progress log itself gives a lasting reference that survives PR merge — the same shift that made Bundle 1's F#1 closeout durable (closeout reasoning lives in the followups doc, not in scratch notes).
+
+5. **Parallel `code-implementer` dispatch with comprehensive briefs continues to compound.** Same pattern Bundle 4 used. Three of the four Bundle 3 items were parallelizable; brief construction took ~10 minutes per subagent; subagent execution ran concurrently with my work on the followups doc closeout. Wall-clock time was dominated by investigation (the searcher findings), not implementation.
+
+### Closes
+
+- **F#21 (validation-time provider constraints, GH #385 case)** — closed in this codebase; the verified case is shipped and now regression-locked end-to-end.
+
+### What's next
+
+Per the cache-ready-opportunity-plan handoff: the projection-model refactor (`scratchpads/cache-ready-opportunity-plan/implementation-plan.md`) is the next major work. It subsumes F#2 (combined `prewarm: true` + `prompt_cache` additive evidence) via Phase 1's component model and F#11 (dynamic-before-static late tail scanning) via Phase 4. Bundle 5's sibling predicate `is_likely_below_min_cache` is the primitive Phase 1's `CacheProjectionComponent.meets_provider_min` consumes.

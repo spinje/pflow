@@ -49,10 +49,13 @@ Related but not fully covering tracking found:
 
 Highest-value open items:
 
-1. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence.
+1. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence
+   (will be subsumed by cache-ready-opportunity plan Phase 1).
 2. Prewarm recommendation can still ignore provider minimum in one path.
 3. Run output still hides the actionable provider error behind large payloads.
-4. Runtime cost summary still says `pricing unavailable for: unknown`.
+4. Runtime cost summary `pricing unavailable for: unknown` — partial fix
+   shipped in Bundle 4 (model names + unnamed counts surfaced); per-model
+   call counts (`X of N calls`) remains additive follow-up.
 
 Closed:
 
@@ -60,6 +63,12 @@ Closed:
   (2026-05-14). See section 1 below for the reasoning.
 - ~~`PerCallRow.input_tokens_estimated` still has mixed units~~ — closed in
   follow-ups-2 (per-call unit contract normalized; JSON 4.3).
+- ~~Validation-time provider constraints (GH #385 case)~~ — closed in Bundle 3
+  (2026-05-15). Most-cited case is already shipped as
+  `llm.thinking-temperature-mismatch`; Bundle 3 tightened gaps (CLI integration
+  test, sub-workflow baseline, stale doc count). Remaining sub-cases (GH #368,
+  OpenAI reasoning) gated on empirically-verified failure modes — see section
+  21 for reopen criteria.
 
 ## Analyze-cache Correctness
 
@@ -521,32 +530,47 @@ cost lines they describe. The parenthetical uses verb-encoded direction:
 label appears that could flip semantic meaning under sign change. See
 the Bundle 1 closeout under section 1 above.
 
-### 21. Validation-time provider constraints are not caught
+### 21. Validation-time provider constraints — CLOSED in Bundle 3 (2026-05-15) for the verified case; broader item remains scoped to "needs empirically-verified failure modes"
 
-Original failure: a run can fail after expensive upstream work because a
-provider rejects a statically knowable parameter combination, such as Anthropic
-thinking/reasoning with an invalid temperature.
+**Status: closed for the most-cited case (GH #385); remaining sub-cases gated on empirical verification.**
 
-Trigger shape:
+#### What shipped
 
-- Model is statically known or default model is known.
-- Provider-specific parameter constraint is statically checkable.
-- Invalid combination appears in the workflow.
+The GH #385 case — Anthropic + extended thinking (`reasoning_effort ∈ {xhigh, high, medium, low, minimal}`) + literal `temperature ≠ 1.0` — is already fully wired:
 
-Why it matters: users can spend money and time before a deterministic provider
-constraint failure appears.
+- Catalog entry: `cache_analysis/warning_catalog.py:916-939` (`llm.thinking-temperature-mismatch`, severity ERROR, source `"validator"`).
+- Validator: `_extract_thinking_temp_violation` (`data_flow.py:1103-1141`) + `_validate_thinking_temperature_compatibility` (`:1144-1181`). Skips templated values; defers to runtime if model is `${...}`.
+- Wired into `WorkflowValidator.validate()` (step 4 — `_validate_data_flow`), `pflow run` (blocking via `WorkflowRunner._validate()`), `pflow analyze-cache` (Blocking errors via `_is_cache_focused_for_advisory` predicate), MCP tool docstring.
+- Empirically verified across Opus 4.1/4.5/4.7, Sonnet 4.5/4.6, Haiku 4.5 (`data_flow.py:1154-1156`).
 
-Desired fix:
+Bundle 3 tightened the gaps around this existing implementation:
 
-- Add validation for high-confidence provider constraints when model and params
-  are statically resolvable.
-- Emit a structured diagnostic pointing to the node and offending fields.
+- New CLI integration test (`tests/test_cli/test_validation_before_execution.py::test_thinking_temperature_mismatch_blocks_before_any_execution`) — proves end-to-end that `pflow run` halts before any node executes when this constraint fires. Uses the marker-file pattern from the canonical `test_unknown_node_caught_before_any_execution`. No real LLM call (the validator halts before any dispatch).
+- New sub-workflow baseline (`.taskmaster/tasks/task_159/baseline/04-warning-catalog/20b-llm.thinking-temperature-mismatch-subworkflow/`) — locks parent→child propagation via `_add_child_provenance` for THIS specific catalog ID, preventing silent loss of the `"In step '...' sub-workflow:"` prefix during future child-IR resolution refactors.
+- Stale CLAUDE.md count fix in `cache_analysis/CLAUDE.md` (was hand-counted 26; now references the auto-derived `EXPECTED_CATALOG_COUNT` constant).
 
-GitHub tracking: related issues
-[#385](https://github.com/spinje/pflow/issues/385) includes the Anthropic
-temperature/thinking validator gap as one observed case, and
-[#368](https://github.com/spinje/pflow/issues/368) covers a related Opus 4.7
-reasoning-parameter provider constraint. This item remains broader than both.
+#### Why the broader F#21 remains open-but-scoped
+
+The original framing of F#21 (*"This item remains broader than both [#385, #368]"*) implied additional provider-constraint validation gaps beyond the Anthropic case. Investigation found no empirically-grounded specifics in this codebase for the remaining sub-cases:
+
+- **GH #368 — Opus 4.7 reasoning-parameter constraint**: referenced by issue number only. The specific constraint shape (which parameter, which failure mode, which provider error string) is not documented in source, tests, or `.taskmaster/`. Cannot implement without knowing the actual constraint.
+- **OpenAI reasoning models (`gpt-5*`/`o1*`/`o3*`/`o4*`) rejecting `temperature`**: industry knowledge but **zero** documentation/tests/examples in this codebase. `tests/test_core/test_prompt_cache_validation.py:1144` explicitly notes that Gemini accepts non-1 temperature; no symmetric OpenAI note exists. Exact behavior varies by model and version (o1 series originally hard-rejected non-1 temp; newer models may silently downgrade). Adding a validator without empirical verification risks false positives — the opposite of the agent UX win this work is supposed to deliver.
+- **Gemini constraints**: explicitly noted as permissive in existing tests; no known constraints worth validating.
+- **`max_tokens` caps**: no awareness anywhere; would need provider-specific tables.
+- **`model_options={"thinking": ...}` direct passthrough**: already runtime-rejected by `_REASONING_MODEL_OPTION_KEYS` deny-list at `llm_client.py:670-682`.
+
+The bar set by GH #385 — empirically verified across multiple model versions before shipping — is the right bar. Adding speculative constraints would erode trust in validator output.
+
+#### Reopen criteria
+
+Reopen with a concrete sub-case when:
+- A specific failure mode is reported with the verbatim provider error string,
+- The failing combination is reproducible with a small `.pflow.md`,
+- The constraint is verified across multiple model versions within the affected provider family.
+
+Then mirror the GH #385 pattern: new catalog row, `_extract_X_violation` helper in `data_flow.py`, wire into `_validate_data_flow`, per-id sample, emission test, baseline case, MCP docstring update, `_is_cache_focused_for_advisory` predicate update.
+
+GitHub tracking: closed for [#385](https://github.com/spinje/pflow/issues/385); [#368](https://github.com/spinje/pflow/issues/368) needs constraint specifics before it can be implemented.
 
 ### 22. MCP sync-required errors do not suggest `pflow mcp sync`
 
