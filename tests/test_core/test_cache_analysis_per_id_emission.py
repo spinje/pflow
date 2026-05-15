@@ -377,8 +377,10 @@ def test_dynamic_before_static_silent_for_heterogeneous_batch_with_no_stable_tai
     Root cause: ``is_below_min_cache(model="", tokens=0)`` returned False
     (because ``not ""`` short-circuits to "honest unmeasurable"), so the
     suppression gate in ``_find_batch_static_tail_after_dynamic`` failed to
-    fire. The conservative-floor variant ``is_likely_below_min_cache`` now
-    gates emission at recommendation-suppression sites.
+    fire. The dedicated zero-payoff guard at the same site now returns None
+    for ``stable_tail_tokens <= 0`` regardless of predicate semantics; the
+    ``is_below_min_cache`` check still runs after, but the zero-payoff case
+    is owned by the explicit guard.
     """
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 

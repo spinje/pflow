@@ -443,3 +443,100 @@ Baselines (6 files): expected-stdout.txt warm-trace suffix re-bake under `.taskm
 ### What's next
 
 Bundle 5 (`is_below_min_cache` predicate split for claim-vs-suppression contexts at `analyze.py:2928, 2957, 3049` — ~0.5 day) before the cache-ready-opportunity plan starts, so the projection model uses the cleaner predicate from day one.
+
+## 2026-05-15 — Bundle 5: predicate split (sibling `is_likely_below_min_cache` for SUPPRESSION sites)
+
+Added the sibling predicate that the post-review entry of the per-call unit contract work anticipated. The new predicate uses `CONSERVATIVE_FLOOR` (4096) when model is None or empty; the existing `is_below_min_cache` retains its "honest unmeasurable" semantics (returns False for unknown model). The split unblocks the cache-ready-opportunity plan's component model — projection components that need a "conservative gate" semantics now have a primitive to call.
+
+### The architectural decision (Option B)
+
+A scan of the 8 `is_below_min_cache` call sites in `analyze.py` found 6 SUPPRESSION-shape uses and 2 CLAIM-shape uses. An initial implementation swapped all 6 SUPPRESSION sites to the new predicate. **Baseline verify caught a real UX regression in the lyrics-generator showcase**: 4 of the 6 documented recommendations on the unresolved-model workflow disappeared, dropping the recommendation count from 6 → 2. The suppressed recommendations were `cache.dynamic-before-static` and `cache.batch-prewarm-*` rows carrying `"savings unavailable"` (honest about dollar uncertainty) + `"projected cache ratio after fix: N%"` (structural insight).
+
+The trade-off: under the conservative predicate, unresolved-model workflows lose structural recommendations entirely until a model is set. Under the honest-unmeasurable predicate at user-visible recommendation gates, the recommendations emit with the existing uncertainty annotation.
+
+**Decision (Option B):** restrict the new predicate to internal cost-math gates where empty-model already short-circuits elsewhere. User-visible recommendation gates stay on the existing predicate.
+
+Final distribution after Bundle 5:
+
+- `is_likely_below_min_cache` (SUPPRESSION, conservative-floor for unknown model):
+  - `analyze.py:4148` — `_compute_cross_workflow_consolidation_costs` (cost map; empty model already short-circuits via `pricing = get_model_pricing(...)` returning None, so this switch is behavior-preserving code-clarity)
+  - `analyze.py:4215` — `_single_call_write_penalty` (similar: empty model already None-propagates via pricing/rate)
+- `is_below_min_cache` (CLAIM/honest-unmeasurable, returns False for unknown model):
+  - `analyze.py:2953` — `cache.batch-prewarm-lower-bound-recommended` gate
+  - `analyze.py:2982` — `cache.batch-prewarm-recommended` gate
+  - `analyze.py:3074` — `cache.dynamic-before-static` non-batch branch
+  - `analyze.py:3127` — `cache.dynamic-before-static` batch branch (zero-payoff guard at line 3124 still owns the `tokens=0` case)
+  - `analyze.py:4487` — `cache.prompt-cache-incomplete` below-threshold flag (mixed CLAIM+SUPPRESSION; secondary filter at 4537 still applies)
+  - `analyze.py:4537` — `_below_threshold_clause_for_findings` (pure CLAIM — generates user-facing "below X-token min" text)
+  - `below_min_tokens_detector.py:125` — `detect()` for `cache.below-min-predicted` (pure CLAIM)
+  - `below_min_tokens_detector.py:153` — `detect_batch_prewarm_below_min()` for `cache.batch-prewarm-below-min` (pure CLAIM)
+
+`engine.py:175` (runtime pre-flight `_should_disable_below_min_prewarm`) intentionally untouched — runtime defense lives there, and the post-review work already validated that path.
+
+### Why Option B preserves better agent UX
+
+Each of the suppressed-under-Option-A recommendations was emitting with the shape:
+
+```text
+Dynamic ref blocks caching on write-lyrics — move `${choose-chorus.chorus_guide}` after stable content   savings unavailable
+  write-lyrics: dynamic `${choose-chorus.chorus_guide}` reference at line 68 appears before ~1002 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
+  → Projected cache ratio after fix: ?%.
+```
+
+That shape is structurally useful: the agent learns about a real pattern in the workflow and can act on it the moment a model is resolved. The `"savings unavailable"` already discharges the analyzer's responsibility to be honest about dollar uncertainty. Suppressing entirely would force the agent to either (a) set a model just to re-discover the structural insight, or (b) miss the pattern altogether. The cache-ready-opportunity plan will subsume this distinction via the component model anyway — `meets_provider_min=False` will be a per-component property, not a hard suppression gate.
+
+### Setup for the cache-ready-opportunity plan
+
+The sibling predicate is the primitive Phase 1 of the projection plan will use to populate `CacheProjectionComponent.meets_provider_min`. Specifically:
+
+- Configured prewarm component: `meets_provider_min = not is_likely_below_min_cache(model, prefix_tokens)` (conservative — treat unknown model as below floor for the "would runtime emit a marker?" question).
+- Declared chunk component: same primitive at the per-component level.
+- Cross-workflow and candidate components: same primitive.
+
+The `affects_cost_projection: bool` flag is the projection model's replacement for SUPPRESSION-gate logic — components with `meets_provider_min=False` AND the cost-projection responsibility set to false won't affect `cache_active.tokens_estimated`. The structural visibility (table `upside` column, `cache_opportunity`) remains intact.
+
+This Bundle 5 work therefore unblocks the projection refactor *cleanly*: there's a single, well-documented primitive that says "is this likely below the provider's minimum, conservatively." The projection model uses it at component construction; analyze.py's user-visible recommendation gates continue to use the honest-unmeasurable predicate until the refactor swaps them out entirely.
+
+### Tests
+
+- 7 new unit tests in `tests/test_core/test_below_min_tokens_detector.py` lock both predicate behaviors and the asymmetry (only-disagree-on-empty-model-branch). The asymmetry test is mutation-protective: changing either branch breaks the lock.
+- 1 docstring update on the existing `test_dynamic_before_static_silent_for_heterogeneous_batch_with_no_stable_tail` test, since the zero-payoff guard (not the predicate split) owns that scenario.
+- No new integration test was added — the lyrics-generator baselines + the existing per-id tests cover the user-visible behavior, which is unchanged at recommendation gates under Option B.
+
+### Verification
+
+- `tests/test_core/test_below_min_tokens_detector.py`: **25 passed**.
+- `tests/test_core/test_cache_analysis_*.py`: **735 passed** (+1 from this work's new asymmetry test, 6 new tests offset by the removed Option-A regression test).
+- `tests/test_core/` + `tests/test_runtime/`: **4343 passed, 1 skipped**.
+- Targeted `ruff check` on touched files + full `mypy` on `src/pflow/core/cache_analysis/`: clean (13 files).
+- `verify.sh` with sandbox-safe `uv` shim: **85 pass, 1 drift** (pre-existing sandbox `/dev/fd/62` issue documented in prior progress log entries — confirmed unchanged via `git diff`).
+
+### Files touched
+
+Production (2 files):
+- `src/pflow/core/cache_analysis/below_min_tokens_detector.py` — added `is_likely_below_min_cache`; updated `is_below_min_cache` docstring to point at the sibling for SUPPRESSION contexts.
+- `src/pflow/core/cache_analysis/analyze.py` — added import; switched 2 internal-cost sites (4148, 4215).
+
+Tests (2 files):
+- `tests/test_core/test_below_min_tokens_detector.py` — 7 new unit tests + sibling import.
+- `tests/test_core/test_cache_analysis_per_id_emission.py` — docstring update on existing test.
+
+### Key insights / learnings
+
+1. **The "post-review observation" was directionally right but scope-needed-narrowing.** The post-review entry flagged 3 suppression sites (`2928, 2957, 3049`) as candidates for the sibling predicate "if false positives surface." The full predicate split at all suppression sites turns out to over-correct: the sites that emit user-visible recommendations carry an `"savings unavailable"` annotation that already discharges the honesty responsibility. Restricting the new predicate to *internal* suppression-gates preserves the educational value of structural recommendations.
+
+2. **Baselines caught the UX regression that unit tests would not have.** No unit test asserts "the lyrics-generator shows 6 recommendations." But the baseline diff made the regression visible immediately. This reinforces the "baselines as output-oracle" pattern: they catch composition-level UX regressions that targeted assertions miss.
+
+3. **The empty-string model marker carries semantic weight.** `row.model = ""` means "heterogeneous batch" (per-item model varies, can't aggregate to a single threshold). The two predicates encode opposite policies for this case: `is_below_min_cache` returns False (no claim without proof); `is_likely_below_min_cache` returns conservatively True (no marker likely to fire). Both are correct for their context; making them coexist named-and-documented is the win.
+
+4. **Internal SUPPRESSION sites where the empty-model case short-circuits elsewhere are pure code-clarity wins.** Sites 4148 and 4215 don't user-visibly change behavior because `get_model_pricing("")` already returns None upstream of the predicate check. The predicate switch at those sites is documentation-by-code: "this gate is suppression-shape; reads as conservative."
+
+5. **The cache-ready-opportunity plan absorbs this distinction cleanly.** Once `CacheProjectionComponent.meets_provider_min` lands as a per-component property and `affects_cost_projection` gates aggregation, the SUPPRESSION-vs-CLAIM tension dissolves: structural opportunities stay visible with explicit blocker fields, and cost math respects the provider minimum without hard-suppressing the row.
+
+### Closes
+
+- Bundle 5 (predicate split) — closed, Option B scope.
+
+### What's next
+
+Per user instruction: stop after Bundle 5. The cache-ready-opportunity plan (`scratchpads/cache-ready-opportunity-plan/implementation-plan.md`) is the next major work and will subsume the remaining predicate-overload questions via the component projection model. Bundle 3 (F#21 validation-time provider constraints) is independent and can run in parallel with or after the refactor.

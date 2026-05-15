@@ -91,8 +91,33 @@ def is_below_min_cache(model: str | None, tokens: int | None) -> bool:
     emission sites (e.g. ``cache.below-min-predicted``) where emitting a
     "below min" claim against an unknown model would render an awkward
     message and risk false claims.
+
+    For SUPPRESSION-type sites (gate a recommendation off when it likely
+    won't pay off), use ``is_likely_below_min_cache`` instead — that variant
+    assumes ``CONSERVATIVE_FLOOR`` for the unknown/empty-model case so
+    heterogeneous-batch rows with short prefixes correctly suppress.
     """
     if not model or tokens is None:
+        return False
+    return tokens < get_min_cache_tokens(model)
+
+
+def is_likely_below_min_cache(model: str | None, tokens: int | None) -> bool:
+    """Return True when token evidence is below an inferred provider minimum.
+
+    "Conservative" variant — uses ``CONSERVATIVE_FLOOR`` (the safe floor used
+    by ``get_min_cache_tokens`` for unknown models) when ``model`` is None or
+    empty. Use at SUPPRESSION-type sites where the cost of a false positive
+    (suppressing a recommendation that would have paid off) is lower than
+    the cost of a false negative (emitting a recommendation that runtime
+    won't fire because the rendered content is below provider minimum).
+
+    Returns ``False`` when ``tokens`` is None (no opinion without token
+    evidence). The asymmetry with ``is_below_min_cache`` is only on the
+    empty/None-model branch: that variant returns False (no claim without a
+    model); this variant returns the conservative-floor comparison.
+    """
+    if tokens is None:
         return False
     return tokens < get_min_cache_tokens(model)
 

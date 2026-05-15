@@ -5,7 +5,10 @@ from pflow.core.cache_analysis.below_min_tokens_detector import (
     BelowMinTokensEvidence,
     detect,
     detect_batch_prewarm_below_min,
+    is_below_min_cache,
+    is_likely_below_min_cache,
 )
+from pflow.core.llm_capabilities import CONSERVATIVE_FLOOR
 
 
 def _evidence(**overrides: object) -> BelowMinTokensEvidence:
@@ -176,3 +179,85 @@ def test_prewarm_below_min_threshold_varies_by_model() -> None:
     assert sonnet is None
     assert opus is not None
     assert opus.min_tokens == 4096
+
+
+# ---------------------------------------------------------------------------
+# is_below_min_cache vs is_likely_below_min_cache (Bundle 5: predicate split)
+# ---------------------------------------------------------------------------
+
+
+def test_is_below_min_cache_returns_false_when_tokens_is_none() -> None:
+    """CLAIM variant: no opinion without token evidence."""
+    assert is_below_min_cache("anthropic/claude-sonnet-4-5", None) is False
+    assert is_below_min_cache("", None) is False
+    assert is_below_min_cache(None, None) is False
+
+
+def test_is_below_min_cache_returns_false_for_empty_or_none_model() -> None:
+    """CLAIM variant: don't claim below-min without a known model.
+
+    Heterogeneous-batch rows carry ``model=""``. Emitting a "below
+    {empty}'s {X}-token minimum" message would be agent-hostile, so the
+    predicate stays silent.
+    """
+    assert is_below_min_cache("", 500) is False
+    assert is_below_min_cache("", 0) is False
+    assert is_below_min_cache(None, 500) is False
+
+
+def test_is_below_min_cache_compares_against_get_min_for_known_model() -> None:
+    # Sonnet-4-5 min is 1024.
+    assert is_below_min_cache("anthropic/claude-sonnet-4-5", 500) is True
+    assert is_below_min_cache("anthropic/claude-sonnet-4-5", 1023) is True
+    assert is_below_min_cache("anthropic/claude-sonnet-4-5", 1024) is False
+    assert is_below_min_cache("anthropic/claude-sonnet-4-5", 2000) is False
+
+
+def test_is_likely_below_min_cache_returns_false_when_tokens_is_none() -> None:
+    """SUPPRESSION variant: no opinion without token evidence."""
+    assert is_likely_below_min_cache("anthropic/claude-sonnet-4-5", None) is False
+    assert is_likely_below_min_cache("", None) is False
+    assert is_likely_below_min_cache(None, None) is False
+
+
+def test_is_likely_below_min_cache_uses_conservative_floor_for_empty_model() -> None:
+    """SUPPRESSION variant: treat empty/unknown model as conservative-floor.
+
+    The asymmetry with ``is_below_min_cache`` matters for heterogeneous-
+    batch rows: at suppression-gate sites, we'd rather suppress a
+    recommendation that might not pay off than emit one against an
+    unknown floor.
+    """
+    # Conservative floor is the safe pessimistic threshold (4096 today).
+    assert is_likely_below_min_cache("", CONSERVATIVE_FLOOR - 1) is True
+    assert is_likely_below_min_cache("", 0) is True
+    assert is_likely_below_min_cache("", CONSERVATIVE_FLOOR) is False
+    assert is_likely_below_min_cache("", CONSERVATIVE_FLOOR + 1000) is False
+    # None model behaves the same as empty.
+    assert is_likely_below_min_cache(None, CONSERVATIVE_FLOOR - 1) is True
+    assert is_likely_below_min_cache(None, CONSERVATIVE_FLOOR) is False
+
+
+def test_is_likely_below_min_cache_matches_known_model_threshold() -> None:
+    """For a known model, both predicates compare against
+    ``get_min_cache_tokens`` (which returns the model-specific threshold)."""
+    # Sonnet-4-5 min is 1024; the model-specific compare wins over the floor.
+    assert is_likely_below_min_cache("anthropic/claude-sonnet-4-5", 1023) is True
+    assert is_likely_below_min_cache("anthropic/claude-sonnet-4-5", 1024) is False
+
+
+def test_predicates_only_disagree_on_empty_model_branch() -> None:
+    """Lock the asymmetry contract: identical for known model, opposite for
+    empty model on sub-floor token counts. Regression for the Bundle 5
+    split; mutation-testing the docstring examples."""
+    # Identical: known model.
+    for tokens in (0, 500, 1024, 2048, 4096, 8000):
+        assert is_below_min_cache("anthropic/claude-sonnet-4-5", tokens) == is_likely_below_min_cache(
+            "anthropic/claude-sonnet-4-5", tokens
+        )
+    # Asymmetric: empty model + sub-floor tokens.
+    assert is_below_min_cache("", 500) is False
+    assert is_likely_below_min_cache("", 500) is True
+    # Symmetric again: empty model + above-floor tokens (neither flags).
+    assert is_below_min_cache("", CONSERVATIVE_FLOOR + 1) is False
+    assert is_likely_below_min_cache("", CONSERVATIVE_FLOOR + 1) is False

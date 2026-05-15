@@ -68,6 +68,7 @@ from .below_min_tokens_detector import (
     BelowMinTokensEvidence,
     detect_batch_prewarm_below_min,
     is_below_min_cache,
+    is_likely_below_min_cache,
 )
 from .below_min_tokens_detector import (
     detect as detect_below_min_tokens,
@@ -4144,7 +4145,7 @@ def _compute_fragmentation_costs(
         total_tokens = _sum_chunk_tokens(list(group_shared), model, ctx, ctx.memo_cache, ctx.workflow_path)
         if total_tokens is None:
             return None
-        if is_below_min_cache(model, total_tokens):
+        if is_likely_below_min_cache(model, total_tokens):
             continue
         costs[str(group["key"] or "")] = total_tokens * _write_rate_for_ttl(pricing, ttl, model)
     return costs
@@ -4211,7 +4212,7 @@ def _single_call_write_penalty(row: PerCallRow, *, ttl: str | None) -> float | N
     tokens = row.cacheable_tokens_estimated
     if tokens is None:
         return None
-    if is_below_min_cache(row.model, tokens):
+    if is_likely_below_min_cache(row.model, tokens):
         return None
     pricing = get_model_pricing(row.model)
     if pricing is None:
