@@ -25,7 +25,7 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | str | Yes | - | The prompt to send to Claude (max 10,000 chars) |
-| `output_schema` | dict | No | - | JSON schema for structured output |
+| `output_schema` | dict | No | - | JSON Schema for structured output |
 
 ### Execution parameters
 
@@ -34,7 +34,8 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 | `cwd` | str | No | Current dir | Working directory for Claude |
 | `model` | str | No | `claude-sonnet-4-5` | Claude model to use |
 | `allowed_tools` | list | No | All tools | Permitted tools |
-| `max_turns` | int | No | `50` | Maximum conversation turns (1-100) |
+| `disallowed_tools` | list | No | - | Tools or patterns to deny |
+| `max_turns` | int | No | `50` | Maximum conversation turns (1-100; must be at least 2 with `output_schema`) |
 | `max_thinking_tokens` | int | No | `8000` | Reasoning budget (1000-100000) |
 | `timeout` | int | No | `300` | Execution timeout in seconds (30-3600) |
 | `system_prompt` | str | No | - | Custom system instructions |
@@ -57,9 +58,13 @@ The `sandbox` parameter controls command execution isolation. See the [Claude Ag
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `result` | str/dict | Response text or parsed schema dict |
+| `result` | str/dict | Free-form text, parsed structured output when `output_schema` succeeds, or raw text on soft schema failure |
 | `llm_usage` | dict | Token usage and execution metadata (same base format as [LLM node](/reference/nodes/llm), plus Claude-specific fields) |
-| `_schema_error` | str | JSON parse error (only if schema provided and parsing failed) |
+| `_schema_error` | str | Soft-failure message for structured-output mode — set when structured output was unavailable, the SDK reported an error alongside the output, or the schema reference resolved to None |
+
+Soft-failures also emit a root-level `shared["__warnings__"][node_id]` entry so workflow status becomes `DEGRADED`. This is an execution diagnostic channel, not a template output under the node.
+
+The node always returns `default` from `post()` — schema soft-failures and SDK soft-errors do NOT route through `- on-error:` edges. Read `${node._schema_error}` or check workflow `DEGRADED` status if downstream logic needs to react.
 
 ### llm_usage structure
 
@@ -77,6 +82,8 @@ The `sandbox` parameter controls command execution isolation. See the [Claude Ag
   "session_id": "abc123"
 }
 ```
+
+`cost_usd` is the SDK-reported API-equivalent estimated cost. Actual billing depends on auth method; Claude Pro/Max subscription runs may report an API-equivalent cost without a direct per-call charge.
 
 ## Authentication
 
@@ -100,7 +107,7 @@ The `sandbox` parameter controls command execution isolation. See the [Claude Ag
 
 ## Structured output
 
-Use `output_schema` to get structured JSON responses:
+Use `output_schema` to get structured responses through the Claude Agent SDK's native JSON Schema mode. The top-level schema must be `type: object` because the Claude API rejects non-object tool input schemas. For array or primitive outputs, wrap the value in an object property.
 
 ````markdown
 ### review
@@ -111,35 +118,37 @@ Review code for security issues and return structured results.
 - prompt: Review this code for security issues: ${code.content}
 
 ```yaml output_schema
-risk_level:
-  type: str
-  description: high, medium, or low
-issues:
-  type: list
-  description: List of security issues found
-score:
-  type: int
-  description: Security score 1-10
+type: object
+properties:
+  risk_level:
+    type: string
+    enum: [high, medium, low]
+    description: Risk level
+  issues:
+    type: array
+    items:
+      type: string
+    description: List of security issues found
+  score:
+    type: integer
+    minimum: 1
+    maximum: 10
+    description: Security score
+required: [risk_level, issues, score]
 ```
 ````
 
-The response is automatically parsed and available as a dict:
+The SDK returns parsed structured output, available as a dict:
 
 ```
-${review.result.risk_level}  → "medium"
-${review.result.issues}      → ["SQL injection risk", "Missing input validation"]
-${review.result.score}       → 6
+${review.result.risk_level}  -> "medium"
+${review.result.issues}      -> ["SQL injection risk", "Missing input validation"]
+${review.result.score}       -> 6
 ```
 
-### Schema field types
+If the schema is set but the SDK returns no structured output, pflow preserves the raw text in `${node.result}`, writes `${node._schema_error}`, and emits `shared["__warnings__"][node_id]` so JSON execution output reports workflow status as `DEGRADED`.
 
-| Type | Description |
-|------|-------------|
-| `str` | Text string |
-| `int` | Integer number |
-| `bool` | Boolean value |
-| `list` | Array/list |
-| `dict` | Object/dictionary |
+Warning kinds distinguish model/schema misses from SDK error signals: `claude_code.schema_not_satisfied` means the model did not produce matching structured output; `claude_code.sdk_error_no_structured_output` means the Claude CLI reported an error and no structured output was usable.
 
 ## Examples
 
@@ -152,7 +161,7 @@ Write a Python function to calculate Fibonacci numbers.
 
 - type: claude-code
 - prompt: Write a Python function to calculate Fibonacci numbers
-- max_turns: 1
+- max_turns: 2
 ```
 
 ### Code review with structured output
@@ -173,15 +182,22 @@ Review the authentication code and return structured findings.
 - prompt: Review this authentication code: ${read.content}
 
 ```yaml output_schema
-issues:
-  type: list
-  description: Problems found
-suggestions:
-  type: list
-  description: Improvements
-approved:
-  type: bool
-  description: Ready for production
+type: object
+properties:
+  issues:
+    type: array
+    items:
+      type: string
+    description: Problems found
+  suggestions:
+    type: array
+    items:
+      type: string
+    description: Improvements
+  approved:
+    type: boolean
+    description: Ready for production
+required: [issues, suggestions, approved]
 ```
 ````
 
@@ -233,6 +249,7 @@ For read-only analysis, use `["Read", "Glob", "Grep", "LS"]`. For full capabilit
 - **Restricted directories**: Cannot use `/`, `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/sys`, `/proc` as working directory
 - **Timeout**: 5 minutes (300 seconds) default, configurable up to 1 hour
 - **Cost**: More expensive than simple LLM calls - use for tasks that need file access and iteration
+- **Structured output root**: `output_schema` must be a top-level object on this node
 
 ## Error handling
 

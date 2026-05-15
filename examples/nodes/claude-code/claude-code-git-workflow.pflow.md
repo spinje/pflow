@@ -33,21 +33,29 @@ Analyze the git changes and commit history to understand what was implemented.
 - max_turns: 3
 
 ```yaml output_schema
-summary:
-  type: str
-  description: One-line summary of changes
-type_of_change:
-  type: str
-  description: "Type: feature/bugfix/refactor/docs/test"
-components_affected:
-  type: list
-  description: List of components or modules affected
-breaking_changes:
-  type: bool
-  description: Whether there are breaking changes
-testing_suggestions:
-  type: list
-  description: Suggested test scenarios
+type: object
+properties:
+  summary:
+    type: string
+    description: One-line summary of changes
+  type_of_change:
+    type: string
+    enum: [feature, bugfix, refactor, docs, test, chore]
+    description: Type of change
+  components_affected:
+    type: array
+    items:
+      type: string
+    description: List of components or modules affected
+  breaking_changes:
+    type: boolean
+    description: Whether there are breaking changes
+  testing_suggestions:
+    type: array
+    items:
+      type: string
+    description: Suggested test scenarios
+required: [summary, type_of_change, components_affected, breaking_changes, testing_suggestions]
 ```
 
 ```prompt
@@ -69,15 +77,20 @@ Generate a comprehensive pull request description based on the analysis.
 - system_prompt: You are a senior developer writing clear, professional PR descriptions. Use markdown formatting and be concise but thorough.
 
 ```yaml output_schema
-title:
-  type: str
-  description: PR title following conventional commits
-description:
-  type: str
-  description: Detailed PR description in markdown
-checklist:
-  type: list
-  description: PR checklist items
+type: object
+properties:
+  title:
+    type: string
+    description: PR title following conventional commits
+  description:
+    type: string
+    description: Detailed PR description in markdown
+  checklist:
+    type: array
+    items:
+      type: string
+    description: PR checklist items
+required: [title, description, checklist]
 ```
 
 ```prompt

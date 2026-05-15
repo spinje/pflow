@@ -1,15 +1,14 @@
-"""Claude Code Agentic Node - AI-powered development assistant with schema-driven outputs.
+"""Claude Code Agentic Node - AI-powered development assistant with structured outputs.
 
 This node integrates with Claude Code Python SDK to execute comprehensive development tasks.
-Features a dynamic schema-driven output system where users provide an output schema that
-gets converted to system prompt instructions, enabling structured outputs from Claude's
-unstructured text generation.
+When users provide a JSON Schema output_schema, pflow passes it to the SDK's native
+structured-output mode and stores the parsed structured_output from the final result.
 
 Interface:
 - Params: prompt: str  # The prompt to send to Claude (required)
-- Params: output_schema: dict  # JSON schema for structured outputs (optional)
-- Writes: shared["result"]: any  # Response - string or dict with schema keys
-- Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
+- Params: output_schema: dict  # JSON Schema for structured outputs (optional)
+- Writes: shared["result"]: str|dict  # Free-form text (str), or parsed JSON (dict/list/primitive) when output_schema is set, or raw text on soft schema failure
+- Writes: shared["_schema_error"]: str  # Soft-failure message for structured-output mode: set when structured output was unavailable, the SDK reported an error alongside the output, or the schema reference resolved to None (optional)
 - Writes: shared["llm_usage"]: dict  # Token usage and execution metadata (empty dict {} if unavailable)
     - model: str  # Model identifier used
     - input_tokens: int  # Non-cached input tokens
@@ -37,16 +36,16 @@ Interface:
     - allowUnsandboxedCommands: bool  # Allow model to request unsandboxed execution
     - network: dict  # Network settings (allowLocalBinding, allowUnixSockets, etc.)
 
-Note: When output_schema is provided, the result is a dict with schema keys.
-Access values as shared["result"]["key"] in templates: ${node.result.key}
+Note: When output_schema is provided, the result is the SDK's parsed structured_output.
+Access object values as shared["result"]["key"] in templates: ${node.result.key}
+Soft schema failures also write a root-level `shared["__warnings__"][node_id]`
+entry so workflow status becomes DEGRADED.
 Session ID is available at ${node.llm_usage.session_id} for chaining sessions.
 """
 
 import asyncio
-import json
 import logging
 import os
-import re
 from typing import Any, Optional
 
 from pflow.core.node import Node
@@ -73,6 +72,16 @@ try:
 except ImportError as e:
     raise ImportError("Claude Agent SDK is not installed. Install with: pip install claude-agent-sdk") from e
 
+# Guard against SDK field renames that would silently break structured output.
+# If claude_agent_sdk renames `structured_output`, every schema call would
+# otherwise soft-fail with a misleading "model didn't comply" message.
+if "structured_output" not in getattr(ResultMessage, "__annotations__", {}):
+    raise ImportError(
+        "claude_agent_sdk.types.ResultMessage has no 'structured_output' field. "
+        "pflow's Claude Code node requires claude-agent-sdk>=0.2.82 with native "
+        "structured output support. Got an incompatible SDK version."
+    )
+
 logger = logging.getLogger(__name__)
 
 # Security patterns for bash command validation
@@ -94,22 +103,21 @@ class ClaudeCodeNode(Node):
     """Claude Code agentic super node for AI-assisted development tasks.
 
     This node integrates with Claude Code Python SDK to execute comprehensive development tasks.
-    Features a dynamic schema-driven output system where users provide an output schema that
-    gets converted to system prompt instructions, enabling structured outputs.
+    When users provide an output_schema, pflow passes the JSON Schema to the SDK's native
+    structured-output mode and stores the parsed structured_output.
 
     Output Schema Format:
-        Each field in the schema is a dict with "type" and "description" keys:
-        - "type": One of "str", "int", "bool", "list", "dict"
-        - "description": Human-readable description of the field
+        JSON Schema for structured outputs (optional):
+        {"type": "object", "properties": {"field": {"type": "string"}}, "required": ["field"]}
 
-        Example: {"risk_level": {"type": "str", "description": "high/medium/low"},
-                  "score": {"type": "int", "description": "Security score 1-10"}}
+        Top-level type must be "object" because the Claude API rejects non-object
+        schemas when the SDK wraps output_format as a tool input_schema.
 
     Interface:
     - Params: prompt: str  # The prompt to send to Claude (required)
-    - Params: output_schema: dict  # Schema for structured outputs (optional): {"field": {"type": "str", "description": "..."}}
-    - Writes: shared["result"]: any  # Response - string without schema, dict with schema
-    - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
+    - Params: output_schema: dict  # JSON Schema for structured outputs (optional)
+    - Writes: shared["result"]: str|dict  # Free-form text, parsed JSON when output_schema succeeds, or raw text on soft schema failure
+    - Writes: shared["_schema_error"]: str  # Soft-failure message for structured-output mode: set when structured output was unavailable, the SDK reported an error alongside the output, or the schema reference resolved to None (optional)
     - Writes: shared["llm_usage"]: dict  # Token usage and execution metadata (empty dict {} if unavailable)
         - model: str  # Model identifier used
         - input_tokens: int  # Non-cached input tokens
@@ -124,6 +132,7 @@ class ClaudeCodeNode(Node):
     - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
     - Params: model: str  # Claude model identifier (default: claude-sonnet-4-5)
     - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
+    - Params: disallowed_tools: list  # Tools to deny (default: None = no restrictions)
     - Params: max_turns: int  # Maximum conversation turns (default: 50)
     - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
     - Params: timeout: int  # Execution timeout in seconds (default: 300; valid: 30-3600)
@@ -154,7 +163,12 @@ class ClaudeCodeNode(Node):
     Note: Result type depends on schema usage:
     - Without schema: String response in ${node_id.result}
     - With schema (success): Dict with fields accessible via ${node_id.result.field_name}
-    - With schema (parse failure): Falls back to string in ${node_id.result} with error in _schema_error
+    - With schema (soft failure): Falls back to string in ${node_id.result}, with _schema_error and __warnings__
+      at the root warning channel so the workflow status becomes DEGRADED.
+
+    Routing: post() always returns "default". Schema soft-failures DO NOT route through
+    `- on-error:` edges — wire schema-validation recovery via inspection of
+    ${node._schema_error} or workflow DEGRADED status, not the error edge.
 
     Example:
         # Basic execution
@@ -166,17 +180,21 @@ class ClaudeCodeNode(Node):
         shared = {
             "prompt": "Review this code for security issues",
             "output_schema": {
-                "risk_level": {"type": "str", "description": "high/medium/low"},
-                "issues": {"type": "list", "description": "List of security issues"},
-                "score": {"type": "int", "description": "Security score 1-10"},
-                "needs_fix": {"type": "bool", "description": "True if critical issues found"}
+                "type": "object",
+                "properties": {
+                    "risk_level": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "issues": {"type": "array", "items": {"type": "string"}},
+                    "score": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "needs_fix": {"type": "boolean"},
+                },
+                "required": ["risk_level", "issues", "score", "needs_fix"],
             }
         }
         node = ClaudeCodeNode()
         node.run(shared)
         # Success: shared["result"] = {"risk_level": "low", "issues": [...], "score": 8, "needs_fix": False}
         # Access as: shared["result"]["risk_level"], shared["result"]["issues"], etc.
-        # Parse failure: shared["result"] = raw_text_string, shared["_schema_error"] = error
+        # Soft schema failure: shared["result"] = raw_text_string, shared["_schema_error"] = error
     """
 
     def __init__(self) -> None:
@@ -196,22 +214,84 @@ class ClaudeCodeNode(Node):
             raise ValueError("Prompt cannot be empty or whitespace only.")
         return prompt
 
-    def _validate_schema(self, output_schema: Any) -> Optional[dict]:
-        """Validate output schema parameter."""
-        if not output_schema:
+    def _validate_schema(self, output_schema: Any) -> dict | None:
+        """Validate output_schema parameter.
+
+        - None: no schema requested (returns None)
+        - {} (empty): likely a typo; raises with guidance
+        - Non-dict: TypeError
+        - Legacy Python-alias format: raises with migration guidance
+        - Non-object top-level: raises (Anthropic API tool-use limitation)
+        - Otherwise: returns as-is; SDK/CLI enforces remaining JSON Schema validity
+
+        Note on schema typos (e.g. type: "intger"): the Anthropic API silently accepts
+        them. Schema typos will result in a soft-fail at runtime (structured_output is
+        None) until centralized JSON Schema validation lands in issue #398.
+        """
+        if output_schema is None:
             return None
         if not isinstance(output_schema, dict):
-            raise TypeError(f"Output schema must be a dict, got {type(output_schema).__name__}")
-
-        # Validate schema keys are valid Python identifiers
-        for key in output_schema:
-            if not str(key).isidentifier():
-                raise ValueError(f"Invalid schema key '{key}'. Keys must be valid Python identifiers.")
-
-        # Check schema complexity
-        if len(output_schema) > 50:
-            raise ValueError(f"Schema too complex ({len(output_schema)} keys). Maximum 50 keys allowed.")
+            raise TypeError(f"output_schema must be a dict (JSON Schema), got {type(output_schema).__name__}")
+        if not output_schema:
+            raise ValueError(
+                "output_schema is an empty dict. Did you forget to populate the schema body? "
+                'Use a real JSON Schema (e.g. {"type": "object", "properties": {...}}) '
+                "or remove the output_schema field entirely."
+            )
+        if self._looks_like_legacy_python_alias_format(output_schema):
+            raise ValueError(
+                "output_schema appears to use the legacy Python-alias format "
+                '({"field": {"type": "str", ...}}). '
+                'Use JSON Schema instead: {"type": "object", "properties": {...}, "required": [...]}. '
+                "See docs/reference/nodes/claude-code.mdx for an example."
+            )
+        # Claude API limitation (verified in Phase 0 smoke test): the SDK wraps output_format
+        # as a tool's input_schema, and the API rejects non-object top-level schemas with a 400.
+        top_level_type = output_schema.get("type")
+        if top_level_type is not None and top_level_type != "object":
+            raise ValueError(
+                "output_schema on claude-code nodes must have top-level type: object "
+                f"(got type: {top_level_type!r}). "
+                "The Anthropic API rejects non-object top-level schemas in tool input_schema "
+                "wrappers. For array or primitive outputs, wrap in an object with a single "
+                'property, e.g. {"type": "object", "properties": {"items": {"type": "array", '
+                '"items": ...}}, "required": ["items"]}. '
+                "(The LLM node has no such restriction.)"
+            )
         return output_schema
+
+    def _emit_schema_resolved_null_warning(self, shared: dict[str, Any]) -> None:
+        """Warn when ``output_schema`` was declared but resolved to ``None``.
+
+        Same channel as soft-fail warnings — ``shared["__warnings__"][node_id]``
+        triggers DEGRADED workflow status. Falls back to ``shared["_schema_error"]``
+        when no ``node_id`` is bound (test paths, uncompiled nodes) so the signal
+        is never fully lost.
+        """
+        node_id = getattr(self, "node_id", None)
+        msg = (
+            "output_schema was declared but resolved to None — Claude Code is running "
+            "in free-form mode. If the schema came from an upstream node "
+            "(e.g. `output_schema: ${node.schema}`), verify that node produced a "
+            "JSON Schema dict. Remove `output_schema:` entirely to silence this warning."
+        )
+        if node_id is not None:
+            shared.setdefault("__warnings__", {})[node_id] = {
+                "kind": "claude_code.output_schema_resolved_to_null",
+                "text": msg,
+                "context": {"node_type": "claude-code"},
+            }
+        else:
+            shared.setdefault("_schema_error", msg)
+
+    @staticmethod
+    def _looks_like_legacy_python_alias_format(schema: dict) -> bool:
+        """Detect the old custom Python-alias output_schema format."""
+        json_schema_markers = {"type", "$ref", "$schema", "oneOf", "anyOf", "allOf", "enum", "const"}
+        if any(marker in schema for marker in json_schema_markers):
+            return False
+        python_alias_types = {"str", "int", "bool", "list", "dict", "float"}
+        return any(isinstance(value, dict) and value.get("type") in python_alias_types for value in schema.values())
 
     def _validate_cwd(self, cwd: Optional[str]) -> str:
         """Validate and normalize working directory."""
@@ -361,7 +441,14 @@ class ClaudeCodeNode(Node):
         prompt = self._validate_prompt(self.params.get("prompt"))
 
         # Validate optional parameters
-        output_schema = self._validate_schema(self.params.get("output_schema"))
+        raw_output_schema = self.params.get("output_schema")
+        output_schema = self._validate_schema(raw_output_schema)
+        # A declared ``output_schema:`` that resolved to None (e.g. templated
+        # from an upstream node that returned None) silently disables structured
+        # output. Emit a DEGRADED-triggering warning so the workflow author sees
+        # it instead of getting a free-form string where they expected a dict.
+        if output_schema is None and "output_schema" in self.params and raw_output_schema is None:
+            self._emit_schema_resolved_null_warning(shared)
         cwd = self._validate_cwd(self.params.get("cwd"))
 
         # Get model with fallback
@@ -376,6 +463,12 @@ class ClaudeCodeNode(Node):
         # Validate numeric parameters
         max_turns = self._validate_max_turns(self.params.get("max_turns", 50))
         max_thinking_tokens = self._validate_max_thinking_tokens(self.params.get("max_thinking_tokens", 8000))
+        if output_schema is not None and max_turns < 2:
+            raise ValueError(
+                f"max_turns must be >= 2 when output_schema is set (got {max_turns}). "
+                "Structured output requires the agent to take at least one turn beyond producing "
+                "the final response. Set max_turns to 2 or higher (default is typically sufficient)."
+            )
 
         # Get system prompt
         system_prompt = self.params.get("system_prompt", "")
@@ -434,11 +527,11 @@ class ClaudeCodeNode(Node):
         Returns:
             Dictionary with results to be processed by post()
         """
-        # Build the prompt
-        prompt = self._build_prompt(prep_res)
+        # Use the user prompt directly. Structured output is enforced by SDK options.
+        prompt = prep_res["prompt"]
 
-        # Build system prompt with schema instructions if needed
-        system_prompt = self._build_system_prompt(prep_res)
+        # User system prompt passes through unchanged; no schema prompt injection.
+        system_prompt = prep_res.get("system_prompt") or ""
 
         # Build Claude Code options
         options = self._build_claude_options(prep_res, system_prompt)
@@ -480,6 +573,14 @@ class ClaudeCodeNode(Node):
         # Add session resumption if provided
         if prep_res["resume"]:
             options_kwargs["resume"] = prep_res["resume"]
+
+        # Native structured output: SDK translates this to --json-schema CLI flag.
+        # subprocess_cli.py only wires the exact json_schema wrapper shape.
+        if prep_res.get("output_schema"):
+            options_kwargs["output_format"] = {
+                "type": "json_schema",
+                "schema": prep_res["output_schema"],
+            }
 
         # Add sandbox configuration if provided
         if prep_res.get("sandbox") is not None:
@@ -531,20 +632,45 @@ class ClaudeCodeNode(Node):
         message_count = 0
         metadata = {}
         progress_events = []  # Track streaming progress for tracing
+        structured_output: Any = None
+        is_error_from_sdk = False
+        sdk_exception_text: str | None = None
 
-        async for message in query(prompt=prompt, options=options):
-            message_count += 1
-            logger.debug(f"Received message {message_count}: type={type(message).__name__}")
+        try:
+            async for message in query(prompt=prompt, options=options):
+                message_count += 1
+                logger.debug(f"Received message {message_count}: type={type(message).__name__}")
 
-            if isinstance(message, AssistantMessage):
-                text_chunk, tools, events = self._process_assistant_message(message, result_text)
-                result_text += text_chunk
-                tool_uses.extend(tools)
-                progress_events.extend(events)
+                if isinstance(message, AssistantMessage):
+                    text_chunk, tools, events = self._process_assistant_message(message, result_text)
+                    result_text += text_chunk
+                    tool_uses.extend(tools)
+                    progress_events.extend(events)
 
-            elif isinstance(message, ResultMessage):
-                metadata = self._extract_metadata(message)
-                progress_events.append(self._create_completion_event(metadata))
+                elif isinstance(message, ResultMessage):
+                    metadata = self._extract_metadata(message)
+                    progress_events.append(self._create_completion_event(metadata))
+                    if message.result and not result_text:
+                        result_text = message.result
+                    structured_output = message.structured_output
+                    is_error_from_sdk = is_error_from_sdk or message.is_error
+        except Exception as exc:
+            # The SDK pairs ``ResultMessage(is_error=True)`` with a non-zero CLI
+            # exit raised as ``ProcessError``. That single class of exception is
+            # the same signal expressed two ways — soft-fail semantics in post()
+            # need the prior is_error state preserved instead of re-raising.
+            #
+            # Connection failures, missing CLI, timeouts and any other Exception
+            # subclass must still reach exec_fallback so the user sees the
+            # remediation message for that concrete failure mode.
+            exc_type_name = type(exc).__name__
+            is_process_error = (
+                ProcessError is not None and isinstance(exc, ProcessError)
+            ) or exc_type_name == "ProcessError"
+            if not is_error_from_sdk or not is_process_error:
+                raise
+            sdk_exception_text = str(exc)
+            logger.warning("Claude Code SDK raised after an error ResultMessage: %s", sdk_exception_text)
 
         # Log results
         self._log_session_results(tool_uses, result_text)
@@ -553,9 +679,11 @@ class ClaudeCodeNode(Node):
         return {
             "result_text": result_text,
             "tool_uses": tool_uses,
-            "output_schema": prep_res.get("output_schema"),
             "metadata": metadata,
             "progress_events": progress_events,
+            "structured_output": structured_output,
+            "is_error_from_sdk": is_error_from_sdk,
+            "sdk_exception_text": sdk_exception_text,
         }
 
     def _process_assistant_message(
@@ -620,6 +748,10 @@ class ClaudeCodeNode(Node):
             "num_turns": getattr(message, "num_turns", None),
             "session_id": getattr(message, "session_id", None),
             "usage": getattr(message, "usage", None),
+            "result": getattr(message, "result", None),
+            "errors": getattr(message, "errors", None),
+            "api_error_status": getattr(message, "api_error_status", None),
+            "stop_reason": getattr(message, "stop_reason", None),
         }
         logger.info(
             f"Captured metadata: cost=${metadata['total_cost_usd']}, "
@@ -673,8 +805,8 @@ class ClaudeCodeNode(Node):
         Returns:
             Always "default" because workflows may not declare explicit error edges
         """
-        # Store results based on schema or as raw text
-        self._store_results(shared, exec_res)
+        node_id = getattr(self, "node_id", None)  # set by compiler; see compilation/compiler.py
+        self._store_results(shared, prep_res, exec_res, node_id)
 
         return "default"
 
@@ -737,125 +869,35 @@ class ClaudeCodeNode(Node):
         # Generic error — pass through the SDK error message directly
         raise ValueError(f"Claude Code execution failed after {self.max_retries} attempts: {error_msg}") from None
 
-    def _build_prompt(self, prep_res: dict[str, Any]) -> str:
-        """Build the prompt for Claude Code.
-
-        Args:
-            prep_res: Prepared parameters
-
-        Returns:
-            Formatted prompt string
-        """
-        prompt = prep_res["prompt"]
-        output_schema = prep_res.get("output_schema")
-
-        # Build base prompt
-        prompt_parts = []
-
-        # If there's a schema, be very direct about JSON output requirement
-        if output_schema:
-            prompt_parts.append("RESPOND WITH JSON ONLY. Complete the following task and output the result as JSON:")
-            prompt_parts.append("")
-
-        prompt_parts.append(prompt)
-
-        # If there's a schema, remind again at the end
-        if output_schema:
-            prompt_parts.append("\nREMEMBER: Output JSON only, no explanatory text.")
-
-        return "\n".join(prompt_parts)
-
-    def _build_system_prompt(self, prep_res: dict[str, Any]) -> str:
-        """Build system prompt, merging schema instructions if needed.
-
-        Args:
-            prep_res: Prepared parameters
-
-        Returns:
-            System prompt with schema instructions prepended if applicable
-        """
-        prompts = []
-
-        # Add schema instructions if schema provided
-        if prep_res["output_schema"]:
-            schema_prompt = self._build_schema_prompt(prep_res["output_schema"])
-            prompts.append(schema_prompt)
-
-        # Add user's system prompt
-        if prep_res["system_prompt"]:
-            prompts.append(prep_res["system_prompt"])
-
-        return "\n\n".join(prompts) if prompts else ""
-
-    def _build_schema_prompt(self, output_schema: dict[str, dict]) -> str:
-        """Convert output schema to JSON format instructions.
-
-        This is the core innovation - converting schema to prompt instructions.
-
-        Args:
-            output_schema: Schema dictionary with keys and type/description
-
-        Returns:
-            Prompt instructions for structured JSON output
-        """
-        if not output_schema:
-            return ""
-
-        # Build JSON template
-        json_template = {}
-        descriptions = []
-
-        for key, config in output_schema.items():
-            type_str = config.get("type", "str")
-            desc = config.get("description", f"Value for {key}")
-
-            # Add to template
-            json_template[key] = f"<{type_str}: {desc}>"
-            descriptions.append(f"  - {key}: {desc}")
-
-        # Create instruction prompt - MUST output JSON ONLY
-        prompt = (
-            "YOU MUST RESPOND WITH JSON ONLY.\n\n"
-            "DO NOT output any preliminary text like 'I'll analyze...' or 'Let me examine...'.\n"
-            "DO NOT explain what you're doing.\n"
-            "ONLY output a single JSON code block with your analysis results.\n\n"
-            "Required JSON structure with these EXACT keys:\n"
-            f"{json.dumps(json_template, indent=2)}\n\n"
-            "Your COMPLETE response should be:\n"
-            "```json\n"
-            "{\n"
-            '  "key1": actual_value,\n'
-            '  "key2": [actual_values]\n'
-            "}\n"
-            "```\n\n"
-            "Field descriptions:\n" + "\n".join(descriptions) + "\n\n"
-            "START YOUR RESPONSE WITH ```json AND END WITH ```\n"
-            "NO OTHER TEXT ALLOWED."
-        )
-
-        return prompt
-
-    def _store_results(self, shared: dict[str, Any], exec_res: dict[str, Any]) -> None:
+    def _store_results(
+        self,
+        shared: dict[str, Any],
+        prep_res: dict[str, Any],
+        exec_res: dict[str, Any],
+        node_id: str | None,
+    ) -> None:
         """Store results in shared store.
 
-        When schema is provided:
-        - Success: shared["result"] = dict with parsed JSON values
-        - Failure: shared["result"] = raw_text, shared["_schema_error"] = error
+        Result placement rules:
+        - No schema: shared["result"] = raw text (str)
+        - Schema + structured_output present: shared["result"] = parsed JSON
+        - Schema + structured_output missing: soft-fail with raw text, _schema_error, and __warnings__
+        - is_error=True + structured_output present: structured_output wins; _schema_error
+          set as a soft-fail signal and __warnings__ written (when node_id is bound)
 
-        When no schema:
-        - shared["result"] = response_text
-
-        Also stores standardized LLM usage data for tracing and tool usage details.
-
-        Args:
-            shared: Shared store to write results to
-            exec_res: Execution results containing result_text, output_schema, metadata, and tool_uses
+        Lifecycle action: post() always returns "default". Soft-fail signals
+        (`_schema_error`, `__warnings__`) communicate the issue without
+        triggering on-error routing — a workflow's `- on-error:` edge does
+        NOT fire on schema misses or SDK soft-errors.
         """
         result_text = exec_res.get("result_text", "")
-        output_schema = exec_res.get("output_schema")
+        structured_output = exec_res.get("structured_output")
+        is_error_from_sdk = exec_res.get("is_error_from_sdk", False)
+        has_schema = prep_res.get("output_schema") is not None
         metadata = exec_res.get("metadata", {})
         tool_uses = exec_res.get("tool_uses", [])
         progress_events = exec_res.get("progress_events", [])
+        warning_context = self._build_schema_warning_context(prep_res, exec_res)
 
         # Store progress events for trace visibility (if any)
         if progress_events:
@@ -864,7 +906,7 @@ class ClaudeCodeNode(Node):
 
         # Store metadata in standardized llm_usage format
         if metadata:
-            usage = metadata.get("usage", {})
+            usage = metadata.get("usage") or {}
 
             # Store token counts separately - do NOT aggregate cache tokens into input_tokens
             base_input = usage.get("input_tokens", 0)
@@ -905,129 +947,113 @@ class ClaudeCodeNode(Node):
             ]
             logger.debug(f"Stored {len(tool_uses)} tool uses for tracing")
 
-        # If no result text, store empty string
-        if not result_text:
-            shared["result"] = ""
-            return
-
         # If no schema, store text directly
-        if not output_schema:
+        if not has_schema:
             shared["result"] = result_text
             return
 
-        # Try to extract and parse JSON
-        json_data = self._extract_json(result_text)
+        self._store_schema_result(
+            shared,
+            node_id,
+            result_text=result_text,
+            structured_output=structured_output,
+            is_error_from_sdk=is_error_from_sdk,
+            warning_context=warning_context,
+        )
 
-        if json_data:
-            # Successfully parsed JSON - create result dict with schema keys
-            result_dict = {}
-            for key in output_schema:
-                if key in json_data:
-                    result_dict[key] = json_data[key]
-                else:
-                    # Missing key - store None
-                    result_dict[key] = None
-                    logger.warning(f"Schema key '{key}' not found in JSON response")
+    def _store_schema_result(
+        self,
+        shared: dict[str, Any],
+        node_id: str | None,
+        *,
+        result_text: str,
+        structured_output: Any,
+        is_error_from_sdk: bool,
+        warning_context: dict[str, Any],
+    ) -> None:
+        """Place result + soft-fail signals on the schema path.
 
-            # Store the parsed dict in result
-            shared["result"] = result_dict
-            logger.info(f"Successfully parsed JSON with {len(output_schema)} schema values")
+        Branches:
+        - structured_output present + no SDK error → success (result only).
+        - structured_output present + SDK error → use structured_output but
+          record a soft-fail signal so the SDK error isn't silently dropped.
+        - structured_output missing → raw text fallback + soft-fail signal.
+
+        Soft-fail signals use ``setdefault("_schema_error", ...)`` (so any
+        prior write — like ``_emit_schema_resolved_null_warning`` — wins)
+        plus an ``__warnings__[node_id]`` write when ``node_id`` is bound.
+        """
+        if structured_output is not None:
+            shared["result"] = structured_output
+            if is_error_from_sdk:
+                self._emit_soft_fail_signal(
+                    shared,
+                    node_id,
+                    kind="claude_code.sdk_error_with_structured_output",
+                    msg=(
+                        "Claude CLI reported is_error=True but structured_output was produced. "
+                        "Using structured_output as result; check provider for partial-response details."
+                    ),
+                    warning_context=warning_context,
+                )
+            return
+
+        shared["result"] = result_text
+        if is_error_from_sdk:
+            msg = (
+                "Claude CLI reported an error and did not produce structured output. "
+                "Raw text stored in result. Check SDK error details and the output_schema."
+            )
+            kind = "claude_code.sdk_error_no_structured_output"
         else:
-            # Failed to parse JSON - fallback to raw text
-            shared["result"] = result_text
-            shared["_schema_error"] = "Failed to parse JSON from response. Raw text stored in result"
-            logger.warning("Could not extract JSON from response, stored raw text in result")
+            msg = (
+                "Model did not return structured output matching the schema. "
+                "Raw text stored in result. Check JSON Schema type spelling, required fields, "
+                "and impossible enum/const constraints."
+            )
+            kind = "claude_code.schema_not_satisfied"
+        self._emit_soft_fail_signal(shared, node_id, kind=kind, msg=msg, warning_context=warning_context)
 
-    def _extract_json(self, text: str) -> Optional[dict]:
-        """Extract JSON from Claude's response with multiple strategies.
+    @staticmethod
+    def _emit_soft_fail_signal(
+        shared: dict[str, Any],
+        node_id: str | None,
+        *,
+        kind: str,
+        msg: str,
+        warning_context: dict[str, Any],
+    ) -> None:
+        """Centralized soft-fail signaling for structured-output mode.
 
-        Args:
-            text: Response text that may contain JSON
-
-        Returns:
-            Parsed JSON dictionary or None if extraction fails
+        Writes ``_schema_error`` (via ``setdefault`` so an earlier writer wins)
+        and a structured ``__warnings__[node_id]`` entry when ``node_id`` is
+        bound. The ``__warnings__`` entry is what flips workflow status to
+        ``DEGRADED``; ``_schema_error`` is the fallback signal that survives
+        when ``node_id`` is unbound (test paths).
         """
-        if not text:
-            return None
+        shared.setdefault("_schema_error", msg)
+        if node_id is not None:
+            shared.setdefault("__warnings__", {})[node_id] = {
+                "kind": kind,
+                "text": msg,
+                "context": warning_context,
+            }
 
-        # Try extraction strategies in order of likelihood
-        strategies = [
-            self._extract_json_from_code_block,
-            self._extract_json_from_raw_object,
-            self._extract_json_from_last_brace,
-        ]
-
-        for strategy in strategies:
-            result = strategy(text)
-            if result is not None:
-                return result
-
-        return None  # Failed to extract JSON
-
-    def _extract_json_from_code_block(self, text: str) -> Optional[dict]:
-        """Extract JSON from markdown code blocks.
-
-        Args:
-            text: Response text that may contain code blocks
-
-        Returns:
-            Parsed JSON dictionary or None if extraction fails
-        """
-        code_block_pattern = r"```(?:json)?\s*\n(.*?)\n```"
-        matches = re.findall(code_block_pattern, text, re.DOTALL)
-
-        for match in matches:
-            try:
-                return json.loads(match)
-            except json.JSONDecodeError:
-                continue
-
-        return None
-
-    def _extract_json_from_raw_object(self, text: str) -> Optional[dict]:
-        """Extract raw JSON objects from text.
-
-        Args:
-            text: Response text that may contain raw JSON
-
-        Returns:
-            Parsed JSON dictionary or None if extraction fails
-        """
-        json_pattern = r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
-        matches = re.findall(json_pattern, text)
-
-        for match in matches:
-            try:
-                return json.loads(match)
-            except json.JSONDecodeError:
-                continue
-
-        return None
-
-    def _extract_json_from_last_brace(self, text: str) -> Optional[dict]:
-        """Extract JSON by finding the last opening brace and its matching close.
-
-        Args:
-            text: Response text that may contain JSON
-
-        Returns:
-            Parsed JSON dictionary or None if extraction fails
-        """
-        try:
-            start = text.rfind("{")
-            if start == -1:
-                return None
-
-            depth = 0
-            for i, char in enumerate(text[start:], start):
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-                    if depth == 0:
-                        potential_json = text[start : i + 1]
-                        return json.loads(potential_json)
-        except Exception as e:
-            logger.debug(f"Failed to extract JSON using last brace method: {e}")
-
-        return None
+    @staticmethod
+    def _build_schema_warning_context(prep_res: dict[str, Any], exec_res: dict[str, Any]) -> dict[str, Any]:
+        """Build compact, agent-actionable context for structured-output warnings."""
+        output_schema = prep_res.get("output_schema") or {}
+        properties = output_schema.get("properties") if isinstance(output_schema, dict) else None
+        metadata = exec_res.get("metadata") or {}
+        result_text = exec_res.get("result_text") or ""
+        return {
+            "node_type": "claude-code",
+            "schema_properties": list(properties) if isinstance(properties, dict) else [],
+            "schema_required": output_schema.get("required") if isinstance(output_schema, dict) else None,
+            "result_preview": result_text[:500],
+            "sdk_result": metadata.get("result"),
+            "sdk_errors": metadata.get("errors"),
+            "sdk_error_status": metadata.get("api_error_status"),
+            "sdk_stop_reason": metadata.get("stop_reason"),
+            "sdk_exception": exec_res.get("sdk_exception_text"),
+        }

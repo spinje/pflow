@@ -4,14 +4,14 @@ Examples for the `claude-code` node: an agentic super node that integrates with 
 
 Features:
 
-- Dynamic schema-driven output for structured responses
+- Native JSON Schema structured output
 - Metadata capture (cost, duration, token usage) in `llm_usage`
 - Tool use (Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch)
 - Dual authentication: API key or Claude Pro/Max CLI
 
 ## Examples
 
-### 1. Simple code generation — `claude-code-basic.pflow.md`
+### 1. Simple code generation - `claude-code-basic.pflow.md`
 
 ```bash
 pflow examples/nodes/claude-code/claude-code-basic.pflow.md
@@ -24,7 +24,7 @@ Demonstrates:
 - Cost tracking via `${node.llm_usage.cost_usd}`
 - Duration and token usage
 
-### 2. Structured code review — `claude-code-schema.pflow.md`
+### 2. Structured code review - `claude-code-schema.pflow.md`
 
 ```bash
 pflow examples/nodes/claude-code/claude-code-schema.pflow.md file_path=your_script.py
@@ -37,7 +37,7 @@ Demonstrates:
 - Declared workflow inputs referenced as `${file_path}`
 - Multiple output files from a single analysis
 
-### 3. Debugging assistant — `claude-code-debug.pflow.md`
+### 3. Debugging assistant - `claude-code-debug.pflow.md`
 
 ```bash
 pflow examples/nodes/claude-code/claude-code-debug.pflow.md error_message="TypeError: ..."
@@ -49,7 +49,7 @@ Demonstrates:
 - Optional inputs (`code_context`, `stack_trace`)
 - Confidence scoring and prevention tips
 
-### 4. Git workflow integration — `claude-code-git-workflow.pflow.md`
+### 4. Git workflow integration - `claude-code-git-workflow.pflow.md`
 
 ```bash
 pflow examples/nodes/claude-code/claude-code-git-workflow.pflow.md
@@ -57,30 +57,39 @@ pflow examples/nodes/claude-code/claude-code-git-workflow.pflow.md
 
 Demonstrates:
 
-- Multi-stage analysis pipeline (shell → claude-code → claude-code → write-file)
+- Multi-stage analysis pipeline (shell -> claude-code -> claude-code -> write-file)
 - Passing upstream node output into the prompt via `${node_id.field}` interpolation
 - System prompts for specific personas
 - Cost aggregation across multiple calls
 
 ## Schema-driven output
 
-When you provide `output_schema`, the result is parsed into a structured dict:
+When you provide `output_schema`, pflow passes JSON Schema to the Claude Agent SDK's native structured-output mode. The top-level schema must be `type: object`.
 
 ```yaml output_schema
-summary:
-  type: str
-  description: Brief summary
-score:
-  type: int
-  description: Score from 1-10
-items:
-  type: list
-  description: List of items
+type: object
+properties:
+  summary:
+    type: string
+    description: Brief summary
+  score:
+    type: integer
+    minimum: 1
+    maximum: 10
+    description: Score from 1-10
+  items:
+    type: array
+    items:
+      type: string
+    description: List of items
+required: [summary, score, items]
 ```
 
 Access fields directly: `${node.result.summary}`, `${node.result.score}`, `${node.result.items}`.
 
-If JSON parsing fails, the raw text is available at `${node.result}` and an error message at `${node._schema_error}`.
+If the SDK returns no structured output, the raw text is available at `${node.result}`, an error message is available at `${node._schema_error}`, and `shared["__warnings__"][node_id]` marks the workflow status `DEGRADED`.
+
+The node always returns `default` from `post()` — schema soft-failures DO NOT route through `- on-error:` edges. Wire schema-recovery logic by inspecting `${node._schema_error}` or the workflow `DEGRADED` status, not the error edge.
 
 ## Passing context into the prompt
 
@@ -117,22 +126,24 @@ ${node.llm_usage.num_turns}                     # Conversation turns used
 ${node.llm_usage.session_id}                    # Resumable session ID
 ```
 
+`cost_usd` is the SDK-reported API-equivalent estimated cost. Actual billing depends on auth method; Claude Pro/Max subscription runs may report an API-equivalent cost without a direct per-call charge.
+
 ## Authentication
 
-- **API key**: `export ANTHROPIC_API_KEY=sk-ant-...` — billed to your Anthropic Console account.
-- **Claude Pro/Max subscription**: `claude setup-token` (or `claude auth login`) — uses subscription entitlements.
+- **API key**: `export ANTHROPIC_API_KEY=sk-ant-...` - billed to your Anthropic Console account.
+- **Claude Pro/Max subscription**: `claude setup-token` (or `claude auth login`) - uses subscription entitlements.
 
 ## Parameters
 
 | Parameter             | Default             | Description                                                 |
 |-----------------------|---------------------|-------------------------------------------------------------|
 | `prompt`              | required            | Prompt to send to Claude                                    |
-| `output_schema`       | None                | Schema for structured output (see above)                    |
+| `output_schema`       | None                | JSON Schema for structured output (see above)               |
 | `cwd`                 | `os.getcwd()`       | Working directory                                           |
 | `model`               | `claude-sonnet-4-5` | Claude model identifier                                     |
 | `allowed_tools`       | All tools           | Permitted tool names (e.g., `["Read", "Write"]`)            |
 | `disallowed_tools`    | None                | Tool names or patterns to deny (e.g., `["Bash(git:*)"]`)    |
-| `max_turns`           | 50                  | Maximum conversation turns                                  |
+| `max_turns`           | 50                  | Maximum conversation turns (must be >=2 with schema)        |
 | `max_thinking_tokens` | 8000                | Maximum tokens for extended reasoning                       |
 | `timeout`             | 300                 | Execution timeout in seconds (30–3600)                      |
 | `system_prompt`       | None                | System instructions                                         |
@@ -141,20 +152,21 @@ ${node.llm_usage.session_id}                    # Resumable session ID
 
 ## Best practices
 
-- Use `output_schema` whenever you need specific fields — it eliminates regex parsing.
-- Set `max_turns` proportional to task complexity: 1 for simple generation, 2–3 for review, 5–10 for multi-step debugging.
+- Use `output_schema` whenever you need specific fields; it delegates enforcement to the SDK's native structured-output mode.
+- Set `max_turns` proportional to task complexity: 2 for simple structured output, 2-3 for review, 5-10 for multi-step debugging.
 - Track `${node.llm_usage.cost_usd}` for budget visibility.
-- Interpolate context directly into the `prompt` — there is no `context` parameter.
-- Check `${node._schema_error}` after structured calls if downstream logic depends on parsed fields.
+- Interpolate context directly into the `prompt`; there is no `context` parameter.
+- Check `${node._schema_error}` or workflow `DEGRADED` status after structured calls if downstream logic depends on parsed fields.
 
 ## Troubleshooting
 
-- **"Claude not outputting JSON despite schema"** — increase `max_turns` so Claude has room to refine.
-- **High cost** — reduce `max_turns`, tighten the prompt, or restrict `allowed_tools`.
-- **Timeouts** — break complex tasks into smaller steps or raise `timeout`.
-- **Authentication failed** — run `claude doctor` or verify `ANTHROPIC_API_KEY`.
+- **"Claude not producing structured output despite schema"** - check that the schema is valid JSON Schema and increase `max_turns` if needed.
+- **Top-level array schema rejected** - wrap arrays or primitives inside a top-level object property.
+- **High cost** - reduce `max_turns`, tighten the prompt, or restrict `allowed_tools`.
+- **Timeouts** - break complex tasks into smaller steps or raise `timeout`.
+- **Authentication failed** - run `claude doctor` or verify `ANTHROPIC_API_KEY`.
 
 ## See also
 
 - [Claude Agent SDK documentation](https://docs.anthropic.com/en/api/claude-agent-sdk)
-- `pflow guide` — top-level guide for workflow authoring
+- `pflow guide` - top-level guide for workflow authoring

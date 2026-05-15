@@ -46,6 +46,7 @@ RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
     "core",
     "http",
     "llm",
+    "claude-code",
     "code",
     "shell",
     "file",

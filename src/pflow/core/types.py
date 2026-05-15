@@ -4,12 +4,6 @@ This module defines the Surface 1 (S1) type system for workflow-authored
 ``## Inputs`` / ``## Outputs`` declarations. It intentionally differs from the
 Python annotation vocabulary used inside code blocks and node Interface
 docstrings.
-
-The Claude Code node's ``output_schema`` is a deliberate fourth surface that
-continues to use Python-aliased names (``str``, ``int``, ``bool``, ``list``,
-``dict``). Those names are embedded literally into LLM prompt construction by
-``nodes/claude/claude_code.py::_build_schema_prompt`` — migrating them would
-change the LLM's instruction wording. Not in scope for the S1 vocabulary.
 """
 
 from __future__ import annotations

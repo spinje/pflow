@@ -40,27 +40,35 @@ Analyze the error and provide structured debugging assistance.
 - system_prompt: You are an expert debugger. Be concise but thorough. Focus on practical solutions.
 
 ```yaml output_schema
-error_type:
-  type: str
-  description: Type of error (syntax/runtime/logic/configuration)
-root_cause:
-  type: str
-  description: Root cause analysis
-immediate_fix:
-  type: str
-  description: Quick fix to resolve the error
-long_term_solution:
-  type: str
-  description: Better long-term solution
-prevention_tips:
-  type: list
-  description: Tips to prevent similar errors
-code_snippet:
-  type: str
-  description: Fixed code snippet if applicable
-confidence:
-  type: int
-  description: Confidence level in the solution (1-10)
+type: object
+properties:
+  error_type:
+    type: string
+    enum: [syntax, runtime, logic, configuration, unknown]
+    description: Type of error
+  root_cause:
+    type: string
+    description: Root cause analysis
+  immediate_fix:
+    type: string
+    description: Quick fix to resolve the error
+  long_term_solution:
+    type: string
+    description: Better long-term solution
+  prevention_tips:
+    type: array
+    items:
+      type: string
+    description: Tips to prevent similar errors
+  code_snippet:
+    type: string
+    description: Fixed code snippet if applicable
+  confidence:
+    type: integer
+    minimum: 1
+    maximum: 10
+    description: Confidence level in the solution
+required: [error_type, root_cause, immediate_fix, long_term_solution, prevention_tips, code_snippet, confidence]
 ```
 
 ### format_report

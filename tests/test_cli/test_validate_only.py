@@ -333,6 +333,128 @@ class TestValidateOnlyJSONOutput:
         assert warning["suggestions"]
 
 
+class TestValidateOnlyClaudeCodeStructuredOutput:
+    """Validation-only must catch Claude Code schema contracts before execution."""
+
+    def test_validate_only_rejects_claude_code_array_root_schema(self, tmp_path: Path) -> None:
+        workflow = {
+            "nodes": [
+                {
+                    "id": "review",
+                    "type": "claude-code",
+                    "params": {
+                        "prompt": "Return an array.",
+                        "max_turns": 2,
+                        "output_schema": {"type": "array", "items": {"type": "string"}},
+                    },
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "claude-array-root.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "top-level type: object" in result.output
+        assert "review" in result.output
+
+    def test_validate_only_rejects_claude_code_max_turns_one_with_schema(self, tmp_path: Path) -> None:
+        workflow = {
+            "nodes": [
+                {
+                    "id": "review",
+                    "type": "claude-code",
+                    "params": {
+                        "prompt": "Return status.",
+                        "max_turns": 1,
+                        "output_schema": {
+                            "type": "object",
+                            "properties": {"status": {"type": "string"}},
+                            "required": ["status"],
+                        },
+                    },
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "claude-max-turns.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "max_turns must be >= 2" in result.output
+        assert "review" in result.output
+
+    def test_validate_only_rejects_claude_code_legacy_schema(self, tmp_path: Path) -> None:
+        workflow = {
+            "nodes": [
+                {
+                    "id": "review",
+                    "type": "claude-code",
+                    "params": {
+                        "prompt": "Return status.",
+                        "max_turns": 2,
+                        "output_schema": {"status": {"type": "str", "description": "Legacy schema style"}},
+                    },
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "claude-legacy-schema.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "legacy Python-alias format" in result.output
+        assert "review" in result.output
+
+    def test_validate_only_defers_templated_output_schema(self, tmp_path: Path) -> None:
+        """Templated ``output_schema`` (e.g. from an upstream code node) must
+        survive preflight. Runtime ``_validate_schema`` checks the resolved
+        value after template resolution.
+
+        Regression: an earlier validator added in Task 126 hard-rejected the
+        templated form because the IR value is a string at parse time. That
+        broke the composition pattern of ``output_schema: ${upstream.field}``.
+        """
+        workflow = {
+            "nodes": [
+                {
+                    "id": "build_schema",
+                    "type": "code",
+                    "params": {
+                        "code": (
+                            'result: dict = {"type": "object", '
+                            '"properties": {"status": {"type": "string"}}, '
+                            '"required": ["status"]}'
+                        ),
+                    },
+                },
+                {
+                    "id": "review",
+                    "type": "claude-code",
+                    "params": {
+                        "prompt": "Return status.",
+                        "max_turns": 2,
+                        "output_schema": "${build_schema.result}",
+                    },
+                },
+            ],
+            "edges": [{"from": "build_schema", "to": "review", "action": "default"}],
+        }
+        workflow_path = tmp_path / "claude-templated-schema.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code == 0, result.output
+        assert "must be a dict" not in result.output
+
+
 class TestValidationErrorDiagnosticShape:
     """Regression guard for Task 144: validation errors are Diagnostic objects.
 

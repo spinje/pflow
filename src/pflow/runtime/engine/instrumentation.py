@@ -348,11 +348,11 @@ def apply_memo_hit(
 ) -> None:
     """Apply a memoization cache hit to shared state.
 
-    `__pflow_stats__` is engine-injected metadata (duration, etc.) that lives
-    in the stored blob for --dry-run historical estimates but must NOT leak
-    into the live `shared` dict — a fresh execution would never produce that
-    key, so restoring it would make cached and fresh paths observably differ
-    (template resolution, equality checks, trace output).
+    `__pflow_stats__` and `__pflow_warnings__` are engine-injected metadata
+    that live in the stored blob but must NOT leak into `shared[node_id]`.
+    Stats feed --dry-run historical estimates; warnings are rehydrated to the
+    root `shared["__warnings__"]` channel so cached degraded executions retain
+    the same status as fresh executions.
 
     Task 159 E.1: when ``_should_write_cache_metadata(node_type_name)``
     fires, augment the restored ``llm_usage`` dict with ``cache_source =
@@ -367,10 +367,11 @@ def apply_memo_hit(
     node_actions = execution.setdefault("node_actions", {})
     node_hashes = execution.setdefault("node_hashes", {})
 
-    if "__pflow_stats__" in cached_output:
-        restored = {k: v for k, v in cached_output.items() if k != "__pflow_stats__"}
-    else:
-        restored = cached_output
+    reserved_keys = {"__pflow_stats__", "__pflow_warnings__"}
+    restored = {k: v for k, v in cached_output.items() if k not in reserved_keys}
+    cached_warning = cached_output.get("__pflow_warnings__")
+    if cached_warning is not None:
+        shared.setdefault("__warnings__", {})[node_id] = cached_warning
     shared[node_id] = restored
     completed_nodes.append(node_id)
     node_actions[node_id] = cached_action
@@ -475,6 +476,9 @@ def write_memo_cache(
             _log_skipped_cache_metadata(node_type_name, node_output)
         workflow_path = shared.get("_pflow_workflow_file")
         output_dict = dict(node_output) if isinstance(node_output, dict) else {"value": node_output}
+        node_warning = shared.get("__warnings__", {}).get(node_id)
+        if node_warning is not None:
+            output_dict["__pflow_warnings__"] = node_warning
         if duration_ms is not None:
             output_dict["__pflow_stats__"] = {"duration_ms": float(duration_ms)}
         memo_cache.put(cache_key, node_id, workflow_path, action or "default", output_dict)

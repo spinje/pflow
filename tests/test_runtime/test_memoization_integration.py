@@ -228,6 +228,47 @@ def test_memo_cache_records_execution_state(tmp_path: Any) -> None:
     assert "state-node" in execution["node_hashes"]
 
 
+def test_memo_cache_rehydrates_node_warning(tmp_path: Any) -> None:
+    """Memo hits must preserve node warnings so degraded status does not become success."""
+    from pflow.runtime.engine.instrumentation import apply_memo_hit, write_memo_cache
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    warning = {
+        "kind": "claude_code.schema_not_satisfied",
+        "text": "Model did not return structured output matching the schema.",
+        "context": {"node_type": "claude-code"},
+    }
+    shared = {
+        "__memoization_cache__": cache,
+        "__warnings__": {"review": warning},
+        "_pflow_workflow_file": "workflow.pflow.md",
+        "review": {"result": "raw text", "_schema_error": warning["text"]},
+    }
+
+    write_memo_cache(
+        "review",
+        shared,
+        "cache-key",
+        node_type_name="ClaudeCodeNode",
+    )
+    cached = cache.get("cache-key")
+    assert cached is not None
+    cached_action, cached_output = cached
+
+    replay_shared: dict[str, Any] = {}
+    apply_memo_hit(
+        "review",
+        replay_shared,
+        cached_action,
+        cached_output,
+        "config-hash",
+        node_type_name="ClaudeCodeNode",
+    )
+
+    assert replay_shared["review"] == {"result": "raw text", "_schema_error": warning["text"]}
+    assert replay_shared["__warnings__"]["review"] == warning
+
+
 def test_memo_cache_no_write_on_error(tmp_path: Any) -> None:
     """When node returns 'error', the result is NOT written to the memo cache."""
     cache = MemoizationCache(db_path=tmp_path / "cache.db")

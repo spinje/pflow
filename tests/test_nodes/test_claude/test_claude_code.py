@@ -4,29 +4,21 @@ Tests criteria from the specification:
 1. Prompt missing → ValueError with "No prompt provided"
 2. Prompt empty string → ValueError with "Prompt cannot be empty"
 3. Prompt > 10000 chars → ValueError with "Prompt too long"
-4. Working directory missing → ValueError with path
-5. Working directory restricted → ValueError with "Restricted directory"
-6-7. Authentication now handled by SDK (tests removed)
-8. Valid task without schema → "success" and shared["result"] populated
-9. Valid task with schema → "success" and schema keys in shared
-10. Output schema invalid keys → ValueError with details
-11. Output schema 50+ keys → ValueError "Schema too complex"
-12. Rate limit error → ValueError with retry message
-13. Timeout at 300s → ValueError with timeout message
-14. CLINotFoundError handling → Correct error transformation
-15. CLIConnectionError handling → Correct error transformation
-16. ProcessError handling → Includes exit code
-17. Tool whitelist enforcement → Only ["Read", "Write", "Edit", "Bash"] allowed
-18. Schema to prompt conversion → System prompt contains JSON format
-19. Valid JSON response → Values stored in schema keys
-20. Invalid JSON response → Raw text in result, error in _schema_error
-21. Partial JSON response → Missing keys stored as None
-22. No response content → Empty result stored
-23. Schema merged with user prompt → Both instructions present
+4. Working directory missing/restricted → clear ValueError
+5. Native SDK structured output is wired through ClaudeAgentOptions.output_format
+6. JSON Schema validation catches legacy format, empty schemas, and top-level non-object schemas
+7. max_turns >= 2 is required when output_schema is set
+8. Valid task without schema → shared["result"] populated with text
+9. Valid task with schema → shared["result"] populated from ResultMessage.structured_output
+10. Schema soft-failures write _schema_error and __warnings__
+11. SDK error signals preserve structured output when available and warn
+12. SDK/process/rate-limit/timeout errors are transformed by exec_fallback
 """
 
 import asyncio
 import sys
+from dataclasses import dataclass
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -49,6 +41,22 @@ class ToolUseBlock:
         self.input = input_data
 
 
+@dataclass
+class ResultMessage:
+    """Test mock mirroring claude_agent_sdk.types.ResultMessage (v0.2.82+)."""
+
+    subtype: str = "success"
+    duration_ms: int = 0
+    duration_api_ms: int = 0
+    is_error: bool = False
+    num_turns: int = 1
+    session_id: str = "test-session"
+    total_cost_usd: float | None = None
+    usage: dict | None = None
+    result: str | None = None
+    structured_output: Any = None
+
+
 class CLINotFoundError(Exception):
     pass
 
@@ -59,7 +67,10 @@ class CLIConnectionError(Exception):
 
 class ProcessError(Exception):
     def __init__(self, exit_code=1, stderr=""):
-        super().__init__()
+        # ``str(exc)`` returns ``stderr`` so ``_run_claude_session`` captures
+        # something meaningful into ``sdk_exception_text`` (the real SDK
+        # ProcessError's ``__str__`` is similarly stderr-derived).
+        super().__init__(stderr)
         self.exit_code = exit_code
         self.stderr = stderr
 
@@ -68,11 +79,16 @@ class ClaudeSDKError(Exception):
     pass
 
 
+class QueryError(Exception):
+    pass
+
+
 # Mock the SDK module before importing the node
 mock_sdk_types = Mock()
 mock_sdk_types.AssistantMessage = AssistantMessage
 mock_sdk_types.TextBlock = TextBlock
 mock_sdk_types.ToolUseBlock = ToolUseBlock
+mock_sdk_types.ResultMessage = ResultMessage
 
 mock_sdk_exceptions = Mock()
 mock_sdk_exceptions.CLINotFoundError = CLINotFoundError
@@ -95,6 +111,7 @@ sys.modules["claude_agent_sdk.exceptions"] = mock_sdk_exceptions
 
 # Now import the node after SDK mocking - E402 is expected here
 from pflow.nodes.claude.claude_code import ClaudeCodeNode  # noqa: E402
+from pflow.registry.metadata_extractor import PflowMetadataExtractor  # noqa: E402
 
 
 # Fixtures for common test setup
@@ -125,7 +142,7 @@ def mock_query_success():
 # Test Criteria 1: Prompt missing → ValueError with "No prompt provided"
 def test_task_missing(claude_node):
     """Test that missing prompt raises ValueError."""
-    shared = {}
+    shared = {"__warnings__": {}}
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
     assert "No prompt provided" in str(exc_info.value)
@@ -135,7 +152,7 @@ def test_task_missing(claude_node):
 def test_task_empty_string(claude_node):
     """Test that empty string prompt raises ValueError."""
     claude_node.params = {"prompt": "   "}  # Whitespace only
-    shared = {}
+    shared = {"__warnings__": {}}
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
     assert "cannot be empty" in str(exc_info.value)
@@ -145,7 +162,7 @@ def test_task_empty_string(claude_node):
 def test_task_too_long(claude_node):
     """Test that prompt over 10000 chars raises ValueError."""
     claude_node.params = {"prompt": "x" * 10001}
-    shared = {}
+    shared = {"__warnings__": {}}
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
     assert "Prompt too long" in str(exc_info.value)
@@ -156,7 +173,7 @@ def test_task_too_long(claude_node):
 def test_working_directory_missing(claude_node):
     """Test that non-existent working directory raises ValueError."""
     claude_node.params = {"prompt": "test prompt", "cwd": "/nonexistent/path"}
-    shared = {}
+    shared = {"__warnings__": {}}
 
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
@@ -167,7 +184,7 @@ def test_working_directory_missing(claude_node):
 # Test Criteria 5: Working directory restricted → ValueError with "Restricted directory"
 def test_working_directory_restricted(claude_node):
     """Test that restricted directories raise ValueError."""
-    shared = {}
+    shared = {"__warnings__": {}}
 
     # Test multiple restricted directories
     for restricted in ["/", "/etc", "/usr", "/bin"]:
@@ -200,7 +217,6 @@ def test_valid_task_without_schema(claude_node):
 
         assert isinstance(result, dict)
         assert result["result_text"] == "def hello_world():\n    print('Hello, World!')"
-        assert result["output_schema"] is None
         assert result["tool_uses"] == []
 
         # Check post() stores results (now string format without schema)
@@ -214,21 +230,24 @@ def test_valid_task_without_schema(claude_node):
 # Test Criteria 9: Valid prompt with schema → "success" and schema keys in shared
 def test_valid_task_with_schema(claude_node):
     """Test successful execution with output schema."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "risk_level": {"type": "string", "enum": ["high", "medium", "low"]},
+            "issues": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["risk_level", "issues"],
+    }
     claude_node.params = {
         "prompt": "Review this code for issues",
-        "output_schema": {
-            "risk_level": {"type": "str", "description": "high/medium/low"},
-            "issues": {"type": "list", "description": "List of issues"},
-        },
+        "output_schema": schema,
     }
-    shared = {}
+    shared = {"__warnings__": {}}
     claude_node.shared = shared
 
-    # Mock query response with JSON
     async def mock_response(*args, **kwargs):
-        yield AssistantMessage(
-            content=[TextBlock(text='Analysis complete.\n```json\n{"risk_level": "low", "issues": []}\n```')]
-        )
+        yield AssistantMessage(content=[TextBlock(text="Analysis complete.")])
+        yield ResultMessage(structured_output={"risk_level": "low", "issues": []}, is_error=False)
 
     with patch("pflow.nodes.claude.claude_code.query") as mock_query:
         mock_query.return_value = mock_response()
@@ -238,57 +257,127 @@ def test_valid_task_with_schema(claude_node):
         result = claude_node.exec(prep_res)
 
         assert isinstance(result, dict)
-        assert result["result_text"] == 'Analysis complete.\n```json\n{"risk_level": "low", "issues": []}\n```'
-        assert result["output_schema"] == claude_node.params["output_schema"]
+        assert result["result_text"] == "Analysis complete."
+        assert result["structured_output"] == {"risk_level": "low", "issues": []}
 
-        # Check post() stores and parses JSON
         claude_node.post(shared, prep_res, result)
-        assert isinstance(shared["result"], dict)
-        assert shared["result"]["risk_level"] == "low"
-        assert shared["result"]["issues"] == []
+        assert shared["result"] == {"risk_level": "low", "issues": []}
+        assert "_schema_error" not in shared
+        assert not shared["__warnings__"]
 
 
-# Test Criteria 10: Output schema invalid keys → ValueError with details
-def test_output_schema_invalid_keys(claude_node):
-    """Test that invalid schema keys raise ValueError."""
-    claude_node.params = {
-        "prompt": "test prompt",
-        "output_schema": {
-            "valid_key": {"type": "str"},
-            "invalid-key": {"type": "str"},  # Invalid: contains hyphen
-        },
+def test_legacy_python_alias_schema_rejected(claude_node):
+    """Old custom output_schema format raises with migration guidance."""
+    with pytest.raises(ValueError, match="legacy Python-alias format"):
+        claude_node._validate_schema({"risk_level": {"type": "str", "description": "high/medium/low"}})
+
+
+def test_legacy_format_detection_checks_all_values(claude_node):
+    """Legacy detection checks all values, not just the first."""
+    schema = {"_meta": "comment", "risk": {"type": "str", "description": "high/medium/low"}}
+    with pytest.raises(ValueError, match="legacy Python-alias format"):
+        claude_node._validate_schema(schema)
+
+
+def test_oneOf_top_level_schema_accepted(claude_node):
+    """Top-level oneOf passes prep validation; runtime compatibility is API-dependent."""
+    schema = {"oneOf": [{"type": "string"}, {"type": "integer"}]}
+    assert claude_node._validate_schema(schema) == schema
+
+
+def test_top_level_array_schema_rejected(claude_node):
+    """The Claude API rejects non-object top-level schemas; prep catches this."""
+    with pytest.raises(ValueError, match="top-level type: object"):
+        claude_node._validate_schema({"type": "array", "items": {"type": "string"}})
+
+
+def test_top_level_primitive_schema_rejected(claude_node):
+    """Primitive top-level schemas must be wrapped in an object."""
+    with pytest.raises(ValueError, match="top-level type: object"):
+        claude_node._validate_schema({"type": "string", "enum": ["yes", "no"]})
+
+
+def test_empty_schema_dict_rejected(claude_node):
+    """Empty dict likely means the schema body was omitted."""
+    with pytest.raises(ValueError, match="empty dict"):
+        claude_node._validate_schema({})
+
+
+def test_none_schema_returns_none(claude_node):
+    """None means no schema was requested."""
+    assert claude_node._validate_schema(None) is None
+
+
+def test_non_dict_schema_raises_typeerror(claude_node):
+    """output_schema must be a JSON Schema dict."""
+    with pytest.raises(TypeError):
+        claude_node._validate_schema(["not", "a", "dict"])
+
+
+def test_registry_interface_outputs_exclude_root_warnings():
+    """Root __warnings__ is diagnostic state, not a node template output."""
+    metadata = PflowMetadataExtractor().extract_metadata(ClaudeCodeNode)
+    output_keys = {item["key"] for item in metadata["outputs"]}
+    assert "result" in output_keys
+    assert "_schema_error" in output_keys
+    assert "__warnings__" not in output_keys
+
+
+def test_output_schema_wrapped_and_passed_to_options(claude_node):
+    """JSON Schema is wrapped in the SDK's native output_format shape."""
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    prep_res = claude_node.prep({})
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert mock_options.call_args.kwargs["output_format"] == {
+        "type": "json_schema",
+        "schema": schema,
     }
-    shared = {}
-
-    with pytest.raises(ValueError) as exc_info:
-        claude_node.prep(shared)
-
-    assert "Invalid schema key" in str(exc_info.value)
-    assert "invalid-key" in str(exc_info.value)
 
 
-# Test Criteria 11: Output schema 50+ keys → ValueError "Schema too complex"
-def test_output_schema_too_complex(claude_node):
-    """Test that overly complex schema raises ValueError."""
-    schema = {f"key_{i}": {"type": "str"} for i in range(51)}
-    claude_node.params = {
-        "prompt": "test prompt",
-        "output_schema": schema,
+def test_exec_passes_structured_options_to_query(claude_node):
+    """The execution path must pass the ClaudeAgentOptions object into query()."""
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+    sentinel_options = object()
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(structured_output={"x": "ok"}, is_error=False)
+
+    with (
+        patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions", return_value=sentinel_options) as mock_options,
+        patch("pflow.nodes.claude.claude_code.query") as mock_query,
+    ):
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep({})
+        claude_node.exec(prep_res)
+
+    assert mock_options.call_args.kwargs["output_format"] == {
+        "type": "json_schema",
+        "schema": schema,
     }
-    shared = {}
+    assert mock_query.call_args.kwargs["options"] is sentinel_options
 
-    with pytest.raises(ValueError) as exc_info:
-        claude_node.prep(shared)
 
-    assert "Schema too complex" in str(exc_info.value)
-    assert "51" in str(exc_info.value)
+def test_no_schema_means_no_output_format(claude_node):
+    """Without output_schema, output_format is omitted."""
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert "output_format" not in mock_options.call_args.kwargs
 
 
 # Test Criteria 12: Rate limit error → ValueError with retry message
 def test_rate_limit_error(claude_node):
     """Test rate limit error handling."""
     claude_node.params = {"prompt": "test prompt"}
-    shared = {}
+    shared = {"__warnings__": {}}
     claude_node.shared = shared
 
     async def mock_error(*args, **kwargs):
@@ -505,61 +594,34 @@ def test_timeout_parameter(claude_node):
     assert "between 30 and 3600" in str(exc_info.value)
 
 
-# Test Criteria 18: Schema to prompt conversion → System prompt contains JSON format
-def test_schema_to_prompt_conversion(claude_node):
-    """Test that schema is converted to JSON format instructions in system prompt."""
-    claude_node.params = {
-        "prompt": "test prompt",
-        "output_schema": {
-            "summary": {"type": "str", "description": "Brief summary"},
-            "score": {"type": "int", "description": "Score from 1-10"},
-        },
-    }
-    shared = {}
-
-    prep_res = claude_node.prep(shared)
-    system_prompt = claude_node._build_system_prompt(prep_res)
-
-    # Check that system prompt contains JSON instructions (updated prompt text)
-    assert "YOU MUST RESPOND WITH JSON ONLY" in system_prompt
-    assert "```json" in system_prompt
-    assert '"summary": "<str: Brief summary>"' in system_prompt
-    assert '"score": "<int: Score from 1-10>"' in system_prompt
-    assert "Field descriptions:" in system_prompt
-    assert "- summary: Brief summary" in system_prompt
-    assert "- score: Score from 1-10" in system_prompt
-
-
 # Test Criteria 19: Valid JSON response → Values stored in schema keys
 def test_valid_json_response_storage(claude_node):
-    """Test that valid JSON response is correctly parsed and stored."""
+    """Test that structured_output is stored directly."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "complexity": {"type": "string"},
+            "lines": {"type": "integer"},
+            "functions": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["complexity", "lines", "functions"],
+    }
     claude_node.params = {
         "prompt": "Analyze code",
-        "output_schema": {
-            "complexity": {"type": "str", "description": "Code complexity"},
-            "lines": {"type": "int", "description": "Number of lines"},
-            "functions": {"type": "list", "description": "List of functions"},
-        },
+        "output_schema": schema,
     }
-    shared = {}
+    shared = {"__warnings__": {}}
     claude_node.shared = shared
 
-    # Mock response with valid JSON
     async def mock_response(*args, **kwargs):
-        yield AssistantMessage(
-            content=[
-                TextBlock(
-                    text="""Analysis complete.
-            ```json
-            {
+        yield AssistantMessage(content=[TextBlock(text="Analysis complete.")])
+        yield ResultMessage(
+            structured_output={
                 "complexity": "medium",
                 "lines": 42,
-                "functions": ["main", "helper", "utils"]
-            }
-            ```
-            """
-                )
-            ]
+                "functions": ["main", "helper", "utils"],
+            },
+            is_error=False,
         )
 
     with patch("pflow.nodes.claude.claude_code.query") as mock_query:
@@ -570,30 +632,31 @@ def test_valid_json_response_storage(claude_node):
 
         assert isinstance(result, dict)
 
-        # Check post() stores parsed JSON values
         claude_node.post(shared, prep_res, result)
-        assert isinstance(shared["result"], dict)
-        assert shared["result"]["complexity"] == "medium"
-        assert shared["result"]["lines"] == 42
-        assert shared["result"]["functions"] == ["main", "helper", "utils"]
-        assert "_schema_error" not in shared  # Should not have error when parsing succeeds
+        assert shared["result"] == {
+            "complexity": "medium",
+            "lines": 42,
+            "functions": ["main", "helper", "utils"],
+        }
+        assert "_schema_error" not in shared
+        assert not shared["__warnings__"]
 
 
 # Test Criteria 20: Invalid JSON response → Raw text in result, error in _schema_error
 def test_invalid_json_response_fallback(claude_node):
-    """Test that invalid JSON falls back to raw text storage."""
+    """Schema set + no structured_output falls back to raw text and warns."""
+    schema = {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}
     claude_node.params = {
         "prompt": "Analyze code",
-        "output_schema": {
-            "summary": {"type": "str", "description": "Summary"},
-        },
+        "output_schema": schema,
     }
+    claude_node.node_id = "review"
     shared = {}
     claude_node.shared = shared
 
-    # Mock response with invalid JSON
     async def mock_response(*args, **kwargs):
         yield AssistantMessage(content=[TextBlock(text="This is not JSON at all, just plain text response.")])
+        yield ResultMessage(structured_output=None, result="This is not JSON at all, just plain text response.")
 
     with patch("pflow.nodes.claude.claude_code.query") as mock_query:
         mock_query.return_value = mock_response()
@@ -603,30 +666,30 @@ def test_invalid_json_response_fallback(claude_node):
 
         assert isinstance(result, dict)
 
-        # Check post() handles invalid JSON (now stores as string)
         claude_node.post(shared, prep_res, result)
-        assert isinstance(shared["result"], str)  # Falls back to string when JSON fails
         assert shared["result"] == "This is not JSON at all, just plain text response."
-        assert shared["_schema_error"] == "Failed to parse JSON from response. Raw text stored in result"
+        assert "Model did not return" in shared["_schema_error"]
+        assert shared["__warnings__"]["review"]["kind"] == "claude_code.schema_not_satisfied"
 
 
-# Test Criteria 21: Partial JSON response → Missing keys stored as None
-def test_partial_json_response(claude_node):
-    """Test that partial JSON response stores None for missing keys."""
+def test_sdk_is_error_branch(claude_node):
+    """SDK is_error without structured_output uses the CLI-error soft-fail warning."""
+    schema = {"type": "object", "properties": {"found": {"type": "string"}}, "required": ["found"]}
     claude_node.params = {
         "prompt": "Analyze code",
-        "output_schema": {
-            "found": {"type": "str", "description": "Found key"},
-            "missing": {"type": "str", "description": "Missing key"},
-            "also_missing": {"type": "int", "description": "Also missing"},
-        },
+        "output_schema": schema,
     }
+    claude_node.node_id = "review"
     shared = {}
     claude_node.shared = shared
 
-    # Mock response with partial JSON (only has "found" key)
     async def mock_response(*args, **kwargs):
-        yield AssistantMessage(content=[TextBlock(text='```json\n{"found": "present"}\n```')])
+        yield AssistantMessage(content=[TextBlock(text="error context")])
+        yield ResultMessage(structured_output=None, result="error context", is_error=True)
+        # The SDK pairs ResultMessage(is_error=True) with a ProcessError raise
+        # when the CLI exits non-zero; the node must preserve the is_error state
+        # rather than re-raise. Other exception types are tested separately.
+        raise ProcessError(exit_code=1, stderr="Claude Code returned an error result: error context")
 
     with patch("pflow.nodes.claude.claude_code.query") as mock_query:
         mock_query.return_value = mock_response()
@@ -636,13 +699,11 @@ def test_partial_json_response(claude_node):
 
         assert isinstance(result, dict)
 
-        # Check post() handles partial JSON
         claude_node.post(shared, prep_res, result)
-        assert isinstance(shared["result"], dict)
-        assert shared["result"]["found"] == "present"
-        assert shared["result"]["missing"] is None
-        assert shared["result"]["also_missing"] is None
-        assert "_schema_error" not in shared  # No error since JSON was parsed
+        assert shared["result"] == "error context"
+        assert "Claude CLI reported an error" in shared["_schema_error"]
+        assert shared["__warnings__"]["review"]["kind"] == "claude_code.sdk_error_no_structured_output"
+        assert shared["__warnings__"]["review"]["context"]["sdk_exception"]
 
 
 # Test Criteria 22: No response content → Empty result stored
@@ -669,26 +730,6 @@ def test_no_response_content(claude_node):
         claude_node.post(shared, prep_res, result)
         assert isinstance(shared["result"], str)
         assert shared["result"] == ""
-
-
-# Test Criteria 23: Schema merged with user prompt → Both instructions present
-def test_schema_merged_with_user_prompt(claude_node):
-    """Test that schema instructions and user system prompt are both present."""
-    claude_node.params = {
-        "prompt": "test prompt",
-        "output_schema": {
-            "result": {"type": "str", "description": "Result"},
-        },
-        "system_prompt": "You are a helpful assistant.",
-    }
-    shared = {}
-
-    prep_res = claude_node.prep(shared)
-    system_prompt = claude_node._build_system_prompt(prep_res)
-
-    # Check both prompts are present (updated prompt text)
-    assert "YOU MUST RESPOND WITH JSON ONLY" in system_prompt
-    assert "You are a helpful assistant." in system_prompt
 
 
 # Additional tests for edge cases and integration
@@ -738,6 +779,17 @@ def test_max_turns_validation(claude_node):
     assert "Invalid max_turns" in str(exc_info.value)
 
 
+def test_max_turns_too_low_with_schema_rejected(claude_node):
+    """Structured output needs at least two turns."""
+    claude_node.params = {
+        "prompt": "test prompt",
+        "output_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
+        "max_turns": 1,
+    }
+    with pytest.raises(ValueError, match="max_turns must be >= 2"):
+        claude_node.prep({})
+
+
 def test_tool_use_logging(claude_node, caplog):
     """Test that tool uses are logged."""
     import logging
@@ -771,29 +823,144 @@ def test_tool_use_logging(claude_node, caplog):
         assert "Claude Code used 2 tools" in caplog.text
 
 
-def test_json_extraction_strategies(claude_node):
-    """Test all JSON extraction strategies."""
-    node = claude_node
+def test_sdk_is_error_with_structured_output_emits_warning(claude_node):
+    """If SDK reports an error but structured_output exists, structured output wins and warning persists."""
+    schema = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    claude_node.node_id = "review"
+    shared = {}
 
-    # Strategy 1: JSON in code block
-    text1 = '```json\n{"key": "value"}\n```'
-    result1 = node._extract_json(text1)
-    assert result1 == {"key": "value"}
+    async def mock_response(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text="done")])
+        yield ResultMessage(structured_output={"x": 1}, is_error=True)
+        # See test_sdk_is_error_branch — only ProcessError is the paired-with-
+        # is_error=True case the node swallows.
+        raise ProcessError(exit_code=1, stderr="partial")
 
-    # Strategy 2: Raw JSON object
-    text2 = 'Some text {"key": "value"} more text'
-    result2 = node._extract_json(text2)
-    assert result2 == {"key": "value"}
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)
 
-    # Strategy 3: Nested JSON
-    text3 = 'Text {"outer": {"inner": "value"}} end'
-    result3 = node._extract_json(text3)
-    assert result3 == {"outer": {"inner": "value"}}
+    assert shared["result"] == {"x": 1}
+    assert shared["__warnings__"]["review"]["kind"] == "claude_code.sdk_error_with_structured_output"
 
-    # Failed extraction
-    text4 = "No JSON here at all"
-    result4 = node._extract_json(text4)
-    assert result4 is None
+
+def test_non_process_error_after_is_error_re_raises(claude_node):
+    """Hard errors after a ResultMessage(is_error=True) must NOT be swallowed.
+
+    Regression: an earlier fix preserved is_error state by swallowing every
+    ``Exception``, which masked ``CLIConnectionError``/``CLINotFoundError``-class
+    failures so the user never saw the remediation message from ``exec_fallback``.
+    Only ``ProcessError`` (the paired non-zero-exit case) is the swallow candidate.
+    """
+    schema = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    claude_node.node_id = "review"
+    shared = {}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(structured_output=None, result="partial", is_error=True)
+        raise CLIConnectionError("Lost connection to Claude CLI mid-stream")
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep(shared)
+        # ``exec()`` runs the SDK loop directly (no retry/fallback wrapper).
+        # The connection error must escape ``_run_claude_session`` so the
+        # Node retry path eventually delivers it to ``exec_fallback``.
+        with pytest.raises(CLIConnectionError, match="Lost connection"):
+            claude_node.exec(prep_res)
+
+
+def test_output_schema_resolved_to_null_emits_warning(claude_node):
+    """A declared output_schema that resolves to None must warn the workflow author.
+
+    Regression: silently dropping schema mode caused workflows that templated
+    the schema from upstream nodes (``output_schema: ${x.schema}``) to report
+    SUCCESS even when the schema reference missed and the run produced free-form
+    text instead of structured output.
+    """
+    # Simulate engine post-template-resolution: key present, value resolved to None.
+    claude_node.params = {"prompt": "test prompt", "output_schema": None}
+    claude_node.node_id = "review"
+    shared: dict = {}
+
+    claude_node.prep(shared)
+
+    warning = shared["__warnings__"]["review"]
+    assert warning["kind"] == "claude_code.output_schema_resolved_to_null"
+    assert "resolved to None" in warning["text"]
+    assert warning["context"]["node_type"] == "claude-code"
+
+
+def test_output_schema_absent_does_not_warn(claude_node):
+    """If the workflow author never declared output_schema, no warning fires."""
+    claude_node.params = {"prompt": "test prompt"}  # no output_schema key
+    shared: dict = {}
+
+    claude_node.prep(shared)
+
+    assert "__warnings__" not in shared
+
+
+def test_output_schema_resolved_null_no_node_id_falls_back_to_schema_error(claude_node):
+    """Test-path / uncompiled nodes preserve signal via ``_schema_error``."""
+    claude_node.params = {"prompt": "test prompt", "output_schema": None}
+    shared: dict = {}
+
+    claude_node.prep(shared)
+
+    # Without a bound node_id, __warnings__ writes would be keyed under None and
+    # are lost downstream — fall back to _schema_error so the signal survives.
+    assert "resolved to None" in shared["_schema_error"]
+
+
+def test_nested_array_schema(claude_node):
+    """Arrays nested inside a top-level object are supported."""
+    schema = {
+        "type": "object",
+        "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+        "required": ["items"],
+    }
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    shared = {}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(structured_output={"items": ["a", "b", "c"]}, is_error=False)
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)
+
+    assert shared["result"] == {"items": ["a", "b", "c"]}
+    assert isinstance(shared["result"]["items"], list)
+
+
+def test_sticky_is_error_across_multiple_result_messages(claude_node):
+    """An early ResultMessage.is_error=True remains visible even if a later message is false."""
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    claude_node.node_id = "review"
+    shared = {}
+
+    async def mock_response(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text="raw")])
+        yield ResultMessage(is_error=True, structured_output=None)
+        yield ResultMessage(is_error=False, structured_output=None)
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)
+
+    assert shared["result"] == "raw"
+    assert "Claude CLI reported an error" in shared["_schema_error"]
+    assert shared["__warnings__"]["review"]["kind"] == "claude_code.sdk_error_no_structured_output"
 
 
 def test_working_directory_expansion(claude_node):
@@ -1031,3 +1198,100 @@ def test_disallowed_tools_with_allowed_tools(claude_node):
     prep_res = claude_node.prep(shared)
     assert prep_res["allowed_tools"] == ["Read", "Write", "Bash"]
     assert prep_res["disallowed_tools"] == ["Bash(rm:*)"]
+
+
+# ---------------------------------------------------------------------------
+# Soft-fail signal preservation when node_id is unbound (test path)
+# ---------------------------------------------------------------------------
+
+
+def test_sdk_error_with_structured_output_no_node_id_falls_back_to_schema_error(claude_node):
+    """When the SDK reports an error alongside valid structured output AND no
+    ``node_id`` is bound, ``_schema_error`` preserves the signal.
+
+    Production engine paths always bind ``node_id``, so this is the test /
+    direct-``node.run(shared)`` path. Matches the fallback established by
+    ``_emit_schema_resolved_null_warning``: ``__warnings__[node_id]`` is the
+    primary channel; ``_schema_error`` is the recovery channel.
+    """
+    schema = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    # No ``claude_node.node_id`` assignment — simulates uncompiled / direct test path.
+    shared: dict = {}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(structured_output={"x": 1}, is_error=True)
+        raise ProcessError(exit_code=1, stderr="partial")
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)
+
+    # Structured output still wins as the result.
+    assert shared["result"] == {"x": 1}
+    # Signal preserved via _schema_error even without node_id.
+    assert "structured_output was produced" in shared["_schema_error"]
+    # __warnings__ guarded by node_id; no warning entry expected.
+    assert "__warnings__" not in shared
+
+
+# ---------------------------------------------------------------------------
+# Soft-fail message strings must not collide with api_warning_detector
+# ---------------------------------------------------------------------------
+
+
+def test_soft_fail_output_shape_not_classified_as_api_warning(claude_node):
+    """Regression pin: a claude-code soft-fail must NOT be detected by
+    ``api_warning_detector.detect_api_warning`` — otherwise the engine would
+    override the node's ``"default"`` action to ``"error"`` and silently flip
+    soft-fail (DEGRADED) into hard fail (FAILED).
+
+    Today the detector is shape-gated — it only extracts an error message from
+    outputs containing ``ok: false`` / ``success: false`` / ``status: "error"`` /
+    GraphQL ``errors`` / an ``error`` key at the dict root. The claude-code node
+    writes ``result``, ``_schema_error``, and ``llm_usage`` — none of those keys
+    match. This test pins that invariant: the output shape from a soft-fail
+    must continue to bypass the detector, regardless of message wording.
+
+    A future contributor adding an ``error`` key to ``shared[node_id]`` for
+    debug visibility would break soft-fail routing — this test fails first.
+    """
+    from pflow.runtime.engine.api_warning_detector import detect_api_warning
+
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    claude_node.node_id = "review"
+    # Simulate engine namespacing: a claude-code node writes its outputs under
+    # ``shared[node_id]`` via NamespacedSharedStore. Build that shape directly
+    # so the test exercises exactly what the detector will see in production.
+    shared: dict = {}
+    namespaced = {}
+
+    async def mock_response(*args, **kwargs):
+        # No structured output → soft-fail branch with the longest message.
+        yield ResultMessage(structured_output=None, result="raw fallback text", is_error=False)
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        # Capture the node-output shape exactly as namespaced_store would write it.
+        # _store_results writes ``shared["result"]``, ``shared["_schema_error"]``,
+        # ``shared["llm_usage"]`` — under namespacing these become
+        # ``shared[node_id][...]``.
+        claude_node.post(namespaced, prep_res, result)
+
+    # Promote namespaced writes into the shared store shape the engine produces.
+    shared["review"] = {k: v for k, v in namespaced.items() if not k.startswith("__")}
+
+    # The canonical invariant: claude-code soft-fail must NOT be detected as
+    # an API warning. If detect_api_warning returns non-None, the engine would
+    # convert action="default" → "error" and lose the entire soft-fail design.
+    assert detect_api_warning("review", shared) is None, (
+        "claude-code soft-fail output was classified as an API warning; engine "
+        "would flip action to 'error'. Inspect: (a) any new error/ok/success/status "
+        "keys in _store_results, or (b) any change to api_warning_detector's "
+        "extract_error_message shape gates."
+    )

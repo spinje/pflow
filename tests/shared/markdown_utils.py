@@ -116,7 +116,7 @@ def ir_to_markdown(  # noqa: C901
                     lines.append(yaml.dump(value, default_flow_style=False, sort_keys=False).rstrip())
                     lines.append("```")
                 elif key == "output_schema" and isinstance(value, (dict, list)):
-                    # Claude-code output schema → yaml code block
+                    # output_schema (JSON Schema) - node-agnostic
                     lines.append("")
                     lines.append("```yaml output_schema")
                     lines.append(yaml.dump(value, default_flow_style=False, sort_keys=False).rstrip())

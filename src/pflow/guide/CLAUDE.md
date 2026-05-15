@@ -16,7 +16,7 @@ src/pflow/guide/
 ├── entry.md             # Capability map — rendered by pflow --help and pflow guide (no args)
 ├── core.md              # Framework fundamentals (explicit topic, not auto-included)
 ├── nodes/               # Per-node-type guides (static prose + dynamic interface from registry)
-│   ├── http.md, llm.md, code.md, shell.md, file.md, mcp.md
+│   ├── http.md, llm.md, claude-code.md, code.md, shell.md, file.md, mcp.md
 └── features/            # Per-feature guides (static content only)
     ├── batch.md, branching.md, prompt-caching.md, sub-workflows.md
 ```
@@ -27,7 +27,7 @@ src/pflow/guide/
 
 ## Dynamic Interface Injection
 
-Node topics (http, llm, code, shell, file) get Parameters + Outputs sections appended at render time, read from the registry. This keeps interface info in sync with actual node implementations.
+Node topics (http, llm, claude-code, code, shell, file) get Parameters + Outputs sections appended at render time, read from the registry. This keeps interface info in sync with actual node implementations.
 
 The mapping is in `_TOPIC_TO_NODE_TYPES`. Topics not listed there (mcp, features, core) get static content only. The `file` topic maps to both `read-file` and `write-file` node types.
 

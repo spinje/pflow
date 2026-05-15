@@ -325,6 +325,8 @@ def test_warns(caplog):
 ### 17. `claude_agent_sdk` Mocked via `sys.modules` (Session-Wide)
 `test_nodes/test_claude/test_claude_code.py` injects mock `claude_agent_sdk` into `sys.modules` **at module level** (not in a fixture). This happens at import time, persists for the entire pytest session, and has no cleanup. If you need to test real `claude_agent_sdk` integration, it won't work in the same pytest run.
 
+`ResultMessage` is a real `@dataclass` in that test file, not an auto-Mock. This is load-bearing: the Claude Code node probes `ResultMessage.__annotations__` at import time to verify SDK structured-output support. Keep `mock_sdk_types.ResultMessage = ResultMessage` before `sys.modules["claude_agent_sdk.types"] = mock_sdk_types`, or imports will fail before tests run.
+
 ### 18. Rewritten Tests That Assert Less Are Regression Signals
 When rewriting tests during a refactor, if the new test asserts LESS than the original, the new implementation likely dropped behavior — the old test wasn't over-specified. Investigate before weakening the assertion.
 
