@@ -140,7 +140,7 @@ The comment at `core/types.py:8-12` exists specifically because the Python-alias
 
 - Workflow authors write JSON Schema in ` ```yaml output_schema ` blocks on `claude-code` nodes, identical syntax to LLM nodes
 - **Top-level MUST be `type: object`** on this node (Claude API tool-input-schema limitation discovered in Phase 0; the LLM node has no such restriction). For array/primitive outputs, wrap in an object. Validation surfaces a clear error at `prep` time.
-- `oneOf`/`anyOf`/`allOf` at the top level pass `prep` validation; runtime success depends on the API (Phase 0 did not probe — may also be rejected)
+- `oneOf`/`anyOf`/`allOf`/`enum` at the top level are rejected at `prep` time (verified via the oneOf follow-up probe: all return HTTP 400 from the Anthropic API). Combinators must live inside an object wrapper.
 - Schemas can be inlined or referenced via `- output_schema: ./schema.yaml` (no change to file_resolver behavior)
 - The legacy Python-alias format (`{"field": {"type": "str", ...}}`) produces a clear migration error at `prep` time
 - Empty schema `{}` produces a clear "did you forget the schema body?" error
@@ -175,7 +175,7 @@ The comment at `core/types.py:8-12` exists specifically because the Python-alias
 
 ### Test coverage
 
-- New tests for: `output_format` wiring, legacy-format rejection, all-values legacy detection, `oneOf` top-level (accepted by prep), top-level array/primitive (rejected by prep), `max_turns: 1` with schema rejected, empty `{}` rejection, `None` no-op, structured_output as dict, `__warnings__` writes on soft-fail and `is_error+structured_output`, sticky `is_error` across multi-message streams
+- New tests for: `output_format` wiring, legacy-format rejection, all-values legacy detection, top-level `oneOf`/`anyOf`/`allOf`/missing-`type` (rejected by prep), top-level array/primitive (rejected by prep), object wrapper with `oneOf` inside (accepted), `max_turns: 1` with schema rejected, empty `{}` rejection, `None` no-op, structured_output as dict, `__warnings__` writes on soft-fail and `is_error+structured_output`, sticky `is_error` across multi-message streams
 - Existing tests for "valid Python identifier keys" / "≤50 keys" / `_build_schema_prompt` / `_extract_json*` deleted
 - All `_schema_error` assertions use substring matching (`"X" in shared["_schema_error"]`), not exact equality
 

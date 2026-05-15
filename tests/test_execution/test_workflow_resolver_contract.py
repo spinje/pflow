@@ -185,5 +185,5 @@ Calls an LLM with a prompt file that doesn't exist on disk.
 """
     )
 
-    with pytest.raises(CompilationError, match="file_resolution|missing"):
+    with pytest.raises(CompilationError, match=r"file_resolution|missing"):
         resolve_workflow(str(workflow_path))

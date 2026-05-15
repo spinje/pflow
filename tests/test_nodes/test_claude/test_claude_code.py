@@ -279,10 +279,30 @@ def test_legacy_format_detection_checks_all_values(claude_node):
         claude_node._validate_schema(schema)
 
 
-def test_oneOf_top_level_schema_accepted(claude_node):
-    """Top-level oneOf passes prep validation; runtime compatibility is API-dependent."""
-    schema = {"oneOf": [{"type": "string"}, {"type": "integer"}]}
-    assert claude_node._validate_schema(schema) == schema
+def test_top_level_oneOf_schema_rejected(claude_node):
+    """Verified via real-API probe: oneOf top-level returns HTTP 400.
+    Combinators must live inside an object wrapper.
+    """
+    with pytest.raises(ValueError, match="top-level type: object"):
+        claude_node._validate_schema({"oneOf": [{"type": "string"}, {"type": "integer"}]})
+
+
+def test_top_level_anyOf_schema_rejected(claude_node):
+    """anyOf at top level is rejected by the API — same class as oneOf."""
+    with pytest.raises(ValueError, match="top-level type: object"):
+        claude_node._validate_schema({"anyOf": [{"type": "object"}, {"type": "object"}]})
+
+
+def test_top_level_allOf_schema_rejected(claude_node):
+    """allOf at top level is rejected by the API — same class as oneOf."""
+    with pytest.raises(ValueError, match="top-level type: object"):
+        claude_node._validate_schema({"allOf": [{"type": "object"}, {"type": "object"}]})
+
+
+def test_top_level_missing_type_rejected(claude_node):
+    """A dict without top-level `type` is rejected — the API requires `type: object`."""
+    with pytest.raises(ValueError, match="top-level type: object"):
+        claude_node._validate_schema({"properties": {"x": {"type": "string"}}})
 
 
 def test_top_level_array_schema_rejected(claude_node):
@@ -295,6 +315,16 @@ def test_top_level_primitive_schema_rejected(claude_node):
     """Primitive top-level schemas must be wrapped in an object."""
     with pytest.raises(ValueError, match="top-level type: object"):
         claude_node._validate_schema({"type": "string", "enum": ["yes", "no"]})
+
+
+def test_top_level_object_with_oneOf_accepted(claude_node):
+    """oneOf INSIDE a top-level `type: object` is fine — the wrapper is what the API requires."""
+    schema = {
+        "type": "object",
+        "properties": {"x": {"type": "string"}},
+        "oneOf": [{"required": ["x"]}, {"required": []}],
+    }
+    assert claude_node._validate_schema(schema) == schema
 
 
 def test_empty_schema_dict_rejected(claude_node):

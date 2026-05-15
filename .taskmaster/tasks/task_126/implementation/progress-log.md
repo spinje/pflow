@@ -177,3 +177,39 @@ Verification:
 
 Deliberate non-change:
 - Did NOT touch the LLM node's analogous `node_id is None` guard. The LLM node has the same pattern at `nodes/llm/llm.py:296`; this passes loses signal in the same way for the same reason. Consistency between the two nodes is preferable to one-off divergence; if the gap matters, fix both together in a follow-up touching both call sites.
+
+## 2026-05-15 — oneOf/anyOf/allOf follow-up probe + tightening
+
+Wrote `scratchpads/task_126_oneof_probe/probe.py` to close the open item Phase 0 left unanswered: do top-level combinator schemas work? Result: **all four (`oneOf`/`anyOf`/`allOf`/`enum`) return `api_error_status=400` from the Anthropic API**, same class as the Phase 0 `type: array`/primitive findings.
+
+Tightened both runtime and static validators:
+- `claude_code.py::_validate_schema` now requires `top_level_type == "object"` (was: rejected only when `type` was set to a non-`"object"` value; missing `type` slipped through).
+- New `_top_level_object_error` helper produces case-specific guidance: combinator-only schemas get a message naming the offending combinator; non-`"object"` types get the wrapping advice.
+- `validator.py::_validate_claude_code_params` mirrors the same logic so `--validate-only` and `--dry-run` reject these at preflight instead of letting them fail at runtime.
+
+Tests:
+- Flipped `test_oneOf_top_level_schema_accepted` → `test_top_level_oneOf_schema_rejected`.
+- Added `test_top_level_{anyOf,allOf,missing_type}_schema_rejected`.
+- Added `test_top_level_object_with_oneOf_accepted` to pin that combinators INSIDE an object wrapper still work.
+- Added two `TestValidateOnlyClaudeCodeStructuredOutput` cases: oneOf root + missing top-level type.
+
+Doc propagation:
+- `task-126.md` requirements and design decisions reflect the rejection (no longer "may pass").
+- `implementation-plan.md` edge case table updated.
+
+Also fixed unrelated pre-existing test-suite issues that were blocking `ruff check .` and turned up during verification:
+- 3× RUF043: raw-string the `pytest.raises(match=...)` regex patterns in `test_workflow_resolver_contract.py`, `test_execution_workflow.py`, `test_plan_workflow.py`.
+- 22× RUF059: prefix unused unpacked variables with `_` in `test_instrumented_wrapper.py`, `test_prepare_inputs_coercion.py`, `test_settings_env_integration.py`, `test_array_notation.py`.
+
+Verification:
+- `uv run pytest tests/test_nodes/test_claude/ tests/test_cli/test_validate_only.py tests/test_cli/test_dry_run.py -q` → `108 passed`
+- `uv run python -m ruff check .` → clean.
+- Pre-existing "fails in sandbox" tests (`test_failed_node_invariant.py`, `test_prep_error_action.py`) run clean on real dev environment: 39 passed in isolation, 1869 passed in the full `tests/test_runtime tests/test_integration` sweep.
+
+## 2026-05-15 — Phase 5.4 manual real-API smoke test
+
+Ran `examples/nodes/claude-code/claude-code-schema.pflow.md` against the real Anthropic API via Claude Max subscription (no `ANTHROPIC_API_KEY`). Reviewed an intentionally-flawed Python file (command injection + SQL injection).
+
+End-to-end result: `success: true`, `warnings: []`, `diagnostics: []`. All 4 nodes completed (`read_code`, `review`, `save_review`, `save_improved`). The `review` node returned a fully-conformant dict with all 6 required fields including `overall_quality: "poor"` (enum constraint honored), `security_score: 2` (1-10 minimum/maximum honored), and `has_critical_issues: true` (correctly typed boolean). Templates `${review.result.*}` resolved cleanly into both downstream `write-file` nodes — `.improved.py` and `.review.md` artifacts were produced with no escaping or template-resolution artifacts. Duration: 54.7s, API-equivalent cost: $0.135 (subscription: $0 billed), 2.6k output tokens, 19.8k cache-creation tokens.
+
+This closes the last open item from the plan's Phase 5 checklist. No regression to the happy path.

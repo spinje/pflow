@@ -91,7 +91,7 @@ class TestExecuteWorkflowErrors:
     def test_nonexistent_workflow_raises_value_error(self):
         """When given a workflow name that does not exist anywhere,
         execute_workflow raises ValueError with 'not found' in the message."""
-        with pytest.raises(ValueError, match="(?i)not found"):
+        with pytest.raises(ValueError, match=r"(?i)not found"):
             ExecutionService.execute_workflow("nonexistent-workflow-xyz")
 
     def test_unknown_node_type_raises_validation_error(self, tmp_path):

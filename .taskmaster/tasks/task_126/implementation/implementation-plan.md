@@ -187,7 +187,7 @@ def _looks_like_legacy_python_alias_format(schema: dict) -> bool:
     )
 ```
 
-**Note on `oneOf`/`anyOf`/`allOf` top-level**: the legacy-format detector accepts these as JSON Schema markers and skips the migration error. The top-level-type check above only fires when `type` is explicitly set and != `"object"`. A pure `oneOf` top-level schema (no `type` key) would pass `_validate_schema` but may still be rejected by the API at runtime — surfacing via the existing soft-fail path. If users hit this in practice, tighten the validation (Phase 0 did not probe `oneOf` top-level).
+**Note on `oneOf`/`anyOf`/`allOf` top-level**: the legacy-format detector accepts these as JSON Schema markers and skips the migration error. **Update post-impl** (oneOf follow-up probe): the top-level-type check now fires whenever `type` is missing OR set to anything other than `"object"`, with a combinator-aware error message. All four (`oneOf`/`anyOf`/`allOf`/`enum`-only) return HTTP 400 from the Anthropic API. To use combinators, nest them inside a `type: object` wrapper.
 
 ### 1.2b Enforce `max_turns >= 2` when `output_schema` is set
 
@@ -894,10 +894,10 @@ rm -rf scratchpads/task_126/   # Phase 0 smoke test artifacts
 | `output_schema = [list, not, dict]` | `_validate_schema` raises `TypeError` |
 | Legacy Python-alias format | `_validate_schema` raises with migration guidance |
 | Legacy format where first value is non-dict | Detection iterates ALL values; still caught |
-| JSON Schema with `oneOf`/`anyOf`/`allOf`/`enum`/`const` (no top-level `type`) | Accepted as JSON Schema |
+| JSON Schema with `oneOf`/`anyOf`/`allOf`/`enum`/`const` (no top-level `type`) | Rejected at prep (oneOf follow-up probe: API returns HTTP 400). Wrap in `{"type": "object", ...}`. |
 | JSON Schema with `$ref` / external refs | Passed through to SDK; SDK/CLI decides |
 | Top-level `type: array` or primitive (`type: string`, etc.) | `_validate_schema` raises (Phase 0 finding: API rejects non-object top-level schemas in tool input_schema wrapping). Workflow author must wrap in an object. |
-| Top-level `oneOf`/`anyOf`/`allOf` (no top-level `type`) | Passes prep validation; may be rejected by API at runtime → soft-fail path |
+| Top-level `oneOf`/`anyOf`/`allOf` (no top-level `type`) | Rejected at prep (post-impl finding); error message names the combinator. |
 | Nested array (`{"type": "object", "properties": {"items": {"type": "array", ...}}}`) | Works normally; `structured_output` is the wrapping object |
 | Multiple `ResultMessage` instances | Last `structured_output` wins; `is_error_from_sdk` is sticky-true (defensive — Phase 0 did not observe multi-message) |
 | `structured_output` empty (`{}`) | Stored as-is — empty object is a valid structured response |

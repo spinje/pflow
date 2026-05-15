@@ -107,7 +107,7 @@ The node always returns `default` from `post()` — schema soft-failures and SDK
 
 ## Structured output
 
-Use `output_schema` to get structured responses through the Claude Agent SDK's native JSON Schema mode. The top-level schema must be `type: object` because the Claude API rejects non-object tool input schemas. For array or primitive outputs, wrap the value in an object property.
+Use `output_schema` to get structured responses through the Claude Agent SDK's native JSON Schema mode. The top-level schema must declare `type: object` because the Claude API rejects any tool input schema without it — including top-level `oneOf`/`anyOf`/`allOf`/`enum` combinators. For array, primitive, or combinator-only outputs, wrap them inside an object property. Combinators nested inside a `type: object` schema work normally.
 
 ````markdown
 ### review

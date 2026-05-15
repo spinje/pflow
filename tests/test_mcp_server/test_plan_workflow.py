@@ -71,7 +71,7 @@ def test_plan_workflow_matches_cli_json_shape(tmp_path) -> None:
 
 def test_plan_workflow_not_found_raises_value_error_with_suggestion() -> None:
     """Unknown workflow names should raise ValueError."""
-    with pytest.raises(ValueError, match="(?i)not found"):
+    with pytest.raises(ValueError, match=r"(?i)not found"):
         ExecutionService.plan_workflow("definitely-not-a-real-workflow")
 
 

@@ -746,18 +746,35 @@ class WorkflowValidator:
             )
 
         top_level_type = output_schema.get("type")
-        if top_level_type is not None and top_level_type != "object":
+        if top_level_type != "object":
+            # Covers non-"object" types AND schemas with no top-level type
+            # (top-level oneOf/anyOf/allOf/enum). Both classes return HTTP 400
+            # from the Anthropic API. Verified in Phase 0 and the oneOf probe.
+            if top_level_type is None:
+                combinators = sorted(k for k in ("oneOf", "anyOf", "allOf", "enum", "const") if k in output_schema)
+                cause = (
+                    f"top-level combinator {combinators[0]!r} with no top-level type"
+                    if combinators
+                    else "no top-level type"
+                )
+                message = (
+                    "output_schema on claude-code nodes must declare top-level type: object "
+                    f"({cause}). Combinators like oneOf/anyOf/allOf/enum must live inside an "
+                    "object wrapper."
+                )
+            else:
+                message = (
+                    "output_schema on claude-code nodes must have top-level type: object "
+                    f"(got type: {top_level_type!r})."
+                )
             diagnostics.append(
                 WorkflowValidator._claude_code_param_error(
                     node_id=node_id,
-                    message=(
-                        "output_schema on claude-code nodes must have top-level type: object "
-                        f"(got type: {top_level_type!r})."
-                    ),
+                    message=message,
                     path=f"nodes[id={node_id}].params.output_schema.type",
                     suggestions=[
-                        "Wrap array or primitive outputs in an object property, "
-                        'e.g. {"type": "object", "properties": {"items": {"type": "array"}}}.'
+                        'Wrap in an object, e.g. {"type": "object", "properties": '
+                        '{"result": <your schema>}, "required": ["result"]}.'
                     ],
                 )
             )

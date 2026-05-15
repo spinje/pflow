@@ -221,8 +221,14 @@ class ClaudeCodeNode(Node):
         - {} (empty): likely a typo; raises with guidance
         - Non-dict: TypeError
         - Legacy Python-alias format: raises with migration guidance
-        - Non-object top-level: raises (Anthropic API tool-use limitation)
+        - Missing or non-"object" top-level type: raises (Anthropic API tool-use limitation)
         - Otherwise: returns as-is; SDK/CLI enforces remaining JSON Schema validity
+
+        The top-level-type check covers both `type: array`/primitives AND schemas
+        that omit `type` entirely (top-level oneOf/anyOf/allOf/enum). All four
+        return HTTP 400 from the Anthropic API when wrapped as a tool's
+        input_schema, verified by Phase 0 (`type: array`/primitives) and the
+        oneOf follow-up probe.
 
         Note on schema typos (e.g. type: "intger"): the Anthropic API silently accepts
         them. Schema typos will result in a soft-fail at runtime (structured_output is
@@ -245,20 +251,43 @@ class ClaudeCodeNode(Node):
                 'Use JSON Schema instead: {"type": "object", "properties": {...}, "required": [...]}. '
                 "See docs/reference/nodes/claude-code.mdx for an example."
             )
-        # Claude API limitation (verified in Phase 0 smoke test): the SDK wraps output_format
-        # as a tool's input_schema, and the API rejects non-object top-level schemas with a 400.
+        # Claude API limitation (verified in Phase 0 + oneOf follow-up): the SDK wraps
+        # output_format as a tool's input_schema, and the API rejects any top-level
+        # schema that isn't `type: object` with a 400. This covers non-"object" types
+        # AND combinator-only schemas (oneOf/anyOf/allOf/enum without a top-level type).
         top_level_type = output_schema.get("type")
-        if top_level_type is not None and top_level_type != "object":
-            raise ValueError(
-                "output_schema on claude-code nodes must have top-level type: object "
-                f"(got type: {top_level_type!r}). "
-                "The Anthropic API rejects non-object top-level schemas in tool input_schema "
-                "wrappers. For array or primitive outputs, wrap in an object with a single "
-                'property, e.g. {"type": "object", "properties": {"items": {"type": "array", '
-                '"items": ...}}, "required": ["items"]}. '
-                "(The LLM node has no such restriction.)"
-            )
+        if top_level_type != "object":
+            raise ValueError(self._top_level_object_error(top_level_type, output_schema))
         return output_schema
+
+    @staticmethod
+    def _top_level_object_error(top_level_type: Any, output_schema: dict[str, Any]) -> str:
+        """Format the "top-level type: object" error with case-specific guidance."""
+        wrapper_example = (
+            'Wrap in an object, e.g. {"type": "object", '
+            '"properties": {"result": <your schema>}, "required": ["result"]}. '
+            "(The LLM node has no such restriction.)"
+        )
+        if top_level_type is None:
+            combinators = sorted(k for k in ("oneOf", "anyOf", "allOf", "enum", "const") if k in output_schema)
+            cause = (
+                f"top-level combinator {combinators[0]!r} with no top-level type"
+                if combinators
+                else "no top-level type"
+            )
+            return (
+                "output_schema on claude-code nodes must declare top-level type: object "
+                f"({cause}). The Anthropic API rejects schemas without a top-level "
+                "type:object when the SDK wraps output_format as a tool input_schema — "
+                "combinators like oneOf/anyOf/allOf/enum must live inside an object "
+                f"wrapper. {wrapper_example}"
+            )
+        return (
+            "output_schema on claude-code nodes must have top-level type: object "
+            f"(got type: {top_level_type!r}). "
+            "The Anthropic API rejects non-object top-level schemas in tool input_schema "
+            f"wrappers. {wrapper_example}"
+        )
 
     def _emit_schema_resolved_null_warning(self, shared: dict[str, Any]) -> None:
         """Warn when ``output_schema`` was declared but resolved to ``None``.
