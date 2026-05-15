@@ -6,6 +6,7 @@ import json
 from unittest.mock import patch
 
 from tests.shared.markdown_utils import write_workflow_file
+from tests.test_cli.test_validate_only import make_claude_code_workflow
 from tests.test_cli.test_workflow_commands import invoke_cli
 
 
@@ -84,6 +85,23 @@ def test_dry_run_exits_one_on_missing_required_input(tmp_path) -> None:
     result = invoke_cli(["--dry-run", str(workflow_path)])
 
     assert result.exit_code == 1
+
+
+def test_dry_run_rejects_claude_code_invalid_schema_before_plan(tmp_path) -> None:
+    """Dry-run must share validation-only's Claude Code schema checks."""
+    workflow_path = tmp_path / "claude-invalid-schema-dry-run.pflow.md"
+    write_workflow_file(
+        make_claude_code_workflow(
+            output_schema={"type": "array", "items": {"type": "string"}},
+            prompt="Return an array.",
+        ),
+        workflow_path,
+    )
+
+    result = invoke_cli(["--dry-run", str(workflow_path)])
+
+    assert result.exit_code == 1
+    assert "top-level type: object" in result.stderr
 
 
 def test_dry_run_exits_one_when_plan_contains_error_diagnostic(tmp_path) -> None:

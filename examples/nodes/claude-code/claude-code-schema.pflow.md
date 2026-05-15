@@ -31,24 +31,34 @@ Review the code for quality, security issues, and best practices.
 - max_turns: 2
 
 ```yaml output_schema
-overall_quality:
-  type: str
-  description: "Overall quality assessment: excellent/good/fair/poor"
-security_score:
-  type: int
-  description: Security score from 1-10 (10 being most secure)
-issues:
-  type: list
-  description: List of specific issues found
-improvements:
-  type: list
-  description: List of recommended improvements
-has_critical_issues:
-  type: bool
-  description: Whether there are critical issues that must be fixed
-refactored_code:
-  type: str
-  description: Improved version of the code with issues fixed
+type: object
+properties:
+  overall_quality:
+    type: string
+    enum: [excellent, good, fair, poor]
+    description: Overall quality assessment
+  security_score:
+    type: integer
+    minimum: 1
+    maximum: 10
+    description: Security score from 1-10 (10 being most secure)
+  issues:
+    type: array
+    items:
+      type: string
+    description: List of specific issues found
+  improvements:
+    type: array
+    items:
+      type: string
+    description: List of recommended improvements
+  has_critical_issues:
+    type: boolean
+    description: Whether there are critical issues that must be fixed
+  refactored_code:
+    type: string
+    description: Improved version of the code with issues fixed
+required: [overall_quality, security_score, issues, improvements, has_critical_issues, refactored_code]
 ```
 
 ### save_review

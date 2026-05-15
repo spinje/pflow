@@ -223,6 +223,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 156: Add `--dry-run` flag with cache plan and cost/duration estimates
 - ✅ Task 157: Fix Dry-Run Batch Sub-Workflow Recursion
 - ✅ Task 158: Replace `llm` Library with LiteLLM
+- ✅ Task 126: Structured Output for Claude Code Node
 
 ### Planned Features (in order of priority)
 
@@ -247,7 +248,6 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 133: Unified Per-Node Storage for Trace and Cache
 
 **v1.0.0 - Security & Sandboxing:**
-- Task 126: Structured Output for Claude Code Node
 - Task 87: Sandboxed Execution Runtime
 - Task 91: Export as MCP Server Packages
 - Task 97: OAuth for Remote MCP Servers

@@ -29,7 +29,7 @@ class TestPrepareInputsTypeCoercion:
         # Simulates CLI's infer_type() converting "1458..." to int
         provided_params = {"channel_id": 1458059302022549698}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         # Coerced value should be in defaults
@@ -50,7 +50,7 @@ class TestPrepareInputsTypeCoercion:
         }
         provided_params = {"channel_id": "already-a-string"}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         # No coercion needed, so not in defaults
@@ -68,7 +68,7 @@ class TestPrepareInputsTypeCoercion:
         }
         provided_params = {"value": 123}  # Stays as int
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         # No coercion, not in defaults
@@ -89,7 +89,7 @@ class TestPrepareInputsTypeCoercion:
             "enabled": "yes",  # string → bool
         }
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         assert defaults["channel_id"] == "123456789"
@@ -109,7 +109,7 @@ class TestPrepareInputsTypeCoercion:
         }
         provided_params = {"limit": "100"}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         assert defaults["limit"] == 100
@@ -133,7 +133,7 @@ class TestPrepareInputsCoercionEdgeCases:
         large_int = 1458059302022549698
         provided_params = {"snowflake": large_int}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         # Verify exact string representation (no precision loss)
@@ -144,7 +144,7 @@ class TestPrepareInputsCoercionEdgeCases:
         workflow_ir = {"inputs": {"value": {"type": "string", "required": True}}}
         provided_params = {"value": 3.14159265359}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         # Should convert cleanly
@@ -155,7 +155,7 @@ class TestPrepareInputsCoercionEdgeCases:
         workflow_ir = {"inputs": {"flag": {"type": "string", "required": True}}}
         provided_params = {"flag": True}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         assert defaults["flag"] == "True"
@@ -173,7 +173,7 @@ class TestPrepareInputsCoercionEdgeCases:
         }
         provided_params = {"count": "not-a-number"}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         # No error from prepare_inputs (coercion failure is graceful)
         # Value stays as-is - downstream validation will catch if needed
@@ -195,7 +195,7 @@ class TestPrepareInputsIntegrationWithDefaults:
         }
         provided_params = {"channel_id": 123456}  # Needs coercion
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         # Coerced value
@@ -212,7 +212,7 @@ class TestPrepareInputsIntegrationWithDefaults:
         }
         provided_params = {"limit": "50"}  # User provided, needs coercion
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         # Coerced user value, not default
@@ -249,7 +249,7 @@ class TestPrepareInputsEnvSettingsCoercion:
         provided_params = {}
         settings_env = {"enabled": "true"}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params, settings_env=settings_env)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params, settings_env=settings_env)
 
         assert errors == []
         assert defaults["enabled"] is True
@@ -268,7 +268,7 @@ class TestPrepareInputsEnvSettingsCoercion:
         }
         provided_params = {}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         assert defaults["count"] == 100  # Coerced to int
@@ -287,7 +287,7 @@ class TestPrepareInputsEnvSettingsCoercion:
         }
         provided_params = {}
 
-        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+        errors, defaults, _env_params = prepare_inputs(workflow_ir, provided_params)
 
         assert errors == []
         assert defaults["optional"] is None  # Not "None" string

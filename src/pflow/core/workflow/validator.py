@@ -162,14 +162,17 @@ class WorkflowValidator:
         if registry is not None:
             diagnostics.extend(WorkflowValidator._validate_unknown_params(workflow_ir, registry))
 
-        # 9. Sub-workflow validation (recursive)
+        # 9. Node-specific static parameter semantics
+        diagnostics.extend(WorkflowValidator._validate_node_param_semantics(workflow_ir))
+
+        # 10. Sub-workflow validation (recursive)
         diagnostics.extend(
             WorkflowValidator._validate_sub_workflows(
                 workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types, workflow_file
             )
         )
 
-        # 10. Cache lint — warn about input-less shell nodes
+        # 11. Cache lint — warn about input-less shell nodes
         diagnostics.extend(WorkflowValidator._warn_inputless_shell_nodes(workflow_ir))
 
         errors = [d for d in diagnostics if d.severity == Severity.ERROR]
@@ -666,7 +669,159 @@ class WorkflowValidator:
         return diagnostics
 
     # =========================================================================
-    # Sub-Workflow Validation (Step 8)
+    # Node-Specific Param Semantics (Step 9)
+    # =========================================================================
+
+    @staticmethod
+    def _validate_node_param_semantics(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+        """Validate node parameter combinations that are knowable statically.
+
+        Runtime ``prep()`` remains the enforcement boundary for values that need
+        actual input resolution. This validator catches literal node contracts so
+        ``--validate-only`` and ``--dry-run`` agree with normal execution.
+        """
+        diagnostics: list[Diagnostic] = []
+        for node in workflow_ir.get("nodes", []):
+            if node.get("type") != "claude-code":
+                continue
+            params = node.get("params", {})
+            if not isinstance(params, dict):
+                continue
+            diagnostics.extend(WorkflowValidator._validate_claude_code_params(node.get("id", "unknown"), params))
+        return diagnostics
+
+    @staticmethod
+    def _validate_claude_code_params(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
+        """Validate Claude Code structured-output constraints without SDK calls.
+
+        Predicates live in ``pflow.nodes.claude.schema_validation`` so the
+        runtime path (``ClaudeCodeNode._validate_schema``) and this static
+        preflight path can't drift on shape detection.
+        """
+        from pflow.nodes.claude.schema_validation import (
+            is_legacy_python_alias_schema,
+            top_level_object_violation,
+        )
+
+        output_schema = params.get("output_schema")
+        if output_schema is None:
+            return []
+
+        # Templated values resolve at runtime; matches max_turns' defer-on-template
+        # policy below. Without this, composition patterns like
+        # ``output_schema: ${upstream.schema}`` would be hard-rejected at preflight
+        # even though runtime ``_validate_schema`` handles them correctly.
+        if isinstance(output_schema, str) and "${" in output_schema:
+            return []
+
+        diagnostics: list[Diagnostic] = []
+        if not isinstance(output_schema, dict):
+            diagnostics.append(
+                WorkflowValidator._claude_code_param_error(
+                    node_id=node_id,
+                    message=f"output_schema must be a dict (JSON Schema), got {type(output_schema).__name__}.",
+                    path=f"nodes[id={node_id}].params.output_schema",
+                    suggestions=["Use a YAML `output_schema` block or remove the output_schema field."],
+                )
+            )
+            return diagnostics
+
+        if not output_schema:
+            diagnostics.append(
+                WorkflowValidator._claude_code_param_error(
+                    node_id=node_id,
+                    message=(
+                        "output_schema is an empty dict. Did you forget to populate the schema body? "
+                        'Use a real JSON Schema (e.g. {"type": "object", "properties": {...}}) '
+                        "or remove the output_schema field entirely."
+                    ),
+                    path=f"nodes[id={node_id}].params.output_schema",
+                    suggestions=["Populate the schema body or remove output_schema."],
+                )
+            )
+            return diagnostics
+
+        if is_legacy_python_alias_schema(output_schema):
+            diagnostics.append(
+                WorkflowValidator._claude_code_param_error(
+                    node_id=node_id,
+                    message=(
+                        "output_schema appears to use the legacy Python-alias format "
+                        '({"field": {"type": "str", ...}}). Use JSON Schema instead: '
+                        '{"type": "object", "properties": {...}, "required": [...]}.'
+                    ),
+                    path=f"nodes[id={node_id}].params.output_schema",
+                    suggestions=["Convert field definitions to JSON Schema under `properties`."],
+                )
+            )
+
+        violation = top_level_object_violation(output_schema)
+        if violation is not None:
+            # The shared predicate covers non-"object" types AND combinator-only
+            # schemas (oneOf/anyOf/allOf/enum without a top-level type). Both
+            # classes return HTTP 400 from the Anthropic API (Phase 0 + oneOf probe).
+            if violation.kind == "missing_type":
+                message = (
+                    "output_schema on claude-code nodes must declare top-level type: object "
+                    f"({violation.cause}). Combinators like oneOf/anyOf/allOf/enum must live "
+                    "inside an object wrapper."
+                )
+            else:
+                message = f"output_schema on claude-code nodes must have top-level type: object ({violation.cause})."
+            diagnostics.append(
+                WorkflowValidator._claude_code_param_error(
+                    node_id=node_id,
+                    message=message,
+                    path=f"nodes[id={node_id}].params.output_schema.type",
+                    suggestions=[
+                        'Wrap in an object, e.g. {"type": "object", "properties": '
+                        '{"result": <your schema>}, "required": ["result"]}.'
+                    ],
+                )
+            )
+
+        max_turns = params.get("max_turns", 50)
+        try:
+            max_turns_int = int(max_turns)
+        except (TypeError, ValueError):
+            max_turns_int = None
+        if max_turns_int is not None and max_turns_int < 2:
+            diagnostics.append(
+                WorkflowValidator._claude_code_param_error(
+                    node_id=node_id,
+                    message=f"max_turns must be >= 2 when output_schema is set (got {max_turns_int}).",
+                    path=f"nodes[id={node_id}].params.max_turns",
+                    suggestions=["Set max_turns to 2 or higher, or remove output_schema."],
+                )
+            )
+
+        return diagnostics
+
+    @staticmethod
+    def _claude_code_param_error(
+        *,
+        node_id: str,
+        message: str,
+        path: str,
+        suggestions: list[str],
+    ) -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Claude Code Structured Output Validation Error",
+            node_id=node_id,
+            message=message,
+            suggestions=suggestions,
+            context={
+                "category": "validation",
+                "node_type": "claude-code",
+                "path": path,
+            },
+            see_also=["claude-code"],
+        )
+
+    # =========================================================================
+    # Sub-Workflow Validation (Step 10)
     # =========================================================================
 
     @staticmethod

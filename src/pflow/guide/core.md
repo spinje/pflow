@@ -554,7 +554,7 @@ result: float = sum(i['pricing']['amount'] for i in items)
 ```
 ````
 
-**Before adding processing steps:** Can the source produce cleaner output? (LLM: use `output_schema`, HTTP: check for `format=json` param.) Fix at source instead of adding nodes.
+**Before adding processing steps:** Can the source produce cleaner output? (LLM/Claude Code: use `output_schema`; Claude Code schemas must be top-level objects and need `max_turns >= 2`. HTTP: check for `format=json` param.) Fix at source instead of adding nodes.
 
 **The golden rule:** Every transformation step must solve a verified problem, not prevent a hypothetical one.
 

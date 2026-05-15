@@ -38,6 +38,7 @@ Load tailored content: `pflow guide <topic> <topic>` (prefer combining nodes and
 Nodes:
   http             JSON REST APIs
   llm              LLM inference (summarize, interpret, decide)
+  claude-code      Agentic coding in a repository (edit, test, debug)
   code             Python data transformation (filter, reshape, compute)
   shell            Shell commands and CLI tools (git, curl, docker)
   file             File read/write

@@ -205,7 +205,7 @@ class TestSettingsEnvPopulation:
         provided_params = {"model": "cli_model"}
         settings_env = {"api_key": ""}  # Empty string for required input
 
-        errors, defaults, _env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
+        errors, _defaults, _env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
         assert len(errors) == 1
         assert "api_key" in errors[0][0]
@@ -587,7 +587,7 @@ class TestShellEnvironmentVariables:
         provided_params = {}
         settings_env = {"api_key": "non_empty_value"}
 
-        errors, defaults, _env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
+        errors, _defaults, _env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert len(errors) == 1
         assert "api_key" in errors[0][0]

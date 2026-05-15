@@ -35,34 +35,35 @@ The Claude Agent SDK provides:
 
 **Interface**:
 - Params: `prompt`: str  # The prompt to send to Claude (required)
-- Params: `output_schema`: dict  # JSON schema for structured outputs (optional)
-- Writes: `shared["result"]`: any  # Response - string or dict with schema keys
+- Params: `output_schema`: dict  # JSON Schema for structured outputs (optional)
+- Writes: `shared["result"]`: str|dict  # Free-form text, parsed JSON (dict/list) when output_schema is set, or raw text on soft schema failure
 - Writes: `shared["llm_usage"]`: dict  # Token usage and execution metadata
 
 **Implementation Notes**:
-The claude-code node executes the Claude Agent SDK in headless mode, passing comprehensive instructions and extracting structured output including modified files, analysis, and implementation details.
+The claude-code node executes the Claude Agent SDK in headless mode, passing comprehensive instructions and optional JSON Schema structured-output configuration. Schema soft-failures write root-level execution warnings so workflow status becomes DEGRADED.
 
-**CLI Examples**:
-```bash
-# Comprehensive GitHub issue resolution (template-driven workflow)
-pflow github-get-issue --issue=1234 => \
-  claude-code --prompt="${comprehensive_fix_instructions}" => \
-  llm --prompt="Write commit message for: ${result}" => \
-  git-commit --message="${commit_message}"
+**Workflow Example**:
+```markdown
+### implement_fix
 
-# Generated instructions example (created by workflow tooling)
-# ${comprehensive_fix_instructions} = "Analyze issue #1234, understand the root cause,
-# search codebase for relevant files, implement a complete fix with proper error
-# handling, write tests, and ensure code quality standards are met..."
-
-# Direct usage with generated instructions
-echo "${generated_instructions}" | pflow claude-code --temperature=0.2
+- type: claude-code
+- prompt: ${comprehensive_fix_instructions}
+- max_turns: 5
 ```
 
 **Parameters**:
-- `model` (optional): Claude model (default: claude-sonnet-4-20250514)
-- `temperature` (optional): Creativity level 0.0-1.0 (default: 0.3)
-- `max_tokens` (optional): Maximum response length (default: 8192)
+- `prompt` (required): Instructions for Claude
+- `output_schema` (optional): JSON Schema for structured output; top-level type must be object
+- `cwd` (optional): Working directory
+- `model` (optional): Claude model (default: claude-sonnet-4-5)
+- `allowed_tools` (optional): Permitted tool names
+- `disallowed_tools` (optional): Tool names or patterns to deny
+- `max_turns` (optional): Maximum conversation turns; must be >=2 with `output_schema`
+- `max_thinking_tokens` (optional): Reasoning budget
+- `timeout` (optional): Execution timeout
+- `system_prompt` (optional): Custom system instructions
+- `resume` (optional): Session ID to resume
+- `sandbox` (optional): Command sandbox configuration
 
 ## Template-Driven Instruction Generation
 
@@ -183,11 +184,12 @@ The super node uses generated instructions:
 
 ### Natural Shared Store Keys
 
-The super node writes to comprehensive shared store keys following the [shared store pattern](../core-concepts/shared-store.md#natural-interfaces):
+The super node writes to shared store keys following the [shared store pattern](../core-concepts/shared-store.md#natural-interfaces):
 - `shared["result"]` for complete development output
-- `shared["analysis"]` for extracted analysis sections
-- `shared["implementation"]` for extracted implementation details
-- `shared["files_modified"]` for tracking file changes
+- `shared["llm_usage"]` for token usage, duration, session ID, and SDK-reported API-equivalent cost
+- `shared["_schema_error"]` when structured output soft-fails
+
+Additional structured fields such as `analysis`, `implementation`, or `files_modified` are available only when the workflow declares them inside `output_schema` and reads them under `shared["result"]`.
 
 ### Claude Agent SDK Integration
 The super node leverages the full capabilities of Claude Agent SDK:

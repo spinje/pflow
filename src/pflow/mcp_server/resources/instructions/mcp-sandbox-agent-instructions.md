@@ -1109,7 +1109,7 @@ Works with or without template variables. Handles nested objects and arrays.
 **Before adding processing steps:**
 
 1. **Can the source produce cleaner output?**
-   - LLM: Add "Return ONLY valid JSON, no other text" to prompt
+   - LLM or Claude Code: Use `output_schema` (JSON Schema in a `yaml output_schema` code block) to produce model-derived structured data at the source. Claude Code requires top-level `type: object` and `max_turns >= 2`.
    - HTTP: Check if API has a `format=json` parameter
    - **If yes → Fix at source instead of adding nodes**
 
@@ -2098,7 +2098,8 @@ Simple operations? → Skip
 Extract nested field? → Template variable ${node.path.to.field}
 Transform/compute?    → code node
 Combine/concatenate?  → code node or templates
-Parse text → structured? → code node (NEVER LLM)
+Parse existing text deterministically → structured? → code node
+Need model judgment as structured data? → LLM/Claude Code with output_schema
 Need meaning/reasoning? → LLM (only if creative decisions needed)
 Run external tool?    → shell node (git, curl, docker, ffmpeg)
 File download?        → shell+curl
@@ -2119,7 +2120,7 @@ Format: `verb-noun-qualifier`
 |---------|----------------|------------|
 | **Manual JSON string construction** | Trying to build `"{\"key\": \"${val}\"}"` | Use object syntax: `{"key": "${val}"}` - auto-serializes with proper escaping |
 | **Using Slack as default example** | Document bias from old examples | Rotate between service categories |
-| **Using LLM for JSON extraction** | Seems "safer" or more flexible | Templates extract paths, code node transforms |
+| **Using LLM for JSON extraction** | Seems "safer" or more flexible | Templates extract existing paths; use `output_schema` when the model must derive structured data |
 | **Over-testing nodes** | Uncertainty about structure | Test ONLY when accessing specific paths |
 | **Creating defensive extraction steps** | Fear of malformed data | Nodes handle parsing automatically |
 | **Ignoring workflow discovery** | Eager to build something new | ALWAYS check existing workflows first |
@@ -2133,7 +2134,7 @@ Format: `verb-noun-qualifier`
 2. **Understand step order vs templates** - Execution order vs data access
 3. **Test only when needed** - Skip if passing whole `${node.result}`
 4. **Phase complex workflows** - Build incrementally
-5. **Use templates for extraction, code node for transformation** - LLM only for meaning
+5. **Use templates for extraction, code node for transformation** - use `output_schema` on LLM/Claude Code for model-derived structured data
 6. **Every value becomes input** - Unless explicitly "always"
 7. **Format user-facing output** - Never show raw JSON
 8. **Document actual structures** - Not what docs claim

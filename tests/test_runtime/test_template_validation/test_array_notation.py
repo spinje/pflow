@@ -268,7 +268,7 @@ class TestBatchResultsIndexAccessGate:
         }
 
         with self._make_registry() as registry:
-            errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
             gate_errors = [e for e in errors if "Index-based access" in e.message]
             assert len(gate_errors) == 1
             assert "error_handling: continue" in gate_errors[0].message
