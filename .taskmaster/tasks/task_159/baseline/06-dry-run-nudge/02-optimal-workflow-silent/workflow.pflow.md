@@ -4,7 +4,16 @@
 
 ### context
 
-Long stable reference doc.
+Long stable reference doc — cached as a system block via `prompt_cache:`.
+
+- type: string
+- required: true
+
+### rubric
+
+Long stable scoring instructions — placed in the prompt body BEFORE the
+per-item ref so `prewarm: true`'s auto batch-prefix marker has substantial
+bytes to cache. Distinct from `${context}` (no shadowing).
 
 - type: string
 - required: true
@@ -28,7 +37,9 @@ ${context}
 
 ### scoring
 
-Batch with declared cache and explicit prewarm.
+Batch with declared cache and explicit prewarm. The cached `${context}`
+goes to system blocks; `${rubric}` is the user-message stable prefix that
+`prewarm: true` caches independently.
 
 - type: llm
 - model: anthropic/claude-sonnet-4-5
@@ -41,7 +52,10 @@ parallel: true
 ```
 
 ```prompt
-Score this item using the reference document: ${item.text}
+${rubric}
+
+Score this item using the reference document and rubric above:
+${item.text}
 ```
 
 ## Outputs

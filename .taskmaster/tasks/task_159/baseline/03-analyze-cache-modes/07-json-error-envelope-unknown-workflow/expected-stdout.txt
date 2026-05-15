@@ -1,5 +1,5 @@
 {
-  "format_version": "4.3",
+  "format_version": "5.0",
   "error": {
     "id": "analyze-cache.workflow-resolution-failed",
     "message": "Workflow '<BASELINE_CASE_DIR>/does-not-exist.pflow.md' not found"

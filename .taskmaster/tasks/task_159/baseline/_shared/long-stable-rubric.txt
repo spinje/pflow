@@ -1,0 +1,56 @@
+You are an expert content evaluator. Score each item below using the rubric and the reference document provided in the system context.
+
+## Evaluation Rubric
+
+For each item, assess these eight dimensions on a 1-10 scale (with N/A allowed where applicable):
+
+1. RELEVANCE to the reference document. Score 10 when the item directly addresses subjects covered by the reference. Score 1 when the item is entirely off-topic. Mid-range scores reflect partial overlap or tangential alignment. When the item touches multiple subjects, score the most directly aligned portion and note the broader scope in your justification.
+
+2. FACTUAL ACCURACY relative to the reference document. Cross-check the item's verifiable claims. Score 10 when all claims are consistent with the reference. Score 1 when the item directly contradicts well-established claims in the reference. Distinguish between claims the reference supports, contradicts, or does not address. Where the reference is silent on a claim, mark that claim "not addressed" rather than penalizing — accuracy can only be evaluated against information the reference actually contains.
+
+3. COMMUNICATION CLARITY. Consider sentence structure, paragraph flow, transitions, and absence of unnecessary jargon. Items that communicate complex ideas simply score high; items that obscure simple ideas behind dense prose score low. Pay attention to whether technical terms are introduced before use, whether examples support abstract claims, and whether the reader can follow the argument without re-reading.
+
+4. DEPTH OF ENGAGEMENT. Does the item demonstrate substantive engagement with the subject, or is it surface-level? Items showing nuanced understanding, counterarguments, or original synthesis score high. Items that merely restate obvious points score low. Mid-range scores fit items that engage seriously but stop short of original contribution.
+
+5. STYLISTIC QUALITY. Is the writing well-crafted? Consider tone consistency, voice, register, and rhetorical choices appropriate to the implied audience. Do not penalize unconventional but effective stylistic choices. A consistent voice — even an unusual one — scores higher than inconsistent voice paired with safe choices.
+
+6. ORIGINALITY OF FRAMING. Does the item offer fresh perspective, new framing, or unexpected connections? Items that recycle obvious points score low. Items that contribute novel angles score high. Score originality independent of accuracy — flag wrong-but-novel observations under accuracy. An item can be highly original and inaccurate; that combination earns a high originality score and a low accuracy score, not one averaged-out middling score.
+
+7. STRUCTURAL COHERENCE. Is the item well-organized? Strong items have a clear beginning, middle, and end with logical transitions. Items that meander, repeat themselves, or lose the thread score low. Pay attention to whether the introduction sets up the body, whether the body delivers on the introduction's promise, and whether the conclusion synthesizes rather than merely repeats.
+
+8. CITATION QUALITY. Where the item references external sources, does it appropriately credit them? Item-level citations strengthen credibility. Score N/A when the item makes no externally-attributable claims; no penalty when N/A. When citations are present but malformed (unclear referent, missing source, broken link), score in the 4-6 range and note the specific problem.
+
+## Scoring Calibration
+
+Anchor scores against these reference points:
+- 1-3 = Poor. Significant weaknesses in this dimension. Justify what's missing in concrete terms — name the specific failure mode.
+- 4-6 = Acceptable but unremarkable. The item neither fails nor distinguishes itself. Most items will sit in this range; that is fine and expected.
+- 7-8 = Above average. Clear strengths in this dimension; mention them in the justification with specific examples from the item.
+- 9-10 = Exceptional. Use sparingly. Require explicit justification of what makes the item outstanding relative to typical items in this domain.
+
+Maintain calibration across the batch. Do not inflate scores based on item length — short items can score highly if they hit the criteria; long items can score low if they ramble or stray from the subject.
+
+## Output Format
+
+For each scored dimension, return:
+- Dimension name (one of the eight above, in the exact spelling shown)
+- Score (1-10 or N/A where allowed)
+- One-sentence justification grounding the score in specific item content (quote a phrase from the item when useful)
+
+Then provide an OVERALL ASSESSMENT in two parts:
+- One sentence summarizing the item's central strengths.
+- One sentence summarizing the item's central weaknesses and the single most important improvement direction.
+
+## General Principles
+
+Apply judgment objectively. Stay specific. Stay consistent across items. Do not invent claims the item did not make. Do not score based on conjecture about author intent — score what the item actually says.
+
+When in doubt between two adjacent scores, prefer the lower score and explain the boundary case in the justification. Underscoring is recoverable across the batch by adjusting other items; overscoring inflates the entire batch and is harder to recover from after the fact.
+
+Treat each item independently. Do not let one strong dimension lift weak dimensions, and do not let one weak dimension drag down strong dimensions. The rubric is intentionally multi-dimensional to surface these distinctions; collapse them at your peril.
+
+When the reference document is silent on an item's claims, mark accuracy as "not addressed" rather than penalizing the item; the item's accuracy can only be evaluated against information the reference document contains. Lack of evidence is not evidence of falsity.
+
+For items in highly specialized domains, focus your scoring on dimensions you can confidently evaluate (clarity, structure, style, originality of framing). For accuracy and relevance in specialized domains, be explicit about the limit of your evaluation in the justification.
+
+Be terse in justifications. One sentence per dimension is the target. Quote a phrase from the item when it grounds the score better than paraphrase. Avoid restating the score in the justification ("scored 7 because the item is good") — the justification should explain what specifically warranted that score and not another.

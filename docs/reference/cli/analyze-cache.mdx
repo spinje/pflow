@@ -66,7 +66,7 @@ Text output is organized into sections that appear when non-empty:
 | Recommended actions | Numbered (ordered by impact when at least one action has a positive savings figure; unordered when no model is resolved or all savings are unavailable). Each item carries a stable warning ID and the edit to apply. |
 | Suggested ## Cache block | Paste-ready block for greenfield mode, with starter prose for each chunk |
 | Sub-workflow boundaries | Cross-file findings: rename detection, prose mismatches, value-flow opportunities |
-| Per-call cache report | Table of LLM nodes with model, tokens, cacheable, ratio, confidence |
+| Per-call cache report | Table of LLM nodes with model, input tokens, cached-now tokens, ready tokens, upside tokens, ratio, confidence |
 | Notes | Per-invocation scoping notes, mixed-model context, fallback hints |
 
 JSON output (`--format=json`) emits the same data with stable field names and `format_version` for consumer version-gating. See `pflow analyze_cache` MCP tool for the full schema.

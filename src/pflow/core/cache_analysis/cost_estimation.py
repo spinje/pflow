@@ -291,7 +291,7 @@ def _row_first_run_with_cache_cost(
     cache write, then cache reads for additional static-batch invocations.
     """
     invocations = invocation_count_for(row)
-    cacheable = row.cacheable_tokens_estimated or 0
+    cacheable = row.cache_active.tokens_estimated or 0
     non_cacheable = max(0, row.input_tokens_estimated - cacheable)
     write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
     total = 0.0
@@ -306,23 +306,13 @@ def _row_rerun_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int |
 
     Equivalent to: every call after the first, within TTL.
 
-    Cacheable tokens only earn the read-rate when the row actually declares
-    ``prompt_cache:`` — provider caches don't fire for undeclared rows even
-    when the analyzer can project a candidate cacheable count. Mirrors
-    ``_aggregate_first_run_savings`` and ``_aggregate_rerun_savings`` (both
-    skip undeclared rows). Without this gate, populating
-    ``cacheable_tokens_estimated`` on undeclared rows (e.g. via the
-    batch-prefix projection) would silently shrink ``rerun_within_ttl_hypothetical_usd``
-    while ``first_run_delta`` stayed flat — an internal contradiction in
-    the headline cost block.
+    Only ``cache_active`` earns the read-rate. Ready/opportunity projections
+    never reduce headline cost projections.
     """
     if output_tokens is None:
         return None
     invocations = invocation_count_for(row)
-    # Undeclared rows: treat cacheable as 0 (no caching → cost reduces to
-    # all-input-rate). Declared rows: Option C — cacheable may be None when
-    # greenfield-no-memo (no projection data); treat as 0 there too.
-    cacheable = row.cacheable_tokens_estimated or 0 if row.declared_prompt_cache else 0
+    cacheable = row.cache_active.tokens_estimated or 0
     non_cacheable = max(0, row.input_tokens_estimated - cacheable)
     per_call_input = cacheable * pricing.cache_read_rate + non_cacheable * pricing.input_rate
     return float(invocations) * (per_call_input + output_tokens * pricing.output_rate)
@@ -394,15 +384,15 @@ def compute_projections(
             _row_no_cache_cost(row, pricing, output) for row, pricing, output in rows_with_output
         )
         rerun_within_ttl_hypothetical_usd = sum(_row_rerun_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
-        no_cache_undeclared = _aggregate_no_cache_cost(
-            [r for r in rows_with_output if not r[0].declared_prompt_cache], ttl
+        no_cache_inactive = _aggregate_no_cache_cost(
+            [r for r in rows_with_output if not r[0].cache_active.affects_cost_projection], ttl
         )
-        with_cache_declared = _aggregate_with_cache_projection(
-            [r for r in rows_with_output if r[0].declared_prompt_cache], ttl
+        with_cache_active = _aggregate_with_cache_projection(
+            [r for r in rows_with_output if r[0].cache_active.affects_cost_projection], ttl
         )
         first_run_with_cache_hypothetical_usd = (
-            (no_cache_undeclared or 0.0) + (with_cache_declared or 0.0)
-            if no_cache_undeclared is not None or with_cache_declared is not None
+            (no_cache_inactive or 0.0) + (with_cache_active or 0.0)
+            if no_cache_inactive is not None or with_cache_active is not None
             else None
         )
 
@@ -513,9 +503,14 @@ def _aggregate_with_cache_projection(
     # cache namespaces and BOTH pay the first-call write. Without ``row.model`` the
     # second model would silently get ``cache_read_rate`` and over-count savings —
     # the exact scenario ``cache.heterogeneous-models-fragment-cache`` warns about.
-    by_subset: dict[tuple[str | None, str, tuple[str, ...]], list[tuple[PerCallRow, ModelPricing, int]]] = {}
+    by_subset: dict[tuple[str | None, str, tuple[str, ...], str], list[tuple[PerCallRow, ModelPricing, int]]] = {}
     for row, pricing, output_tokens in priced_rows:
-        subset = (row.workflow_path, row.model, tuple(row.declared_prompt_cache or ()))
+        subset = (
+            row.workflow_path,
+            row.model,
+            tuple(row.declared_prompt_cache or ()),
+            row.cache_active.data_source,
+        )
         by_subset.setdefault(subset, []).append((row, pricing, output_tokens))
 
     total = 0.0
@@ -523,7 +518,7 @@ def _aggregate_with_cache_projection(
         first = True
         for row, pricing, output_tokens in group:
             invocations = invocation_count_for(row)
-            cacheable = row.cacheable_tokens_estimated or 0
+            cacheable = row.cache_active.tokens_estimated or 0
             non_cacheable = max(0, row.input_tokens_estimated - cacheable)
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
 
@@ -548,9 +543,13 @@ def _aggregate_first_run_savings(
     # Cohort key includes ``row.model`` for symmetry with ``_aggregate_with_cache_projection``
     # — provider caches are model-keyed; both functions must group identically to preserve
     # the ``no_cache - first_run_with_cache == savings_first_run_usd`` arithmetic identity.
-    by_subset: dict[tuple[str | None, str, tuple[str, ...]] | None, list[tuple[PerCallRow, ModelPricing]]] = {}
+    by_subset: dict[tuple[str | None, str, tuple[str, ...], str] | None, list[tuple[PerCallRow, ModelPricing]]] = {}
     for row, pricing, _output in priced_rows:
-        subset = (row.workflow_path, row.model, tuple(row.declared_prompt_cache)) if row.declared_prompt_cache else None
+        subset = (
+            (row.workflow_path, row.model, tuple(row.declared_prompt_cache or ()), row.cache_active.data_source)
+            if row.cache_active.affects_cost_projection
+            else None
+        )
         by_subset.setdefault(subset, []).append((row, pricing))
 
     total_savings = 0.0
@@ -561,7 +560,7 @@ def _aggregate_first_run_savings(
         for row, pricing in group:
             invocations = invocation_count_for(row)
             # See Option C note above — None → 0.
-            cacheable = row.cacheable_tokens_estimated or 0
+            cacheable = row.cache_active.tokens_estimated or 0
             write_rate = _write_rate_for_ttl(pricing, ttl, row.model)
 
             for i in range(invocations):
@@ -584,11 +583,11 @@ def _aggregate_rerun_savings(
     """
     total_savings = 0.0
     for row, pricing, _output in priced_rows:
-        if not row.declared_prompt_cache:
+        if not row.cache_active.affects_cost_projection:
             continue
         invocations = invocation_count_for(row)
         # See Option C note in ``_aggregate_with_cache_projection`` — None → 0.
-        cacheable = row.cacheable_tokens_estimated or 0
+        cacheable = row.cache_active.tokens_estimated or 0
         # no-cache: cacheable * input_rate ; rerun: cacheable * read_rate
         total_savings += invocations * cacheable * (pricing.input_rate - pricing.cache_read_rate)
     return total_savings

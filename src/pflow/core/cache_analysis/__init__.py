@@ -113,8 +113,16 @@ Version history (``JSON_FORMAT_VERSION``):
   to work; consumers caching specific token values across 4.2 -> 4.3 will see
   the per-call shift.
 
-Consumer rule: gate on ``format_version.startswith("4.")`` for the current
-shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning
+- ``"5.0"`` — explicit provider-cache projection model. JSON removes legacy
+  public ``per_call[].cacheable_tokens_estimated``,
+  ``per_call[].cacheable_data_source``, and ``per_call[].cache_ratio_pct``.
+  Rows now expose ``cached_now_tokens_estimated``, ``cache_configured``,
+  ``cache_active``, ``cache_ready``, and ``cache_opportunity``. Only
+  ``cache_active`` feeds cost projections; ready/opportunity are
+  prioritization fields.
+
+Consumer rule: gate on ``format_version.startswith("5.")`` for the current
+shape. Additive 5.x minor fields don't bump; semantic shifts in field meaning
 and per-warning diagnostic-context changes bump minor; typed top-level field
 removals bump major.
 """
@@ -128,7 +136,7 @@ from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
 
-JSON_FORMAT_VERSION: Final[str] = "4.3"
+JSON_FORMAT_VERSION: Final[str] = "5.0"
 """Version string emitted as the first key by ``render_json``.
 
 Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.

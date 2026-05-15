@@ -26,9 +26,11 @@
 ## Per-call cache report
   How to read each row:
     · cached_now: tokens served from cache during this run (requires trace).
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
+    · — means the column does not apply to this row.
 
-  node  model                        input  cached_now  could_cache  ratio  calls  notes
-  ---------------------------------------------------------------------------------
+  node  model                        input  cached_now  ready  upside  ratio  calls  notes
+  -----------------------------------------------------------------------------------
 
-  gen   anthropic/claude-sonnet-4-5  1,800           —            ?     ?%      1  single call; no repeated cache use observed; discrepancy
+  gen   anthropic/claude-sonnet-4-5  1,800         100      —       —     ?%      1  single call; no repeated cache use observed; discrepancy

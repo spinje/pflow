@@ -117,13 +117,24 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 ### Per-call Unit Contract
 
-`PerCallRow` token fields are per-call by contract. This includes `input_tokens_estimated`, `output_tokens_estimated`, `cacheable_tokens_estimated`, `chunk_tokens_estimated`, `body_tokens_estimated`, `cache_creation_input_tokens`, and `cache_read_input_tokens`. Trace rows are normalized once at the producer boundary in `_aggregate_trace_llm_calls`; downstream code must not divide again.
+`PerCallRow` token fields are per-call by contract. This includes `input_tokens_estimated`, `output_tokens_estimated`, projection `tokens_estimated` values, `chunk_tokens_estimated`, `body_tokens_estimated`, `cache_creation_input_tokens`, and `cache_read_input_tokens`. Trace rows are normalized once at the producer boundary in `_aggregate_trace_llm_calls`; downstream code must not divide again.
 
 Workflow-level consumers multiply token fields with `invocation_count_for(row)`. That helper lives beside `PerCallRow` in `analyze.py` because it is part of the row contract: static batches use `batch_size_estimated` when known, dynamic batches use observed call count, and non-batch rows repeated through a parent batch use `observed_call_count`.
 
 `row.cost_usd` is the deliberate exception. It is cohort actually-paid trace cost sourced through `AnalysisContext.cost_usd_for_node()` / `TraceTree.total_cost`, not through `_aggregate_trace_llm_calls`. Cost projection helpers ignore `row.cost_usd`; actual-paid aggregation sums it only on the no-trace fallback path.
 
-The row invariant is `cacheable_tokens_estimated <= input_tokens_estimated`. `_build_per_call_row` keeps a clamp for rare tokenizer-drift overshoots and logs at debug when it fires. `test_per_call_row_invariant_cacheable_le_input` is the contract test to update if this behavior changes.
+Projection invariants are row-local: `cached_now_tokens_estimated`, `cache_configured.tokens_estimated`, `cache_active.tokens_estimated`, `cache_ready.tokens_estimated`, and `cache_opportunity.tokens_estimated` must not exceed `input_tokens_estimated` when known. `cache_active` is the only projection that feeds headline cost math.
+
+### Projection model
+
+Rows expose four projection objects:
+
+- `cache_configured`: tokens the current workflow asks runtime to cache before provider minimum/image stripping.
+- `cache_active`: configured tokens the analyzer believes remain provider-effective after known runtime gates. Only this projection may affect cost projections.
+- `cache_ready`: tokens already active, configured, or unlockable with a direct cache edit in the current prompt shape.
+- `cache_opportunity`: maximum provable unrealized per-call cache upside after the required edit.
+
+`cached_now_tokens_estimated` is separate trace telemetry (`cache_creation_input_tokens + cache_read_input_tokens` when provider cache fields exist). Do not decompose provider telemetry across projection components; providers return one aggregate cache-read/write count per call.
 
 ### token_estimation.py
 
@@ -131,9 +142,9 @@ The row invariant is `cacheable_tokens_estimated <= input_tokens_estimated`. `_b
 
 **Symmetric fall-through for cacheable-token estimation**: when chunks can't be fully resolved (any chunk returns `None` from `_estimate_ref_tokens`), both DECLARED and CANDIDATE subsets return `(None, "unavailable")`. Honest unmeasurable. The previous declared-subset Tier 3 heuristic was deleted (F-04 fix) — it fabricated `len(prompt) * 75 // 400` token counts that didn't reflect actual cache content size and produced false-positive `cache.below-min-predicted` warnings.
 
-**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2 (memo/parameters) and then to unavailable if chunks still can't resolve. Downstream `cache.below-min-predicted` is emitted through `below_min_tokens_detector.py` only when there is real positive cacheable-token evidence, and is suppressed when `cacheable_data_source == "trace"` so it doesn't contradict trace evidence when cache demonstrably worked.
+**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2 (memo/parameters) and then to unavailable if chunks still can't resolve. Downstream `cache.below-min-predicted` is emitted through `below_min_tokens_detector.py` only when there is real positive configured-token evidence, and is suppressed for observed trace-active components so it doesn't contradict trace evidence when cache demonstrably worked.
 
-**`cacheable_data_source` projection tiers**: `batch_prefix` projects stable bytes before a batch item reference; `cross_workflow_projection` projects parent-declared values flowing into a child workflow that has not declared the receiving input in its own `## Cache`. Cross-workflow projection may replace weak parameter-derived candidate evidence when it finds a larger boundary-level opportunity, but it does not override trace, memo, or `batch_prefix` evidence. In no-trace analysis, structural cross-workflow recommendations still surface, but per-call cross-workflow rows stay unavailable and a note routes agents to `--from-trace` for attribution.
+**Projection tokenization**: `tokenize_prompt_region_for_projection` can resolve parameters, memo, and trace `node_output` values through `AnalysisContext.resolve_ref_value_for_projection`. This is intentionally narrower than changing `resolve_ref_value()` globally; existing warnings keep their old resolution contract while row opportunity can use trace-backed code-node outputs.
 
 **LiteLLM is lazy-imported** (mirrors the `llm_client.py` lazy-import pattern) to keep the analyzer package import-cheap.
 

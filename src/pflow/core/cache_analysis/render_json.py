@@ -20,7 +20,15 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 
-from .analyze import CacheAnalysis, CostDelta, PerCallRow, RecommendedAction, SuggestedBlock
+from .analyze import (
+    CacheAnalysis,
+    CacheProjection,
+    CacheProjectionComponent,
+    CostDelta,
+    PerCallRow,
+    RecommendedAction,
+    SuggestedBlock,
+)
 
 
 def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
@@ -109,7 +117,15 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         "total_llm_invocations_estimated": s.total_llm_invocations_estimated,
         "dynamic_batch_node_count": s.dynamic_batch_node_count,
         "total_input_tokens_estimated": s.total_input_tokens_estimated,
-        "total_cacheable_tokens_estimated": s.total_cacheable_tokens_estimated,
+        "total_cache_active_tokens_estimated": s.total_cache_active_tokens_estimated,
+        "total_cache_ready_tokens_estimated": s.total_cache_ready_tokens_estimated,
+        "total_cache_opportunity_tokens_estimated": s.total_cache_opportunity_tokens_estimated,
+        "total_cache_ready_confidence": s.total_cache_ready_confidence,
+        "total_cache_opportunity_confidence": s.total_cache_opportunity_confidence,
+        "unknown_cache_ready_row_count": s.unknown_cache_ready_row_count,
+        "unknown_cache_opportunity_row_count": s.unknown_cache_opportunity_row_count,
+        "lower_bound_cache_ready_row_count": s.lower_bound_cache_ready_row_count,
+        "lower_bound_cache_opportunity_row_count": s.lower_bound_cache_opportunity_row_count,
         "models_in_use": list(s.models_in_use),
         "ir_default_model": s.ir_default_model,
         "observed_models_in_trace": list(s.observed_models_in_trace),
@@ -248,18 +264,14 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         "body_tokens_estimated": row.body_tokens_estimated,
         "output_tokens_estimated": row.output_tokens_estimated,
         "output_data_source": row.output_data_source,
-        "cacheable_tokens_estimated": row.cacheable_tokens_estimated,
-        "cache_ratio_pct": row.cache_ratio_pct,
         "cache_creation_input_tokens": row.cache_creation_input_tokens,
         "cache_read_input_tokens": row.cache_read_input_tokens,
+        "cached_now_tokens_estimated": row.cached_now_tokens_estimated,
+        "cache_configured": _projection_to_dict(row.cache_configured),
+        "cache_active": _projection_to_dict(row.cache_active),
+        "cache_ready": _projection_to_dict(row.cache_ready),
+        "cache_opportunity": _projection_to_dict(row.cache_opportunity),
         "data_source": row.data_source,
-        # Independent tier label for the cacheable metric. Sources:
-        # ``"trace"``, ``"memo"``, ``"parameters"``, ``"batch_prefix"``,
-        # ``"cross_workflow_projection"``, ``"unavailable"``.
-        # Independent from ``data_source`` (input) — the two may legitimately
-        # diverge (e.g., trace fires for input but cacheable falls through
-        # to memo when ``cache_creation+cache_read == 0``).
-        "cacheable_data_source": row.cacheable_data_source,
         "cross_workflow_inputs": [
             {
                 "child_input_name": contribution.child_input_name,
@@ -289,6 +301,39 @@ def _per_call_to_dict(row: PerCallRow) -> dict[str, Any]:
         # Stage 0.3 (Task 159): per-call ``warnings`` array dropped — production
         # never populated it. JSON consumers needing per-row warning markers
         # filter ``warnings[]`` (top-level) by ``node_id``.
+    }
+
+
+def _projection_to_dict(projection: CacheProjection) -> dict[str, Any]:
+    return {
+        "tokens_estimated": projection.tokens_estimated,
+        "data_source": projection.data_source,
+        "ratio_pct": projection.ratio_pct,
+        "action": projection.action,
+        "actionability": projection.actionability,
+        "confidence": projection.confidence,
+        "meets_provider_min": projection.meets_provider_min,
+        "provider_min_tokens": projection.provider_min_tokens,
+        "blocked_reason": projection.blocked_reason,
+        "affects_cost_projection": projection.affects_cost_projection,
+        "diagnostic_ids": list(projection.diagnostic_ids),
+        "components": [_projection_component_to_dict(component) for component in projection.components],
+    }
+
+
+def _projection_component_to_dict(component: CacheProjectionComponent) -> dict[str, Any]:
+    return {
+        "tokens_estimated": component.tokens_estimated,
+        "data_source": component.data_source,
+        "ratio_pct": component.ratio_pct,
+        "action": component.action,
+        "actionability": component.actionability,
+        "confidence": component.confidence,
+        "meets_provider_min": component.meets_provider_min,
+        "provider_min_tokens": component.provider_min_tokens,
+        "blocked_reason": component.blocked_reason,
+        "affects_cost_projection": component.affects_cost_projection,
+        "diagnostic_ids": list(component.diagnostic_ids),
     }
 
 

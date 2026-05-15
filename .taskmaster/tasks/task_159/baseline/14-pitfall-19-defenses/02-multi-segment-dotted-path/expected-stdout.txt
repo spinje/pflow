@@ -1,5 +1,5 @@
 {
-  "format_version": "4.3",
+  "format_version": "5.0",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -59,7 +59,15 @@
     "total_llm_invocations_estimated": 1,
     "dynamic_batch_node_count": 0,
     "total_input_tokens_estimated": 12007,
-    "total_cacheable_tokens_estimated": 12000,
+    "total_cache_active_tokens_estimated": 12000,
+    "total_cache_ready_tokens_estimated": 12000,
+    "total_cache_opportunity_tokens_estimated": 0,
+    "total_cache_ready_confidence": "exact",
+    "total_cache_opportunity_confidence": "unknown",
+    "unknown_cache_ready_row_count": 0,
+    "unknown_cache_opportunity_row_count": 0,
+    "lower_bound_cache_ready_row_count": 0,
+    "lower_bound_cache_opportunity_row_count": 0,
     "models_in_use": [
       "anthropic/claude-sonnet-4-5"
     ],
@@ -112,12 +120,108 @@
       "body_tokens_estimated": 7,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
-      "cacheable_tokens_estimated": 12000,
-      "cache_ratio_pct": 100,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
+      "cached_now_tokens_estimated": null,
+      "cache_configured": {
+        "tokens_estimated": 12000,
+        "data_source": "declared_chunks",
+        "ratio_pct": 100,
+        "action": "none",
+        "actionability": "active",
+        "confidence": "exact",
+        "meets_provider_min": true,
+        "provider_min_tokens": 1024,
+        "blocked_reason": "",
+        "affects_cost_projection": true,
+        "diagnostic_ids": [],
+        "components": [
+          {
+            "tokens_estimated": 12000,
+            "data_source": "declared_chunks",
+            "ratio_pct": 100,
+            "action": "none",
+            "actionability": "active",
+            "confidence": "exact",
+            "meets_provider_min": true,
+            "provider_min_tokens": 1024,
+            "blocked_reason": "",
+            "affects_cost_projection": true,
+            "diagnostic_ids": []
+          }
+        ]
+      },
+      "cache_active": {
+        "tokens_estimated": 12000,
+        "data_source": "declared_chunks",
+        "ratio_pct": 100,
+        "action": "none",
+        "actionability": "active",
+        "confidence": "exact",
+        "meets_provider_min": true,
+        "provider_min_tokens": 1024,
+        "blocked_reason": "",
+        "affects_cost_projection": true,
+        "diagnostic_ids": [],
+        "components": [
+          {
+            "tokens_estimated": 12000,
+            "data_source": "declared_chunks",
+            "ratio_pct": 100,
+            "action": "none",
+            "actionability": "active",
+            "confidence": "exact",
+            "meets_provider_min": true,
+            "provider_min_tokens": 1024,
+            "blocked_reason": "",
+            "affects_cost_projection": true,
+            "diagnostic_ids": []
+          }
+        ]
+      },
+      "cache_ready": {
+        "tokens_estimated": 12000,
+        "data_source": "declared_chunks",
+        "ratio_pct": 100,
+        "action": "none",
+        "actionability": "active",
+        "confidence": "exact",
+        "meets_provider_min": true,
+        "provider_min_tokens": 1024,
+        "blocked_reason": "",
+        "affects_cost_projection": true,
+        "diagnostic_ids": [],
+        "components": [
+          {
+            "tokens_estimated": 12000,
+            "data_source": "declared_chunks",
+            "ratio_pct": 100,
+            "action": "none",
+            "actionability": "active",
+            "confidence": "exact",
+            "meets_provider_min": true,
+            "provider_min_tokens": 1024,
+            "blocked_reason": "",
+            "affects_cost_projection": true,
+            "diagnostic_ids": []
+          }
+        ]
+      },
+      "cache_opportunity": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
       "data_source": "estimator",
-      "cacheable_data_source": "parameters",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept.core_idea",

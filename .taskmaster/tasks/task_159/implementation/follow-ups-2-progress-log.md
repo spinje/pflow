@@ -660,3 +660,141 @@ Docs (1 file):
 ### What's next
 
 Per the cache-ready-opportunity-plan handoff: the projection-model refactor (`scratchpads/cache-ready-opportunity-plan/implementation-plan.md`) is the next major work. It subsumes F#2 (combined `prewarm: true` + `prompt_cache` additive evidence) via Phase 1's component model and F#11 (dynamic-before-static late tail scanning) via Phase 4. Bundle 5's sibling predicate `is_likely_below_min_cache` is the primitive Phase 1's `CacheProjectionComponent.meets_provider_min` consumes.
+
+## 2026-05-15 — Cache ready/opportunity Phase 1-2 checkpoint
+
+Added the explicit row projection model (`cache_configured`, `cache_active`, `cache_ready`, `cache_opportunity`) and moved JSON/cost/text consumers off the public legacy `cacheable_*` fields. The legacy row fields still exist internally as a bridge for older helper paths/tests, but final JSON is now `5.0` and no longer emits them.
+
+Important model fixes landed with the projection scaffolding: declared `prompt_cache:` and `prewarm: true` are now treated as additive mechanisms, `_estimate_batch_prefix_cacheable_tokens` no longer suppresses combined declared+prewarm rows, and `cache.batch-prewarm-below-min` is no longer gated off by `row.declared_prompt_cache`.
+
+Cost math now reads only `row.cache_active.tokens_estimated`; `cache_ready` and `cache_opportunity` are display/actionability signals and must not reduce `first_run_with_cache_hypothetical_usd` or `rerun_within_ttl_hypothetical_usd`. The no-cache baseline still anchors on `row.input_tokens_estimated`.
+
+Unverified at this checkpoint: tests and baselines have not run yet. Next agents should trust the direction of the data model, not the exact renderer polish, until the Phase 3 trace-output test and focused cache-analysis suite are green.
+
+## 2026-05-15 — Cache ready/opportunity Phase 3 checkpoint
+
+Trace indexing now collects non-empty `event["node_output"]` into `TraceExecutionIndex.outputs_by_key`, and `AnalysisContext.resolve_ref_value_for_projection()` resolves parameters/memo first, then workflow-scoped trace outputs. Projection tokenization uses this resolver without changing the older `resolve_ref_value()` contract.
+
+The mandatory dual-producer regression test exists and passes: `test_build_trace_execution_index_collects_top_level_and_batch_node_outputs` loads the live Gemini lyrics-generator trace and proves both a top-level `WorkflowTraceCollector` output (`fetch-sources`) and a batch-item `_capture_item_trace` output (`build-scoring-items.result.genre_only` / `narrator_info`) are index-visible.
+
+Key learning: without resolved cross-workflow edges, nested batch child outputs in the live fixture are scoped as `(None, node_id)`. The projection resolver intentionally falls back to `(None, root)` after `(workflow_path, root)` so these observed batch outputs can still unlock prefix measurement.
+
+Verified: the new dual-producer test passes standalone. Not yet verified: the full `score-choruses` table value and baseline drift.
+
+## 2026-05-15 — Cache ready/opportunity Phases 4-5 checkpoint
+
+Dynamic-before-static evidence now feeds `cache_opportunity` as a structural-edit component while keeping the existing diagnostic path gated for provider-effective recommendations. Below-min structural upside remains visible on the row with `blocked_reason="below_provider_min"` instead of disappearing before the renderer can explain it.
+
+Repeated non-batch stable refs now have a separate detector instead of loosening `_detect_candidate_subsets()` from `>=2` to `>=1`. This preserves the old noise guard for one-shot prompts while allowing repeated rows to surface direct `declare_prompt_cache` opportunities.
+
+The real lyrics-generator canary test has been updated to the new intended behavior: `score-choruses` resolves trace-captured `build-scoring-items.result.*` values and reports a `batch_prefix` ready/opportunity value above 500 tokens, `action="add_prewarm"`, below provider min, and no cost-projection effect.
+
+Verified: `tests/test_core/test_cache_analysis_analyze.py` passes (`180 passed`). Still unverified: renderer snapshots, JSON/MCP schema tests, broader cache-analysis family, and baselines.
+
+## 2026-05-15 — Cache ready/opportunity docs/schema checkpoint
+
+Stopped here for review per user request. JSON schema is bumped to `5.0`; `render_json` emits `cached_now_tokens_estimated`, `cache_configured`, `cache_active`, `cache_ready`, and `cache_opportunity`, and no longer emits public legacy `cacheable_tokens_estimated`, `cacheable_data_source`, or `cache_ratio_pct`.
+
+Docs/schema text updated in:
+- `src/pflow/core/cache_analysis/__init__.py`
+- `src/pflow/mcp_server/tools/execution_tools.py`
+- `src/pflow/core/cache_analysis/CLAUDE.md`
+- `docs/reference/cli/analyze-cache.mdx`
+- `docs/how-it-works/prompt-caching.mdx`
+- `examples/core/prompt-caching.pflow.md`
+
+Important doc correction: Gemini explicit cached-content minimum is documented as 4,096 tokens, matching `llm_capabilities.py`; the old "Gemini Flash 1024" line was wrong for the explicit provider-cache path pflow marks.
+
+Verification state at stop:
+- `tests/test_core/test_cache_analysis_analyze.py` passes (`180 passed`).
+- Mandatory trace-output dual-producer test passes standalone.
+- `tests/test_core/test_cache_analysis_renderers.py` is not yet green. After partial renderer-test migration, latest run had 13 failures, mostly tests still asserting old `could_cache` columns / legacy JSON field placement plus a few synthetic-builder default fields. These are expected migration work, not evidence that the core projection model failed.
+
+Known review focus before continuing:
+- Renderer/test migration is incomplete and should be the next phase before baselines.
+- Synthetic direct `PerCallRow` test constructors use the compatibility bridge in `PerCallRow.__post_init__`; production rows are populated explicitly in `_build_per_call_row`.
+- Re-check text UX after tests are migrated; current renderer is mechanically switched to `ready`/`upside` but not yet baseline-polished.
+
+## 2026-05-15 — Cache ready/opportunity final implementation checkpoint
+
+Completed renderer/test migration, baseline regeneration, and final verification. Text now uses `cached_now` / `ready` / `upside`; JSON remains `5.0` and omits public legacy `cacheable_*` fields. The all-rows/default visibility pass preserves the old low-signal hiding rule for already-good active rows while keeping edit-required opportunities visible.
+
+Two implementation fixes after the docs checkpoint were load-bearing:
+- Projection component confidence had a name collision with the analysis-summary `_aggregate_confidence()` helper, which leaked `(confidence, coverage)` tuples into JSON. Renamed the component helper so MCP/JSON round-trips stay pure JSON.
+- `_build_cache_projection_components()` was split into component-builder helpers instead of suppressing ruff complexity. This keeps declared-cache, configured-prewarm, candidate, prewarm-opportunity, and dynamic-tail logic independently reviewable.
+
+Baseline drift was classified as intended: schema/additive JSON 5.0 fields, text column rename, no public legacy JSON fields, and behavioral token changes from deeper evidence. The live Gemini lyrics canary now shows `score-choruses` as an `add prewarm` ready/upside row around 1,129 tokens, below Gemini's 4,096-token provider minimum and excluded from cost projection.
+
+Verification:
+- Focused cache-analysis/CLI/MCP suite: `773 passed`.
+- Baselines: `87 passed, 0 drifted, 0 harness errors`.
+- Ruff on touched Python files: clean.
+- Near-full sandbox suite with uv-subprocess sandbox failures excluded: `6859 passed, 19 skipped`.
+
+Known sandbox limitation: the unfiltered near-full suite still has 4 `/opt/homebrew/bin/uv` subprocess panics before pflow code starts (`test_importing_helper_module_does_not_import_litellm`, two `pflow save` subprocess validation tests, and `test_analyze_cache_does_not_attempt_remote_model_cost_map`). These match the sandbox failure mode documented by `pflow-sandbox-testing`; they were excluded only for the final broad application run.
+
+## 2026-05-15 — Cache ready/opportunity post-review fixes (B1, P2, P3, U2)
+
+Post-implementation code review of the projection-model work surfaced one blocker-class regression and three smaller hygiene items. All four are fixed here.
+
+### B1 — Test fixtures restored to true optimality
+
+Two baselines silently lost their test intent when the new measurement model exposed that their fixtures weren't actually optimal:
+
+- `06-dry-run-nudge/02-optimal-workflow-silent` — README mutation contract said "an already-optimal workflow stays quiet" but the regenerated baseline started emitting `cache.opportunities-available` from the new analyzer.
+- `13-happy-path-interactions/01-batch-cache-prewarm-happy` — README enumerated "NO `cache.batch-prewarm-recommended`, NO `cache.prewarm-no-prefix`, NO `cache.below-min-predicted`" but the regenerated baseline started emitting `cache.batch-prewarm-below-min` (a structurally-similar ID the README didn't enumerate).
+
+The new analyzer was right: both workflows had `prompt_cache: [context]` AND `prewarm: true` but only the system-block cache (`${context}`) was substantial. The user-message prefix before `${item.text}` was the tiny literal "Score this item using the reference document: " (~9 tokens), well below the 1024-token Sonnet 4.5 min. Per DD#11 the two markers are additive (distinct provider breakpoints, system + user-message), so `prewarm: true` needs its own substantial prefix to be effective.
+
+Fix: added `_shared/long-stable-rubric.txt` (~1600 tokens of scoring instructions) and gave both fixtures a `rubric` input referenced in the prompt body before `${item.text}`. `${rubric}` is NOT in `## Cache`, so there's no shadowing with the declared `${context}` chunk. Both fixtures now have meaningful content in both cache scopes, both clear the provider min, both stay silent. READMEs rewritten to explain the additive-mechanism model and the new mutation contract.
+
+### P3 — Placeholder explainer is conditional
+
+Initial fix added `— means the column does not apply to this row.` and `? means the column applies but the token count can't be measured yet (run the workflow once to populate).` to the `How to read each row:` bullets. User caught a UX regression: those lines printed even when no row in the table used those placeholders, adding noise instead of clarity.
+
+Final fix: new `_per_call_placeholder_usage(rows, visible_columns)` helper walks visible cells and reports `(any_em_dash, any_question)`. The explainer only emits each placeholder line when at least one visible cell would render that placeholder. Verified:
+
+- Greenfield baseline (no placeholders): no extra lines.
+- Gemini canary (some `—`): `—` line only.
+- Steady-state-text-hidden mode (would show `?`): explainer suppressed entirely because per-call section is hidden anyway.
+
+### U2 — Doc prose vocabulary cleaned
+
+`docs/how-it-works/prompt-caching.mdx` and `examples/core/prompt-caching.pflow.md` both said "ready/cache-active tokens" — mixing the CLI column name (`ready`) with the JSON field name (`cache_active`) in one phrase. Replaced with `ready`/`upside` column-name-only prose. The CLI text doesn't expose `cache_active` as a column; only JSON consumers see that key.
+
+### P2 — diagnostic_ids match the actually-emitted diagnostic
+
+`_declared_projection_component` hardcoded `cache.below-min-predicted` as the diagnostic ID for blocked declared chunks. But when trace evidence (`cache_skipped_reason == "below_min"`) is the source of the block, the actually-emitted diagnostic at `analyze-cache --from-trace` is `cache.below-min-rendered` — a different catalog ID. JSON consumers following `cache_configured.components[].diagnostic_ids` looked up `cache.below-min-predicted` and didn't find it in `analysis.warnings[]`. Same pattern for `_configured_prewarm_projection_component`: hardcoded `cache.batch-prewarm-below-min` when runtime trace evidence would have emitted `cache.prewarm-disabled-below-min`.
+
+Fix: both builders now pick the diagnostic ID by evidence source — runtime-blocked from trace → rendered/disabled IDs; static prediction → predicted/recommended IDs. Verified in `09c-cache.below-min-rendered`: `diagnostic_ids` now reads `["cache.below-min-rendered"]`, matching the emitted `warnings[0].id`.
+
+### Verification
+
+- Cache-analysis/CLI/MCP focused suite: 556 passed.
+- Baselines: 87 passed, 0 drifted, 0 harness errors.
+- `make check`: clean (ruff, ruff-format, mypy on 209 source files, deptry).
+- `make test`: 6837 passed, 4 pre-existing failures unrelated to cache_analysis (`test_routing_failure_in_sub_workflow_propagates_to_parent_trace` and three `test_prep_error_action` tests — verified failing on the base commit before any of this work).
+- Pre-commit `pretty-format-json` auto-fix touched 4 baseline `trace.json` files (formatting only, semantic-equivalent); baselines still verify clean.
+
+### Files touched
+
+Production (2 files):
+- `src/pflow/core/cache_analysis/analyze.py` — P2 fix (two diagnostic-ID selectors).
+- `src/pflow/core/cache_analysis/render_text.py` — P3 fix (conditional placeholder explainer + new `_per_call_placeholder_usage` helper).
+
+Docs/examples (2 files):
+- `docs/how-it-works/prompt-caching.mdx` — U2 prose cleanup.
+- `examples/core/prompt-caching.pflow.md` — U2 prose cleanup.
+
+Fixtures (1 new, 6 edited):
+- New: `.taskmaster/tasks/task_159/baseline/_shared/long-stable-rubric.txt`.
+- Edited: `06-dry-run-nudge/02-optimal-workflow-silent/{workflow.pflow.md,command.sh,README.md}`, `13-happy-path-interactions/01-batch-cache-prewarm-happy/{workflow.pflow.md,command.sh,README.md}`.
+
+Baselines: all `expected-stdout.txt` files regenerated (drift was the conditional `?`/`—` explainer lines and the P2-corrected `diagnostic_ids` arrays). 4 `trace.json` files auto-formatted by pre-commit (semantic-equivalent).
+
+### Closes (from the post-review)
+
+- B1 (test fixtures silently rewritten without updating intent) — closed.
+- P3 (explainer omits `?`/`—` placeholders) — closed, gated on actual usage.
+- U2 (doc prose leaks `cache-active` JSON field name) — closed.
+- P2 (diagnostic_ids hardcoded predicted ID for rendered case) — closed for both declared and prewarm components.

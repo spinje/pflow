@@ -73,6 +73,9 @@ def per_call_row_has_real_data(row: PerCallRow) -> bool:
         row.data_source in {"trace", "memo"}
         or bool(row.declared_prompt_cache)
         or row.model_is_heterogeneous
+        or row.cached_now_tokens_estimated is not None
+        or row.cache_ready.data_source not in {"not_applicable", "unavailable"}
+        or row.cache_opportunity.data_source not in {"not_applicable", "unavailable"}
         or row.cacheable_data_source != "unavailable"
     )
 

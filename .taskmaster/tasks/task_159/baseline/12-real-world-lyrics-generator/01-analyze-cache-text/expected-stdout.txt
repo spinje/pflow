@@ -109,9 +109,6 @@
 ### chorus-chooser.pflow.md (called by choose-chorus)
   generate-chorus-options  <varies>          ?  opaque-prompt
 
-  Per-call notes:
-    · 7 nodes lack trace data — run with --report to populate cache columns.
-
   Token estimate confidence:
     · Projected input tokens for: write-lyrics, song-architecture, rewrite-emotional, rewrite-craft, generate-suno-prompt, creative-direction, easter-eggs, generate-chorus-options.
 

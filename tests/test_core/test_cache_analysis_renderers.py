@@ -155,6 +155,35 @@ def _make_analysis(
             total_cacheable_tokens_estimated=sum(
                 (r.cacheable_tokens_estimated or 0) * invocation_count_for(r) for r in rows
             ),
+            total_cache_active_tokens_estimated=sum(
+                (r.cache_active.tokens_estimated or 0) * invocation_count_for(r) for r in rows
+            ),
+            total_cache_ready_tokens_estimated=sum(
+                (r.cache_ready.tokens_estimated or 0) * invocation_count_for(r) for r in rows
+            ),
+            total_cache_opportunity_tokens_estimated=sum(
+                (r.cache_opportunity.tokens_estimated or 0) * invocation_count_for(r) for r in rows
+            ),
+            total_cache_ready_confidence="exact" if any(r.cache_ready.tokens_estimated for r in rows) else "unknown",
+            total_cache_opportunity_confidence=(
+                "exact" if any(r.cache_opportunity.tokens_estimated for r in rows) else "unknown"
+            ),
+            unknown_cache_ready_row_count=sum(
+                1
+                for r in rows
+                if r.cache_ready.data_source not in {"not_applicable", "unavailable"}
+                and r.cache_ready.tokens_estimated is None
+            ),
+            unknown_cache_opportunity_row_count=sum(
+                1
+                for r in rows
+                if r.cache_opportunity.data_source not in {"not_applicable", "unavailable"}
+                and r.cache_opportunity.tokens_estimated is None
+            ),
+            lower_bound_cache_ready_row_count=sum(1 for r in rows if r.cache_ready.confidence == "lower_bound"),
+            lower_bound_cache_opportunity_row_count=sum(
+                1 for r in rows if r.cache_opportunity.confidence == "lower_bound"
+            ),
             models_in_use=tuple(sorted({r.model for r in rows if r.model})),
             ir_default_model=ir_default_model,
             partial_cost_usd=partial,
@@ -212,6 +241,11 @@ _BUILDER_DOCUMENTED_DEFAULTS: frozenset[str] = frozenset({
     "heterogeneous_model_node_count",
     "heterogeneous_model_node_paths",
     "sub_workflow_rollup",
+    "total_cache_active_tokens_estimated",
+    "unknown_cache_ready_row_count",
+    "unknown_cache_opportunity_row_count",
+    "lower_bound_cache_ready_row_count",
+    "lower_bound_cache_opportunity_row_count",
 })
 
 
@@ -1760,10 +1794,8 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
     # Header and column bullets each on their own line — standalone substrings.
     assert "How to read each row:" in text
     assert "· cached_now: tokens served from cache during this run (requires trace)." in text
-    assert (
-        "· could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. "
-        "`?` if not projectable statically."
-    ) in text
+    assert "· ready: tokens already active or unlockable by a direct cache edit" in text
+    assert "· upside: unrealized cache opportunity" in text
     # Run-on form with semicolon separators must NOT appear.
     assert "cached_now: tokens served from cache during this run; could_cache:" not in text
     # The wrong-after-Pass-A2 advice is gone.
@@ -4355,7 +4387,8 @@ def test_per_call_keeps_all_columns_in_mixed_mode() -> None:
         "model",
         "input",
         "cached_now",
-        "could_cache",
+        "ready",
+        "upside",
         "ratio",
         "calls",
         "notes",
@@ -4363,9 +4396,10 @@ def test_per_call_keeps_all_columns_in_mixed_mode() -> None:
     cached = _per_call_cells_by_header(text, "cached")
     projected = _per_call_cells_by_header(text, "projected")
     assert cached["cached_now"] == "7,500"
-    assert cached["could_cache"] == "—"
+    assert cached["ready"] == "7,500"
     assert projected["cached_now"] == "—"
-    assert projected["could_cache"] == "2,500"
+    assert projected["ready"] == "2,500"
+    assert projected["upside"] == "2,500"
 
 
 def test_per_call_dedups_repeated_notes_into_footer() -> None:
@@ -4453,7 +4487,7 @@ def test_per_call_explainer_adapts_to_visible_columns() -> None:
     unavailable_text = render_text(_make_analysis(rows=[unavailable]))
 
     assert "cached_now: tokens served from cache during this run" not in projected_text
-    assert "could_cache: extra tokens" in projected_text
+    assert "ready: tokens already active" in projected_text
     assert "cached_now: tokens served from cache during this run" not in unavailable_text
     assert "could_cache: extra tokens" not in unavailable_text
 
@@ -5491,12 +5525,16 @@ def test_render_json_includes_cache_creation_and_read_tokens() -> None:
     assert row_dict["cache_read_input_tokens"] == 8062
 
     # Pin key adjacency so future dict refactors don't silently scatter the
-    # cache-related fields. Plan specified placement after cache_ratio_pct
-    # and before data_source.
+    # cache-related fields. JSON 5.0 places raw trace splits before projections.
     keys = list(row_dict.keys())
-    assert keys.index("cache_creation_input_tokens") == keys.index("cache_ratio_pct") + 1
+    assert keys.index("cache_creation_input_tokens") == keys.index("output_data_source") + 1
     assert keys.index("cache_read_input_tokens") == keys.index("cache_creation_input_tokens") + 1
-    assert keys.index("data_source") == keys.index("cache_read_input_tokens") + 1
+    assert keys.index("cached_now_tokens_estimated") == keys.index("cache_read_input_tokens") + 1
+    assert keys.index("cache_configured") == keys.index("cached_now_tokens_estimated") + 1
+    assert keys.index("cache_active") == keys.index("cache_configured") + 1
+    assert keys.index("cache_ready") == keys.index("cache_active") + 1
+    assert keys.index("cache_opportunity") == keys.index("cache_ready") + 1
+    assert keys.index("data_source") == keys.index("cache_opportunity") + 1
 
 
 def test_render_json_per_call_cache_tokens_null_on_greenfield() -> None:
@@ -5917,7 +5955,7 @@ def test_below_provider_min_note_renders_for_projected_undeclared_rows() -> None
 
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "summarize")
-    assert cells["notes"] == "below provider min (need ≥4,096 for this model)"
+    assert cells["notes"] == "declare prompt_cache; below provider min (need ≥4,096 for this model)"
 
 
 def test_below_provider_min_note_silent_when_cache_declared() -> None:
@@ -5970,7 +6008,7 @@ def test_per_call_explainer_mentions_provider_minimum() -> None:
     })
 
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
-    assert "Numbers below your model's provider minimum won't cache" in text
+    assert "below provider min" in text
 
 
 def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
@@ -5989,7 +6027,7 @@ def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "write-lyrics")
     assert cells["cached_now"] == "213,382"
-    assert cells["could_cache"] == "—"
+    assert cells["ready"] == "213,382"
 
 
 def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
@@ -6007,7 +6045,8 @@ def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "score-choruses")
     assert "cached_now" not in cells
-    assert cells["could_cache"] == "213,382"
+    assert cells["ready"] == "213,382"
+    assert cells["upside"] == "213,382"
 
 
 def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
@@ -6019,6 +6058,7 @@ def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
     """
     row = PerCallRow(**{
         **_row("rewrite-emotional", 80).__dict__,
+        "input_tokens_estimated": 266_728,
         "cacheable_tokens_estimated": 63_009,
         "declared_prompt_cache": ["prefix"],
         "cacheable_data_source": "trace",
@@ -6026,7 +6066,7 @@ def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "rewrite-emotional")
     assert cells["cached_now"] == "63,009"
-    assert cells["could_cache"] == "—"
+    assert cells["ready"] == "63,009"
 
 
 def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
@@ -6044,7 +6084,7 @@ def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "greenfield")
     assert "could_cache" not in cells
-    assert cells["notes"] == "no trace recorded — run with --report to populate this row"
+    assert cells["notes"].endswith("no trace recorded — run with --report to populate this row")
 
 
 def test_renderer_never_emits_cd_commands() -> None:

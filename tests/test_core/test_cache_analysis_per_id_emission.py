@@ -329,13 +329,12 @@ def test_batch_prewarm_below_min_silent_when_first_per_item_at_position_zero() -
     assert "cache.batch-prewarm-below-min" not in warning_ids
 
 
-def test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present() -> None:
-    """When ``## Cache`` is declared and the node has ``prompt_cache:``,
-    prewarm writes the declared chunk once via the serialized first call.
-    The prompt-body prefix length is irrelevant to whether caching fires —
-    the declared chunk is what gets cached. ``cache.below-min-predicted``
-    handles the declared-cache path (and would fire if the declared chunk
-    were below min, which is a separate scenario). The new ID stays silent.
+def test_batch_prewarm_below_min_emits_when_declared_prompt_cache_present() -> None:
+    """Declared ``prompt_cache:`` and ``prewarm: true`` are additive.
+
+    A too-short prewarm prompt-body prefix remains worth reporting even when a
+    separate declared cache chunk exists, because the two mechanisms emit
+    separate provider cache markers at runtime.
     """
     short_prefix = "tiny "
     workflow_ir = {
@@ -361,7 +360,7 @@ def test_batch_prewarm_below_min_silent_when_declared_prompt_cache_present() -> 
         auto_load_trace=False,
         memo_cache=None,
     )
-    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+    assert "cache.batch-prewarm-below-min" in {d.id for d in result.warnings}
 
 
 def test_dynamic_before_static_silent_for_heterogeneous_batch_with_no_stable_tail(tmp_path: Path) -> None:

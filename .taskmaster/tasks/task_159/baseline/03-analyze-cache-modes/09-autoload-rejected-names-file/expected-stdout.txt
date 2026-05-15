@@ -29,13 +29,14 @@
 
 ## Per-call cache report
   How to read each row:
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
 
-  node      model                        input  could_cache  ratio  notes
-  ------------------------------------------------------------------
+  node      model                        input  ready  ratio  notes
+  ------------------------------------------------------------
 
-  answer-a  anthropic/claude-sonnet-4-5     16            1     6%  below-min-predicted
-  answer-b  anthropic/claude-sonnet-4-5     16            1     6%  below-min-predicted
+  answer-a  anthropic/claude-sonnet-4-5     16      1     6%  below-min-predicted
+  answer-b  anthropic/claude-sonnet-4-5     16      1     6%  below-min-predicted
 
 ## Notes
 

@@ -483,9 +483,13 @@ The 4 LLM responses.
     payload = _json_payload(result.output)
     rows = {row["node_path"]: row for row in payload["per_call"]}
     row = rows["batch-llm"]
-    assert row["cacheable_tokens_estimated"] is None
-    assert row["cache_ratio_pct"] is None
-    assert row["cacheable_data_source"] == "unavailable"
+    assert row["cache_ready"]["tokens_estimated"] is None
+    assert row["cache_ready"]["ratio_pct"] is None
+    assert row["cache_ready"]["data_source"] == "not_applicable"
+    assert row["cache_opportunity"]["tokens_estimated"] < 100
+    assert row["cache_opportunity"]["ratio_pct"] is not None
+    assert row["cache_opportunity"]["data_source"] == "dynamic_before_static"
+    assert row["cache_opportunity"]["confidence"] == "exact"
     warning_ids = {warning["id"] for warning in payload["warnings"]}
     action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
     assert "cache.batch-prewarm-below-min" not in warning_ids

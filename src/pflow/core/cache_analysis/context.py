@@ -54,6 +54,7 @@ class AnalysisContext:
     workflow_path: str | None = None
     base_path: Path | None = None
     parameters_by_workflow: Mapping[str | None, Mapping[str, Any]] = field(default_factory=dict)
+    trace_outputs_by_key: Mapping[tuple[str | None, str], Any] = field(default_factory=dict)
 
     @classmethod
     def build(
@@ -66,6 +67,7 @@ class AnalysisContext:
         workflow_path: str | None = None,
         base_path: Path | None = None,
         parameters_by_workflow: Mapping[str | None, Mapping[str, Any]] | None = None,
+        trace_outputs_by_key: Mapping[tuple[str | None, str], Any] | None = None,
     ) -> AnalysisContext:
         """The single construction path. Compiles trace JSON into ``TraceTree`` once.
 
@@ -93,6 +95,7 @@ class AnalysisContext:
             workflow_path=workflow_path,
             base_path=base_path,
             parameters_by_workflow=parameters_by_workflow or {},
+            trace_outputs_by_key=trace_outputs_by_key or {},
         )
 
     # ------------------------------------------------------------------
@@ -180,6 +183,37 @@ class AnalysisContext:
 
         # Node-output root (or workflow-input not in parameters): consult memo.
         return self._resolve_from_memo(ref, root)
+
+    def resolve_ref_value_for_projection(self, ref: str) -> Any | None:
+        """Resolve ``ref`` for analyzer projections using trace outputs as evidence.
+
+        This preserves :meth:`resolve_ref_value` for existing memo/parameter
+        estimates while allowing projection-only paths to use values observed
+        in the loaded trace. Resolution order is current inputs, memo, then
+        workflow-scoped trace ``node_output``.
+        """
+        value = self.resolve_ref_value(ref)
+        if value is not None:
+            return value
+
+        from pflow.runtime.template_resolver import TemplateResolver
+
+        root = TemplateResolver.extract_root_node_id(ref)
+        if not root:
+            return None
+        output = self.trace_outputs_by_key.get((self.workflow_path, root))
+        if output is None:
+            output = self.trace_outputs_by_key.get((None, root))
+        if output is None:
+            return None
+        try:
+            resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
+        except Exception:
+            logger.debug("trace-output resolve failed for %s", ref, exc_info=True)
+            return None
+        if isinstance(resolved, str) and resolved == f"${{{ref}}}":
+            return None
+        return _normalize_empty(resolved)
 
     def _resolve_from_parameters(self, ref: str, root: str) -> Any | None:
         """Resolve ``ref`` against ``self.parameters`` for a workflow-input root."""

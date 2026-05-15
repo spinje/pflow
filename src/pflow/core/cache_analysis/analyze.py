@@ -82,7 +82,8 @@ from .token_estimation import (
     estimate_output_tokens,
     estimate_tokens,
     tokenize_prompt_region,
-    tokenize_prompt_region_lower_bound,
+    tokenize_prompt_region_for_projection,
+    tokenize_prompt_region_lower_bound_for_projection,
 )
 from .token_estimation import (
     build_shared_store_for_refs as _build_shared_store_for_refs,
@@ -100,6 +101,216 @@ _SUGGESTED_BLOCK_BELOW_THRESHOLD: str = "below_threshold"
 _SUGGESTED_BLOCK_EVIDENCE_INCOMPLETE: str = "evidence_incomplete"
 _SUGGESTED_BLOCK_INSUFFICIENT_NODES: str = "insufficient_nodes"
 _PARENT_PROSE_PREVIEW_LIMIT = 40
+
+_PROJECTION_NOT_APPLICABLE = "not_applicable"
+_PROJECTION_UNAVAILABLE = "unavailable"
+_BLOCK_BELOW_PROVIDER_MIN = "below_provider_min"
+_BLOCK_PREWARM_IMAGES = "prewarm_images"
+_BLOCK_ABSENT_BRANCH = "absent_branch"
+_BLOCK_RUNTIME_STRIPPED = "runtime_stripped"
+
+
+@dataclass(frozen=True)
+class CacheProjectionComponent:
+    """One independently sourced cache projection component."""
+
+    tokens_estimated: int | None
+    data_source: str
+    ratio_pct: int | None
+    action: str = "none"
+    actionability: str = _PROJECTION_NOT_APPLICABLE
+    confidence: str = "exact"
+    meets_provider_min: bool | None = None
+    provider_min_tokens: int | None = None
+    blocked_reason: str = ""
+    affects_cost_projection: bool = False
+    diagnostic_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CacheProjection:
+    """Aggregated cache projection for one purpose.
+
+    ``components`` are IR-derived estimates. Provider trace telemetry remains
+    an aggregate per call and is exposed separately as
+    ``cached_now_tokens_estimated``; do not try to decompose provider-reported
+    cache reads across components because providers do not return that split.
+    """
+
+    tokens_estimated: int | None
+    data_source: str
+    ratio_pct: int | None
+    action: str = "none"
+    actionability: str = _PROJECTION_NOT_APPLICABLE
+    confidence: str = "unknown"
+    meets_provider_min: bool | None = None
+    provider_min_tokens: int | None = None
+    blocked_reason: str = ""
+    affects_cost_projection: bool = False
+    diagnostic_ids: tuple[str, ...] = ()
+    components: tuple[CacheProjectionComponent, ...] = ()
+
+
+def unavailable_projection() -> CacheProjection:
+    return CacheProjection(None, _PROJECTION_UNAVAILABLE, None, action="none", confidence="unknown")
+
+
+def not_applicable_projection() -> CacheProjection:
+    return CacheProjection(None, _PROJECTION_NOT_APPLICABLE, None, action="none", confidence="unknown")
+
+
+def component_tokens(component: CacheProjectionComponent) -> int:
+    return component.tokens_estimated or 0
+
+
+def _projection_component(
+    *,
+    tokens: int | None,
+    input_tokens: int | None,
+    data_source: str,
+    action: str,
+    actionability: str,
+    confidence: str = "exact",
+    meets_provider_min: bool | None = None,
+    provider_min_tokens: int | None = None,
+    blocked_reason: str = "",
+    affects_cost_projection: bool = False,
+    diagnostic_ids: tuple[str, ...] = (),
+) -> CacheProjectionComponent:
+    capped_tokens = _cap_projection_tokens(tokens, input_tokens)
+    return CacheProjectionComponent(
+        tokens_estimated=capped_tokens,
+        data_source=data_source,
+        ratio_pct=_safe_pct(capped_tokens, input_tokens) if capped_tokens is not None and input_tokens else None,
+        action=action,
+        actionability=actionability,
+        confidence=confidence,
+        meets_provider_min=meets_provider_min,
+        provider_min_tokens=provider_min_tokens,
+        blocked_reason=blocked_reason,
+        affects_cost_projection=affects_cost_projection,
+        diagnostic_ids=diagnostic_ids,
+    )
+
+
+def _cap_projection_tokens(tokens: int | None, input_tokens: int | None) -> int | None:
+    if tokens is None:
+        return None
+    if input_tokens is None:
+        return max(0, tokens)
+    return min(max(0, tokens), max(0, input_tokens))
+
+
+def aggregate_projection(
+    components: Iterable[CacheProjectionComponent],
+    *,
+    purpose: str,
+    input_tokens: int | None,
+) -> CacheProjection:
+    """Aggregate projection components by purpose.
+
+    Configured/active components are additive. Ready/opportunity are winner
+    projections unless components are known additive elsewhere; this keeps the
+    row number from double-counting overlapping edit paths.
+    """
+    items = tuple(components)
+    if not items:
+        return not_applicable_projection()
+
+    if purpose in {"configured", "active"}:
+        known = [component for component in items if component.tokens_estimated is not None]
+        if not known:
+            return CacheProjection(
+                None,
+                items[0].data_source,
+                None,
+                action=items[0].action,
+                actionability=items[0].actionability,
+                confidence=_aggregate_component_confidence(items),
+                meets_provider_min=items[0].meets_provider_min,
+                provider_min_tokens=items[0].provider_min_tokens,
+                blocked_reason=items[0].blocked_reason,
+                affects_cost_projection=any(component.affects_cost_projection for component in items),
+                diagnostic_ids=_merge_diagnostic_ids(items),
+                components=items,
+            )
+        total = _cap_projection_tokens(sum(component.tokens_estimated or 0 for component in known), input_tokens)
+        representative = _best_component(items)
+        return CacheProjection(
+            total,
+            representative.data_source if len({c.data_source for c in known}) == 1 else "mixed",
+            _safe_pct(total, input_tokens) if total is not None and input_tokens else None,
+            action=representative.action,
+            actionability=representative.actionability,
+            confidence=_aggregate_component_confidence(items),
+            meets_provider_min=representative.meets_provider_min,
+            provider_min_tokens=representative.provider_min_tokens,
+            blocked_reason=representative.blocked_reason,
+            affects_cost_projection=any(component.affects_cost_projection for component in known),
+            diagnostic_ids=_merge_diagnostic_ids(items),
+            components=items,
+        )
+
+    winner = _best_component(items)
+    return CacheProjection(
+        winner.tokens_estimated,
+        winner.data_source,
+        winner.ratio_pct,
+        action=winner.action,
+        actionability=winner.actionability,
+        confidence=winner.confidence,
+        meets_provider_min=winner.meets_provider_min,
+        provider_min_tokens=winner.provider_min_tokens,
+        blocked_reason=winner.blocked_reason,
+        affects_cost_projection=winner.affects_cost_projection,
+        diagnostic_ids=winner.diagnostic_ids,
+        components=(winner,),
+    )
+
+
+def _best_component(components: Iterable[CacheProjectionComponent]) -> CacheProjectionComponent:
+    actionability_rank = {
+        "active": 0,
+        "direct_edit": 1,
+        "configured_blocked": 2,
+        "direct_edit_blocked": 3,
+        "structural_edit": 4,
+        "structural_edit_blocked": 5,
+        "observed": 6,
+        "blocked": 7,
+        _PROJECTION_NOT_APPLICABLE: 8,
+    }
+    confidence_rank = {"observed": 0, "exact": 1, "lower_bound": 2, "unknown": 3}
+    return sorted(
+        components,
+        key=lambda component: (
+            -(component.tokens_estimated if component.tokens_estimated is not None else -1),
+            actionability_rank.get(component.actionability, 9),
+            confidence_rank.get(component.confidence, 4),
+            component.data_source,
+            component.action,
+        ),
+    )[0]
+
+
+def _aggregate_component_confidence(components: Iterable[CacheProjectionComponent]) -> str:
+    values = {component.confidence for component in components}
+    if "unknown" in values:
+        return "unknown"
+    if "lower_bound" in values:
+        return "lower_bound"
+    if "observed" in values and len(values) == 1:
+        return "observed"
+    return "exact"
+
+
+def _merge_diagnostic_ids(components: Iterable[CacheProjectionComponent]) -> tuple[str, ...]:
+    merged: list[str] = []
+    for component in components:
+        for diagnostic_id in component.diagnostic_ids:
+            if diagnostic_id not in merged:
+                merged.append(diagnostic_id)
+    return tuple(merged)
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +350,9 @@ class PerCallRow:
     Token-field units (load-bearing contract):
 
     - All ``*_tokens_estimated`` fields are per-call by contract.
-      ``input_tokens_estimated``, ``cacheable_tokens_estimated``,
-      ``output_tokens_estimated``, ``chunk_tokens_estimated``, and the
-      ``body_tokens_estimated`` property represent one invocation of this
+      ``input_tokens_estimated``, the projection ``*_tokens_estimated``
+      fields, ``output_tokens_estimated``, ``chunk_tokens_estimated``, and
+      the ``body_tokens_estimated`` property represent one invocation of this
       node. ``cache_creation_input_tokens`` and ``cache_read_input_tokens``
       are also per-call, sourced via ``_aggregate_trace_llm_calls``.
     - ``cost_usd`` is cohort by design: it represents actually-paid
@@ -150,11 +361,11 @@ class PerCallRow:
       ``compute_actually_paid`` sums this directly for the workflow total.
     - Cohort consumers (workflow totals, cost summaries) must multiply token
       fields by ``invocation_count_for(row)`` at the use site.
-    - The invariant ``cacheable_tokens_estimated <= input_tokens_estimated``
-      holds row-wise. The clamp in ``_build_per_call_row`` remains as
-      defense-in-depth against rare tokenizer-drift overshoots and logs when
-      it fires. Verified by
-      ``test_per_call_row_invariant_cacheable_le_input``.
+    - Projection fields are capped at ``input_tokens_estimated`` row-wise.
+      New code must read ``cache_configured``, ``cache_active``,
+      ``cache_ready``, or ``cache_opportunity``. The legacy ``cacheable_*``
+      fields remain only as an internal bridge while older helper tests and
+      local consumers are migrated.
 
     Tri-state nullability for tokens / cacheable / ratio:
 
@@ -219,6 +430,11 @@ class PerCallRow:
     # which is an analyzer projection of cacheable input bytes.
     cache_creation_input_tokens: int | None = None
     cache_read_input_tokens: int | None = None
+    cached_now_tokens_estimated: int | None = None
+    cache_configured: CacheProjection = field(default_factory=not_applicable_projection)
+    cache_active: CacheProjection = field(default_factory=not_applicable_projection)
+    cache_ready: CacheProjection = field(default_factory=not_applicable_projection)
+    cache_opportunity: CacheProjection = field(default_factory=not_applicable_projection)
     # Track A (Phase A): cohort recorded cost from the trace (sum of
     # llm_call + batch_items[*].llm_call costs for this node's event tree).
     # ``None`` when no trace event matched. Read by the renderer for the
@@ -259,6 +475,90 @@ class PerCallRow:
     # key were dead. Per-row inline warning markers are derived at render time
     # from ``analysis.warnings`` filtered by node_id (see
     # ``render_text._render_per_call``).
+
+    def __post_init__(self) -> None:
+        """Bridge legacy direct test constructors to explicit projections.
+
+        Production row construction populates the projection fields directly.
+        A large helper-test surface still instantiates ``PerCallRow`` with the
+        old cacheable scalar; synthesize active/ready/opportunity projections
+        only when callers left the new fields at their defaults.
+        """
+        if self.cached_now_tokens_estimated is None and (
+            self.cache_creation_input_tokens is not None or self.cache_read_input_tokens is not None
+        ):
+            object.__setattr__(
+                self,
+                "cached_now_tokens_estimated",
+                int(self.cache_creation_input_tokens or 0) + int(self.cache_read_input_tokens or 0),
+            )
+        projection_already_specific = self.cache_ready.data_source not in {
+            _PROJECTION_NOT_APPLICABLE,
+            _PROJECTION_UNAVAILABLE,
+        } or self.cache_active.data_source not in {_PROJECTION_NOT_APPLICABLE, _PROJECTION_UNAVAILABLE}
+        if self.cacheable_tokens_estimated is None or projection_already_specific:
+            if (
+                self.cacheable_data_source == "trace"
+                and self.declared_prompt_cache
+                and self.cached_now_tokens_estimated is None
+            ):
+                object.__setattr__(self, "cached_now_tokens_estimated", self.cacheable_tokens_estimated)
+            return
+        if not self.declared_prompt_cache and (
+            self.cacheable_tokens_estimated <= 0 or self.cacheable_data_source == "trace"
+        ):
+            return
+        source = "declared_chunks" if self.declared_prompt_cache else self.cacheable_data_source
+        action = "none" if self.declared_prompt_cache else "declare_prompt_cache"
+        if source == "batch_prefix":
+            action = "add_prewarm"
+        elif source == "cross_workflow_projection":
+            action = "declare_child_cache"
+        actionability = "active" if self.declared_prompt_cache else "direct_edit"
+        meets_min, provider_min, blocked = _provider_min_state(self.model, self.cacheable_tokens_estimated)
+        if self.cacheable_data_source == "trace" and self.declared_prompt_cache:
+            meets_min = True
+            blocked = ""
+        component = _projection_component(
+            tokens=self.cacheable_tokens_estimated,
+            input_tokens=self.input_tokens_estimated,
+            data_source=source,
+            action=action,
+            actionability=(actionability if self.declared_prompt_cache or not blocked else "direct_edit_blocked"),
+            confidence=_projection_source_confidence(self.cacheable_data_source),
+            meets_provider_min=meets_min,
+            provider_min_tokens=provider_min,
+            blocked_reason=blocked,
+            affects_cost_projection=bool(self.declared_prompt_cache),
+        )
+        if (
+            self.cacheable_data_source == "trace"
+            and self.declared_prompt_cache
+            and self.cached_now_tokens_estimated is None
+        ):
+            object.__setattr__(self, "cached_now_tokens_estimated", self.cacheable_tokens_estimated)
+        object.__setattr__(
+            self,
+            "cache_ready",
+            aggregate_projection((component,), purpose="ready", input_tokens=self.input_tokens_estimated),
+        )
+        if self.declared_prompt_cache:
+            object.__setattr__(
+                self,
+                "cache_configured",
+                aggregate_projection((component,), purpose="configured", input_tokens=self.input_tokens_estimated),
+            )
+            object.__setattr__(
+                self,
+                "cache_active",
+                aggregate_projection((component,), purpose="active", input_tokens=self.input_tokens_estimated),
+            )
+        else:
+            object.__setattr__(
+                self,
+                "cache_opportunity",
+                aggregate_projection((component,), purpose="opportunity", input_tokens=self.input_tokens_estimated),
+            )
 
     @property
     def body_tokens_estimated(self) -> int:
@@ -326,6 +626,9 @@ class _PromptStaticTailFinding:
     tokens_before_dynamic: int | None
     template_refs_after_dynamic: int
     static_tail_excerpt: str
+    meets_provider_min: bool | None = None
+    provider_min_tokens: int | None = None
+    blocked_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -426,6 +729,7 @@ class TraceExecutionIndex:
     llm_call_lists_by_key: dict[tuple[str | None, str], tuple[dict[str, Any], ...]]
     provider_llm_calls_by_key: dict[tuple[str | None, str], dict[str, Any]]
     provider_llm_call_lists_by_key: dict[tuple[str | None, str], tuple[dict[str, Any], ...]]
+    outputs_by_key: dict[tuple[str | None, str], Any]
     executed_keys: set[tuple[str | None, str]]
     workflows_with_trace: set[str | None]
     current_cost_by_workflow: dict[str | None, float | None]
@@ -545,6 +849,15 @@ class AnalysisSummary:
     models_in_use: tuple[str, ...]
     partial_cost_usd: bool
     unavailable_models: tuple[str, ...]
+    total_cache_active_tokens_estimated: int = 0
+    total_cache_ready_tokens_estimated: int = 0
+    total_cache_opportunity_tokens_estimated: int = 0
+    total_cache_ready_confidence: str = "unknown"
+    total_cache_opportunity_confidence: str = "unknown"
+    unknown_cache_ready_row_count: int = 0
+    unknown_cache_opportunity_row_count: int = 0
+    lower_bound_cache_ready_row_count: int = 0
+    lower_bound_cache_opportunity_row_count: int = 0
     unavailable_models_by_workflow: dict[str | None, tuple[str, ...]] | None = None
     evidence_scope: str = "static_analysis"
     observed_models_in_trace: tuple[str, ...] = ()
@@ -702,6 +1015,7 @@ def analyze(
         lookup_path,
         memo_cache=memo_cache,
         trace_data=trace_data,
+        trace_outputs_by_key=trace_index.outputs_by_key,
         base_path=base_path,
     )
 
@@ -715,6 +1029,7 @@ def analyze(
         parameters=parameters or {},
         memo_cache=memo_cache,
         trace_data=trace_data,
+        trace_outputs_by_key=trace_index.outputs_by_key,
         workflow_path=lookup_path,
         base_path=base_path,
         parameters_by_workflow=parameters_by_workflow,
@@ -750,6 +1065,7 @@ def analyze(
             lookup_path,
             memo_cache=memo_cache,
             trace_data=trace_data,
+            trace_outputs_by_key=trace_index.outputs_by_key,
             base_path=base_path,
         )
         ctx = AnalysisContext.build(
@@ -757,6 +1073,7 @@ def analyze(
             parameters=parameters or {},
             memo_cache=memo_cache,
             trace_data=trace_data,
+            trace_outputs_by_key=trace_index.outputs_by_key,
             workflow_path=lookup_path,
             base_path=base_path,
             parameters_by_workflow=parameters_by_workflow,
@@ -1553,6 +1870,11 @@ def _build_trace_execution_index(
         llm_call_lists_by_key={key: tuple(calls) for key, calls in llm_call_lists_by_key.items()},
         provider_llm_calls_by_key=provider_llm_calls_by_key,
         provider_llm_call_lists_by_key={key: tuple(calls) for key, calls in provider_llm_call_lists_by_key.items()},
+        outputs_by_key=_collect_trace_outputs_by_key(
+            tree,
+            root_workflow_path=root_workflow_path,
+            edge_child_paths=edge_child_paths,
+        ),
         executed_keys=executed_keys,
         workflows_with_trace=workflows_with_trace,
         current_cost_by_workflow=cost_by_workflow,
@@ -1573,7 +1895,26 @@ def _build_trace_execution_index(
 
 
 def _empty_trace_execution_index() -> TraceExecutionIndex:
-    return TraceExecutionIndex({}, {}, {}, {}, {}, set(), set(), {}, trace_loaded=False)
+    return TraceExecutionIndex({}, {}, {}, {}, {}, {}, set(), set(), {}, trace_loaded=False)
+
+
+def _collect_trace_outputs_by_key(
+    tree: Any,
+    *,
+    root_workflow_path: str,
+    edge_child_paths: dict[str, str],
+) -> dict[tuple[str | None, str], Any]:
+    """Collect non-empty event node outputs keyed by workflow scope and node id."""
+    outputs: dict[tuple[str | None, str], Any] = {}
+    for walk_event in tree.walk(edges=edge_child_paths, workflow_path=root_workflow_path):
+        event = walk_event.event
+        output = event.get("node_output")
+        if output is None:
+            continue
+        if isinstance(output, (dict, list, str, tuple, set)) and not output:
+            continue
+        outputs[(walk_event.workflow_path, walk_event.event_node_id)] = output
+    return outputs
 
 
 def _diagnostics_from_trace_warnings(trace_data: Mapping[str, Any] | None) -> list[Diagnostic]:
@@ -1821,6 +2162,7 @@ def _build_parameters_by_workflow(
     memo_cache: Any | None,
     trace_data: Mapping[str, Any] | None,
     base_path: Path | None,
+    trace_outputs_by_key: Mapping[tuple[str | None, str], Any] | None = None,
 ) -> dict[str | None, dict[str, Any]]:
     """Build workflow-scoped parameter views from cross-workflow input edges."""
     params_by_workflow: dict[str | None, dict[str, Any]] = {root_workflow_path: dict(root_parameters)}
@@ -1844,6 +2186,7 @@ def _build_parameters_by_workflow(
                 parameters=params_by_workflow[parent_workflow],
                 memo_cache=memo_cache,
                 trace_data=trace_data,
+                trace_outputs_by_key=trace_outputs_by_key or {},
                 workflow_path=parent_workflow,
                 base_path=base_path,
                 parameters_by_workflow=params_by_workflow,
@@ -1967,6 +2310,7 @@ def _build_per_call_rows_and_warnings(
             parameters=ctx.parameters_for_workflow(workflow_path),
             memo_cache=ctx.memo_cache,
             trace_data=ctx.trace_data,
+            trace_outputs_by_key=ctx.trace_outputs_by_key,
             workflow_path=workflow_path,
             base_path=ctx.base_path,
             parameters_by_workflow=ctx.parameters_by_workflow,
@@ -2412,6 +2756,34 @@ def _build_per_call_row(
     # ## Cache items) is consumed elsewhere; here we pass declared_subset
     # (this node's ``prompt_cache:``) and candidate_subset (greenfield
     # candidates from shared template references).
+    declared_tokens: int | None = None
+    declared_source = "unavailable"
+    if declared_subset:
+        declared_tokens, declared_source = estimate_cacheable_tokens(
+            declared_subset=declared_subset,
+            candidate_subset=None,
+            trace_event=provider_trace_llm_call,
+            memo_cache=memo_cache,
+            model=model,
+            workflow_path=workflow_path,
+            prompt=resolved_prompt,
+            ctx=ctx,
+        )
+
+    candidate_tokens: int | None = None
+    candidate_source = "unavailable"
+    if candidate_subset:
+        candidate_tokens, candidate_source = estimate_cacheable_tokens(
+            declared_subset=None,
+            candidate_subset=candidate_subset,
+            trace_event=None,
+            memo_cache=memo_cache,
+            model=model,
+            workflow_path=workflow_path,
+            prompt=resolved_prompt,
+            ctx=ctx,
+        )
+
     cacheable_tokens, cacheable_source = estimate_cacheable_tokens(
         declared_subset=declared_subset,
         candidate_subset=candidate_subset,
@@ -2420,6 +2792,31 @@ def _build_per_call_row(
         model=model,
         workflow_path=workflow_path,
         prompt=resolved_prompt,
+        ctx=ctx,
+    )
+    batch_prefix_tokens = _estimate_batch_prefix_cacheable_tokens(
+        node=node,
+        model=model,
+        prompt=prompt,
+        declared_subset=declared_subset,
+        observed_call_count=observed_call_count,
+        ctx=ctx,
+    )
+    dynamic_tail_finding = _estimate_dynamic_tail_opportunity(
+        node=node,
+        row_model=model,
+        prompt=prompt,
+        observed_call_count=observed_call_count,
+        batch_size=batch_size,
+        declared_subset=declared_subset,
+        ctx=ctx,
+    )
+    repeated_ref_component = _detect_repeated_row_stable_refs(
+        node=node,
+        model=model,
+        input_tokens=input_tokens,
+        observed_call_count=observed_call_count,
+        batch_size=batch_size,
         ctx=ctx,
     )
     cacheable_tokens, cacheable_source = _prefer_batch_prefix_cacheable_tokens(
@@ -2433,6 +2830,13 @@ def _build_per_call_row(
         ctx=ctx,
     )
 
+    cross_workflow_components, cross_workflow_component_inputs = _cross_workflow_projection_components(
+        workflow_path=workflow_path,
+        node_id=node_id,
+        model=model,
+        input_tokens=input_tokens,
+        cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
+    )
     cacheable_tokens, cacheable_source, cross_workflow_inputs = _apply_cross_workflow_projection(
         workflow_path=workflow_path,
         node_id=node_id,
@@ -2442,33 +2846,15 @@ def _build_per_call_row(
         cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
     )
 
-    # Explicit 3-way: None / 0 / positive (preserves Option C visibility
-    # contract — None hides the row, 0 shows "no cacheable yet", positive
-    # shows the real estimate).
-    cacheable_with_clamp: int | None
-    ratio: int | None
-    if cacheable_tokens is None:
-        cacheable_with_clamp = None
-        ratio = None
-    elif cacheable_tokens > 0:
-        if cacheable_tokens > input_tokens:
-            logger.debug(
-                "cacheable_tokens (%d, source=%s) exceeded input_tokens (%d, source=%s) "
-                "for node=%s workflow=%s model=%s; clamping. Likely tokenizer drift "
-                "between projection and prompt-resolution paths; see PerCallRow docstring.",
-                cacheable_tokens,
-                cacheable_source,
-                input_tokens,
-                source,
-                node_id,
-                workflow_path,
-                model,
-            )
-        cacheable_with_clamp = min(cacheable_tokens, input_tokens)
-        ratio = _safe_pct(cacheable_with_clamp, input_tokens)
-    else:
-        cacheable_with_clamp = 0
-        ratio = 0
+    cacheable_with_clamp, ratio = _clamp_legacy_cacheable_projection(
+        cacheable_tokens=cacheable_tokens,
+        cacheable_source=cacheable_source,
+        input_tokens=input_tokens,
+        input_source=source,
+        node_id=node_id,
+        workflow_path=workflow_path,
+        model=model,
+    )
 
     # Track A (Phase A): per-node recorded cost from the trace. When trace
     # data exists for this node, the analyzer reports what the workflow
@@ -2489,16 +2875,32 @@ def _build_per_call_row(
         # which is checked by the renderer separately via ``unavailable_models``).
         cost_source = "recomputed"
 
-    trace_cache_creation = (
-        int(provider_trace_llm_call.get("cache_creation_input_tokens") or 0)
-        if provider_trace_llm_call is not None
-        else None
+    trace_cache_creation, trace_cache_read = _trace_cache_token_splits(provider_trace_llm_call)
+    (
+        cached_now_tokens_estimated,
+        cache_configured,
+        cache_active,
+        cache_ready,
+        cache_opportunity,
+    ) = _build_cache_projection_components(
+        node=node,
+        model=model,
+        input_tokens=input_tokens,
+        declared_subset=declared_subset,
+        candidate_subset=candidate_subset,
+        declared_tokens=declared_tokens,
+        declared_source=declared_source,
+        candidate_tokens=candidate_tokens,
+        candidate_source=candidate_source,
+        batch_prefix_tokens=batch_prefix_tokens,
+        dynamic_tail_finding=dynamic_tail_finding,
+        repeated_ref_component=repeated_ref_component,
+        cross_workflow_components=cross_workflow_components,
+        provider_trace_llm_call=provider_trace_llm_call,
+        provider_trace_llm_calls=provider_trace_llm_calls,
     )
-    trace_cache_read = (
-        int(provider_trace_llm_call.get("cache_read_input_tokens") or 0)
-        if provider_trace_llm_call is not None
-        else None
-    )
+    if not cross_workflow_inputs and cross_workflow_component_inputs:
+        cross_workflow_inputs = cross_workflow_component_inputs
 
     return PerCallRow(
         node_path=node_id,
@@ -2517,6 +2919,11 @@ def _build_per_call_row(
         cacheable_data_source=cacheable_source,
         cache_creation_input_tokens=trace_cache_creation,
         cache_read_input_tokens=trace_cache_read,
+        cached_now_tokens_estimated=cached_now_tokens_estimated,
+        cache_configured=cache_configured,
+        cache_active=cache_active,
+        cache_ready=cache_ready,
+        cache_opportunity=cache_opportunity,
         cost_usd=cost_value,
         cost_data_source=cost_source,
         workflow_path=workflow_path,
@@ -2573,6 +2980,460 @@ def _apply_cross_workflow_projection(
                 key=lambda c: (c.child_cache_ref, c.parent_node_id, c.parent_workflow, c.parent_cache_ref),
             )
         ),
+    )
+
+
+def _clamp_legacy_cacheable_projection(
+    *,
+    cacheable_tokens: int | None,
+    cacheable_source: str,
+    input_tokens: int,
+    input_source: str,
+    node_id: str,
+    workflow_path: str | None,
+    model: str,
+) -> tuple[int | None, int | None]:
+    """Return the legacy bridge token+ratio pair without leaking impossible totals."""
+    if cacheable_tokens is None:
+        return None, None
+    if cacheable_tokens <= 0:
+        return 0, 0
+    if cacheable_tokens > input_tokens:
+        logger.debug(
+            "cacheable_tokens (%d, source=%s) exceeded input_tokens (%d, source=%s) "
+            "for node=%s workflow=%s model=%s; clamping. Likely tokenizer drift "
+            "between projection and prompt-resolution paths; see PerCallRow docstring.",
+            cacheable_tokens,
+            cacheable_source,
+            input_tokens,
+            input_source,
+            node_id,
+            workflow_path,
+            model,
+        )
+    clamped = min(cacheable_tokens, input_tokens)
+    return clamped, _safe_pct(clamped, input_tokens)
+
+
+def _trace_cache_token_splits(provider_trace_llm_call: dict[str, Any] | None) -> tuple[int | None, int | None]:
+    if provider_trace_llm_call is None:
+        return None, None
+    return (
+        int(provider_trace_llm_call.get("cache_creation_input_tokens") or 0),
+        int(provider_trace_llm_call.get("cache_read_input_tokens") or 0),
+    )
+
+
+def _cross_workflow_projection_components(
+    *,
+    workflow_path: str | None,
+    node_id: str,
+    model: str,
+    input_tokens: int,
+    cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] | None,
+) -> tuple[tuple[CacheProjectionComponent, ...], tuple[CrossWorkflowInputContribution, ...]]:
+    if cross_workflow_candidates_by_row is None:
+        return (), ()
+    row_candidates = cross_workflow_candidates_by_row.get((workflow_path, node_id), [])
+    if not row_candidates:
+        return (), ()
+    projected_tokens = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
+    min_tokens = get_min_cache_tokens(model)
+    below_min = is_likely_below_min_cache(model, projected_tokens)
+    component = _projection_component(
+        tokens=projected_tokens,
+        input_tokens=input_tokens,
+        data_source="cross_workflow_projection",
+        action="declare_child_cache",
+        actionability="direct_edit_blocked" if below_min else "direct_edit",
+        meets_provider_min=not below_min,
+        provider_min_tokens=min_tokens,
+        blocked_reason=_BLOCK_BELOW_PROVIDER_MIN if below_min else "",
+        affects_cost_projection=False,
+        diagnostic_ids=("cache.sub-workflow-cache-undeclared",) if not below_min else (),
+    )
+    contributions = tuple(
+        CrossWorkflowInputContribution(
+            child_input_name=candidate.child_input_name,
+            child_cache_ref=candidate.child_cache_ref,
+            parent_value_expr=candidate.parent_value_expr,
+            parent_cache_ref=candidate.parent_cache_ref,
+            parent_prose=candidate.parent_prose or None,
+            tokens_per_call=candidate.estimated_tokens_per_call,
+            model=model,
+        )
+        for candidate in sorted(
+            row_candidates,
+            key=lambda c: (c.child_cache_ref, c.parent_node_id, c.parent_workflow, c.parent_cache_ref),
+        )
+    )
+    return (component,), contributions
+
+
+def _node_has_images(node: Mapping[str, Any]) -> bool:
+    params = node.get("params")
+    if not isinstance(params, Mapping):
+        return False
+    images = params.get("images")
+    if images is None:
+        return False
+    if isinstance(images, (list, tuple, set, dict, str)):
+        return bool(images)
+    return True
+
+
+def _runtime_trace_blocker(calls: tuple[dict[str, Any], ...], *, kind: str) -> str:
+    key = "prewarm_disabled_reason" if kind == "prewarm" else "cache_skipped_reason"
+    reasons = {str(call.get(key)) for call in calls if call.get(key)}
+    if "below_min" in reasons:
+        return _BLOCK_BELOW_PROVIDER_MIN
+    if reasons:
+        return _BLOCK_RUNTIME_STRIPPED
+    return ""
+
+
+def _provider_min_state(model: str, tokens: int | None) -> tuple[bool | None, int | None, str]:
+    if tokens is None:
+        return None, get_min_cache_tokens(model) if model else None, ""
+    min_tokens = get_min_cache_tokens(model)
+    below_min = is_likely_below_min_cache(model, tokens)
+    return (not below_min, min_tokens, _BLOCK_BELOW_PROVIDER_MIN if below_min else "")
+
+
+def _projection_source_confidence(source: str) -> str:
+    if source == "trace":
+        return "observed"
+    if source in {"batch_prefix_lower_bound", "dynamic_before_static_lower_bound"}:
+        return "lower_bound"
+    if source == "unavailable":
+        return "unknown"
+    return "exact"
+
+
+def _estimate_dynamic_tail_opportunity(
+    *,
+    node: dict[str, Any],
+    row_model: str,
+    prompt: str,
+    observed_call_count: int,
+    batch_size: int | None,
+    declared_subset: list[str] | None,
+    ctx: AnalysisContext,
+) -> _PromptStaticTailFinding | None:
+    if declared_subset:
+        return None
+    batch = node.get("batch")
+    if not isinstance(batch, dict):
+        return None
+    affected_calls = batch_size or observed_call_count
+    if affected_calls < 2:
+        return None
+    alias = str(batch.get("as", "item"))
+    finding = _find_batch_static_tail_after_dynamic(
+        prompt=prompt,
+        model=row_model,
+        batch_alias=alias,
+        node_inputs=_node_inputs(node),
+        ctx=ctx,
+        include_below_min=True,
+    )
+    if finding is None:
+        return None
+    return finding
+
+
+def _detect_repeated_row_stable_refs(
+    *,
+    node: dict[str, Any],
+    model: str,
+    input_tokens: int,
+    observed_call_count: int,
+    batch_size: int | None,
+    ctx: AnalysisContext,
+) -> CacheProjectionComponent | None:
+    if isinstance(node.get("batch"), dict):
+        return None
+    invocations = observed_call_count or batch_size or 1
+    if invocations < 2:
+        return None
+    prompt = node.get("params", {}).get("prompt", "") or ""
+    if not isinstance(prompt, str):
+        return None
+    refs = _extract_unique_refs(prompt)
+    if not refs:
+        return None
+    total = 0
+    for ref in refs:
+        value = ctx.resolve_ref_value_for_projection(ref)
+        if value is None:
+            return None
+        total += estimate_tokens(model, deterministic_serialize(value))[0]
+    if total <= 0:
+        return None
+    meets_min, provider_min, blocked = _provider_min_state(model, total)
+    return _projection_component(
+        tokens=total,
+        input_tokens=input_tokens,
+        data_source="candidate_chunks",
+        action="declare_prompt_cache",
+        actionability="direct_edit_blocked" if blocked else "direct_edit",
+        confidence="exact",
+        meets_provider_min=meets_min,
+        provider_min_tokens=provider_min,
+        blocked_reason=blocked,
+        affects_cost_projection=False,
+        diagnostic_ids=("cache.shared-context-undeclared",) if not blocked else (),
+    )
+
+
+def _provider_trace_cached_now(provider_trace_llm_call: dict[str, Any] | None) -> int | None:
+    creation, read = _trace_cache_token_splits(provider_trace_llm_call)
+    if creation is None and read is None:
+        return None
+    return int(creation or 0) + int(read or 0)
+
+
+def _declared_projection_component(
+    *,
+    model: str,
+    input_tokens: int,
+    declared_tokens: int | None,
+    declared_source: str,
+    provider_trace_llm_call: dict[str, Any] | None,
+    provider_trace_llm_calls: tuple[dict[str, Any], ...],
+) -> CacheProjectionComponent:
+    meets_min, provider_min, blocked = _provider_min_state(model, declared_tokens)
+    if declared_source == "trace" and declared_tokens is not None and declared_tokens > 0:
+        meets_min = True
+        blocked = ""
+    chunks = provider_trace_llm_call.get("cache_chunks_skipped") if provider_trace_llm_call is not None else None
+    if isinstance(chunks, list) and chunks:
+        blocked = _BLOCK_ABSENT_BRANCH
+    runtime_blocked = _runtime_trace_blocker(provider_trace_llm_calls, kind="declared")
+    if runtime_blocked:
+        blocked = runtime_blocked
+    is_active = bool(declared_tokens is not None and declared_tokens > 0 and not blocked and meets_min is not False)
+    # Pick the diagnostic ID that matches the evidence source: trace shows runtime
+    # stripped → `cache.below-min-rendered`; static analyzer prediction →
+    # `cache.below-min-predicted`. Mismatching the two leaves agents looking up
+    # a diagnostic ID that isn't in `analysis.warnings`.
+    below_min_id = (
+        "cache.below-min-rendered" if runtime_blocked == _BLOCK_BELOW_PROVIDER_MIN else "cache.below-min-predicted"
+    )
+    return _projection_component(
+        tokens=declared_tokens,
+        input_tokens=input_tokens,
+        data_source="declared_chunks" if declared_source != "trace" else "trace",
+        action="none",
+        actionability="active" if is_active else "configured_blocked",
+        confidence=_projection_source_confidence(declared_source),
+        meets_provider_min=meets_min,
+        provider_min_tokens=provider_min,
+        blocked_reason=blocked,
+        affects_cost_projection=is_active,
+        diagnostic_ids=() if is_active else (below_min_id,) if blocked == _BLOCK_BELOW_PROVIDER_MIN else (),
+    )
+
+
+def _configured_prewarm_projection_component(
+    *,
+    model: str,
+    input_tokens: int,
+    batch_prefix_tokens: int,
+    has_images: bool,
+    provider_trace_llm_calls: tuple[dict[str, Any], ...],
+) -> CacheProjectionComponent:
+    meets_min, provider_min, blocked = _provider_min_state(model, batch_prefix_tokens)
+    runtime_blocked = _runtime_trace_blocker(provider_trace_llm_calls, kind="prewarm")
+    if runtime_blocked:
+        blocked = runtime_blocked
+        meets_min = False if runtime_blocked == _BLOCK_BELOW_PROVIDER_MIN else meets_min
+    if has_images:
+        blocked = _BLOCK_PREWARM_IMAGES
+    is_active = bool(batch_prefix_tokens > 0 and not blocked and meets_min is not False)
+    # Pick the diagnostic ID that matches the evidence source: trace shows runtime
+    # pre-flight disabled the marker → `cache.prewarm-disabled-below-min`; static
+    # analyzer prediction → `cache.batch-prewarm-below-min`. Mismatching the two
+    # leaves agents looking up a diagnostic ID that isn't in `analysis.warnings`.
+    below_min_id = (
+        "cache.prewarm-disabled-below-min"
+        if runtime_blocked == _BLOCK_BELOW_PROVIDER_MIN
+        else "cache.batch-prewarm-below-min"
+    )
+    return _projection_component(
+        tokens=batch_prefix_tokens,
+        input_tokens=input_tokens,
+        data_source="configured_prewarm",
+        action="none",
+        actionability="active" if is_active else "configured_blocked",
+        confidence="exact",
+        meets_provider_min=meets_min,
+        provider_min_tokens=provider_min,
+        blocked_reason=blocked,
+        affects_cost_projection=is_active,
+        diagnostic_ids=() if is_active else (below_min_id,) if blocked == _BLOCK_BELOW_PROVIDER_MIN else (),
+    )
+
+
+def _candidate_cache_projection_component(
+    *,
+    model: str,
+    input_tokens: int,
+    candidate_tokens: int | None,
+    candidate_source: str,
+) -> CacheProjectionComponent:
+    meets_min, provider_min, blocked = _provider_min_state(model, candidate_tokens)
+    return _projection_component(
+        tokens=candidate_tokens,
+        input_tokens=input_tokens,
+        data_source="candidate_chunks" if candidate_source != "unavailable" else "unavailable",
+        action="declare_prompt_cache",
+        actionability="direct_edit_blocked" if blocked else "direct_edit",
+        confidence=_projection_source_confidence(candidate_source),
+        meets_provider_min=meets_min,
+        provider_min_tokens=provider_min,
+        blocked_reason=blocked,
+        affects_cost_projection=False,
+        diagnostic_ids=("cache.shared-context-undeclared",) if not blocked else (),
+    )
+
+
+def _prewarm_opportunity_projection_component(
+    *,
+    model: str,
+    input_tokens: int,
+    batch_prefix_tokens: int,
+) -> CacheProjectionComponent:
+    meets_min, provider_min, blocked = _provider_min_state(model, batch_prefix_tokens)
+    return _projection_component(
+        tokens=batch_prefix_tokens,
+        input_tokens=input_tokens,
+        data_source="batch_prefix",
+        action="add_prewarm",
+        actionability="direct_edit_blocked" if blocked else "direct_edit",
+        confidence="exact",
+        meets_provider_min=meets_min,
+        provider_min_tokens=provider_min,
+        blocked_reason=blocked,
+        affects_cost_projection=False,
+        diagnostic_ids=("cache.batch-prewarm-recommended",) if not blocked else (),
+    )
+
+
+def _dynamic_tail_projection_component(
+    *,
+    input_tokens: int,
+    finding: _PromptStaticTailFinding,
+) -> CacheProjectionComponent:
+    blocked = finding.blocked_reason
+    return _projection_component(
+        tokens=finding.stable_tail_tokens,
+        input_tokens=input_tokens,
+        data_source="dynamic_before_static",
+        action="move_dynamic_ref_after_stable_prefix",
+        actionability="structural_edit_blocked" if blocked else "structural_edit",
+        confidence="exact",
+        meets_provider_min=finding.meets_provider_min,
+        provider_min_tokens=finding.provider_min_tokens,
+        blocked_reason=blocked,
+        affects_cost_projection=False,
+        diagnostic_ids=("cache.dynamic-before-static",) if not blocked else (),
+    )
+
+
+def _build_cache_projection_components(
+    *,
+    node: dict[str, Any],
+    model: str,
+    input_tokens: int,
+    declared_subset: list[str] | None,
+    candidate_subset: list[str] | None,
+    declared_tokens: int | None,
+    declared_source: str,
+    candidate_tokens: int | None,
+    candidate_source: str,
+    batch_prefix_tokens: int | None,
+    dynamic_tail_finding: _PromptStaticTailFinding | None,
+    repeated_ref_component: CacheProjectionComponent | None,
+    cross_workflow_components: tuple[CacheProjectionComponent, ...],
+    provider_trace_llm_call: dict[str, Any] | None,
+    provider_trace_llm_calls: tuple[dict[str, Any], ...],
+) -> tuple[int | None, CacheProjection, CacheProjection, CacheProjection, CacheProjection]:
+    configured: list[CacheProjectionComponent] = []
+    active: list[CacheProjectionComponent] = []
+    ready: list[CacheProjectionComponent] = []
+    opportunity: list[CacheProjectionComponent] = []
+
+    cached_now = _provider_trace_cached_now(provider_trace_llm_call)
+
+    if declared_subset:
+        declared_component = _declared_projection_component(
+            model=model,
+            input_tokens=input_tokens,
+            declared_tokens=declared_tokens,
+            declared_source=declared_source,
+            provider_trace_llm_call=provider_trace_llm_call,
+            provider_trace_llm_calls=provider_trace_llm_calls,
+        )
+        configured.append(declared_component)
+        ready.append(declared_component)
+        if declared_component.affects_cost_projection:
+            active.append(replace(declared_component, affects_cost_projection=True, actionability="active"))
+
+    prewarm = node.get("prewarm")
+    has_images = _node_has_images(node)
+    if prewarm is True and batch_prefix_tokens is not None:
+        prewarm_component = _configured_prewarm_projection_component(
+            model=model,
+            input_tokens=input_tokens,
+            batch_prefix_tokens=batch_prefix_tokens,
+            has_images=has_images,
+            provider_trace_llm_calls=provider_trace_llm_calls,
+        )
+        configured.append(prewarm_component)
+        ready.append(prewarm_component)
+        if prewarm_component.affects_cost_projection:
+            active.append(replace(prewarm_component, affects_cost_projection=True, actionability="active"))
+
+    if not declared_subset and candidate_subset:
+        candidate_component = _candidate_cache_projection_component(
+            model=model,
+            input_tokens=input_tokens,
+            candidate_tokens=candidate_tokens,
+            candidate_source=candidate_source,
+        )
+        ready.append(candidate_component)
+        opportunity.append(candidate_component)
+
+    if prewarm is None and batch_prefix_tokens is not None and not has_images:
+        prewarm_opportunity = _prewarm_opportunity_projection_component(
+            model=model,
+            input_tokens=input_tokens,
+            batch_prefix_tokens=batch_prefix_tokens,
+        )
+        ready.append(prewarm_opportunity)
+        opportunity.append(prewarm_opportunity)
+
+    ready.extend(cross_workflow_components)
+    opportunity.extend(cross_workflow_components)
+
+    if dynamic_tail_finding is not None:
+        dynamic_component = _dynamic_tail_projection_component(
+            input_tokens=input_tokens,
+            finding=dynamic_tail_finding,
+        )
+        opportunity.append(dynamic_component)
+
+    if repeated_ref_component is not None:
+        ready.append(repeated_ref_component)
+        opportunity.append(repeated_ref_component)
+
+    return (
+        cached_now,
+        aggregate_projection(configured, purpose="configured", input_tokens=input_tokens),
+        aggregate_projection(active, purpose="active", input_tokens=input_tokens),
+        aggregate_projection(ready, purpose="ready", input_tokens=input_tokens),
+        aggregate_projection(opportunity, purpose="opportunity", input_tokens=input_tokens),
     )
 
 
@@ -2791,13 +3652,21 @@ def _per_node_warnings(
     node_id = row.node_path
 
     if row.declared_prompt_cache:
+        declared_component = next(
+            (
+                component
+                for component in row.cache_configured.components
+                if component.data_source in {"declared_chunks", "trace"}
+            ),
+            None,
+        )
         finding = detect_below_min_tokens(
             BelowMinTokensEvidence(
                 node_id=node_id,
                 model=row.model,
                 declared_prompt_cache=list(row.declared_prompt_cache),
-                estimated_tokens=row.cacheable_tokens_estimated,
-                estimated_data_source=row.cacheable_data_source,
+                estimated_tokens=declared_component.tokens_estimated if declared_component else None,
+                estimated_data_source=declared_component.data_source if declared_component else "unavailable",
             )
         )
         if finding is not None:
@@ -2828,10 +3697,6 @@ def _per_node_warnings(
     #   * ``cache.batch-prewarm-below-min`` — first > 0 but the bytes before
     #     it tokenize below the provider's minimum (auto batch-prefix marker
     #     will silently no-op at the provider). Gated on
-    #     ``not row.declared_prompt_cache``: when ``## Cache`` is declared,
-    #     prewarm writes that chunk once via the serialized first call —
-    #     the prompt-body prefix is irrelevant to whether caching fires,
-    #     and ``cache.below-min-predicted`` handles the declared-cache path.
     prewarm = node.get("prewarm")
     batch = node.get("batch")
     if prewarm is True and isinstance(batch, dict):
@@ -2850,11 +3715,11 @@ def _per_node_warnings(
                         first_dynamic_position=0,
                     )
                 )
-            elif first is not None and first > 0 and not row.declared_prompt_cache:
+            elif first is not None and first > 0:
                 # Unresolved refs in the static prefix make below-min unprovable;
                 # skip the static-analysis emit but fall through so the trace-driven
                 # conditional-warmup detector below can still run.
-                prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
+                prefix_tokens = tokenize_prompt_region_for_projection(prompt[:first], model=row.model, ctx=ctx)
                 if prefix_tokens is not None:
                     prewarm_finding = detect_batch_prewarm_below_min(
                         BatchPrewarmBelowMinEvidence(
@@ -2934,8 +3799,8 @@ def _batch_prewarm_recommendations(
         first = first_per_item_position(prompt, alias, node_inputs)
         if first is None or first == 0:
             return []
-        prefix_tokens = tokenize_prompt_region(prompt[:first], model=row.model, ctx=ctx)
-        dynamic_tokens = tokenize_prompt_region(prompt[first:], model=row.model, ctx=ctx)
+        prefix_tokens = tokenize_prompt_region_for_projection(prompt[:first], model=row.model, ctx=ctx)
+        dynamic_tokens = tokenize_prompt_region_for_projection(prompt[first:], model=row.model, ctx=ctx)
     if prefix_tokens is not None and dynamic_tokens is not None:
         return _confident_batch_prewarm_recommendation(
             row=row,
@@ -2945,7 +3810,7 @@ def _batch_prewarm_recommendations(
         )
 
     if prefix_tokens is None and not uses_existing_prefix_evidence:
-        measurable_tokens, unresolved_refs = tokenize_prompt_region_lower_bound(
+        measurable_tokens, unresolved_refs = tokenize_prompt_region_lower_bound_for_projection(
             prompt[:first],
             model=row.model,
             ctx=ctx,
@@ -3107,6 +3972,7 @@ def _find_batch_static_tail_after_dynamic(
     batch_alias: str,
     node_inputs: Mapping[str, Any] | None = None,
     ctx: AnalysisContext,
+    include_below_min: bool = False,
 ) -> _PromptStaticTailFinding | None:
     """Find a local-batch dynamic ref followed by enough literal stable text."""
     refs = list(classify_prompt_refs(prompt, batch_alias, node_inputs))
@@ -3124,7 +3990,8 @@ def _find_batch_static_tail_after_dynamic(
         # fix: 0%" — internally contradictory advice.
         if stable_tail_tokens is None or stable_tail_tokens <= 0:
             return None
-        if is_below_min_cache(model, stable_tail_tokens):
+        meets_min, provider_min, blocked = _provider_min_state(model, stable_tail_tokens)
+        if blocked and not include_below_min:
             return None
         tokens_before_dynamic = tokenize_prompt_region(prompt[: ref.position], model=model, ctx=ctx)
         return _PromptStaticTailFinding(
@@ -3134,6 +4001,9 @@ def _find_batch_static_tail_after_dynamic(
             tokens_before_dynamic=tokens_before_dynamic,
             template_refs_after_dynamic=len(refs) - index - 1,
             static_tail_excerpt=_static_excerpt(literal_tail),
+            meets_provider_min=meets_min,
+            provider_min_tokens=provider_min,
+            blocked_reason=blocked,
         )
     return None
 
@@ -3257,14 +4127,13 @@ def _estimate_batch_prefix_cacheable_tokens(
 ) -> int | None:
     """Estimate per-call cacheable prefix tokens before the first batch-item ref.
 
-    Returns ``None`` for non-batch nodes, nodes already declaring
-    ``prompt_cache:``, or batches with fewer than 2 calls (no cache fan-out
-    benefit). The call count is used only to gate the ``< 2`` precondition;
-    the returned value is per-call to match every consumer of
-    ``PerCallRow.cacheable_tokens_estimated``.
+    Returns ``None`` for non-batch nodes or batches with fewer than 2 calls
+    (no cache fan-out benefit). Declared cache and prewarm are independent
+    runtime markers, so declared rows still need prefix evidence.
     """
+    del declared_subset
     batch = node.get("batch")
-    if declared_subset or not isinstance(batch, dict):
+    if not isinstance(batch, dict):
         return None
     affected_call_count = observed_call_count or (_estimate_batch_size(batch) or 0)
     if affected_call_count < 2:
@@ -3274,7 +4143,7 @@ def _estimate_batch_prefix_cacheable_tokens(
     boundary = first_per_item_position(prompt, alias, node_inputs)
     if boundary is None or boundary == 0:
         return None
-    prefix_tokens = tokenize_prompt_region(prompt[:boundary], model=model, ctx=ctx)
+    prefix_tokens = tokenize_prompt_region_for_projection(prompt[:boundary], model=model, ctx=ctx)
     if prefix_tokens is None or prefix_tokens <= 0:
         return None
     return prefix_tokens
@@ -4467,6 +5336,7 @@ def _emit_partial_declaration_findings(
             parameters=ctx.parameters_for_workflow(workflow_path),
             memo_cache=ctx.memo_cache,
             trace_data=ctx.trace_data,
+            trace_outputs_by_key=ctx.trace_outputs_by_key,
             workflow_path=workflow_path,
             base_path=ctx.base_path,
             parameters_by_workflow=ctx.parameters_by_workflow,
@@ -6895,6 +7765,23 @@ def _build_summary(
     # rather than fabricated 0). Top-level summary still useful — agents
     # see the partial signal from steady-state / post-run rows.
     total_cacheable = sum((r.cacheable_tokens_estimated or 0) * invocation_count_for(r) for r in rows)
+    total_cache_active = sum((r.cache_active.tokens_estimated or 0) * invocation_count_for(r) for r in rows)
+    total_cache_ready = sum((r.cache_ready.tokens_estimated or 0) * invocation_count_for(r) for r in rows)
+    total_cache_opportunity = sum((r.cache_opportunity.tokens_estimated or 0) * invocation_count_for(r) for r in rows)
+    unknown_ready = sum(
+        1
+        for r in rows
+        if r.cache_ready.data_source not in {_PROJECTION_NOT_APPLICABLE, _PROJECTION_UNAVAILABLE}
+        and r.cache_ready.tokens_estimated is None
+    )
+    unknown_opportunity = sum(
+        1
+        for r in rows
+        if r.cache_opportunity.data_source not in {_PROJECTION_NOT_APPLICABLE, _PROJECTION_UNAVAILABLE}
+        and r.cache_opportunity.tokens_estimated is None
+    )
+    lower_ready = sum(1 for r in rows if r.cache_ready.confidence == "lower_bound")
+    lower_opportunity = sum(1 for r in rows if r.cache_opportunity.confidence == "lower_bound")
     trace_coverage, executed_count, unexecuted_nodes = _trace_coverage_for_rows(rows, ctx)
     models_observed_in_trace = tuple(sorted({model for row in rows for model in row.observed_models}))
     # Stage C.1: heterogeneous rows have ``model = ""`` AND
@@ -7027,6 +7914,15 @@ def _build_summary(
         dynamic_batch_node_count=dynamic_batch_count,
         total_input_tokens_estimated=total_input,
         total_cacheable_tokens_estimated=total_cacheable,
+        total_cache_active_tokens_estimated=total_cache_active,
+        total_cache_ready_tokens_estimated=total_cache_ready,
+        total_cache_opportunity_tokens_estimated=total_cache_opportunity,
+        total_cache_ready_confidence=_aggregate_projection_confidence(row.cache_ready for row in rows),
+        total_cache_opportunity_confidence=_aggregate_projection_confidence(row.cache_opportunity for row in rows),
+        unknown_cache_ready_row_count=unknown_ready,
+        unknown_cache_opportunity_row_count=unknown_opportunity,
+        lower_bound_cache_ready_row_count=lower_ready,
+        lower_bound_cache_opportunity_row_count=lower_opportunity,
         models_in_use=tuple(models),
         observed_models_in_trace=models_observed_in_trace,
         ir_default_model=ir_default_model,
@@ -7098,6 +7994,21 @@ def _evidence_scope_for_trace_coverage(trace_coverage: str) -> str:
     if trace_coverage == "complete":
         return "complete_trace"
     return "static_analysis"
+
+
+def _aggregate_projection_confidence(projections: Iterable[CacheProjection]) -> str:
+    values = {
+        projection.confidence
+        for projection in projections
+        if projection.data_source not in {_PROJECTION_NOT_APPLICABLE, _PROJECTION_UNAVAILABLE}
+    }
+    if not values or "unknown" in values:
+        return "unknown"
+    if "lower_bound" in values:
+        return "lower_bound"
+    if values == {"observed"}:
+        return "observed"
+    return "exact"
 
 
 def _filter_trace_dependent_warnings(warnings: list[Diagnostic]) -> list[Diagnostic]:

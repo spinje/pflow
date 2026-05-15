@@ -18,10 +18,10 @@
   Executed trace rows are evidence-only; unexecuted rows are marked when shown.
   Showing 1 executed LLM node; 1 unexecuted row hidden (--all-rows shows everything).
 
-  node      model                    input  cached_now  could_cache  ratio  calls  notes
-  ---------------------------------------------------------------------------------
+  node      model                    input  cached_now  ready  upside  ratio  calls  notes
+  -----------------------------------------------------------------------------------
 
-  answer-a  gemini/gemini-2.5-flash  6,043       6,024            —   100%      1
+  answer-a  gemini/gemini-2.5-flash  6,043       6,024  6,024       —   100%      1
 
 ## Notes
 

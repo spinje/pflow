@@ -20,6 +20,7 @@ from pflow.core.cache_analysis.analyze import (
     TraceUnexecutedLLMRow,
     _aggregate_confidence,
     _build_summary,
+    _build_trace_execution_index,
     _maybe_append_gemini_note,
     analyze,
     invocation_count_for,
@@ -5300,6 +5301,25 @@ def test_build_trace_execution_index_excludes_cached_llm_cost() -> None:
     assert child_entry.actually_paid_usd == 0.0
 
 
+def test_build_trace_execution_index_collects_top_level_and_batch_node_outputs() -> None:
+    """Trace-output projection must see both node-output producers."""
+    trace_path = Path(".taskmaster/tasks/task_159/baseline/_shared/fixtures/live-gemini-lyrics-generator.trace.json")
+    trace_data = json.loads(trace_path.read_text())
+    root_workflow_path = str(trace_data.get("workflow_path") or "")
+
+    index = _build_trace_execution_index(trace_data, root_workflow_path, {})
+
+    top_output = index.outputs_by_key[(root_workflow_path, "fetch-sources")]
+    assert isinstance(top_output, dict)
+
+    batch_output = index.outputs_by_key[(None, "build-scoring-items")]
+    assert isinstance(batch_output, dict)
+    result = batch_output.get("result")
+    assert isinstance(result, dict)
+    assert result["genre_only"]
+    assert result["narrator_info"]
+
+
 def test_actually_paid_and_trace_index_agree_on_memo_hit_child() -> None:
     """Parity invariant: ``summary.actually_paid_usd`` and the rollup's
     per-child ``actually_paid_usd`` MUST agree on cached-event semantics.
@@ -6238,18 +6258,8 @@ def test_tier2_chunk_cacheable_unresolved_repeated_row_stays_unavailable(
     assert row.cacheable_tokens_estimated is None
 
 
-def test_real_trace_score_choruses_does_not_fabricate_unmeasurable_batch_prefix() -> None:
-    """Real lyrics-generator canary for honest unmeasurable batch prefixes.
-
-    This intentionally covers the whole chain on the production-shaped fixture:
-    nested batch aliases, minimized trace values, dynamic sub-workflow batch
-    attribution, external prompt loading, and cross-workflow projection.
-
-    Mutation contract: route ``_estimate_batch_prefix_cacheable_tokens`` back
-    through raw prompt-slice tokenization; this test fails because
-    ``score-choruses`` reports ``batch_prefix`` for a prefix that still
-    contains unresolved upstream refs.
-    """
+def test_real_trace_score_choruses_uses_trace_outputs_for_stable_prefix_opportunity() -> None:
+    """Real lyrics-generator canary for trace-output-backed prefix projection."""
     from pflow.core.markdown_parser import parse_markdown
 
     baseline_dir = Path(".taskmaster/tasks/task_159/baseline").resolve()
@@ -6268,8 +6278,16 @@ def test_real_trace_score_choruses_does_not_fabricate_unmeasurable_batch_prefix(
 
     score_rows = [row for row in result.per_call if row.node_path == "score-choruses"]
     assert score_rows, "expected score-choruses row in lyrics-generator analysis"
-    assert all(row.cacheable_data_source != "batch_prefix" for row in score_rows)
-    assert any(row.cacheable_data_source == "parameters" for row in score_rows)
+    assert len(score_rows) == 1
+    row = score_rows[0]
+    assert row.cache_ready.data_source == "batch_prefix"
+    assert row.cache_opportunity.data_source == "batch_prefix"
+    assert row.cache_ready.tokens_estimated is not None and row.cache_ready.tokens_estimated > 500
+    assert row.cache_opportunity.tokens_estimated == row.cache_ready.tokens_estimated
+    assert row.cache_opportunity.action == "add_prewarm"
+    assert row.cache_opportunity.meets_provider_min is False
+    assert row.cache_opportunity.blocked_reason == "below_provider_min"
+    assert row.cache_opportunity.affects_cost_projection is False
     select_rows = [row for row in result.per_call if row.node_path == "select-chorus"]
     assert select_rows, "expected select-chorus row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "cross_workflow_projection" for row in select_rows)

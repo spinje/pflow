@@ -24,13 +24,14 @@
 
 ## Per-call cache report
   How to read each row:
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
   Showing 1 of 2 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
-  node      model                      input  could_cache  ratio  notes
-  ----------------------------------------------------------------
+  node      model                      input  ready  ratio  notes
+  ----------------------------------------------------------
 
-  consumer  anthropic/claude-opus-4-5  6,004        6,000   100%  padding-advisory
+  consumer  anthropic/claude-opus-4-5  6,004  6,000   100%  padding-advisory
 
   Token estimate confidence:
     · Projected input tokens for: consumer.

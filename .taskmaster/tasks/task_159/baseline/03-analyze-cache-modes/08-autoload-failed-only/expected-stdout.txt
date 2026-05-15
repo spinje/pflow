@@ -14,7 +14,8 @@
 ## Per-call cache report
   How to read each row:
     · cached_now: tokens served from cache during this run (requires trace).
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
   Showing 0 of 2 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   Hidden: 2 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).

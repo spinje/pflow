@@ -328,6 +328,21 @@ def tokenize_prompt_region(
     return estimate_tokens(model, resolved)[0]
 
 
+def tokenize_prompt_region_for_projection(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+) -> int | None:
+    """Projection variant that can resolve refs from trace node outputs."""
+    return _tokenize_prompt_region_with_resolver(
+        region,
+        model=model,
+        ctx=ctx,
+        use_projection_resolver=True,
+    )
+
+
 def tokenize_prompt_region_lower_bound(
     region: str,
     *,
@@ -380,6 +395,91 @@ def tokenize_prompt_region_lower_bound(
     return estimate_tokens(model, stripped)[0], unresolved
 
 
+def tokenize_prompt_region_lower_bound_for_projection(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+) -> tuple[int, tuple[str, ...]]:
+    """Lower-bound projection variant that can resolve refs from trace outputs."""
+    return _tokenize_prompt_region_lower_bound_with_resolver(
+        region,
+        model=model,
+        ctx=ctx,
+        use_projection_resolver=True,
+    )
+
+
+def _tokenize_prompt_region_with_resolver(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+    use_projection_resolver: bool,
+) -> int | None:
+    if not region:
+        return 0
+    if "${" not in region:
+        return estimate_tokens(model, region)[0]
+
+    from pflow.core.cache_render import deterministic_serialize
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    refs = extract_unique_refs(region)
+    if not refs:
+        return estimate_tokens(model, region)[0]
+
+    shared = build_shared_store_for_refs(refs, ctx, use_projection_resolver=use_projection_resolver)
+    try:
+        resolved = TemplateResolver.resolve_template(region, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        logger.debug("tokenize_prompt_region: resolve_template raised", exc_info=True)
+        return None
+
+    if not isinstance(resolved, str):
+        resolved = deterministic_serialize(resolved)
+    if TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+        return None
+    return estimate_tokens(model, resolved)[0]
+
+
+def _tokenize_prompt_region_lower_bound_with_resolver(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+    use_projection_resolver: bool,
+) -> tuple[int, tuple[str, ...]]:
+    if not region:
+        return 0, ()
+    if "${" not in region:
+        return estimate_tokens(model, region)[0], ()
+
+    from pflow.core.cache_render import deterministic_serialize
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    refs = extract_unique_refs(region)
+    if not refs:
+        return estimate_tokens(model, region)[0], ()
+
+    shared = build_shared_store_for_refs(refs, ctx, use_projection_resolver=use_projection_resolver)
+    try:
+        resolved = TemplateResolver.resolve_template(region, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        logger.debug("tokenize_prompt_region_lower_bound: resolve_template raised", exc_info=True)
+        return 0, tuple(refs)
+
+    if not isinstance(resolved, str):
+        resolved = deterministic_serialize(resolved)
+
+    unresolved = tuple(match.group(1) for match in TemplateResolver.TEMPLATE_PATTERN.finditer(resolved))
+    if not unresolved:
+        return estimate_tokens(model, resolved)[0], ()
+
+    stripped = TemplateResolver.TEMPLATE_PATTERN.sub("", resolved)
+    return estimate_tokens(model, stripped)[0], unresolved
+
+
 def extract_unique_refs(prompt: str) -> list[str]:
     """Walk ``prompt`` for unique template refs, deduped in encounter order."""
     from pflow.runtime.template_resolver import TemplateResolver
@@ -392,7 +492,12 @@ def extract_unique_refs(prompt: str) -> list[str]:
     return refs
 
 
-def build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[str, Any]:
+def build_shared_store_for_refs(
+    refs: list[str],
+    ctx: AnalysisContext,
+    *,
+    use_projection_resolver: bool = False,
+) -> dict[str, Any]:
     """Build a synthetic shared store keyed by root node ids for ``refs``."""
     from pflow.runtime.template_resolver import TemplateResolver
 
@@ -404,7 +509,8 @@ def build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[s
         # Resolve the root, not the full path. TemplateResolver performs
         # dotted/indexed traversal against the root value, while AnalysisContext
         # preserves the parameters-vs-memo resolution policy.
-        value = ctx.resolve_ref_value(root)
+        resolver = ctx.resolve_ref_value_for_projection if use_projection_resolver else ctx.resolve_ref_value
+        value = resolver(root)
         if value is not None:
             shared[root] = value
     return shared
@@ -578,5 +684,7 @@ __all__ = [
     "estimate_tokens",
     "extract_unique_refs",
     "tokenize_prompt_region",
+    "tokenize_prompt_region_for_projection",
     "tokenize_prompt_region_lower_bound",
+    "tokenize_prompt_region_lower_bound_for_projection",
 ]
