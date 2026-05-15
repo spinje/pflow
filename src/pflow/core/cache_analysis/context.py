@@ -30,11 +30,14 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from pflow.core.trace_tree import TraceTree
 
 logger = logging.getLogger(__name__)
+
+_PREDICTION_SKIPPED: Final[str] = "__PREDICTION_SKIPPED__"
+"""Cache-key prediction was attempted but intentionally skipped for this node."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,14 @@ class AnalysisContext:
     base_path: Path | None = None
     parameters_by_workflow: Mapping[str | None, Mapping[str, Any]] = field(default_factory=dict)
     trace_outputs_by_key: Mapping[tuple[str | None, str], Any] = field(default_factory=dict)
+    predicted_cache_keys: Mapping[tuple[str | None, str], str] = field(default_factory=dict)
+    prediction_fidelity_notes: tuple[str, ...] = ()
+    # Documented exception to the frozen-context "read-only inputs" rule:
+    # these sets are per-analysis accumulators. Memo token/value tiers mutate
+    # them so the final summary can report detected stale and uncheckable memo
+    # use without threading mutable counters through every estimator signature.
+    stale_memo_skipped: set[tuple[str | None, str]] = field(default_factory=set)
+    stale_memo_uncheckable: set[tuple[str | None, str]] = field(default_factory=set)
 
     @classmethod
     def build(
@@ -68,6 +79,10 @@ class AnalysisContext:
         base_path: Path | None = None,
         parameters_by_workflow: Mapping[str | None, Mapping[str, Any]] | None = None,
         trace_outputs_by_key: Mapping[tuple[str | None, str], Any] | None = None,
+        predicted_cache_keys: Mapping[tuple[str | None, str], str] | None = None,
+        prediction_fidelity_notes: tuple[str, ...] = (),
+        stale_memo_skipped: set[tuple[str | None, str]] | None = None,
+        stale_memo_uncheckable: set[tuple[str | None, str]] | None = None,
     ) -> AnalysisContext:
         """The single construction path. Compiles trace JSON into ``TraceTree`` once.
 
@@ -96,6 +111,10 @@ class AnalysisContext:
             base_path=base_path,
             parameters_by_workflow=parameters_by_workflow or {},
             trace_outputs_by_key=trace_outputs_by_key or {},
+            predicted_cache_keys=predicted_cache_keys or {},
+            prediction_fidelity_notes=prediction_fidelity_notes,
+            stale_memo_skipped=stale_memo_skipped if stale_memo_skipped is not None else set(),
+            stale_memo_uncheckable=stale_memo_uncheckable if stale_memo_uncheckable is not None else set(),
         )
 
     # ------------------------------------------------------------------
@@ -243,9 +262,14 @@ class AnalysisContext:
         from pflow.runtime.template_resolver import TemplateResolver
 
         try:
-            latest = self.memo_cache.get_latest_for_node(root, workflow_path=self.workflow_path)
+            latest = _latest_memo_for_freshness_check(
+                self.memo_cache,
+                root,
+                workflow_path=self.workflow_path,
+                ctx=self,
+            )
         except Exception:
-            logger.debug("memo_cache.get_latest_for_node failed for %s", ref, exc_info=True)
+            logger.debug("memo cache freshness-aware lookup failed for %s", ref, exc_info=True)
             return None
         if latest is None:
             return None
@@ -276,4 +300,36 @@ def _normalize_empty(value: Any) -> Any | None:
     return value
 
 
-__all__ = ["AnalysisContext"]
+def _latest_memo_for_freshness_check(
+    memo_cache: Any,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    ctx: AnalysisContext,
+) -> tuple[dict[str, Any], float] | None:
+    """Return latest memo output unless Bundle 6 cache-key comparison marks it stale."""
+    if hasattr(memo_cache, "get_latest_for_node_with_cache_key"):
+        result = memo_cache.get_latest_for_node_with_cache_key(node_id, workflow_path=workflow_path)
+        if result is None:
+            return None
+        output, created_at, memo_cache_key = result
+        predicted = ctx.predicted_cache_keys.get((workflow_path, node_id))
+        if predicted is None:
+            return output, created_at
+        if predicted == _PREDICTION_SKIPPED:
+            ctx.stale_memo_uncheckable.add((workflow_path, node_id))
+            return output, created_at
+        if memo_cache_key != predicted:
+            ctx.stale_memo_skipped.add((workflow_path, node_id))
+            return None
+        return output, created_at
+    result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
+    if result is None:
+        return None
+    output, created_at = result
+    if not isinstance(output, dict):
+        return None
+    return output, created_at
+
+
+__all__ = ["_PREDICTION_SKIPPED", "AnalysisContext"]

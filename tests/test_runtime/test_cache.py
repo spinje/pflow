@@ -215,6 +215,37 @@ def test_get_latest_for_node_returns_newest_entry(tmp_path):
     assert isinstance(created_at, float)
 
 
+def test_get_latest_for_node_returns_two_tuple_unchanged(tmp_path):
+    """Existing get_latest_for_node() API stays a two-tuple."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("key", "node-a", "/wf.pflow.md", "default", {"version": 1})
+
+    result = cache.get_latest_for_node("node-a", workflow_path="/wf.pflow.md")
+
+    assert result is not None
+    output, created_at = result
+    assert output == {"version": 1}
+    assert isinstance(created_at, float)
+
+
+def test_get_latest_for_node_with_cache_key_returns_three_tuple(tmp_path):
+    """The additive freshness-check API includes the stored cache_key."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("stored-key", "node-a", "/wf.pflow.md", "default", {"version": 1})
+
+    result = cache.get_latest_for_node_with_cache_key("node-a", workflow_path="/wf.pflow.md")
+
+    assert result is not None
+    output, created_at, cache_key = result
+    assert output == {"version": 1}
+    assert isinstance(created_at, float)
+    assert cache_key == "stored-key"
+
+
 def test_get_with_age_respects_ttl(tmp_path):
     """Expired entries are hidden by get_with_age()."""
     db_path = tmp_path / "cache.db"

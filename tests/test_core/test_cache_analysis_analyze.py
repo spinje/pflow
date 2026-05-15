@@ -714,6 +714,105 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection(tm
     assert result.summary.rerun_delta.amount_usd < 0.003
 
 
+def test_resolve_trace_scope_returns_three_tuple_with_appears_as_child() -> None:
+    """Lock ``_resolve_trace_scope`` return shape so refactors can't silently
+    drop ``appears_as_child`` and re-break the parent-redirect signal.
+
+    Bundle 6 expanded the return tuple from ``(root, scope_mismatch)`` to
+    ``(root, scope_mismatch, appears_as_child)``. ``_derive_trace_workflow_relationship``
+    depends on the third element; if a refactor drops it back to a 2-tuple
+    the relationship enum silently regresses to ``different_workflow`` for
+    every parent-redirect case.
+    """
+    from pflow.core.cache_analysis.analyze import _resolve_trace_scope
+
+    # No trace loaded — short-circuit returns 3-tuple with default values.
+    notes: list[str] = []
+    result_no_trace = _resolve_trace_scope(None, "wf.pflow.md", notes)
+    assert len(result_no_trace) == 3
+    root, scope_mismatch, appears_as_child = result_no_trace
+    assert root == "wf.pflow.md"
+    assert scope_mismatch is False
+    assert appears_as_child is False
+
+    # Same-workflow trace — also 3-tuple, both bools False.
+    trace_same = {"workflow_path": "wf.pflow.md", "nodes": []}
+    result_same = _resolve_trace_scope(trace_same, "wf.pflow.md", notes)
+    assert len(result_same) == 3
+    _, scope_mismatch_same, appears_as_child_same = result_same
+    assert scope_mismatch_same is False
+    assert appears_as_child_same is False
+
+
+def test_analyze_skips_stale_llm_memo_when_predicted_cache_key_differs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for Bundle 6 per-workflow contexts preserving predictions."""
+    from pflow.runtime.cache import MemoizationCache
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    workflow_path = str(tmp_path / "workflow.pflow.md")
+    monkeypatch.setattr(
+        analyze_module,
+        "_predict_cache_keys",
+        lambda *_args, **_kwargs: ({(workflow_path, "draft"): "current-key"}, []),
+    )
+    monkeypatch.setattr("litellm.token_counter", lambda model, text: 123)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="stale-key",
+        node_id="draft",
+        workflow_path=workflow_path,
+        action="default",
+        output={"response": "old", "llm_usage": {"input_tokens": 9999, "output_tokens": 88}},
+    )
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Draft the article."},
+            }
+        ],
+        "edges": [],
+    }
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False, memo_cache=cache)
+
+    assert result.summary.stale_memo_skipped_count == 1
+    assert result.per_call[0].data_source != "memo"
+    assert result.per_call[0].input_tokens_estimated == 123
+
+
+def test_cross_workflow_memo_value_resolver_skips_stale_parent_memo(tmp_path: Path) -> None:
+    """Regression for the cross-workflow value path using freshness-aware memo."""
+    from pflow.core.cache_analysis.analyze import _resolve_value_in_workflow_memo
+    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.runtime.cache import MemoizationCache
+
+    parent_path = str(tmp_path / "parent.pflow.md")
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="old-parent-key",
+        node_id="creative",
+        workflow_path=parent_path,
+        action="default",
+        output={"direction": "stale direction"},
+    )
+    ctx = AnalysisContext.build(
+        workflow_ir={"nodes": []},
+        memo_cache=cache,
+        workflow_path=str(tmp_path / "root.pflow.md"),
+        predicted_cache_keys={(parent_path, "creative"): "current-parent-key"},
+    )
+
+    resolved = _resolve_value_in_workflow_memo("creative.direction", workflow_path=parent_path, ctx=ctx)
+
+    assert resolved is None
+    assert ctx.stale_memo_skipped == {(parent_path, "creative")}
+
+
 def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics(tmp_path: Path) -> None:
     """Regression for the double-counted Anthropic trace-token bug."""
     usage_rows = [
@@ -1882,13 +1981,15 @@ def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
     assert row.cacheable_tokens_estimated is not None
 
 
-def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization(
+def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization_but_is_disclosed_uncheckable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Defends memo-backed child input resolution: parent's memoized output
-    must propagate to child prompt tokenization, otherwise the child prompt
-    stays tiny/partial.
+    """Parent memo can seed child params, but Bundle 6 exposes it as uncheckable.
+
+    ``parameters_by_workflow`` is built before cache-key prediction exists. The
+    analyzer keeps the useful memo-backed projection while incrementing the
+    uncheckable memo counter so the trust boundary is visible.
     """
     import pflow.core.cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
@@ -1946,6 +2047,7 @@ def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization(
     row = next(row for row in result.per_call if row.workflow_path == str(child_path))
     assert row.data_source == "estimator"
     assert row.input_tokens_estimated > 100
+    assert result.summary.stale_memo_uncheckable_count == 1
 
 
 def test_child_workflow_unresolved_input_remains_unavailable(

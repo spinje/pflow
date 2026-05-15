@@ -267,8 +267,28 @@ def _format_trace_header_line(trace_path: str, summary: AnalysisSummary) -> str:
     status = summary.trace_final_status or "unknown"
     recorded = _format_recorded_timestamp(summary.trace_recorded_at)
     if recorded is None:
-        return f"  Trace: {filename} ({status})"
-    return f"  Trace: {filename} ({status}, recorded {recorded})"
+        line = f"  Trace: {filename} ({status})"
+    else:
+        line = f"  Trace: {filename} ({status}, recorded {recorded})"
+    suffix = _trace_relationship_suffix(summary)
+    if suffix is None:
+        return line
+    return f"{line}\n         {suffix}"
+
+
+def _trace_relationship_suffix(summary: AnalysisSummary) -> str | None:
+    relationship = summary.trace_workflow_relationship
+    if relationship in (None, "same_fresh"):
+        return None
+    if relationship == "same_drifted":
+        count = summary.trace_model_drift_count
+        noun = "difference" if count == 1 else "differences"
+        return f"stale: {count} model {noun}"
+    if relationship == "parent_redirect":
+        return "this workflow appears as a sub-workflow; use --from-trace on the root"
+    if relationship == "different_workflow":
+        return "different workflow recorded in this trace"
+    return None
 
 
 def _format_recorded_timestamp(iso: str | None) -> str | None:
@@ -1570,7 +1590,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
             deduped_components_by_row=deduped_components_by_row,
             analysis=analysis,
         )
-    _append_per_call_footer_blocks(lines, visible, hidden_count, per_call_notes)
+    _append_per_call_footer_blocks(lines, visible, hidden_count, per_call_notes, analysis=analysis)
     return "\n".join(lines)
 
 
@@ -1579,13 +1599,19 @@ def _append_per_call_footer_blocks(
     visible: list[PerCallRow],
     hidden_count: int,
     per_call_notes: list[tuple[str, int]],
+    *,
+    analysis: CacheAnalysis,
 ) -> None:
     notes_footer_lines = _render_per_call_notes_footer(per_call_notes)
     if notes_footer_lines:
         lines.append("")
         for line in notes_footer_lines:
             lines.append(f"  {line}")
-    footer_lines = _per_call_confidence_footer(visible)
+    footer_lines = _per_call_confidence_footer(
+        visible,
+        stale_memo_skipped_count=analysis.summary.stale_memo_skipped_count,
+        stale_memo_uncheckable_count=analysis.summary.stale_memo_uncheckable_count,
+    )
     if footer_lines is not None:
         lines.append("")
         for line in footer_lines:
@@ -2210,7 +2236,12 @@ def _format_node_list(node_paths: list[str]) -> str:
     return ", ".join(parts)
 
 
-def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
+def _per_call_confidence_footer(
+    rows: list[PerCallRow],
+    *,
+    stale_memo_skipped_count: int = 0,
+    stale_memo_uncheckable_count: int = 0,
+) -> list[str] | None:
     """Build the multi-line token-estimate-confidence footer block.
 
     Returns ``["Token estimate confidence:", "  · <bullet>", ...]`` or
@@ -2256,6 +2287,17 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
         bullets.append(
             f"{_format_node_list(cross_workflow_nodes)}: savings projected from values flowing in "
             "from parent workflow(s). See Recommended actions for the per-boundary fix."
+        )
+    if stale_memo_skipped_count > 0:
+        noun = "value" if stale_memo_skipped_count == 1 else "values"
+        bullets.append(
+            f"{stale_memo_skipped_count} memoized {noun} skipped as stale "
+            "(node config changed since this run was recorded; using fresh estimates instead)."
+        )
+    if stale_memo_uncheckable_count > 0:
+        noun = "value" if stale_memo_uncheckable_count == 1 else "values"
+        bullets.append(
+            f"{stale_memo_uncheckable_count} memoized {noun} used but freshness could not be verified for this node."
         )
     if not bullets:
         return None

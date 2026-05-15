@@ -71,6 +71,7 @@ def estimate_tokens(
     node_id: str | None = None,
     workflow_path: str | None = None,
     has_unresolved_refs: bool = False,
+    ctx: AnalysisContext | None = None,
 ) -> tuple[int, str]:
     """Return ``(token_count, source)`` per the four-tier strategy.
 
@@ -93,7 +94,7 @@ def estimate_tokens(
 
     # --- Tier 2: memo cache ---------------------------------------------------
     if memo_cache is not None and node_id is not None:
-        token_count = _from_memo(memo_cache, node_id, workflow_path=workflow_path)
+        token_count = _from_memo(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
         if token_count is not None:
             return token_count, "memo"
 
@@ -251,6 +252,7 @@ def estimate_output_tokens(
     memo_cache: _MemoCacheLike | None = None,
     node_id: str | None = None,
     workflow_path: str | None = None,
+    ctx: AnalysisContext | None = None,
 ) -> tuple[int | None, str]:
     """Return ``(output_token_count | None, source)`` for an LLM call.
 
@@ -273,7 +275,7 @@ def estimate_output_tokens(
             return token_count, "trace"
 
     if memo_cache is not None and node_id is not None:
-        token_count = _output_from_memo(memo_cache, node_id, workflow_path=workflow_path)
+        token_count = _output_from_memo(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
         if token_count is not None:
             return token_count, "memo"
 
@@ -552,29 +554,51 @@ def _llm_call_field_from_trace(trace: dict[str, Any], node_id: str, field: str) 
     return value if isinstance(value, int) else None
 
 
-def _from_memo(memo_cache: _MemoCacheLike, node_id: str, *, workflow_path: str | None) -> int | None:
+def _from_memo(
+    memo_cache: _MemoCacheLike,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None,
+) -> int | None:
     """Pull ``llm_usage.input_tokens`` from the latest memoized output."""
-    return _llm_usage_field_from_memo(memo_cache, node_id, workflow_path=workflow_path, field="input_tokens")
+    return _llm_usage_field_from_memo(
+        memo_cache,
+        node_id,
+        workflow_path=workflow_path,
+        field="input_tokens",
+        ctx=ctx,
+    )
 
 
-def _output_from_memo(memo_cache: _MemoCacheLike, node_id: str, *, workflow_path: str | None) -> int | None:
+def _output_from_memo(
+    memo_cache: _MemoCacheLike,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None,
+) -> int | None:
     """Pull ``llm_usage.output_tokens`` from the latest memoized output."""
-    return _llm_usage_field_from_memo(memo_cache, node_id, workflow_path=workflow_path, field="output_tokens")
+    return _llm_usage_field_from_memo(
+        memo_cache,
+        node_id,
+        workflow_path=workflow_path,
+        field="output_tokens",
+        ctx=ctx,
+    )
 
 
 def _llm_usage_field_from_memo(
-    memo_cache: _MemoCacheLike, node_id: str, *, workflow_path: str | None, field: str
+    memo_cache: _MemoCacheLike,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    field: str,
+    ctx: AnalysisContext | None,
 ) -> int | None:
     """Read an integer field from the latest memoized output's ``llm_usage`` dict."""
-    try:
-        result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
-    except Exception:
-        logger.debug("memo_cache.get_latest_for_node raised", exc_info=True)
-        return None
-    if result is None:
-        return None
-    output, _created_at = result
-    if not isinstance(output, dict):
+    output = _memo_output_for_freshness_check(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
+    if output is None:
         return None
     llm_usage = output.get("llm_usage")
     if not isinstance(llm_usage, dict):
@@ -583,6 +607,46 @@ def _llm_usage_field_from_memo(
     if isinstance(value, int):
         return value
     return None
+
+
+def _memo_output_for_freshness_check(
+    memo_cache: Any,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None,
+) -> dict[str, Any] | None:
+    """Read latest memo output, skipping it when ctx proves the row stale."""
+    if ctx is not None and hasattr(memo_cache, "get_latest_for_node_with_cache_key"):
+        from .context import _PREDICTION_SKIPPED
+
+        try:
+            result = memo_cache.get_latest_for_node_with_cache_key(node_id, workflow_path=workflow_path)
+        except Exception:
+            logger.debug("memo_cache.get_latest_for_node_with_cache_key raised", exc_info=True)
+            return None
+        if result is None:
+            return None
+        output, _created_at, memo_cache_key = result
+        predicted = ctx.predicted_cache_keys.get((workflow_path, node_id))
+        if predicted is None:
+            return output if isinstance(output, dict) else None
+        if predicted == _PREDICTION_SKIPPED:
+            ctx.stale_memo_uncheckable.add((workflow_path, node_id))
+            return output if isinstance(output, dict) else None
+        if memo_cache_key != predicted:
+            ctx.stale_memo_skipped.add((workflow_path, node_id))
+            return None
+        return output if isinstance(output, dict) else None
+    try:
+        result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
+    except Exception:
+        logger.debug("memo_cache.get_latest_for_node raised", exc_info=True)
+        return None
+    if result is None:
+        return None
+    output, _created_at = result
+    return output if isinstance(output, dict) else None
 
 
 def _from_estimator(model: str, text: str) -> int:
@@ -661,15 +725,8 @@ def _latest_value_for_ref(
     from pflow.runtime.template_resolver import TemplateResolver
 
     root = TemplateResolver.extract_root_node_id(ref)
-    try:
-        latest = memo_cache.get_latest_for_node(root, workflow_path=workflow_path)
-    except Exception:
-        logger.debug("memo_cache.get_latest_for_node failed while estimating %s", ref, exc_info=True)
-        return None
-    if latest is None:
-        return None
-    output, _created_at = latest
-    if not isinstance(output, dict):
+    output = _memo_output_for_freshness_check(memo_cache, root, workflow_path=workflow_path, ctx=ctx)
+    if output is None:
         return None
     resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
     if isinstance(resolved, str) and resolved == f"${{{ref}}}":

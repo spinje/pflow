@@ -1093,6 +1093,44 @@ def test_all_rows_flag_passed_through(tmp_path: Path) -> None:
     assert result.exit_code == 0
 
 
+def test_list_traces_empty_result_exits_zero_text(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--list-traces"])
+    assert result.exit_code == 0
+    assert "No traces found" in result.output
+
+
+def test_list_traces_empty_result_exits_zero_json(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--list-traces", "--format=json"])
+    assert result.exit_code == 0
+    payload = _json_payload(result.output)
+    assert payload["format_version"].startswith("5.")
+    assert payload["mode"] == "list_traces"
+    assert payload["traces"] == []
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--all-rows",
+        "--no-trace-autoload",
+        "--from-trace",
+    ],
+)
+def test_list_traces_rejects_analysis_only_flags(tmp_path: Path, flag: str) -> None:
+    workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
+    runner = CliRunner(mix_stderr=False)
+    args = ["analyze-cache", str(workflow_path), "--list-traces", flag]
+    if flag == "--from-trace":
+        args.append(str(tmp_path / "trace.json"))
+    result = runner.invoke(cli, args)
+    assert result.exit_code == 2
+    assert "--list-traces is mutually exclusive" in result.stderr
+
+
 # ---------------------------------------------------------------------------
 # Inputs are optional (DD#35)
 # ---------------------------------------------------------------------------

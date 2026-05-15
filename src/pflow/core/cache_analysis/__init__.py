@@ -120,6 +120,12 @@ Version history (``JSON_FORMAT_VERSION``):
   ``cache_active``, ``cache_ready``, and ``cache_opportunity``. Only
   ``cache_active`` feeds cost projections; ready/opportunity are
   prioritization fields.
+- ``"5.0"`` — staleness-signal additive fields:
+  ``summary.trace_workflow_relationship``,
+  ``summary.trace_model_drift_count``,
+  ``summary.stale_memo_skipped_count``, and
+  ``summary.stale_memo_uncheckable_count``. Trace discovery is exposed through
+  CLI-only ``--list-traces`` and the public ``list_traces_for_workflow`` helper.
 
 Consumer rule: gate on ``format_version.startswith("5.")`` for the current
 shape. Additive 5.x minor fields don't bump; semantic shifts in field meaning
@@ -131,7 +137,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from .analyze import CacheAnalysis, analyze
+from .analyze import CacheAnalysis, TraceListEntry, analyze, list_traces_for_workflow
 from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
@@ -145,7 +151,9 @@ Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.
 __all__ = [
     "JSON_FORMAT_VERSION",
     "CacheAnalysis",
+    "TraceListEntry",
     "analyze",
+    "list_traces_for_workflow",
     "render_json",
     "render_text",
     "summarize",

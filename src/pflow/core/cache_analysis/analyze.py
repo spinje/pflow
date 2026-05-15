@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Final, TypedDict
 
 if TYPE_CHECKING:
     # ``CostTier`` lives in ``cost_estimation.py`` (where it's produced).
@@ -53,6 +53,7 @@ from pflow.core.cache_render import (  # noqa: F401 — see docstring.
 )
 from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.exceptions import CompilationError, MarkdownParseError, SchemaValidationError, WorkflowValidationError
 from pflow.core.llm_capabilities import anthropic_models_at_threshold, get_min_cache_tokens
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import detect_provider, normalize_model_name
@@ -73,7 +74,7 @@ from .below_min_tokens_detector import (
 from .below_min_tokens_detector import (
     detect as detect_below_min_tokens,
 )
-from .context import AnalysisContext, _normalize_empty
+from .context import _PREDICTION_SKIPPED, AnalysisContext, _latest_memo_for_freshness_check, _normalize_empty
 from .cross_workflow import CrossWorkflowEdge, DynamicBatchInfo, walk_cross_workflow
 from .padding_advisor import PaddingCandidate, compute_padding_advisories
 from .token_estimation import (
@@ -108,6 +109,18 @@ _BLOCK_BELOW_PROVIDER_MIN = "below_provider_min"
 _BLOCK_PREWARM_IMAGES = "prewarm_images"
 _BLOCK_ABSENT_BRANCH = "absent_branch"
 _BLOCK_RUNTIME_STRIPPED = "runtime_stripped"
+
+_PREDICTION_RECOVERABLE_EXCEPTIONS: Final[tuple[type[Exception], ...]] = (
+    CompilationError,
+    MarkdownParseError,
+    SchemaValidationError,
+    WorkflowValidationError,
+    FileNotFoundError,
+    ValueError,
+    KeyError,
+    RecursionError,
+    OSError,
+)
 
 
 @dataclass(frozen=True)
@@ -793,6 +806,21 @@ class TraceUnexecutedLLMRow:
 
 
 @dataclass(frozen=True)
+class TraceListEntry:
+    """One trace row for ``pflow analyze-cache --list-traces``."""
+
+    path: Path
+    final_status: str
+    recorded_at: str
+    duration_ms: float | None
+    llm_call_count: int
+    total_cost_usd: float | None
+    models_used: tuple[str, ...]
+    would_be_autoloaded: bool
+    model_drift_count: int | None
+
+
+@dataclass(frozen=True)
 class AnalysisSummary:
     """Atomic cost primitives + counts for an analyze-cache result.
 
@@ -900,6 +928,8 @@ class AnalysisSummary:
     # is the ISO ``start_time`` from the trace JSON. Both ``None`` when no
     # trace is loaded.
     trace_final_status: str | None = None
+    trace_workflow_relationship: str | None = None
+    trace_model_drift_count: int = 0
     trace_recorded_at: str | None = None
     # Trace cache-layer split. Provider prompt caching and pflow's local memo
     # cache are independent layers; a resumed run can skip LLM calls before the
@@ -911,6 +941,8 @@ class AnalysisSummary:
     trace_local_cache_input_tokens: int = 0
     trace_provider_cache_creation_input_tokens: int = 0
     trace_provider_cache_read_input_tokens: int = 0
+    stale_memo_skipped_count: int = 0
+    stale_memo_uncheckable_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -993,7 +1025,7 @@ def analyze(
     trace_data, used_trace_path = _resolve_trace_data(trace_path, auto_load_trace, lookup_path, notes)
     ir_default_model = get_default_workflow_model()
 
-    trace_root_workflow_path, scope_mismatch = _resolve_trace_scope(trace_data, lookup_path, notes)
+    trace_root_workflow_path, scope_mismatch, appears_as_child = _resolve_trace_scope(trace_data, lookup_path, notes)
 
     cache_block = workflow_ir.get("cache")
     declared_chunks = _extract_declared_chunks(cache_block)
@@ -1009,6 +1041,8 @@ def analyze(
         notes.append(dynamic_batch_note)
     edge_child_paths = _edge_child_paths(cw_result)
     trace_index = _build_trace_execution_index(trace_data, trace_root_workflow_path, edge_child_paths)
+    stale_memo_skipped: set[tuple[str | None, str]] = set()
+    stale_memo_uncheckable: set[tuple[str | None, str]] = set()
     parameters_by_workflow = _build_parameters_by_workflow(
         cw_result,
         parameters or {},
@@ -1017,6 +1051,7 @@ def analyze(
         trace_data=trace_data,
         trace_outputs_by_key=trace_index.outputs_by_key,
         base_path=base_path,
+        stale_memo_uncheckable=stale_memo_uncheckable,
     )
 
     # Build the AnalysisContext once and thread it through helpers. Bundles
@@ -1033,7 +1068,10 @@ def analyze(
         workflow_path=lookup_path,
         base_path=base_path,
         parameters_by_workflow=parameters_by_workflow,
+        stale_memo_skipped=stale_memo_skipped,
+        stale_memo_uncheckable=stale_memo_uncheckable,
     )
+    ctx, predicted_cache_keys, prediction_fidelity_notes = _attach_predicted_cache_keys(ctx, cw_result)
 
     # Pass 1 (cheap): walk IR for shared template references — no tokenization.
     # Tier 2 of ``estimate_cacheable_tokens`` consumes the per-node candidate
@@ -1077,6 +1115,10 @@ def analyze(
             workflow_path=lookup_path,
             base_path=base_path,
             parameters_by_workflow=parameters_by_workflow,
+            predicted_cache_keys=predicted_cache_keys,
+            prediction_fidelity_notes=tuple(prediction_fidelity_notes),
+            stale_memo_skipped=ctx.stale_memo_skipped,
+            stale_memo_uncheckable=ctx.stale_memo_uncheckable,
         )
         per_call_result = _build_per_call_rows_and_warnings(
             ctx=ctx,
@@ -1093,7 +1135,7 @@ def analyze(
     # per-row via ``PerCallRow.data_source``; only model drift needs explicit
     # disclosure because ``_resolve_effective_row_model`` declares "trace wins"
     # and projections would silently use stale pricing.
-    drift_note = _detect_per_node_model_drift(
+    drift_note, drift_count = _detect_per_node_model_drift(
         per_call_rows,
         getattr(cw_result, "irs_by_workflow", {}) or {ctx.workflow_path: dict(ctx.workflow_ir)},
         ir_default_model,
@@ -1223,6 +1265,13 @@ def analyze(
     )
     summary = replace(
         summary,
+        trace_workflow_relationship=_derive_trace_workflow_relationship(
+            trace_loaded=trace_data is not None,
+            scope_mismatch=scope_mismatch,
+            appears_as_child=appears_as_child,
+            drift_count=drift_count,
+        ),
+        trace_model_drift_count=drift_count,
         sub_workflow_rollup=_build_sub_workflow_rollup(
             cw_result,
             lookup_path,
@@ -1388,6 +1437,57 @@ def _collect_candidate_traces(
     return successful, failed
 
 
+def _autoload_selection_with_disclosure(
+    successful: list[tuple[Path, dict[str, Any]]],
+    failed: list[tuple[Path, dict[str, Any]]],
+) -> tuple[Path | None, str | None]:
+    """Return autoload choice plus the disclosure note for non-obvious choices."""
+    if successful:
+        chosen = successful[0][0]
+        if failed and failed[0][0].name > chosen.name:
+            return chosen, (
+                f"Skipped newer trace `{failed[0][0].name}` (failed run) in "
+                f"favor of `{chosen.name}` (success). Pass "
+                f"`--from-trace <path>` to override."
+            )
+        return chosen, None
+    if failed:
+        chosen = failed[0][0]
+        return chosen, (
+            f"Auto-loaded `{chosen.name}` (failed run); no successful "
+            f"trace exists for this workflow. Trace-dependent recommendations "
+            f"may be suppressed. Re-run the workflow to record a successful "
+            f"trace, or pass `--from-trace <path>` to use a specific trace."
+        )
+    return None, None
+
+
+def list_traces_for_workflow(
+    workflow_path: str,
+    *,
+    debug_dir: Path | None = None,
+) -> tuple[list[TraceListEntry], str | None]:
+    """Enumerate stored traces for a workflow and mark the autoload choice."""
+    debug_dir = debug_dir or (Path.home() / ".pflow" / "debug")
+    if not debug_dir.exists():
+        return [], None
+    successful, failed = _collect_candidate_traces(debug_dir, workflow_path)
+    chosen_path, disclosure_note = _autoload_selection_with_disclosure(successful, failed)
+    current_models, has_heterogeneous_nodes = _resolve_current_workflow_model_set_for_path(workflow_path)
+    entries = [
+        _build_trace_list_entry(
+            trace_path,
+            data,
+            would_be_autoloaded=trace_path == chosen_path,
+            current_models=current_models,
+            has_heterogeneous_nodes=has_heterogeneous_nodes,
+        )
+        for trace_path, data in [*successful, *failed]
+    ]
+    entries.sort(key=lambda entry: entry.path.name, reverse=True)
+    return entries, disclosure_note
+
+
 def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
     """Find the best matching 2.x trace for ``workflow_path``.
 
@@ -1423,31 +1523,13 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
 
     successful, failed = _collect_candidate_traces(debug_dir, workflow_path)
 
-    if successful:
-        chosen_file, chosen_data = successful[0]
-        # Bug 10 disclosure: newer failed trace was skipped in favor of an
-        # older success. Both filenames make the choice auditable for the
-        # agent; ``--from-trace`` is the escape hatch.
-        if failed and failed[0][0].name > chosen_file.name:
-            notes.append(
-                f"Skipped newer trace `{failed[0][0].name}` (failed run) in "
-                f"favor of `{chosen_file.name}` (success). Pass "
-                f"`--from-trace <path>` to override."
-            )
-        return chosen_data, str(chosen_file)
-
-    if failed:
-        chosen_file, chosen_data = failed[0]
-        # Failed trace selected only because no success exists. Downstream
-        # truncated-trace suppression already gates recommendations honestly;
-        # this disclosure routes the agent to the unblocking action.
-        notes.append(
-            f"Auto-loaded `{chosen_file.name}` (failed run); no successful "
-            f"trace exists for this workflow. Trace-dependent recommendations "
-            f"may be suppressed. Re-run the workflow to record a successful "
-            f"trace, or pass `--from-trace <path>` to use a specific trace."
-        )
-        return chosen_data, str(chosen_file)
+    chosen_path, disclosure_note = _autoload_selection_with_disclosure(successful, failed)
+    if chosen_path is not None:
+        if disclosure_note is not None:
+            notes.append(disclosure_note)
+        for candidate_path, candidate_data in [*successful, *failed]:
+            if candidate_path == chosen_path:
+                return candidate_data, str(candidate_path)
 
     # No hash-scoped match. If the debug dir holds unrelated traces, surface
     # that so the agent doesn't read greenfield output as "no evidence
@@ -1491,7 +1573,7 @@ def _resolve_trace_scope(
     trace_data: dict[str, Any] | None,
     lookup_path: str,
     notes: list[str],
-) -> tuple[str, bool]:
+) -> tuple[str, bool, bool]:
     """Determine the trace's root workflow path and whether scope is mismatched.
 
     Bug 5: when a trace was recorded for a parent workflow that invoked the
@@ -1500,7 +1582,7 @@ def _resolve_trace_scope(
     look like they belong to the analyzed workflow (which they don't), so
     cost summation includes them — producing the bug's nonsense ratios.
 
-    Returns ``(trace_root_workflow_path, scope_mismatch)``:
+    Returns ``(trace_root_workflow_path, scope_mismatch, appears_as_child)``:
 
     - When the trace's stored path refers to the same workflow as
       ``lookup_path`` (relative vs absolute representations of the same
@@ -1525,8 +1607,9 @@ def _resolve_trace_scope(
     """
     raw_trace_root = (trace_data.get("workflow_path") if trace_data else None) or lookup_path
     if trace_data is None or _workflow_paths_refer_to_same(raw_trace_root, lookup_path):
-        return lookup_path, False
-    if _workflow_appears_as_child(trace_data, lookup_path, raw_trace_root):
+        return lookup_path, False, False
+    appears_as_child = _workflow_appears_as_child(trace_data, lookup_path, raw_trace_root)
+    if appears_as_child:
         notes.append(
             f"`{lookup_path}` appears as a sub-workflow inside the trace `{raw_trace_root}`. "
             f"To see full attribution for this run, analyze the trace root instead: "
@@ -1538,7 +1621,26 @@ def _resolve_trace_scope(
             f"analyzed workflow `{lookup_path}`; cost figures show only events attributable "
             f"to the analyzed workflow and its sub-workflows."
         )
-    return raw_trace_root, True
+    return raw_trace_root, True, appears_as_child
+
+
+def _derive_trace_workflow_relationship(
+    *,
+    trace_loaded: bool,
+    scope_mismatch: bool,
+    appears_as_child: bool,
+    drift_count: int,
+) -> str | None:
+    """Single typed signal for how loaded trace evidence relates to the workflow."""
+    if not trace_loaded:
+        return None
+    if appears_as_child:
+        return "parent_redirect"
+    if scope_mismatch:
+        return "different_workflow"
+    if drift_count > 0:
+        return "same_drifted"
+    return "same_fresh"
 
 
 def _workflow_appears_as_child(
@@ -1626,22 +1728,149 @@ def _resolve_ir_static_model_for_node(
     node: Mapping[str, Any] | None,
     default_model: str | None,
 ) -> str | None:
-    """Return the IR-static model for a single LLM node, or ``None`` if unresolvable.
+    """Return the IR-static model for a single LLM node.
 
-    Templated ``${var}`` models return ``None`` (heterogeneous batch — model
-    varies per item; comparing against trace would be meaningless). Missing
-    explicit model falls back to the workflow default.
+    Concrete models return a normalized model string. Templated batch-item
+    models return ``""`` to mark declared heterogeneous-model workflows, where
+    comparing a trace model set against one current model would be misleading.
+    Other templated models return ``None`` because they are unresolvable from
+    static IR. Missing explicit model falls back to the workflow default.
     """
     if node is None:
         return None
     explicit = node.get("params", {}).get("model") or node.get("model")
     if isinstance(explicit, str) and "${" in explicit:
+        batch_alias = _batch_alias_for_node(node)
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(explicit):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                root = TemplateResolver.extract_root_node_id(operand)
+                if root == batch_alias:
+                    return ""
         return None
     if explicit:
         return normalize_model_name(str(explicit))
     if default_model:
         return normalize_model_name(default_model)
     return None
+
+
+def _batch_alias_for_node(node: Mapping[str, Any]) -> str:
+    batch = node.get("batch")
+    if not isinstance(batch, Mapping):
+        return "item"
+    raw_alias = batch.get("as")
+    if not isinstance(raw_alias, str):
+        raw_alias = batch.get("item_alias")
+    return raw_alias if isinstance(raw_alias, str) else "item"
+
+
+def _resolve_current_workflow_model_set(
+    workflow_ir: Mapping[str, Any],
+    default_model: str | None,
+) -> tuple[frozenset[str], bool]:
+    """Resolved static models plus a flag for IR-declared heterogeneous nodes."""
+    models: set[str] = set()
+    has_heterogeneous = False
+    nodes = workflow_ir.get("nodes", []) if isinstance(workflow_ir, Mapping) else []
+    for node in nodes:
+        if not _is_llm_node(node):
+            continue
+        model = _resolve_ir_static_model_for_node(node, default_model)
+        if model is None:
+            continue
+        if model == "":
+            has_heterogeneous = True
+            continue
+        normalized = normalize_model_name(model)
+        if normalized:
+            models.add(normalized)
+    return frozenset(models), has_heterogeneous
+
+
+def _resolve_current_workflow_model_set_for_path(workflow_path: str) -> tuple[frozenset[str], bool]:
+    """Load a workflow path and return comparable model data for trace listing."""
+    if workflow_path.startswith("ir-hash:"):
+        return frozenset(), False
+    try:
+        from pflow.execution.workflow_resolver import resolve_workflow
+
+        resolved = resolve_workflow(workflow_path)
+    except Exception:
+        logger.debug("Cannot resolve workflow for trace-list model comparison", exc_info=True)
+        return frozenset(), False
+    default_model = get_default_workflow_model()
+    settings = resolved.ir.get("settings") if isinstance(resolved.ir, Mapping) else None
+    if isinstance(settings, Mapping) and isinstance(settings.get("model"), str):
+        default_model = str(settings["model"])
+    try:
+        cw_result = walk_cross_workflow(
+            resolved.ir,
+            base_path=Path(workflow_path).parent,
+            root_workflow_path=workflow_path,
+        )
+    except Exception:
+        logger.debug("Cannot walk nested workflows for trace-list model comparison", exc_info=True)
+        return _resolve_current_workflow_model_set(resolved.ir, default_model)
+    models: set[str] = set()
+    has_heterogeneous = False
+    for workflow_ir in getattr(cw_result, "irs_by_workflow", {}).values():
+        workflow_models, workflow_has_heterogeneous = _resolve_current_workflow_model_set(workflow_ir, default_model)
+        models.update(workflow_models)
+        has_heterogeneous = has_heterogeneous or workflow_has_heterogeneous
+    return frozenset(models), has_heterogeneous
+
+
+def _build_trace_list_entry(
+    trace_path: Path,
+    data: dict[str, Any],
+    *,
+    would_be_autoloaded: bool,
+    current_models: frozenset[str],
+    has_heterogeneous_nodes: bool,
+) -> TraceListEntry:
+    raw_summary = data.get("llm_summary")
+    llm_summary: Mapping[str, Any] = raw_summary if isinstance(raw_summary, Mapping) else {}
+    trace_models = frozenset(
+        normalized
+        for raw_model in llm_summary.get("models_used", [])
+        if isinstance(raw_model, str)
+        for normalized in [normalize_model_name(raw_model)]
+        if normalized
+    )
+    if has_heterogeneous_nodes:
+        drift_count: int | None = None
+    elif current_models and trace_models:
+        drift_count = len(current_models.symmetric_difference(trace_models))
+    else:
+        drift_count = 0
+    return TraceListEntry(
+        path=trace_path,
+        final_status=str(data.get("final_status") or "success"),
+        recorded_at=str(data.get("start_time") or ""),
+        duration_ms=_safe_float(data.get("duration_ms")),
+        llm_call_count=_safe_int_from_mapping(llm_summary, "total_calls") or 0,
+        total_cost_usd=_safe_float(llm_summary.get("total_cost_usd")),
+        models_used=tuple(sorted(trace_models)),
+        would_be_autoloaded=would_be_autoloaded,
+        model_drift_count=drift_count,
+    )
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int_from_mapping(data: Mapping[str, Any], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _row_model_drift(
@@ -1677,7 +1906,7 @@ def _detect_per_node_model_drift(
     per_call_rows: Sequence[PerCallRow],
     irs_by_workflow: Mapping[str, Mapping[str, Any]],
     default_model: str | None,
-) -> str | None:
+) -> tuple[str | None, int]:
     """Detect per-node model drift between trace and current IR.
 
     Compares each per-call row's single trace-observed model against the
@@ -1701,7 +1930,7 @@ def _detect_per_node_model_drift(
             drifts.append((row.node_path, drift[0], drift[1]))
 
     if not drifts:
-        return None
+        return None, 0
 
     if len(drifts) == 1:
         node_id, trace_model, ir_model = drifts[0]
@@ -1709,14 +1938,14 @@ def _detect_per_node_model_drift(
             f"Trace was recorded with model `{trace_model}` for node `{node_id}`; "
             f"current workflow declares `{ir_model}`. Actually-paid is correct; "
             f"cost projections use trace-side pricing. Re-record a trace to refresh."
-        )
+        ), 1
 
     items = ", ".join(f"`{node_id}` ({trace_model} → {ir_model})" for node_id, trace_model, ir_model in drifts)
     return (
         f"Trace was recorded with different models than current workflow for "
         f"{len(drifts)} nodes: {items}. Actually-paid is correct; "
         f"cost projections use trace-side pricing. Re-record a trace to refresh."
-    )
+    ), len(drifts)
 
 
 def _extract_cache_ttl(cache_block: Any) -> str | None:
@@ -2163,6 +2392,7 @@ def _build_parameters_by_workflow(
     trace_data: Mapping[str, Any] | None,
     base_path: Path | None,
     trace_outputs_by_key: Mapping[tuple[str | None, str], Any] | None = None,
+    stale_memo_uncheckable: set[tuple[str | None, str]] | None = None,
 ) -> dict[str | None, dict[str, Any]]:
     """Build workflow-scoped parameter views from cross-workflow input edges."""
     params_by_workflow: dict[str | None, dict[str, Any]] = {root_workflow_path: dict(root_parameters)}
@@ -2194,6 +2424,8 @@ def _build_parameters_by_workflow(
             resolved = _resolve_child_input_value(edge, parent_ctx)
             if resolved is None:
                 continue
+            if stale_memo_uncheckable is not None:
+                stale_memo_uncheckable.update(_unchecked_parent_memo_roots(edge, parent_ctx))
             child_params = params_by_workflow.setdefault(str(child_workflow), {})
             child_params[str(child_input_name)] = resolved
             made_progress = True
@@ -2231,6 +2463,25 @@ def _resolve_child_input_value(edge: CrossWorkflowEdge, parent_ctx: AnalysisCont
     if isinstance(resolved, str) and TemplateResolver.TEMPLATE_PATTERN.search(resolved):
         return None
     return _normalize_empty(resolved)
+
+
+def _unchecked_parent_memo_roots(
+    edge: CrossWorkflowEdge,
+    parent_ctx: AnalysisContext,
+) -> set[tuple[str | None, str]]:
+    """Node-output roots used to seed child params before prediction can verify memo."""
+    value = edge.parent_input_value
+    if not isinstance(value, str) or parent_ctx.memo_cache is None:
+        return set()
+    declared_inputs = parent_ctx.workflow_ir.get("inputs") if isinstance(parent_ctx.workflow_ir, Mapping) else None
+    input_names = set(declared_inputs) if isinstance(declared_inputs, Mapping) else set()
+    tainted: set[tuple[str | None, str]] = set()
+    for ref in _extract_unique_refs(value):
+        root = TemplateResolver.extract_root_node_id(ref)
+        if not root or root in input_names or root == edge.parent_batch_alias:
+            continue
+        tainted.add((parent_ctx.workflow_path, root))
+    return tainted
 
 
 def _resolve_first_batch_item(edge: CrossWorkflowEdge, parent_ctx: AnalysisContext) -> Any | None:
@@ -2314,6 +2565,10 @@ def _build_per_call_rows_and_warnings(
             workflow_path=workflow_path,
             base_path=ctx.base_path,
             parameters_by_workflow=ctx.parameters_by_workflow,
+            predicted_cache_keys=ctx.predicted_cache_keys,
+            prediction_fidelity_notes=ctx.prediction_fidelity_notes,
+            stale_memo_skipped=ctx.stale_memo_skipped,
+            stale_memo_uncheckable=ctx.stale_memo_uncheckable,
         )
         nodes = workflow_ir.get("nodes", []) or []
         nodes_by_id: dict[str, dict[str, Any]] = {
@@ -3510,6 +3765,7 @@ def _estimate_row_tokens(
             node_id=node_id,
             workflow_path=workflow_path,
             has_unresolved_refs=has_unresolved,
+            ctx=ctx,
         )
         chunk_tokens = 0
         if declared_subset and ctx is not None and model:
@@ -3531,6 +3787,7 @@ def _estimate_row_tokens(
             memo_cache=memo_cache,
             node_id=node_id,
             workflow_path=workflow_path,
+            ctx=ctx,
         )
     return input_tokens, chunk_tokens, source, output_tokens, output_source
 
@@ -5340,6 +5597,10 @@ def _emit_partial_declaration_findings(
             workflow_path=workflow_path,
             base_path=ctx.base_path,
             parameters_by_workflow=ctx.parameters_by_workflow,
+            predicted_cache_keys=ctx.predicted_cache_keys,
+            prediction_fidelity_notes=ctx.prediction_fidelity_notes,
+            stale_memo_skipped=ctx.stale_memo_skipped,
+            stale_memo_uncheckable=ctx.stale_memo_uncheckable,
         )
         findings = _detect_partial_prompt_cache_declarations(
             workflow_ir,
@@ -6051,9 +6312,9 @@ def _resolve_value_in_workflow_memo(
     if not root:
         return None
     try:
-        latest = ctx.memo_cache.get_latest_for_node(root, workflow_path=workflow_path)
+        latest = _latest_memo_for_freshness_check(ctx.memo_cache, root, workflow_path=workflow_path, ctx=ctx)
     except Exception:
-        logger.debug("memo_cache.get_latest_for_node failed for %s in %s", ref, workflow_path, exc_info=True)
+        logger.debug("memo_cache freshness check failed for %s in %s", ref, workflow_path, exc_info=True)
         return None
     if latest is None:
         return None
@@ -7121,6 +7382,29 @@ def _format_skipped_workflows_note(paths: list[str]) -> str:
     )
 
 
+def _attach_predicted_cache_keys(
+    ctx: AnalysisContext,
+    cw_result: Any,
+) -> tuple[AnalysisContext, dict[tuple[str | None, str], str], list[str]]:
+    """Run cache-key prediction once and store the result on the context."""
+    predicted_cache_keys: dict[tuple[str | None, str], str] = {}
+    prediction_fidelity_notes: list[str] = []
+    try:
+        predicted_cache_keys, prediction_fidelity_notes = _predict_cache_keys(cw_result, ctx)
+    except _PREDICTION_RECOVERABLE_EXCEPTIONS as exc:
+        logger.debug("memo freshness prediction disabled: %s", exc, exc_info=True)
+        _mark_all_prediction_skipped(predicted_cache_keys, cw_result, ctx)
+    return (
+        replace(
+            ctx,
+            predicted_cache_keys=predicted_cache_keys,
+            prediction_fidelity_notes=tuple(prediction_fidelity_notes),
+        ),
+        predicted_cache_keys,
+        prediction_fidelity_notes,
+    )
+
+
 def _predict_one_workflow(
     *,
     workflow_path: str | None,
@@ -7148,10 +7432,12 @@ def _predict_one_workflow(
     # summary at the caller level (L-4). Distinct from the partial-params
     # case below where some inputs were resolved and we want to predict
     # what we can on a per-node basis.
+    llm_nodes = [node for node in ir.get("nodes", []) if _is_llm_node(node)]
     if not params and declared_inputs:
         skipped_input_workflows.append(workflow_path or "<root>")
+        _mark_prediction_skipped(predicted_keys, workflow_path, llm_nodes)
         return
-    if not any(_is_llm_node(node) for node in ir.get("nodes", [])):
+    if not llm_nodes:
         return
     # Partial-params case: walker resolved some inputs but not all (e.g.,
     # a child input that flows from an upstream sub-workflow output the
@@ -7166,17 +7452,45 @@ def _predict_one_workflow(
     dummied_chunks = _dummied_cache_chunks(ir, dummied_keys)
     scaffold = _build_predict_scaffold(ir, padded_params, ctx.memo_cache, workflow_path)
     if scaffold is None:
+        _mark_prediction_skipped(predicted_keys, workflow_path, llm_nodes)
         return
-    for node in ir.get("nodes", []):
-        if not _is_llm_node(node):
-            continue
+    for node in llm_nodes:
         if _node_references_any(node, dummied_keys, dummied_chunks):
+            predicted_keys[(workflow_path, str(node["id"]))] = _PREDICTION_SKIPPED
             continue
         cache_key, skip_reason = _predict_node_with_scaffold(node, scaffold, workflow_path)
         if cache_key is not None:
             predicted_keys[(workflow_path, str(node["id"]))] = cache_key
         elif skip_reason:
+            predicted_keys[(workflow_path, str(node["id"]))] = _PREDICTION_SKIPPED
             notes.append(skip_reason)
+
+
+def _mark_prediction_skipped(
+    predicted_keys: dict[tuple[str | None, str], str],
+    workflow_path: str | None,
+    nodes: Iterable[Mapping[str, Any]],
+) -> None:
+    for node in nodes:
+        node_id = node.get("id")
+        if isinstance(node_id, str):
+            predicted_keys[(workflow_path, node_id)] = _PREDICTION_SKIPPED
+
+
+def _mark_all_prediction_skipped(
+    predicted_keys: dict[tuple[str | None, str], str],
+    cw_result: Any,
+    ctx: AnalysisContext,
+) -> None:
+    """Mark every known LLM node as attempted-but-uncheckable after prediction outage."""
+    irs_by_workflow = getattr(cw_result, "irs_by_workflow", None) or {ctx.workflow_path: dict(ctx.workflow_ir)}
+    for workflow_path, workflow_ir in irs_by_workflow.items():
+        nodes = workflow_ir.get("nodes", []) if isinstance(workflow_ir, Mapping) else []
+        _mark_prediction_skipped(
+            predicted_keys,
+            workflow_path,
+            (node for node in nodes if isinstance(node, Mapping) and _is_llm_node(node)),
+        )
 
 
 def _pad_inputs_for_prediction(
@@ -7370,12 +7684,6 @@ def _build_predict_scaffold(
     Lazy imports keep the analyzer package import-cheap (mirrors
     ``token_estimation.py``'s LiteLLM lazy-import).
     """
-    from pflow.core.exceptions import (
-        CompilationError,
-        MarkdownParseError,
-        SchemaValidationError,
-        WorkflowValidationError,
-    )
     from pflow.execution.plan import create_planner_shared
     from pflow.registry import Registry
     from pflow.runtime import compile_workflow
@@ -7385,22 +7693,15 @@ def _build_predict_scaffold(
         compile_params.setdefault("_pflow_workflow_file", str(workflow_path))
     try:
         compiled = compile_workflow(dict(workflow_ir), Registry(), dict(compile_params))
-    except (
-        CompilationError,
-        MarkdownParseError,
-        SchemaValidationError,
-        WorkflowValidationError,
-        FileNotFoundError,
-        ValueError,
-    ) as exc:
+        shared = create_planner_shared(compiled, dict(compile_params), memo_cache, workflow_path)
+    except _PREDICTION_RECOVERABLE_EXCEPTIONS as exc:
         logger.debug(
-            "predict-stage compile failed for %s: %s",
+            "predict-stage setup failed for %s: %s",
             workflow_path or "<root>",
             exc,
             exc_info=True,
         )
         return None
-    shared = create_planner_shared(compiled, dict(compile_params), memo_cache, workflow_path)
     bare_nodes_by_id = _enumerate_compiled_bare_nodes(compiled)
     return _PredictScaffold(compiled=compiled, shared=shared, bare_nodes_by_id=bare_nodes_by_id)
 
@@ -7508,7 +7809,17 @@ def _emit_discrepancy_diagnostics(
     if not fv.startswith("2."):
         return []
 
-    predicted_keys, predict_notes = _predict_cache_keys(cw_result, ctx)
+    if ctx.predicted_cache_keys or ctx.prediction_fidelity_notes:
+        predicted_keys = dict(ctx.predicted_cache_keys)
+        predict_notes = list(ctx.prediction_fidelity_notes)
+    else:
+        try:
+            predicted_keys, predict_notes = _predict_cache_keys(cw_result, ctx)
+        except _PREDICTION_RECOVERABLE_EXCEPTIONS:
+            logger.debug("trace discrepancy prediction failed", exc_info=True)
+            predicted_keys = {}
+            _mark_all_prediction_skipped(predicted_keys, cw_result, ctx)
+            predict_notes = list(ctx.prediction_fidelity_notes)
     notes.extend(predict_notes)
 
     diagnostics: list[Diagnostic] = []
@@ -7948,6 +8259,8 @@ def _build_summary(
         trace_provider_cache_read_input_tokens=(
             trace_index.provider_cache_read_input_tokens if trace_index is not None else 0
         ),
+        stale_memo_skipped_count=len(ctx.stale_memo_skipped) if ctx is not None else 0,
+        stale_memo_uncheckable_count=len(ctx.stale_memo_uncheckable) if ctx is not None else 0,
     )
 
 

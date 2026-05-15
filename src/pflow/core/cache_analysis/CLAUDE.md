@@ -136,6 +136,15 @@ Rows expose four projection objects:
 
 `cached_now_tokens_estimated` is separate trace telemetry (`cache_creation_input_tokens + cache_read_input_tokens` when provider cache fields exist). Do not decompose provider telemetry across projection components; providers return one aggregate cache-read/write count per call.
 
+### Staleness signals
+
+Four independent staleness signals, four locations, no overloading:
+
+1. **Trace staleness**: `summary.trace_workflow_relationship: null | "same_fresh" | "same_drifted" | "parent_redirect" | "different_workflow"` plus `summary.trace_model_drift_count`. Derived from `_resolve_trace_scope` + `_detect_per_node_model_drift` count. Text renders it as an indented continuation under `Trace:` so long filenames do not wrap into the signal. Narrative model-drift and redirect notes remain in `notes[]`.
+2. **Memo staleness (detected)**: `summary.stale_memo_skipped_count`. Memo token/value tiers skip a memo row when its stored `cache_key` differs from `AnalysisContext.predicted_cache_keys[(workflow_path, node_id)]`; skipped rows fall through to estimator/unavailable. The accumulator is keyed by `(workflow_path, node_id)` to avoid parent/child node-id collisions.
+3. **Memo staleness (uncheckable)**: `summary.stale_memo_uncheckable_count`. `_PREDICTION_SKIPPED` means prediction was attempted but intentionally skipped for that node (for example missing sub-workflow params or placeholder-tainted inputs). The memo is consumed, but the count increments so `skipped=0` does not falsely mean every consumed memo was verified fresh.
+4. **Trace discovery**: `pflow analyze-cache <workflow> --list-traces` lists matching `~/.pflow/debug/workflow-trace-<hash>-*.json` files, marks the would-be autoloaded trace, includes the same disclosure note used by autoload, and annotates per-trace model drift. Drift comparison is skipped for workflows with IR-declared heterogeneous model nodes (`model=""` sentinel); unresolvable models (`None`) are silently excluded from the comparison. Empty listings exit 0 because "no traces yet" is a valid discovery result.
+
 ### token_estimation.py
 
 **4-tier hierarchy with documented fall-through rules**: `trace → memo → estimator → heuristic`. The `estimator-partial` source is emitted when the prompt was partially-resolvable (some `${...}` refs missed); confidence aggregation treats it as estimator-tier (not heuristic) so a partially-resolved row doesn't classify the workflow as `low_no_data`.

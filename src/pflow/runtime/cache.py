@@ -321,6 +321,21 @@ class MemoizationCache:
             Tuple of (output, created_at_epoch_seconds) or None if not found,
             expired, or reads disabled.
         """
+        result = self.get_latest_for_node_with_cache_key(node_id, workflow_path=workflow_path)
+        if result is None:
+            return None
+        output, created_at, _cache_key = result
+        return output, created_at
+
+    def get_latest_for_node_with_cache_key(
+        self, node_id: str, *, workflow_path: Optional[str] = None
+    ) -> Optional[tuple[dict[str, Any], float, str]]:
+        """Look up the newest cache entry for a node_id, including cache_key.
+
+        This is an additive API for analyzer freshness checks. Existing
+        runtime consumers should keep using :meth:`get_latest_for_node` unless
+        they specifically need the stored memo cache key.
+        """
         if not self.read_enabled:
             return None
 
@@ -353,11 +368,11 @@ class MemoizationCache:
 
                 output_json = zlib.decompress(output_blob).decode()
                 output = json.loads(output_json)
-                return (output, created_at)
+                return (output, created_at, cache_key)
             finally:
                 conn.close()
         except (sqlite3.Error, zlib.error, json.JSONDecodeError, OSError):
-            logger.debug("Memoization cache get_latest_for_node failed", exc_info=True)
+            logger.debug("Memoization cache get_latest_for_node_with_cache_key failed", exc_info=True)
             return None
 
     def put(

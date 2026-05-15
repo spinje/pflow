@@ -790,13 +790,16 @@ Useful variants:
 
 ```bash
 pflow analyze-cache workflow.pflow.md --no-trace-autoload # static analysis only
+pflow analyze-cache workflow.pflow.md --list-traces       # discover saved traces
 pflow analyze-cache workflow.pflow.md --from-trace <path> # inspect a specific run
 pflow analyze-cache workflow.pflow.md --format=json       # machine-readable output
 ```
 
 Trace files live at
 `~/.pflow/debug/workflow-trace-<hash>-<name>-<timestamp>.json`. The default
-command auto-loads the most recent matching trace when one exists.
+command auto-loads the most recent matching trace when one exists. Use
+`--list-traces` when the loaded trace looks stale or you need the paste-ready
+`--from-trace` command for a specific run.
 
 `pflow run --dry-run` emits a one-line prompt-cache nudge when actionable
 opportunities exist. It stays silent when the workflow already looks optimal.

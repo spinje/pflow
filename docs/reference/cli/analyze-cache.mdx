@@ -10,6 +10,7 @@ icon: "database"
 pflow analyze-cache <WORKFLOW> [PARAMS...]
 pflow analyze-cache <WORKFLOW> [PARAMS...] --format=json
 pflow analyze-cache <WORKFLOW> --from-trace <TRACE_PATH>
+pflow analyze-cache <WORKFLOW> --list-traces
 ```
 
 `pflow analyze-cache` reads a workflow file (or saved workflow name), finds LLM calls that share static context, and emits recommendations: which values to add to a `## Cache` block, which nodes should opt in, and projected cost savings.
@@ -37,6 +38,9 @@ pflow analyze-cache ./song-creator.pflow.md --no-trace-autoload
 pflow analyze-cache ./song-creator.pflow.md \
   --from-trace ~/.pflow/debug/workflow-trace-abc12345-song-creator-20260507.json
 
+# List matching traces and the trace that auto-load would pick
+pflow analyze-cache ./song-creator.pflow.md --list-traces
+
 # JSON output for agent consumption
 pflow analyze-cache ./song-creator.pflow.md --format=json
 
@@ -52,8 +56,12 @@ pflow analyze-cache ./song-creator.pflow.md --all-rows
 | `--from-trace <path>` | - | Explicit trace file (any 2.x format). Overrides auto-load |
 | `--no-trace-autoload` | off | Skip the most-recent matching trace from `~/.pflow/debug/` |
 | `--all-rows` | off | Show every LLM node in the per-call table; default hides clean rows |
+| `--list-traces` | off | List matching traces and exit without running analysis |
 
-`--from-trace` and `--no-trace-autoload` are mutually exclusive.
+`--from-trace` and `--no-trace-autoload` are mutually exclusive. `--list-traces`
+is mutually exclusive with `--from-trace`, `--no-trace-autoload`, and
+`--all-rows`; use it as a discovery command, then run analysis with the chosen
+trace.
 
 ## Output
 

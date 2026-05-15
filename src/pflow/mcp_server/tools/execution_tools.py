@@ -586,6 +586,18 @@ async def analyze_cache(
     those rows surface in ``trace_unexecuted_llm_rows`` for header
     annotation but don't trigger suppression.
 
+    **summary.trace_workflow_relationship** (string|null): typed trace
+    staleness signal: ``null`` when no trace loaded, else ``"same_fresh"``,
+    ``"same_drifted"``, ``"parent_redirect"``, or ``"different_workflow"``.
+    **summary.trace_model_drift_count** (integer): number of per-node model
+    differences detected between the loaded trace and current workflow IR.
+    **summary.stale_memo_skipped_count** and
+    **summary.stale_memo_uncheckable_count** (integers): local memo rows
+    skipped as stale via cache-key mismatch, or consumed when freshness could
+    not be verified. ``pflow analyze-cache --list-traces`` is CLI-only in
+    this bundle; MCP callers receive these summary fields from normal
+    analysis output.
+
     **summary.actual_vs_no_cache_delta.unavailable_reason** (string when
     ``kind=="unavailable"``): ``"no_trace"`` (trace_coverage is ``"none"``)
     or ``"projection_exclusions"`` (cohort filtered by unpriced models /

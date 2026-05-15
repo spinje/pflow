@@ -98,7 +98,11 @@ def _summary_to_dict(analysis: CacheAnalysis) -> dict[str, Any]:
         # from the trace JSON (null when no trace or pre-2.1.0 trace lacking
         # the field). Additive — same JSON major version.
         "trace_final_status": s.trace_final_status,
+        "trace_workflow_relationship": s.trace_workflow_relationship,
+        "trace_model_drift_count": s.trace_model_drift_count,
         "trace_recorded_at": s.trace_recorded_at,
+        "stale_memo_skipped_count": s.stale_memo_skipped_count,
+        "stale_memo_uncheckable_count": s.stale_memo_uncheckable_count,
         "evidence_scope": s.evidence_scope,
         "trace_llm_nodes_static": s.trace_llm_nodes_static,
         "trace_llm_nodes_executed": s.trace_llm_nodes_executed,

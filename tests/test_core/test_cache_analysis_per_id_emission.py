@@ -4267,7 +4267,7 @@ def test_predict_cache_keys_pads_partial_walker_params_no_schema_failure_note(tm
     from types import SimpleNamespace
 
     from pflow.core.cache_analysis.analyze import _predict_cache_keys
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.cache_analysis.context import _PREDICTION_SKIPPED, AnalysisContext
     from pflow.runtime.cache import MemoizationCache
 
     # Sub-workflow that declares two required inputs. Walker resolves
@@ -4318,9 +4318,10 @@ def test_predict_cache_keys_pads_partial_walker_params_no_schema_failure_note(tm
     assert not any("SchemaValidationError" in n for n in notes), f"unexpected: {notes!r}"
     assert not any("failed to compile" in n for n in notes), f"unexpected: {notes!r}"
     # ``use-brief`` references only walker-resolved ``brief`` → predicted.
-    # ``use-analyses`` references the padded ``analyses`` → silently skipped.
+    # ``use-analyses`` references the padded ``analyses`` → marked with the
+    # Bundle 6 sentinel so memo consumers can report uncheckable coverage.
     assert ("x.pflow.md", "use-brief") in keys, f"expected use-brief in {sorted(keys)}"
-    assert ("x.pflow.md", "use-analyses") not in keys, f"unexpected use-analyses in {sorted(keys)}"
+    assert keys[("x.pflow.md", "use-analyses")] == _PREDICTION_SKIPPED
 
 
 def test_build_predict_scaffold_silent_on_compile_failure() -> None:

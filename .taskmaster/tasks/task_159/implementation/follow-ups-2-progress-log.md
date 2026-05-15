@@ -1143,3 +1143,115 @@ Anyone needing the full implementer pre-flight briefing (trace-output dual-produ
 ### Closes
 
 - Cache ready/opportunity plan — closed; rationale durable in this entry, scratchpad removed.
+
+## 2026-05-15 — Bundle 6 phases 1-3 checkpoint: staleness signals + trace discovery
+
+Implemented the core Bundle 6 surfaces through Phase 3.
+
+Phase 1: trace staleness is now typed on `AnalysisSummary.trace_workflow_relationship` with `trace_model_drift_count`, and text renders non-fresh trace state as an indented continuation under the `Trace:` header. `_resolve_trace_scope` now exposes `appears_as_child`; `_detect_per_node_model_drift` returns `(note, count)`. JSON emits the new summary fields.
+
+Phase 2: `MemoizationCache.get_latest_for_node_with_cache_key()` is additive; the existing 2-tuple `get_latest_for_node()` remains unchanged and is locked by tests. `AnalysisContext` carries `predicted_cache_keys`, prediction notes, and the two accumulator sets. Memo token/value resolution now compares stored memo `cache_key` against predicted keys when available: missing prediction trusts memo, `_PREDICTION_SKIPPED` consumes memo and increments uncheckable, mismatch skips memo and falls through. `_predict_one_workflow` now writes `_PREDICTION_SKIPPED` at the two deliberate skip sites. The pre-existing test expecting skipped nodes to be absent from the map was updated because absence now specifically means "not predicted at all"; attempted-but-skipped is a sentinel.
+
+Phase 3: `list_traces_for_workflow()` reuses the hash-scoped trace collector and shares `_autoload_selection_with_disclosure()` with autoload, so the would-be-autoloaded marker and disclosure note cannot drift. Added `render_traces_list.py` and `pflow analyze-cache --list-traces` in text/JSON modes. Empty trace listings exit 0 per the rev-2 plan; the plan's later edge-case table said exit 1, but that conflicts with the explicit design rationale and was not followed. Model-drift listing distinguishes heterogeneous-model sentinel `""` from unresolvable `None`.
+
+Deviation / missing context: the requested `.taskmaster/tasks/task_126/implementation/progress-log.md` file does not exist in this worktree. I verified the task_126 directory and read the available `task-126.md` plus the starting-context braindump instead. No Bundle 6 implementation decision depended on Task 126.
+
+Verification so far:
+- `tests/test_core/test_cache_analysis_*.py tests/test_runtime/test_cache.py tests/test_cli/test_analyze_cache.py`: 803 passed.
+- Targeted `ruff check` on touched files: clean.
+- Targeted `mypy` on `src/pflow/core/cache_analysis`, `src/pflow/runtime/cache.py`, and `src/pflow/cli/commands/analyze_cache.py`: clean.
+
+Hard parts / next-agent notes:
+- The prediction sentinel is intentionally a map value, not a missing key. Missing key preserves legacy trust; sentinel is coverage-honesty.
+- The mutable sets on frozen `AnalysisContext` are documented accumulator exceptions. Do not add more mutable context fields without the same explicit pattern.
+- `--list-traces` uses `resolve_workflow()` only for current-model comparison. If the workflow cannot be loaded, listing still works and omits drift annotation rather than failing discovery.
+
+## 2026-05-15 — Bundle 6 context-window handoff
+
+Current state: Bundle 6 implementation is functionally complete through docs, tests, and baseline regeneration. New code covers staleness summary fields, memo freshness via predicted cache keys, `_PREDICTION_SKIPPED`, trace listing, `pflow analyze-cache --list-traces`, JSON/text renderers, docs, MCP docstrings, and focused tests.
+
+Verification completed: cache-analysis family + runtime cache + analyze-cache CLI targeted run passed (`803 passed`); all cache-analysis `*_test` files passed separately (`741 passed`); targeted `ruff` and `mypy` were clean. Baseline verify passed except the known sandbox `/dev/fd` drift in `15-run-flag-interactions/03-report-with-only` (`86 passed, 1 drifted, 0 harness errors`). A broader near-full pytest run had `6890 passed, 19 skipped, 4 failed`; all four failures were subprocess tests invoking Homebrew `uv` and failing before pflow code with the known sandbox Tokio/system-configuration panic class.
+
+Remaining cleanup before final response: update the stale `_resolve_ir_static_model_for_node` docstring to reflect that `""` now means declared heterogeneous batch model and `None` means unresolvable/missing; optionally rerun targeted `ruff`/`mypy` after that doc-only patch. No known source-level failing tests remain. Plan deviations to disclose: task_126 progress log path was missing; `--list-traces` empty result exits 0 because rev-2 design contradicted the later edge-case table; the plan's subagent/code-review checkpoint was not run because the active tool instructions only allow spawning subagents when explicitly requested by the user.
+
+## 2026-05-15 — Bundle 6 closeout after continuation pass
+
+Continuation audit found one missed plan site: `_resolve_value_in_workflow_memo()` still called legacy `get_latest_for_node()` directly. It now reuses `context._latest_memo_for_freshness_check()`, so cross-workflow memo value resolution gets the same three-state behavior as token estimation and `AnalysisContext.resolve_ref_value`: missing prediction trusts memo, `_PREDICTION_SKIPPED` consumes memo and counts uncheckable, cache-key mismatch skips memo and counts stale. This was not a cosmetic fix; it closes the explicit plan item for the analyze.py cross-workflow memo resolver and avoids a divergent stale-memo path.
+
+Also updated `_resolve_ir_static_model_for_node()` docs to match the implemented contract: concrete string = resolved model, `""` = declared heterogeneous batch model, `None` = unresolvable/missing model. This matters because `--list-traces` skips drift only for the heterogeneous sentinel, not for every unresolved template.
+
+Verification after the continuation fix:
+- `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest tests/test_core/test_cache_analysis_*.py tests/test_runtime/test_cache.py tests/test_cli/test_analyze_cache.py -q` → `803 passed`.
+- Targeted `ruff check` on touched source/tests → clean.
+- Targeted `mypy src/pflow/core/cache_analysis src/pflow/runtime/cache.py src/pflow/cli/commands/analyze_cache.py` → clean.
+- Baseline `verify.sh` with sandbox-safe `uv` shim → `86 passed, 1 drifted, 0 harness errors`; the only drift is the known sandbox `/dev/fd` case `15-run-flag-interactions/03-report-with-only`.
+
+Plan deviations with reasons: empty `--list-traces` exits 0 because the rev-2 design and Phase 3d explicitly require that despite the later edge-case table saying exit 1; no MCP `list_traces` exposure because the plan marked it out of scope; no subagent `/code-review` checkpoint was run because active tool instructions require explicit user authorization before spawning subagents. The missing Task 126 progress-log path remains a context deviation from the original preflight, already documented above.
+
+## 2026-05-15 — Bundle 6 review-fix closeout
+
+Post-implementation review found real gaps; fixed them rather than accepting the first green run.
+
+Critical fixes:
+- Per-workflow `AnalysisContext.build()` calls in `_build_per_call_rows_and_warnings()` and `_emit_partial_declaration_findings()` now preserve `predicted_cache_keys`, prediction notes, and the shared `stale_memo_*` accumulator sets. Before this, the main per-call token path could silently trust stale memo even though predictions existed on the root context.
+- Prediction-attempted failure paths now write `_PREDICTION_SKIPPED`: scaffold build failure marks all LLM nodes in that workflow; per-node planner/template skip reasons mark that node. Total prediction outage marks all known LLM nodes. Missing key again means “not predicted,” not “attempted but failed.”
+- `_build_parameters_by_workflow()` still allows memo-backed parent values to seed child params because removing that regressed existing cross-workflow projections, but those pre-prediction memo roots are now counted in `stale_memo_uncheckable`. This preserves useful projections while exposing the trust boundary.
+- `--list-traces` model detection now honors real `batch.as` aliases (legacy `item_alias` kept only as fallback) and walks nested workflows when building the current model set, avoiding false drift for parent/child model combinations.
+
+Test/doc fixes:
+- Added behavior tests for stale LLM memo skipping through `analyze()`, cross-workflow memo value skipping, public-path heterogeneous `--list-traces`, trace-header relationship text, stale-memo footer text, concrete trace paths in list output, and all `--list-traces` mutual-exclusion flags.
+- Documented emitted `summary.trace_model_drift_count` in JSON version history, cache-analysis CLAUDE, and MCP docs.
+- Added `--list-traces` to CLI docs and the prompt-caching guide; regenerated only the affected guide baseline.
+
+Verification after review fixes:
+- `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest tests/test_core/test_cache_analysis_*.py tests/test_runtime/test_cache.py tests/test_cli/test_analyze_cache.py -q` → `810 passed`.
+- Targeted `ruff check` on changed Python source/tests → clean.
+- Targeted `mypy src/pflow/core/cache_analysis src/pflow/runtime/cache.py src/pflow/cli/commands/analyze_cache.py` → clean.
+- Baseline `verify.sh` with sandbox-safe `uv` shim → `86 passed, 1 drifted, 0 harness errors`; the remaining drift is the known sandbox `/dev/fd` case `15-run-flag-interactions/03-report-with-only`.
+
+Review notes not implemented: richer `--list-traces` drift status enums and structured stale-memo node arrays are valid future UX improvements, but they expand the public JSON schema beyond the plan's additive fields. Current Bundle 6 contract remains counts + typed trace relationship + per-trace drift count/null, with tests covering non-default behavior.
+
+## 2026-05-15 — Bundle 6 multi-agent review pass + four pre-merge fixes
+
+Three review agents (`review-plan`, `review-silent-failures`, `review-feature-interactions`) ran in parallel against the staged Bundle 6 changes, plus an independent reviewer pass. Reviews surfaced four merge-quality items that fit cleanly inside the bundle's contract; richer JSON schema expansions were noted but deferred.
+
+### Fixes applied
+
+**1. Confidence-footer wording: drop pflow-internal vocabulary.** Per CLAUDE.md Priority #4 ("no pflow internals exposed in agent-facing output"), the two new confidence-footer lines used "estimator-tier" and "couldn't predict cache_key" — both leak analyzer-internal symbols. Rewrote `_per_call_confidence_footer` in `render_text.py:2291-2302`:
+- `"... using estimator-tier instead"` → `"... using fresh estimates instead"`
+- `"... analyzer couldn't predict cache_key for this node"` → `"... freshness could not be verified for this node"`
+Added negative assertions to `tests/test_core/test_cache_analysis_renderers.py` so neither `"estimator-tier"` nor `"cache_key"` can regress into rendered text — mutation-protective per the same priority directive.
+
+**2. Timestamp formatting consistency.** The `--list-traces` text renderer printed raw ISO timestamps (`2026-05-15T12:00:00.123456`), while the existing `Trace:` header uses `_format_recorded_timestamp` to produce `2026-05-15 12:00`. `render_traces_list.py` now imports and uses the same helper so the trace listing matches the header. Same minute precision, same source, no double-formatter drift surface.
+
+**3. Structural test locking `_resolve_trace_scope` 3-tuple shape.** Bundle 6 expanded the return tuple from `(root, scope_mismatch)` to `(root, scope_mismatch, appears_as_child)`. `_derive_trace_workflow_relationship` depends on the third element; if a future refactor drops it back to a 2-tuple, the relationship enum silently regresses to `different_workflow` for every parent-redirect case. Added `test_resolve_trace_scope_returns_three_tuple_with_appears_as_child` in `test_cache_analysis_analyze.py` — asserts `len(result) == 3` and unpacks all three elements for both the no-trace and same-workflow paths. The test fails noisily on shape regression rather than silently producing wrong typed signals.
+
+**4. Dry-run latency smoke check.** The hoist runs prediction unconditionally on every `analyze()` call, including the dry-run path. Measured stable warm-run cost on the real lyrics-generator (25 LLM nodes across parent + sub-workflows) via direct `analyze()` invocations: ~330ms after litellm import warm-up; first process pays ~570ms total (litellm + prediction + analysis). Within the plan's documented ~700ms acceptance budget. No regression vs the planned target.
+
+### Verification after fixes
+
+- Cache-analysis + cache + analyze-cache CLI focused suite → `811 passed` (+1 from new structural test).
+- `verify.sh` with sandbox-safe `uv` shim → `87 passed, 0 drifted, 0 harness errors` (previously documented sandbox `/dev/fd` drift for `15-run-flag-interactions/03-report-with-only` did not fire on this run).
+- Targeted `ruff check` on the 4 changed files → clean.
+- Targeted `mypy` on `render_text.py` + `render_traces_list.py` → clean.
+
+### Deferred (non-blocking)
+
+- DRY the two `_*_memo_for_freshness_check` helpers between `context.py` and `token_estimation.py`. The three-state logic duplicates; token-estimation's variant could call the context variant and discard `created_at`. Not a correctness bug.
+- Remove `hasattr(memo_cache, "get_latest_for_node_with_cache_key")` and `ctx is None` fallbacks once all test mocks implement the new method. Currently load-bearing for legacy fixtures.
+- Update `open-bugs-and-ux-followups.md` to mark S#1, S#16, F#7, F#9 as closed.
+- Richer `--list-traces` drift status enums and structured stale-memo node arrays were proposed but expand the public JSON schema beyond Bundle 6's additive contract; defer until a real consumer needs them.
+
+### Files touched
+
+Production (2 files):
+- `src/pflow/core/cache_analysis/render_text.py` — confidence-footer wording fix.
+- `src/pflow/core/cache_analysis/render_traces_list.py` — timestamp formatter reuse.
+
+Tests (2 files):
+- `tests/test_core/test_cache_analysis_analyze.py` — new structural test for `_resolve_trace_scope`.
+- `tests/test_core/test_cache_analysis_renderers.py` — updated existing wording assertion + negative assertions blocking the pflow-internal regression.
+
+### Closes
+
+- Final pre-merge polish for Bundle 6. Implementation is merge-ready.

@@ -58,6 +58,8 @@ def _make_analysis(
     ir_default_model: str | None = None,
     trace_path: str | None = None,
     trace_final_status: str | None | type(Ellipsis) = Ellipsis,
+    trace_workflow_relationship: str | None = None,
+    trace_model_drift_count: int = 0,
     trace_recorded_at: str | None | type(Ellipsis) = Ellipsis,
     trace_provider_llm_call_count: int = 0,
     trace_local_memo_llm_hit_count: int = 0,
@@ -65,6 +67,8 @@ def _make_analysis(
     trace_local_cache_input_tokens: int = 0,
     trace_provider_cache_creation_input_tokens: int = 0,
     trace_provider_cache_read_input_tokens: int = 0,
+    stale_memo_skipped_count: int = 0,
+    stale_memo_uncheckable_count: int = 0,
 ) -> CacheAnalysis:
     """Construct a renderable analysis with atomic cost primitives.
 
@@ -208,6 +212,8 @@ def _make_analysis(
                 if trace_final_status is not Ellipsis
                 else ("success" if actually_paid is not None else None)
             ),
+            trace_workflow_relationship=trace_workflow_relationship,
+            trace_model_drift_count=trace_model_drift_count,
             trace_recorded_at=(
                 cast(str | None, trace_recorded_at)
                 if trace_recorded_at is not Ellipsis
@@ -219,6 +225,8 @@ def _make_analysis(
             trace_local_cache_input_tokens=trace_local_cache_input_tokens,
             trace_provider_cache_creation_input_tokens=trace_provider_cache_creation_input_tokens,
             trace_provider_cache_read_input_tokens=trace_provider_cache_read_input_tokens,
+            stale_memo_skipped_count=stale_memo_skipped_count,
+            stale_memo_uncheckable_count=stale_memo_uncheckable_count,
         ),
         suggested_blocks=(),
         per_call=tuple(rows),
@@ -324,6 +332,10 @@ class TestMakeAnalysisShapeParity:
             trace_local_cache_input_tokens=100,
             trace_provider_cache_creation_input_tokens=50,
             trace_provider_cache_read_input_tokens=25,
+            trace_workflow_relationship="same_drifted",
+            trace_model_drift_count=1,
+            stale_memo_skipped_count=1,
+            stale_memo_uncheckable_count=1,
         )
 
         def _at_default(summary: AnalysisSummary, field: dataclasses.Field[Any]) -> bool:
@@ -687,6 +699,34 @@ def test_text_render_shows_trace_header_line_when_loaded() -> None:
     assert "(success, recorded 2026-05-11 15:32)" in text
 
 
+def test_text_render_trace_header_shows_same_drifted_relationship() -> None:
+    analysis = _make_analysis(
+        trace_path="/abs/workflow-trace-stale.json",
+        trace_final_status="success",
+        trace_workflow_relationship="same_drifted",
+        trace_model_drift_count=1,
+    )
+
+    text = render_text(analysis)
+
+    assert "Trace: workflow-trace-stale.json (success)" in text
+    assert "stale: 1 model difference" in text
+    assert "this workflow appears as a sub-workflow" not in text
+
+
+def test_text_render_trace_header_shows_parent_redirect_relationship() -> None:
+    analysis = _make_analysis(
+        trace_path="/abs/workflow-trace-parent.json",
+        trace_final_status="success",
+        trace_workflow_relationship="parent_redirect",
+    )
+
+    text = render_text(analysis)
+
+    assert "this workflow appears as a sub-workflow; use --from-trace on the root" in text
+    assert "stale:" not in text
+
+
 def test_text_render_omits_trace_header_when_no_trace_loaded() -> None:
     """When ``trace_path`` is None (greenfield or autoload-rejected), no
     ``Trace:`` line appears."""
@@ -726,6 +766,23 @@ def test_text_render_trace_header_shows_failed_status_honestly() -> None:
     )
     text = render_text(analysis)
     assert "Trace: workflow-trace-bad.json (failed, recorded 2026-05-11 16:30)" in text
+
+
+def test_text_render_confidence_footer_shows_stale_memo_counts() -> None:
+    analysis = _make_analysis(
+        rows=[_row("draft", 50)],
+        stale_memo_skipped_count=1,
+        stale_memo_uncheckable_count=2,
+    )
+
+    text = render_text(analysis)
+
+    assert "1 memoized value skipped as stale" in text
+    assert "using fresh estimates instead" in text
+    assert "2 memoized values used but freshness could not be verified" in text
+    # Negative: pflow internals must not leak into agent-facing output (CLAUDE.md Priority #4)
+    assert "estimator-tier" not in text
+    assert "cache_key" not in text
 
 
 def test_text_renders_partial_cost_with_marker() -> None:
