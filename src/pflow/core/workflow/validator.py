@@ -692,7 +692,17 @@ class WorkflowValidator:
 
     @staticmethod
     def _validate_claude_code_params(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
-        """Validate Claude Code structured-output constraints without SDK calls."""
+        """Validate Claude Code structured-output constraints without SDK calls.
+
+        Predicates live in ``pflow.nodes.claude.schema_validation`` so the
+        runtime path (``ClaudeCodeNode._validate_schema``) and this static
+        preflight path can't drift on shape detection.
+        """
+        from pflow.nodes.claude.schema_validation import (
+            is_legacy_python_alias_schema,
+            top_level_object_violation,
+        )
+
         output_schema = params.get("output_schema")
         if output_schema is None:
             return []
@@ -731,7 +741,7 @@ class WorkflowValidator:
             )
             return diagnostics
 
-        if WorkflowValidator._looks_like_legacy_python_alias_schema(output_schema):
+        if is_legacy_python_alias_schema(output_schema):
             diagnostics.append(
                 WorkflowValidator._claude_code_param_error(
                     node_id=node_id,
@@ -745,28 +755,19 @@ class WorkflowValidator:
                 )
             )
 
-        top_level_type = output_schema.get("type")
-        if top_level_type != "object":
-            # Covers non-"object" types AND schemas with no top-level type
-            # (top-level oneOf/anyOf/allOf/enum). Both classes return HTTP 400
-            # from the Anthropic API. Verified in Phase 0 and the oneOf probe.
-            if top_level_type is None:
-                combinators = sorted(k for k in ("oneOf", "anyOf", "allOf", "enum", "const") if k in output_schema)
-                cause = (
-                    f"top-level combinator {combinators[0]!r} with no top-level type"
-                    if combinators
-                    else "no top-level type"
-                )
+        violation = top_level_object_violation(output_schema)
+        if violation is not None:
+            # The shared predicate covers non-"object" types AND combinator-only
+            # schemas (oneOf/anyOf/allOf/enum without a top-level type). Both
+            # classes return HTTP 400 from the Anthropic API (Phase 0 + oneOf probe).
+            if violation.kind == "missing_type":
                 message = (
                     "output_schema on claude-code nodes must declare top-level type: object "
-                    f"({cause}). Combinators like oneOf/anyOf/allOf/enum must live inside an "
-                    "object wrapper."
+                    f"({violation.cause}). Combinators like oneOf/anyOf/allOf/enum must live "
+                    "inside an object wrapper."
                 )
             else:
-                message = (
-                    "output_schema on claude-code nodes must have top-level type: object "
-                    f"(got type: {top_level_type!r})."
-                )
+                message = f"output_schema on claude-code nodes must have top-level type: object ({violation.cause})."
             diagnostics.append(
                 WorkflowValidator._claude_code_param_error(
                     node_id=node_id,
@@ -795,15 +796,6 @@ class WorkflowValidator:
             )
 
         return diagnostics
-
-    @staticmethod
-    def _looks_like_legacy_python_alias_schema(schema: dict[str, Any]) -> bool:
-        """Detect the old custom Claude Code output_schema format."""
-        json_schema_markers = {"type", "$ref", "$schema", "oneOf", "anyOf", "allOf", "enum", "const"}
-        if any(marker in schema for marker in json_schema_markers):
-            return False
-        python_alias_types = {"str", "int", "bool", "list", "dict", "float"}
-        return any(isinstance(value, dict) and value.get("type") in python_alias_types for value in schema.values())
 
     @staticmethod
     def _claude_code_param_error(

@@ -213,3 +213,54 @@ Ran `examples/nodes/claude-code/claude-code-schema.pflow.md` against the real An
 End-to-end result: `success: true`, `warnings: []`, `diagnostics: []`. All 4 nodes completed (`read_code`, `review`, `save_review`, `save_improved`). The `review` node returned a fully-conformant dict with all 6 required fields including `overall_quality: "poor"` (enum constraint honored), `security_score: 2` (1-10 minimum/maximum honored), and `has_critical_issues: true` (correctly typed boolean). Templates `${review.result.*}` resolved cleanly into both downstream `write-file` nodes — `.improved.py` and `.review.md` artifacts were produced with no escaping or template-resolution artifacts. Duration: 54.7s, API-equivalent cost: $0.135 (subscription: $0 billed), 2.6k output tokens, 19.8k cache-creation tokens.
 
 This closes the last open item from the plan's Phase 5 checklist. No regression to the happy path.
+
+## 2026-05-15 — PR #399 review evaluation + fix-ups
+
+Bot review on PR #399 (`claude[bot]`) flagged 0 critical / 2 warnings / 5 suggestions. Three subagents (`pflow-codebase-searcher`) verified each finding against the actual code in parallel.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1 | Schema validation logic duplicated between `validator.py:683-829` and `claude_code.py:217-323` (predicate bodies byte-identical; drift risk) | Confirmed | Extracted predicates to new `src/pflow/nodes/claude/schema_validation.py` (`is_legacy_python_alias_schema`, `top_level_object_violation` returning a `TopLevelObjectViolation` NamedTuple, plus constants). Validator and runtime both import; per-call-site error framing preserved. |
+| 2 | `__warnings__` policy in `src/pflow/nodes/CLAUDE.md` reads as LLM-only | Confirmed but reframed — the doc says "one approved direct producer" (not "the only"); explicitly invites future contributors. Three-subagent inventory confirmed ClaudeCode's writes already conform to the canonical shape and round-trip through the generic memo cache rehydration. | Doc-only update naming both `LLMNode.post()` and `ClaudeCodeNode.post()` as approved producers; points at `_emit_soft_fail_signal` / `_emit_schema_resolved_null_warning`. |
+| 3 | Import probe fragile against auto-Mock `__annotations__` (`TypeError` instead of friendly `ImportError`) | Confirmed | Added `isinstance(ann, dict)` guard around the `in` check in `claude_code.py`. |
+| 4 | `_run_claude_session` catch-all wider than needed (proposed typed-only `except (ProcessError,)`) | **Disputed** | Subagent verified the current name-fallback (`type(exc).__name__ == "ProcessError"`) is a deliberate safety net for partial-import scenarios where `ProcessError` is None at module load. The proposed typed-only refactor degrades to `except ():` (empty tuple, catches nothing) in that case, dropping the soft-fail signal. Skipped the refactor; added regression test instead (see below). |
+| 5 | `_validate_tools` / `_validate_disallowed_tools` near-duplicates | Confirmed | Collapsed into `_validate_optional_tool_list(value, param_name)` helper. Both methods now one-line delegates preserving signatures. |
+| 6 | `TestValidateOnlyClaudeCodeStructuredOutput` builds inline 15-line IR dicts in 5 tests | Confirmed | Added module-level `make_claude_code_workflow` factory; refactored 5 cases. `test_dry_run.py` imports the same factory for parity. |
+| 7 | Mixed `__warnings__` assertion styles | Confirmed | Documented the deliberate split (fixture-init vs. early-return paths) in the test module's docstring. |
+
+Subtle issue discovered during action [1] implementation: `pflow.nodes.claude.__init__.py` eagerly imported `ClaudeCodeNode`, which triggered SDK loading before `test_claude_code.py`'s `sys.modules` mock could bind when the new `test_schema_validation.py` ran first. Fixed by switching to `__getattr__`-based lazy resolution. Behavior preserved for all consumers (registry uses filesystem walking, not `__init__.py` exports). Pin test added.
+
+### High-value test additions
+
+Stepped back from "coverage" framing to "what catches real bugs". Added three tests and pruned two shallow ones in the process.
+
+**Added — HIGH VALUE**:
+- `test_runtime_and_validator_agree_on_rejection` / `test_runtime_and_validator_agree_on_acceptance` (parametrized, 16 cases): the cross-surface parity contract that the validator's existence depends on. Shared predicates prevent drift at the predicate level, but call sites can still drift on which checks they run / in what order. Adding a new rejection rule to one side without the other now fires here with the `case_id` naming the gap. Out of scope: templated values, which differ by design.
+- `test_runtime_and_validator_agree_on_max_turns_with_schema`: pins the cross-rule `max_turns >= 2 when output_schema is set` is enforced on both surfaces.
+- `test_claude_code_node_resolves_identically_via_package_and_direct_import`: pin for the lazy `__init__.py` contract. Reverting to eager re-export breaks here with a clean signal, not in confusing cross-file ordering downstream.
+- `test_process_error_name_fallback_when_sdk_class_is_none`: pins the disputed Finding 4 decision. Patches `ProcessError` to None, raises a locally-defined `ProcessError`-named class, asserts the name-fallback still swallows after `is_error=True` so the soft-fail signal lands. A typed-only refactor would degrade to `except ():` and break this test.
+
+**Pruned — SHALLOW**:
+- `test_constants_contract`: pure membership snapshot fully redundant with behavioral predicate tests.
+- `test_violation_is_named_tuple`: `isinstance` + tuple unpacking; trivial and duplicative.
+
+**Reframed**:
+- `test_combinator_set_contract` → `test_top_level_const_named_in_cause`: replaced the set-equality snapshot with a behavioral test for `const`, achieving symmetry with the four other combinator tests and meaningful bug-catching (silent UX regression if `const` is removed from the tuple).
+
+### Verification (final pass)
+
+- `uv run pytest tests/test_nodes/test_claude/ tests/test_cli/test_validate_only.py tests/test_cli/test_dry_run.py tests/test_runtime/test_memoization_integration.py -q` → `154 passed`
+- `uv run pytest tests/test_nodes/ tests/test_cli/ tests/test_core/ tests/test_runtime/test_memoization_integration.py tests/test_runtime/test_instrumented_wrapper.py -q` → `4080 passed, 9 skipped, 0 failed`
+- `uv run ruff check` on all touched files → clean
+- `uv run mypy` on touched node files → success (8 pre-existing errors on conditional-None SDK exception assignments confirmed present on `main` before this branch; not introduced)
+
+Net file delta:
+- **New**: `src/pflow/nodes/claude/schema_validation.py` (66 lines, pure module)
+- **New**: `tests/test_nodes/test_claude/test_schema_validation.py` (17 direct predicate tests)
+- **Modified**: `src/pflow/nodes/claude/claude_code.py` (uses shared predicates, defensive import-probe shim, narrowed exception handler unchanged, tools-validator collapsed)
+- **Modified**: `src/pflow/nodes/claude/__init__.py` (lazy `__getattr__`)
+- **Modified**: `src/pflow/core/workflow/validator.py` (uses shared predicates, deletes duplicate `_looks_like_legacy_python_alias_schema`)
+- **Modified**: `src/pflow/nodes/CLAUDE.md` (names both LLM and Claude Code as `__warnings__` producers)
+- **Modified**: `tests/test_nodes/test_claude/test_claude_code.py` (parity tests, lazy-init pin, name-fallback pin, assertion-style convention docstring, Severity/WorkflowValidator imports)
+- **Modified**: `tests/test_cli/test_validate_only.py` (factory + refactor)
+- **Modified**: `tests/test_cli/test_dry_run.py` (imports shared factory)

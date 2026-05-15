@@ -333,24 +333,44 @@ class TestValidateOnlyJSONOutput:
         assert warning["suggestions"]
 
 
+def make_claude_code_workflow(
+    *,
+    output_schema: Any,
+    max_turns: int = 2,
+    prompt: str = "Return a result.",
+    node_id: str = "review",
+) -> dict[str, Any]:
+    """Build a single-node claude-code workflow IR for preflight tests.
+
+    Centralizes the 15-line shape that every ``TestValidateOnlyClaudeCodeStructuredOutput``
+    case used to inline. Tests pass only the field(s) they're actually exercising
+    (typically ``output_schema``, sometimes ``max_turns``); other fields take
+    test-safe defaults.
+    """
+    return {
+        "nodes": [
+            {
+                "id": node_id,
+                "type": "claude-code",
+                "params": {
+                    "prompt": prompt,
+                    "max_turns": max_turns,
+                    "output_schema": output_schema,
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+
 class TestValidateOnlyClaudeCodeStructuredOutput:
     """Validation-only must catch Claude Code schema contracts before execution."""
 
     def test_validate_only_rejects_claude_code_array_root_schema(self, tmp_path: Path) -> None:
-        workflow = {
-            "nodes": [
-                {
-                    "id": "review",
-                    "type": "claude-code",
-                    "params": {
-                        "prompt": "Return an array.",
-                        "max_turns": 2,
-                        "output_schema": {"type": "array", "items": {"type": "string"}},
-                    },
-                }
-            ],
-            "edges": [],
-        }
+        workflow = make_claude_code_workflow(
+            output_schema={"type": "array", "items": {"type": "string"}},
+            prompt="Return an array.",
+        )
         workflow_path = tmp_path / "claude-array-root.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
@@ -361,24 +381,15 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
         assert "review" in result.output
 
     def test_validate_only_rejects_claude_code_max_turns_one_with_schema(self, tmp_path: Path) -> None:
-        workflow = {
-            "nodes": [
-                {
-                    "id": "review",
-                    "type": "claude-code",
-                    "params": {
-                        "prompt": "Return status.",
-                        "max_turns": 1,
-                        "output_schema": {
-                            "type": "object",
-                            "properties": {"status": {"type": "string"}},
-                            "required": ["status"],
-                        },
-                    },
-                }
-            ],
-            "edges": [],
-        }
+        workflow = make_claude_code_workflow(
+            output_schema={
+                "type": "object",
+                "properties": {"status": {"type": "string"}},
+                "required": ["status"],
+            },
+            max_turns=1,
+            prompt="Return status.",
+        )
         workflow_path = tmp_path / "claude-max-turns.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
@@ -392,25 +403,15 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
         """Top-level oneOf (no top-level type) is rejected at preflight.
         Verified via real-API probe: the API returns HTTP 400 for combinator-only schemas.
         """
-        workflow = {
-            "nodes": [
-                {
-                    "id": "review",
-                    "type": "claude-code",
-                    "params": {
-                        "prompt": "Return a verdict.",
-                        "max_turns": 2,
-                        "output_schema": {
-                            "oneOf": [
-                                {"type": "object", "properties": {"yes": {"type": "boolean"}}},
-                                {"type": "object", "properties": {"no": {"type": "boolean"}}},
-                            ]
-                        },
-                    },
-                }
-            ],
-            "edges": [],
-        }
+        workflow = make_claude_code_workflow(
+            output_schema={
+                "oneOf": [
+                    {"type": "object", "properties": {"yes": {"type": "boolean"}}},
+                    {"type": "object", "properties": {"no": {"type": "boolean"}}},
+                ]
+            },
+            prompt="Return a verdict.",
+        )
         workflow_path = tmp_path / "claude-oneof-root.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
@@ -423,20 +424,10 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
 
     def test_validate_only_rejects_claude_code_missing_top_level_type(self, tmp_path: Path) -> None:
         """A schema dict without top-level `type` is rejected — the API requires `type: object`."""
-        workflow = {
-            "nodes": [
-                {
-                    "id": "review",
-                    "type": "claude-code",
-                    "params": {
-                        "prompt": "Return status.",
-                        "max_turns": 2,
-                        "output_schema": {"properties": {"status": {"type": "string"}}},
-                    },
-                }
-            ],
-            "edges": [],
-        }
+        workflow = make_claude_code_workflow(
+            output_schema={"properties": {"status": {"type": "string"}}},
+            prompt="Return status.",
+        )
         workflow_path = tmp_path / "claude-missing-type.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
@@ -447,20 +438,10 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
         assert "review" in result.output
 
     def test_validate_only_rejects_claude_code_legacy_schema(self, tmp_path: Path) -> None:
-        workflow = {
-            "nodes": [
-                {
-                    "id": "review",
-                    "type": "claude-code",
-                    "params": {
-                        "prompt": "Return status.",
-                        "max_turns": 2,
-                        "output_schema": {"status": {"type": "str", "description": "Legacy schema style"}},
-                    },
-                }
-            ],
-            "edges": [],
-        }
+        workflow = make_claude_code_workflow(
+            output_schema={"status": {"type": "str", "description": "Legacy schema style"}},
+            prompt="Return status.",
+        )
         workflow_path = tmp_path / "claude-legacy-schema.pflow.md"
         write_workflow_file(workflow, workflow_path)
 

@@ -13,6 +13,20 @@ Tests criteria from the specification:
 10. Schema soft-failures write _schema_error and __warnings__
 11. SDK error signals preserve structured output when available and warn
 12. SDK/process/rate-limit/timeout errors are transformed by exec_fallback
+
+``__warnings__`` assertion conventions (deliberate split — both are used):
+
+- ``shared = {"__warnings__": {}}`` + ``assert not shared["__warnings__"]``
+  Tests that EXERCISE a happy path. Pre-initializing the channel makes the
+  "empty after run" assertion semantic ("we ran successfully and didn't write
+  any warnings"). The pre-init also matches what the production engine seeds
+  into shared state for full runs.
+
+- ``shared = {}`` + ``assert "__warnings__" not in shared``
+  Tests that exercise EARLY-RETURN paths in ``prep`` (no ``node_id`` bound,
+  schema-absent, etc.) where the production code intentionally never touches
+  the channel. The strict "key absent" assertion catches accidental
+  ``setdefault`` calls that would create the empty dict as a side effect.
 """
 
 import asyncio
@@ -110,6 +124,8 @@ sys.modules["claude_agent_sdk.types"] = mock_sdk_types
 sys.modules["claude_agent_sdk.exceptions"] = mock_sdk_exceptions
 
 # Now import the node after SDK mocking - E402 is expected here
+from pflow.core.diagnostic import Severity  # noqa: E402
+from pflow.core.workflow.validator import WorkflowValidator  # noqa: E402
 from pflow.nodes.claude.claude_code import ClaudeCodeNode  # noqa: E402
 from pflow.registry.metadata_extractor import PflowMetadataExtractor  # noqa: E402
 
@@ -904,6 +920,57 @@ def test_non_process_error_after_is_error_re_raises(claude_node):
             claude_node.exec(prep_res)
 
 
+def test_process_error_name_fallback_when_sdk_class_is_none(claude_node):
+    """Pin the name-based ProcessError fallback against a typed-only "cleanup."
+
+    The exception handler in ``_run_claude_session`` combines an
+    ``isinstance(exc, ProcessError)`` check with a runtime
+    ``type(exc).__name__ == "ProcessError"`` name fallback. The name fallback
+    matters when ``ProcessError`` is ``None`` at module load — happens in
+    partial / vendored SDK install scenarios where ``from claude_agent_sdk
+    import ProcessError`` failed but the SDK can still emit a class spelled
+    ``ProcessError`` at runtime.
+
+    A "clean refactor" to typed-only ``except (ProcessError,)`` would degrade
+    to ``except ():`` in that case (empty tuple catches nothing), the soft-fail
+    state would be lost, and the user would see a hard error instead of the
+    intended DEGRADED signal. This test exercises that exact scenario.
+    """
+    import pflow.nodes.claude.claude_code as cc
+
+    # A locally-defined exception class with the load-bearing name. NOT a
+    # subclass of the test module's mock ``ProcessError`` — that ``isinstance``
+    # match would let the typed approach pass too.
+    class StandaloneProcessError(Exception):
+        def __init__(self, message: str = "stderr text") -> None:
+            super().__init__(message)
+
+    StandaloneProcessError.__name__ = "ProcessError"
+
+    schema = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    claude_node.node_id = "review"
+    shared: dict = {}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(structured_output=None, result="partial", is_error=True)
+        raise StandaloneProcessError("CLI exit 1")
+
+    with (
+        patch.object(cc, "ProcessError", None),
+        patch("pflow.nodes.claude.claude_code.query") as mock_query,
+    ):
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep(shared)
+        # MUST NOT raise — name fallback swallows after is_error=True.
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)
+
+    # Soft-fail signal preserved end-to-end.
+    assert "Claude CLI reported an error" in shared["_schema_error"]
+    assert shared["__warnings__"]["review"]["kind"] == "claude_code.sdk_error_no_structured_output"
+
+
 def test_output_schema_resolved_to_null_emits_warning(claude_node):
     """A declared output_schema that resolves to None must warn the workflow author.
 
@@ -1325,3 +1392,139 @@ def test_soft_fail_output_shape_not_classified_as_api_warning(claude_node):
         "keys in _store_results, or (b) any change to api_warning_detector's "
         "extract_error_message shape gates."
     )
+
+
+# ---------------------------------------------------------------------------
+# Runtime ↔ Validator parity
+# ---------------------------------------------------------------------------
+#
+# ``pflow.nodes.claude.schema_validation`` shares the *predicates* between the
+# runtime path (``ClaudeCodeNode._validate_schema``) and the static preflight
+# path (``WorkflowValidator._validate_claude_code_params``). The shared
+# predicates prevent drift on shape detection, but the CALL SITES can still
+# drift on:
+#
+# * which checks they run (one side adds a rule, the other doesn't),
+# * the order of checks (an early-return on one side shadows a later check),
+# * which inputs are rejected vs. accepted.
+#
+# These parametrized tables encode the cross-surface contract. Adding a new
+# rejection rule means adding a row to ``_PARITY_REJECT``; if either surface
+# doesn't implement it, the test fires with the case_id naming the gap.
+#
+# Out of scope: templated values (``output_schema: "${upstream}"``). Those
+# differ by design — the validator defers strings to runtime; the runtime
+# never sees a string because the resolver replaces it first. The defer
+# behavior is pinned separately in ``test_validate_only_defers_templated_output_schema``.
+
+_PARITY_REJECT: list[tuple[str, Any]] = [
+    ("empty_dict", {}),
+    ("non_dict_list", ["not", "a", "dict"]),
+    ("legacy_python_alias", {"risk": {"type": "str"}}),
+    ("legacy_detection_all_values", {"_meta": "x", "risk": {"type": "int"}}),
+    ("top_level_array", {"type": "array", "items": {"type": "string"}}),
+    ("top_level_string", {"type": "string"}),
+    ("top_level_oneOf", {"oneOf": [{"type": "object"}]}),
+    ("top_level_anyOf", {"anyOf": [{"type": "object"}]}),
+    ("top_level_allOf", {"allOf": [{"type": "object"}]}),
+    ("top_level_enum", {"enum": ["a", "b"]}),
+    ("top_level_const", {"const": {"x": 1}}),
+    ("missing_top_level_type", {"properties": {"x": {"type": "string"}}}),
+]
+
+_PARITY_ACCEPT: list[tuple[str, Any]] = [
+    ("none_schema", None),
+    ("minimal_object", {"type": "object"}),
+    ("object_with_properties", {"type": "object", "properties": {"x": {"type": "string"}}}),
+    (
+        "object_with_inner_oneOf",
+        {
+            "type": "object",
+            "properties": {"choice": {"oneOf": [{"type": "string"}, {"type": "integer"}]}},
+        },
+    ),
+]
+
+
+def _runtime_rejects(node: ClaudeCodeNode, schema: Any) -> bool:
+    try:
+        node._validate_schema(schema)
+        return False
+    except (ValueError, TypeError):
+        return True
+
+
+def _validator_rejects(schema: Any) -> bool:
+    diagnostics = WorkflowValidator._validate_claude_code_params("review", {"output_schema": schema})
+    return any(d.severity == Severity.ERROR for d in diagnostics)
+
+
+@pytest.mark.parametrize("case_id,schema", _PARITY_REJECT, ids=[c[0] for c in _PARITY_REJECT])
+def test_runtime_and_validator_agree_on_rejection(case_id: str, schema: Any, claude_node: Any) -> None:
+    """Schemas rejected by one surface must be rejected by both.
+
+    Add a row to ``_PARITY_REJECT`` when adding a rejection rule; if either
+    surface doesn't implement it, this test fires with the case_id naming
+    the gap.
+    """
+    validator_rejected = _validator_rejects(schema)
+    runtime_rejected = _runtime_rejects(claude_node, schema)
+    assert validator_rejected == runtime_rejected, (
+        f"Surface drift on '{case_id}': validator_rejected={validator_rejected}, runtime_rejected={runtime_rejected}"
+    )
+    assert validator_rejected, f"'{case_id}' should be rejected — neither surface caught it"
+
+
+@pytest.mark.parametrize("case_id,schema", _PARITY_ACCEPT, ids=[c[0] for c in _PARITY_ACCEPT])
+def test_runtime_and_validator_agree_on_acceptance(case_id: str, schema: Any, claude_node: Any) -> None:
+    """Schemas accepted by one surface must be accepted by both."""
+    validator_rejected = _validator_rejects(schema)
+    runtime_rejected = _runtime_rejects(claude_node, schema)
+    assert validator_rejected == runtime_rejected, (
+        f"Surface drift on '{case_id}': validator_rejected={validator_rejected}, runtime_rejected={runtime_rejected}"
+    )
+    assert not validator_rejected, f"'{case_id}' should be accepted — at least one surface wrongly rejected"
+
+
+def test_claude_code_node_resolves_identically_via_package_and_direct_import() -> None:
+    """Pin the lazy ``pflow.nodes.claude.__init__.py`` contract.
+
+    The ``__getattr__``-based lazy resolution is load-bearing: it lets
+    ``test_schema_validation.py`` import the predicates without dragging in
+    ``claude_agent_sdk`` before the SDK mock binds (``tests/CLAUDE.md`` #17).
+    A revert to ``from .claude_code import ClaudeCodeNode`` at package load
+    would break that test file's coexistence with the mock — producing
+    confusing ProcessError-style failures spread across unrelated tests
+    rather than a clean signal that this contract changed.
+
+    This test makes the contract explicit. Reverting the lazy init breaks
+    HERE, not in cross-file ordering downstream.
+    """
+    import pflow.nodes.claude as pkg
+    from pflow.nodes.claude.claude_code import ClaudeCodeNode as direct
+
+    assert pkg.ClaudeCodeNode is direct
+
+
+def test_runtime_and_validator_agree_on_max_turns_with_schema(claude_node: Any) -> None:
+    """The cross-rule ``max_turns >= 2 when output_schema is set`` is enforced
+    on both surfaces. Runtime checks happen in ``prep()`` (not ``_validate_schema``),
+    so this case tests the full ``prep()`` path.
+    """
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+    params = {"output_schema": schema, "max_turns": 1, "prompt": "test"}
+
+    diagnostics = WorkflowValidator._validate_claude_code_params("review", params)
+    validator_rejected = any(d.severity == Severity.ERROR for d in diagnostics)
+
+    claude_node.params = params
+    runtime_rejected = False
+    try:
+        claude_node.prep({})
+    except ValueError:
+        runtime_rejected = True
+
+    assert validator_rejected == runtime_rejected, (
+        f"max_turns parity drift: validator={validator_rejected}, runtime={runtime_rejected}"
+    )
+    assert validator_rejected

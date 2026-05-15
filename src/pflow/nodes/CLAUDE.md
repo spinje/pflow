@@ -11,10 +11,10 @@ This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the
 
 Rule of thumb: if the value changes between workflow runs, it's shared store data. If it's the same regardless of input, it's a param.
 
-`LLMNode.post()` is one approved direct producer of `shared["__warnings__"]`. The convention for choosing between `setdefault` and `=` is intent-based:
+`LLMNode.post()` and `ClaudeCodeNode.post()` are approved direct producers of `shared["__warnings__"]`. The convention for choosing between `setdefault` and `=` is intent-based:
 
-- **`setdefault` — preserve prior signal.** Used by `_emit_observed_below_min_cache_warning` (catalog-backed `cache.below-min-tokens` diagnostic emitted when provider telemetry reports zero cache creation/read for a node declaring `prompt_cache:`). Pre-existing warnings survive; this is supplementary observability that never overwrites earlier evidence.
-- **`=` — this signal takes precedence.** Used by `_emit_prewarm_disabled_warning` (when `prewarm: true` is declared but cache rendering can't fire — e.g., images present, or canonical/standard byte alignment failed) and by adapter-empty-response warnings emitted later in `post()`. These signals are authoritative for the run; clobbering prior writes is intentional.
+- **`setdefault` — preserve prior signal.** Used by `LLMNode._emit_observed_below_min_cache_warning` (catalog-backed `cache.below-min-tokens` diagnostic emitted when provider telemetry reports zero cache creation/read for a node declaring `prompt_cache:`). Pre-existing warnings survive; this is supplementary observability that never overwrites earlier evidence.
+- **`=` — this signal takes precedence.** Used by `LLMNode._emit_prewarm_disabled_warning` (when `prewarm: true` is declared but cache rendering can't fire — e.g., images present, or canonical/standard byte alignment failed), adapter-empty-response warnings emitted later in `LLMNode.post()`, and `ClaudeCodeNode._emit_soft_fail_signal` / `_emit_schema_resolved_null_warning` (schema soft-failures and templated-schema-resolved-to-None — both authoritative for the run). These signals clobber prior writes intentionally.
 
 Future contributors adding new direct `__warnings__` writes: pick the verb by asking "is this signal authoritative for the node's current run, or supplementary?" Authoritative → `=`. Supplementary → `setdefault`.
 

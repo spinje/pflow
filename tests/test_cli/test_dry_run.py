@@ -6,6 +6,7 @@ import json
 from unittest.mock import patch
 
 from tests.shared.markdown_utils import write_workflow_file
+from tests.test_cli.test_validate_only import make_claude_code_workflow
 from tests.test_cli.test_workflow_commands import invoke_cli
 
 
@@ -90,20 +91,10 @@ def test_dry_run_rejects_claude_code_invalid_schema_before_plan(tmp_path) -> Non
     """Dry-run must share validation-only's Claude Code schema checks."""
     workflow_path = tmp_path / "claude-invalid-schema-dry-run.pflow.md"
     write_workflow_file(
-        {
-            "nodes": [
-                {
-                    "id": "review",
-                    "type": "claude-code",
-                    "params": {
-                        "prompt": "Return an array.",
-                        "max_turns": 2,
-                        "output_schema": {"type": "array", "items": {"type": "string"}},
-                    },
-                }
-            ],
-            "edges": [],
-        },
+        make_claude_code_workflow(
+            output_schema={"type": "array", "items": {"type": "string"}},
+            prompt="Return an array.",
+        ),
         workflow_path,
     )
 

@@ -49,6 +49,11 @@ import os
 from typing import Any, Optional
 
 from pflow.core.node import Node
+from pflow.nodes.claude.schema_validation import (
+    TopLevelObjectViolation,
+    is_legacy_python_alias_schema,
+    top_level_object_violation,
+)
 
 # Import Claude Agent SDK (renamed from Claude Code SDK)
 try:
@@ -75,7 +80,11 @@ except ImportError as e:
 # Guard against SDK field renames that would silently break structured output.
 # If claude_agent_sdk renames `structured_output`, every schema call would
 # otherwise soft-fail with a misleading "model didn't comply" message.
-if "structured_output" not in getattr(ResultMessage, "__annotations__", {}):
+# The ``isinstance(..., dict)`` check upgrades a forgotten test mock
+# (auto-``Mock`` with synthetic ``__annotations__``) from an opaque
+# ``TypeError`` on ``in`` to this friendly ``ImportError``.
+_resolved_annotations = getattr(ResultMessage, "__annotations__", {})
+if not isinstance(_resolved_annotations, dict) or "structured_output" not in _resolved_annotations:
     raise ImportError(
         "claude_agent_sdk.types.ResultMessage has no 'structured_output' field. "
         "pflow's Claude Code node requires claude-agent-sdk>=0.2.82 with native "
@@ -244,7 +253,7 @@ class ClaudeCodeNode(Node):
                 'Use a real JSON Schema (e.g. {"type": "object", "properties": {...}}) '
                 "or remove the output_schema field entirely."
             )
-        if self._looks_like_legacy_python_alias_format(output_schema):
+        if is_legacy_python_alias_schema(output_schema):
             raise ValueError(
                 "output_schema appears to use the legacy Python-alias format "
                 '({"field": {"type": "str", ...}}). '
@@ -253,38 +262,33 @@ class ClaudeCodeNode(Node):
             )
         # Claude API limitation (verified in Phase 0 + oneOf follow-up): the SDK wraps
         # output_format as a tool's input_schema, and the API rejects any top-level
-        # schema that isn't `type: object` with a 400. This covers non-"object" types
-        # AND combinator-only schemas (oneOf/anyOf/allOf/enum without a top-level type).
-        top_level_type = output_schema.get("type")
-        if top_level_type != "object":
-            raise ValueError(self._top_level_object_error(top_level_type, output_schema))
+        # schema that isn't `type: object` with a 400. The shared predicate covers
+        # non-"object" types AND combinator-only schemas (oneOf/anyOf/allOf/enum
+        # without a top-level type).
+        violation = top_level_object_violation(output_schema)
+        if violation is not None:
+            raise ValueError(self._top_level_object_error(violation))
         return output_schema
 
     @staticmethod
-    def _top_level_object_error(top_level_type: Any, output_schema: dict[str, Any]) -> str:
+    def _top_level_object_error(violation: TopLevelObjectViolation) -> str:
         """Format the "top-level type: object" error with case-specific guidance."""
         wrapper_example = (
             'Wrap in an object, e.g. {"type": "object", '
             '"properties": {"result": <your schema>}, "required": ["result"]}. '
             "(The LLM node has no such restriction.)"
         )
-        if top_level_type is None:
-            combinators = sorted(k for k in ("oneOf", "anyOf", "allOf", "enum", "const") if k in output_schema)
-            cause = (
-                f"top-level combinator {combinators[0]!r} with no top-level type"
-                if combinators
-                else "no top-level type"
-            )
+        if violation.kind == "missing_type":
             return (
                 "output_schema on claude-code nodes must declare top-level type: object "
-                f"({cause}). The Anthropic API rejects schemas without a top-level "
+                f"({violation.cause}). The Anthropic API rejects schemas without a top-level "
                 "type:object when the SDK wraps output_format as a tool input_schema — "
                 "combinators like oneOf/anyOf/allOf/enum must live inside an object "
                 f"wrapper. {wrapper_example}"
             )
         return (
             "output_schema on claude-code nodes must have top-level type: object "
-            f"(got type: {top_level_type!r}). "
+            f"({violation.cause}). "
             "The Anthropic API rejects non-object top-level schemas in tool input_schema "
             f"wrappers. {wrapper_example}"
         )
@@ -313,15 +317,6 @@ class ClaudeCodeNode(Node):
         else:
             shared.setdefault("_schema_error", msg)
 
-    @staticmethod
-    def _looks_like_legacy_python_alias_format(schema: dict) -> bool:
-        """Detect the old custom Python-alias output_schema format."""
-        json_schema_markers = {"type", "$ref", "$schema", "oneOf", "anyOf", "allOf", "enum", "const"}
-        if any(marker in schema for marker in json_schema_markers):
-            return False
-        python_alias_types = {"str", "int", "bool", "list", "dict", "float"}
-        return any(isinstance(value, dict) and value.get("type") in python_alias_types for value in schema.values())
-
     def _validate_cwd(self, cwd: Optional[str]) -> str:
         """Validate and normalize working directory."""
         if not cwd:
@@ -341,30 +336,25 @@ class ClaudeCodeNode(Node):
             raise ValueError(f"Restricted directory: {cwd}")
         return cwd
 
-    def _validate_tools(self, allowed_tools: Optional[list]) -> Optional[list]:
-        """Validate allowed tools list.
+    def _validate_optional_tool_list(self, value: Optional[list], param_name: str) -> Optional[list]:
+        """Validate a tool-list parameter.
 
-        If None or empty, all tools are available (SDK default).
-        If provided, pass through to SDK without validation - let SDK handle unknown tools.
+        Empty / falsy → ``None`` (SDK default applies — meaning differs by
+        caller: ``allowed_tools=None`` opens all tools, ``disallowed_tools=None``
+        blocks none). Non-list raises ``TypeError``; otherwise pass through and
+        let the SDK reject unknown tool names / patterns.
         """
-        if not allowed_tools:
-            return None  # All tools available
-        if not isinstance(allowed_tools, list):
-            raise TypeError(f"allowed_tools must be a list, got {type(allowed_tools).__name__}")
-        return allowed_tools
+        if not value:
+            return None
+        if not isinstance(value, list):
+            raise TypeError(f"{param_name} must be a list, got {type(value).__name__}")
+        return value
+
+    def _validate_tools(self, allowed_tools: Optional[list]) -> Optional[list]:
+        return self._validate_optional_tool_list(allowed_tools, "allowed_tools")
 
     def _validate_disallowed_tools(self, disallowed_tools: Optional[list]) -> Optional[list]:
-        """Validate disallowed tools list.
-
-        If None or empty, no tools are blocked (SDK default).
-        If provided, pass through to SDK without validation - let SDK handle unknown patterns.
-        Supports pattern matching like "Bash(git:*)", "Bash(pflow:*)".
-        """
-        if not disallowed_tools:
-            return None  # No restrictions
-        if not isinstance(disallowed_tools, list):
-            raise TypeError(f"disallowed_tools must be a list, got {type(disallowed_tools).__name__}")
-        return disallowed_tools
+        return self._validate_optional_tool_list(disallowed_tools, "disallowed_tools")
 
     def _validate_max_turns(self, max_turns: Any) -> int:
         """Validate and convert max_turns parameter."""
