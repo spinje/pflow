@@ -56,6 +56,20 @@ Highest-value open items:
 
 Closed:
 
+- ~~S#5 — Failed-batch trace drops completed nested LLM events~~ — closed in
+  Bundle 8 (2026-05-15). Runtime trace-capture bug: ``execute_batch`` popped
+  per-item trace items into a local before raising for fail_fast errors,
+  losing them on the engine's except path. Fix moved the drain from producer
+  (``batch_executor``) to consumer (``engine._execute_node``), using the
+  shared store as the recovery channel symmetric with the success path.
+- ~~S#9 — Parent-trace redirect hint missed non-batch sub-workflows~~ —
+  closed in Bundle 8 (2026-05-15). Bundle 4 shipped the redirect-hint logic
+  but only exercised it via homogeneous-batch fixtures; the production
+  ``sub_workflow_events`` path silently failed because
+  ``_workflow_appears_as_child`` called ``TraceTree.walk`` without an
+  ``edges`` map. Fix moved edge derivation into ``TraceTree`` itself: the
+  trace's own ``_pflow_child_workflow_paths`` field now drives a
+  ``default_edges`` map merged into every ``walk()`` at top-level entry.
 - ~~Full shadowed-cache summary math~~ — closed as misframed in Bundle 1
   (2026-05-14). See section 1 below for the reasoning.
 - ~~`PerCallRow.input_tokens_estimated` still has mixed units~~ — closed in

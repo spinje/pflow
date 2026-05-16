@@ -22,7 +22,7 @@ work across the trace tree; flat per-event work doesn't need them.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -72,10 +72,19 @@ class TraceTree:
     Format-version validation belongs to callers because CLI/MCP loaders own
     their exit-code contracts. This class validates only the tree shape it
     traverses.
+
+    ``default_edges`` (``{node_id: child_workflow_path}``) is auto-derived from
+    the trace itself by reading every event's ``node_output._pflow_child_workflow_paths``.
+    :meth:`walk` uses these by default so the common ``tree.walk(workflow_path=root)``
+    case correctly attributes ``sub_workflow_events`` to their child workflow.
+    Callers that have richer attribution (e.g. the cross-workflow analyzer, which
+    also knows IR-static children that didn't execute) pass ``edges=`` to layer
+    on top — caller's mapping wins on conflict.
     """
 
     events: tuple[Mapping[str, Any], ...]
     format_version: str = ""
+    default_edges: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, trace_data: Mapping[str, Any]) -> TraceTree:
@@ -86,7 +95,11 @@ class TraceTree:
             events = tuple(event for event in nodes if isinstance(event, Mapping))
         else:
             raise ValueError(f"trace nodes must be a list, got {type(nodes).__name__}")
-        return cls(events=events, format_version=str(trace_data.get("format_version", "")))
+        return cls(
+            events=events,
+            format_version=str(trace_data.get("format_version", "")),
+            default_edges=_collect_default_edges(events),
+        )
 
     def event_for(self, node_id: str, *, requires_llm_call: bool = False) -> Mapping[str, Any] | None:
         """Return a top-level event by node id.
@@ -133,7 +146,17 @@ class TraceTree:
         the child's workflow_path. Yielded events carry that workflow_path.
         For 2.1 traces (no per-event ``workflow_path`` field), this is the
         only attribution mechanism.
+
+        Default edges: at top-level entry (``events`` is ``None``), the tree's
+        ``default_edges`` (auto-derived from ``_pflow_child_workflow_paths``)
+        are merged with the caller's ``edges``. The caller's mapping wins on
+        conflict so explicit IR-derived attribution stays authoritative.
         """
+        if events is None:
+            merged: dict[str, str] = dict(self.default_edges)
+            if edges:
+                merged.update(edges)
+            edges = merged
         source = self.events if events is None else events
         for raw_event in source:
             if not isinstance(raw_event, Mapping):
@@ -252,7 +275,15 @@ class TraceTree:
         historical children. Cached non-LLM events without LLM descendants do
         not contribute LLM cost evidence. Non-cached events yield their LLM
         calls and recurse normally.
+
+        Default edges: at top-level entry, merges :attr:`default_edges` with
+        the caller's ``edges`` (caller wins on conflict). See :meth:`walk`.
         """
+        if events is None:
+            merged: dict[str, str] = dict(self.default_edges)
+            if edges:
+                merged.update(edges)
+            edges = merged
         source = self.events if events is None else events
         for raw_event in source:
             if not isinstance(raw_event, Mapping):
@@ -494,6 +525,45 @@ def _mapping_events(value: Any) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, list):
         return ()
     return tuple(item for item in value if isinstance(item, Mapping))
+
+
+def _collect_default_edges(events: Iterable[Mapping[str, Any]]) -> dict[str, str]:
+    """Derive ``{node_id: child_workflow_path}`` from a trace event tree.
+
+    Reads ``node_output._pflow_child_workflow_paths`` on every event in the
+    tree (top-level, batch items, sub-workflow descendants). The runtime
+    populates that field for every WorkflowExecutor invocation that succeeds
+    in resolving its child workflow path — see ``runtime/workflow_executor.py
+    ::_record_child_workflow_path``.
+
+    Used as the default ``edges`` argument for :meth:`TraceTree.walk` so the
+    common case (no explicit edges from a cross-workflow analyzer) still
+    attributes child events to the correct workflow path. Callers that have
+    additional IR-static knowledge layer their own ``edges=`` on top.
+    """
+    edges: dict[str, str] = {}
+
+    def visit(items: Iterable[Mapping[str, Any]]) -> None:
+        for event in items:
+            if not isinstance(event, Mapping):
+                continue
+            node_output = event.get("node_output")
+            if isinstance(node_output, Mapping):
+                paths = node_output.get("_pflow_child_workflow_paths")
+                if isinstance(paths, Mapping):
+                    for node_id, path in paths.items():
+                        if isinstance(node_id, str) and isinstance(path, str) and path:
+                            edges[node_id] = path
+            # Recurse into batch items + their nested events
+            for item in event.get("batch_items") or []:
+                if isinstance(item, Mapping):
+                    visit([item])
+                    visit(_mapping_events(item.get("events")))
+            # Recurse into sub_workflow_events
+            visit(_mapping_events(event.get("sub_workflow_events")))
+
+    visit(events)
+    return edges
 
 
 def _is_llm_like_event(event: Mapping[str, Any], *, assume_llm_event: bool) -> bool:

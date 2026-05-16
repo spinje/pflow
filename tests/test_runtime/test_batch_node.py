@@ -66,7 +66,16 @@ def _run_batch(
     node_id: str = "test_node",
     execute_single_fn=None,
 ) -> tuple[str, list[dict]]:
-    """Helper to run execute_batch with convenient defaults."""
+    """Helper to run execute_batch with convenient defaults.
+
+    Mirrors the engine: drives ``execute_batch`` then drains the per-item trace
+    accumulator from the shared store. Returns ``(action, batch_trace_items)``
+    so tests can assert on both without coupling to the (deliberately) narrower
+    ``execute_batch`` return surface — the engine is the only production
+    consumer of the trace items.
+    """
+    from pflow.runtime.engine.batch_executor import _collect_batch_trace
+
     batch_config = BatchConfig(
         items_template=items_template,
         item_alias=item_alias,
@@ -78,7 +87,15 @@ def _run_batch(
     )
     config = _make_node_config(node_id=node_id, batch_config=batch_config)
     fn = execute_single_fn or _simple_execute_single_fn
-    return execute_batch(node, config, shared, fn)
+    try:
+        action = execute_batch(node, config, shared, fn)
+    except Exception:
+        # Same recovery channel as the engine's except handler — drain the
+        # accumulator even when the batch raises so test assertions about
+        # the completed-before-failure trace shape remain valid.
+        _collect_batch_trace(shared, node_id)
+        raise
+    return action, _collect_batch_trace(shared, node_id)
 
 
 # =============================================================================

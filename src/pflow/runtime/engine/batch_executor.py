@@ -212,8 +212,14 @@ def execute_batch(
     config: NodeConfig,
     shared: dict[str, Any],
     execute_single_fn: Callable,
-) -> tuple[str, list[dict]]:
+) -> str:
     """Execute a batch node: resolve items, iterate, aggregate results.
+
+    Per-item trace events accumulate in ``shared["_batch_trace"][config.node_id]``
+    and remain there for the caller to drain via ``_collect_batch_trace``. This is
+    the recovery channel for both success and exception paths — when this function
+    raises (fail_fast with errors), the caller's except handler can still collect
+    the items that completed before the failure. The engine is the sole consumer.
 
     Args:
         node: Bare node instance
@@ -222,7 +228,7 @@ def execute_batch(
         execute_single_fn: Callback (node, config, item_shared) -> (action, last_resolutions, template_errors)
 
     Returns:
-        (action, batch_trace_items)
+        The aggregated action string.
     """
     batch_config = config.batch_config
     if batch_config is None:
@@ -258,11 +264,12 @@ def execute_batch(
         )
 
     action = _aggregate_batch_results(exec_res, errors, item_timings, batch_config, config.node_id, shared)
-    batch_trace_items = _collect_batch_trace(shared, config.node_id)
     _push_batch_warnings(shared, exec_res, errors, config.node_id, batch_config)
 
     # fail_fast: raise AFTER aggregation so shared[node_id] has the partial
     # batch_metadata/errors list that step 17.5 will archive into __failures__.
+    # Per-item trace events stay in shared["_batch_trace"][node_id] for the
+    # engine's except handler to drain — never dropped on the failure path.
     if batch_config.error_handling == "fail_fast" and errors:
         first_error = errors[0]
         if first_error.get("exception") is not None:
@@ -274,7 +281,7 @@ def execute_batch(
             message = f"{message}\n\n{details}"
         raise RuntimeError(message)
 
-    return action, batch_trace_items
+    return action
 
 
 def _execute_batch_item(

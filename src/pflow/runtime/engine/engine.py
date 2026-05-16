@@ -36,7 +36,7 @@ from pflow.runtime.node_state import (
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .api_warning_detector import detect_api_warning
-from .batch_executor import execute_batch
+from .batch_executor import _collect_batch_trace, execute_batch
 from .instrumentation import (
     apply_memo_hit,
     cache_result,
@@ -567,7 +567,13 @@ class WorkflowEngine:
 
             # 9. Execute: batch or single
             if config.batch_config:
-                action, batch_trace_items = execute_batch(node, config, shared, self._execute_single_node)
+                action = execute_batch(node, config, shared, self._execute_single_node)
+                # Drain accumulated per-item trace events here, not in execute_batch
+                # itself. The shared store is the recovery channel — if execute_batch
+                # had raised (fail_fast all-failed), the except handler below drains
+                # the same buffer and the completed-before-failure events survive
+                # into the trace.
+                batch_trace_items = _collect_batch_trace(shared, config.node_id)
             else:
                 # Set resolved params on node and execute
                 if resolved_params is not None:
@@ -694,6 +700,14 @@ class WorkflowEngine:
 
             # Extract partial resolutions from template errors (attached by resolve_templates)
             error_resolutions = getattr(e, "_pflow_partial_resolutions", None) or last_resolutions
+
+            # Drain per-item trace events on the failure path too. When
+            # execute_batch raises (fail_fast all-failed), items that completed
+            # before the failing item still appear in shared["_batch_trace"].
+            # Without this drain, completed nested LLM work would silently vanish
+            # from the trace, and analyze-cache would report `[unexecuted]` for
+            # nodes that actually ran.
+            batch_trace_items = _collect_batch_trace(shared, config.node_id) if config.batch_config else None
 
             record_trace(
                 config.node_id,

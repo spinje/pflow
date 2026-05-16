@@ -7203,6 +7203,119 @@ def test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent(
     assert "pflow analyze-cache" in redirect_notes[0]
 
 
+def test_workflow_appears_as_child_detects_sub_workflow_via_default_edges(
+    tmp_path: Path,
+) -> None:
+    """Bug A regression: ``_workflow_appears_as_child`` must detect the
+    analyzed workflow nested under a parent via ``sub_workflow_events``
+    (non-batch sub-workflow) — the most common shape, missed by Bundle 4's
+    original tests which exercised only the homogeneous-batch path.
+
+    Pre-fix shape:
+      ``_workflow_appears_as_child`` called ``tree.walk(workflow_path=trace_root)``
+      WITHOUT an ``edges`` argument. ``TraceTree.walk`` falls back to inheriting
+      the parent's ``workflow_path`` when ``edges`` is None, so every yielded
+      event under ``sub_workflow_events`` carried the parent path. The match
+      against the child's ``lookup_path`` always failed — redirect note never
+      fired. ``trace_workflow_relationship`` regressed to ``"different_workflow"``.
+
+    Post-fix shape:
+      ``TraceTree.from_dict`` auto-derives ``default_edges`` from each event's
+      ``node_output._pflow_child_workflow_paths`` (the runtime populates this
+      via ``WorkflowExecutor._record_child_workflow_path``). ``walk()`` merges
+      defaults with caller-provided ``edges`` so the common
+      ``tree.walk(workflow_path=root)`` case correctly attributes
+      sub-workflow events to the child path.
+
+    Pitfall #19 defense: builds a trace fixture matching the REAL producer shape
+    (including ``_pflow_child_workflow_paths`` in ``node_output``), not the older
+    synthetic shape that bypassed the bug. Mutation contract:
+      - Remove ``default_edges`` propagation in ``TraceTree.walk`` → this test
+        fails (redirect note absent).
+      - Remove the ``node_output._pflow_child_workflow_paths`` collection in
+        ``_collect_default_edges`` → same failure.
+    """
+    child_path = str(tmp_path / "child.pflow.md")
+    parent_path = str(tmp_path / "parent.pflow.md")
+    child_ir = {
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"prompt": "say ok", "model": "anthropic/claude-sonnet-4-5"},
+            }
+        ]
+    }
+
+    # Build a parent trace with a NON-BATCH sub-workflow event (sub_workflow_events
+    # tier — the path Bundle 4's homogeneous-batch test never exercised). Crucially,
+    # populate node_output._pflow_child_workflow_paths the way the runtime does.
+    summarize_event = {
+        "node_id": "summarize",
+        "node_type": "LLMNode",
+        "duration_ms": 1.0,
+        "success": True,
+        "timestamp": "2026-05-15T00:00:00",
+        "node_output": {"response": "ok"},
+        "llm_call": {
+            "model": "anthropic/claude-sonnet-4-5",
+            "input_tokens": 50,
+            "output_tokens": 5,
+            "total_tokens": 55,
+            "cost_usd": 0.001,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        },
+        "llm_prompt": "say ok",
+        "llm_response": "ok",
+    }
+    parent_event = {
+        "node_id": "call-child",
+        "node_type": "WorkflowExecutor",
+        "duration_ms": 1.0,
+        "success": True,
+        "timestamp": "2026-05-15T00:00:00",
+        "node_params": {"workflow": child_path},
+        # The load-bearing field for default_edges derivation:
+        "node_output": {"_pflow_child_workflow_paths": {"call-child": child_path}},
+        "sub_workflow_events": [summarize_event],
+    }
+    trace_dict = {
+        "format_version": "2.3.0",
+        "workflow_name": "parent",
+        "workflow_path": parent_path,
+        "start_time": "2026-05-15T00:00:00",
+        "end_time": "2026-05-15T00:00:01",
+        "duration_ms": 1.0,
+        "nodes": [parent_event],
+        "nodes_executed": 1,
+        "nodes_failed": 0,
+        "failed_node_ids": [],
+        "final_status": "completed",
+        "execution_id": "test",
+    }
+    trace_file = tmp_path / "parent-trace.json"
+    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+
+    result = analyze(
+        child_ir,
+        workflow_path=child_path,
+        trace_path=trace_file,
+        memo_cache=None,
+    )
+
+    # Bug A signal #1: structured field flips to parent_redirect.
+    assert result.summary.trace_workflow_relationship == "parent_redirect", (
+        f"expected parent_redirect, got: {result.summary.trace_workflow_relationship!r}"
+    )
+
+    # Bug A signal #2: text rendering carries the redirect note + suggested command.
+    redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
+    assert len(redirect_notes) == 1, f"expected redirect note, got: {result.notes}"
+    assert child_path in redirect_notes[0]
+    assert "pflow analyze-cache" in redirect_notes[0]
+
+
 def test_scope_mismatch_emits_generic_note_when_analyzed_workflow_absent_from_trace(
     tmp_path: Path,
 ) -> None:

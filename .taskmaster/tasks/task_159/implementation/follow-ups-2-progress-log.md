@@ -1255,3 +1255,214 @@ Tests (2 files):
 ### Closes
 
 - Final pre-merge polish for Bundle 6. Implementation is merge-ready.
+
+## 2026-05-15 — Bundle 8: two leaky-abstraction fixes (closes S#5, S#9)
+
+Repro verification surfaced two bugs hiding behind shipped infrastructure: the
+redirect-hint introduced in Bundle 4 didn't fire in real production traces, and
+failed batch sub-workflows silently dropped completed nested LLM events. Both
+turned out to be the same shape — a leaky abstraction where the producer side
+required the consumer to remember boilerplate. One-line patches would have
+fixed the symptoms; the structural fix below eliminates each bug class.
+
+### Bug A — `_workflow_appears_as_child` missed sub_workflow_events
+
+`pflow analyze-cache <child> --from-trace <parent-trace>` reported the
+generic scope-mismatch note instead of the redirect hint Bundle 4 was
+designed to fire. The single broken call site
+(`analyze.py:1669::_workflow_appears_as_child`) called
+`tree.walk(workflow_path=trace_root)` without an `edges=` map. Eight other
+production walkers (`analyze.py:2082, 2138, 2199, 2622, 6392, 6468, 7838,
+8121`) all built an edges map via `_edge_child_paths(cw_result)` first.
+Bundle 4's unit test exercised homogeneous-batch fixtures (`workflow_path`
+stamped directly on items) which goes through a different walker branch
+(`_child_workflow_path_from_batch_item`) — Pitfall #19 again.
+
+**Fix shape — push edge derivation into the data structure.**
+`TraceTree.from_dict` now auto-derives `default_edges` from every event's
+`node_output._pflow_child_workflow_paths` (the runtime's authoritative
+record, populated by `workflow_executor.py::_record_child_workflow_path`).
+`TraceTree.walk()` merges `default_edges` with the caller's explicit
+`edges=` at top-level entry; caller's mapping wins on conflict so the 8
+existing call sites keep their authoritative IR-derived attribution.
+
+Why this over the one-line patch (inline-derive at the broken site):
+- One-line patch fixes the symptom; leaves the leak — the next walker site
+  added without `edges=` reintroduces the bug class.
+- Structural fix is ~15 LOC (`_collect_default_edges` helper +
+  `default_edges` field + 8-line merge in `walk()` / `iter_actual_cost_events()`).
+- The walker is the data-structure's API surface; remembering to build
+  edges before walking is responsibility the data structure should own.
+
+### Bug B — failed batch dropped completed nested LLM events
+
+`pflow analyze-cache <wrapper> --from-trace <failed-batch-trace>` reported
+`calls=0 [unexecuted]` for nested LLM nodes that visibly ran before the
+batch failed. Trace JSON inspection showed the events were entirely absent
+from the file: no `before-failure`, no `gemini`, no `llm_usage`, no
+`sub_workflow_events`, no top-level `llm_summary`. The runtime had silently
+dropped completed nested work on the failure path.
+
+Root cause at `batch_executor.py::execute_batch`: the producer popped
+batch trace items into a local (`_collect_batch_trace(shared, node_id)`)
+BEFORE raising for `fail_fast` with errors. The engine's except handler at
+`engine.py:705` then passed the never-reassigned `batch_trace_items=None`
+to `record_trace`. The completed nested events sat on `execute_batch`'s
+local — about to be returned — but the raise prevented the return.
+
+**Fix shape — consumer drains, producer accumulates.** `execute_batch`
+stops calling `_collect_batch_trace` and stops packaging items in its
+return tuple. Return signature widens from `tuple[str, list[dict]]` →
+`str`. The engine drains `shared["_batch_trace"][node_id]` directly in
+both success and exception paths. The shared store is now the single
+recovery channel symmetric with how it's accumulated.
+
+Why this over the one-line patch (add a `_collect_batch_trace` call in
+the engine's except handler):
+- One-line patch creates two parallel pathways for the same data — return
+  tuple AND shared store drain. Two ways to get the data, only one works
+  on failure. Same leak shape, patched on the failure path.
+- Structural fix removes the tuple pathway entirely. Consumer reads the
+  buffer regardless of how the producer terminated.
+
+### Why "what would top-10% codebases do" mattered here
+
+Both bugs are textbook examples of the leaky-abstraction failure mode:
+the producer's API requires the consumer to know boilerplate that's the
+producer's responsibility. Top-10% codebases (rustc, mypy, ruff) push
+this kind of responsibility into the data structure that owns the
+information. Two fixes for two leaks become one pattern — "producer
+accumulates, consumer drains" / "data structure derives, caller
+augments" — and the bug class is structurally closed rather than
+tactically patched.
+
+The user's directive ("prioritize simplicity of the FINAL code, not how
+easy it is to get there") was load-bearing here. The one-line patches
+were faster to write and easier to merge. The structural fixes are
+fewer total lines once the merge dance is accounted for AND eliminate
+the recurrence vector. Six months from now, the future agent reading
+`tree.walk(workflow_path=root)` doesn't need to wonder "do I need
+edges=?"; the future agent reading `execute_batch` doesn't need to
+trace where the trace items went. The final code is obvious.
+
+### Tests (Pitfall #19 defenses)
+
+Three new regression tests, all driving real production code paths:
+
+- **`test_walk_auto_derives_edges_from_pflow_child_workflow_paths`**
+  (`tests/test_core/test_trace_tree.py`) — builds a trace dict with
+  `node_output._pflow_child_workflow_paths` populated, asserts
+  `tree.walk(workflow_path=root)` (no explicit edges) yields the
+  inner LLM event with the child's workflow_path. Also asserts
+  caller-provided edges WIN on conflict (preserves 8 existing call sites).
+
+- **`test_workflow_appears_as_child_detects_sub_workflow_via_default_edges`**
+  (`tests/test_core/test_cache_analysis_analyze.py`) — builds a trace
+  fixture matching the REAL producer shape (non-batch sub-workflow with
+  `_pflow_child_workflow_paths` in `node_output`), analyzes the CHILD
+  workflow, asserts `summary.trace_workflow_relationship == "parent_redirect"`
+  and the redirect note fires. Lives next to Bundle 4's negative test
+  (`test_scope_mismatch_emits_generic_note_when_analyzed_workflow_absent_from_trace`)
+  which continues to gate the false-positive direction.
+
+- **`test_failed_batch_with_completed_nested_llm_persists_to_trace`**
+  (`tests/test_runtime/test_trace_integration.py::TestFailedBatchItemsInTrace`) —
+  drives `WorkflowEngine.run()` end-to-end on a real-shape batch+sub-workflow
+  with a successful inner shell node followed by a failing one. Asserts
+  the failed batch's `batch_items[0].events` contains the completed
+  `before-failure` event with `success=True`. Mutation contract documented
+  inline.
+
+All three are mutation-verified: reverting either production fix causes the
+corresponding test to fail with a precise error message.
+
+### Files touched
+
+Production (3 files):
+- `src/pflow/core/trace_tree.py` — `default_edges` field on `TraceTree`
+  dataclass; new `_collect_default_edges` module-level helper; merge in
+  `walk()` and `iter_actual_cost_events()` at top-level entry.
+- `src/pflow/runtime/engine/batch_executor.py` — `execute_batch` stops
+  draining and returns just `action`; docstring documents the shared-store
+  recovery contract.
+- `src/pflow/runtime/engine/engine.py` — `_collect_batch_trace` imported;
+  drain happens in `_execute_node`'s success path (after `execute_batch`)
+  AND in the except handler (before `record_trace`).
+
+Tests (4 files):
+- `tests/test_core/test_trace_tree.py` — `test_walk_auto_derives_edges_from_pflow_child_workflow_paths`.
+- `tests/test_core/test_cache_analysis_analyze.py` — `test_workflow_appears_as_child_detects_sub_workflow_via_default_edges`.
+- `tests/test_runtime/test_trace_integration.py` — `test_failed_batch_with_completed_nested_llm_persists_to_trace`.
+- `tests/test_runtime/test_batch_node.py` — `_run_batch` test helper updated
+  to drain the shared store itself (mirrors the engine's role). Returns
+  `(action, batch_trace_items)` so existing 8 callers don't change shape.
+  Wraps `execute_batch` in try/except to drain on raise.
+
+Docs (1 file):
+- `.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md`
+  — S#5 + S#9 added to the Closed section with one-paragraph closeout
+  reasoning + reopen criteria.
+
+### Verification
+
+- **Bug A end-to-end**: `pflow analyze-cache repro-03-child.pflow.md --from-trace <parent-trace> --format json` reports `summary.trace_workflow_relationship: "parent_redirect"` and renders the redirect note pointing to the trace root.
+- **Bug B end-to-end**: `pflow scratchpads/pflow-cache-repros/repro-06-failed-wrapper.pflow.md --no-cache` produces a trace JSON with `batch_items` populated, `llm_summary.total_calls == 2`, and `before-failure` events present. `pflow analyze-cache ... --from-trace ... --all-rows` shows the `before-failure` row with `calls 2` instead of `[unexecuted]`.
+- **Focused suite**: `tests/test_core/ tests/test_runtime/ tests/test_cli/ tests/test_execution/` — 5556 passed, 1 skipped.
+- **Baseline oracle** (`verify.sh` with sandbox-safe `uv` shim): **87 passed, 0 drifted, 0 harness errors**.
+- **Lint/types**: `ruff check` clean on touched files; `mypy` clean on touched files.
+- **Mutation verification**: Bug A — removing `default_edges` merge in `walk()` fails 2 tests with the wrong workflow_path attribution. Bug B — restoring `batch_trace_items = None` in the except handler fails the failed-batch persistence test.
+
+### Implementation efficiency
+
+The two bugs were investigated in parallel via `pflow-codebase-searcher`
+subagents (each ~130s wall-clock, independent file surfaces). Both
+investigations returned precise root cause + line numbers + suggested fix
+shape. Implementation took ~45 min sequential including the type-error
+refactor for `Optional[list]` annotation handling. Mutation verification
+~10 min. Total wall-clock from investigation start to mutation-verified
+fix: ~3.5 hours.
+
+### Key insights / learnings
+
+1. **One-line patches are the wrong fix when the bug is an abstraction
+   leak.** Both bugs had tempting symptom-level patches. Both would have
+   left the bug class open. The structural fixes are ~15 LOC each and
+   eliminate the recurrence vector — that's the right ratio for
+   "simplicity of the final code" over "easy path to merge."
+
+2. **Pitfall #19 strikes twice in one sprint.** Bug A's unit test
+   passed for months because the synthetic `homogeneous_workflow_batch_event`
+   fixture happens to stamp `workflow_path` on items directly, bypassing
+   the broken `sub_workflow_events` code path. Bug B was silent because
+   the trace file simply didn't have the data — synthetic tests that
+   constructed trace dicts with batch_items pre-populated would have
+   passed even on broken production. Both regressions are now locked by
+   tests that drive real production code paths end-to-end.
+
+3. **Investigation > planning.** The parallel `pflow-codebase-searcher`
+   investigations returned root cause + line numbers + suggested fix in
+   a way that made the structural fix obvious. Without the investigation,
+   the natural instinct would have been the one-line patch. Bundle 8
+   demonstrates the pattern other bundles in follow-ups-2 also showed:
+   when the followups doc framing seems narrow, investigate before
+   accepting the framing.
+
+4. **Type annotation hygiene matters for refactor readability.**
+   Re-declaring `batch_trace_items: Optional[list]` in the except handler
+   tripped mypy's no-redef. The fix was to hoist the declaration to the
+   same location as `child_trace_events: Optional[list] = None` — the
+   pattern was already in the codebase. Following the existing pattern
+   was both correct and cheaper than introducing a new one.
+
+### Closes
+
+- **S#5** (failed-batch trace drops completed nested LLM events) — closed.
+- **S#9** (parent-trace redirect hint missed non-batch sub-workflows) —
+  closed for the production code path Bundle 4 didn't lock down.
+
+### What's next
+
+The cross-consumer prompt-file index work (S#15+S#17+S#20) remains its own
+task per the Bundle 7 closeout. With S#5 + S#9 closed in Bundle 8, the
+remaining open scratchpad items are either feature-sized (S#8 replay-from-
+trace) or already deferred to their own task. The branch is merge-ready.
