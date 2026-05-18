@@ -811,7 +811,7 @@ class TraceListEntry:
 
     path: Path
     final_status: str
-    recorded_at: str
+    recorded_at: str | None
     duration_ms: float | None
     llm_call_count: int
     total_cost_usd: float | None
@@ -1843,10 +1843,11 @@ def _build_trace_list_entry(
         drift_count = len(current_models.symmetric_difference(trace_models))
     else:
         drift_count = 0
+    start_time_raw = data.get("start_time")
     return TraceListEntry(
         path=trace_path,
         final_status=str(data.get("final_status") or "success"),
-        recorded_at=str(data.get("start_time") or ""),
+        recorded_at=start_time_raw if isinstance(start_time_raw, str) and start_time_raw else None,
         duration_ms=_safe_float(data.get("duration_ms")),
         llm_call_count=_safe_int_from_mapping(llm_summary, "total_calls") or 0,
         total_cost_usd=_safe_float(llm_summary.get("total_cost_usd")),

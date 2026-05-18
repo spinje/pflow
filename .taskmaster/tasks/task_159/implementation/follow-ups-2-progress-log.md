@@ -1606,4 +1606,6 @@ Three fixes from a multi-agent code review of the staged PR.
 
 **W5 — `engine/CLAUDE.md` `execute_batch` signature drift.** The doc still said `→ (action, batch_trace_items)` (the pre-Bundle-8 shape). Updated to `→ str` with the shared-store recovery channel contract documented inline. Added a gotcha entry pinning "never drain inside `execute_batch`" so future agents don't re-introduce Bug B.
 
+**S1 + S2 — `--list-traces` polish (suggestions).** `TraceListEntry.recorded_at` was typed `str` but stored `""` on missing input; the JSON renderer translated `""` → `None` (wire format already correct, but the dataclass annotation lied). Typed to `str | None` and store `None` directly. Cosmetic: `"1 LLM call(s)"` now reads `"1 LLM call"` (matches the `"difference"/"differences"` pattern at line 46), and sub-second runs render as `"47ms"` instead of `"0.0s"` via a new `_format_duration` helper. No baseline regen (no `--list-traces` baseline exists; the `"LLM call(s)"` text in render_text.py is unchanged).
+
 Verification: cache-analysis + runtime + trace focused suite **2006 passed, 1 skipped**; baseline oracle **87 passed, 0 drifted**; `ruff check` + `mypy` on touched files clean. W2/W3/W4/W6 from the review (lower severity) deferred — captured in `scratchpads/code-review-pr405-20260518.md`.

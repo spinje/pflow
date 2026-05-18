@@ -8,6 +8,14 @@ from .analyze import TraceListEntry
 from .render_text import _format_recorded_timestamp
 
 
+def _format_duration(duration_ms: float | None) -> str:
+    if duration_ms is None:
+        return "duration unavailable"
+    if duration_ms < 1000:
+        return f"{round(duration_ms)}ms"
+    return f"{duration_ms / 1000:.1f}s"
+
+
 def render_traces_list_text(
     entries: list[TraceListEntry],
     *,
@@ -30,12 +38,13 @@ def render_traces_list_text(
         # Reuse the same YYYY-MM-DD HH:MM formatter the ``Trace:`` header uses
         # so timestamps render consistently across analyze-cache surfaces.
         formatted_timestamp = _format_recorded_timestamp(entry.recorded_at)
+        call_noun = "LLM call" if entry.llm_call_count == 1 else "LLM calls"
         metadata = [
             entry.final_status,
             f"recorded {formatted_timestamp}" if formatted_timestamp else "no timestamp",
-            f"{entry.llm_call_count} LLM call(s)",
+            f"{entry.llm_call_count} {call_noun}",
             f"${entry.total_cost_usd:.4f}" if entry.total_cost_usd is not None else "cost unavailable",
-            f"{entry.duration_ms / 1000:.1f}s" if entry.duration_ms is not None else "duration unavailable",
+            _format_duration(entry.duration_ms),
         ]
         lines.append(f"      {', '.join(metadata)}")
         if entry.models_used:
