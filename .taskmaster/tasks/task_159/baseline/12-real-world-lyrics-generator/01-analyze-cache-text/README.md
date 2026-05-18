@@ -17,7 +17,7 @@ nesting (parent → song-creator → chorus-chooser).
 - Emits opaque-prompt warning on chorus-chooser's `generate-chorus-options`
   (prompt is `${item.prompt}` from a code node).
 - Emits sub-workflow-cache-undeclared on chorus-chooser.
-- Emits per-node below-min-tokens warnings for chunks that resolve to LLM
+- Emits per-node below-min-predicted warnings for chunks that resolve to LLM
   responses (analyzer estimates these as small literals because there's no
   run history — see F-04 in FINDINGS.md).
 

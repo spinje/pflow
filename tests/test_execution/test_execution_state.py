@@ -144,6 +144,50 @@ class TestBuildExecutionSteps:
         assert steps[2]["node_id"] == "soak"
         assert steps[2]["status"] == "completed"
 
+    def test_failed_batch_steps_preserve_full_item_and_summary(self):
+        """Execution-state rows remain full-fidelity for in-process callers."""
+        large_item = {"label": "oversized-item", "payload": "PAYLOAD-START token199 PAYLOAD-END"}
+        item_summary = {
+            "summary_version": 1,
+            "type": "dict",
+            "label": "oversized-item",
+            "size_chars": 64,
+            "sha256": "123456789abc",
+            "summary": "label='oversized-item'; payload=<str 34 chars sha256=123456789abc>",
+            "truncated": True,
+        }
+        workflow_ir = {"nodes": [{"id": "batch"}]}
+        shared_storage = {
+            "__failures__": {
+                "batch": {
+                    "data": {
+                        "count": 1,
+                        "success_count": 0,
+                        "error_count": 1,
+                        "errors": [
+                            {
+                                "index": 0,
+                                "item": large_item,
+                                "item_summary": item_summary,
+                                "error": "forced batch failure for oversized-item",
+                                "exception": RuntimeError("boom"),
+                            }
+                        ],
+                        "batch_metadata": {"execution_mode": "sequential"},
+                    },
+                    "category": "node_action_error",
+                    "error": "boom",
+                }
+            },
+            "__execution__": {"completed_nodes": [], "failed_node": "batch"},
+        }
+
+        steps = build_execution_steps(workflow_ir, shared_storage, None)
+
+        detail = steps[0]["batch_error_details"][0]
+        assert detail["item"] == large_item
+        assert detail["item_summary"] == item_summary
+
 
 class TestBuildExecutionStepsStderr:
     """Tests for stderr detection in build_execution_steps."""

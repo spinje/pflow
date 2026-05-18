@@ -25,14 +25,15 @@
 
 ## Per-call cache report
   How to read each row:
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
 
-  node       model                       input  could_cache  ratio  notes
-  ------------------------------------------------------------------
+  node       model                       input  ready  upside  ratio  notes
+  --------------------------------------------------------------------
 
-  tag        anthropic/claude-haiku-4-5      9            1    11%  below provider min (need ≥4,096 for this model)
-  summarize  anthropic/claude-haiku-4-5      7            1    14%  below provider min (need ≥4,096 for this model)
-  translate  anthropic/claude-haiku-4-5      7            1    14%  below provider min (need ≥4,096 for this model)
+  tag        anthropic/claude-haiku-4-5      9      1       1    11%  declare prompt_cache; below provider min (need ≥4,096 for this model)
+  summarize  anthropic/claude-haiku-4-5      7      1       1    14%  declare prompt_cache; below provider min (need ≥4,096 for this model)
+  translate  anthropic/claude-haiku-4-5      7      1       1    14%  declare prompt_cache; below provider min (need ≥4,096 for this model)
 
   Token estimate confidence:
     · Projected input tokens for: tag, summarize, translate.

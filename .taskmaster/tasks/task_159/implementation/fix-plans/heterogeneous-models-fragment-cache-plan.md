@@ -224,7 +224,7 @@ Both default to `("caching",)` — existing topic, no new guide section needed i
      - `test_fragmentation_and_write_penalty_coemit_when_one_group_has_size_one`
 
 8. **`tests/test_cli/test_analyze_cache.py`**
-   - Add 1 `CliRunner.invoke(...)` JSON test per new ID asserting the catalog ID appears in `payload["warnings"]`. Mirror line 122-142 (existing `cache.below-min-tokens` precedent).
+   - Add 1 `CliRunner.invoke(...)` JSON test per new ID asserting the catalog ID appears in `payload["warnings"]`. Mirror line 122-142 (existing `cache.below-min-predicted` precedent).
 
 ## Edge cases (covered by tests)
 
@@ -293,6 +293,6 @@ uv run pflow mcp-server  # in another terminal, then:
 
 3. **`canonical_model_for_cache()` primitive** — `normalize_model_name` is sufficient for v1. If real workflows hit `models/<vertex-name>` aliasing in production, the fix belongs in `normalize_model_name` itself with awareness of all callers (runtime, pricing, our detector).
 
-4. **Provider-aware text on `cache.below-min-tokens`** (Finding #10) — separate refactor.
+4. **Provider-aware text on `cache.below-min-predicted`** (Finding #10) — separate refactor.
 
 5. **`rerun_within_ttl_hypothetical_usd` modeling memo cache** (Finding #2) — separate refactor.

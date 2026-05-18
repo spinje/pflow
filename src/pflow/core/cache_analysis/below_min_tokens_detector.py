@@ -83,13 +83,52 @@ class BatchPrewarmBelowMinFinding:
     provider_note: str
 
 
+def is_below_min_cache(model: str | None, tokens: int | None) -> bool:
+    """Return True when populated token evidence is below the provider minimum.
+
+    "Honest unmeasurable" variant — returns False when the model is None or
+    empty (heterogeneous-batch rows carry ``model=""``). Use at CLAIM-type
+    emission sites (e.g. ``cache.below-min-predicted``) where emitting a
+    "below min" claim against an unknown model would render an awkward
+    message and risk false claims.
+
+    For SUPPRESSION-type sites (gate a recommendation off when it likely
+    won't pay off), use ``is_likely_below_min_cache`` instead — that variant
+    assumes ``CONSERVATIVE_FLOOR`` for the unknown/empty-model case so
+    heterogeneous-batch rows with short prefixes correctly suppress.
+    """
+    if not model or tokens is None:
+        return False
+    return tokens < get_min_cache_tokens(model)
+
+
+def is_likely_below_min_cache(model: str | None, tokens: int | None) -> bool:
+    """Return True when token evidence is below an inferred provider minimum.
+
+    "Conservative" variant — uses ``CONSERVATIVE_FLOOR`` (the safe floor used
+    by ``get_min_cache_tokens`` for unknown models) when ``model`` is None or
+    empty. Use at SUPPRESSION-type sites where the cost of a false positive
+    (suppressing a recommendation that would have paid off) is lower than
+    the cost of a false negative (emitting a recommendation that runtime
+    won't fire because the rendered content is below provider minimum).
+
+    Returns ``False`` when ``tokens`` is None (no opinion without token
+    evidence). The asymmetry with ``is_below_min_cache`` is only on the
+    empty/None-model branch: that variant returns False (no claim without a
+    model); this variant returns the conservative-floor comparison.
+    """
+    if tokens is None:
+        return False
+    return tokens < get_min_cache_tokens(model)
+
+
 def detect(evidence: BelowMinTokensEvidence) -> BelowMinTokensFinding | None:
     """Return a below-minimum finding when supplied evidence proves one."""
     if not evidence.declared_prompt_cache or not evidence.model:
         return None
 
     threshold = get_min_cache_tokens(evidence.model)
-    provider_note = _provider_note(evidence.model)
+    note = provider_note(evidence.model)
 
     if evidence.has_observed:
         observed_total = evidence.observed_creation_tokens + evidence.observed_read_tokens
@@ -101,14 +140,14 @@ def detect(evidence: BelowMinTokensEvidence) -> BelowMinTokensFinding | None:
             min_tokens=threshold,
             evidence_kind="observed",
             cacheable_tokens=0,
-            provider_note=provider_note,
+            provider_note=note,
         )
 
     if evidence.estimated_tokens is None or evidence.estimated_tokens <= 0:
         return None
     if evidence.estimated_data_source == "trace":
         return None
-    if evidence.estimated_tokens >= threshold:
+    if not is_below_min_cache(evidence.model, evidence.estimated_tokens):
         return None
     return BelowMinTokensFinding(
         node_id=evidence.node_id,
@@ -116,7 +155,7 @@ def detect(evidence: BelowMinTokensEvidence) -> BelowMinTokensFinding | None:
         min_tokens=threshold,
         evidence_kind="predicted",
         cacheable_tokens=evidence.estimated_tokens,
-        provider_note=provider_note,
+        provider_note=note,
     )
 
 
@@ -136,7 +175,7 @@ def detect_batch_prewarm_below_min(
     if evidence.prefix_tokens <= 0:
         return None
     threshold = get_min_cache_tokens(evidence.model)
-    if evidence.prefix_tokens >= threshold:
+    if not is_below_min_cache(evidence.model, evidence.prefix_tokens):
         return None
     return BatchPrewarmBelowMinFinding(
         node_id=evidence.node_id,
@@ -144,11 +183,11 @@ def detect_batch_prewarm_below_min(
         min_tokens=threshold,
         prefix_tokens=evidence.prefix_tokens,
         batch_alias=evidence.batch_alias,
-        provider_note=_provider_note(evidence.model),
+        provider_note=provider_note(evidence.model),
     )
 
 
-def _provider_note(model: str) -> str:
+def provider_note(model: str) -> str:
     provider = detect_provider(model)
     if provider is None:
         return ""

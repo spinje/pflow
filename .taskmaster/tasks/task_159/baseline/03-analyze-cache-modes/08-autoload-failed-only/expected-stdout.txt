@@ -3,25 +3,24 @@
 
   Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
   Evidence: complete trace (2 LLM nodes executed)
-  Trace: workflow-trace-a27e8d4c-smoke-with-cache-<TIMESTAMP>.json (failed, recorded 2026-05-08 16:30)
+  Trace: workflow-trace-0ec95040-smoke-with-cache-<TIMESTAMP>.json (failed, recorded 2026-05-08 16:30)
 
 ## Summary
 
-  Actually paid:               ~$0.0087 (from trace)
+  Actually paid:               ~$0.0087 (from trace)  (saves 26% vs cost without caching)
   Cost without caching:        ~$0.01
-  Cost on rerun (within TTL):  ~$0.0031
-  Actual cost delta (this run): saves ~$0.0031/run vs no-cache, 26% of no-cache cost
-  Rerun delta (projected):      saves ~$0.0086/run on rerun, 73% of no-cache cost
+  Cost on rerun (within TTL), modeled rerun vs warm-cache trace:  ~$0.0031  (saves 73% vs cost without caching)
 
 ## Per-call cache report
   How to read each row:
     · cached_now: tokens served from cache during this run (requires trace).
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
   Showing 0 of 2 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
   Hidden: 2 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 
 ## Notes
 
-  · Auto-loaded `workflow-trace-a27e8d4c-smoke-with-cache-<TIMESTAMP>.json` (failed run); no successful trace exists for this workflow. Trace-dependent recommendations may be suppressed. Re-run the workflow to record a successful trace, or pass `--from-trace <path>` to use a specific trace.
+  · Auto-loaded `workflow-trace-0ec95040-smoke-with-cache-<TIMESTAMP>.json` (failed run); no successful trace exists for this workflow. Trace-dependent recommendations may be suppressed. Re-run the workflow to record a successful trace, or pass `--from-trace <path>` to use a specific trace.
   · Cache fidelity check skipped: this is a first run (no prior runs to compare cached vs uncached against). On later runs, specific cache misfires (TTL expired, chunks skipped) will appear here.

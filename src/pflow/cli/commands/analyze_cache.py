@@ -71,6 +71,12 @@ import click
     default=False,
     help=("Show every node in the per-call cache report. Default hides rows with cache ratio ≥80%% and no warnings."),
 )
+@click.option(
+    "--list-traces",
+    is_flag=True,
+    default=False,
+    help="List stored traces for this workflow and mark which trace analyze-cache would autoload.",
+)
 @click.pass_context
 def analyze_cache(
     ctx: click.Context,
@@ -80,6 +86,7 @@ def analyze_cache(
     from_trace: str | None,
     no_trace_autoload: bool,
     all_rows: bool,
+    list_traces: bool,
 ) -> None:
     """Analyze a workflow's prompt cache plan; shows recommendations and discrepancies.
 
@@ -103,11 +110,27 @@ def analyze_cache(
             exit_code=2,
         )
         return
+    if list_traces and (from_trace is not None or no_trace_autoload or all_rows):
+        _emit_error(
+            ctx,
+            json_mode=json_mode,
+            error_id="analyze-cache.flags-mutually-exclusive",
+            message="--list-traces is mutually exclusive with --from-trace, --no-trace-autoload, and --all-rows.",
+            suggestion=(
+                "Use `pflow analyze-cache <workflow> --list-traces` to discover traces, "
+                "then run analyze-cache separately with --from-trace <chosen-trace>."
+            ),
+            exit_code=2,
+        )
+        return
 
     # Lazy imports — analysis pulls in LiteLLM via token_estimation, no need
     # to pay the import cost on every CLI invocation.
     from pflow.cli.param_parsing import parse_workflow_params
     from pflow.core.cache_analysis import analyze, render_json, render_text
+    from pflow.core.cache_analysis.analyze import list_traces_for_workflow
+    from pflow.core.cache_analysis.render_traces_list import render_traces_list_json, render_traces_list_text
+    from pflow.core.workflow_id import synthesize_inline_workflow_id
     from pflow.execution.workflow_resolver import resolve_workflow
 
     # Workflow resolution + param parsing — both raise on user error; the
@@ -133,6 +156,29 @@ def analyze_cache(
     # time. The displayed ``"<inline>"`` label is computed separately inside
     # ``analyze()`` for the rendered output.
     workflow_path_str = resolved.file_path
+
+    if list_traces:
+        trace_lookup_path = (
+            workflow_path_str if workflow_path_str is not None else synthesize_inline_workflow_id(resolved.ir)
+        )
+        entries, disclosure_note = list_traces_for_workflow(trace_lookup_path)
+        if json_mode:
+            click.echo(
+                render_traces_list_json(
+                    entries,
+                    workflow_path=trace_lookup_path,
+                    disclosure_note=disclosure_note,
+                )
+            )
+        else:
+            click.echo(
+                render_traces_list_text(
+                    entries,
+                    workflow_path=trace_lookup_path,
+                    disclosure_note=disclosure_note,
+                )
+            )
+        return
 
     # Run the analyzer. Internal exceptions propagate so the CLI exits non-zero
     # rather than emitting empty-but-valid JSON (per the silent-failures rule

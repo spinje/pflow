@@ -5,17 +5,19 @@ import json
 import logging
 import re
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from pflow.core.diagnostic import Diagnostic
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
-TRACE_FORMAT_VERSION = "2.2.0"
+TRACE_FORMAT_VERSION = "2.3.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -63,7 +65,8 @@ class _LLMSummaryAccumulator:
     total_output_tokens: int = 0
     priced_cost: float = 0.0
     models: set[str] = field(default_factory=set)
-    unavailable_models: set[str] = field(default_factory=set)
+    unavailable_models: Counter[str] = field(default_factory=Counter)
+    unavailable_models_unnamed_count: int = 0
 
     def add_leaf(self, call: dict[str, Any]) -> None:
         self.total_calls += 1
@@ -71,12 +74,16 @@ class _LLMSummaryAccumulator:
         self.total_input_tokens += call.get("input_tokens", 0)
         self.total_output_tokens += call.get("output_tokens", 0)
         cost = call.get("cost_usd")
+        model = call.get("model") or ""
+        is_real_model = bool(model) and model != VALIDATION_PLACEHOLDER
         if cost is None:
-            self.unavailable_models.add(call.get("model") or "unknown")
+            if is_real_model:
+                self.unavailable_models[model] += 1
+            else:
+                self.unavailable_models_unnamed_count += 1
         else:
             self.priced_cost += cost
-        model = call.get("model")
-        if model:
+        if is_real_model:
             self.models.add(model)
 
     def as_dict(self) -> dict[str, Any]:
@@ -87,10 +94,17 @@ class _LLMSummaryAccumulator:
             "total_output_tokens": self.total_output_tokens,
             "models_used": sorted(self.models),
         }
-        if self.unavailable_models:
+        if self.unavailable_models or self.unavailable_models_unnamed_count:
             result["total_cost_usd"] = None
             result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None
-            result["unavailable_models"] = sorted(self.unavailable_models)
+            # Bundle 7 / F#17 deferred: emit per-model call counts so renderers
+            # can render "model (N calls)" without rebuilding the count from
+            # individual call events. Additive within trace 2.x — consumers
+            # gate on ``format_version.startswith("2.")``.
+            result["unavailable_models"] = [
+                {"name": name, "calls": calls} for name, calls in sorted(self.unavailable_models.items())
+            ]
+            result["unavailable_models_unnamed_count"] = self.unavailable_models_unnamed_count
             result["pricing_available"] = False
         else:
             result["total_cost_usd"] = round(self.priced_cost, 6)
@@ -141,8 +155,11 @@ class WorkflowTraceCollector:
     - Top-level ``workflow_path`` (resolved file path or ``ir-hash:<md5>``
       for inline runs).
     - Per-event cache-correlation fields on LLM events: ``cache_key``,
-      ``cache_source``, ``cache_age_sec``, ``cache_chunks_skipped``
-      (flow through ``llm_call`` via the ``llm_usage`` channel).
+      ``cache_source``, ``cache_age_sec``, ``cache_chunks_skipped``,
+      ``cache_skipped_reason`` (``"below_min"`` when a runtime cache marker
+      strip fired), and ``prewarm_disabled_reason`` (``"below_min"`` when
+      workflow-entry pre-flight disabled prewarm for the node). These flow
+      through ``llm_call`` via the ``llm_usage`` channel.
     - Per-event ``llm_system`` capturing the effective system content
       the LLM saw — ``str`` for plain system params, ``list[dict]`` for
       cache-rendered prefixes (with provider-specific ``cache_control``

@@ -372,8 +372,8 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     )
     assert result.exit_code == 0
     payload = _json_payload(result.output)
-    assert any(w["id"] == "cache.below-min-tokens" for w in payload["warnings"]), (
-        f"expected cache.below-min-tokens to fire on _LLM_WORKFLOW; "
+    assert any(w["id"] == "cache.below-min-predicted" for w in payload["warnings"]), (
+        f"expected cache.below-min-predicted to fire on _LLM_WORKFLOW; "
         f"got warnings={[w['id'] for w in payload['warnings']]}"
     )
 
@@ -483,9 +483,13 @@ The 4 LLM responses.
     payload = _json_payload(result.output)
     rows = {row["node_path"]: row for row in payload["per_call"]}
     row = rows["batch-llm"]
-    assert row["cacheable_tokens_estimated"] is None
-    assert row["cache_ratio_pct"] is None
-    assert row["cacheable_data_source"] == "unavailable"
+    assert row["cache_ready"]["tokens_estimated"] is None
+    assert row["cache_ready"]["ratio_pct"] is None
+    assert row["cache_ready"]["data_source"] == "not_applicable"
+    assert row["cache_opportunity"]["tokens_estimated"] < 100
+    assert row["cache_opportunity"]["ratio_pct"] is not None
+    assert row["cache_opportunity"]["data_source"] == "dynamic_before_static"
+    assert row["cache_opportunity"]["confidence"] == "exact"
     warning_ids = {warning["id"] for warning in payload["warnings"]}
     action_ids = {action["warning_id"] for action in payload["recommended_actions"]}
     assert "cache.batch-prewarm-below-min" not in warning_ids
@@ -1087,6 +1091,44 @@ def test_all_rows_flag_passed_through(tmp_path: Path) -> None:
     runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--all-rows"])
     assert result.exit_code == 0
+
+
+def test_list_traces_empty_result_exits_zero_text(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--list-traces"])
+    assert result.exit_code == 0
+    assert "No traces found" in result.output
+
+
+def test_list_traces_empty_result_exits_zero_json(tmp_path: Path) -> None:
+    workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
+    runner = CliRunner(mix_stderr=False)
+    result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--list-traces", "--format=json"])
+    assert result.exit_code == 0
+    payload = _json_payload(result.output)
+    assert payload["format_version"].startswith("5.")
+    assert payload["mode"] == "list_traces"
+    assert payload["traces"] == []
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "--all-rows",
+        "--no-trace-autoload",
+        "--from-trace",
+    ],
+)
+def test_list_traces_rejects_analysis_only_flags(tmp_path: Path, flag: str) -> None:
+    workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
+    runner = CliRunner(mix_stderr=False)
+    args = ["analyze-cache", str(workflow_path), "--list-traces", flag]
+    if flag == "--from-trace":
+        args.append(str(tmp_path / "trace.json"))
+    result = runner.invoke(cli, args)
+    assert result.exit_code == 2
+    assert "--list-traces is mutually exclusive" in result.stderr
 
 
 # ---------------------------------------------------------------------------

@@ -19,11 +19,23 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any
 
+import pytest
+
 from pflow.core.cache_render import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.nodes.llm import LLMNode
 
 ANTHROPIC = "anthropic/claude-sonnet-4-5"
 GEMINI = "gemini/gemini-2.5-flash"
+
+
+@pytest.fixture(autouse=True)
+def _bypass_below_min_strip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests assert on the rendered auto-batch-prefix block shape; they
+    intentionally use tiny fixture content. The runtime pre-dispatch strip
+    would otherwise remove the markers and break shape assertions. The
+    strip itself is exercised in ``test_prompt_cache_below_min_runtime.py``.
+    """
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
 
 
 def _ctx_batch(

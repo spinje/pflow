@@ -36,13 +36,16 @@ Useful variants:
 
 ```bash
 pflow analyze-cache workflow.pflow.md --no-trace-autoload # static analysis only
+pflow analyze-cache workflow.pflow.md --list-traces       # discover saved traces
 pflow analyze-cache workflow.pflow.md --from-trace <path> # inspect a specific run
 pflow analyze-cache workflow.pflow.md --format=json       # machine-readable output
 ```
 
 Trace files live at
 `~/.pflow/debug/workflow-trace-<hash>-<name>-<timestamp>.json`. The default
-command auto-loads the most recent matching trace when one exists.
+command auto-loads the most recent matching trace when one exists. Use
+`--list-traces` when the loaded trace looks stale or you need the paste-ready
+`--from-trace` command for a specific run.
 
 `pflow run --dry-run` emits a one-line prompt-cache nudge when actionable
 opportunities exist. It stays silent when the workflow already looks optimal.
@@ -316,11 +319,18 @@ When the analyzer names one of these findings, apply the corresponding edit:
 | Finding | What to do |
 |---|---|
 | `cache.shared-context-undeclared` | Add the suggested `## Cache` block or chunk. |
+| `cache.shared-context-undeclared-conditional` | Check trace coverage, then add the suggested cache block when the shared context is present on the calls you care about. |
 | `cache.prompt-cache-incomplete` | Add the missing chunk names to the listed LLM nodes. |
 | `cache.sub-workflow-cache-undeclared` | Edit the child workflow; add its own `## Cache` and `prompt_cache:` entries. |
 | `cache.batch-prewarm-recommended` | Add `prewarm: true` to the batch LLM node. |
+| `cache.batch-prewarm-lower-bound-recommended` | Consider `prewarm: true`; the measured lower bound is enough to justify trying it, but verify with a trace. |
 | `cache.dynamic-before-static` | Move stable instructions/context before dynamic `${...}` text. |
-| `cache.below-min-tokens` | Include more stable context or leave that small prefix uncached. |
+| `cache.below-min-predicted` | Include more declared cache content or remove `prompt_cache:` when static evidence is below the provider minimum. |
+| `cache.below-min-observed` | Inspect the rendered cache content; the provider reported that the declared cache did not fire. |
+| `cache.below-min-rendered` | Runtime stripped the marker for this invocation; add stable content before the marker or leave it uncached. |
+| `cache.prewarm-disabled-below-min` | The batch prefix is too small for prewarm; add stable prefix content or remove `prewarm: true`. |
+| `cache.batch-prewarm-below-min` | Grow the stable batch prefix before `${item...}`, or remove `prewarm: true` because the prefix is too small to cache. |
+| `cache.conditional-warmup-recommended` | Split mixed-size batches so below-threshold items skip prewarm while larger items keep it. |
 | `cache.opaque-prompt` | Inline the stable prompt prefix into the LLM node when the prompt shape is uniform. |
 | `cache.system-prompts-fragment-cache` | Keep `system:` uniform across nodes that should share the same cached prefix. |
 | `cache.prompt-body-duplicates-cache` | Remove the duplicated value from `prompt:`; it already arrives through `prompt_cache:`. |
@@ -344,6 +354,28 @@ cache-shape advisories:
 | `cache.first-call-write-penalty` | Remove `prompt_cache:` from one-off calls when no later call reads that cache. |
 | `cache.cross-workflow-prose-mismatch` | Use the same prose around the cached value in both workflows when you want cross-file cache reuse. |
 | `cache.discrepancy` | In trace mode, compare the reported cause: skipped chunks or runtime value changes. |
+
+## Runtime Cache Marker Stripping And Prewarm Pre-Flight
+
+Before each LLM call, pflow measures rendered cache markers against the
+provider minimum. If a marker is below the threshold, pflow removes the
+provider cache marker and records `cache_skipped_reason: "below_min"` in the
+trace event so `analyze-cache --from-trace` can attribute that exact call.
+
+For batch nodes with `prewarm: true`, pflow checks the static batch prefix
+at workflow entry. If the prefix is provably below the provider minimum,
+pflow disables prewarm sequencing for that node and emits
+`cache.prewarm-disabled-below-min`.
+
+When pflow can't prove the prefix size ahead of time — for example, the
+model is templated (`model: ${item.model}`), or the prefix contains
+references to upstream node outputs that aren't known until runtime —
+pflow re-checks before each LLM call. If the rendered prefix is below the
+provider minimum, pflow removes the prewarm cache marker for that call and
+emits the same `cache.prewarm-disabled-below-min` finding.
+
+The fix is the same in both cases: grow the static batch prefix above the
+provider minimum, or remove `prewarm: true`.
 
 `cache.cross-workflow-rename-detected` is informational. Different variable
 names alone do not break provider cache hits; edit names only when it improves

@@ -1,283 +1,116 @@
 # Task 159 Follow-ups: Open Bugs and UX Issues
 
-This file preserves unresolved issues from the Task 159 scratchpads before
-those scratchpads are deleted.
+Forward-looking backlog of unresolved cache/analyzer/CLI UX items after the
+prompt-caching follow-ups-2 PR merges. Closed items are not duplicated here
+— see `follow-ups-2-progress-log.md` for shipped-work chronology and
+closeout reasoning.
 
 Scope rules:
 
-- Includes only issues with a clear user or agent failure mode and a plausible
+- Includes only items with a clear user/agent failure mode and a plausible
   fix.
-- Excludes fixed items already captured in GitHub issue #395.
-- Excludes very minor polish, speculative ideas, and items where it is not
-  clear that changing behavior would improve pflow.
-- Groups related observations into actionable backlog items instead of
-  preserving scratchpad numbering.
+- Excludes anything that shipped in Task 159 or the follow-ups-1 / -2 PRs.
+- Excludes very minor polish or speculative ideas where it is not clear
+  changing behavior would improve pflow.
+- Groups related observations into actionable backlog items rather than
+  preserving original scratchpad numbering.
 
-## GitHub Tracking Audit
+## GitHub Tracking
 
-Checked against GitHub issues on 2026-05-13. Exact matches and genuinely
-related issues are linked inline below. Most items in this file are not yet
-tracked as standalone GitHub issues; issue #395 is intentionally not counted as
-tracking because it only catalogs fixed PR #396 work.
+Items below cross-reference GitHub issues where tracking already exists.
+Items without a GH link have no standalone tracking; the PR that closes
+follow-ups-2 will reference this doc as the catch-all backlog.
 
-Exact or substantially matching tracking found:
+Actively-tracked related issues (left open after this PR):
 
-- Item 3: [#394](https://github.com/spinje/pflow/issues/394) tracks the
-  remaining `PerCallRow.input_tokens_estimated` mixed-unit contract.
-- Item 16: [#385](https://github.com/spinje/pflow/issues/385) tracks the
-  provider-error-first and large batch-payload formatting problem.
-
-Related but not fully covering tracking found:
-
-- Item 4: [#393](https://github.com/spinje/pflow/issues/393) tracks the
-  runtime defense for below-min prewarm prefixes, but not the analyzer
-  recommendation branch described here.
-- Item 12: [#369](https://github.com/spinje/pflow/issues/369) tracks the
-  narrower within-batch heterogeneous-model fragmentation detector.
-- Item 17: [#123](https://github.com/spinje/pflow/issues/123) covers
-  unknown-model pricing warnings and text cost-summary gaps, but not this exact
-  `pricing unavailable for: unknown` runtime wording.
-- Item 18: [#385](https://github.com/spinje/pflow/issues/385) overlaps because
-  it covers concise batch failure context and avoiding huge item dumps.
-- Item 21: [#385](https://github.com/spinje/pflow/issues/385) includes the
-  Anthropic temperature/thinking validator gap as one concrete case, and
-  [#368](https://github.com/spinje/pflow/issues/368) covers a related Opus 4.7
-  reasoning-parameter provider constraint. Neither tracks the general provider
-  constraint validation backlog item completely.
+- **[#369](https://github.com/spinje/pflow/issues/369)** — within-batch
+  heterogeneous-model fragmentation (covers item 4 below; narrower).
+- **[#400](https://github.com/spinje/pflow/issues/400)** — `-o` flag +
+  `--only` batch UX (covers item 13 below; explicitly externalized from
+  the prompt-cache branch in Bundle 9).
+- **[#368](https://github.com/spinje/pflow/issues/368)** — Opus 4.7
+  reasoning-effort constraint (related to item 5 below; needs constraint
+  shape before it can be implemented).
+- **[#366](https://github.com/spinje/pflow/issues/366)** — Trace 2.2
+  per-event `workflow_path` stamping (substrate for future cross-workflow
+  attribution work; Bundle 8 used `_pflow_child_workflow_paths` runtime
+  field as a tactical workaround, but #366's forward-compat investment
+  remains valid).
 
 ## Priority Map
 
-Highest-value open items:
+Highest-value open items, ranked by agent impact:
 
-1. Full shadowed-cache summary math still uses an inflated baseline.
-2. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence.
-3. `PerCallRow.input_tokens_estimated` still has mixed units.
-4. Prewarm recommendation can still ignore provider minimum in one path.
-5. Run output still hides the actionable provider error behind large payloads.
-6. Runtime cost summary still says `pricing unavailable for: unknown`.
+1. Cross-consumer prompt-file index (item 12) — biggest new-coverage win.
+2. Heterogeneous-model fragmentation actionability (item 4) — biggest
+   accuracy win for batch-with-mixed-models workflows.
+3. Provider TTL expiry / static TTL risk detection (item 1) — last big
+   correctness gap in `--from-trace` output.
+4. Dynamic-before-static late-tail scanning (item 2) — partial fix
+   shipped in Cache-ready-opportunity Phase 4; this item is the
+   remaining late-tail discovery work.
+
+Everything else is feature expansion, polish, or deferred-to-own-task.
 
 ## Analyze-cache Correctness
 
-### 1. Full shadowed-cache summary math remains deferred
+### 1. Provider prompt-cache TTL expiry detection + static TTL risk prediction
 
-Original failure: when a cache chunk contains a large object but the prompt body
-uses only a tiny subfield, analyzer savings can still compare against a
-strawman baseline: "send the full cache prefix uncached." The PR fixed the
-local `cache.prompt-body-shadows-cache` recommendation by adding body-only vs
-with-cache cost disclosure, but it did not rewrite the broader summary math.
+Two related gaps in TTL-awareness. Currently the analyzer has no way to
+flag when a workflow is likely to outrun its declared cache TTL —
+neither at runtime (no provider TTL expiry detection) nor statically (no
+duration-vs-TTL comparison).
 
-Trigger shape:
+**Static side**: a workflow with `## Cache - ttl: 5m` but expected
+runtime of many minutes will write cache that expires before later reads
+fire. Users only learn after a run, and long paid workflows may waste
+cache writes.
 
-- `## Cache` declares a parent object or large bundle.
-- One or more prompt bodies reference only a small subpath, such as
-  `${concept.core_idea}` or `${bundle.tiny_field}`.
-- Summary/projection math treats the full cached object as the no-cache
-  baseline.
-
-Why it matters: the summary can still overstate savings or make cache look
-beneficial when the real current prompt is much cheaper because it sends only
-the referenced subfield. In correctness-sensitive prompts, caching the full
-object can also expose context intentionally omitted from the prompt.
+**Trace side**: an old analyzer branch tried to infer provider
+prompt-cache TTL expiry from local memo-cache age. That wrong inference
+was removed (Task 159 base). There is no replacement using actual trace
+write/read timestamps for the same provider cache prefix.
 
 Desired fix:
 
-- Compute the current prompt-body cost for the bytes actually used.
-- Compare cache recommendations against that real current-state baseline.
-- Suppress or clearly annotate summary-level savings when shadowed-cache
-  evidence proves the summary comparison is not valid.
+- Static: compare declared TTL against trace-backed duration when a
+  trace exists; conservative heuristics when no trace exists; warn when
+  later cache consumers are likely to read after the declared TTL.
+- Trace: use trace write/read timestamps for the same provider cache
+  prefix; emit a new catalog ID when reads occur after declared/provider
+  TTL windows.
 
-Trust boundary: the local recommendation disclosure is fixed and should be
-kept. The open issue is the aggregate summary/projection model.
+Keep these separate from local memo-cache age — that conflation was the
+historical bug.
 
-### 2. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence
+### 2. Dynamic-before-static scanning can miss later opportunities
 
-Original failure: when a batch node declares both `prompt_cache: [...]` and
-`prewarm: true`, the analyzer reports the declared cache chunk but does not
-show whether the prewarm prefix contributes additional cacheable bytes.
+Partial fix shipped: Cache-ready-opportunity Phase 4 added structural
+opportunities for batch dynamic-ref reorder cases via the
+`cache_opportunity` component model. The remaining gap is the
+late-tail scanning case.
 
-Trigger shape:
+`_find_batch_static_tail_after_dynamic` returns after the first per-item
+reference. If the first stable tail after that reference is
+unmeasurable, later measurable stable sections remain hidden.
 
-- Batch LLM node with declared `prompt_cache`.
-- Same node also has `prewarm: true`.
-- Prompt contains static bytes before the first per-item reference that are not
-  already covered by the declared chunk.
+Trigger shape: prompts with multiple dynamic refs interleaved with
+stable sections, where the first post-dynamic section cannot be
+measured but a later section could be.
 
-Root cause: declared-cache evidence and batch-prefix evidence are treated as
-competing sources for `cacheable_tokens_estimated`. If the declared chunk is
-larger, the smaller prewarm-only contribution disappears from the row.
-
-Why it matters: agents cannot verify whether `prewarm: true` is doing useful
-work beyond the declared cache. This is especially important because prewarm
-has a wall-clock cost.
-
-Desired fix options:
-
-- Add an explicit `batch_prefix_extra_tokens` or equivalent field for combined
-  rows.
-- Or sum declared-cache and prewarm-prefix contributions when they occupy
-  distinct message regions and do not overlap.
-- Render the combined evidence clearly in text and JSON so users can decide
-  whether prewarm is worth keeping.
-
-### 3. `PerCallRow.input_tokens_estimated` still has mixed units
-
-Original failure: PR #396 fixed `cacheable_tokens_estimated` to be per-call,
-but `input_tokens_estimated` still has mixed producer behavior. Some row types
-store per-call input tokens, while some dynamic-batch trace and repeated-trace
-paths can still behave like cohort totals.
-
-Trigger shape: dynamic batch traces or repeated trace rows where input tokens
-are produced from aggregate trace evidence.
-
-Why it matters: compensating divides and defensive clamps remain in analyzer
-code because not every producer obeys one unit contract. This makes future
-cache math fragile and harder to reason about.
+Why it matters: the analyzer can under-report prompt-reordering
+opportunities in complex batch prompts.
 
 Desired fix:
 
-- Declare `PerCallRow.input_tokens_estimated` as per-call by contract.
-- Update all producers to honor that contract.
-- Delete compensating divides that only exist because the field is mixed-unit.
-- Update tests that currently encode the mixed-unit behavior.
+- Continue advisory scanning after unmeasurable suffixes.
+- Preserve exact projection conservatism: do not fabricate exact savings
+  from unmeasurable regions.
 
-GitHub tracking: exact match
-[#394](https://github.com/spinje/pflow/issues/394).
+### 3. Greenfield cost projection can say unavailable despite enough data
 
-### 4. Prewarm recommendation can still ignore provider minimum in one path
-
-Original failure: after adding `cache.batch-prewarm-below-min`, one adjacent
-recommendation path remains asymmetric. `_batch_prewarm_recommendations` has an
-existing-prefix-evidence branch that can emit `cache.batch-prewarm-recommended`
-without applying the provider-minimum threshold check used by the prompt-walk
-branch.
-
-Trigger shape:
-
-- Analyzer has batch-prefix evidence for a node.
-- `prewarm` is not declared yet.
-- The inferred prefix is non-zero but below the model's explicit cache minimum.
-
-Why it matters: the analyzer can still tell a user to add `prewarm: true` for a
-prefix that would not fire at the provider. The below-min warning appears only
-after the user adds prewarm, which is too late.
-
-Desired fix:
-
-- Apply the same provider-minimum guard in the existing-prefix-evidence branch
-  before emitting `cache.batch-prewarm-recommended`.
-- If the prefix is below minimum, emit the appropriate below-min or conditional
-  advice instead of a confident prewarm recommendation.
-
-GitHub tracking: related issue
-[#393](https://github.com/spinje/pflow/issues/393) covers the runtime-side
-prewarm below-min defense. It does not fully cover this analyzer-side
-recommendation path.
-
-### 5. Provider prompt-cache TTL expiry detection is still missing
-
-Original failure: the old analyzer tried to infer provider prompt-cache TTL
-expiry from local memo-cache age. That wrong inference was removed, but there
-is not yet a replacement for real provider TTL expiry detection.
-
-Trigger shape:
-
-- Workflow declares a provider prompt-cache TTL.
-- Trace contains enough timing data to compare cache writes and later reads.
-- Later reads might occur after the provider cache entry should have expired.
-
-Why it matters: users no longer get the wrong TTL recommendation, but they also
-do not get a correct warning when a long workflow is likely to outrun its prompt
-cache TTL.
-
-Desired fix:
-
-- Use trace write/read timestamps for the same provider cache prefix.
-- Emit a new catalog ID when reads occur after declared/provider TTL windows.
-- Keep this separate from local memo-cache age.
-
-### 6. Static TTL risk prediction is still missing
-
-Original failure: users can declare a short cache TTL on a workflow whose total
-runtime is much longer, but the analyzer does not warn before a trace proves
-the issue.
-
-Trigger shape: a workflow with `## Cache - ttl: 5m` but expected runtime of
-many minutes before later cache reads.
-
-Why it matters: users only learn about likely TTL problems after a run, and
-long paid workflows may waste cache writes.
-
-Desired fix:
-
-- Compare declared TTL against trace-backed duration when a trace exists.
-- Use conservative heuristics when no trace exists.
-- Warn when later cache consumers are likely to read after the declared TTL.
-
-## Analyze-cache Evidence and Iteration UX
-
-### 7. No `analyze-cache --list-traces`
-
-Original failure: users have no direct command to inspect traces that
-`analyze-cache` could load. They must know about `~/.pflow/debug/` and infer
-which trace autoload selected.
-
-Trigger shape: multiple traces exist for a workflow, especially after failed
-and successful iteration runs.
-
-Why it matters: trace transparency improved in PR #396, but users still lack a
-discovery command when they want to choose a specific trace or understand
-alternatives.
-
-Desired fix:
-
-- Add `pflow analyze-cache --list-traces <workflow>`.
-- Show trace filename, recorded time, final status, workflow match, rough
-  coverage, and whether autoload would choose it.
-- Include suggested `--from-trace <path>` commands.
-
-### 8. No diff view for recommendation changes across iterations
-
-Original failure: recommendation counts can shrink, grow, or change category as
-the user edits workflows. This is correct behavior, but the analyzer does not
-show what changed since the previous analysis.
-
-Trigger shape: optimization loops where the user repeatedly changes workflow
-cache declarations, reruns, and re-analyzes.
-
-Why it matters: agents cannot easily tell which edits fixed prior findings and
-which new findings were introduced.
-
-Desired fix:
-
-- Add `analyze-cache --diff <prior-report-or-trace>` or similar.
-- Report recommendations added, removed, and changed.
-- Keep stable IDs/locations so agents can track progress across iterations.
-
-### 9. Trace-backed projections can feel stale after workflow edits
-
-Original observation: this is not a correctness bug. Trace data records what
-happened before edits. However, after a user changes workflow source or a code
-node's output shape, trace-backed projections can still reflect old data.
-
-Trigger shape:
-
-- User changes a workflow or upstream code node after recording a trace.
-- Then runs `analyze-cache --from-trace <old-trace>`.
-
-Why it matters: users may read trace-backed token sizes as current when they
-actually describe the old run.
-
-Desired fix:
-
-- Compare trace capture time or recorded source fingerprints against workflow
-  file modification times when available.
-- Show a gentle hint such as "trace predates recent workflow changes; rerun for
-  current projection."
-
-### 10. Greenfield cost projection can say unavailable despite enough apparent data
-
-Original failure: in small greenfield experiments, the Summary block reported
-`Cost per run: unavailable` even when the analyzer appeared to know the model,
+In small greenfield experiments, the Summary block can report `Cost per
+run: unavailable` even when the analyzer appears to know the model,
 static batch size, and input token estimate.
 
 Trigger shape:
@@ -287,309 +120,512 @@ Trigger shape:
 - Static batch items.
 - Resolved token estimates.
 
-Why it matters: users receive less cost feedback than the analyzer may be able
-to provide.
+Why it matters: users receive less cost feedback than the analyzer may
+be able to provide.
 
 Desired fix:
 
 - Audit summary cost gating for estimator-tier evidence.
-- Emit no-cache hypothetical cost when model pricing, input estimates, output
-  assumptions, and batch size are sufficient.
+- Emit no-cache hypothetical cost when model pricing, input estimates,
+  output assumptions, and batch size are sufficient.
 - If output tokens are the blocker, say that directly.
 
-### 11. Dynamic-before-static scanning can miss later opportunities
+### 4. Heterogeneous-model cache fragmentation is not actionable enough
 
-Original limitation: `_find_batch_static_tail_after_dynamic` returns after the
-first per-item reference. If the first stable tail after that reference is
-unmeasurable, later measurable stable sections can remain hidden.
+Output can report heterogeneous models in a batch without clearly tying
+that fact to provider-cache fragmentation or a recommendation.
 
-Trigger shape: prompts with multiple dynamic refs interleaved with stable
-sections, where the first post-dynamic section cannot be measured but a later
-section could be.
+Trigger shape: a batch where items use different models, such as a mix
+of Gemini variants.
 
-Why it matters: the analyzer can under-report prompt reordering opportunities
-in complex batch prompts.
-
-Desired fix:
-
-- Continue advisory scanning after unmeasurable suffixes.
-- Preserve exact projection conservatism: do not fabricate exact savings from
-  unmeasurable regions.
-
-### 12. Heterogeneous-model cache fragmentation is not actionable enough
-
-Original failure: output could report heterogeneous models in a batch without
-clearly tying that fact to provider-cache fragmentation or a recommendation.
-
-Trigger shape: a batch where items use different models, such as a mix of
-Gemini variants.
-
-Why it matters: users may not understand that provider prompt caches are model
-scoped. Cross-model batch items cannot share the same provider cache prefix.
+Why it matters: users may not understand that provider prompt caches
+are model-scoped. Cross-model batch items cannot share the same
+provider cache prefix.
 
 Desired fix:
 
-- Strengthen or emit `cache.heterogeneous-models-fragment-cache` when batch
-  model variation materially fragments cache reuse.
+- Strengthen or emit `cache.heterogeneous-models-fragment-cache` when
+  batch model variation materially fragments cache reuse.
 - Include token-weighted impact where possible.
 - Explain that each model writes/reads its own cache.
 
-GitHub tracking: related issue
+A draft implementation fragment lives at
+`.taskmaster/tasks/task_159/implementation/reports/cache-heterogeneous-models-fragment.md`.
+
+GitHub tracking:
 [#369](https://github.com/spinje/pflow/issues/369) tracks within-batch
-heterogeneous-model fragmentation. It is narrower than this item because this
-item is also about making the user-facing output actionable when heterogeneity
-is already known.
+heterogeneous-model fragmentation; this item additionally covers the
+agent-UX side of making the output actionable when heterogeneity is
+already known.
 
-### 13. Template-reference skipped-analysis notes need clearer guidance
+### 5. Provider-specific constraint validation beyond Anthropic+thinking
 
-Original failure: Notes such as "template reference couldn't be resolved at
-analysis time" were repeated without explaining whether this was concerning,
+Bundle 3 closed the most-cited case
+(`llm.thinking-temperature-mismatch`, Anthropic + extended thinking +
+non-1 temperature) and explicitly scoped the broader item to "needs
+empirically-verified failure modes."
+
+Specific sub-cases without empirical grounding in this codebase:
+
+- **GH [#368](https://github.com/spinje/pflow/issues/368) — Opus 4.7
+  reasoning-parameter constraint**: referenced by issue number only; the
+  specific constraint shape (which parameter, which failure mode, which
+  provider error string) is not documented anywhere actionable. Cannot
+  implement without knowing the actual constraint.
+- **OpenAI reasoning models** (`gpt-5*` / `o1*` / `o3*` / `o4*`)
+  rejecting `temperature`: industry knowledge but zero
+  documentation/tests/examples in this codebase. Exact behavior varies
+  by model and version (o1 series originally hard-rejected non-1 temp;
+  newer models may silently downgrade). Adding a validator without
+  empirical verification risks false positives.
+- **Gemini constraints**: explicitly noted as permissive in existing
+  tests; no known constraints worth validating.
+- **`max_tokens` caps**: no awareness anywhere; would need
+  provider-specific tables.
+
+Reopen criteria for any sub-case:
+
+- A specific failure mode reported with verbatim provider error string.
+- A reproducible failing combination in a small `.pflow.md`.
+- The constraint verified across multiple model versions within the
+  affected provider family.
+
+Then mirror the Bundle 3 pattern: new catalog row, `_extract_X_violation`
+helper in `data_flow.py`, wire into `_validate_data_flow`, per-id
+sample, emission test, baseline case, MCP docstring update,
+`_is_cache_focused_for_advisory` predicate update.
+
+## Analyze-cache Evidence and Iteration UX
+
+### 6. No diff view for recommendation changes across iterations
+
+Recommendation counts can shrink, grow, or change category as the user
+edits workflows. This is correct behavior, but the analyzer does not
+show what changed since the previous analysis.
+
+Trigger shape: optimization loops where the user repeatedly changes
+workflow cache declarations, reruns, and re-analyzes.
+
+Why it matters: agents cannot easily tell which edits fixed prior
+findings and which new findings were introduced.
+
+Desired fix:
+
+- Add `analyze-cache --diff <prior-report-or-trace>` or similar.
+- Report recommendations added, removed, and changed.
+- Keep stable IDs/locations so agents can track progress across
+  iterations.
+
+### 7. Richer `--list-traces` drift status enums and structured stale-memo arrays
+
+Bundle 6 shipped `--list-traces` with counts and a per-trace
+drift-count field. Two follow-on polish items were noted as deferred
+during the Bundle 6 review pass because they expand the public JSON
+schema beyond the additive contract used for the initial ship:
+
+- Richer drift status enum (e.g.
+  `fresh` / `stale_memo` / `model_drift` / `partial_match` instead of
+  the current count + null).
+- Structured stale-memo node arrays so consumers can target which
+  specific nodes are stale, not just how many.
+
+Defer until a real consumer needs them; the current contract covers the
+common autoload + listing case.
+
+### 8. Template-reference skipped-analysis notes need clearer guidance
+
+Notes such as "template reference couldn't be resolved at analysis
+time" are repeated without explaining whether this is concerning,
 whether runtime cache still works, or what the user should do.
 
 Trigger shape: static analysis paths that cannot resolve runtime-produced
 values.
 
-Why it matters: agents can overreact to normal static-analysis limits or miss
-the fact that cache declarations can still work at runtime.
+Why it matters: agents can overreact to normal static-analysis limits or
+miss the fact that cache declarations can still work at runtime.
 
 Desired fix:
 
-- Classify these notes as informational when the workflow is otherwise valid.
+- Classify these notes as informational when the workflow is otherwise
+  valid.
 - Explain that runtime cache can still fire if declarations are correct.
 - Point to `pflow guide prompt-caching` for the relevant pattern.
 
-### 14. Gemini cache telemetry caveat may still be too low-visibility
+### 9. Gemini cache telemetry caveat may still be too low-visibility
 
-Original failure: Gemini reports cache reads in telemetry, but writes may not
-show the same way. The note explaining this can appear low in a Notes section.
+Gemini reports cache reads in telemetry, but writes may not show the
+same way. The note explaining this can appear low in a Notes section.
 
-Trigger shape: Gemini-backed workflows with prompt caching and trace telemetry.
+Trigger shape: Gemini-backed workflows with prompt caching and trace
+telemetry.
 
-Why it matters: users may wrongly conclude caching is not working when they do
-not see write telemetry.
-
-Desired fix:
-
-- Promote provider-specific telemetry caveats near Summary or the per-call
-  table when relevant.
-- Keep the wording provider-specific so non-Gemini workflows do not inherit
-  Gemini caveats.
-
-### 15. Recommendation language can still lead agents to write cache-aware prompt prose
-
-Original failure: after following advice to remove `${var}` from prompt bodies,
-an agent may replace it with wording such as "see cached context above" or "as
-cached above." The model does not see a cache boundary; it sees one prompt.
-
-Trigger shape: agent applies a mechanically correct cache edit but writes prose
-that exposes pflow's implementation detail to the model.
-
-Why it matters: cache edits can degrade prompt quality or confuse the model.
+Why it matters: users may wrongly conclude caching is not working when
+they do not see write telemetry.
 
 Desired fix:
 
-- Add guide examples showing how to refer to cached content by semantic label,
-  not by cache mechanics.
+- Promote provider-specific telemetry caveats near Summary or the
+  per-call table when relevant.
+- Keep the wording provider-specific so non-Gemini workflows do not
+  inherit Gemini caveats.
+
+### 10. Recommendation language can still lead agents to write cache-aware prompt prose
+
+After following advice to remove `${var}` from prompt bodies, an agent
+may replace it with wording such as "see cached context above" or "as
+cached above." The model does not see a cache boundary; it sees one
+prompt.
+
+Trigger shape: agent applies a mechanically correct cache edit but
+writes prose that exposes pflow's implementation detail to the model.
+
+Why it matters: cache edits can degrade prompt quality or confuse the
+model.
+
+Desired fix:
+
+- Add guide examples showing how to refer to cached content by semantic
+  label, not by cache mechanics.
 - Optionally add an informational analyzer lint for phrases such as
   "cached above", "in the cache", or "context above."
 
+### 11. "without recorded model" phrase is borderline-opaque to fresh agents
+
+Bundle 7 flagged this during the fresh-agent cold-read review. The
+phrase appears in the cost summary when LLM calls were made but no
+model was recorded in `llm_usage`. The wording could mean either "API
+didn't return it" or "pflow failed to record it" — neither is
+self-explanatory.
+
+Trigger shape: any LLM call where `llm_usage["model"]` is empty or
+missing despite the call having happened.
+
+Why it matters: agents triaging an unpriced cost summary cannot tell
+whether to investigate the provider response, pflow's recording path,
+or accept it as expected for a particular adapter.
+
+Desired fix:
+
+- Rewrite to name the source of the gap, e.g. `pricing unavailable for
+  N call(s) where the model field was not returned by the provider`.
+- Keep "we don't know" honest where genuinely unknown; do not fabricate.
+
+## Cross-workflow / multi-workflow detection
+
+### 12. Cross-consumer prompt-file index
+
+Currently the analyzer cannot answer:
+
+- "Which other workflows consume this `.prompt.md` file?"
+- "If I add `prompt_cache` to one consumer, do other consumers also
+  benefit / need a matching declaration?"
+- "For `prompt: ${item.prompt}` with item values pointing at local
+  prompt files, do those files share template variables that could be
+  hoisted into cached context?"
+
+Originally three scratchpad findings (S#15, S#17, S#20). All three
+share a root cause: there is no `prompt_file → [consuming_node_ids]`
+index, and no detector for shared variables across item-resolved prompt
+files. Bundle 7 and Bundle 8 closeouts both explicitly defer this work
+to its own task because the scope is larger than a single follow-up
+bundle.
+
+Trigger shapes:
+
+- Multi-workflow project where two workflows reference the same
+  external `.prompt.md` file, but only one declares `prompt_cache`.
+- Batch LLM node with `prompt: ${item.prompt}` and item values pointing
+  at multiple shared-template prompt files.
+- Parallel sub-workflow fan-out where ≥2 children share overlapping
+  `prompt_cache` declarations — should the parent emit a single warm
+  node?
+
+Desired fix (own task, est. 2–3 days):
+
+- Cross-workflow walker extension in
+  `core/cache_analysis/cross_workflow.py` to build a
+  `prompt_file → [consuming_node_ids]` index across workflows discovered
+  by the same walker traversal.
+- Detect shared template variables across item-resolved prompt files.
+- New catalog warning when one consumer adds `prompt_cache` but other
+  consumers lack a matching declaration.
+- New catalog warning recommending a parent warm node when ≥2 parallel
+  sub-workflow children share overlapping `prompt_cache`.
+
+### Inlined repros
+
+Both originally lived under `scratchpads/pflow-cache-repros/`
+(throwaway by design — preserved here so the bug shape doesn't die
+with the scratchpads).
+
+**Repro A — opaque prompt-file batch.** The batch LLM node references
+`prompt: ${item.prompt}` where each item value is a local prompt file.
+Both prompt files reference the same `${source_text}` variable. The
+analyzer does not currently inspect the referenced prompt files, so the
+shared variable is invisible to it.
+
+```markdown
+# Repro: Opaque Prompt-File Batch
+
+## Inputs
+
+### source_text
+
+Shared text used by both prompt files.
+
+- type: string
+- required: false
+- default: "This is shared source text. Repeat it mentally as if it were much larger."
+
+## Steps
+
+### analyze
+
+Run two prompt files that both reference `${source_text}`.
+
+- type: llm
+- temperature: 0
+- reasoning_effort: none
+- max_tokens: 16
+- prompt: ${item.prompt}
+
+\`\`\`yaml batch
+items:
+  - prompt: ./prompt-a.md
+  - prompt: ./prompt-b.md
+parallel: true
+\`\`\`
+
+## Outputs
+
+### results
+
+- source: ${analyze.results}
+```
+
+Where `prompt-a.md` and `prompt-b.md` both contain:
+
+```markdown
+Shared source:
+
+${source_text}
+
+Task A / B: reply with one sentence about the source.
+```
+
+Verification: `pflow analyze-cache <wrapper>.pflow.md --no-trace-autoload --all-rows`.
+Observed: `Cost data unavailable: run the workflow once for cost figures.`
+No static recommendation that `prompt: ${item.prompt}` points at
+local prompt files which share `${source_text}`.
+
+**Repro B — shared prompt missing surrounding context.** A
+`shared-context.prompt.md` was refactored to rely on context supplied
+by the surrounding workflow (via `## Cache`/`prompt_cache:`). A second
+workflow uses the same prompt file but doesn't declare the matching
+`prompt_cache`. Both workflows validate; both execute and return `OK`.
+The broken consumer fails silently — the prompt assumes context that
+isn't there.
+
+**The shared prompt** (`shared-context.prompt.md`):
+
+```markdown
+Use the source material from the surrounding context.
+
+Return exactly:
+
+OK
+```
+
+**The well-behaved consumer:**
+
+```markdown
+# With-Context Wrapper
+
+## Inputs
+
+### source_text
+
+- type: string
+- required: false
+- default: "This source text is supplied as surrounding context."
+
+## Cache
+
+- ttl: 5m
+
+\`\`\`cache
+Source material:
+
+${source_text}
+\`\`\`
+
+## Steps
+
+### answer
+
+- type: llm
+- prompt_cache: [source_text]
+- temperature: 0
+- reasoning_effort: none
+- max_tokens: 8
+- prompt: ./shared-context.prompt.md
+```
+
+**The broken consumer** (missing `## Cache` + `prompt_cache:`):
+
+```markdown
+# Missing-Context Wrapper
+
+## Steps
+
+### answer
+
+- type: llm
+- temperature: 0
+- reasoning_effort: none
+- max_tokens: 8
+- prompt: ./shared-context.prompt.md
+```
+
+Verification: `pflow <broken-consumer>.pflow.md --validate-only` passes;
+runtime succeeds; neither validator nor analyzer flags that the prompt
+prose assumes context the workflow does not supply. This is a
+semantic/context-contract bug, not a template-variable bug — the fix
+needs the cross-consumer prompt-file index described above to detect
+which workflows consume each prompt file and compare their declared
+`prompt_cache` against the prompt's prose assumptions.
+
 ## Run Output and General CLI UX
 
-### 16. Run-failure error format buries the provider message
+### 13. `-o` flag dotted paths / `--only` batch UX
 
-Original failure: batch failures printed the entire batch item payload before
-the actionable provider error. In the reported case, an Anthropic
-temperature/thinking constraint was buried after several KB of batch data.
+Tracked at [GH #400](https://github.com/spinje/pflow/issues/400) (S#13
+externalized in Bundle 9). Three compounding issues for batch and
+dict-output nodes:
 
-Trigger shape: LLM/provider error inside a batch item whose input object is
-large.
+1. `-o <node>.<subkey>` does not support dotted-path traversal.
+2. Warning on miss gives no hint about which keys would resolve.
+3. Default `--only <batch-node>` (no `-o`) streams the full `results`
+   payload to stdout — high context cost for agents.
 
-Why it matters: the user needs the provider error and node location first, not
-the full batch item. Large payloads delay diagnosis and make logs harder for
-agents to parse.
+Out of scope for the prompt-cache branch (general CLI/iteration UX,
+owned by Task 106). The companion failure-path UX shipped in this
+branch (compact batch-item summaries for FAILED items); this issue is
+the success-path equivalent.
 
-Desired fix:
+### 14. Validation failures may not save partial traces consistently
 
-- Render provider/root-cause error first.
-- Then render node ID, workflow path, and concise batch item identity.
-- Replace huge item values with a short preview, index, and/or content hash.
-- Keep full payload in trace/debug output.
+Runtime failures save partial traces, but a validation failure after a
+background run has begun may not save a trace.
 
-GitHub tracking: substantial match
-[#385](https://github.com/spinje/pflow/issues/385).
+Trigger shape: workflow starts or is queued for execution, then
+validation fails before normal runtime trace finalization.
 
-### 17. Runtime cost summary says `pricing unavailable for: unknown`
-
-Original failure: after a paid run, output could show a partial cost with
-`pricing unavailable for: unknown` instead of naming the model or call source.
-
-Trigger shape: one or more LLM calls use a model missing pricing metadata,
-often from per-item model overrides.
-
-Why it matters: users cannot tell which model lacks pricing or how much of the
-run is uncosted.
+Why it matters: trace availability feels inconsistent, and
+`analyze-cache` has no failed trace candidate to inspect.
 
 Desired fix:
 
-- Name unknown-priced models.
-- Count affected calls.
-- Prefer wording like `pricing unavailable for: gemini/gemini-3-flash-preview
-  (3 of 237 calls)`.
-
-GitHub tracking: related issue
-[#123](https://github.com/spinje/pflow/issues/123) covers unknown-model pricing
-warnings and text-mode cost-summary gaps. It does not exactly track the current
-runtime wording `pricing unavailable for: unknown`.
-
-### 18. Batch warnings show count without cause
-
-Original failure: batch output reported a count such as `1 error(s) out of 4
-items` without showing the one-line cause for each failed item.
-
-Trigger shape: batch node with one or more failed items.
-
-Why it matters: users must scroll through earlier output to learn whether the
-failure was a timeout, provider error, validation error, or something else.
-
-Desired fix:
-
-- Under the batch warning, render `[item N] cause: <one-line message>`.
-- Keep large payloads out of the summary.
-
-GitHub tracking: related issue
-[#385](https://github.com/spinje/pflow/issues/385) overlaps on concise batch
-failure context and replacing huge item dumps with a fingerprint/preview.
-
-### 19. "Blocking errors" can include fallback/error-path nodes
-
-Original failure: validation could report an unknown MCP fallback node under
-`Blocking errors` even though that node was only reachable through `on-error`
-and the primary path could run.
-
-Trigger shape: fallback/error-path node is invalid or unavailable, but normal
-path analysis can continue.
-
-Why it matters: "Blocking" implies the whole workflow cannot be analyzed or
-executed, which overstates conditional-path issues.
-
-Desired fix:
-
-- Split truly blocking errors from conditional/error-path limitations.
-- Explain which path is affected.
-
-### 20. Negative "Actual savings" wording is confusing
-
-Original failure: output could say `Actual savings ... adds ~$X vs no-cache`.
-The label says savings, while the value means overhead.
-
-Trigger shape: cache costs more than the no-cache projection for that run,
-often due to first-run write cost or low cache reuse.
-
-Why it matters: users have to infer that a positive "adds" value means cache
-was more expensive.
-
-Desired fix:
-
-- Render `Overhead vs no-cache: +$X` when cache increases cost.
-- Render `Savings vs no-cache: -$X` or equivalent when cache reduces cost.
-- Avoid using "savings" as the label for both signs.
-
-### 21. Validation-time provider constraints are not caught
-
-Original failure: a run can fail after expensive upstream work because a
-provider rejects a statically knowable parameter combination, such as Anthropic
-thinking/reasoning with an invalid temperature.
-
-Trigger shape:
-
-- Model is statically known or default model is known.
-- Provider-specific parameter constraint is statically checkable.
-- Invalid combination appears in the workflow.
-
-Why it matters: users can spend money and time before a deterministic provider
-constraint failure appears.
-
-Desired fix:
-
-- Add validation for high-confidence provider constraints when model and params
-  are statically resolvable.
-- Emit a structured diagnostic pointing to the node and offending fields.
-
-GitHub tracking: related issues
-[#385](https://github.com/spinje/pflow/issues/385) includes the Anthropic
-temperature/thinking validator gap as one observed case, and
-[#368](https://github.com/spinje/pflow/issues/368) covers a related Opus 4.7
-reasoning-parameter provider constraint. This item remains broader than both.
-
-### 22. MCP sync-required errors do not suggest `pflow mcp sync`
-
-Original failure: validation reported an `mcp-<service>-<tool>` node type as
-unknown even when the service was registered but had zero synced tools.
-
-Trigger shape: MCP service exists locally but `pflow mcp sync <service>` has
-not populated tool definitions.
-
-Why it matters: the direct fix is known, but the diagnostic does not mention
-it. Users have to discover `pflow mcp list` or sync behavior separately.
-
-Desired fix:
-
-- When an unknown MCP node type matches a registered service with zero tools,
-  include `pflow mcp sync <service>` in the diagnostic.
-
-### 23. Validation failures may not save partial traces consistently
-
-Original failure: runtime failures saved partial traces, but a validation
-failure after a background run had begun did not save a trace.
-
-Trigger shape: workflow starts or is queued for execution, then validation
-fails before normal runtime trace finalization.
-
-Why it matters: trace availability feels inconsistent, and analyze-cache has no
-failed trace candidate to inspect.
-
-Desired fix:
-
-- Define the trace-saving policy for validation failures vs runtime failures.
+- Define the trace-saving policy for validation failures vs runtime
+  failures.
 - Make behavior consistent and document it.
-- If validation failures intentionally do not save traces, make that explicit
-  in output.
+- If validation failures intentionally do not save traces, make that
+  explicit in output.
+
+## Iteration / Measurement Workflow
+
+### 15. Replay sub-workflow from trace inputs
+
+(S#8.) When iterating on a single LLM node deep in a workflow, agents
+must re-run the full upstream pipeline (long-running creative nodes,
+multi-minute concept generation) before reaching the node they care
+about. `--from-trace` exists for analysis but not for replay.
+
+Trigger shape: optimization loops where the same sub-workflow node is
+re-measured repeatedly with the same upstream inputs.
+
+Why it matters: clean `--no-cache` measurement of a single deep node
+is currently very expensive because most time is spent on unrelated
+upstream work.
+
+Desired fix (own task / feature, est. >1 week):
+
+- New `pflow run --replay-node <node-id> --from-trace <trace>` flag
+  that loads captured inputs for the target node from the trace and
+  skips all upstream execution.
+- Reports include a copy-pasteable replay command for failed batch items
+  or downstream sub-workflows.
+
+Defer until a real iteration loop hits this often enough to justify the
+implementation cost.
 
 ## Documentation and Maintenance
 
-### 24. Cache chunk byte boundaries are undocumented
+### 16. Cache chunk byte boundaries are undocumented
 
-Original failure: whitespace between chunks inside `## Cache` contributes to
-chunk bytes, which can create parent/child prose mismatches such as leading
-blank lines.
+Whitespace between chunks inside `## Cache` contributes to chunk bytes,
+which can create parent/child prose mismatches such as leading blank
+lines.
 
-Trigger shape: users manually align parent and child cache chunks and expect
-visual whitespace outside `${var}` lines not to affect chunk identity.
+Trigger shape: users manually align parent and child cache chunks and
+expect visual whitespace outside `${var}` lines not to affect chunk
+identity.
 
-Why it matters: small whitespace differences can break cache boundary matching,
-but users do not have a precise model of what bytes belong to each chunk.
+Why it matters: small whitespace differences can break cache boundary
+matching, but users do not have a precise model of what bytes belong to
+each chunk.
 
 Desired fix:
 
 - Document exact cache chunk byte boundaries and whitespace behavior.
 - Include examples with blank lines before/after `${var}`.
-- If the current behavior is too surprising, consider an explicit delimiter or
-  normalization strategy as a future design decision.
+- Distinguish substantial model prompts (separate `.prompt.md` files
+  appropriate) from tiny operational warmup prompts (S#18 — inline next
+  to `prompt_cache` for auditability).
+- If the current behavior is too surprising, consider an explicit
+  delimiter or normalization strategy as a future design decision.
 
-### 25. Stale docs still reference deleted trace drift helper
+### 17. Stale CLAUDE.md trace-drift references
 
-Original failure: some internal CLAUDE docs still referenced
-`_trace_aligns_with_ir` after the whole-trace drift gate was removed.
+Some internal CLAUDE.md docs still reference `_trace_aligns_with_ir`
+after the whole-trace drift gate was removed in Task 159 base.
 
-Trigger shape: future agents reading implementation guidance for cache analysis
-or runtime trace behavior.
+Trigger shape: future agents reading implementation guidance for cache
+analysis or runtime trace behavior.
 
-Why it matters: stale docs point agents toward nonexistent code and the old
-coarse trace-validity model.
+Why it matters: stale docs point agents toward nonexistent code and the
+old coarse trace-validity model.
 
 Desired fix:
 
-- Update affected CLAUDE docs to describe the current per-row trace evidence
-  model.
+- Update affected CLAUDE.md docs to describe the current per-row trace
+  evidence model.
 - Remove references to `_trace_aligns_with_ir`.
-- Prefer doing this during the Task 160 cache-analysis architecture sweep.
+- Prefer doing this during the Task 160 cache-analysis architectural
+  refactor sweep.
+
+## Internal Hygiene
+
+Two small refactors flagged as deferred during Bundle 6's pre-merge
+review pass. Both are non-blocking for users but affect future agent
+review.
+
+### 18. DRY the two `_*_memo_for_freshness_check` helpers
+
+The three-state memo-freshness logic duplicates between `context.py`
+and `token_estimation.py`. `token_estimation`'s variant could call
+`context`'s and discard the unused `created_at` return slot.
+
+Not a correctness bug; safe to consolidate during any future
+cache-analysis refactor pass.
+
+### 19. Remove `hasattr` fallback for `get_latest_for_node_with_cache_key`
+
+Bundle 6 added the new `MemoizationCache` method as additive on top of
+the legacy `get_latest_for_node()`. The new freshness-check path uses
+`hasattr(memo_cache, "get_latest_for_node_with_cache_key")` and falls
+back when the method is absent — load-bearing for legacy test mocks
+that don't implement the new method.
+
+Once all test mocks implement the new method, the `hasattr` fallback
+and the `ctx is None` paths can be removed.

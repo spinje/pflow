@@ -18,6 +18,82 @@ from pflow.cli.main import main
 from tests.shared.markdown_utils import write_workflow_file
 
 
+def _large_batch_item() -> dict[str, str]:
+    payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+    return {"label": "oversized-item", "payload": payload}
+
+
+def _large_batch_failure_workflow() -> dict:
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fail-batch",
+                "type": "shell",
+                "params": {"command": 'echo "forced batch failure for ${item.label}" >&2; exit 1'},
+                "batch": {
+                    "items": [_large_batch_item()],
+                    "error_handling": "fail_fast",
+                },
+            }
+        ],
+        "edges": [],
+        "start_node": "fail-batch",
+    }
+
+
+def _large_code_batch_failure_workflow() -> dict:
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fail-batch",
+                "type": "code",
+                "params": {
+                    "inputs": {"label": "${item.label}", "payload": "${item.payload}"},
+                    "code": (
+                        "label: str\n"
+                        "payload: str\n\n"
+                        'raise RuntimeError(f"forced batch failure for {label}")\n'
+                        'result: str = "unreachable"'
+                    ),
+                },
+                "batch": {
+                    "items": [_large_batch_item()],
+                    "error_handling": "fail_fast",
+                },
+            }
+        ],
+        "edges": [],
+        "start_node": "fail-batch",
+    }
+
+
+def _degraded_large_batch_workflow() -> dict:
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "process",
+                "type": "shell",
+                "params": {
+                    "command": (
+                        'if [ "${item.label}" = "oversized-item" ]; then '
+                        'echo "forced batch failure for ${item.label}" >&2; exit 1; '
+                        "else echo ok; fi"
+                    )
+                },
+                "batch": {
+                    "items": [{"label": "small-item", "payload": "ok"}, _large_batch_item()],
+                    "error_handling": "continue",
+                },
+            }
+        ],
+        "edges": [],
+        "start_node": "process",
+    }
+
+
 class TestEnhancedErrorOutput:
     """Test enhanced error output in CLI."""
 
@@ -208,6 +284,85 @@ class TestEnhancedErrorOutput:
         assert "category" in error
         assert "message" in error
         assert "node_id" in error
+
+    def test_large_batch_item_failure_does_not_dump_payload_to_text_stderr(self, tmp_path):
+        workflow_path = tmp_path / "large-batch-failure.pflow.md"
+        write_workflow_file(_large_batch_failure_workflow(), workflow_path)
+
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(main, [str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        assert "fail-batch" in result.stderr
+        assert "[0]" in result.stderr
+        assert "oversized-item" in result.stderr
+        assert "forced batch failure" in result.stderr
+        assert "payload=<str" in result.stderr
+        assert "PAYLOAD-START" not in result.stderr
+        assert "PAYLOAD-END" not in result.stderr
+        assert "token199" not in result.stderr
+
+    def test_large_code_batch_item_failure_keeps_item_summary_on_own_line(self, tmp_path):
+        workflow_path = tmp_path / "large-code-batch-failure.pflow.md"
+        write_workflow_file(_large_code_batch_failure_workflow(), workflow_path)
+
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(main, [str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "\n  item: label='oversized-item'; payload=<str" in result.stderr
+        assert ". Item:" not in result.stderr
+        assert "expectations. Item:" not in result.stderr
+        assert "Batch 'fail-batch' errors:" in result.stderr
+        assert "Suggestions:" not in result.stderr.split("Batch 'fail-batch' errors:", 1)[1]
+        assert "PAYLOAD-START" not in result.stderr
+        assert "PAYLOAD-END" not in result.stderr
+        assert "token199" not in result.stderr
+
+    def test_large_batch_item_json_uses_compact_batch_error_details(self, tmp_path):
+        workflow_path = tmp_path / "large-batch-failure.pflow.md"
+        write_workflow_file(_large_batch_failure_workflow(), workflow_path)
+
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
+
+        assert result.exit_code != 0
+        output = json.loads(result.stdout)
+        detail = output["execution"]["steps"][0]["batch_error_details"][0]
+        assert detail["index"] == 0
+        assert detail["item_summary"]["label"] == "oversized-item"
+        assert "payload=<str" in detail["item_summary"]["summary"]
+        assert detail["item_ref"] == detail["item_summary"]["sha256"]
+        assert detail["has_full_item"] is True
+        assert "item" not in detail
+        assert "exception" not in detail
+
+        serialized = result.stdout
+        assert "PAYLOAD-START" not in serialized
+        assert "PAYLOAD-END" not in serialized
+        assert "token199" not in serialized
+        for error in output["errors"]:
+            assert "PAYLOAD-START" not in error.get("message", "")
+        for diagnostic in output["diagnostics"]:
+            assert "PAYLOAD-START" not in diagnostic.get("message", "")
+        assert "PAYLOAD-START" not in output["error"]
+        assert "PAYLOAD-START" not in result.stderr
+
+    def test_degraded_large_batch_output_compacts_failed_item_in_stdout(self, tmp_path):
+        workflow_path = tmp_path / "degraded-large-batch.pflow.md"
+        write_workflow_file(_degraded_large_batch_workflow(), workflow_path)
+
+        runner = CliRunner(mix_stderr=False)
+        result = runner.invoke(main, [str(workflow_path)])
+
+        assert result.exit_code == 0
+        assert "payload=<str" in result.stdout
+        assert "PAYLOAD-START" not in result.stdout
+        assert "PAYLOAD-END" not in result.stdout
+        assert "token199" not in result.stdout
+        assert "Batch 'process' errors:" in result.stderr
+        assert "PAYLOAD-START" not in result.stderr
 
     def test_template_error_shows_context(self, tmp_path):
         """Template errors should fail with actionable context.

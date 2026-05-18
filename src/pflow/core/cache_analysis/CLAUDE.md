@@ -115,29 +115,59 @@ Chunk-level pricing helpers (the "if this ref were cached, how much would N call
 
 **1h-TTL Anthropic multiplier**: LiteLLM's `cache_creation_input_token_cost` is the 5-min rate (1.25× base); 1h-TTL writes cost 2× base. `_write_rate_for_ttl` applies the multiplier. Mirrors the runtime override at `llm_client.py::_maybe_normalize_anthropic_1h_cost` — keep in lockstep so predicted and actual costs price the same byte at the same rate.
 
+### Per-call Unit Contract
+
+`PerCallRow` token fields are per-call by contract. This includes `input_tokens_estimated`, `output_tokens_estimated`, projection `tokens_estimated` values, `chunk_tokens_estimated`, `body_tokens_estimated`, `cache_creation_input_tokens`, and `cache_read_input_tokens`. Trace rows are normalized once at the producer boundary in `_aggregate_trace_llm_calls`; downstream code must not divide again.
+
+Workflow-level consumers multiply token fields with `invocation_count_for(row)`. That helper lives beside `PerCallRow` in `analyze.py` because it is part of the row contract: static batches use `batch_size_estimated` when known, dynamic batches use observed call count, and non-batch rows repeated through a parent batch use `observed_call_count`.
+
+`row.cost_usd` is the deliberate exception. It is cohort actually-paid trace cost sourced through `AnalysisContext.cost_usd_for_node()` / `TraceTree.total_cost`, not through `_aggregate_trace_llm_calls`. Cost projection helpers ignore `row.cost_usd`; actual-paid aggregation sums it only on the no-trace fallback path.
+
+Projection invariants are row-local: `cached_now_tokens_estimated`, `cache_configured.tokens_estimated`, `cache_active.tokens_estimated`, `cache_ready.tokens_estimated`, and `cache_opportunity.tokens_estimated` must not exceed `input_tokens_estimated` when known. `cache_active` is the only projection that feeds headline cost math.
+
+### Projection model
+
+Rows expose four projection objects:
+
+- `cache_configured`: tokens the current workflow asks runtime to cache before provider minimum/image stripping.
+- `cache_active`: configured tokens the analyzer believes remain provider-effective after known runtime gates. Only this projection may affect cost projections.
+- `cache_ready`: tokens already active, configured, or unlockable with a direct cache edit in the current prompt shape.
+- `cache_opportunity`: maximum provable unrealized per-call cache upside after the required edit.
+
+`cached_now_tokens_estimated` is separate trace telemetry (`cache_creation_input_tokens + cache_read_input_tokens` when provider cache fields exist). Do not decompose provider telemetry across projection components; providers return one aggregate cache-read/write count per call.
+
+### Staleness signals
+
+Four independent staleness signals, four locations, no overloading:
+
+1. **Trace staleness**: `summary.trace_workflow_relationship: null | "same_fresh" | "same_drifted" | "parent_redirect" | "different_workflow"` plus `summary.trace_model_drift_count`. Derived from `_resolve_trace_scope` + `_detect_per_node_model_drift` count. Text renders it as an indented continuation under `Trace:` so long filenames do not wrap into the signal. Narrative model-drift and redirect notes remain in `notes[]`.
+2. **Memo staleness (detected)**: `summary.stale_memo_skipped_count`. Memo token/value tiers skip a memo row when its stored `cache_key` differs from `AnalysisContext.predicted_cache_keys[(workflow_path, node_id)]`; skipped rows fall through to estimator/unavailable. The accumulator is keyed by `(workflow_path, node_id)` to avoid parent/child node-id collisions.
+3. **Memo staleness (uncheckable)**: `summary.stale_memo_uncheckable_count`. `_PREDICTION_SKIPPED` means prediction was attempted but intentionally skipped for that node (for example missing sub-workflow params or placeholder-tainted inputs). The memo is consumed, but the count increments so `skipped=0` does not falsely mean every consumed memo was verified fresh.
+4. **Trace discovery**: `pflow analyze-cache <workflow> --list-traces` lists matching `~/.pflow/debug/workflow-trace-<hash>-*.json` files, marks the would-be autoloaded trace, includes the same disclosure note used by autoload, and annotates per-trace model drift. Drift comparison is skipped for workflows with IR-declared heterogeneous model nodes (`model=""` sentinel); unresolvable models (`None`) are silently excluded from the comparison. Empty listings exit 0 because "no traces yet" is a valid discovery result.
+
 ### token_estimation.py
 
 **4-tier hierarchy with documented fall-through rules**: `trace → memo → estimator → heuristic`. The `estimator-partial` source is emitted when the prompt was partially-resolvable (some `${...}` refs missed); confidence aggregation treats it as estimator-tier (not heuristic) so a partially-resolved row doesn't classify the workflow as `low_no_data`.
 
-**Symmetric fall-through for cacheable-token estimation**: when chunks can't be fully resolved (any chunk returns `None` from `_estimate_ref_tokens`), both DECLARED and CANDIDATE subsets return `(None, "unavailable")`. Honest unmeasurable. The previous declared-subset Tier 3 heuristic was deleted (F-04 fix) — it fabricated `len(prompt) * 75 // 400` token counts that didn't reflect actual cache content size and produced false-positive `cache.below-min-tokens` warnings.
+**Symmetric fall-through for cacheable-token estimation**: when chunks can't be fully resolved (any chunk returns `None` from `_estimate_ref_tokens`), both DECLARED and CANDIDATE subsets return `(None, "unavailable")`. Honest unmeasurable. The previous declared-subset Tier 3 heuristic was deleted (F-04 fix) — it fabricated `len(prompt) * 75 // 400` token counts that didn't reflect actual cache content size and produced false-positive `cache.below-min-predicted` warnings.
 
-**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2 (memo/parameters) and then to unavailable if chunks still can't resolve. Downstream `cache.below-min-tokens` warning is emitted through `below_min_tokens_detector.py` in predicted mode only when there is real positive cacheable-token evidence, and is suppressed when `cacheable_data_source == "trace"` so it doesn't contradict trace evidence when cache demonstrably worked.
+**Tier 1 fall-through for declared cache that didn't fire**: when `cache_creation + cache_read == 0` in the trace event (cache declared but didn't fire — sub-threshold etc.), fall through to Tier 2 (memo/parameters) and then to unavailable if chunks still can't resolve. Downstream `cache.below-min-predicted` is emitted through `below_min_tokens_detector.py` only when there is real positive configured-token evidence, and is suppressed for observed trace-active components so it doesn't contradict trace evidence when cache demonstrably worked.
 
-**`cacheable_data_source` projection tiers**: `batch_prefix` projects stable bytes before a batch item reference; `cross_workflow_projection` projects parent-declared values flowing into a child workflow that has not declared the receiving input in its own `## Cache`. Cross-workflow projection may replace weak parameter-derived candidate evidence when it finds a larger boundary-level opportunity, but it does not override trace, memo, or `batch_prefix` evidence. In no-trace analysis, structural cross-workflow recommendations still surface, but per-call cross-workflow rows stay unavailable and a note routes agents to `--from-trace` for attribution.
+**Projection tokenization**: `tokenize_prompt_region_for_projection` can resolve parameters, memo, and trace `node_output` values through `AnalysisContext.resolve_ref_value_for_projection`. This is intentionally narrower than changing `resolve_ref_value()` globally; existing warnings keep their old resolution contract while row opportunity can use trace-backed code-node outputs.
 
 **LiteLLM is lazy-imported** (mirrors the `llm_client.py` lazy-import pattern) to keep the analyzer package import-cheap.
 
 ### warning_catalog.py
 
-**Frozen catalog of 26 warning IDs.** Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
+**Frozen catalog of warning IDs.** Count is auto-derived as `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (`warning_catalog.py:945`) — trust the code as source of truth (currently 30). Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
 
 **`Diagnostic.id` is a top-level field, not nested in `context["warning_id"]`.** Mirrors mypy / rustc / ruff / eslint / clippy convention. Identity tuple updated from `(severity, source, node_id, message)` to `(severity, source, node_id, id or message)` — when `id` is set it's the dedup key, falling back to message-keyed dedup when absent (preserves legacy sub-workflow warning dedup byte-for-byte).
 
 **Catalog-as-SSoT for headlines**: `resolve_headline_for(diag)` looks up `headline_template` from the catalog by `diag.id` and formats against `diag.context`. **Works whether the diagnostic came from `make_diagnostic(...)` OR was built directly via `Diagnostic(id="cache.X", ...)`** — the validator emitters in `data_flow.py` use direct construction; the analyzer-side emitters use `make_diagnostic`. Both produce equivalent renderable diagnostics.
 
-**Dispatch tables** for `cache.below-min-tokens` (predicted vs observed evidence) live in this file. Validation of required context keys happens in `make_diagnostic` so missing context fails at construction, not at render.
+**Below-min warnings use distinct catalog IDs.** `cache.below-min-predicted` is analyzer static evidence, `cache.below-min-observed` is post-call provider telemetry, `cache.below-min-rendered` is runtime per-call marker stripping on the DECLARED channel, and `cache.prewarm-disabled-below-min` covers the prewarm cache marker failing to reach the provider — emitted by engine pre-flight (`_should_disable_below_min_prewarm`) when the static batch prefix is provably below the provider minimum at workflow entry, AND by the LLM-node dispatch strip (`_assemble_cache_prep`) when a templated model or unresolved-prefix-refs let the per-call rendering fall below the minimum. There is no evidence-kind dispatch table in the catalog; agents branch on `Diagnostic.id`.
 
-**`cache.below-min-tokens` has two drivers but one catalog ID**: analyzer predicted-tier emission and `LLMNode.post()` runtime observed-tier emission both call `below_min_tokens_detector.detect()`. The detector imports only stdlib plus `llm_capabilities` and `llm_providers` so `nodes/llm/llm.py` can import it without pulling analyzer/runtime-heavy dependencies. Runtime observed-tier findings surface post-run through `__warnings__` as `Diagnostic` instances; same-id child sub-workflow collisions remain limited by the existing `__warnings__[node_id]` key shape.
+**Prewarm-disabled is runtime-owned but catalog-backed.** Two producers, one catalog ID. (1) `build_cache_render_dict(workflow, shared)` can disable `CacheRenderContext.prewarm` before batch execution when the static prefix is provably below the provider minimum. It writes `cache.prewarm-disabled-below-min` to `__warnings__` and `__prewarm_disabled_below_min__[node_id] = "below_min"`. (2) `_assemble_cache_prep` in `nodes/llm/llm.py` strips a pure prewarm-channel marker at dispatch when per-call rendering falls below the minimum (templated model / unresolved refs that the pre-flight static check couldn't prove). The same catalog ID and the same `prewarm_disabled_reason` field are written in either case; LLM events carry `prewarm_disabled_reason` in trace 2.3.0 from BOTH producers.
 
 **About 75% of the file is data**: catalog dict + message templates + headline templates. The remaining 25% is constructors and dispatch logic.
 
@@ -273,7 +303,7 @@ Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_
 
 - **`_workflow_short_name` is duplicated** in `analyze.py` and `render_text.py`. Both implement the same basename-strip-`.pflow.md` logic. The duplication is a known follow-up (task 160).
 - **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
-- **Stable warning ID catalog has 26 entries** as of v1: 9 cache IDs from the original spec (the spec's 10th, `cache.opportunities-available`, is the dry-run nudge ID and lives outside the catalog) + `cache.discrepancy` + `cache.invalid-on-non-llm` + `cache.unsupported-provider-ttl` + `cache.prewarm-no-prefix` + `cache.batch-prewarm-below-min` + `cache.batch-prewarm-lower-bound-recommended` + `cache.shared-context-undeclared-conditional` + `cache.consolidate-to-root-recommended` + `cache.opaque-prompt` + `cache.prompt-cache-incomplete` + `cache.prompt-body-duplicates-cache` + `cache.prompt-body-shadows-cache` + `cache.heterogeneous-models-fragment-cache` + `cache.first-call-write-penalty` + `cache.system-prompts-fragment-cache` + `cache.sub-workflow-cache-undeclared` + `llm.thinking-temperature-mismatch`. Per DD#29 (task-159.md), adding new IDs requires design review.
+- **Stable warning ID catalog**: count is auto-derived as `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (`warning_catalog.py:945`) — trust the code as source of truth (currently 30). Per DD#29 (task-159.md), adding new IDs requires design review. The current set spans cache-* IDs plus one `llm.*` entry (`llm.thinking-temperature-mismatch`). To enumerate exhaustively, read `CACHE_WARNING_CATALOG` keys directly rather than maintaining a list here — the code drifts faster than the doc.
 
 ## Where to add a new feature
 

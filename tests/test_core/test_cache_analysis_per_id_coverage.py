@@ -160,14 +160,54 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
-        "cache.below-min-tokens": (
+        "cache.below-min-predicted": (
             "rewrite",
             {
                 "model": "claude-sonnet-4-5",
                 "cacheable_tokens": 512,
                 "min_tokens": 1024,
-                "evidence_kind": "predicted",
                 "provider_note": "",
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
+        "cache.below-min-observed": (
+            "rewrite",
+            {
+                "model": "claude-sonnet-4-5",
+                "cacheable_tokens": 0,
+                "min_tokens": 1024,
+                "provider_note": "",
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
+        "cache.below-min-rendered": (
+            "rewrite",
+            {
+                "model": "claude-sonnet-4-5",
+                "cacheable_tokens": 512,
+                "min_tokens": 1024,
+                "provider_note": "",
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
+        "cache.prewarm-disabled-below-min": (
+            "rewrite",
+            {
+                "model": "claude-sonnet-4-5",
+                "cacheable_tokens": 512,
+                "min_tokens": 1024,
+                "provider_note": "",
+                "alias": "item",
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
+        "cache.conditional-warmup-recommended": (
+            "rewrite",
+            {
+                "model": "claude-sonnet-4-5",
+                "below_min_count": 2,
+                "total_count": 4,
+                "min_tokens": 1024,
                 "affected_workflow": "x.pflow.md",
             },
         ),
@@ -391,6 +431,62 @@ def test_per_id_diagnostic_json_round_trip(warning_id: str) -> None:
     assert payload["id"] == warning_id
 
 
+def test_analyze_rehydrates_catalog_warnings_from_trace(tmp_path: Any) -> None:
+    """Runtime-only cache warnings recorded in trace JSON remain visible to
+    ``analyze-cache --from-trace``.
+
+    The rendered/prewarm-disabled below-min IDs are emitted by runtime code, not
+    the static analyzer. Trace replay is therefore the production boundary that
+    keeps those IDs observable after the run that produced them.
+    """
+    from pflow.core.cache_analysis import analyze
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    workflow_path = str(tmp_path / "trace-replay.pflow.md")
+    trace_path = tmp_path / "trace-replay.json"
+    workflow_ir: dict[str, Any] = {
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "hello"},
+            }
+        ],
+        "edges": [],
+    }
+    rendered = make_diagnostic(
+        "cache.below-min-rendered",
+        node_id="ask",
+        affected_workflow=workflow_path,
+        model="anthropic/claude-sonnet-4-5",
+        cacheable_tokens=5,
+        min_tokens=1024,
+        provider_note="cache_control markers will silently no-op at the provider",
+    )
+    prewarm_disabled = make_diagnostic(
+        "cache.prewarm-disabled-below-min",
+        node_id="ask",
+        affected_workflow=workflow_path,
+        model="anthropic/claude-sonnet-4-5",
+        cacheable_tokens=5,
+        min_tokens=1024,
+        provider_note="cache_control markers will silently no-op at the provider",
+        alias="item",
+    )
+
+    builder = TraceFixtureBuilder()
+    trace = builder.trace(workflow_path, [builder.llm_event("ask")])
+    trace["format_version"] = "2.3.0"
+    trace["warnings"] = [rendered.to_display_dict(), prewarm_disabled.to_display_dict()]
+    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+
+    analysis = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path)
+    warnings_by_id = {warning.id: warning for warning in analysis.warnings}
+
+    assert warnings_by_id["cache.below-min-rendered"].context["cacheable_tokens"] == 5
+    assert warnings_by_id["cache.prewarm-disabled-below-min"].context["alias"] == "item"
+
+
 # ---------------------------------------------------------------------------
 # Production-driven round-trip: drives REAL producers (validator, analyzer,
 # summarizer) against minimal IR fixtures that fire each catalog id, then
@@ -442,7 +538,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
       ``cache.unsupported-provider-ttl``,
       ``cache.prompt-body-duplicates-cache``,
       ``cache.prompt-body-shadows-cache``
-    - ``analyze`` → ``cache.below-min-tokens``, ``cache.prewarm-no-prefix``
+    - ``analyze`` → ``cache.below-min-predicted``, ``cache.prewarm-no-prefix``
     - ``summarize_from_analysis`` → ``cache.opportunities-available``
     """
     from pflow.core.cache_analysis import analyze, summarize_from_analysis
@@ -450,6 +546,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     from pflow.core.workflow.data_flow import validate_data_flow
 
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
     token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
     monkeypatch.setattr(
@@ -463,6 +560,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
     )
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(below_min_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
     monkeypatch.setattr(
         cost_module,
@@ -573,7 +671,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     seen_ids.add("cache.unsupported-provider-ttl")
 
     # --- analyzer-emitted ids (analyze.py) -------------------------------
-    # cache.below-min-tokens: a node opts into a small declared cache —
+    # cache.below-min-predicted: a node opts into a small declared cache —
     # the rendered content falls below the provider minimum (Anthropic = 1024).
     below_min_tokens_ir: dict[str, Any] = {
         "inputs": {"topic": {"type": "string"}},
@@ -592,10 +690,10 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         "edges": [],
     }
     analysis = analyze(below_min_tokens_ir, parameters={"topic": "hi"})
-    found = [d for d in analysis.warnings if d.id == "cache.below-min-tokens"]
-    assert found, f"analyze did not emit cache.below-min-tokens: ids={[d.id for d in analysis.warnings]}"
+    found = [d for d in analysis.warnings if d.id == "cache.below-min-predicted"]
+    assert found, f"analyze did not emit cache.below-min-predicted: ids={[d.id for d in analysis.warnings]}"
     _round_trip(found[0])
-    seen_ids.add("cache.below-min-tokens")
+    seen_ids.add("cache.below-min-predicted")
 
     # cache.prewarm-no-prefix: batch llm node with prewarm: true and
     # ${item.X} at position 0 of the prompt template.
@@ -629,10 +727,9 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
             {
                 "id": "score",
                 "type": "llm",
-                "model": "anthropic/claude-sonnet-4-5",
                 "prewarm": True,
                 "batch": {"items": "${items}", "as": "item"},
-                "params": {"prompt": "Score this: ${item.text}"},
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Score this: ${item.text}"},
             }
         ],
         "edges": [],
@@ -643,6 +740,129 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     _round_trip(found[0])
     seen_ids.add("cache.batch-prewarm-below-min")
 
+    # cache.prewarm-disabled-below-min: runtime pre-flight disables prewarm
+    # when the static prefix is below the provider minimum.
+    from pflow.registry.registry import Registry
+    from pflow.runtime.compilation.compiler import compile_workflow
+    from pflow.runtime.engine.engine import build_cache_render_dict
+
+    compiled = compile_workflow(batch_prewarm_below_min_ir, Registry(), initial_params={"items": [{"text": "a"}]})
+    shared_for_prewarm = {"items": [{"text": "a"}], "_pflow_workflow_file": "x.pflow.md"}
+    render_dict = build_cache_render_dict(compiled, shared_for_prewarm)
+    assert render_dict["score"].prewarm is False
+    found = [
+        d
+        for d in (shared_for_prewarm.get("__warnings__", {}) or {}).values()
+        if getattr(d, "id", None) == "cache.prewarm-disabled-below-min"
+    ]
+    assert found, "build_cache_render_dict did not emit cache.prewarm-disabled-below-min"
+    _round_trip(found[0])
+    seen_ids.add("cache.prewarm-disabled-below-min")
+
+    # cache.below-min-observed / rendered: runtime LLM helpers emit these
+    # producer-path diagnostics outside analyze().
+    from types import MappingProxyType
+
+    from pflow.core.cache_render import CacheRenderContext
+    from pflow.nodes.llm.llm import (
+        _emit_declared_rendered_below_min_warning,
+        _emit_observed_below_min_cache_warning,
+    )
+
+    runtime_shared: dict[str, Any] = {
+        "__pflow_cache_render__": MappingProxyType({
+            "ask": CacheRenderContext(
+                cache_block=None,
+                subset=("topic",),
+                prewarm=False,
+                unresolved_batch_prompt=None,
+                batch_alias=None,
+            )
+        }),
+        "_pflow_workflow_file": "x.pflow.md",
+    }
+    _emit_observed_below_min_cache_warning(
+        shared=runtime_shared,
+        node_id="ask",
+        model="anthropic/claude-sonnet-4-5",
+        llm_usage={
+            "has_cache_telemetry": True,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        },
+    )
+    observed = runtime_shared["__warnings__"]["ask"]
+    assert observed.id == "cache.below-min-observed"
+    _round_trip(observed)
+    seen_ids.add("cache.below-min-observed")
+
+    _emit_declared_rendered_below_min_warning(
+        shared=runtime_shared,
+        node_id="ask",
+        model="anthropic/claude-sonnet-4-5",
+        measured_tokens=5,
+        min_tokens=10,
+    )
+    rendered = runtime_shared["__warnings__"]["ask"]
+    assert rendered.id == "cache.below-min-rendered"
+    _round_trip(rendered)
+    seen_ids.add("cache.below-min-rendered")
+
+    # cache.conditional-warmup-recommended: complete trace shows a mixed
+    # cohort, with some provider calls stripped below-min and some not.
+    conditional_ir: dict[str, Any] = {
+        "inputs": {"items": {"type": "list"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": ("stable " * 2000) + "${item.text}"},
+            }
+        ],
+        "edges": [],
+    }
+    conditional_path = str(tmp_path / "conditional.pflow.md")
+    conditional_trace_path = tmp_path / "conditional-trace.json"
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    builder = TraceFixtureBuilder()
+    conditional_trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=conditional_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "anthropic/claude-sonnet-4-5",
+                                    "input_tokens": 200,
+                                    "output_tokens": 5,
+                                    "total_tokens": 205,
+                                    "cost_usd": 0.01,
+                                    **({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else {}),
+                                },
+                            }
+                            for index in range(4)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+    analysis = analyze(conditional_ir, workflow_path=conditional_path, trace_path=conditional_trace_path)
+    found = [d for d in analysis.warnings if d.id == "cache.conditional-warmup-recommended"]
+    assert found, f"analyze did not emit cache.conditional-warmup-recommended: ids={[d.id for d in analysis.warnings]}"
+    _round_trip(found[0])
+    seen_ids.add("cache.conditional-warmup-recommended")
+
     # cache.batch-prewarm-recommended: batch with large static prefix, no
     # explicit prewarm decision.
     batch_recommended_ir: dict[str, Any] = {
@@ -652,7 +872,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
                 "type": "llm",
                 "model": "priced/model",
                 "batch": {"items": [{"text": str(i)} for i in range(34)], "as": "item"},
-                "params": {"prompt": ("stable " * 100) + "${item.text}"},
+                "params": {"prompt": ("stable " * 5_000) + "${item.text}"},
             }
         ],
         "edges": [],
@@ -675,9 +895,9 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
                                 "success": True,
                                 "llm_call": {
                                     "model": "priced/model",
-                                    "input_tokens": 200,
+                                    "input_tokens": 10_000,
                                     "output_tokens": 5,
-                                    "total_tokens": 205,
+                                    "total_tokens": 10_005,
                                     "cost_usd": 0.01,
                                 },
                             }
@@ -707,7 +927,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
                 "type": "llm",
                 "model": "priced/model",
                 "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
-                "params": {"prompt": ("stable " * 20) + "${missing.upstream}\n${item.text}"},
+                "params": {"prompt": ("stable " * 5_000) + "${missing.upstream}\n${item.text}"},
             }
         ],
         "edges": [],

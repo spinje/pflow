@@ -48,14 +48,14 @@ def estimate_cacheable_tokens(
 
     Asymmetric fall-through (load-bearing):
     - For DECLARED subsets: partial memo data → falls through to Tier 3
-      (heuristic) to preserve cache.below-min-tokens warning fidelity.
+      (heuristic) to preserve cache.below-min-predicted warning fidelity.
     - For CANDIDATE-only (greenfield projection): partial memo data →
       returns (None, "unavailable") (Option C — honest unmeasurable).
 
     Tier 1 fall-through: when declared subset has trace_event with
     cache_creation+cache_read == 0 (cache declared but didn't fire —
     sub-threshold etc.), fall through to Tier 2/3. Downstream
-    cache.below-min-tokens warning is gated on cacheable_data_source !=
+    cache.below-min-predicted warning is gated on cacheable_data_source !=
     "trace" so it fires correctly for the fallthrough cases without
     contradicting trace evidence when cache demonstrably worked.
     """
@@ -67,7 +67,7 @@ def estimate_cacheable_tokens(
         if creation + read > 0:
             return (creation + read, "trace")
         # Fall through: declared but didn't fire. Tier 2/3 computes
-        # "what was attempted" so cache.below-min-tokens fires correctly.
+        # "what was attempted" so cache.below-min-predicted fires correctly.
 
     # Tier 2: memo-resolved chunk tokenization (declared OR candidate)
     chunks = declared_subset or candidate_subset
@@ -75,10 +75,10 @@ def estimate_cacheable_tokens(
         total = _sum_resolved_chunk_tokens(chunks, model, memo_cache, workflow_path)
         if total is not None:
             return (total, "memo")
-        # Fall through to Tier 3 for declared (preserves below-min-tokens fidelity).
+        # Fall through to Tier 3 for declared (preserves below-min-predicted fidelity).
         # For candidate-only, fall through to Tier 4 (Option C — honest unmeasurable).
 
-    # Tier 3: estimator (declared subset only — heuristic; preserves below-min-tokens)
+    # Tier 3: estimator (declared subset only — heuristic; preserves below-min-predicted)
     if declared_subset:
         return (max(0, len(prompt) * 75 // 400), "estimator")
 
@@ -152,12 +152,12 @@ def _llm_call_field_from_trace(trace, node_id, field):
 | 2 | Greenfield, post-run, candidate detected | — | ✓ | — | ✓ | 2 | int / `memo` ✓ FIXES Bug D |
 | 3 | Greenfield, post-run, no candidate | — | ✓ | — | — | 4 | None / `unavailable` (row hidden) |
 | 4 | Greenfield + trace, candidate detected | ✓ | ✓ | — | ✓ | 2 | int / `memo` (Tier 1 N/A — no declared) ✓ FIXES Bug D in trace mode |
-| 5 | Declared, pre-run | — | — | ✓ | — | 3 | int / `estimator` (heuristic; below-min-tokens may fire spuriously — pre-first-run; resolves on memo population) |
+| 5 | Declared, pre-run | — | — | ✓ | — | 3 | int / `estimator` (heuristic; below-min-predicted may fire spuriously — pre-first-run; resolves on memo population) |
 | 6 | Declared, post-run, no trace | — | ✓ | ✓ | — | 2 | int / `memo` ✓ FIXES brownfield bug (silent gap) |
 | 7 | Declared + trace, cache fired | ✓ | ✓ | ✓ | — | 1 | int / `trace` ✓ FIXES smoke-test Bug A,B,C |
 | 8a | **Declared + heterogeneous batch** (`model=""`) | — | — | ✓ | — | 3 | int / `estimator` (Tier 2 short-circuits on `not model`; Tier 3 fires for declared) |
 | 8b | **Greenfield + heterogeneous batch** (`model=""`) | — | — | — | — | 4 | None / `unavailable` (Tier 2 gate fails on `not model`; Tier 3 requires declared) — **JSON shape changes from `0` to `null`** for these rows; documented as additive 2.x |
-| 9 | Declared + trace, cache didn't fire | ✓ | ✓ | ✓ | — | 2 (after fall-through) | int / `memo` (preserves below-min-tokens warning correctly) |
+| 9 | Declared + trace, cache didn't fire | ✓ | ✓ | ✓ | — | 2 (after fall-through) | int / `memo` (preserves below-min-predicted warning correctly) |
 | 10 | Declared, partial memo (one chunk no data) | — | partial | ✓ | — | 3 (after fall-through) | int / `estimator` (declared falls through; below-min works) |
 | 11 | Declared + trace fired, partial memo | ✓ | partial | ✓ | — | 1 | int / `trace` (Tier 1 wins; partial memo doesn't matter) |
 | 12 | Candidate + partial memo | — | partial | — | ✓ | 4 | None / `unavailable` (candidate-only does NOT fall through — honest Option C) |
@@ -254,7 +254,7 @@ if (
     min_tokens = get_min_cache_tokens(row.model)
     if cacheable < min_tokens:
         diagnostics.append(
-            make_diagnostic("cache.below-min-tokens", ...)
+            make_diagnostic("cache.below-min-predicted", ...)
         )
 ```
 
@@ -396,9 +396,9 @@ Each drives `analyze(...)` end-to-end with REAL `MemoizationCache` (mirrors `tes
 assert summary.warnings_count + summary.info_count >= 1
 # With:
 assert any(
-    w.id == "cache.below-min-tokens"
+    w.id == "cache.below-min-predicted"
     for w in result.warnings
-), f"Expected cache.below-min-tokens; got: {[w.id for w in result.warnings]}"
+), f"Expected cache.below-min-predicted; got: {[w.id for w in result.warnings]}"
 ```
 
 This catches both "warning disappears" AND "different warning fires for the wrong reason."
@@ -418,7 +418,7 @@ Agent 3 confirmed no DIRECT tests reference `_estimate_cacheable_tokens` or `_en
 | Steady-state (`## Cache` declared) + no trace + no memo | Static heuristic | Tier 3 estimator (same formula) | Test #5; existing `test_analyze_summary_counts_warnings_and_info` |
 | Steady-state + memo (no trace) | **STATIC HEURISTIC — broken silently** | Tier 2 memo | Test #13 (the silent gap) |
 | Steady-state + 2.1 trace, cache fired | **STATIC HEURISTIC — broken** | Tier 1 trace | Test #14 (smoke fixture) |
-| Steady-state + 2.1 trace, cache didn't fire (sub-threshold) | Static heuristic | Tier 1 falls through → Tier 2/3 → `cache.below-min-tokens` fires (gated on `source != "trace"`) | Test #2 + Case 9 row |
+| Steady-state + 2.1 trace, cache didn't fire (sub-threshold) | Static heuristic | Tier 1 falls through → Tier 2/3 → `cache.below-min-predicted` fires (gated on `source != "trace"`) | Test #2 + Case 9 row |
 | `--from-trace` with discrepancies (existing path) | Discrepancy-detection unchanged | Same — discrepancy logic untouched | Existing `test_discrepancy_*` |
 | 2.0.0 trace fallback | Discrepancy emission suppressed; static heuristic | Tier 1 sees 0+0 fields → falls to Tier 2/3 (correct) | Existing 2.0.0 fallback test |
 | **Heterogeneous + declared** (`model=""` + `prompt_cache:`) | Static heuristic | Tier 3 (Tier 2 short-circuits on `not model`) — Case 8a | Test #16 (NEW end-to-end) |
@@ -529,7 +529,7 @@ Single PR with a `/code-review` checkpoint between production refactor and test 
 
 7. **Add new tests** — 12 tier-coverage unit tests (#1-12) + 5 end-to-end production-shape tests (#13-17).
 
-8. **Strengthen existing tests** — `test_analyze_summary_counts_warnings_and_info` to assert specific `cache.below-min-tokens` ID.
+8. **Strengthen existing tests** — `test_analyze_summary_counts_warnings_and_info` to assert specific `cache.below-min-predicted` ID.
 
 9. **Run smoke fixtures + lyrics-generator regression + load-bearing gates.**
 
@@ -602,7 +602,7 @@ Reviewed by 4 agents in parallel: review-plan, review-silent-failures, review-fe
 | # | Finding | Found by | Where addressed |
 |---|---|---|---|
 | 1 | Tri-state clamp block must explicitly distinguish None / 0 / positive | review-plan, review-silent-failures | "_build_per_call_row refactor" — explicit 3-way code block |
-| 2 | `cache.below-min-tokens` warning emitter must consume `cacheable_data_source` | review-silent-failures | "_per_node_warnings gate update" — analyzer-side, NOT deferred |
+| 2 | `cache.below-min-predicted` warning emitter must consume `cacheable_data_source` | review-silent-failures | "_per_node_warnings gate update" — analyzer-side, NOT deferred |
 | 3 | Monkeypatch site direction was inverted | review-plan, review-test-fidelity | "Tests — Monkeypatch site direction" — 5 existing sites STAY at analyze_module |
 | 4 | Autouse `deterministic_tokens` fixture bypass | review-test-fidelity | "Autouse fixture update" — patch BOTH module bindings |
 | 5 | `_find_trace_event` helper signature must be specified | review-plan, review-feature-interactions | "Function — `_find_llm_event`" — explicit spec; refactor `_llm_call_field_from_trace` to consume |
@@ -623,7 +623,7 @@ Reviewed by 4 agents in parallel: review-plan, review-silent-failures, review-fe
 
 #### review-silent-failures C1 — Tier 1 fall-through behavior
 - **Claimed issue**: returning `(0, "trace")` short-circuit instead of fall-through to Tier 2/3.
-- **Why disputed**: `(0, "trace")` would suppress `cache.below-min-tokens` even for genuine fall-through cases where cache didn't fire (provider sub-threshold). The right fix is review-silent-failures C2's gate-on-source pattern (action item #2 above) — which is more surgical and DOES suppress the false-positive case (trace nonzero but below-min) without sacrificing the warning's diagnostic value.
+- **Why disputed**: `(0, "trace")` would suppress `cache.below-min-predicted` even for genuine fall-through cases where cache didn't fire (provider sub-threshold). The right fix is review-silent-failures C2's gate-on-source pattern (action item #2 above) — which is more surgical and DOES suppress the false-positive case (trace nonzero but below-min) without sacrificing the warning's diagnostic value.
 
 #### review-test-fidelity C1 — Test #2 mutation contract wording
 - **Claimed issue**: "mutation `> 0` → `>= 0` impossible to introduce."

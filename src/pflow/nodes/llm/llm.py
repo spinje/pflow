@@ -5,6 +5,7 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pflow.core.cache_analysis.below_min_tokens_detector import (
     BelowMinTokensEvidence,
+    provider_note,
 )
 from pflow.core.cache_analysis.below_min_tokens_detector import (
     detect as detect_below_min_tokens,
@@ -26,6 +28,7 @@ from pflow.core.cache_render import (
 )
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
 from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
+from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_providers import detect_provider
 from pflow.core.llm_reasoning_map import (
@@ -174,7 +177,7 @@ def _emit_observed_below_min_cache_warning(
     model: str,
     llm_usage: dict[str, Any],
 ) -> None:
-    """Emit observed-tier cache.below-min-tokens for LLMNode cache misses."""
+    """Emit observed-tier cache.below-min-observed for LLMNode cache misses."""
     cache_ctx = _read_cache_render_context(shared, node_id)
     declared_prompt_cache = list(cache_ctx.subset) if cache_ctx and cache_ctx.subset else []
     if node_id is None or not declared_prompt_cache:
@@ -208,16 +211,167 @@ def _emit_observed_below_min_cache_warning(
 
     workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
     diagnostic = make_diagnostic(
-        "cache.below-min-tokens",
+        "cache.below-min-observed",
         node_id=finding.node_id,
         affected_workflow=workflow_path,
         model=finding.model,
         min_tokens=finding.min_tokens,
-        evidence_kind=finding.evidence_kind,
         cacheable_tokens=finding.cacheable_tokens,
         provider_note=finding.provider_note,
     )
     shared.setdefault("__warnings__", {}).setdefault(node_id, diagnostic)
+
+
+def _count_text_tokens(text: str, model: str) -> int:
+    """Best-effort token count for ``text`` under ``model``.
+
+    Primary: ``litellm.token_counter`` (the same primitive
+    ``cache_analysis.token_estimation`` uses). Fallback on any failure: a
+    ``len(text) // 4`` heuristic — the worst-case bias is toward
+    underestimating tokens for normal English, which biases the threshold
+    check toward false-strip (lost savings, no error) over false-keep
+    (Gemini hard-rejection). Acceptable for a binary above/below check.
+    """
+    try:
+        from pflow.core.litellm_runtime import import_litellm
+
+        return int(import_litellm().token_counter(model=model, text=text))
+    except Exception:
+        return len(text) // 4
+
+
+@dataclass(frozen=True)
+class CacheStripResult:
+    """Records which cache markers were stripped at dispatch.
+
+    Channels:
+      - ``declared``: system_blocks markers (rendered ``prompt_cache:`` chunks).
+      - ``prewarm``: user_message_blocks markers (auto-batch-prefix when
+        ``prewarm: true`` fires).
+
+    Per-channel ``*_measured_tokens`` is set only when that channel's
+    marker was stripped — its value is the cumulative token count through
+    the stripped block (the same number the existing warning template
+    interpolates as ``cacheable_tokens``).
+
+    Cumulative-token monotonicity guarantees ``prewarm`` strip without
+    ``declared`` strip can only happen on pure-prewarm nodes (no
+    ``system_blocks`` marker). Combined nodes either strip nothing,
+    strip declared only, or strip both.
+    """
+
+    threshold: int
+    declared_measured_tokens: int | None = None
+    prewarm_measured_tokens: int | None = None
+
+
+def _strip_below_min_cache_markers(
+    *,
+    system_blocks: list[dict[str, Any]] | None,
+    user_message_blocks: list[dict[str, Any]] | None,
+    model: str,
+) -> CacheStripResult | None:
+    """Strip ``cache_control`` markers whose cumulative cache scope is below
+    the provider minimum.
+
+    Each ``cache_control`` marker creates an independent provider cache
+    scope spanning all preceding text content (including earlier blocks in
+    the same message AND prior message sections — v1 order:
+    ``system_blocks`` → ``user_message_blocks``). For each marker, we
+    measure cumulative tokens through its block and strip the marker when
+    below ``get_min_cache_tokens(model)``.
+
+    Returns a ``CacheStripResult`` carrying per-channel ``measured_tokens``
+    (smallest stripped scope in each channel), or ``None`` when no markers
+    were stripped. Mutates the block dicts in place via
+    ``del block["cache_control"]`` — block text content is unchanged so the
+    call still goes out, it just no longer claims a cache.
+    """
+    threshold = get_min_cache_tokens(model)
+    cumulative = 0
+    declared_min: int | None = None
+    prewarm_min: int | None = None
+    # channel_label argument keeps the walker linear; per-channel
+    # captures replace the previous flat ``stripped_scopes`` list.
+    for channel_label, blocks in (("declared", system_blocks), ("prewarm", user_message_blocks)):
+        if not blocks:
+            continue
+        for block in blocks:
+            cumulative += _count_text_tokens(str(block.get("text", "")), model)
+            if "cache_control" in block and cumulative < threshold:
+                del block["cache_control"]
+                if channel_label == "declared":
+                    declared_min = cumulative if declared_min is None else min(declared_min, cumulative)
+                else:
+                    prewarm_min = cumulative if prewarm_min is None else min(prewarm_min, cumulative)
+
+    if declared_min is None and prewarm_min is None:
+        return None
+    return CacheStripResult(
+        threshold=threshold,
+        declared_measured_tokens=declared_min,
+        prewarm_measured_tokens=prewarm_min,
+    )
+
+
+def _emit_declared_rendered_below_min_warning(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    model: str,
+    measured_tokens: int,
+    min_tokens: int,
+) -> None:
+    """Emit ``cache.below-min-rendered`` for a stripped DECLARED-channel marker.
+
+    Authoritative for this run (``=`` assignment per ``nodes/CLAUDE.md``);
+    the observed-tier emitter naturally suppresses itself afterward because
+    the stripped marker means the provider returns no cache telemetry.
+    """
+    if node_id is None:
+        return
+    workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
+    diagnostic = make_diagnostic(
+        "cache.below-min-rendered",
+        node_id=node_id,
+        affected_workflow=workflow_path,
+        model=model,
+        min_tokens=min_tokens,
+        cacheable_tokens=measured_tokens,
+        provider_note=provider_note(model),
+    )
+    shared.setdefault("__warnings__", {})[node_id] = diagnostic
+
+
+def _emit_prewarm_dispatch_stripped_warning(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    model: str,
+    measured_tokens: int,
+    min_tokens: int,
+    alias: str,
+) -> None:
+    """Emit ``cache.prewarm-disabled-below-min`` for a stripped PREWARM-channel marker.
+
+    Same catalog ID the engine pre-flight emits; the catalog template was
+    loosened so the wording is truthful for both producers (pre-flight
+    disable + dispatch strip).
+    """
+    if node_id is None:
+        return
+    workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
+    diagnostic = make_diagnostic(
+        "cache.prewarm-disabled-below-min",
+        node_id=node_id,
+        affected_workflow=workflow_path,
+        model=model,
+        min_tokens=min_tokens,
+        cacheable_tokens=measured_tokens,
+        provider_note=provider_note(model),
+        alias=alias,
+    )
+    shared.setdefault("__warnings__", {})[node_id] = diagnostic
 
 
 def _build_openai_cache_kwargs(
@@ -514,11 +668,18 @@ def _assemble_cache_prep(
     user_model_options: dict[str, Any],
     attachments: list[Attachment] | None = None,
     node_id: str | None = None,
-) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None, list[str], dict[str, Any]]:
+) -> tuple[
+    list[dict[str, Any]] | None,
+    list[dict[str, Any]] | None,
+    list[str],
+    dict[str, Any],
+    str | None,
+    str | None,
+]:
     """Build the cache-rendering quad for ``prep_res``.
 
     Returns ``(system_blocks, user_message_blocks, chunks_skipped,
-    model_options)``:
+    model_options, cache_skipped_reason, prewarm_disabled_reason)``:
 
     - ``system_blocks`` — declared cache rendered as content blocks (C1.2),
       or ``None`` when no cache opt-in applies.
@@ -528,10 +689,16 @@ def _assemble_cache_prep(
       channel via ``cache_chunks_skipped`` on ``llm_usage``).
     - ``model_options`` — user options with OpenAI cache kwargs merged in
       (only on OpenAI; other providers pass through unchanged).
+    - ``cache_skipped_reason`` — ``"below_min"`` when runtime strips a
+      declared-channel cache marker before dispatch, else ``None``.
+    - ``prewarm_disabled_reason`` — ``"below_min"`` when runtime strips a
+      pure prewarm-channel cache marker before dispatch, else ``None``.
 
     Extracted from ``LLMNode.prep`` to keep cyclomatic complexity below the
     project's C901 threshold.
     """
+    cache_skipped_reason: str | None = None
+    prewarm_disabled_reason: str | None = None
     system_blocks, chunks_skipped = _build_system_blocks(
         user_system=user_system,
         cache_ctx=cache_ctx,
@@ -547,6 +714,47 @@ def _assemble_cache_prep(
         attachments=attachments,
         node_id=node_id,
     )
+    # Pre-dispatch strip: when the rendered cache content for any marker
+    # is below the provider's minimum-cacheable-tokens, strip the marker
+    # before sending. Otherwise Gemini hard-rejects the call ("Cached
+    # content is too small") and Anthropic silently no-ops the marker
+    # without surfacing a warning until post-call telemetry.
+    result = _strip_below_min_cache_markers(
+        system_blocks=system_blocks,
+        user_message_blocks=user_message_blocks,
+        model=model,
+    )
+    if result is not None:
+        if result.declared_measured_tokens is not None:
+            # Declared-channel strip: primary cause when both channels strip
+            # (cumulative monotonicity — fix declared first; prewarm strip
+            # is downstream consequence). Emit declared warning only.
+            cache_skipped_reason = "below_min"
+            _emit_declared_rendered_below_min_warning(
+                shared=shared,
+                node_id=node_id,
+                model=model,
+                measured_tokens=result.declared_measured_tokens,
+                min_tokens=result.threshold,
+            )
+        elif result.prewarm_measured_tokens is not None:
+            # Pure prewarm-only strip (impossible on combined nodes per
+            # monotonicity). cache_ctx.batch_alias is guaranteed non-None
+            # because _build_user_message_blocks returns None when alias
+            # is missing, so the strip above could only have happened with
+            # a valid alias in scope.
+            prewarm_disabled_reason = "below_min"
+            alias = cache_ctx.batch_alias if cache_ctx else None
+            if alias is not None:
+                _emit_prewarm_dispatch_stripped_warning(
+                    shared=shared,
+                    node_id=node_id,
+                    model=model,
+                    measured_tokens=result.prewarm_measured_tokens,
+                    min_tokens=result.threshold,
+                    alias=alias,
+                )
+
     options = dict(user_model_options)
     provider = detect_provider(model)
     if provider is not None and provider.name == "openai":
@@ -555,7 +763,7 @@ def _assemble_cache_prep(
             # ``setdefault`` so a user-provided override wins (e.g., a test
             # pinning a specific prompt_cache_key for fixture stability).
             options.setdefault(key, value)
-    return system_blocks, user_message_blocks, chunks_skipped, options
+    return system_blocks, user_message_blocks, chunks_skipped, options, cache_skipped_reason, prewarm_disabled_reason
 
 
 def _build_system_blocks(
@@ -668,6 +876,8 @@ class LLMNode(Node):
         - cache_source: str  # Trace 2.1.0 — "memo" | "in_process" — which pflow cache layer served this call. Absent for fresh executions.
         - cache_age_sec: float  # Trace 2.1.0 — age of the cached entry in seconds. Absent for fresh executions or in-process hits.
         - cache_chunks_skipped: list  # Trace 2.1.0 — chunk names skipped during cache rendering due to ABSENT upstream branches (default empty list).
+        - cache_skipped_reason: str|None  # Trace 2.3.0 — "below_min" when runtime stripped cache markers before dispatch.
+        - prewarm_disabled_reason: str|None  # Trace 2.3.0 — "below_min" when pre-flight disabled batch prewarm for this node.
     - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)
@@ -794,7 +1004,14 @@ class LLMNode(Node):
         # silent-stale-cache gate).
         node_id = getattr(self, "node_id", None)
         cache_ctx = _read_cache_render_context(shared, node_id)
-        system_blocks, user_message_blocks, chunks_skipped, merged_model_options = _assemble_cache_prep(
+        (
+            system_blocks,
+            user_message_blocks,
+            chunks_skipped,
+            merged_model_options,
+            cache_skipped_reason,
+            prewarm_disabled_reason_dispatch,
+        ) = _assemble_cache_prep(
             user_system=system,
             cache_ctx=cache_ctx,
             shared=shared,
@@ -805,6 +1022,15 @@ class LLMNode(Node):
             node_id=node_id,
         )
 
+        # Pre-flight wrote __prewarm_disabled_below_min__[node_id] BEFORE batch
+        # dispatch (engine.py:_should_disable_below_min_prewarm); dispatch strip
+        # writes prewarm_disabled_reason_dispatch per-call. Pre-flight wins when
+        # both fire — it disabled prewarm sequencing for the whole batch, so the
+        # per-call dispatch strip is downstream of that decision.
+        prewarm_disabled_reason = (shared.get("__prewarm_disabled_below_min__") or {}).get(
+            node_id
+        ) or prewarm_disabled_reason_dispatch
+
         prep_res = {
             "prompt": prompt,
             "model": model,
@@ -813,6 +1039,8 @@ class LLMNode(Node):
             "system_blocks": system_blocks,
             "user_message_blocks": user_message_blocks,
             "__cache_chunks_skipped__": chunks_skipped,
+            "__cache_skipped_reason__": cache_skipped_reason,
+            "__prewarm_disabled_reason__": prewarm_disabled_reason,
             "max_tokens": self.params.get("max_tokens"),
             "attachments": attachments,
             "output_schema": self.params.get("output_schema"),
@@ -898,6 +1126,8 @@ class LLMNode(Node):
             # method's input arg; directly available.
             err_dict = _error_dict_from_exception(e)
             err_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
+            err_dict["usage"]["cache_skipped_reason"] = prep_res.get("__cache_skipped_reason__")
+            err_dict["usage"]["prewarm_disabled_reason"] = prep_res.get("__prewarm_disabled_reason__")
             return err_dict
 
         return {
@@ -949,6 +1179,8 @@ class LLMNode(Node):
             # Task 159 C1.2 cross-layer co-edit (cache_chunks_skipped) — wrap
             # at the caller, not the builder.
             err_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
+            err_dict["usage"]["cache_skipped_reason"] = prep_res.get("__cache_skipped_reason__")
+            err_dict["usage"]["prewarm_disabled_reason"] = prep_res.get("__prewarm_disabled_reason__")
             return err_dict
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
@@ -1006,6 +1238,8 @@ class LLMNode(Node):
                 # surfaces this so analyze-cache --from-trace can attribute
                 # cache discrepancies to runtime branch skips.
                 "cache_chunks_skipped": list(prep_res.get("__cache_chunks_skipped__", [])),
+                "cache_skipped_reason": prep_res.get("__cache_skipped_reason__"),
+                "prewarm_disabled_reason": prep_res.get("__prewarm_disabled_reason__"),
             }
             # Adapter populates cost_usd from LiteLLM's response_cost (None
             # when LiteLLM has no pricing data for the model).
@@ -1071,6 +1305,8 @@ class LLMNode(Node):
                 # Task 159 C1.2 cross-layer co-edit (cache_chunks_skipped) —
                 # wrap at the caller. ``prep_res`` is this method's arg.
                 error_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
+                error_dict["usage"]["cache_skipped_reason"] = prep_res.get("__cache_skipped_reason__")
+                error_dict["usage"]["prewarm_disabled_reason"] = prep_res.get("__prewarm_disabled_reason__")
                 # Preserve raw response for downstream fallback parsing —
                 # contract preserved from the previous behavior. Usage was
                 # captured above (the call succeeded; only parsing failed),
@@ -1132,11 +1368,18 @@ class LLMNode(Node):
             # threads it into shared so trace 2.1.0 records runtime branch
             # skips even on failure paths. Without this preservation, the
             # wraps at the four call sites are dead code.
-            cache_chunks_skipped = exec_res.get("usage", {}).get("cache_chunks_skipped", [])
+            usage_in = exec_res.get("usage", {})
+            cache_chunks_skipped = usage_in.get("cache_chunks_skipped", [])
+            cache_skipped_reason = usage_in.get("cache_skipped_reason")
+            prewarm_disabled_reason = usage_in.get("prewarm_disabled_reason")
+            salvage: dict[str, Any] = {}
             if cache_chunks_skipped:
-                shared["llm_usage"] = {"cache_chunks_skipped": list(cache_chunks_skipped)}
-            else:
-                shared["llm_usage"] = {}
+                salvage["cache_chunks_skipped"] = list(cache_chunks_skipped)
+            if cache_skipped_reason:
+                salvage["cache_skipped_reason"] = cache_skipped_reason
+            if prewarm_disabled_reason:
+                salvage["prewarm_disabled_reason"] = prewarm_disabled_reason
+            shared["llm_usage"] = salvage
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle errors after all retries exhausted.
@@ -1159,4 +1402,6 @@ class LLMNode(Node):
         # Task 159 C1.2 cross-layer co-edit (cache_chunks_skipped) — wrap at
         # the caller, not the builder. ``prep_res`` is this method's arg.
         err_dict["usage"]["cache_chunks_skipped"] = list(prep_res.get("__cache_chunks_skipped__", []))
+        err_dict["usage"]["cache_skipped_reason"] = prep_res.get("__cache_skipped_reason__")
+        err_dict["usage"]["prewarm_disabled_reason"] = prep_res.get("__prewarm_disabled_reason__")
         return err_dict

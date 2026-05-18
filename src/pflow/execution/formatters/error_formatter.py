@@ -9,6 +9,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.execution.execution_state import build_execution_steps
+from pflow.execution.formatters.batch_errors import compact_batch_error_detail
 from pflow.execution.result import ExecutionResult
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,7 @@ def format_execution_errors(
     if ir_data and shared_storage:
         steps = build_execution_steps(ir_data, shared_storage, metrics_summary)
         if steps:
+            steps = _compact_batch_error_details(steps)
             # Count nodes by status
             completed_count = sum(1 for s in steps if s["status"] == "completed")
             nodes_total = len(steps)
@@ -114,3 +116,16 @@ def format_execution_errors(
         }
 
     return result_dict
+
+
+def _compact_batch_error_details(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact_steps: list[dict[str, Any]] = []
+    for step in steps:
+        step_copy = dict(step)
+        details = step_copy.get("batch_error_details")
+        if isinstance(details, list):
+            step_copy["batch_error_details"] = [
+                compact_batch_error_detail(detail) if isinstance(detail, dict) else detail for detail in details
+            ]
+        compact_steps.append(step_copy)
+    return compact_steps

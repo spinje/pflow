@@ -27,6 +27,16 @@ from pflow.nodes.llm import LLMNode
 ANTHROPIC = "anthropic/claude-sonnet-4-5"
 
 
+@pytest.fixture(autouse=True)
+def _bypass_below_min_strip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests assert on the rendered cache_control block shape; they
+    intentionally use tiny fixture content. The runtime pre-dispatch strip
+    would otherwise remove the markers and break shape assertions. The
+    strip itself is exercised in ``test_prompt_cache_below_min_runtime.py``.
+    """
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
+
+
 # --- Helpers ---------------------------------------------------------------
 
 

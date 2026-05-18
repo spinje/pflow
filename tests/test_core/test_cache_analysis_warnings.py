@@ -38,7 +38,7 @@ def test_catalog_count_constant_is_auto_derived() -> None:
 
 
 def test_catalog_size_matches_v1_inventory() -> None:
-    """v1 currently ships with 26 entries (25 ``cache.*`` plus 1 ``llm.*``):
+    """v1 currently ships with 30 entries (29 ``cache.*`` plus 1 ``llm.*``):
 
     - 10 from spec DD#29
     - ``cache.discrepancy`` (Round 2)
@@ -71,11 +71,16 @@ def test_catalog_size_matches_v1_inventory() -> None:
       provider minimum but unresolved upstream refs require verification)
     - ``cache.shared-context-undeclared-conditional`` (Task 159 follow-up:
       shared context is structurally reusable, but current values are below
-      provider cache minimums).
+      provider cache minimums)
+    - split below-min provider-threshold IDs:
+      ``cache.below-min-predicted``, ``cache.below-min-observed``,
+      ``cache.below-min-rendered``, and
+      ``cache.prewarm-disabled-below-min``
+    - ``cache.conditional-warmup-recommended`` (mixed-size batch traces).
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 26
+    assert len(CACHE_WARNING_CATALOG) == 30
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -174,17 +179,16 @@ def test_make_diagnostic_order_mismatch_uses_bare_identifier_format() -> None:
 
 def test_make_diagnostic_below_min_tokens() -> None:
     diag = make_diagnostic(
-        "cache.below-min-tokens",
+        "cache.below-min-predicted",
         node_id="rewrite",
         affected_workflow="x.pflow.md",
         model="claude-sonnet-4-5",
         cacheable_tokens=512,
         min_tokens=1024,
-        evidence_kind="predicted",
         provider_note="cache_control markers will silently no-op at the provider",
     )
     assert diag.severity == Severity.WARNING
-    assert diag.id == "cache.below-min-tokens"
+    assert diag.id == "cache.below-min-predicted"
     assert "1024" in diag.message
     assert "claude-sonnet-4-5" in diag.message
     assert "cache_control markers" in diag.message
@@ -192,13 +196,12 @@ def test_make_diagnostic_below_min_tokens() -> None:
 
 def test_make_diagnostic_below_min_tokens_observed_message() -> None:
     diag = make_diagnostic(
-        "cache.below-min-tokens",
+        "cache.below-min-observed",
         node_id="rewrite",
         affected_workflow="x.pflow.md",
         model="gemini/gemini-2.5-pro",
         cacheable_tokens=0,
         min_tokens=4096,
-        evidence_kind="observed",
         provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply",
     )
     assert "did not fire on this call" in diag.message
@@ -206,19 +209,20 @@ def test_make_diagnostic_below_min_tokens_observed_message() -> None:
     assert "Gemini's automatic implicit cache" in diag.message
 
 
-def test_make_diagnostic_below_min_tokens_unknown_evidence_kind_fallback(caplog: pytest.LogCaptureFixture) -> None:
+def test_make_diagnostic_below_min_tokens_rendered_message() -> None:
     diag = make_diagnostic(
-        "cache.below-min-tokens",
+        "cache.below-min-rendered",
         node_id="rewrite",
         affected_workflow="x.pflow.md",
-        model="openai/gpt-5",
-        cacheable_tokens=0,
-        min_tokens=1024,
-        evidence_kind="suspected",
-        provider_note="",
+        model="gemini/gemini-2.5-pro",
+        cacheable_tokens=1135,
+        min_tokens=4096,
+        provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply",
     )
-    assert "declared cache below openai/gpt-5's minimum of 1024" in diag.message
-    assert "unknown evidence_kind" in caplog.text
+    assert "cache marker stripped before send" in diag.message
+    assert "1135 tokens" in diag.message
+    assert "ran uncached for this invocation" in diag.message
+    assert "Gemini's automatic implicit cache" in diag.message
 
 
 def test_make_diagnostic_batch_prewarm_below_min_anthropic() -> None:
@@ -251,10 +255,52 @@ def test_make_diagnostic_batch_prewarm_below_min_anthropic() -> None:
     assert "declared cache" not in diag.message
     assert "prompt_cache:" not in diag.message
 
-    # Suggestions name the two remediation paths.
+    # Suggestions name the three remediation paths (grow, remove prewarm,
+    # OR switch model — F#4 follow-ups-2 model-switch bullet).
     suggestions_blob = "\n".join(diag.suggestions or ())
     assert "Grow the static prefix" in suggestions_blob
     assert "remove `- prewarm: true`" in suggestions_blob
+    assert "switch `- model:`" in suggestions_blob
+
+
+def test_make_diagnostic_batch_prewarm_below_min_suggestions_include_model_switch_bullet() -> None:
+    """F#4 (follow-ups-2): the third suggestion bullet must explicitly name a
+    concrete lower-min model so agents on Gemini / Opus 4.5+ workflows have
+    a provider-aware out beyond growing the prefix or removing prewarm.
+
+    Mutation contract: revert the third bullet (the ``Switch
+    `- model:` ...`` line) from ``warning_catalog.py`` —
+    ``cache.batch-prewarm-below-min``'s ``suggestions_template`` collapses
+    back to two entries and this test fails on length and on the
+    ``anthropic/claude-sonnet-4-5`` substring.
+
+    Provider-aware framing: the bullet always recommends a model with cache
+    minimum ≤ 1,024 (the floor across published providers), so it never
+    suggests a model that would worsen the situation regardless of the
+    caller's current model.
+    """
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="gemini/gemini-2.5-flash",
+        prefix_tokens=1129,
+        min_tokens=4096,
+        batch_alias="item",
+        provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply for stable prefixes",
+    )
+    suggestions = list(diag.suggestions or ())
+    assert len(suggestions) == 3, f"expected 3 suggestion bullets, got {len(suggestions)}: {suggestions}"
+    model_switch_bullet = suggestions[2]
+    # Lock the bullet's load-bearing pieces — wording can refactor but the
+    # contract is: name a concrete model with min ≤ 1,024 + point at the guide.
+    assert "switch `- model:`" in model_switch_bullet
+    assert "anthropic/claude-sonnet-4-5" in model_switch_bullet
+    assert "1,024" in model_switch_bullet
+    assert "pflow guide prompt-caching" in model_switch_bullet
+    # Naming the failing node keeps the suggestion actionable in
+    # multi-node workflows.
+    assert "score" in model_switch_bullet
 
 
 def test_make_diagnostic_batch_prewarm_below_min_gemini_implicit_cache_note() -> None:
@@ -508,12 +554,11 @@ def test_make_diagnostic_node_id_without_affected_workflow_raises() -> None:
     """
     with pytest.raises(KeyError, match="affected_workflow"):
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="rewrite",
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         )
 
@@ -522,13 +567,12 @@ def test_make_diagnostic_node_id_with_affected_workflow_none_raises() -> None:
     """The workflow-scope guard validates value shape, not just key presence."""
     with pytest.raises(KeyError, match="affected_workflow"):
         make_diagnostic(
-            "cache.below-min-tokens",
+            "cache.below-min-predicted",
             node_id="rewrite",
             affected_workflow=None,
             model="claude-sonnet-4-5",
             cacheable_tokens=512,
             min_tokens=1024,
-            evidence_kind="predicted",
             provider_note="",
         )
 
@@ -770,14 +814,46 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "suggested_subset": ["a", "b"],
             "savings_usd": 0.04,
         },
-        "cache.below-min-tokens": {
+        "cache.below-min-predicted": {
             "node_id": "rewrite",
             "affected_workflow": "x.pflow.md",
             "model": "claude-sonnet-4-5",
             "cacheable_tokens": 512,
             "min_tokens": 1024,
-            "evidence_kind": "predicted",
             "provider_note": "",
+        },
+        "cache.below-min-observed": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "cacheable_tokens": 0,
+            "min_tokens": 1024,
+            "provider_note": "",
+        },
+        "cache.below-min-rendered": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "cacheable_tokens": 512,
+            "min_tokens": 1024,
+            "provider_note": "",
+        },
+        "cache.prewarm-disabled-below-min": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "cacheable_tokens": 512,
+            "min_tokens": 1024,
+            "provider_note": "",
+            "alias": "item",
+        },
+        "cache.conditional-warmup-recommended": {
+            "node_id": "rewrite",
+            "affected_workflow": "x.pflow.md",
+            "model": "claude-sonnet-4-5",
+            "below_min_count": 2,
+            "total_count": 4,
+            "min_tokens": 1024,
         },
         "cache.cross-workflow-prose-mismatch": {
             "parent_workflow": "p.pflow.md",
@@ -1068,3 +1144,64 @@ def test_format_dry_run_nudge_renders_at_one_cent_threshold() -> None:
     # Below the floor — figure dropped.
     below_floor = format_dry_run_nudge(opportunity_count=1, first_run_savings_usd=0.00009)
     assert below_floor == "Cache: 1 design opportunity available."
+
+
+def test_shadow_warning_message_uses_duplication_framing() -> None:
+    """Bundle 1 reframing: the shadow warning's rendered message asks a
+    duplication question rather than asserting "unused" or "different
+    baseline" (both unprovable from workflow shape alone).
+
+    Mutation contract: restoring the old "overlapping cached chunks and
+    `${var}` references (sub-path overlap)" message or the
+    "Sub-path overlap can quietly inflate input tokens without firing the
+    cache reliably" suggestion → these assertions fail.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.prompt-body-shadows-cache",
+        node_id="use-tiny-field",
+        shadowing_pairs=[{"chunk_name": "bundle", "body_ref": "bundle.tiny_field", "direction": "cache_contains_body"}],
+        overlap_lines="  - cached `${bundle}` overlaps inline `${bundle.tiny_field}`",
+        affected_workflow="/abs/x.pflow.md",
+    )
+    # Positive: duplication framing.
+    assert "may be sending the same value twice in each call" in diag.message
+    # Negative: removed phrases.
+    assert "has overlapping cached chunks and" not in diag.message
+    assert "unused by your prompt" not in diag.message
+    assert "without firing the cache reliably" not in " ".join(diag.suggestions)
+    # The two-direction guidance is still present in the suggestion.
+    suggestions_text = " ".join(diag.suggestions)
+    assert "narrow the cached chunk" in suggestions_text
+    assert "remove the prompt-body" in suggestions_text
+
+
+def test_duplicates_warning_message_uses_duplication_framing() -> None:
+    """The duplicates warning's reframed message leads with "sends the same
+    value twice in each call" so the shadow and duplicates warnings rhyme
+    tonally. The rate mechanism (cached at 0.1x vs body at 1.0x) is preserved
+    as honest cost context.
+
+    Mutation contract: restoring "duplicates cached chunks in the prompt
+    body" as the message lead → this assertion fails.
+    """
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+
+    diag = make_diagnostic(
+        "cache.prompt-body-duplicates-cache",
+        node_id="rewrite",
+        overlapping_pairs=[{"chunk_name": "concept", "body_ref": "concept"}],
+        overlap_lines="  - cached `${concept}` AND inline `${concept}`",
+        affected_workflow="/abs/x.pflow.md",
+    )
+    assert "sends the same value twice in each call" in diag.message
+    # Rate mechanism is preserved so the agent understands WHY this is an error.
+    # The U+00D7 multiplication sign is the canonical ratio notation for the
+    # catalog (see the `src/pflow/core/cache_analysis/*` per-file ruff ignore
+    # in pyproject.toml); the noqa suppresses the equivalent ambiguity check
+    # at the test-assertion site.
+    assert "0.1×" in diag.message  # noqa: RUF001
+    assert "1.0×" in diag.message  # noqa: RUF001
+    # The legacy lead phrasing is gone.
+    assert "duplicates cached chunks in the prompt body" not in diag.message

@@ -5,7 +5,7 @@ category, and the message / suggestions / path templates so emitted Diagnostics
 have stable shape regardless of which call site builds them. Per Task 159
 DD#29, the catalog is closed in v1 — adding new IDs goes through design review.
 
-26 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
+30 entries: 14 ``cache.*`` from v1 + ``cache.prompt-cache-incomplete`` +
 ``cache.prompt-body-duplicates-cache`` and
 ``cache.prompt-body-shadows-cache`` (Task 159 follow-up: detect prompt-body /
 prompt_cache overlap that silently nullifies declared caching) + ``llm.thinking-
@@ -20,7 +20,9 @@ their own cache declarations) + ``cache.batch-prewarm-below-min`` and
 ``cache.batch-prewarm-lower-bound-recommended`` (Task 159 follow-ups: prewarm
 threshold and lower-bound advisory gaps) + ``cache.shared-context-undeclared-
 conditional`` (Task 159 follow-up: shared context is structurally cacheable but
-current values are below provider minimums). The base 14 covers the 9 from
+current values are below provider minimums) + four distinct below-min provider
+threshold IDs (predicted, observed, rendered, prewarm-disabled) +
+``cache.conditional-warmup-recommended`` for mixed-size batch traces. The base 14 covers the 9 from
 spec § "Stable Warning ID Catalog" + ``cache.discrepancy`` (Round 2),
 ``cache.invalid-on-non-llm`` (Round 3, validator-
 reach gap closure for non-LLM nodes), ``cache.prewarm-no-prefix`` (Round 3,
@@ -157,26 +159,17 @@ _SUB_WORKFLOW_CACHE_UNDECLARED_HEADLINE = (
     "Sub-workflow cache undeclared in {child_workflow_basename} — add {affected_input_count} {inputs_phrase}"
 )
 
-# cache.below-min-tokens has two evidence tiers with different remediation
-# framing: predicted analyzer estimates and observed provider telemetry.
-_BELOW_MIN_TOKENS_MESSAGE_PREDICTED = (
-    "{node_id}: declared cache content is ~{cacheable_tokens} tokens, "
-    "below {model}'s minimum of {min_tokens}{provider_clause}"
+_BELOW_MIN_REQUIRED_CONTEXT = (
+    ("node_id", str),
+    ("model", str),
+    ("cacheable_tokens", int),
+    ("min_tokens", int),
+    ("provider_note", str),
 )
-_BELOW_MIN_TOKENS_MESSAGE_OBSERVED = (
-    "{node_id}: declared cache did not fire on this call (provider reported "
-    "0 cache_creation + 0 cache_read tokens) — likely because rendered content "
-    "is below {model}'s minimum of {min_tokens}{provider_clause}"
-)
-_BELOW_MIN_TOKENS_MESSAGE_UNKNOWN = "{node_id}: declared cache below {model}'s minimum of {min_tokens}{provider_clause}"
-_BELOW_MIN_TOKENS_DISPATCH = {
-    "predicted": _BELOW_MIN_TOKENS_MESSAGE_PREDICTED,
-    "observed": _BELOW_MIN_TOKENS_MESSAGE_OBSERVED,
-}
 
 # cache.batch-prewarm-below-min — analyzer-only counterpart for prewarm
 # declarations whose static prefix is below the provider minimum. Vocabulary
-# differs from ``cache.below-min-tokens`` because the remediation differs
+# differs from the declared/rendered below-min IDs because the remediation differs
 # (restructure the prompt or remove ``prewarm: true`` — not "add chunks to
 # ## Cache" or "remove ``prompt_cache:``").
 _BATCH_PREWARM_BELOW_MIN_MESSAGE = (
@@ -479,27 +472,77 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
     # pivot from "this model can't cache my content" to "here are models that
     # can." See .taskmaster/tasks/task_94/research/cache-threshold-cross-reference-from-task-159.md
     # for design rationale and the bidirectional cross-reference plan.
-    "cache.below-min-tokens": CacheWarningSpec(
+    "cache.below-min-predicted": CacheWarningSpec(
         severity=Severity.WARNING,
         source="cache_analyzer",
         category=CACHE_WARNING_CATEGORY,
-        # Dispatched by ``evidence_kind`` in ``make_diagnostic``.
-        message_template="",
-        required_context_keys=(
-            ("node_id", str),
-            ("model", str),
-            ("cacheable_tokens", int),
-            ("min_tokens", int),
-            ("evidence_kind", str),
-            ("provider_note", str),
+        message_template=(
+            "{node_id}: declared cache content is ~{cacheable_tokens} tokens, "
+            "below {model}'s minimum of {min_tokens}{provider_clause}"
         ),
+        required_context_keys=_BELOW_MIN_REQUIRED_CONTEXT,
         suggestions_template=(
             "Increase cache content above {min_tokens} tokens by adding more chunks "
             "to ## Cache, OR remove `prompt_cache:` from {node_id} since the cache "
             "won't fire as declared.",
         ),
         path_template="nodes[id={node_id}].prompt_cache",
-        headline_template="Cache content below provider minimum on {node_id}",
+        headline_template="Declared cache content below provider minimum on {node_id}",
+    ),
+    "cache.below-min-observed": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=(
+            "{node_id}: declared cache did not fire on this call (provider reported "
+            "0 cache_creation + 0 cache_read tokens) — likely because rendered content "
+            "is below {model}'s minimum of {min_tokens}{provider_clause}"
+        ),
+        required_context_keys=_BELOW_MIN_REQUIRED_CONTEXT,
+        suggestions_template=(
+            "Verify chunk resolution; if intentional, remove `prompt_cache:` from "
+            "{node_id} or expand cache content above {min_tokens} tokens.",
+        ),
+        path_template="nodes[id={node_id}].prompt_cache",
+        headline_template="Cache did not fire post-call on {node_id}",
+    ),
+    "cache.below-min-rendered": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=(
+            "{node_id}: cache marker stripped before send — rendered cache "
+            "content was {cacheable_tokens} tokens, below {model}'s minimum of "
+            "{min_tokens}. The LLM call ran uncached for this invocation"
+            "{provider_clause}"
+        ),
+        required_context_keys=_BELOW_MIN_REQUIRED_CONTEXT,
+        suggestions_template=(
+            "Either add more stable content above {min_tokens} tokens before the "
+            "cache marker, OR remove the cache declaration since runtime content "
+            "is too small.",
+        ),
+        path_template="nodes[id={node_id}].prompt_cache",
+        headline_template="Cache marker stripped at runtime on {node_id}",
+    ),
+    "cache.prewarm-disabled-below-min": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        message_template=(
+            "{node_id}: prewarm cache marker did not reach the provider — "
+            "static batch prefix is {cacheable_tokens} tokens, below "
+            "{model}'s minimum of {min_tokens}. LLM calls will go "
+            "uncached{provider_clause}"
+        ),
+        required_context_keys=(*_BELOW_MIN_REQUIRED_CONTEXT, ("alias", str)),
+        suggestions_template=(
+            "Add stable content above {min_tokens} tokens before the first "
+            "`${{{alias}.*}}` reference in {node_id}'s prompt, OR remove "
+            "`prewarm: true` since the prefix is too small to benefit.",
+        ),
+        path_template="nodes[id={node_id}]",
+        headline_template="Prewarm cache did not fire on {node_id}",
     ),
     "cache.cross-workflow-prose-mismatch": CacheWarningSpec(
         severity=Severity.INFO,
@@ -609,9 +652,39 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "threshold.",
             "OR remove `- prewarm: true` from {node_id} — the prewarm marker will "
             "not fire at the provider with a ~{prefix_tokens}-token prefix.",
+            "OR switch `- model:` on {node_id} to one with a lower cache "
+            "minimum — e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 "
+            "tokens. See `pflow guide prompt-caching` for the per-model "
+            "threshold table.",
         ),
         path_template="nodes[id={node_id}].prompt",
         headline_template="Batch prewarm prefix below provider minimum on {node_id}",
+    ),
+    "cache.conditional-warmup-recommended": CacheWarningSpec(
+        severity=Severity.WARNING,
+        source="cache_analyzer",
+        category=CACHE_WARNING_CATEGORY,
+        requires_complete_trace=True,
+        message_template=(
+            "{node_id}: prewarm fires for all batch items but {below_min_count} "
+            "of {total_count} executed items had cache content below {model}'s "
+            "minimum of {min_tokens} tokens. Add a conditional route to skip "
+            "prewarm for below-threshold inputs."
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("model", str),
+            ("below_min_count", int),
+            ("total_count", int),
+            ("min_tokens", int),
+        ),
+        suggestions_template=(
+            "Insert a Python code node before {node_id} that branches on input "
+            "size, routing below-threshold inputs to a non-prewarm path. See "
+            "`pflow guide caching` for the conditional-warmup pattern.",
+        ),
+        path_template="nodes[id={node_id}]",
+        headline_template="Conditional warmup recommended for {node_id}",
     ),
     "cache.consolidate-to-root-recommended": CacheWarningSpec(
         severity=Severity.INFO,
@@ -781,9 +854,9 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="validator",
         category=CACHE_FAILURE_CATEGORY,
         message_template=(
-            "Node '{node_id}' duplicates cached chunks in the prompt body — the cache "
-            "stores these values at 0.1× rate but the body sends them inline at 1.0× "
-            "every call:\n{overlap_lines}"
+            "Node '{node_id}' sends the same value twice in each call — once as a cached "
+            "chunk AND inline in the prompt body. The cached copy is paid at 0.1× rate but "
+            "the inline copy is paid at 1.0× every call:\n{overlap_lines}"
         ),
         required_context_keys=(
             ("node_id", str),
@@ -813,7 +886,8 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="validator",
         category=CACHE_WARNING_CATEGORY,
         message_template=(
-            "Node '{node_id}' has overlapping cached chunks and `${{var}}` references (sub-path overlap):\n{overlap_lines}"
+            "Node '{node_id}' may be sending the same value twice in each call — cached "
+            "chunks and prompt-body `${{var}}` references overlap on a sub-path:\n{overlap_lines}"
         ),
         required_context_keys=(
             ("node_id", str),
@@ -822,9 +896,9 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             ("overlap_lines", str),
         ),
         suggestions_template=(
-            "Either narrow the cached chunks to only the sub-paths the body uses, OR "
-            "remove the listed `${{...}}` references from the prompt body. Sub-path "
-            "overlap can quietly inflate input tokens without firing the cache reliably.",
+            "If only the sub-path is needed in the prompt, narrow the cached chunk to that "
+            "sub-path. If the full chunk is needed as context, remove the prompt-body "
+            "`${{...}}` references — they're already supplied by the cache.",
         ),
         path_template="nodes[id={node_id}].params.prompt",
         headline_template="Prompt body shadows cached chunks on {node_id}",
@@ -924,7 +998,11 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.prompt-body-shadows-cache": 10,
     # Tier 5 — informational warnings that surface latent issues.
     "cache.unused-chunk": 30,
-    "cache.below-min-tokens": 30,
+    "cache.conditional-warmup-recommended": 25,
+    "cache.prewarm-disabled-below-min": 28,
+    "cache.below-min-rendered": 29,
+    "cache.below-min-observed": 30,
+    "cache.below-min-predicted": 31,
     "cache.prewarm-no-prefix": 30,
     "cache.batch-prewarm-below-min": 30,
     "cache.consolidate-to-root-recommended": 30,
@@ -1041,18 +1119,6 @@ def _validate_required(
             )
 
 
-def _select_message_template(
-    *,
-    warning_id: str,
-    spec: CacheWarningSpec,
-    context_kwargs: dict[str, Any],
-    format_dict: dict[str, Any],
-) -> str:
-    if warning_id == "cache.below-min-tokens":
-        return _select_below_min_tokens_template(context_kwargs=context_kwargs, format_dict=format_dict)
-    return spec.message_template
-
-
 def _augment_format_dict(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:
     _add_savings_aliases(format_dict, context_kwargs)
     _add_collection_aliases(format_dict, context_kwargs)
@@ -1115,27 +1181,10 @@ def _add_plural_aliases(format_dict: dict[str, Any], context_kwargs: dict[str, A
 
 def _add_provider_clause(format_dict: dict[str, Any], context_kwargs: dict[str, Any]) -> None:
     # Generic ``provider_clause`` derivation for catalog templates that include
-    # per-provider notes, currently ``cache.below-min-tokens`` and
-    # ``cache.batch-prewarm-below-min``.
+    # per-provider notes, such as the below-min and prewarm-below-min warnings.
     if "provider_note" in context_kwargs:
         note = str(context_kwargs["provider_note"])
         format_dict["provider_clause"] = f"; {note}" if note else ""
-
-
-def _select_below_min_tokens_template(
-    *,
-    context_kwargs: dict[str, Any],
-    format_dict: dict[str, Any],
-) -> str:
-    evidence_kind = context_kwargs["evidence_kind"]
-    template = _BELOW_MIN_TOKENS_DISPATCH.get(evidence_kind)
-    if template is not None:
-        return template
-    logger.warning(
-        "cache.below-min-tokens: unknown evidence_kind=%r; falling back to generic template",
-        evidence_kind,
-    )
-    return _BELOW_MIN_TOKENS_MESSAGE_UNKNOWN
 
 
 def make_diagnostic(
@@ -1167,14 +1216,7 @@ def make_diagnostic(
     format_dict: dict[str, Any] = {**context_kwargs, "node_id": node_id}
     _augment_format_dict(format_dict, context_kwargs)
 
-    selected_message_template = _select_message_template(
-        warning_id=warning_id,
-        spec=spec,
-        context_kwargs=context_kwargs,
-        format_dict=format_dict,
-    )
-
-    message = selected_message_template.format(**format_dict)
+    message = spec.message_template.format(**format_dict)
     suggestions = [s.format(**format_dict) for s in spec.suggestions_template]
     path = spec.path_template.format(**format_dict)
     context = _context_for_diagnostic(context_kwargs)

@@ -306,7 +306,7 @@ against IR's declared models. If they differ, EITHER skip auto-load
 with an info note, OR tag findings with "trace from prior model context"
 caveat.
 
-#### Finding 9 — `cache.below-min-tokens` does NOT fire in `--validate-only`
+#### Finding 9 — `cache.below-min-predicted` does NOT fire in `--validate-only`
 **What**: Below-threshold cache content is detectable statically (model +
 chunk sizes are known at parse time). Currently warning only fires from
 `analyze-cache` — agents who skip running it see nothing.
@@ -316,7 +316,7 @@ said "Workflow is valid" with no warning.
 **Fix**: add the static-threshold check to the validator's data-flow phase
 (same shape as `cache.prompt-body-duplicates-cache`).
 
-#### Finding 10 — `cache.below-min-tokens` warning text misleads on Gemini
+#### Finding 10 — `cache.below-min-predicted` warning text misleads on Gemini
 **What**: Warning says "cache_control markers will silently no-op at
 the provider". On Anthropic this is accurate (no implicit cache). On
 Gemini, IMPLICIT cache fires automatically on stable prefixes regardless,
@@ -503,7 +503,7 @@ scoped, so each workflow caches independently."
   `cache_creation_input_tokens=0` documented in analyzer notes.
 - ✓ **Auto-load gate `startswith("2.")`** correctly accepts 2.2.0 traces
   per the recent post-implementation cleanup.
-- ✓ **`cache.below-min-tokens` per-node specificity** — each affected
+- ✓ **`cache.below-min-predicted` per-node specificity** — each affected
   node gets its own warning with declared content size and model
   threshold.
 
@@ -534,7 +534,7 @@ Ordered by ROI / severity:
    per_call JSON rows** (Finding 5). Same UX gap as #4 but for JSON
    consumers.
 
-6. **Move `cache.below-min-tokens` to validate-time** (Finding 9).
+6. **Move `cache.below-min-predicted` to validate-time** (Finding 9).
    Catches the "you declared cache but it'll silently no-op" class
    before the agent has to think about analyze-cache.
 
@@ -545,7 +545,7 @@ Ordered by ROI / severity:
 8. **Auto-load model-context check** (Finding 8). Compare trace's
    `by_model` to IR's models; skip or caveat on mismatch.
 
-9. **Provider-aware text for `cache.below-min-tokens`** (Finding 10).
+9. **Provider-aware text for `cache.below-min-predicted`** (Finding 10).
    Gemini implicit cache may still fire — agents need to know.
 
 10. **Filed but lower priority**: Findings 7 (NODE vs CALL count

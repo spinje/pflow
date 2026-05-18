@@ -1,5 +1,5 @@
 {
-  "format_version": "4.2",
+  "format_version": "5.0",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -46,7 +46,11 @@
     },
     "trace_coverage": "none",
     "trace_final_status": null,
+    "trace_workflow_relationship": null,
+    "trace_model_drift_count": 0,
     "trace_recorded_at": null,
+    "stale_memo_skipped_count": 0,
+    "stale_memo_uncheckable_count": 0,
     "evidence_scope": "static_analysis",
     "trace_llm_nodes_static": 1,
     "trace_llm_nodes_executed": 0,
@@ -59,7 +63,15 @@
     "total_llm_invocations_estimated": null,
     "dynamic_batch_node_count": 1,
     "total_input_tokens_estimated": 9,
-    "total_cacheable_tokens_estimated": 0,
+    "total_cache_active_tokens_estimated": 0,
+    "total_cache_ready_tokens_estimated": 0,
+    "total_cache_opportunity_tokens_estimated": 0,
+    "total_cache_ready_confidence": "unknown",
+    "total_cache_opportunity_confidence": "unknown",
+    "unknown_cache_ready_row_count": 0,
+    "unknown_cache_opportunity_row_count": 0,
+    "lower_bound_cache_ready_row_count": 0,
+    "lower_bound_cache_opportunity_row_count": 0,
     "models_in_use": [
       "anthropic/claude-sonnet-4-5"
     ],
@@ -95,7 +107,8 @@
       "message": "scoring: the static prefix before the first `${item.X}` reference is ~5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
       "suggestions": [
         "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
-        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~5-token prefix."
+        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~5-token prefix.",
+        "OR switch `- model:` on scoring to one with a lower cache minimum \u2014 e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table."
       ]
     }
   ],
@@ -112,12 +125,66 @@
       "body_tokens_estimated": 9,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
-      "cacheable_tokens_estimated": null,
-      "cache_ratio_pct": null,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
+      "cached_now_tokens_estimated": null,
+      "cache_configured": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
+      "cache_active": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
+      "cache_ready": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
+      "cache_opportunity": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
       "data_source": "estimator-partial",
-      "cacheable_data_source": "unavailable",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -143,7 +210,8 @@
       "title": "Cache Warning",
       "suggestions": [
         "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
-        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~5-token prefix."
+        "OR remove `- prewarm: true` from scoring \u2014 the prewarm marker will not fire at the provider with a ~5-token prefix.",
+        "OR switch `- model:` on scoring to one with a lower cache minimum \u2014 e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table."
       ],
       "node_id": "scoring",
       "context": {

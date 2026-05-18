@@ -494,9 +494,9 @@ def create_planner_shared(
         "node_visit_counts": {},
     }
     shared["__cache_hits__"] = []
-    shared["__pflow_cache_render__"] = MappingProxyType(build_cache_render_dict(compiled))
     if parent_workflow_file:
         shared["_pflow_workflow_file"] = parent_workflow_file
+    shared["__pflow_cache_render__"] = MappingProxyType(build_cache_render_dict(compiled, shared))
     return shared
 
 

@@ -89,6 +89,9 @@ def _output_with_header(value: Any, print_flag: bool, description: str | None = 
     - TTY stdout: header to stderr, data to stdout — the description is
       useful interactive context.
     """
+    from pflow.execution.formatters.batch_errors import compact_batch_output_value
+
+    value = compact_batch_output_value(value)
     if print_flag or not _stdout_is_tty():
         safe_output(value)
         return
@@ -386,9 +389,9 @@ def _warn_missing_declared_outputs(declared_outputs: dict[str, Any], verbose: bo
 
 def _truncate_error_message(message: str, max_length: int = 200) -> str:
     """Truncate error message to max length with ellipsis."""
-    if len(message) <= max_length:
-        return message
-    return message[: max_length - 3] + "..."
+    from pflow.execution.formatters.batch_errors import _truncate_error_message as shared_truncate_error_message
+
+    return shared_truncate_error_message(message, max_length)
 
 
 def _display_batch_errors(steps: list[dict[str, Any]]) -> None:
@@ -397,22 +400,10 @@ def _display_batch_errors(steps: list[dict[str, Any]]) -> None:
     Args:
         steps: List of execution step dicts
     """
-    for step in steps:
-        if not step.get("is_batch") or step.get("batch_errors", 0) == 0:
-            continue
+    from pflow.execution.formatters.batch_errors import format_batch_errors_section
 
-        node_id = step.get("node_id", "unknown")
-        error_details = step.get("batch_error_details", [])
-        truncated = step.get("batch_errors_truncated", 0)
-
-        click.echo(f"\nBatch '{node_id}' errors:", err=True)
-        for err in error_details:
-            idx = err.get("index", "?")
-            msg = _truncate_error_message(str(err.get("error", "Unknown error")))
-            click.echo(f"  [{idx}] {msg}", err=True)
-
-        if truncated > 0:
-            click.echo(f"  ...and {truncated} more errors", err=True)
+    for line in format_batch_errors_section(steps):
+        click.echo(line, err=True)
 
 
 def _display_stderr_warnings(steps: list[dict[str, Any]]) -> None:
@@ -454,25 +445,39 @@ def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:
 def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, Any]) -> None:
     """Display LLM cost and token usage summary.
 
+    Renders ``💰 Cost: ...`` (priced) or ``⚠️  Cost unavailable — ...``
+    (unpriced) on the first line, followed by a ``   Total LLM calls: N``
+    sibling line (3-space indent) whenever the run actually made any LLM
+    calls. The sibling line is intentionally suppressed when no LLM calls
+    happened so workflows that never touch an LLM don't see ``Total LLM
+    calls: 0`` (mirrors the "honest unmeasurable" precedent in
+    ``format_dry_run_nudge``).
+
     Args:
         total_cost: Total cost in USD
         formatted_result: Full formatted result containing metrics
     """
     metrics = formatted_result.get("metrics", {})
     total_metrics = metrics.get("total", {})
+    total_llm_calls = int(total_metrics.get("total_calls", 0) or 0)
 
     # Warn about models with unavailable pricing
     if not total_metrics.get("pricing_available", True):
-        unavailable = total_metrics.get("unavailable_models", [])
-        models_str = ", ".join(unavailable)
+        from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
+
+        unavailable_counts = unavailable_models_to_counts(total_metrics.get("unavailable_models", []))
+        unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
+        models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
         partial = total_metrics.get("partial_cost_usd")
         if partial is not None:
             click.echo(
-                f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_str})",
+                f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})",
                 err=True,
             )
         else:
-            click.echo(f"⚠️  Cost unavailable — pricing data missing for: {models_str}", err=True)
+            click.echo(f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}", err=True)
+        if total_llm_calls > 0:
+            click.echo(f"   Total LLM calls: {total_llm_calls}", err=True)
         return
 
     if total_cost is None or total_cost <= 0:
@@ -482,8 +487,14 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
     workflow_metrics = metrics.get("workflow", {})
     total_tokens = workflow_metrics.get("total_tokens", 0)
 
+    detail_parts: list[str] = []
+    if total_llm_calls > 0:
+        detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
     if total_tokens > 0:
-        click.echo(f"💰 Cost: ${total_cost:.4f} ({total_tokens:,} tokens)", err=True)
+        detail_parts.append(f"{total_tokens:,} tokens")
+
+    if detail_parts:
+        click.echo(f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})", err=True)
     else:
         click.echo(f"💰 Cost: ${total_cost:.4f}", err=True)
 

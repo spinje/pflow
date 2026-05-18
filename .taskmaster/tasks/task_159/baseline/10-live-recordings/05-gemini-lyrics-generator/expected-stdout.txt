@@ -1,7 +1,7 @@
 # Cache Analysis: lyrics-generator.pflow.md
   File: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
 
-  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes)
+  Workflow: 25 LLM nodes, ~253 invocations
   Models: gemini/gemini-2.5-flash, gemini/gemini-2.5-flash-lite, gemini/gemini-3-flash-preview
   Heterogeneous: generate-chorus-options (model varies per batch item)
   Evidence: complete trace (25 LLM nodes executed)
@@ -10,22 +10,20 @@
 
 ## Summary
 
-  Actually paid:               ~$2.31 (from trace)
+  Actually paid:               ~$2.31 (from trace)  (saves 5% vs cost without caching)
   Cost without caching:        ~$2.42
-  Cost on rerun (within TTL):  ~$2.34
+  Cost on rerun (within TTL), modeled rerun vs warm-cache trace:  ~$2.34  (saves 4% vs cost without caching)
 
   · ~$0.27 of the above was paid by generate-chorus-options but couldn't be analyzed for cache savings (model varies per call). Caching may still apply at runtime if its content repeats across calls.
-  Actual cost delta (this run): saves ~$0.11/run vs no-cache, 5% of no-cache cost
-  Rerun delta (projected):      saves ~$0.09/run on rerun, 4% of no-cache cost
 
-  12 recommended actions
+  14 recommended actions
 
 ## Blocking errors
 
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
 
-## Recommended actions (12, ordered by impact)
+## Recommended actions (14, ordered by impact)
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
@@ -307,7 +305,21 @@
      → Verify: confirm ~474 tokens is the realistic per-call size.
      → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md
 
-  12. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
+  12. Batch prewarm prefix below provider minimum on curate-briefs        savings unavailable
+     curate-briefs
+     curate-briefs: the static prefix before the first `${item.X}` reference is ~103 tokens, below gemini/gemini-2.5-flash's minimum of 4096; explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply for stable prefixes
+     → Grow the static prefix above 4096 tokens — move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.
+     → OR remove `- prewarm: true` from curate-briefs — the prewarm marker will not fire at the provider with a ~103-token prefix.
+     → OR switch `- model:` on curate-briefs to one with a lower cache minimum — e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table.
+
+  13. Batch prewarm prefix below provider minimum on score-choruses       savings unavailable
+     score-choruses in chorus-chooser.pflow.md
+     score-choruses: the static prefix before the first `${item.X}` reference is ~1129 tokens, below gemini/gemini-2.5-flash's minimum of 4096; explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply for stable prefixes
+     → Grow the static prefix above 4096 tokens — move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.
+     → OR remove `- prewarm: true` from score-choruses — the prewarm marker will not fire at the provider with a ~1129-token prefix.
+     → OR switch `- model:` on score-choruses to one with a lower cache minimum — e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table.
+
+  14. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
      generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
      → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
@@ -316,62 +328,63 @@
 ## Per-call cache report
   How to read each row:
     · cached_now: tokens served from cache during this run (requires trace).
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
+    · — means the column does not apply to this row.
   Showing 18 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
-  node                     model                      input  cached_now  could_cache  ratio  calls  notes
-  --------------------------------------------------------------------------------------------------
+  node                     model                     input  cached_now   ready  upside  ratio  calls  notes
+  ----------------------------------------------------------------------------------------------------
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
-  generate-chorus-options  <varies>                       ?           —            ?     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
-  score-choruses           gemini/gemini-2.5-flash  158,704           —           41     0%    136  below provider min (need ≥4,096 for this model)
-  select-chorus            gemini/gemini-2.5-flash   36,289           —        8,504    23%      4  cacheable values: architecture, concept.core_idea, concept.title, +1 more
-
-### song-creator.pflow.md (called by create-songs)
-  rewrite-emotional        gemini/gemini-2.5-flash   94,100      63,009            —    67%      4
-  rewrite-craft            gemini/gemini-2.5-flash   84,124      56,785            —    68%      4
-  generate-suno-prompt     gemini/gemini-2.5-flash   13,776       7,909            —    57%      4
-
-### lyrics-generator.pflow.md
-  curate-briefs            gemini/gemini-2.5-flash   54,752           —          103     0%      4  below provider min (need ≥4,096 for this model)
-
-### review-accuracy.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   34,481           —        7,036    20%      4  cacheable values: concept_brief, creative_direction, lyrics
+  select-chorus            gemini/gemini-2.5-flash   9,072           0   8,504   8,504    94%      4  declare child cache; cacheable values: architecture, concept.core_idea, concept.title, +1 more
+  score-choruses           gemini/gemini-2.5-flash   1,167         620   1,129   1,129    97%    136  add prewarm; below provider min (need ≥4,096 for this model); batch-prewarm-below-min
+  generate-chorus-options  <varies>                      ?           0       —       —     ?%     32  opaque-prompt; observed=gemini-2.5-flash-lite,gemini-3-flash-preview
 
 ### review-emotional-architecture.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   32,873           —        7,225    22%      4  cacheable values: concept_brief, creative_direction, lyrics
+  review                   gemini/gemini-2.5-flash   8,218           0   7,225   7,225    88%      4  declare child cache; cacheable values: concept_brief, creative_direction, lyrics
+
+### review-accuracy.pflow.md (called by craft-reviews)
+  review                   gemini/gemini-2.5-flash   8,620       1,532   7,036   7,036    82%      4  declare child cache; cacheable values: concept_brief, creative_direction, lyrics
+
+### song-creator.pflow.md (called by create-songs)
+  rewrite-emotional        gemini/gemini-2.5-flash  23,525      15,752  15,752   6,658    28%      4  declare prompt_cache
+  rewrite-craft            gemini/gemini-2.5-flash  21,031      14,196  14,196   5,301    25%      4  declare prompt_cache
+  generate-suno-prompt     gemini/gemini-2.5-flash   3,444       1,977   1,977     297     9%      4  declare prompt_cache; below provider min (need ≥4,096 for this model)
 
 ### review-rhyme.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,917           —        5,837    23%      4  cacheable values: creative_direction, lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   6,479           0   5,837   5,837    90%      4  declare child cache; cacheable values: creative_direction, lyrics, song_architecture
 
 ### review-genre.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   25,693           —        5,837    23%      4  cacheable values: creative_direction, lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   6,423           0   5,837   5,837    91%      4  declare child cache; cacheable values: creative_direction, lyrics, song_architecture
 
 ### review-imagery.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   21,260           —        4,104    19%      4  cacheable values: lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   5,315         255   4,104   4,104    77%      4  declare child cache; cacheable values: lyrics, song_architecture
 
 ### review-narrative.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash   16,736           —        4,104    25%      4  cacheable values: lyrics, song_architecture
+  review                   gemini/gemini-2.5-flash   4,184           0   4,104   4,104    98%      4  declare child cache; cacheable values: lyrics, song_architecture
 
 ### review-ai-tells.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   14,212           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
+  review                   gemini/gemini-2.5-flash   3,553           0   2,207   2,207    62%      4  declare child cache; cacheable values: creative_direction, lyrics; below provider min (need ≥4,096 for this model)
 
 ### review-cliche.pflow.md (called by craft-reviews)
-  review                   gemini/gemini-2.5-flash   13,760           —            ?     ?%      4  below cache minimum: creative_direction ~1,922; below cache minimum: lyrics ~285
+  review                   gemini/gemini-2.5-flash   3,440         254   2,207   2,207    64%      4  declare child cache; cacheable values: creative_direction, lyrics; below provider min (need ≥4,096 for this model)
 
 ### review-stranger-summary.pflow.md (called by emotional-reviews)
-  review                   gemini/gemini-2.5-flash    6,467           —            ?     ?%      4  below cache minimum: lyrics ~474
+  review                   gemini/gemini-2.5-flash   1,617           0     474     474    29%      4  declare child cache; below provider min (need ≥4,096 for this model)
+
+### lyrics-generator.pflow.md
+  curate-briefs            gemini/gemini-2.5-flash  13,688           0     103   3,043    22%      4  move dynamic ref after stable content; below provider min (need ≥4,096 for this model); batch-prewarm-below-min
 
 ### concept-chooser.pflow.md (called by choose-concepts)
-  generate-concepts        gemini/gemini-2.5-flash    5,166           —            ?     ?%      4  batch_items=4; no stable 4,096-token repeated prefix found
+  generate-concepts        gemini/gemini-2.5-flash   5,166           0       —       —     ?%      4  batch_items=4; no stable 4,096-token repeated prefix found
 
 ### analyze-source.pflow.md (called by analyze-sources)
-  analyze                  gemini/gemini-2.5-flash    1,058           —            ?     ?%      6  batch_items=6; no stable 4,096-token repeated prefix found
+  analyze                  gemini/gemini-2.5-flash   1,058           0       —       —     ?%      6  batch_items=6; no stable 4,096-token repeated prefix found
 
   Token estimate confidence:
-    · score-choruses: tokens estimated from the first batch item as a representative sample. Actual tokens may vary for later items.
-    · curate-briefs: savings projected from a stable prompt prefix repeated across the batch. Use `--report` to confirm with a real run.
-    · select-chorus, 6 review nodes: savings projected from values flowing in from parent workflow(s). See Recommended actions for the per-boundary fix.
+    · score-choruses, curate-briefs: savings projected from a stable prompt prefix repeated across the batch. Use `--report` to confirm with a real run.
+    · select-chorus, 9 review nodes: savings projected from values flowing in from parent workflow(s). See Recommended actions for the per-boundary fix.
 
   Hidden: 7 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
 

@@ -4,8 +4,11 @@ Verifies that validation gates compilation (spec 9b) and that a valid
 workflow runs through the full pipeline producing structured results.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
@@ -132,7 +135,7 @@ def test_runtime_warning_diagnostic_passes_through_without_api_warning_wrapping(
     diagnostic = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",
+        id="cache.below-min-observed",
         node_id="ask",
         message="ask: declared cache did not fire",
         suggestions=["Increase cache content above 1024 tokens."],
@@ -143,7 +146,7 @@ def test_runtime_warning_diagnostic_passes_through_without_api_warning_wrapping(
     warnings = runner._extract_runtime_warnings({"__warnings__": {"ask": diagnostic}})
 
     assert warnings == [diagnostic]
-    assert warnings[0].id == "cache.below-min-tokens"
+    assert warnings[0].id == "cache.below-min-observed"
     assert warnings[0].suggestions == ["Increase cache content above 1024 tokens."]
     assert warnings[0].context == {"category": "cache_warning"}
 
@@ -152,7 +155,7 @@ def test_runtime_warning_diagnostic_missing_node_id_gets_store_key() -> None:
     diagnostic = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",
+        id="cache.below-min-observed",
         message="declared cache did not fire",
     )
     runner = WorkflowRunner()
@@ -162,7 +165,11 @@ def test_runtime_warning_diagnostic_missing_node_id_gets_store_key() -> None:
     assert warnings[0].node_id == "ask"
 
 
-def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_client) -> None:
+def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_client, monkeypatch) -> None:
+    # Bypass the runtime pre-dispatch strip so this test isolates the
+    # post-call observed-tier path. Strip behavior is exercised in
+    # tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
     mock_llm_client.set_response(
         "*",
         None,
@@ -188,14 +195,17 @@ def test_llm_declared_cache_zero_provider_tokens_emits_catalog_warning(mock_llm_
 
     warning = result.shared_after["__warnings__"]["ask"]
     assert isinstance(warning, Diagnostic)
-    assert warning.id == "cache.below-min-tokens"
+    assert warning.id == "cache.below-min-observed"
     assert warning.context is not None
-    assert warning.context["evidence_kind"] == "observed"
     assert result.status == WorkflowStatus.DEGRADED
-    assert any(w.id == "cache.below-min-tokens" for w in result.warnings)
+    assert any(w.id == "cache.below-min-observed" for w in result.warnings)
 
 
-def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(mock_llm_client) -> None:
+def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(mock_llm_client, monkeypatch) -> None:
+    # Bypass the runtime pre-dispatch strip so this test isolates the
+    # post-call observed-tier path. Strip behavior is exercised in
+    # tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
     mock_llm_client.set_response(
         "*",
         None,
@@ -221,6 +231,129 @@ def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(m
 
     assert not result.shared_after.get("__warnings__")
     assert result.status == WorkflowStatus.SUCCESS
+
+
+@pytest.mark.trace_files
+def test_llm_rendered_below_min_warning_reaches_trace_json(mock_llm_client, monkeypatch) -> None:
+    """Production runner path must serialize runtime cache-strip evidence.
+
+    Node-level tests prove ``LLMNode`` strips the marker. This locks the
+    runner/trace handoff: ``llm_usage.cache_skipped_reason`` and the
+    catalog-backed runtime warning both survive into trace JSON.
+    """
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10)
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    workflow_ir = {
+        "inputs": {"small_doc": {"type": "string"}},
+        "cache": {"items": [{"name": "small_doc", "var": "small_doc", "prose_before": "Small doc:\n"}]},
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "prompt_cache": ["small_doc"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {"small_doc": "short"}, RunnerConfig())
+
+    assert result.success is True
+    assert result.trace is not None
+    trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    llm_call = trace_data["nodes"][0]["llm_call"]
+    assert llm_call["cache_skipped_reason"] == "below_min"
+    assert any(warning.get("id") == "cache.below-min-rendered" for warning in trace_data["warnings"])
+
+
+@pytest.mark.trace_files
+def test_batch_prewarm_disabled_below_min_reaches_trace_json(mock_llm_client) -> None:
+    """Production runner path must serialize prewarm-disabled runtime evidence."""
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    workflow_ir = {
+        "inputs": {"items": {"type": "array"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "prewarm": True,
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Short stable prefix.\n\nItem: ${item.text}",
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(
+        workflow_ir,
+        {"items": [{"text": "one"}, {"text": "two"}]},
+        RunnerConfig(),
+    )
+
+    assert result.success is True
+    assert result.trace is not None
+    trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    batch_items = trace_data["nodes"][0]["batch_items"]
+    assert {item["llm_call"]["prewarm_disabled_reason"] for item in batch_items} == {"below_min"}
+    assert any(warning.get("id") == "cache.prewarm-disabled-below-min" for warning in trace_data["warnings"])
+
+
+@pytest.mark.trace_files
+def test_exception_trace_preserves_prior_runtime_cache_warnings(mock_llm_client, monkeypatch) -> None:
+    """Runtime warnings emitted before a later exception must reach trace warnings."""
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10)
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    workflow_ir = {
+        "inputs": {"small_doc": {"type": "string"}},
+        "cache": {"items": [{"name": "small_doc", "var": "small_doc", "prose_before": "Small doc:\n"}]},
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "prompt_cache": ["small_doc"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
+            }
+        ],
+        "outputs": {"broken": {"source": "${ask.missing_field}", "description": "forces post-run failure"}},
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {"small_doc": "short"}, RunnerConfig())
+
+    assert result.success is False
+    assert result.trace is not None
+    assert any(warning.id == "cache.below-min-rendered" for warning in result.warnings)
+    trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    assert trace_data["nodes"][0]["llm_call"]["cache_skipped_reason"] == "below_min"
+    assert any(warning.get("id") == "cache.below-min-rendered" for warning in trace_data["warnings"])
 
 
 def test_llm_empty_response_warning_overwrites_cache_miss_observation(mock_llm_client) -> None:
@@ -315,7 +448,7 @@ def test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry
 
     Mutation contract: revert the guard to the ``not in llm_usage`` check
     OR set ``has_cache_telemetry=True`` in the fixture; this test fails
-    because ``cache.below-min-tokens`` is incorrectly emitted.
+    because ``cache.below-min-observed`` is incorrectly emitted.
     """
     from types import MappingProxyType
 
@@ -356,7 +489,7 @@ def test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry
 
     assert "__warnings__" not in shared, (
         "Provider returned no cache telemetry — observed-tier detection must skip "
-        "rather than emit a false-positive cache.below-min-tokens warning."
+        "rather than emit a false-positive cache.below-min-observed warning."
     )
 
 

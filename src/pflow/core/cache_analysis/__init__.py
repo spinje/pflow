@@ -103,9 +103,32 @@ Version history (``JSON_FORMAT_VERSION``):
   above each ``${...}`` line in the suggested child ``## Cache`` block, with
   blank lines between chunks to mirror the parent's visual structure. JSON
   consumers receive the full untruncated prose.
+- ``"4.3"`` — per-call unit contract correction: all
+  ``PerCallRow.*_tokens_estimated`` fields are normalized to per-call for all
+  row types instead of mixing per-call and cohort units. Trace-sourced
+  ``per_call[].cache_creation_input_tokens`` and
+  ``per_call[].cache_read_input_tokens`` also shift to per-call. ``cost_usd``
+  remains cohort by design because it represents actually-paid workflow-level
+  trace cost. Consumers gating on ``format_version.startswith("4.")`` continue
+  to work; consumers caching specific token values across 4.2 -> 4.3 will see
+  the per-call shift.
 
-Consumer rule: gate on ``format_version.startswith("4.")`` for the current
-shape. Additive 4.x minor fields don't bump; semantic shifts in field meaning
+- ``"5.0"`` — explicit provider-cache projection model. JSON removes legacy
+  public ``per_call[].cacheable_tokens_estimated``,
+  ``per_call[].cacheable_data_source``, and ``per_call[].cache_ratio_pct``.
+  Rows now expose ``cached_now_tokens_estimated``, ``cache_configured``,
+  ``cache_active``, ``cache_ready``, and ``cache_opportunity``. Only
+  ``cache_active`` feeds cost projections; ready/opportunity are
+  prioritization fields.
+- ``"5.0"`` — staleness-signal additive fields:
+  ``summary.trace_workflow_relationship``,
+  ``summary.trace_model_drift_count``,
+  ``summary.stale_memo_skipped_count``, and
+  ``summary.stale_memo_uncheckable_count``. Trace discovery is exposed through
+  CLI-only ``--list-traces`` and the public ``list_traces_for_workflow`` helper.
+
+Consumer rule: gate on ``format_version.startswith("5.")`` for the current
+shape. Additive 5.x minor fields don't bump; semantic shifts in field meaning
 and per-warning diagnostic-context changes bump minor; typed top-level field
 removals bump major.
 """
@@ -114,12 +137,12 @@ from __future__ import annotations
 
 from typing import Final
 
-from .analyze import CacheAnalysis, analyze
+from .analyze import CacheAnalysis, TraceListEntry, analyze, list_traces_for_workflow
 from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
 
-JSON_FORMAT_VERSION: Final[str] = "4.2"
+JSON_FORMAT_VERSION: Final[str] = "5.0"
 """Version string emitted as the first key by ``render_json``.
 
 Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.
@@ -128,7 +151,9 @@ Consumer rule: ``startswith(JSON_FORMAT_VERSION.split(".")[0] + ".")``.
 __all__ = [
     "JSON_FORMAT_VERSION",
     "CacheAnalysis",
+    "TraceListEntry",
     "analyze",
+    "list_traces_for_workflow",
     "render_json",
     "render_text",
     "summarize",

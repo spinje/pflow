@@ -931,7 +931,7 @@ Expected: clean pass for all 63 cases. If 1-3 cases mutate (residual risk on cro
 ```bash
 uv run pflow analyze-cache .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md --no-trace-autoload
 ```
-Expected: pre-existing `cache.below-min-tokens` warnings still appear. No new noise from non-cache validator findings (since the workflow tree is structurally clean per Searcher B's verification).
+Expected: pre-existing `cache.below-min-predicted` warnings still appear. No new noise from non-cache validator findings (since the workflow tree is structurally clean per Searcher B's verification).
 
 **8. Test churn check** (pre-merge guard):
 ```bash

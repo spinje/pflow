@@ -60,9 +60,13 @@ def _has_cache_control(system_blocks: object) -> bool:
     return any(isinstance(block, dict) and "cache_control" in block for block in system_blocks)
 
 
-def test_prompt_cache_fires_under_no_cache_flag(tmp_path: Path, mock_llm_client: MockLLMClient) -> None:
+def test_prompt_cache_fires_under_no_cache_flag(tmp_path: Path, mock_llm_client: MockLLMClient, monkeypatch) -> None:
     """``--no-cache`` (cache_enabled=False) MUST NOT disable LLM provider
     prompt caching. The system message still carries cache_control markers."""
+    # Bypass the runtime pre-dispatch strip so this test isolates the
+    # memo-cache layer interaction. Strip behavior is exercised in
+    # tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
     mock_llm_client.set_response("*", None, "ok", cache_creation_input_tokens=1024)
     workflow_path = tmp_path / "wf.pflow.md"
     workflow_path.write_text(_WORKFLOW_WITH_PROMPT_CACHE, encoding="utf-8")

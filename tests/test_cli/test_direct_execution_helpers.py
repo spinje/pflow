@@ -180,20 +180,39 @@ class TestDisplayCostSummary:
     @staticmethod
     def _make_formatted_result(
         pricing_available: bool = True,
-        unavailable_models: list[str] | None = None,
+        unavailable_models: list[dict[str, object]] | None = None,
         partial_cost_usd: float | None = None,
+        unavailable_models_unnamed_count: int = 0,
+        total_calls: int = 0,
     ) -> dict:
-        total: dict = {"tokens_input": 10, "tokens_output": 5, "tokens_total": 15, "cost_usd": None}
+        """Build a synthetic formatted result for cost-display tests.
+
+        ``unavailable_models`` uses the F#17-deferred shape
+        ``list[{name, calls}]`` consumed by the helper-normalizer in
+        ``cli/workflow_output.py::_display_cost_summary``.
+        """
+        total: dict = {
+            "tokens_input": 10,
+            "tokens_output": 5,
+            "tokens_total": 15,
+            "total_calls": total_calls,
+            "cost_usd": None,
+        }
         if not pricing_available:
             total["pricing_available"] = False
             total["unavailable_models"] = unavailable_models or []
+            total["unavailable_models_unnamed_count"] = unavailable_models_unnamed_count
             if partial_cost_usd is not None:
                 total["partial_cost_usd"] = partial_cost_usd
         return {"metrics": {"total": total, "workflow": {"total_tokens": 15}}}
 
     def test_unknown_model_shows_warning(self) -> None:
         """When LiteLLM has no pricing for the model, show warning with model name."""
-        result = self._make_formatted_result(pricing_available=False, unavailable_models=["my-custom-model"])
+        result = self._make_formatted_result(
+            pricing_available=False,
+            unavailable_models=[{"name": "my-custom-model", "calls": 4}],
+            total_calls=4,
+        )
 
         @click.command()
         def cmd() -> None:
@@ -202,14 +221,18 @@ class TestDisplayCostSummary:
         runner = click.testing.CliRunner()
         cli_result = runner.invoke(cmd)
         assert "Cost unavailable" in cli_result.output
-        assert "my-custom-model" in cli_result.output
+        # F#17 deferred: per-model call count in parenthetical
+        assert "my-custom-model (4 calls)" in cli_result.output
+        # F#17 deferred: total LLM calls sibling line (3-space indent)
+        assert "   Total LLM calls: 4" in cli_result.output
 
     def test_partial_cost_shows_partial_with_models(self) -> None:
         """When some models have pricing, show partial cost."""
         result = self._make_formatted_result(
             pricing_available=False,
-            unavailable_models=["unknown-model"],
+            unavailable_models=[{"name": "unknown-model", "calls": 1}],
             partial_cost_usd=0.03,
+            total_calls=2,
         )
 
         @click.command()
@@ -219,11 +242,12 @@ class TestDisplayCostSummary:
         runner = click.testing.CliRunner()
         cli_result = runner.invoke(cmd)
         assert "$0.0300+" in cli_result.output
-        assert "unknown-model" in cli_result.output
+        assert "unknown-model (1 call)" in cli_result.output
+        assert "   Total LLM calls: 2" in cli_result.output
 
     def test_known_model_shows_normal_cost(self) -> None:
         """When pricing is available, show normal cost."""
-        result = self._make_formatted_result()
+        result = self._make_formatted_result(total_calls=3)
 
         @click.command()
         def cmd() -> None:
@@ -233,6 +257,22 @@ class TestDisplayCostSummary:
         cli_result = runner.invoke(cmd)
         assert "$0.0500" in cli_result.output
         assert "unavailable" not in cli_result.output.lower()
+        # F#17 deferred: priced multi-call line carries the call count
+        assert "3 calls" in cli_result.output
+
+    def test_known_model_singular_call_uses_singular_noun(self) -> None:
+        """F#17 wording lock: single LLM call renders as ``1 call``."""
+        result = self._make_formatted_result(total_calls=1)
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(0.05, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert "$0.0500" in cli_result.output
+        assert "1 call" in cli_result.output
+        assert "1 calls" not in cli_result.output
 
     def test_zero_cost_shows_nothing(self) -> None:
         """When cost is zero, show nothing."""
@@ -245,3 +285,59 @@ class TestDisplayCostSummary:
         runner = click.testing.CliRunner()
         cli_result = runner.invoke(cmd)
         assert cli_result.output.strip() == ""
+
+    def test_total_llm_calls_suppressed_when_zero(self) -> None:
+        """Honest unmeasurable: workflows with no LLM calls must NOT show
+        ``Total LLM calls: 0``."""
+        result = self._make_formatted_result(total_calls=0)
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(0.05, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        # Cost line shows but no sibling line for zero calls.
+        assert "$0.0500" in cli_result.output
+        assert "Total LLM calls" not in cli_result.output
+
+    def test_unnamed_only_shows_count_not_unknown(self) -> None:
+        """Regression: genuinely-unrecorded calls render as a clear count
+        rather than the opaque literal ``"unknown"``."""
+        result = self._make_formatted_result(
+            pricing_available=False,
+            unavailable_models=[],
+            unavailable_models_unnamed_count=3,
+            total_calls=3,
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(None, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert "3 calls without recorded model" in cli_result.output
+        assert "unknown" not in cli_result.output
+        assert "   Total LLM calls: 3" in cli_result.output
+
+    def test_named_plus_unnamed_shows_both(self) -> None:
+        """A mix surfaces both real model names and the unnamed-count
+        tally in the rendered phrase."""
+        result = self._make_formatted_result(
+            pricing_available=False,
+            unavailable_models=[{"name": "my-custom-model", "calls": 3}],
+            unavailable_models_unnamed_count=2,
+            partial_cost_usd=0.01,
+            total_calls=5,
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(None, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        # Locked wording from F#17 deferred spec
+        assert "my-custom-model (3 calls); 2 calls without recorded model" in cli_result.output
+        assert "   Total LLM calls: 5" in cli_result.output

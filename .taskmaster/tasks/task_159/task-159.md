@@ -306,7 +306,7 @@ Catalog organized by emission path (per DD#36 three-tier architecture). "Run val
 | `cache.batch-prewarm-recommended` | `warning` | Prewarm savings_ratio ≥ 5% (per DD#33), no explicit `prewarm:` decision declared. `context.savings_pct` and `context.savings_usd` carry the magnitude — agent decides based on intent. |
 | `cache.dynamic-before-static` | `warning` | A node's prompt has a `${var}` reference high up that prevents the rest of the prompt (which IS stable) from caching. Highest-leverage individual fix when it appears. |
 | `cache.padding-advisory` | `info` | A node's `prompt_cache:` subset doesn't start at position 1 of the master order; padding would unlock prefix hits at 0.1× read rate, net-positive. |
-| `cache.below-min-tokens` | `warning` | Declared cache content for a node is below the provider's minimum token threshold. Markers will silently no-op. |
+| `cache.below-min-predicted` | `warning` | Declared cache content for a node is below the provider's minimum token threshold. Markers will silently no-op. |
 | `cache.cross-workflow-prose-mismatch` | `info` | Tier 2: parent and child both declare a chunk with the same identifier but different prose-before-the-`${var}`. Cross-workflow byte-level cache hit won't fire. |
 | `cache.cross-workflow-rename-detected` | `info` | Tier 2: parent passes a value into a child's input under a different name (e.g. `concept_brief → creative_brief`). Yellow flag for divergent prose between the two cache blocks. |
 | `cache.consolidate-to-root-recommended` | `info` | Sub-paths of a parent dict (e.g. `concept.core_idea`, `concept.title`) appear in `## Cache` (brownfield) or in shared template references (greenfield) AND are individually below the provider's min-cache threshold AND consolidating to `${root}` would cross the threshold. Sub-path `cache_control` markers silently no-op at the provider; consolidation makes caching actually fire. (Added in CP3 / lyrics-generator Stage 1 verification — DD#29 design review approved.) |
@@ -685,7 +685,7 @@ New module: `src/pflow/core/llm_capabilities.py` introduced in Phase B.
   - OpenAI: 1024 (automatic caching threshold)
 - LiteLLM's `model_cost` dict has some of this data (`max_input_tokens`, `cache_creation_input_token_cost`, `cache_read_input_token_cost`, `supports_prompt_caching`) but coverage and field names need verification. Wrapping deferred to v1.x if hardcoded data proves stale.
 - Used by:
-  - `cache.below-min-tokens` warning emission (looks up the threshold for the node's model).
+  - `cache.below-min-predicted` warning emission (looks up the threshold for the node's model).
   - Auto batch-prefix detection (skips when prefix is below threshold).
 - Lookup: `get_min_cache_tokens(model: str) -> int` returns the threshold. Fallback for unknown models per DD#32 (recommended floor: 4096).
 

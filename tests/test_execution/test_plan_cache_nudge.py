@@ -47,7 +47,7 @@ echo hello
 _WORKFLOW_WITH_LLM = """\
 # Workflow with cache opportunities
 
-A workflow with an LLM node that emits cache.below-min-tokens.
+A workflow with an LLM node that emits cache.below-min-predicted.
 
 ## Inputs
 
@@ -92,7 +92,7 @@ def test_silent_when_no_opportunities(tmp_path: Path) -> None:
 
 
 def test_nudge_appears_when_opportunities_exist(tmp_path: Path) -> None:
-    """Workflow with cache.below-min-tokens triggers the nudge."""
+    """Workflow with cache.below-min-predicted triggers the nudge."""
     workflow_path = _write_workflow(tmp_path, _WORKFLOW_WITH_LLM)
     runner = WorkflowRunner()
     plan = runner.plan(str(workflow_path), {"topic": "climate"}, RunnerConfig())

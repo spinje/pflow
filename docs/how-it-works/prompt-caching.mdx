@@ -78,10 +78,10 @@ Provider caches only fire above a minimum token threshold:
 | Anthropic Sonnet 4.5, Opus 4.1, Sonnet 3.7 | 1024 |
 | Anthropic Sonnet 4.6, Haiku 3.5 | 2048 |
 | Anthropic Opus 4.5+, Haiku 4.5 | 4096 |
-| Gemini Flash | 1024 |
+| Gemini explicit cached content | 4096 |
 | OpenAI auto-cache | 1024 |
 
-Below the threshold, the cache marker is silently no-op'd by the provider — no error, just no savings. `pflow analyze-cache` warns when a declared subset is below threshold and suggests including more chunks to cross it.
+Below the threshold, pflow strips or treats the provider cache marker as ineffective before cost projection — no savings should be assumed. `pflow analyze-cache` shows below-min `ready`/`upside` rows with a blocker note explaining the threshold; only the active (provider-effective) portion feeds cost estimates.
 
 ## Batch prefix caching
 
@@ -120,7 +120,7 @@ When a parent passes a value into a child workflow, both files can cache it inde
 pflow analyze-cache workflow.pflow.md
 ```
 
-It identifies LLM calls that share context, projects savings, and emits a paste-ready `## Cache` block for greenfield workflows. See the [analyze-cache reference](/reference/cli/analyze-cache).
+It identifies LLM calls that share context, separates active cache from ready/upside opportunities, projects savings only from active cache, and emits a paste-ready `## Cache` block for greenfield workflows. See the [analyze-cache reference](/reference/cli/analyze-cache).
 
 `pflow run --dry-run` emits a one-line nudge when actionable opportunities exist — silent on optimal plans.
 

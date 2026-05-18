@@ -35,7 +35,7 @@ Make `input_tokens_estimated` actually equal the total billed tokens. The clamp 
 ### Tests
 
 - **Update** `tests/test_core/test_cache_analysis_analyze.py:453-486` (`test_per_call_cache_ratio_never_exceeds_100_pct`): rewrite docstring to clarify the invariant is now structural (cache is part of input by construction). Drop the "Mutation test" comment that pinned the clamp as the spec. Test passes unchanged because invariant still holds.
-- **Add** `test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block`: Bug 4 reproducer. Workflow with `## Cache` declaring `${context}`, `prompt_cache: [context]`, prompt body = `"Draft a summary."`. Pass `parameters={"context": "X" * 19117}`. Assert `cacheable_tokens_estimated > 1024` (above provider minimum) AND no `cache.below-min-tokens` warning fires.
+- **Add** `test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block`: Bug 4 reproducer. Workflow with `## Cache` declaring `${context}`, `prompt_cache: [context]`, prompt body = `"Draft a summary."`. Pass `parameters={"context": "X" * 19117}`. Assert `cacheable_tokens_estimated > 1024` (above provider minimum) AND no `cache.below-min-predicted` warning fires.
 - **Add** `test_total_input_tokens_anthropic_trace_sums_cache_portions`: trace tier with Anthropic shape (`input_tokens=500`, `cache_creation=1500`, `cache_read=0`), assert `input_tokens_estimated == 2000`.
 - **Add** `test_total_input_tokens_gemini_trace_does_not_double_count`: trace tier with Gemini shape (`input_tokens=2000`, `cache_creation=0`, `cache_read=1500`), assert `input_tokens_estimated == 2000` (not 3500).
 
@@ -46,7 +46,7 @@ Make `input_tokens_estimated` actually equal the total billed tokens. The clamp 
 CONTEXT=$(yes "filler" | head -200 | tr -d '\n')
 uv run pflow analyze-cache /tmp/with-cache.pflow.md context="$CONTEXT" --format=json | \
   jq '.per_call[] | {node: .node_path, input: .input_tokens_estimated, cacheable: .cacheable_tokens_estimated}'
-# Expect: cacheable > 2000, no cache.below-min-tokens warning
+# Expect: cacheable > 2000, no cache.below-min-predicted warning
 
 uv run pytest tests/test_core/test_cache_analysis_analyze.py -k "ratio or cacheable_tokens or total_input"
 make check
@@ -153,8 +153,8 @@ Drop the `if d.node_id is None:` guard in `view_helpers.py:119`. Always populate
 ### Tests
 
 - **Update** `tests/test_core/test_cache_analysis_renderers.py:531 test_text_recommended_actions_render_workflow_scope_for_workflow_level_findings` — assertions stay valid (basename still appears) but should also verify that workflow-level findings keep their existing single-line scope shape.
-- **Add** `test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_multi_workflow_analysis`: parent + child both have `draft` with `cache.below-min-tokens`. Assert text output contains literal `draft in parent.pflow.md` AND `draft in child.pflow.md`.
-- **Add** `test_text_recommended_actions_single_workflow_omits_scope_suffix`: single-workflow analysis with `cache.below-min-tokens`. Assert the action item does NOT contain ` in `.
+- **Add** `test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_multi_workflow_analysis`: parent + child both have `draft` with `cache.below-min-predicted`. Assert text output contains literal `draft in parent.pflow.md` AND `draft in child.pflow.md`.
+- **Add** `test_text_recommended_actions_single_workflow_omits_scope_suffix`: single-workflow analysis with `cache.below-min-predicted`. Assert the action item does NOT contain ` in `.
 - **Add** `test_json_recommended_actions_per_node_finding_carries_scope_workflow`: same multi-workflow fixture. Assert `recommended_actions[0].scope_workflow` AND `node_id` both populated.
 
 ### Verification
@@ -196,7 +196,7 @@ raise KeyError(...)
 
 **File:** `src/pflow/core/cache_analysis/warning_catalog.py:943-958`
 
-**Test:** **Add** `test_make_diagnostic_node_id_with_affected_workflow_none_raises`: `make_diagnostic('cache.below-min-tokens', node_id='x', affected_workflow=None, ...)` raises `KeyError`. (Currently does NOT raise — value-validity hole.)
+**Test:** **Add** `test_make_diagnostic_node_id_with_affected_workflow_none_raises`: `make_diagnostic('cache.below-min-predicted', node_id='x', affected_workflow=None, ...)` raises `KeyError`. (Currently does NOT raise — value-validity hole.)
 
 ### Bug 3 — Stale `current_cost` in user-facing note text
 

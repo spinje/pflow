@@ -1,0 +1,273 @@
+{
+  "format_version": "5.0",
+  "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+  "analyzed_at": "<TIMESTAMP>",
+  "estimate_confidence": "high_from_trace",
+  "estimate_confidence_coverage": {
+    "trace": 1,
+    "memo": 0,
+    "estimator": 0,
+    "heuristic": 0,
+    "total": 1
+  },
+  "trace_path": "<BASELINE_CASE_DIR>/trace.json",
+  "summary": {
+    "actually_paid_usd": 0.0001,
+    "actually_paid_tier": "trace",
+    "no_cache_hypothetical_usd": 0.000147,
+    "first_run_with_cache_hypothetical_usd": 0.000147,
+    "rerun_within_ttl_hypothetical_usd": 0.000147,
+    "first_run_delta": {
+      "amount_usd": 0.0,
+      "pct_of_baseline": 0,
+      "kind": "break_even",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "first_run_with_cache_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "rerun_delta": {
+      "amount_usd": 0.0,
+      "pct_of_baseline": 0,
+      "kind": "break_even",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "rerun_within_ttl_hypothetical_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "actual_vs_no_cache_delta": {
+      "amount_usd": 4.<HASH:16>-05,
+      "pct_of_baseline": 32,
+      "kind": "savings",
+      "baseline": "no_cache_hypothetical_usd",
+      "compared_to": "actually_paid_usd",
+      "unavailable_reason": null,
+      "excluded_nodes": []
+    },
+    "trace_coverage": "complete",
+    "trace_final_status": "degraded",
+    "trace_workflow_relationship": "same_fresh",
+    "trace_model_drift_count": 0,
+    "trace_recorded_at": "<TIMESTAMP>",
+    "stale_memo_skipped_count": 0,
+    "stale_memo_uncheckable_count": 0,
+    "evidence_scope": "complete_trace",
+    "trace_llm_nodes_static": 1,
+    "trace_llm_nodes_executed": 1,
+    "trace_unexecuted_llm_rows": [],
+    "blocking_errors": 0,
+    "actionable_opportunities": 2,
+    "warnings_count": 2,
+    "info_count": 0,
+    "total_llm_nodes_estimated": 1,
+    "total_llm_invocations_estimated": 1,
+    "dynamic_batch_node_count": 0,
+    "total_input_tokens_estimated": 24,
+    "total_cache_active_tokens_estimated": 0,
+    "total_cache_ready_tokens_estimated": 0,
+    "total_cache_opportunity_tokens_estimated": 0,
+    "total_cache_ready_confidence": "unknown",
+    "total_cache_opportunity_confidence": "unknown",
+    "unknown_cache_ready_row_count": 0,
+    "unknown_cache_opportunity_row_count": 0,
+    "lower_bound_cache_ready_row_count": 0,
+    "lower_bound_cache_opportunity_row_count": 0,
+    "models_in_use": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "ir_default_model": null,
+    "observed_models_in_trace": [
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "partial_cost_usd": false,
+    "unavailable_models": [],
+    "unavailable_models_by_workflow": {},
+    "projection_exclusions": [],
+    "heterogeneous_model_node_count": 0,
+    "heterogeneous_model_node_paths": [],
+    "root_llm_node_count": 1,
+    "sub_workflow_llm_node_count": 0,
+    "sub_workflow_rollup": null,
+    "suggested_run_command": "pflow run <BASELINE_CASE_DIR>/workflow.pflow.md items=<value>",
+    "trace_provider_llm_call_count": 1,
+    "trace_local_memo_llm_hit_count": 0,
+    "trace_local_in_process_llm_hit_count": 0,
+    "trace_local_cache_input_tokens": 0,
+    "trace_provider_cache_creation_input_tokens": 0,
+    "trace_provider_cache_read_input_tokens": 0
+  },
+  "blocking_errors": [],
+  "other_blocking_errors": [],
+  "recommended_actions": [
+    {
+      "rank": 1,
+      "warning_id": "cache.prewarm-disabled-below-min",
+      "node_id": "score",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "score: prewarm cache marker did not reach the provider \u2014 static batch prefix is 5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024. LLM calls will go uncached; cache_control markers will silently no-op at the provider",
+      "suggestions": [
+        "Add stable content above 1024 tokens before the first `${item.*}` reference in score's prompt, OR remove `prewarm: true` since the prefix is too small to benefit."
+      ]
+    },
+    {
+      "rank": 2,
+      "warning_id": "cache.batch-prewarm-below-min",
+      "node_id": "score",
+      "estimated_savings_usd": null,
+      "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "message": "score: the static prefix before the first `${item.X}` reference is ~4 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
+      "suggestions": [
+        "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
+        "OR remove `- prewarm: true` from score \u2014 the prewarm marker will not fire at the provider with a ~4-token prefix.",
+        "OR switch `- model:` on score to one with a lower cache minimum \u2014 e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table."
+      ]
+    }
+  ],
+  "suggested_blocks": [],
+  "per_call": [
+    {
+      "node_path": "score",
+      "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+      "model": "anthropic/claude-sonnet-4-5",
+      "is_batch": true,
+      "batch_size_estimated": null,
+      "input_tokens_estimated": 24,
+      "chunk_tokens_estimated": 0,
+      "body_tokens_estimated": 24,
+      "output_tokens_estimated": 5,
+      "output_data_source": "trace",
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cached_now_tokens_estimated": 0,
+      "cache_configured": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
+      "cache_active": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
+      "cache_ready": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
+      "cache_opportunity": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
+      "data_source": "trace",
+      "cross_workflow_inputs": [],
+      "declared_prompt_cache": null,
+      "model_is_heterogeneous": false,
+      "cost_usd": 0.0001,
+      "cost_data_source": "trace",
+      "did_not_execute_in_trace": false,
+      "observed_models": [
+        "anthropic/claude-sonnet-4-5"
+      ],
+      "observed_call_count": 1
+    }
+  ],
+  "cross_workflow": {
+    "boundaries_analyzed": 0,
+    "rename_detections": [],
+    "prose_mismatches": [],
+    "value_flow_opportunities": []
+  },
+  "warnings": [
+    {
+      "severity": "warning",
+      "message": "score: the static prefix before the first `${item.X}` reference is ~4 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
+      "source": "cache_analyzer",
+      "id": "cache.batch-prewarm-below-min",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
+        "OR remove `- prewarm: true` from score \u2014 the prewarm marker will not fire at the provider with a ~4-token prefix.",
+        "OR switch `- model:` on score to one with a lower cache minimum \u2014 e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table."
+      ],
+      "node_id": "score",
+      "context": {
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "model": "anthropic/claude-sonnet-4-5",
+        "prefix_tokens": 4,
+        "min_tokens": 1024,
+        "batch_alias": "item",
+        "provider_note": "cache_control markers will silently no-op at the provider",
+        "category": "cache_warning",
+        "path": "nodes[id=score].prompt"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    },
+    {
+      "severity": "warning",
+      "message": "score: prewarm cache marker did not reach the provider \u2014 static batch prefix is 5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024. LLM calls will go uncached; cache_control markers will silently no-op at the provider",
+      "source": "cache_analyzer",
+      "id": "cache.prewarm-disabled-below-min",
+      "title": "Cache Warning",
+      "suggestions": [
+        "Add stable content above 1024 tokens before the first `${item.*}` reference in score's prompt, OR remove `prewarm: true` since the prefix is too small to benefit."
+      ],
+      "node_id": "score",
+      "context": {
+        "affected_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
+        "model": "anthropic/claude-sonnet-4-5",
+        "min_tokens": 1024,
+        "cacheable_tokens": 5,
+        "provider_note": "cache_control markers will silently no-op at the provider",
+        "category": "cache_warning",
+        "path": "nodes[id=score]",
+        "alias": "item"
+      },
+      "see_also": [
+        "prompt-caching"
+      ]
+    }
+  ],
+  "notes": [
+    "Cache fidelity check skipped: this is a first run (no prior runs to compare cached vs uncached against). On later runs, specific cache misfires (TTL expired, chunks skipped) will appear here."
+  ]
+}

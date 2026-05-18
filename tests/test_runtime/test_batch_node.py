@@ -66,7 +66,16 @@ def _run_batch(
     node_id: str = "test_node",
     execute_single_fn=None,
 ) -> tuple[str, list[dict]]:
-    """Helper to run execute_batch with convenient defaults."""
+    """Helper to run execute_batch with convenient defaults.
+
+    Mirrors the engine: drives ``execute_batch`` then drains the per-item trace
+    accumulator from the shared store. Returns ``(action, batch_trace_items)``
+    so tests can assert on both without coupling to the (deliberately) narrower
+    ``execute_batch`` return surface — the engine is the only production
+    consumer of the trace items.
+    """
+    from pflow.runtime.engine.batch_executor import _collect_batch_trace
+
     batch_config = BatchConfig(
         items_template=items_template,
         item_alias=item_alias,
@@ -78,7 +87,15 @@ def _run_batch(
     )
     config = _make_node_config(node_id=node_id, batch_config=batch_config)
     fn = execute_single_fn or _simple_execute_single_fn
-    return execute_batch(node, config, shared, fn)
+    try:
+        action = execute_batch(node, config, shared, fn)
+    except Exception:
+        # Same recovery channel as the engine's except handler — drain the
+        # accumulator even when the batch raises so test assertions about
+        # the completed-before-failure trace shape remain valid.
+        _collect_batch_trace(shared, node_id)
+        raise
+    return action, _collect_batch_trace(shared, node_id)
 
 
 # =============================================================================
@@ -139,6 +156,26 @@ class MockInnerNode:
         # Write to namespace (simulating namespaced behavior)
         shared[self.node_id] = result
         return "default"
+
+
+class LabelErrorNode:
+    def __init__(self, node_id: str):
+        self.node_id = node_id
+
+    def _run(self, shared: dict) -> str:
+        item = shared["item"]
+        shared[self.node_id] = {"error": f"forced batch failure for {item['label']}"}
+        return "default"
+
+
+class DeepcopyFailureNode:
+    def __deepcopy__(self, memo: dict) -> "DeepcopyFailureNode":
+        raise RuntimeError("worker setup failed")
+
+
+def _large_batch_item() -> dict[str, str]:
+    payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+    return {"label": "oversized-item", "payload": payload}
 
 
 class ParallelMockInnerNode:
@@ -500,6 +537,78 @@ class TestErrorHandling:
 
         with pytest.raises(RuntimeError, match=r"Batch 'test_node' failed at item \[0\]"):
             _run_batch(inner, shared, error_handling="fail_fast")
+
+    def test_fail_fast_large_item_error_message_is_bounded_but_shared_data_is_full(self):
+        """Action-error fail-fast shows a compact item summary and keeps full runtime data."""
+        large_item = _large_batch_item()
+        inner = LabelErrorNode("test_node")
+        shared: dict = {"data": [large_item]}
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _run_batch(inner, shared, error_handling="fail_fast")
+
+        message = str(exc_info.value)
+        assert "Batch 'test_node' failed at item [0]" in message
+        assert "forced batch failure for oversized-item" in message
+        assert "oversized-item" in message
+        assert "payload=<str" in message
+        assert "sha256=" in message
+        assert "\n  item: label='oversized-item'; payload=<str" in message
+        assert ". Item:" not in message
+        assert "PAYLOAD-START" not in message
+        assert "PAYLOAD-END" not in message
+        assert "token199" not in message
+
+        error = shared["test_node"]["errors"][0]
+        assert error["item"] == large_item
+        assert error["item_summary"]["label"] == "oversized-item"
+        assert "payload=<str" in error["item_summary"]["summary"]
+
+    def test_retry_exhausted_exception_error_records_item_summary_and_full_item(self):
+        """Exception-after-retries path records compact summary beside full item."""
+        large_item = _large_batch_item()
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 0
+        shared: dict = {"data": [large_item]}
+
+        with pytest.raises(ValueError) as exc_info:
+            _run_batch(inner, shared, error_handling="fail_fast", max_retries=1)
+
+        assert "PAYLOAD-START" not in str(exc_info.value)
+        error = shared["test_node"]["errors"][0]
+        assert error["item"] == large_item
+        assert error["item_summary"]["label"] == "oversized-item"
+        assert "PAYLOAD-START" not in error["item_summary"]["summary"]
+
+    def test_parallel_executor_error_records_item_summary_and_full_item(self):
+        """Parallel future-level exceptions use the same batch error shape."""
+        large_item = _large_batch_item()
+        shared: dict = {"data": [large_item]}
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _run_batch(DeepcopyFailureNode(), shared, error_handling="continue", parallel=True)
+
+        assert "PAYLOAD-START" not in str(exc_info.value)
+        error = shared["test_node"]["errors"][0]
+        assert error["item"] == large_item
+        assert error["item_summary"]["label"] == "oversized-item"
+
+    def test_continue_all_failed_large_items_keep_full_items_and_bounded_error_text(self):
+        """All-failed continue path keeps full items but does not print them in the raise."""
+        large_item = _large_batch_item()
+        inner = LabelErrorNode("test_node")
+        shared: dict = {"data": [large_item]}
+
+        with pytest.raises(RuntimeError) as exc_info:
+            _run_batch(inner, shared, error_handling="continue")
+
+        message = str(exc_info.value)
+        assert "all 1 items failed" in message
+        assert "forced batch failure for oversized-item" in message
+        assert "PAYLOAD-START" not in message
+        error = shared["test_node"]["errors"][0]
+        assert error["item"] == large_item
+        assert error["item_summary"]["label"] == "oversized-item"
 
     def test_continue_records_error_in_result(self):
         """continue mode records error from result dict."""

@@ -6,7 +6,7 @@
 
 ## The gap
 
-Task 159 ships `pflow analyze-cache` with a `cache.below-min-tokens` warning
+Task 159 ships `pflow analyze-cache` with a `cache.below-min-predicted` warning
 when declared `## Cache` content is below the provider's minimum cache token
 threshold. The warning identifies the threshold for the node's current
 model (e.g. "Gemini's minimum is 4096 tokens"), but agents reading this
@@ -34,7 +34,7 @@ to delegate to a single CLI invocation.
 
 ## The proposed shape
 
-When a `cache.below-min-tokens` warning fires (or when greenfield
+When a `cache.below-min-predicted` warning fires (or when greenfield
 `## Cache` analysis shows shared content too small for the workflow's
 declared model), the analyzer's suggestion would point at:
 
@@ -165,10 +165,10 @@ wiring:
 
 - `pflow llm show <model>` should include `see_also` to the caching
   guide (`pflow guide caching`).
-- `pflow analyze-cache`'s `cache.below-min-tokens` suggestion should
+- `pflow analyze-cache`'s `cache.below-min-predicted` suggestion should
   reference `pflow llm list --min-cache-tokens=<N>`.
 
-The analyzer side requires extending `cache.below-min-tokens`
+The analyzer side requires extending `cache.below-min-predicted`
 suggestion in `src/pflow/core/cache_analysis/warning_catalog.py:355`
 (the `suggestions_template` field). The greenfield analysis path in
 `src/pflow/core/cache_analysis/analyze.py::_populate_suggested_blocks`
@@ -177,7 +177,7 @@ authoring `## Cache` for the first time benefit most.
 
 ## Acceptance criteria — when Task 94 implements this
 
-A `pflow analyze-cache` run that emits `cache.below-min-tokens`
+A `pflow analyze-cache` run that emits `cache.below-min-predicted`
 should be one CLI invocation away from "pick a model that would
 work":
 
@@ -207,7 +207,7 @@ openai/gpt-4o-mini                        1024       0.15                 yes
 ## Code touch points when wiring up
 
 - `src/pflow/core/cache_analysis/warning_catalog.py:355` —
-  extend `cache.below-min-tokens` `suggestions_template` to add the
+  extend `cache.below-min-predicted` `suggestions_template` to add the
   command reference. Keep the existing two suggestions (add chunks /
   remove declaration); add the model-discovery option as a third.
 - `src/pflow/core/cache_analysis/analyze.py::_populate_suggested_blocks` —
@@ -228,7 +228,7 @@ openai/gpt-4o-mini                        1024       0.15                 yes
 - **Don't** add a separate `pflow cache list-models` command — would
   duplicate Task 94's dispatch logic.
 - **Don't** inline the per-model threshold table in the
-  `cache.below-min-tokens` warning context — inflates context with
+  `cache.below-min-predicted` warning context — inflates context with
   data most agents don't need; the filter command is the right
   interface.
 - **Don't** prescribe a model swap from the analyzer side. Model
@@ -244,7 +244,7 @@ openai/gpt-4o-mini                        1024       0.15                 yes
 - Live data: `src/pflow/core/llm_capabilities.py::MODEL_CAPABILITIES`
   (per-model cache thresholds, DD#32 from Task 159).
 - Warning emission: `src/pflow/core/cache_analysis/warning_catalog.py:340`
-  (`cache.below-min-tokens` catalog entry).
+  (`cache.below-min-predicted` catalog entry).
 - Emission gates:
   `src/pflow/core/cache_analysis/analyze.py::_per_node_warnings`
   (around line 764 — gates on `declared_prompt_cache`,

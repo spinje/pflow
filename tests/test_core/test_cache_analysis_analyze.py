@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
+import math
 import os
 import sys
 import time
@@ -18,8 +20,10 @@ from pflow.core.cache_analysis.analyze import (
     TraceUnexecutedLLMRow,
     _aggregate_confidence,
     _build_summary,
+    _build_trace_execution_index,
     _maybe_append_gemini_note,
     analyze,
+    invocation_count_for,
 )
 from pflow.core.cache_analysis.context import AnalysisContext
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -116,7 +120,8 @@ def test_summary_reports_static_batch_invocation_estimate() -> None:
     assert summary.dynamic_batch_node_count == 0
 
 
-def test_summary_static_batch_input_and_cacheable_totals_are_cohort() -> None:
+def test_summary_static_batch_input_and_cacheable_totals_are_per_call_with_cohort_multiplication() -> None:
+    """Summary totals multiply per-call row tokens by the row invocation count."""
     rows = [
         PerCallRow(
             node_path="batch-llm",
@@ -135,6 +140,115 @@ def test_summary_static_batch_input_and_cacheable_totals_are_cohort() -> None:
 
     assert summary.total_input_tokens_estimated == 400
     assert summary.total_cacheable_tokens_estimated == 240
+
+
+def test_summary_dynamic_batch_input_is_per_call(tmp_path: Path) -> None:
+    workflow_path = str(tmp_path / "dynamic-batch.pflow.md")
+    workflow_ir = {
+        "inputs": {"items": {"type": "array"}},
+        "nodes": [
+            {
+                "id": "batch",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {"prompt": "${item}"},
+            }
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[
+            _llm_trace_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("batch", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+        ],
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        parameters={"items": ["a", "b", "c"]},
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = analysis.per_call[0]
+    assert row.input_tokens_estimated == 100
+    assert row.output_tokens_estimated == 10
+    assert analysis.summary.total_input_tokens_estimated == 300
+    assert analysis.summary.total_llm_invocations_estimated == 3
+    assert analysis.summary.dynamic_batch_node_count == 0
+
+
+def test_summary_non_batch_repeated_input_is_per_call(tmp_path: Path) -> None:
+    workflow_path = str(tmp_path / "repeated.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "select",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "Select"},
+            }
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+            _llm_trace_event("select", model="anthropic/claude-sonnet-4-5", input_tokens=100, output_tokens=10),
+        ],
+    )
+
+    analysis = analyze(
+        workflow_ir,
+        workflow_path=workflow_path,
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = analysis.per_call[0]
+    assert row.input_tokens_estimated == 100
+    assert row.output_tokens_estimated == 10
+    assert analysis.summary.total_input_tokens_estimated == 400
+    assert analysis.summary.total_llm_invocations_estimated == 4
+
+
+def test_arithmetic_identity_no_cache_minus_first_run_equals_savings() -> None:
+    rows = [
+        PerCallRow(
+            node_path="batch-llm",
+            model="anthropic/claude-sonnet-4-5",
+            is_batch=True,
+            batch_size_estimated=4,
+            input_tokens_estimated=100,
+            cacheable_tokens_estimated=60,
+            cache_ratio_pct=60,
+            data_source="trace",
+            declared_prompt_cache=["context"],
+            output_tokens_estimated=10,
+            output_data_source="trace",
+        )
+    ]
+
+    summary = _build_summary(rows, warnings=[], ttl="5m")
+
+    assert summary.no_cache_hypothetical_usd is not None
+    assert summary.first_run_with_cache_hypothetical_usd is not None
+    assert summary.first_run_delta.amount_usd is not None
+    assert summary.first_run_delta.kind == "savings"
+    assert math.isclose(
+        summary.no_cache_hypothetical_usd - summary.first_run_with_cache_hypothetical_usd,
+        summary.first_run_delta.amount_usd,
+        rel_tol=1e-6,
+    )
 
 
 def test_analyze_no_run_data_note_suppressed_when_parameter_backed_cacheable_present() -> None:
@@ -314,6 +428,37 @@ def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatc
     assert block.per_node_thresholds["reader"]["meets_threshold"] is True
     assert block.estimated_savings_usd == pytest.approx(90.0)
     assert any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
+
+
+def test_suggested_block_savings_multiplies_batch_consumer_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+
+    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    workflow_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "writer",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "params": {"prompt": "First ${topic}."},
+            },
+            {
+                "id": "reader",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "batch": {"items": ["a", "b", "c"], "as": "item"},
+                "params": {"prompt": "Second ${topic} for ${item}."},
+            },
+        ],
+    }
+
+    result = analyze(workflow_ir, parameters={"topic": "small"}, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
+
+    assert result.suggested_blocks
+    assert result.suggested_blocks[0].estimated_savings_usd == pytest.approx(270.0)
 
 
 def test_below_threshold_emits_conditional_even_when_only_one_node_below(
@@ -569,6 +714,105 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection(tm
     assert result.summary.rerun_delta.amount_usd < 0.003
 
 
+def test_resolve_trace_scope_returns_three_tuple_with_appears_as_child() -> None:
+    """Lock ``_resolve_trace_scope`` return shape so refactors can't silently
+    drop ``appears_as_child`` and re-break the parent-redirect signal.
+
+    Bundle 6 expanded the return tuple from ``(root, scope_mismatch)`` to
+    ``(root, scope_mismatch, appears_as_child)``. ``_derive_trace_workflow_relationship``
+    depends on the third element; if a refactor drops it back to a 2-tuple
+    the relationship enum silently regresses to ``different_workflow`` for
+    every parent-redirect case.
+    """
+    from pflow.core.cache_analysis.analyze import _resolve_trace_scope
+
+    # No trace loaded — short-circuit returns 3-tuple with default values.
+    notes: list[str] = []
+    result_no_trace = _resolve_trace_scope(None, "wf.pflow.md", notes)
+    assert len(result_no_trace) == 3
+    root, scope_mismatch, appears_as_child = result_no_trace
+    assert root == "wf.pflow.md"
+    assert scope_mismatch is False
+    assert appears_as_child is False
+
+    # Same-workflow trace — also 3-tuple, both bools False.
+    trace_same = {"workflow_path": "wf.pflow.md", "nodes": []}
+    result_same = _resolve_trace_scope(trace_same, "wf.pflow.md", notes)
+    assert len(result_same) == 3
+    _, scope_mismatch_same, appears_as_child_same = result_same
+    assert scope_mismatch_same is False
+    assert appears_as_child_same is False
+
+
+def test_analyze_skips_stale_llm_memo_when_predicted_cache_key_differs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for Bundle 6 per-workflow contexts preserving predictions."""
+    from pflow.runtime.cache import MemoizationCache
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    workflow_path = str(tmp_path / "workflow.pflow.md")
+    monkeypatch.setattr(
+        analyze_module,
+        "_predict_cache_keys",
+        lambda *_args, **_kwargs: ({(workflow_path, "draft"): "current-key"}, []),
+    )
+    monkeypatch.setattr("litellm.token_counter", lambda model, text: 123)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="stale-key",
+        node_id="draft",
+        workflow_path=workflow_path,
+        action="default",
+        output={"response": "old", "llm_usage": {"input_tokens": 9999, "output_tokens": 88}},
+    )
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Draft the article."},
+            }
+        ],
+        "edges": [],
+    }
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, auto_load_trace=False, memo_cache=cache)
+
+    assert result.summary.stale_memo_skipped_count == 1
+    assert result.per_call[0].data_source != "memo"
+    assert result.per_call[0].input_tokens_estimated == 123
+
+
+def test_cross_workflow_memo_value_resolver_skips_stale_parent_memo(tmp_path: Path) -> None:
+    """Regression for the cross-workflow value path using freshness-aware memo."""
+    from pflow.core.cache_analysis.analyze import _resolve_value_in_workflow_memo
+    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.runtime.cache import MemoizationCache
+
+    parent_path = str(tmp_path / "parent.pflow.md")
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="old-parent-key",
+        node_id="creative",
+        workflow_path=parent_path,
+        action="default",
+        output={"direction": "stale direction"},
+    )
+    ctx = AnalysisContext.build(
+        workflow_ir={"nodes": []},
+        memo_cache=cache,
+        workflow_path=str(tmp_path / "root.pflow.md"),
+        predicted_cache_keys={(parent_path, "creative"): "current-parent-key"},
+    )
+
+    resolved = _resolve_value_in_workflow_memo("creative.direction", workflow_path=parent_path, ctx=ctx)
+
+    assert resolved is None
+    assert ctx.stale_memo_skipped == {(parent_path, "creative")}
+
+
 def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics(tmp_path: Path) -> None:
     """Regression for the double-counted Anthropic trace-token bug."""
     usage_rows = [
@@ -711,7 +955,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
     assert result.summary.trace_unexecuted_llm_rows == (TraceUnexecutedLLMRow("x", "skipped"),)
     assert result.summary.actual_vs_no_cache_delta.kind != "unavailable"
     # Per-row suppression: skipped node produces no per-row warnings.
-    assert not any(d.node_id == "skipped" and d.id == "cache.below-min-tokens" for d in result.warnings)
+    assert not any(d.node_id == "skipped" and d.id == "cache.below-min-predicted" for d in result.warnings)
     # cache.first-call-write-penalty would not fire here (2 nodes, not 1), so
     # we don't assert its absence; the dedicated truncated-filter test owns that.
     assert result.suggested_blocks == ()
@@ -1096,7 +1340,7 @@ def test_filter_consults_catalog_flag_not_severity() -> None:
     unflagged_warning = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
-        id="cache.below-min-tokens",  # IR-derived; no flag
+        id="cache.below-min-predicted",  # IR-derived; no flag
         node_id="x",
         message="below-min finding",
     )
@@ -1113,7 +1357,7 @@ def test_filter_consults_catalog_flag_not_severity() -> None:
     assert "cache.first-call-write-penalty" not in filtered_ids
     # IR-derived findings flow regardless of severity.
     assert "cache.cross-workflow-rename-detected" in filtered_ids
-    assert "cache.below-min-tokens" in filtered_ids
+    assert "cache.below-min-predicted" in filtered_ids
     # Diagnostics with no id (un-catalog'd) flow — no catalog lookup possible.
     assert error_no_id in filtered
 
@@ -1148,7 +1392,7 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
                                 "input_tokens": 100,
                                 "output_tokens": 10,
                                 "cost_usd": 0.01,
-                                "cache_creation_input_tokens": 3,
+                                "cache_creation_input_tokens": 4,
                                 "cache_read_input_tokens": 0,
                             },
                         },
@@ -1184,14 +1428,165 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
     assert row.model_is_heterogeneous is True
     assert row.observed_call_count == 2
     assert row.observed_models == ("gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview")
-    assert row.input_tokens_estimated == 300
-    assert row.output_tokens_estimated == 30
-    assert row.cache_creation_input_tokens == 3
-    assert row.cache_read_input_tokens == 4
+    assert row.input_tokens_estimated == 150
+    assert row.output_tokens_estimated == 15
+    assert row.cache_creation_input_tokens == 2
+    assert row.cache_read_input_tokens == 2
+    assert result.summary.trace_provider_cache_creation_input_tokens == 4
+    assert result.summary.trace_provider_cache_read_input_tokens == 4
     assert row.cost_usd == pytest.approx(0.03)
     assert result.summary.trace_coverage == "complete"
     assert result.summary.observed_models_in_trace == row.observed_models
     assert result.summary.models_in_use == row.observed_models
+
+
+def test_memo_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path: Path) -> None:
+    """A local memo hit restores historical llm_usage for token estimates only.
+
+    Provider cache telemetry in the current trace must exclude the restored
+    historical payload; otherwise a resumed run looks like provider prompt
+    caching worked even when pflow skipped the LLM call before the provider.
+    """
+    workflow_ir = {
+        "cache": {
+            "items": [
+                {
+                    "name": "source",
+                    "var": "content",
+                    "prose_before": "Source content:\n",
+                }
+            ]
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "prompt_cache": ["source"],
+                "params": {
+                    "model": "gemini/gemini-2.5-flash-lite",
+                    "prompt": "Summarize the source content.",
+                },
+            }
+        ],
+    }
+    trace_path = tmp_path / "memo-hit-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "summarize",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "cached": True,
+                    "llm_call": {
+                        "model": "gemini/gemini-2.5-flash-lite",
+                        "input_tokens": 6000,
+                        "output_tokens": 100,
+                        "cost_usd": 0.25,
+                        "cache_source": "memo",
+                        "cache_read_input_tokens": 5900,
+                        "cache_creation_input_tokens": 0,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"content": "large source " * 2000},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    row = result.per_call[0]
+    assert row.data_source == "trace"
+    assert row.cacheable_data_source != "trace"
+    assert row.cache_read_input_tokens is None
+    assert row.cache_creation_input_tokens is None
+    assert result.summary.trace_provider_llm_call_count == 0
+    assert result.summary.trace_provider_cache_read_input_tokens == 0
+    assert result.summary.trace_local_memo_llm_hit_count == 1
+    assert result.summary.trace_local_cache_input_tokens == 6000
+
+
+def test_in_process_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path: Path) -> None:
+    """Same evidence split as memo hits, but for same-run in-process reuse."""
+    from pflow.core.cache_analysis.render_json import render_json
+
+    workflow_ir = {
+        "cache": {
+            "items": [
+                {
+                    "name": "source",
+                    "var": "content",
+                    "prose_before": "Source content:\n",
+                }
+            ]
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "prompt_cache": ["source"],
+                "params": {
+                    "model": "gemini/gemini-2.5-flash-lite",
+                    "prompt": "Summarize the source content.",
+                },
+            }
+        ],
+    }
+    trace_path = tmp_path / "in-process-hit-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "summarize",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "cached": True,
+                    "llm_call": {
+                        "model": "gemini/gemini-2.5-flash-lite",
+                        "input_tokens": 6000,
+                        "output_tokens": 100,
+                        "cost_usd": 0.25,
+                        "cache_source": "in_process",
+                        "cache_read_input_tokens": 5900,
+                        "cache_creation_input_tokens": 0,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"content": "large source " * 2000},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    assert result.summary.trace_provider_llm_call_count == 0
+    assert result.summary.trace_provider_cache_read_input_tokens == 0
+    assert result.summary.trace_local_in_process_llm_hit_count == 1
+    assert result.summary.trace_local_cache_input_tokens == 6000
+    summary = render_json(result)["summary"]
+    assert summary["trace_provider_llm_call_count"] == 0
+    assert summary["trace_provider_cache_read_input_tokens"] == 0
+    assert summary["trace_local_in_process_llm_hit_count"] == 1
+    assert summary["trace_local_cache_input_tokens"] == 6000
 
 
 def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actual_delta(tmp_path: Path) -> None:
@@ -1329,12 +1724,17 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     assert "couldn't be analyzed for cache savings" in text
     assert "model varies per call" in text  # now in the footnote
     assert "pass-through" not in text
-    assert "Actual cost delta (this run):" in text
-    # The savings line no longer inlines (excludes ...); the cohort context
-    # is in the footnote below.
+    # Candidate A: the actual-vs-no-cache savings now render as a parenthetical
+    # on the ``Actually paid`` line, not as a separate ``Actual cost delta``
+    # line. The legacy labels must not reappear.
+    assert "Actual cost delta" not in text
+    assert "Actual trace delta:" not in text
+    actually_paid_line = next(line for line in text.splitlines() if "Actually paid:" in line)
+    assert "vs cost without caching" in actually_paid_line
+    # The savings parenthetical does not inline ``(excludes ...)``; the
+    # cohort context is in the footnote below.
     assert "(excludes generate)" not in text
     assert "unavailable (projection excludes generate)" not in text
-    assert "Actual trace delta:" not in text
 
 
 def test_observed_model_replaces_ir_when_trace_consistent(
@@ -1654,13 +2054,15 @@ def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
     assert row.cacheable_tokens_estimated is not None
 
 
-def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization(
+def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization_but_is_disclosed_uncheckable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Defends memo-backed child input resolution: parent's memoized output
-    must propagate to child prompt tokenization, otherwise the child prompt
-    stays tiny/partial.
+    """Parent memo can seed child params, but Bundle 6 exposes it as uncheckable.
+
+    ``parameters_by_workflow`` is built before cache-key prediction exists. The
+    analyzer keeps the useful memo-backed projection while incrementing the
+    uncheckable memo counter so the trust boundary is visible.
     """
     import pflow.core.cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
@@ -1718,6 +2120,7 @@ def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization(
     row = next(row for row in result.per_call if row.workflow_path == str(child_path))
     assert row.data_source == "estimator"
     assert row.input_tokens_estimated > 100
+    assert result.summary.stale_memo_uncheckable_count == 1
 
 
 def test_child_workflow_unresolved_input_remains_unavailable(
@@ -1782,7 +2185,7 @@ def test_analyze_skips_non_llm_nodes_in_per_call() -> None:
     assert {row.node_path for row in result.per_call} == {"llm-step"}
 
 
-def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
+def test_per_call_row_invariant_cacheable_le_input() -> None:
     """Cacheable tokens never exceed total input tokens.
 
     The invariant is now structural: ``input_tokens_estimated`` equals total
@@ -1826,12 +2229,55 @@ def test_per_call_cache_ratio_never_exceeds_100_pct() -> None:
         )
 
 
+def test_clamp_logs_debug_when_cacheable_exceeds_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 200 if ref == "context" else None)
+
+    workflow_path = str(tmp_path / "clamp.pflow.md")
+    workflow_ir = {
+        "inputs": {"context": {"type": "string"}},
+        "cache": {"items": [{"name": "context", "var": "context", "prose_before": "P:\n"}]},
+        "nodes": [
+            {
+                "id": "judge",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prompt_cache": ["context"],
+                "params": {"prompt": "Judge ${context}."},
+            }
+        ],
+    }
+    trace_path = _write_trace_fixture(
+        tmp_path,
+        workflow_path=workflow_path,
+        nodes=[_llm_trace_event("judge", model="anthropic/claude-sonnet-4-5", input_tokens=100)],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="pflow.core.cache_analysis.analyze"):
+        result = analyze(
+            workflow_ir,
+            parameters={"context": "stable"},
+            workflow_path=workflow_path,
+            trace_path=trace_path,
+            auto_load_trace=False,
+            memo_cache=None,
+        )
+
+    row = result.per_call[0]
+    assert row.cacheable_tokens_estimated == row.input_tokens_estimated == 100
+    assert any("cacheable_tokens (200, source=parameters) exceeded input_tokens (100" in m for m in caplog.messages)
+
+
 def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block() -> None:
     """Bug 4 reproducer — declared chunks referenced by name only in
     ``prompt_cache:`` (not inlined in the prompt body) must contribute their
     resolved token count to ``input_tokens_estimated``. Without this the
     ``min(cacheable, input)`` clamp truncated correct cacheable values to
-    the prompt-body-only size and ``cache.below-min-tokens`` falsely fired.
+    the prompt-body-only size and ``cache.below-min-predicted`` falsely fired.
     """
     workflow_ir = {
         "inputs": {"context": {"type": "string"}},
@@ -1861,7 +2307,7 @@ def test_cacheable_tokens_includes_cache_content_when_chunks_only_in_cache_block
     )
     # input_tokens must include cache content; otherwise the clamp truncates cacheable.
     assert row.input_tokens_estimated >= row.cacheable_tokens_estimated
-    assert "cache.below-min-tokens" not in {d.id for d in result.warnings}
+    assert "cache.below-min-predicted" not in {d.id for d in result.warnings}
 
 
 def test_per_call_row_body_plus_chunks_invariant() -> None:
@@ -1954,12 +2400,21 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
     rendered = render_text(result)
     assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field`" in rendered
     assert "would drop per-call cost" in rendered
-    assert "compares against inlining the full chunk uncached" in rendered
+    # Bundle 1: the "compares against inlining the full chunk uncached"
+    # footnote was removed. The summary baseline is the honest answer to
+    # "what would caching the same prompt cost without the discount"; the
+    # local recommendation already shows the alternative (remove the
+    # cache declaration to get body-only cost). Mutation contract:
+    # restoring that footnote to ``_format_shadow_cache_cost_comparison``
+    # fails this negative assertion.
+    assert "compares against inlining the full chunk uncached" not in rendered
+    assert "different baseline than your body" not in rendered
+    assert "unused by your prompt" not in rendered
 
 
 def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> None:
     from pflow.core.cache_analysis.cost_estimation import (
-        _per_call_first_run_with_cache_cost,
+        _row_first_run_with_cache_cost,
         get_model_pricing,
     )
 
@@ -2011,8 +2466,9 @@ def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> Non
     assert row.output_tokens_estimated is not None
     warning = next(d for d in result.warnings if d.id == "cache.prompt-body-shadows-cache")
 
-    expected_1h = _per_call_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="1h")
-    default_5m = _per_call_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="5m")
+    invocation_count = invocation_count_for(row)
+    expected_1h = _row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="1h") / invocation_count
+    default_5m = _row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="5m") / invocation_count
     assert warning.context["with_cache_cost_usd_per_call"] == pytest.approx(expected_1h)
     assert warning.context["with_cache_cost_usd_per_call"] > default_5m
 
@@ -2151,12 +2607,12 @@ def test_analyze_summary_counts_warnings_and_info() -> None:
         "cache": {"items": [{"name": "concept", "var": "concept", "prose_before": "P\n\n"}]},
     }
     result = analyze(workflow_ir, parameters={"concept": "hi"}, workflow_path="x", auto_load_trace=False)
-    # cache.below-min-tokens fires from parameters-tier evidence
+    # cache.below-min-predicted fires from parameters-tier evidence
     # (small chunk, anthropic min=1024).
     # Tighter assertion: lock the specific id so a different warning firing
     # for the wrong reason fails the test (not just total count).
-    assert any(w.id == "cache.below-min-tokens" for w in result.warnings), (
-        f"Expected cache.below-min-tokens; got: {[w.id for w in result.warnings]}"
+    assert any(w.id == "cache.below-min-predicted" for w in result.warnings), (
+        f"Expected cache.below-min-predicted; got: {[w.id for w in result.warnings]}"
     )
     sum_ = result.summary
     assert sum_.warnings_count + sum_.info_count >= 1
@@ -3590,7 +4046,7 @@ def test_blocking_errors_filters_out_warnings_and_info() -> None:
 
     actions = build_blocking_errors([
         _make_diag("cache.order-mismatch", Severity.ERROR),
-        _make_diag("cache.below-min-tokens", Severity.WARNING),
+        _make_diag("cache.below-min-predicted", Severity.WARNING),
         _make_diag("cache.shared-context-undeclared", Severity.INFO),
     ])
     assert [a.warning_id for a in actions] == ["cache.order-mismatch"]
@@ -4368,8 +4824,8 @@ def test_heterogeneous_batch_with_declared_cache_falls_through_to_unavailable(
     assert row.model_is_heterogeneous is True
     assert row.cacheable_tokens_estimated is None
     assert row.cacheable_data_source == "unavailable"
-    # No false-positive below-min-tokens warning.
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    # No false-positive below-min-predicted warning.
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, f"unexpected warnings: {[w.id for w in analysis.warnings]}"
 
 
@@ -4377,7 +4833,7 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``cache.below-min-tokens`` MUST NOT fire when ``cacheable_data_source``
+    """``cache.below-min-predicted`` MUST NOT fire when ``cacheable_data_source``
     is ``"trace"``: trace evidence (cache_creation + cache_read > 0) shows
     the cache demonstrably worked at this size, so the warning would
     contradict reality.
@@ -4440,9 +4896,9 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     assert row.cacheable_data_source == "trace"
     assert row.cacheable_tokens_estimated == 800
     # The contract: warning MUST NOT fire when trace shows cache worked.
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, (
-        f"cache.below-min-tokens fired despite trace showing cache fired (cacheable=800, "
+        f"cache.below-min-predicted fired despite trace showing cache fired (cacheable=800, "
         f"src=trace). Gate ``cacheable_data_source != 'trace'`` regression. "
         f"warnings: {[w.id for w in analysis.warnings]}"
     )
@@ -4571,9 +5027,9 @@ def test_below_min_tokens_fires_when_memo_data_shows_below_min(
     assert row.cacheable_data_source == "memo"
     assert row.cacheable_tokens_estimated is not None
     assert row.cacheable_tokens_estimated < 1024
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert len(below_min) == 1, (
-        f"cache.below-min-tokens should fire when memo says below threshold; got: {[w.id for w in analysis.warnings]}"
+        f"cache.below-min-predicted should fire when memo says below threshold; got: {[w.id for w in analysis.warnings]}"
     )
 
 
@@ -4587,7 +5043,7 @@ def test_f04_greenfield_node_output_chunk_does_not_emit_false_below_min_warning(
     node output (``${produce.response}``) AND no memo data exists would
     fall through Tier 1 (no trace) → Tier 2 (no memo) → Tier 3 heuristic
     → fabricated ~``len(prompt) * 75 // 400`` token count → false-positive
-    ``cache.below-min-tokens`` warning ("declared cache content is ~1
+    ``cache.below-min-predicted`` warning ("declared cache content is ~1
     tokens, below ... minimum of 1024").
 
     Post-fix: Tier 3 is deleted; the path lands at Tier 4 unavailable.
@@ -4635,9 +5091,9 @@ def test_f04_greenfield_node_output_chunk_does_not_emit_false_below_min_warning(
     consume_row = next(r for r in analysis.per_call if r.node_path == "consume")
     assert consume_row.cacheable_tokens_estimated is None
     assert consume_row.cacheable_data_source == "unavailable"
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min, (
-        f"F-04 regression: cache.below-min-tokens fired on greenfield "
+        f"F-04 regression: cache.below-min-predicted fired on greenfield "
         f"node-output chunk. Warnings: {[w.id for w in analysis.warnings]}"
     )
 
@@ -4694,7 +5150,7 @@ def test_partial_input_resolution_with_node_output_chunk_returns_unavailable(
     downstream_row = next(r for r in analysis.per_call if r.node_path == "downstream")
     assert downstream_row.cacheable_data_source == "unavailable"
     assert downstream_row.cacheable_tokens_estimated is None
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert not below_min
 
 
@@ -4704,12 +5160,12 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
 ) -> None:
     """Declared subset + 2.1.0 trace recording cache_creation=0, cache_read=0
     (cache declared but didn't fire — sub-threshold etc.). Tier 1 MUST fall
-    through; Tier 2 fires via memo; ``cache.below-min-tokens`` MUST fire
+    through; Tier 2 fires via memo; ``cache.below-min-predicted`` MUST fire
     because the gate's ``cacheable_data_source != "trace"`` clause is now
     True.
 
     This is the matrix Case 9 — the case that exists specifically to
-    preserve ``cache.below-min-tokens`` fidelity when cache fails to engage.
+    preserve ``cache.below-min-predicted`` fidelity when cache fails to engage.
     Without Tier 1 fall-through (e.g., short-circuit returning
     ``(0, "trace")`` per the disputed review-silent-failures C1 finding),
     cacheable_data_source would be ``"trace"``, the gate would suppress the
@@ -4719,7 +5175,7 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
     Mutation contracts:
       A. Replace Tier 1 fall-through with ``return (0, "trace")`` —
          cacheable_data_source becomes ``"trace"``, the gate at
-         ``analyze.py:778`` suppresses, ``cache.below-min-tokens`` fails to
+         ``analyze.py:778`` suppresses, ``cache.below-min-predicted`` fails to
          fire. This test catches it.
       B. Drop the ``> 0`` precondition (use ``>= 0``) — cacheable becomes
          0 with source ``"trace"`` for the 0+0 case, same outcome as A.
@@ -4731,7 +5187,7 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
 
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     # Lock memo tokenization to a deterministic value BELOW Sonnet 4.5's
-    # 1024-token threshold so cache.below-min-tokens fires for genuine
+    # 1024-token threshold so cache.below-min-predicted fires for genuine
     # sub-threshold cache content.
     monkeypatch.setattr("litellm.token_counter", lambda model, text: 500)
 
@@ -4800,9 +5256,9 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
         f"expected memo-tier value of 500; got {row.cacheable_tokens_estimated}"
     )
     # The whole point of the fall-through: warning fires correctly.
-    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-tokens"]
+    below_min = [w for w in analysis.warnings if w.id == "cache.below-min-predicted"]
     assert below_min, (
-        f"cache.below-min-tokens did NOT fire for declared-but-cache-didn't-fire "
+        f"cache.below-min-predicted did NOT fire for declared-but-cache-didn't-fire "
         f"sub-threshold case. Tier 1 fall-through regression. "
         f"warnings: {[w.id for w in analysis.warnings]}"
     )
@@ -5018,6 +5474,25 @@ def test_build_trace_execution_index_excludes_cached_llm_cost() -> None:
     assert result.summary.sub_workflow_rollup is not None
     child_entry = result.summary.sub_workflow_rollup.per_workflow[0]
     assert child_entry.actually_paid_usd == 0.0
+
+
+def test_build_trace_execution_index_collects_top_level_and_batch_node_outputs() -> None:
+    """Trace-output projection must see both node-output producers."""
+    trace_path = Path(".taskmaster/tasks/task_159/baseline/_shared/fixtures/live-gemini-lyrics-generator.trace.json")
+    trace_data = json.loads(trace_path.read_text())
+    root_workflow_path = str(trace_data.get("workflow_path") or "")
+
+    index = _build_trace_execution_index(trace_data, root_workflow_path, {})
+
+    top_output = index.outputs_by_key[(root_workflow_path, "fetch-sources")]
+    assert isinstance(top_output, dict)
+
+    batch_output = index.outputs_by_key[(None, "build-scoring-items")]
+    assert isinstance(batch_output, dict)
+    result = batch_output.get("result")
+    assert isinstance(result, dict)
+    assert result["genre_only"]
+    assert result["narrator_info"]
 
 
 def test_actually_paid_and_trace_index_agree_on_memo_hit_child() -> None:
@@ -5441,6 +5916,7 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
     ${items}`` rows have no static size even when trace observed repeated calls.
     """
     analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
     token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
     monkeypatch.setattr(
@@ -5449,10 +5925,11 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
         lambda _model, text, **_kwargs: (len(text.split()), "test"),
     )
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(below_min_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
     model = "anthropic/claude-haiku-4-5"
-    prefix = "Shared rubric:\n" + ("stable context sentence. " * 40)
+    prefix = "Shared rubric:\n" + ("stable context sentence. " * 1600)
     prompt = f"{prefix}\n${{item.dynamic}}"
     workflow_path = str(tmp_path / "dynamic-batch-prewarm.pflow.md")
     workflow_ir = {
@@ -5480,9 +5957,9 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
                                 "success": True,
                                 "llm_call": {
                                     "model": model,
-                                    "input_tokens": 1_000,
+                                    "input_tokens": 20_000,
                                     "output_tokens": 10,
-                                    "total_tokens": 1_010,
+                                    "total_tokens": 20_010,
                                     "cost_usd": 0.01,
                                 },
                             }
@@ -5663,10 +6140,10 @@ def test_batch_prefix_projection_does_not_ripple_into_rerun_cost_for_undeclared_
     Without this gate, the headline cost block would carry an internal
     contradiction: ``actually_paid - rerun_hypothetical`` would diverge from
     ``first_run_delta`` because ``_aggregate_first_run_savings`` correctly
-    skips undeclared rows but ``_per_call_rerun_cost`` ungated would not.
+    skips undeclared rows but ``_row_rerun_cost`` ungated would not.
 
     Mutation contract: remove the ``if row.declared_prompt_cache`` gate from
-    ``_per_call_rerun_cost`` in ``cost_estimation.py``; this test fails
+    ``_row_rerun_cost`` in ``cost_estimation.py``; this test fails
     because the rerun hypothetical drops below the no-cache hypothetical for
     a workflow with no declared cache.
     """
@@ -5807,16 +6284,11 @@ def test_batch_prefix_projection_does_not_fire_for_non_batch_repeated_call_nodes
     assert row.cacheable_data_source != "batch_prefix"
 
 
-def test_tier2_chunk_cacheable_multiplies_for_repeated_non_batch_trace_rows(
+def test_tier2_chunk_cacheable_stays_per_call_for_repeated_non_batch_trace_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2 chunk estimates use cohort units when trace input is cohort.
-
-    Mutation contract: force ``resolved_chunk_call_count`` to always return 1;
-    this test fails because the repeated non-batch row falls back to the
-    per-call chunk size while ``input_tokens_estimated`` remains cohort-summed.
-    """
+    """Tier 2 chunk estimates use the same per-call units as trace input."""
     token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
     monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 123 if ref == "context" else None)
 
@@ -5860,9 +6332,12 @@ def test_tier2_chunk_cacheable_multiplies_for_repeated_non_batch_trace_rows(
     row = next(row for row in result.per_call if row.node_path == "judge")
     assert row.is_batch is False
     assert row.observed_call_count == 4
-    assert row.input_tokens_estimated == 4_000
+    assert row.input_tokens_estimated == 1_000
     assert row.cacheable_data_source == "parameters"
-    assert row.cacheable_tokens_estimated == 492
+    assert row.cacheable_tokens_estimated == 123
+    assert result.summary.total_cacheable_tokens_estimated == sum(
+        (row.cacheable_tokens_estimated or 0) * invocation_count_for(row) for row in result.per_call
+    )
 
 
 def test_tier2_chunk_cacheable_single_call_remains_per_call(
@@ -5958,18 +6433,8 @@ def test_tier2_chunk_cacheable_unresolved_repeated_row_stays_unavailable(
     assert row.cacheable_tokens_estimated is None
 
 
-def test_real_trace_score_choruses_does_not_fabricate_unmeasurable_batch_prefix() -> None:
-    """Real lyrics-generator canary for honest unmeasurable batch prefixes.
-
-    This intentionally covers the whole chain on the production-shaped fixture:
-    nested batch aliases, minimized trace values, dynamic sub-workflow batch
-    attribution, external prompt loading, and cross-workflow projection.
-
-    Mutation contract: route ``_estimate_batch_prefix_cacheable_tokens`` back
-    through raw prompt-slice tokenization; this test fails because
-    ``score-choruses`` reports ``batch_prefix`` for a prefix that still
-    contains unresolved upstream refs.
-    """
+def test_real_trace_score_choruses_uses_trace_outputs_for_stable_prefix_opportunity() -> None:
+    """Real lyrics-generator canary for trace-output-backed prefix projection."""
     from pflow.core.markdown_parser import parse_markdown
 
     baseline_dir = Path(".taskmaster/tasks/task_159/baseline").resolve()
@@ -5988,8 +6453,16 @@ def test_real_trace_score_choruses_does_not_fabricate_unmeasurable_batch_prefix(
 
     score_rows = [row for row in result.per_call if row.node_path == "score-choruses"]
     assert score_rows, "expected score-choruses row in lyrics-generator analysis"
-    assert all(row.cacheable_data_source != "batch_prefix" for row in score_rows)
-    assert any(row.cacheable_data_source == "parameters" for row in score_rows)
+    assert len(score_rows) == 1
+    row = score_rows[0]
+    assert row.cache_ready.data_source == "batch_prefix"
+    assert row.cache_opportunity.data_source == "batch_prefix"
+    assert row.cache_ready.tokens_estimated is not None and row.cache_ready.tokens_estimated > 500
+    assert row.cache_opportunity.tokens_estimated == row.cache_ready.tokens_estimated
+    assert row.cache_opportunity.action == "add_prewarm"
+    assert row.cache_opportunity.meets_provider_min is False
+    assert row.cache_opportunity.blocked_reason == "below_provider_min"
+    assert row.cache_opportunity.affects_cost_projection is False
     select_rows = [row for row in result.per_call if row.node_path == "select-chorus"]
     assert select_rows, "expected select-chorus row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "cross_workflow_projection" for row in select_rows)
@@ -6793,12 +7266,175 @@ def test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent(
     assert result.summary.actually_paid_usd is not None
     assert result.summary.actually_paid_usd == pytest.approx(0.015, abs=1e-6)
 
-    # Disclosure Note must name both paths and use unambiguous wording
-    # (describes the trace file's stored value, not an action taken).
-    scope_notes = [n for n in result.notes if "trace file references workflow" in n]
-    assert len(scope_notes) == 1, f"expected exactly one scope-mismatch note, got: {result.notes}"
-    assert parent_path in scope_notes[0] or os.path.realpath(parent_path) in scope_notes[0]
-    assert str(child_path) in scope_notes[0]
+    # S#9: when the analyzed workflow runs as a sub-workflow inside the
+    # trace's root, the disclosure becomes a redirect hint pointing the
+    # agent at the trace root so they can get full attribution.
+    redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
+    assert len(redirect_notes) == 1, f"expected one redirect note, got: {result.notes}"
+    assert str(child_path) in redirect_notes[0]
+    assert parent_path in redirect_notes[0] or os.path.realpath(parent_path) in redirect_notes[0]
+    assert "pflow analyze-cache" in redirect_notes[0]
+
+
+def test_workflow_appears_as_child_detects_sub_workflow_via_default_edges(
+    tmp_path: Path,
+) -> None:
+    """Bug A regression: ``_workflow_appears_as_child`` must detect the
+    analyzed workflow nested under a parent via ``sub_workflow_events``
+    (non-batch sub-workflow) — the most common shape, missed by Bundle 4's
+    original tests which exercised only the homogeneous-batch path.
+
+    Pre-fix shape:
+      ``_workflow_appears_as_child`` called ``tree.walk(workflow_path=trace_root)``
+      WITHOUT an ``edges`` argument. ``TraceTree.walk`` falls back to inheriting
+      the parent's ``workflow_path`` when ``edges`` is None, so every yielded
+      event under ``sub_workflow_events`` carried the parent path. The match
+      against the child's ``lookup_path`` always failed — redirect note never
+      fired. ``trace_workflow_relationship`` regressed to ``"different_workflow"``.
+
+    Post-fix shape:
+      ``TraceTree.from_dict`` auto-derives ``default_edges`` from each event's
+      ``node_output._pflow_child_workflow_paths`` (the runtime populates this
+      via ``WorkflowExecutor._record_child_workflow_path``). ``walk()`` merges
+      defaults with caller-provided ``edges`` so the common
+      ``tree.walk(workflow_path=root)`` case correctly attributes
+      sub-workflow events to the child path.
+
+    Pitfall #19 defense: builds a trace fixture matching the REAL producer shape
+    (including ``_pflow_child_workflow_paths`` in ``node_output``), not the older
+    synthetic shape that bypassed the bug. Mutation contract:
+      - Remove ``default_edges`` propagation in ``TraceTree.walk`` → this test
+        fails (redirect note absent).
+      - Remove the ``node_output._pflow_child_workflow_paths`` collection in
+        ``_collect_default_edges`` → same failure.
+    """
+    child_path = str(tmp_path / "child.pflow.md")
+    parent_path = str(tmp_path / "parent.pflow.md")
+    child_ir = {
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"prompt": "say ok", "model": "anthropic/claude-sonnet-4-5"},
+            }
+        ]
+    }
+
+    # Build a parent trace with a NON-BATCH sub-workflow event (sub_workflow_events
+    # tier — the path Bundle 4's homogeneous-batch test never exercised). Crucially,
+    # populate node_output._pflow_child_workflow_paths the way the runtime does.
+    summarize_event = {
+        "node_id": "summarize",
+        "node_type": "LLMNode",
+        "duration_ms": 1.0,
+        "success": True,
+        "timestamp": "2026-05-15T00:00:00",
+        "node_output": {"response": "ok"},
+        "llm_call": {
+            "model": "anthropic/claude-sonnet-4-5",
+            "input_tokens": 50,
+            "output_tokens": 5,
+            "total_tokens": 55,
+            "cost_usd": 0.001,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        },
+        "llm_prompt": "say ok",
+        "llm_response": "ok",
+    }
+    parent_event = {
+        "node_id": "call-child",
+        "node_type": "WorkflowExecutor",
+        "duration_ms": 1.0,
+        "success": True,
+        "timestamp": "2026-05-15T00:00:00",
+        "node_params": {"workflow": child_path},
+        # The load-bearing field for default_edges derivation:
+        "node_output": {"_pflow_child_workflow_paths": {"call-child": child_path}},
+        "sub_workflow_events": [summarize_event],
+    }
+    trace_dict = {
+        "format_version": "2.3.0",
+        "workflow_name": "parent",
+        "workflow_path": parent_path,
+        "start_time": "2026-05-15T00:00:00",
+        "end_time": "2026-05-15T00:00:01",
+        "duration_ms": 1.0,
+        "nodes": [parent_event],
+        "nodes_executed": 1,
+        "nodes_failed": 0,
+        "failed_node_ids": [],
+        "final_status": "completed",
+        "execution_id": "test",
+    }
+    trace_file = tmp_path / "parent-trace.json"
+    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+
+    result = analyze(
+        child_ir,
+        workflow_path=child_path,
+        trace_path=trace_file,
+        memo_cache=None,
+    )
+
+    # Bug A signal #1: structured field flips to parent_redirect.
+    assert result.summary.trace_workflow_relationship == "parent_redirect", (
+        f"expected parent_redirect, got: {result.summary.trace_workflow_relationship!r}"
+    )
+
+    # Bug A signal #2: text rendering carries the redirect note + suggested command.
+    redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
+    assert len(redirect_notes) == 1, f"expected redirect note, got: {result.notes}"
+    assert child_path in redirect_notes[0]
+    assert "pflow analyze-cache" in redirect_notes[0]
+
+
+def test_scope_mismatch_emits_generic_note_when_analyzed_workflow_absent_from_trace(
+    tmp_path: Path,
+) -> None:
+    """S#9 negative: when the analyzed workflow does NOT appear inside the
+    trace at all (different workflow, different file), the generic
+    scope-mismatch disclosure fires — not the redirect hint, which would be
+    misleading because the trace root doesn't actually contain this
+    workflow.
+
+    Mutation contract:
+      - If ``_workflow_appears_as_child`` returns True unconditionally,
+        this test fails because the redirect note fires for unrelated
+        workflows.
+    """
+    analyzed_path = str(tmp_path / "unrelated.pflow.md")
+    other_path = str(tmp_path / "other.pflow.md")
+    analyzed_ir = {
+        "nodes": [
+            {
+                "id": "analyzed-llm",
+                "type": "llm",
+                "params": {"prompt": "x", "model": "anthropic/claude-sonnet-4-5"},
+            }
+        ]
+    }
+
+    builder = TraceFixtureBuilder()
+    # Trace records a different workflow with a different node; the
+    # analyzed workflow never appears as a child.
+    other_llm = builder.llm_event("other-llm", cost_usd=0.01, input_tokens=100, output_tokens=10)
+    trace_dict = builder.trace(other_path, [other_llm])
+    trace_file = tmp_path / "other-trace.json"
+    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+
+    result = analyze(
+        analyzed_ir,
+        workflow_path=analyzed_path,
+        trace_path=trace_file,
+        memo_cache=None,
+    )
+
+    # Generic disclosure must fire; redirect hint must NOT.
+    generic_notes = [n for n in result.notes if "trace file references workflow" in n]
+    redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
+    assert len(generic_notes) == 1, f"expected generic note, got: {result.notes}"
+    assert len(redirect_notes) == 0, f"unexpected redirect note: {result.notes}"
 
 
 def test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow(

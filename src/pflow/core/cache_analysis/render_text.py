@@ -17,7 +17,7 @@ Cost tri-state contract (Suggestion 26):
 - Partial → ``~$0.84 (partial — 2 of 23 nodes use unpriced models)``.
 - All unavailable → ``unavailable`` (NEVER ``$0.00``).
 
-Default-hide-clean rule: rows with ``cache_ratio_pct >= 80`` and no inline
+Default-hide-clean rule: rows with a high ready/upside ratio and no inline
 warnings collapse into a single ``Hidden: N nodes ...`` line. ``--all-rows``
 overrides.
 
@@ -64,7 +64,8 @@ _PER_CALL_COLUMNS: tuple[str, ...] = (
     "model",
     "input",
     "cached_now",
-    "could_cache",
+    "ready",
+    "upside",
     "ratio",
     "calls",
     "notes",
@@ -266,8 +267,28 @@ def _format_trace_header_line(trace_path: str, summary: AnalysisSummary) -> str:
     status = summary.trace_final_status or "unknown"
     recorded = _format_recorded_timestamp(summary.trace_recorded_at)
     if recorded is None:
-        return f"  Trace: {filename} ({status})"
-    return f"  Trace: {filename} ({status}, recorded {recorded})"
+        line = f"  Trace: {filename} ({status})"
+    else:
+        line = f"  Trace: {filename} ({status}, recorded {recorded})"
+    suffix = _trace_relationship_suffix(summary)
+    if suffix is None:
+        return line
+    return f"{line}\n         {suffix}"
+
+
+def _trace_relationship_suffix(summary: AnalysisSummary) -> str | None:
+    relationship = summary.trace_workflow_relationship
+    if relationship in (None, "same_fresh"):
+        return None
+    if relationship == "same_drifted":
+        count = summary.trace_model_drift_count
+        noun = "difference" if count == 1 else "differences"
+        return f"stale: {count} model {noun}"
+    if relationship == "parent_redirect":
+        return "this workflow appears as a sub-workflow; use --from-trace on the root"
+    if relationship == "different_workflow":
+        return "different workflow recorded in this trace"
+    return None
 
 
 def _format_recorded_timestamp(iso: str | None) -> str | None:
@@ -417,6 +438,31 @@ def _render_cost_block(s: AnalysisSummary) -> list[str]:
     return _render_greenfield_no_cache_lines(s)
 
 
+def _rerun_label(
+    summary: AnalysisSummary,
+    *,
+    context: str,
+) -> str:
+    """Return the rerun-within-TTL label appropriate for the trace state.
+
+    When the trace already showed provider cache reads
+    (``trace_provider_cache_read_input_tokens > 0``), the "Cost on rerun"
+    projection models a different scenario than the trace itself — agents
+    should not confuse the two. We append a clarifying suffix so the
+    contrast is explicit.
+
+    Args:
+        summary: Analysis summary carrying trace cache evidence.
+        context: One of ``"truncated"``, ``"complete"``, or ``"greenfield"``.
+                 Selects between "Cost on rerun (executed, within TTL)" and
+                 "Cost on rerun (within TTL)" forms.
+    """
+    base = "Cost on rerun (executed, within TTL)" if context == "truncated" else "Cost on rerun (within TTL)"
+    if context != "greenfield" and summary.trace_provider_cache_read_input_tokens > 0:
+        return f"{base}, modeled rerun vs warm-cache trace"
+    return base
+
+
 def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
     """Cost lines when a trace contributed actual costs.
 
@@ -440,16 +486,22 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         s.unavailable_models,
         tier_annotation=tier,
     )
+    local_hits = s.trace_local_memo_llm_hit_count + s.trace_local_in_process_llm_hit_count
+    actual_paren = _format_delta_parenthetical(s.actual_vs_no_cache_delta, local_cache_reuse=bool(local_hits))
+    rerun_paren = _format_delta_parenthetical(s.rerun_delta)
     if s.evidence_scope == "truncated_trace_executed_subset":
         # Truncated branch is structurally different (executed subset is the
         # cohort by construction). Unchanged by Fix 7.
         no_cache_str = _format_cost(s.no_cache_hypothetical_usd, False, s.unavailable_models)
         rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, False, s.unavailable_models)
-        return [
-            f"  Actually paid (executed trace):       {actually_paid_str}",
+        rerun_label = _rerun_label(s, context="truncated")
+        lines = [
+            _append_parenthetical(f"  Actually paid (executed trace):       {actually_paid_str}", actual_paren),
             f"  Cost without caching (executed):      {no_cache_str}",
-            f"  Cost on rerun (executed, within TTL): {rerun_str}",
+            _append_parenthetical(f"  {rerun_label}: {rerun_str}", rerun_paren),
         ]
+        lines.extend(_format_trace_cache_layer_lines(s))
+        return lines
     # Complete-trace branch — try to fold pass-through.
     can_fold = (
         bool(s.projection_exclusions)
@@ -468,26 +520,66 @@ def _render_trace_cost_lines(s: AnalysisSummary) -> list[str]:
         )
         no_cache_str = _format_cost(no_cache_folded, False, s.unavailable_models)
         rerun_str = _format_cost(rerun_folded, False, s.unavailable_models)
+        rerun_label = _rerun_label(s, context="complete")
         lines = [
-            f"  Actually paid:               {actually_paid_str}",
+            _append_parenthetical(f"  Actually paid:               {actually_paid_str}", actual_paren),
             f"  Cost without caching:        {no_cache_str}",
-            f"  Cost on rerun (within TTL):  {rerun_str}",
+            _append_parenthetical(f"  {rerun_label}:  {rerun_str}", rerun_paren),
         ]
         footnote = _format_passthrough_footnote(s, excluded_total)
         if footnote is not None:
             lines.append("")
             lines.append(footnote)
+        lines.extend(_format_trace_cache_layer_lines(s))
         return lines
     # Fall back: keep the standalone Excluded line + priced-cohort projections.
     projection_partial_marker = s.partial_cost_usd and not s.projection_exclusions
     no_cache_str = _format_cost(s.no_cache_hypothetical_usd, projection_partial_marker, s.unavailable_models)
     rerun_str = _format_cost(s.rerun_within_ttl_hypothetical_usd, projection_partial_marker, s.unavailable_models)
-    lines = [f"  Actually paid:               {actually_paid_str}"]
+    rerun_label = _rerun_label(s, context="complete")
+    lines = [_append_parenthetical(f"  Actually paid:               {actually_paid_str}", actual_paren)]
     excluded_line = _format_excluded_from_analysis_line(s)
     if excluded_line is not None:
         lines.append(excluded_line)
     lines.append(f"  Cost without caching:        {no_cache_str}")
-    lines.append(f"  Cost on rerun (within TTL):  {rerun_str}")
+    lines.append(_append_parenthetical(f"  {rerun_label}:  {rerun_str}", rerun_paren))
+    lines.extend(_format_trace_cache_layer_lines(s))
+    return lines
+
+
+def _format_trace_cache_layer_lines(s: AnalysisSummary) -> list[str]:
+    """Separate provider prompt-cache evidence from pflow local memo reuse.
+
+    Cached LLM events preserve historical ``llm_call`` data so the analyzer can
+    still recover token counts for projections. That historical payload must not
+    read as provider cache activity in the current trace. These lines name the
+    two cache layers when local reuse happened.
+    """
+    local_hits = s.trace_local_memo_llm_hit_count + s.trace_local_in_process_llm_hit_count
+    if local_hits == 0:
+        return []
+
+    local_parts: list[str] = []
+    if s.trace_local_memo_llm_hit_count:
+        local_parts.append(f"{s.trace_local_memo_llm_hit_count:,} memo")
+    if s.trace_local_in_process_llm_hit_count:
+        local_parts.append(f"{s.trace_local_in_process_llm_hit_count:,} in-process")
+    local_label = " + ".join(local_parts)
+
+    provider_bits = [
+        f"{s.trace_provider_llm_call_count:,} provider LLM call(s)",
+        f"{s.trace_provider_cache_read_input_tokens:,} cache-read tokens",
+    ]
+    if s.trace_provider_cache_creation_input_tokens:
+        provider_bits.append(f"{s.trace_provider_cache_creation_input_tokens:,} cache-write tokens")
+
+    lines = [
+        "",
+        f"  Local pflow cache reuse:     skipped {local_label} LLM call(s)"
+        f" ({s.trace_local_cache_input_tokens:,} historical input tokens)",
+        f"  Provider cache in this run:  {', '.join(provider_bits)}",
+        "  · Actual cost delta includes local pflow cache reuse; run with --no-cache to measure provider prompt caching cleanly.",
+    ]
     return lines
 
 
@@ -575,12 +667,16 @@ def _render_greenfield_with_cache_lines(s: AnalysisSummary) -> list[str]:
         "Cost on first run (cache, projected subset)" if s.projection_exclusions else "Cost on first run (cache)"
     )
     rerun_label = (
-        "Cost on rerun (within TTL, projected subset)" if s.projection_exclusions else "Cost on rerun (within TTL)"
+        "Cost on rerun (within TTL, projected subset)"
+        if s.projection_exclusions
+        else _rerun_label(s, context="greenfield")
     )
+    first_run_paren = _format_delta_parenthetical(s.first_run_delta)
+    rerun_paren = _format_delta_parenthetical(s.rerun_delta)
     return [
         f"  {no_cache_label}:        {no_cache_str}",
-        f"  {first_run_label}:   {first_run_str}",
-        f"  {rerun_label}:  {rerun_str}",
+        _append_parenthetical(f"  {first_run_label}:   {first_run_str}", first_run_paren),
+        _append_parenthetical(f"  {rerun_label}:  {rerun_str}", rerun_paren),
     ]
 
 
@@ -626,10 +722,6 @@ def _render_summary(analysis: CacheAnalysis) -> str:
     if s.evidence_scope == "truncated_trace_executed_subset":
         summary_lines.append("  Trace-backed costs below cover executed nodes only.")
     summary_lines.extend(_render_cost_block(s))
-
-    delta_lines = _render_summary_deltas(s)
-    if delta_lines:
-        summary_lines.extend(delta_lines)
 
     _append_summary_counts(summary_lines, analysis)
 
@@ -734,71 +826,52 @@ def _append_summary_counts(summary_lines: list[str], analysis: CacheAnalysis) ->
         )
 
 
-def _render_summary_deltas(s: AnalysisSummary) -> list[str]:
-    """Render savings deltas for the Summary block.
-
-    Trace mode shows the measured savings as the headline plus the
-    steady-state rerun projection. The first-run-with-cache projection is
-    suppressed when actual data exists: the projection models neither memo
-    cache hits nor provider implicit caching, so it can be off by an order
-    of magnitude and visually compete with the actual figure (BASELINE-AUDIT
-    L-3). Greenfield mode only has projections, so both are rendered.
-    """
-    if s.evidence_scope in {"complete_trace", "truncated_trace_executed_subset"}:
-        return _render_trace_deltas(s)
-    return _render_greenfield_deltas(s)
-
-
-def _render_trace_deltas(s: AnalysisSummary) -> list[str]:
-    lines: list[str] = []
-    actual = _format_delta(s.actual_vs_no_cache_delta, label="vs no-cache")
-    actual_label = "Actual cost delta (this run):"
-    if actual:
-        lines.append(f"  {actual_label:29s} {actual}")
-    elif s.actual_vs_no_cache_delta.unavailable_reason == "projection_exclusions" and s.projection_exclusions:
-        # Excluded nodes are surfaced via the ``Excluded from analysis`` line
-        # in the cost block above; here we just signal that savings can't be
-        # computed for the remaining cohort.
-        lines.append(f"  {actual_label:29s} unavailable")
-    rerun = _format_delta(s.rerun_delta, label="on rerun")
-    if rerun:
-        lines.append(f"  {'Rerun delta (projected):':29s} {rerun}")
-    return lines
-
-
-def _render_greenfield_deltas(s: AnalysisSummary) -> list[str]:
-    lines: list[str] = []
-    first = _format_delta(s.first_run_delta, label="on first run")
-    if first:
-        lines.append(f"  {'First-run delta:':29s} {first}")
-    rerun = _format_delta(s.rerun_delta, label="on rerun")
-    if rerun:
-        lines.append(f"  {'Rerun delta:':29s} {rerun}")
-    return lines
-
-
 _BASELINE_LABELS: dict[str, str] = {
-    "no_cache_hypothetical_usd": "no-cache cost",
+    "no_cache_hypothetical_usd": "cost without caching",
 }
 
 
-def _format_delta(delta: CostDelta, *, label: str) -> str:
+def _format_delta_parenthetical(delta: CostDelta, *, local_cache_reuse: bool = False) -> str:
+    """Render a CostDelta as a trailing parenthetical for a cost line.
+
+    Candidate A summary shape: deltas are no longer rendered as separate
+    summary lines. Instead each cost line that has a comparison (e.g.
+    "Actually paid" vs no-cache hypothetical, "Cost on rerun" vs no-cache
+    hypothetical) carries its own parenthetical:
+
+        ``Actually paid:    ~$0.0087  (saves 26% vs cost without caching)``
+
+    Returns empty string when the delta carries no comparison information
+    (``unavailable`` kind, missing percentage, etc.) — callers strip trailing
+    whitespace to avoid a dangling double-space.
+
+    Dollar deltas are deliberately dropped from the parenthetical: they're
+    derivable by subtraction from the two cost lines above, and re-emitting
+    them creates a third number that has to stay in sync. The percentage
+    carries the load-bearing signal.
+    """
     if delta.kind == "unavailable":
         return ""
     if delta.kind == "break_even":
-        return "no meaningful cost change"
-    if delta.amount_usd is None:
+        return "(no meaningful cost change)"
+    if delta.pct_of_baseline is None:
         return ""
-    amount = _format_dollar_amount(delta.amount_usd)
     baseline_label = _BASELINE_LABELS.get(delta.baseline, "baseline")
-    pct = f", {delta.pct_of_baseline}% of {baseline_label}" if delta.pct_of_baseline is not None else ""
-    # Note: ``delta.excluded_nodes`` is preserved on the dataclass and emitted
-    # in JSON output (``render_json.py``). The text renderer surfaces excluded
-    # nodes via the ``Excluded from analysis`` line in the cost block instead
-    # so the cohort is established once, near the dollar figures it explains.
-    if delta.kind == "savings":
-        return f"saves {amount}/run {label}{pct}"
-    return f"adds {amount} {label}{pct}"
+    verb = "saves" if delta.kind == "savings" else "adds"
+    suffix = ", incl. local cache reuse" if local_cache_reuse else ""
+    return f"({verb} {delta.pct_of_baseline}% vs {baseline_label}{suffix})"
+
+
+def _append_parenthetical(line: str, parenthetical: str) -> str:
+    """Compose a cost line with its optional trailing delta parenthetical.
+
+    Two spaces separate the dollar value from the parenthetical. Returns the
+    bare line when the parenthetical is empty so unavailable deltas don't
+    leave trailing whitespace.
+    """
+    if not parenthetical:
+        return line
+    return f"{line}  {parenthetical}"
 
 
 def _format_unavailable_models(analysis: CacheAnalysis) -> str:
@@ -1077,10 +1150,6 @@ def _format_shadow_cache_cost_comparison(action: RecommendedAction) -> list[str]
     return [
         f"     → Removing `prompt_cache:` for {chunks_csv} from `{node_id}` "
         f"would drop per-call cost from {cache_str} to {body_str}{ratio_phrase}.",
-        "       The body only references a sub-path of the cached value; the rest is sent to the model "
-        "but unused by your prompt.",
-        "       Note: the summary's 'saves N%' compares against inlining the full chunk uncached — "
-        "a different baseline than your body actually uses.",
     ]
 
 
@@ -1496,7 +1565,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
     deduped_components_by_row, per_call_notes = _collapse_no_trace_notes(components_by_row)
 
     lines = ["## Per-call cache report"]
-    explainer_lines = _per_call_scope_explainer(analysis.summary.evidence_scope, visible_columns)
+    explainer_lines = _per_call_scope_explainer(analysis.summary.evidence_scope, visible_columns, visible)
     for explainer_line in explainer_lines:
         lines.append(f"  {explainer_line}")
     if truncated_trace_default_view and len(visible) < len(rows):
@@ -1521,7 +1590,7 @@ def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:
             deduped_components_by_row=deduped_components_by_row,
             analysis=analysis,
         )
-    _append_per_call_footer_blocks(lines, visible, hidden_count, per_call_notes)
+    _append_per_call_footer_blocks(lines, visible, hidden_count, per_call_notes, analysis=analysis)
     return "\n".join(lines)
 
 
@@ -1530,13 +1599,19 @@ def _append_per_call_footer_blocks(
     visible: list[PerCallRow],
     hidden_count: int,
     per_call_notes: list[tuple[str, int]],
+    *,
+    analysis: CacheAnalysis,
 ) -> None:
     notes_footer_lines = _render_per_call_notes_footer(per_call_notes)
     if notes_footer_lines:
         lines.append("")
         for line in notes_footer_lines:
             lines.append(f"  {line}")
-    footer_lines = _per_call_confidence_footer(visible)
+    footer_lines = _per_call_confidence_footer(
+        visible,
+        stale_memo_skipped_count=analysis.summary.stale_memo_skipped_count,
+        stale_memo_uncheckable_count=analysis.summary.stale_memo_uncheckable_count,
+    )
     if footer_lines is not None:
         lines.append("")
         for line in footer_lines:
@@ -1559,7 +1634,7 @@ def _visible_per_call_rows(
     if not real_data_rows:
         return [], 0, False
     # Analytical detections (cache.dynamic-before-static, cache.padding-advisory,
-    # cache.batch-prewarm-recommended, cache.below-min-tokens, etc.) emit Diagnostic
+    # cache.batch-prewarm-recommended, cache.below-min-predicted, etc.) emit Diagnostic
     # objects to ``analysis.warnings`` rather than populating ``row.warnings``. The
     # default-hide rule MUST consult analysis-wide warnings.
     nodes_with_warnings = set(_warnings_by_row_key(analysis))
@@ -1615,21 +1690,16 @@ def _unavailable_notes_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | N
 def _below_provider_min_note_by_row_key(analysis: CacheAnalysis) -> dict[tuple[str | None, str], list[str]]:
     """Per-row notes for projected cacheable tokens below the provider minimum."""
     notes_by_node: dict[tuple[str | None, str], list[str]] = {}
-    projected_tiers = {"parameters", "memo", "batch_prefix", "cross_workflow_projection"}
     for row in analysis.per_call:
-        if row.cacheable_data_source not in projected_tiers:
+        projection = row.cache_opportunity
+        if projection.data_source in {"not_applicable", "unavailable"}:
             continue
-        if row.declared_prompt_cache:
-            continue
-        if row.cacheable_tokens_estimated is None:
-            continue
-        if not row.model:
-            continue
-        min_tokens = get_min_cache_tokens(row.model)
-        if row.cacheable_tokens_estimated >= min_tokens:
+        if projection.meets_provider_min is not False or projection.provider_min_tokens is None:
             continue
         key = (row.workflow_path, row.node_path)
-        notes_by_node.setdefault(key, []).append(f"below provider min (need ≥{min_tokens:,} for this model)")
+        notes_by_node.setdefault(key, []).append(
+            f"below provider min (need ≥{projection.provider_min_tokens:,} for this model)"
+        )
     return notes_by_node
 
 
@@ -1807,7 +1877,8 @@ def _per_call_cells(
         "model": _cell_model(row),
         "input": _cell_input(row, inline_warnings),
         "cached_now": _cell_cached_now(row),
-        "could_cache": _cell_could_cache(row),
+        "ready": _cell_ready(row),
+        "upside": _cell_upside(row),
         "ratio": _cell_ratio(row),
         "calls": _cell_calls(row, static_mode=static_mode),
         "notes": "; ".join(deduped_components),
@@ -1835,28 +1906,34 @@ def _cell_input(row: PerCallRow, inline_warnings: list[str]) -> str:
 
 
 def _cell_cached_now(row: PerCallRow) -> str:
-    if row.cacheable_data_source == "trace" and row.declared_prompt_cache:
-        return _format_nullable_int(row.cacheable_tokens_estimated)
-    return "—"
+    return _format_nullable_int(row.cached_now_tokens_estimated) if row.cached_now_tokens_estimated is not None else "—"
 
 
-def _cell_could_cache(row: PerCallRow) -> str:
-    if row.cacheable_data_source == "trace":
-        # Tier 1 fired (declared + cache_creation/read recorded). cached_now
-        # carries the number; could_cache has no projection role here.
+def _cell_ready(row: PerCallRow) -> str:
+    return _cell_projection_tokens(row.cache_ready)
+
+
+def _cell_upside(row: PerCallRow) -> str:
+    return _cell_projection_tokens(row.cache_opportunity)
+
+
+def _cell_projection_tokens(projection: object) -> str:
+    data_source = getattr(projection, "data_source", "unavailable")
+    tokens = getattr(projection, "tokens_estimated", None)
+    confidence = getattr(projection, "confidence", "unknown")
+    if data_source == "not_applicable":
         return "—"
-    if row.cacheable_data_source in {"memo", "parameters", "batch_prefix", "cross_workflow_projection"}:
-        # Tier 2 / heuristic projection — show the projected count.
-        return _format_nullable_int(row.cacheable_tokens_estimated)
-    if row.cacheable_data_source == "unavailable":
+    if tokens is None:
         return "?"
-    # Future tier: fail-loud, fail-actionable — show the value if the analyzer
-    # produced one, else fall through to the formatter's None handling.
-    return _format_nullable_int(row.cacheable_tokens_estimated)
+    prefix = ">=" if confidence == "lower_bound" else ""
+    return f"{prefix}{tokens:,}"
 
 
 def _cell_ratio(row: PerCallRow) -> str:
-    return f"{row.cache_ratio_pct}%" if row.cache_ratio_pct is not None else "?%"
+    ratio = row.cache_opportunity.ratio_pct
+    if ratio is None:
+        ratio = row.cache_ready.ratio_pct
+    return f"{ratio}%" if ratio is not None else "?%"
 
 
 def _cell_calls(row: PerCallRow, *, static_mode: bool = False) -> str:
@@ -1874,26 +1951,26 @@ def _visible_per_call_columns(rows: list[PerCallRow], *, static_mode: bool) -> t
     Identity columns and notes are always present. Trace-backed reports keep
     the established full table. Static reports hide columns that would carry
     only placeholders, except for resolved declared-cache rows where
-    ``could_cache: ?`` is the useful signal that projection needs trace data.
+    ``ready: ?`` is the useful signal that projection needs trace data.
     """
     if not static_mode:
         return _PER_CALL_COLUMNS
     has_real = {
-        "cached_now": any(
-            row.cacheable_data_source == "trace"
-            and bool(row.declared_prompt_cache)
-            and row.cacheable_tokens_estimated is not None
-            for row in rows
-        ),
-        "could_cache": any(
-            (
-                row.cacheable_data_source in {"memo", "parameters", "batch_prefix", "cross_workflow_projection"}
-                and row.cacheable_tokens_estimated is not None
+        "cached_now": any(row.cached_now_tokens_estimated is not None for row in rows),
+        "ready": any(
+            row.cache_ready.tokens_estimated is not None
+            or (
+                row.cache_ready.data_source not in {"not_applicable", "unavailable"}
+                and bool(row.declared_prompt_cache)
+                and bool(row.model)
+                and not row.model_is_heterogeneous
             )
-            or (bool(row.declared_prompt_cache) and bool(row.model) and not row.model_is_heterogeneous)
             for row in rows
         ),
-        "ratio": any(row.cache_ratio_pct is not None for row in rows),
+        "upside": any(row.cache_opportunity.data_source not in {"not_applicable", "unavailable"} for row in rows),
+        "ratio": any(
+            row.cache_opportunity.ratio_pct is not None or row.cache_ready.ratio_pct is not None for row in rows
+        ),
         "calls": not static_mode,
     }
     return tuple(
@@ -1919,16 +1996,39 @@ def _cell_note_components(
     if row.observed_models and (row.model_is_heterogeneous or len(row.observed_models) > 1):
         observed = ",".join(_short_observed_model_name(model) for model in row.observed_models)
         notes.append(f"observed={observed}")
-    if row.cacheable_data_source == "cross_workflow_projection" and len(row.cross_workflow_inputs) > 1:
+    if row.cache_opportunity.action and row.cache_opportunity.action != "none":
+        notes.append(_projection_action_note(row.cache_opportunity.action))
+    if (
+        row.cache_opportunity.data_source == "cross_workflow_projection"
+        or row.cacheable_data_source == "cross_workflow_projection"
+    ) and len(row.cross_workflow_inputs) > 1:
         notes.append(_format_cross_workflow_inputs_note(row.cross_workflow_inputs))
-    if row.cacheable_data_source == "unavailable":
+    if row.cache_ready.data_source in {"not_applicable", "unavailable"} and row.cache_opportunity.data_source in {
+        "not_applicable",
+        "unavailable",
+    }:
         notes.extend(unavailable_notes)
-        fallback_note = _unavailable_could_cache_note(row, inline_warnings, has_specific_note=bool(unavailable_notes))
+        fallback_note = _unavailable_projection_note(row, inline_warnings, has_specific_note=bool(unavailable_notes))
         if fallback_note:
             notes.append(fallback_note)
     notes.extend(below_min_notes)
     notes.extend(warning_id for warning_id in inline_warnings if warning_id != "opaque-prompt")
     return notes
+
+
+def _projection_action_note(action: str) -> str:
+    labels = {
+        "declare_prompt_cache": "declare prompt_cache",
+        "extend_prompt_cache": "extend prompt_cache",
+        "extend_prompt_cache_prefix": "extend prompt_cache prefix",
+        "consolidate_to_root_cache": "cache root object instead",
+        "add_prewarm": "add prewarm",
+        "verify_and_add_prewarm": "verify prefix, then add prewarm",
+        "move_dynamic_ref_after_stable_prefix": "move dynamic ref after stable content",
+        "declare_child_cache": "declare child cache",
+        "inline_opaque_prompt": "opaque-prompt",
+    }
+    return labels.get(action, action.replace("_", " "))
 
 
 def _collapse_no_trace_notes(
@@ -1985,7 +2085,7 @@ def _format_cross_workflow_inputs_note(inputs: tuple[CrossWorkflowInputContribut
     return f"cacheable values: {', '.join(names[:3])}, +{len(names) - 3} more"
 
 
-def _unavailable_could_cache_note(
+def _unavailable_projection_note(
     row: PerCallRow,
     inline_warnings: list[str],
     *,
@@ -1997,7 +2097,7 @@ def _unavailable_could_cache_note(
         return None
     if row.observed_call_count == 0:
         # Static-mode rows (no trace) had no fallback note before, leaving the
-        # row with `cached_now: —`, `could_cache: ?`, `ratio: ?%`, `calls: —`
+        # row with `cached_now: —`, `ready: ?`, `ratio: ?%`, `calls: —`
         # and a blank notes column. The agent saw only placeholders with no
         # explanation or next step. Name the cause and the unblocking action.
         return _NO_TRACE_RECORDED_NOTE
@@ -2045,6 +2145,7 @@ def _render_sub_workflow_drill_in(analysis: CacheAnalysis) -> str:
 def _per_call_scope_explainer(
     evidence_scope: str = "static_analysis",
     visible_columns: tuple[str, ...] = _PER_CALL_COLUMNS,
+    visible_rows: list[PerCallRow] | None = None,
 ) -> list[str]:
     """Return multi-line explainer describing what the per-call columns mean.
 
@@ -2054,32 +2155,65 @@ def _per_call_scope_explainer(
       Distinct lead because partial coverage changes how missing values
       should be interpreted.
     - **All other modes**: one shared block that names each column and
-      explains the ``?`` / ``—`` placeholders in the column they appear in.
+      explains the ``?`` / ``—`` placeholders ONLY when at least one
+      visible cell would render that placeholder. Without this gate the
+      glossary appears for every report even when no row uses it, which
+      adds noise instead of clarity.
 
     Caller renders each string as its own line (indented at the call site).
-
-    The prior version split the all-other-modes case into "steady-state"
-    vs "post-run greenfield" leads with a four-bullet block whose last
-    line read ``"— means the column does not apply to this row's tier."``
-    That phrasing leaked pflow-internal vocabulary (``tier`` is shorthand
-    for the ``data_source`` / ``cacheable_data_source`` enum classification)
-    into stdout and forced agents to infer enum semantics to read ``—``.
-    The collapsed block explains each placeholder where it appears.
     """
     if evidence_scope == "truncated_trace_executed_subset":
         return ["Executed trace rows are evidence-only; unexecuted rows are marked when shown."]
     bullets: list[str] = []
     if "cached_now" in visible_columns:
         bullets.append("cached_now: tokens served from cache during this run (requires trace).")
-    if "could_cache" in visible_columns:
-        bullets.append(
-            "could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. "
-            "`?` if not projectable statically. "
-            "Numbers below your model's provider minimum won't cache — see notes column."
-        )
+    if "ready" in visible_columns or "upside" in visible_columns:
+        bullets.append("ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.")
+        bullets.append("upside: unrealized cache opportunity after the notes column's required edit.")
     if not bullets:
         return []
+    if visible_rows:
+        shows_em_dash, shows_question = _per_call_placeholder_usage(visible_rows, visible_columns)
+        if shows_em_dash:
+            bullets.append("— means the column does not apply to this row.")
+        if shows_question:
+            bullets.append(
+                "? means the column applies but the token count can't be measured yet "
+                "(run the workflow once to populate)."
+            )
     return ["How to read each row:", *(f"  · {bullet}" for bullet in bullets)]
+
+
+def _per_call_placeholder_usage(
+    rows: list[PerCallRow],
+    visible_columns: tuple[str, ...],
+) -> tuple[bool, bool]:
+    """Return (any_em_dash, any_question) across the visible cell values.
+
+    Mirrors the cell renderers (``_cell_cached_now``, ``_cell_projection_tokens``)
+    so the explainer only mentions placeholders the reader actually sees.
+    """
+    shows_em_dash = False
+    shows_question = False
+    show_cached_now = "cached_now" in visible_columns
+    show_ready = "ready" in visible_columns
+    show_upside = "upside" in visible_columns
+    for row in rows:
+        if show_cached_now and row.cached_now_tokens_estimated is None:
+            shows_em_dash = True
+        if show_ready:
+            if row.cache_ready.data_source == "not_applicable":
+                shows_em_dash = True
+            elif row.cache_ready.tokens_estimated is None:
+                shows_question = True
+        if show_upside:
+            if row.cache_opportunity.data_source == "not_applicable":
+                shows_em_dash = True
+            elif row.cache_opportunity.tokens_estimated is None:
+                shows_question = True
+        if shows_em_dash and shows_question:
+            break
+    return shows_em_dash, shows_question
 
 
 def _format_node_list(node_paths: list[str]) -> str:
@@ -2102,7 +2236,12 @@ def _format_node_list(node_paths: list[str]) -> str:
     return ", ".join(parts)
 
 
-def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
+def _per_call_confidence_footer(
+    rows: list[PerCallRow],
+    *,
+    stale_memo_skipped_count: int = 0,
+    stale_memo_uncheckable_count: int = 0,
+) -> list[str] | None:
     """Build the multi-line token-estimate-confidence footer block.
 
     Returns ``["Token estimate confidence:", "  · <bullet>", ...]`` or
@@ -2110,9 +2249,23 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
     string as its own line (indented at the call site).
     """
     low_input_nodes = [row.node_path for row in rows if row.data_source in {"estimator", "heuristic"}]
-    batch_exemplar_nodes = [row.node_path for row in rows if row.cacheable_data_source == "parameters" and row.is_batch]
-    batch_prefix_nodes = [row.node_path for row in rows if row.cacheable_data_source == "batch_prefix"]
-    cross_workflow_nodes = [row.node_path for row in rows if row.cacheable_data_source == "cross_workflow_projection"]
+    batch_exemplar_nodes = [
+        row.node_path
+        for row in rows
+        if (row.cache_ready.data_source == "candidate_chunks" or row.cacheable_data_source == "parameters")
+        and row.is_batch
+    ]
+    batch_prefix_nodes = [
+        row.node_path
+        for row in rows
+        if row.cache_opportunity.data_source == "batch_prefix" or row.cacheable_data_source == "batch_prefix"
+    ]
+    cross_workflow_nodes = [
+        row.node_path
+        for row in rows
+        if row.cache_opportunity.data_source == "cross_workflow_projection"
+        or row.cacheable_data_source == "cross_workflow_projection"
+    ]
     bullets: list[str] = []
     if low_input_nodes:
         bullets.append(f"Projected input tokens for: {_format_node_list(low_input_nodes)}.")
@@ -2134,6 +2287,17 @@ def _per_call_confidence_footer(rows: list[PerCallRow]) -> list[str] | None:
         bullets.append(
             f"{_format_node_list(cross_workflow_nodes)}: savings projected from values flowing in "
             "from parent workflow(s). See Recommended actions for the per-boundary fix."
+        )
+    if stale_memo_skipped_count > 0:
+        noun = "value" if stale_memo_skipped_count == 1 else "values"
+        bullets.append(
+            f"{stale_memo_skipped_count} memoized {noun} skipped as stale "
+            "(node config changed since this run was recorded; using fresh estimates instead)."
+        )
+    if stale_memo_uncheckable_count > 0:
+        noun = "value" if stale_memo_uncheckable_count == 1 else "values"
+        bullets.append(
+            f"{stale_memo_uncheckable_count} memoized {noun} used but freshness could not be verified for this node."
         )
     if not bullets:
         return None
@@ -2164,17 +2328,45 @@ def _select_visible_rows(
 ) -> tuple[list[PerCallRow], int]:
     """Apply the default-hide-clean rule.
 
-    Returns ``(visible_rows, hidden_count)``. Sorted: warnings first, then by
-    ``input_tokens_estimated`` descending.
+    Returns ``(visible_rows, hidden_count)``. Sorted by actionability and
+    cohort opportunity size, then by input size.
     """
     rows_list = list(rows)
     if all_rows:
-        sorted_rows = sorted(rows_list, key=lambda r: -r.input_tokens_estimated)
+        sorted_rows = sorted(rows_list, key=_row_sort_key)
         return sorted_rows, 0
     visible = [r for r in rows_list if _is_row_visible_by_default(r, nodes_with_warnings)]
     hidden = len(rows_list) - len(visible)
-    sorted_visible = sorted(visible, key=lambda r: -r.input_tokens_estimated)
+    sorted_visible = sorted(visible, key=_row_sort_key)
     return sorted_visible, hidden
+
+
+def _row_sort_key(row: PerCallRow) -> tuple[int, int, int, int]:
+    actionability_rank = {
+        "active": 0,
+        "direct_edit": 0,
+        "configured_blocked": 1,
+        "direct_edit_blocked": 1,
+        "structural_edit": 2,
+        "structural_edit_blocked": 2,
+        "unknown": 3,
+        "not_applicable": 4,
+    }
+    best_actionability = row.cache_opportunity.actionability
+    if best_actionability == "not_applicable":
+        best_actionability = row.cache_ready.actionability
+    cohort_opportunity = (row.cache_opportunity.tokens_estimated or 0) * _row_invocations_for_render(row)
+    cohort_ready = (row.cache_ready.tokens_estimated or 0) * _row_invocations_for_render(row)
+    return (
+        actionability_rank.get(best_actionability, 3),
+        -cohort_opportunity,
+        -cohort_ready,
+        -row.input_tokens_estimated,
+    )
+
+
+def _row_invocations_for_render(row: PerCallRow) -> int:
+    return row.observed_call_count or row.batch_size_estimated or 1
 
 
 def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[tuple[str | None, str]]) -> bool:
@@ -2184,21 +2376,38 @@ def _is_row_visible_by_default(row: PerCallRow, nodes_with_warnings: set[tuple[s
     never populated it. Per-row warning visibility is keyed entirely by
     ``analysis.warnings`` filtered by node_id.
 
-    ``cache_ratio_pct`` may be ``None`` (mixed-state row that survived the
+    Projection ratio may be ``None`` (mixed-state row that survived the
     real-data filter but has no projection). Treat None as "below threshold"
     — show by default since the agent should at least see that the row exists.
     """
     if (row.workflow_path, row.node_path) in nodes_with_warnings or (None, row.node_path) in nodes_with_warnings:
         return True
-    if row.cacheable_data_source != "unavailable" and not row.declared_prompt_cache:
+    if row.cache_ready.data_source not in {"not_applicable", "unavailable"} and row.cache_ready.actionability in {
+        "direct_edit",
+        "direct_edit_blocked",
+        "configured_blocked",
+    }:
+        return True
+    if row.cache_opportunity.data_source not in {
+        "not_applicable",
+        "unavailable",
+    } and row.cache_opportunity.actionability in {
+        "direct_edit",
+        "direct_edit_blocked",
+        "structural_edit",
+        "structural_edit_blocked",
+    }:
         return True
     if row.model_is_heterogeneous:
         return True
-    if row.cache_ratio_pct is None:
+    ratio = (
+        row.cache_opportunity.ratio_pct if row.cache_opportunity.ratio_pct is not None else row.cache_ready.ratio_pct
+    )
+    if ratio is None:
         if row.declared_prompt_cache:
             return True
         return row.observed_call_count != 1
-    return row.cache_ratio_pct < _HIDDEN_RATIO_THRESHOLD
+    return ratio < _HIDDEN_RATIO_THRESHOLD
 
 
 def _render_notes(analysis: CacheAnalysis) -> str:

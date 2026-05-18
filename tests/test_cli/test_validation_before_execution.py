@@ -116,6 +116,59 @@ class TestValidationBeforeExecution:
             "The shell node ran, which means validation happened too late."
         )
 
+    def test_thinking_temperature_mismatch_blocks_before_any_execution(self, tmp_path: Path) -> None:
+        """Anthropic-thinking+temperature constraint is statically detectable.
+
+        pflow promises agents that workflows with this violation will NOT spend
+        money / time on upstream work — this test makes that promise testable
+        end-to-end via the CLI path.
+        """
+        # Create a "proof" file that the shell node would create if it executed
+        proof_file = tmp_path / "execution_proof.txt"
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "would-touch-proof",
+                    "type": "shell",
+                    "params": {"command": f"touch {proof_file}"},
+                },
+                {
+                    "id": "bad-thinking-temp",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-opus-4-7",
+                        "reasoning_effort": "high",
+                        "temperature": 0.3,
+                        "prompt": "ignored - never dispatched",
+                    },
+                },
+            ],
+            "edges": [{"from": "would-touch-proof", "to": "bad-thinking-temp"}],
+        }
+
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli([str(workflow_path)])
+
+        # Should fail with validation error
+        assert result.exit_code != 0
+
+        # Catalog ID should appear in combined output
+        combined_output = result.output + result.stderr
+        assert "llm.thinking-temperature-mismatch" in combined_output, (
+            f"Expected catalog ID 'llm.thinking-temperature-mismatch' in output, got:\n{combined_output}"
+        )
+
+        # CRITICAL: shell node should NOT have executed
+        assert not proof_file.exists(), (
+            "Validation should have blocked execution before any node ran - "
+            "the shell node executed, which means thinking-temperature-mismatch "
+            "validation happened too late."
+        )
+
     def test_validation_error_has_clean_message(self, tmp_path: Path) -> None:
         """Validation errors should have clean, user-friendly messages.
 

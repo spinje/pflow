@@ -278,6 +278,194 @@ class TestFailedBatchItemsInTrace:
         assert batch_items[1]["success"] is False
         assert batch_items[1]["item"] == "bad"
 
+    def test_failed_batch_with_completed_nested_llm_persists_to_trace(
+        self,
+        tmp_path: "Any",
+    ) -> None:
+        """When a batch sub-workflow fails AFTER completing an LLM call, the
+        completed nested LLM event MUST appear in the parent's batch_items trace.
+
+        Pre-fix shape (Bug B): ``execute_batch`` popped batch trace items into a
+        local before raising for ``fail_fast`` with errors. The engine's except
+        handler then passed ``batch_trace_items=None`` to ``record_trace``, so
+        completed-before-failure work vanished from the trace. ``analyze-cache``
+        downstream reported ``calls=0 [unexecuted]`` for nodes that actually ran.
+
+        Post-fix: producer (``execute_batch``) leaves items in
+        ``shared["_batch_trace"]``; the engine drains them on both success and
+        exception paths. The recovery channel is the shared store, not a
+        return-tuple that gets discarded on raise.
+
+        Mutation contract:
+          - Revert ``execute_batch`` to call ``_collect_batch_trace`` itself and
+            pack into a return tuple → ``batch_items`` becomes ``None`` on the
+            engine's except path → this test fails because the completed-nested
+            shell event is missing.
+          - Drop the except-path drain in ``engine._execute_node`` → same
+            failure mode.
+        """
+        from tests.shared.markdown_utils import write_workflow_file
+
+        # Child workflow: ``before-failure`` succeeds, ``fail-after`` raises.
+        # Mirrors repro-06-failing-child.pflow.md, but uses shell nodes to
+        # keep the test offline. The "completed nested work" signal is the
+        # presence of ``before-failure``'s event in the trace.
+        child_ir = {
+            "nodes": [
+                {
+                    "id": "before-failure",
+                    "type": "shell",
+                    "params": {"command": "echo completed"},
+                    "purpose": "Step that runs before the failing step.",
+                },
+                {
+                    "id": "fail-after",
+                    "type": "shell",
+                    "params": {"command": "exit 1"},
+                    "purpose": "Step that fails to terminate the child workflow.",
+                },
+            ],
+            "edges": [],
+        }
+        child_path = tmp_path / "child.pflow.md"
+        write_workflow_file(child_ir, child_path)
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "child-batch",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path)},
+                    "batch": {"items": "${labels}", "as": "label", "parallel": False},
+                    "purpose": "Batch over labels, invoking the failing child once per label.",
+                },
+            ],
+            "edges": [],
+        }
+
+        with pytest.raises(RuntimeError):
+            _run_with_trace(parent_ir, extra_shared={"labels": ["alpha", "beta"]})
+
+        # The trace must record the failed batch node WITH its completed nested work.
+        # Engine's except-path drain populates batch_items even when the batch raises.
+        # (Re-running here with no exception assertion is awkward; rely on the
+        # collector snapshot above — the run raised but record_trace fired first.)
+        # Build a fresh collector and re-run to grab the trace events.
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        collector = WorkflowTraceCollector("failed-batch-test")
+        registry = Registry()
+        workflow = compile_workflow(ir_json=parent_ir, registry=registry, initial_params={})
+        shared: dict[str, Any] = {
+            "__trace_collector__": collector,
+            "labels": ["alpha", "beta"],
+        }
+        shared.update(workflow.resolved_defaults)
+        engine = WorkflowEngine(trace_collector=collector)
+        with pytest.raises(RuntimeError):
+            engine.run(workflow, shared)
+
+        assert len(collector.events) == 1
+        event = collector.events[0]
+        assert event["node_id"] == "child-batch"
+        batch_items = event.get("batch_items")
+        assert batch_items is not None, "batch_items must persist on failed batches"
+        # Default error_handling=fail_fast stops after the first failing item.
+        # The load-bearing assertion is not the item count — it's that the
+        # completed nested work BEFORE the failure point is present.
+        assert len(batch_items) >= 1
+
+        # Item ran the child workflow's `before-failure` step successfully
+        # before `fail-after` raised. That successful step MUST appear in the
+        # item's nested events list — that's the Bug B regression signal.
+        first_item = batch_items[0]
+        sub_events = first_item.get("events") or []
+        before_failure_events = [e for e in sub_events if e.get("node_id") == "before-failure"]
+        assert len(before_failure_events) == 1, (
+            f"completed nested 'before-failure' event missing from batch item: {first_item!r}"
+        )
+        assert before_failure_events[0].get("success") is True
+
+    def test_succeeded_batch_persists_items_when_post_exec_step_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """W1 regression: a successful ``execute_batch`` followed by an
+        exception in a later step (e.g. ``write_memo_cache``) must still
+        preserve batch trace items in the trace.
+
+        Pre-fix shape: ``engine._execute_node`` drained the per-item buffer
+        immediately after ``execute_batch`` returned (line 576). If anything
+        between that drain and ``record_trace`` raised — memo cache SQLite
+        IO, ``detect_api_warning``, metrics — the except handler's drain
+        popped an already-empty buffer and ``record_trace`` got
+        ``batch_trace_items=[]``. Items silently lost.
+
+        Post-fix: the drain happens at exactly one site per branch (right
+        before ``record_trace``). The buffer sits in the shared store until
+        the consumer reads it on whichever branch wins.
+
+        Mutation contract: revert the W1 fix (drain immediately after
+        ``execute_batch`` returns) and this test fails — batch_items would
+        be ``[]`` on the except path.
+        """
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine, instrumentation
+
+        # Make ``write_memo_cache`` raise — this is a step between the
+        # successful ``execute_batch`` call and ``record_trace`` in the engine.
+        call_count = {"n": 0}
+
+        def _failing_write_memo_cache(*_args: Any, **_kwargs: Any) -> None:
+            call_count["n"] += 1
+            raise RuntimeError("simulated SQLite IO error mid-execute_node")
+
+        monkeypatch.setattr(instrumentation, "write_memo_cache", _failing_write_memo_cache)
+        # The engine imports write_memo_cache via "from .instrumentation import ..."
+        # so we need to patch it at the import site too.
+        from pflow.runtime.engine import engine as engine_module
+
+        monkeypatch.setattr(engine_module, "write_memo_cache", _failing_write_memo_cache)
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch-node",
+                    "type": "shell",
+                    "params": {"command": "echo ok-${item}"},
+                    "batch": {"items": "${data}", "as": "item"},
+                },
+            ],
+            "edges": [],
+        }
+        collector = WorkflowTraceCollector("post-exec-raise-test")
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry, initial_params={})
+        shared: dict[str, Any] = {
+            "__trace_collector__": collector,
+            "data": ["one", "two"],
+        }
+        shared.update(workflow.resolved_defaults)
+        engine = WorkflowEngine(trace_collector=collector)
+
+        with pytest.raises(RuntimeError, match="simulated SQLite IO error"):
+            engine.run(workflow, shared)
+
+        assert call_count["n"] >= 1, "write_memo_cache must have been called"
+        assert len(collector.events) == 1
+        event = collector.events[0]
+        assert event["node_id"] == "batch-node"
+        batch_items = event.get("batch_items") or []
+        assert len(batch_items) == 2, (
+            f"both completed batch items must persist to the trace even when "
+            f"a post-exec step raised; got: {batch_items!r}"
+        )
+
 
 class TestSubWorkflowTraceTree:
     """Verify sub-workflow internal nodes appear as sub_workflow_events.
@@ -1017,12 +1205,19 @@ class TestCachedSystemEndToEnd:
     except via raw JSON inspection.
     """
 
-    def test_cached_system_reaches_report_for_llm_node_with_cache_block(self, tmp_path: "Any") -> None:
+    def test_cached_system_reaches_report_for_llm_node_with_cache_block(
+        self, tmp_path: "Any", monkeypatch: "Any"
+    ) -> None:
         """Run a workflow with a ## Cache block; verify the trace records
         ``llm_system`` AND the generated report has a ``## Cached System``
         section with the cache_control marker visible.
         """
         import json
+
+        # Bypass the runtime pre-dispatch strip so the tiny fixture content
+        # ("Reference doc body") doesn't get its marker stripped. The strip
+        # is exercised in tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
+        monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10_000)
 
         ir = {
             "ir_version": "0.1.0",

@@ -412,7 +412,7 @@ class TestExecErrorActionDetection:
                 "router": Diagnostic(
                     severity=Severity.WARNING,
                     source="cache_analyzer",
-                    id="cache.below-min-tokens",
+                    id="cache.below-min-predicted",
                     message="router: declared cache did not fire",
                 )
             },

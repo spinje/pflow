@@ -1,7 +1,7 @@
 """Per-model capability table for prompt caching (Task 159 DD#32).
 
 Hardcoded per-model min-cache-token thresholds. Used by:
-  - ``cache.below-min-tokens`` warning emission (looks up the threshold for the
+  - ``cache.below-min-predicted`` warning emission (looks up the threshold for the
     node's model).
   - Auto batch-prefix detection (skips when prefix is below threshold).
 
@@ -31,7 +31,7 @@ from pflow.core.llm_providers import detect_provider, model_name_without_provide
 # Task 94 cross-reference (Display Available LLM Models) — when Task 94 ships
 # `pflow llm list` with capability filters, the table below becomes the data
 # source for `--min-cache-tokens=<N>` filtering. The analyzer's
-# `cache.below-min-tokens` suggestion will then point agents at that command.
+# `cache.below-min-predicted` suggestion will then point agents at that command.
 # See .taskmaster/tasks/task_94/research/cache-threshold-cross-reference-from-task-159.md
 # for the bidirectional cross-reference plan and design choices.
 
@@ -53,7 +53,7 @@ class ModelCapability:
 
     ``min_cache_tokens`` is the threshold in tokens; rendered prompt-cache
     content below this value will silently no-op at the provider, so the
-    validator emits ``cache.below-min-tokens``.
+    validator emits ``cache.below-min-predicted``.
     """
 
     provider: str
@@ -86,7 +86,7 @@ MODEL_CAPABILITIES: tuple[ModelCapability, ...] = (
     # Gemini explicit ``cachedContents`` requires ~4k tokens. The implicit
     # path fires at lower thresholds (free, automatic) but is independent of
     # the cache_control marker pflow emits — so the threshold used by
-    # ``cache.below-min-tokens`` reflects the EXPLICIT path's requirement.
+    # ``cache.below-min-predicted`` reflects the EXPLICIT path's requirement.
     ModelCapability("gemini", "", 4096, notes="Gemini explicit cachedContents minimum"),
 )
 

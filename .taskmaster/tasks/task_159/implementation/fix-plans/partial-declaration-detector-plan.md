@@ -15,10 +15,10 @@ The cache analyzer (`src/pflow/core/cache_analysis/`) ships feature-complete on 
 2. `select-chorus-and-tier2-scope-gap-handoff.md` — Tier 2 chunk-path returns per-call tokens while `input_tokens_estimated` is cohort-summed (for some row classes). Per-call rows show contradictory units.
 
 Plan v1.0 was reviewed by 5 specialized agents. They surfaced:
-- **A design issue**: producer-side multiplication of Tier 2 cacheable created asymmetric semantics with the planned input divisor, silently breaking the clamp at `analyze.py:1548`, the `cache.below-min-tokens` detector, and the summary aggregator.
+- **A design issue**: producer-side multiplication of Tier 2 cacheable created asymmetric semantics with the planned input divisor, silently breaking the clamp at `analyze.py:1548`, the `cache.below-min-predicted` detector, and the summary aggregator.
 - **A reuse opportunity** flagged by two reviewers independently: Pass B's prompt-body cleanup logic should call existing `cache_overlap.compute_overlaps()` (or its wrapper `_compute_prompt_body_cleanup` at `analyze.py:2934-2969`) instead of reinventing it. Eliminates body-shadow leakage and batch-alias filter need by construction.
 - **A scope gap**: Pass A.A2 must divide both input AND output AND Tier 1 cacheable for static-list batch rows; output cost is 60-85% of total per CLAUDE.md, dividing only input is a partial fix.
-- **A latent bug**: `cache.below-min-tokens` predicted-tier reads `row.cacheable_tokens_estimated` directly. Threshold is per-call by provider rule; if cacheable is cohort, threshold check is units-mismatched.
+- **A latent bug**: `cache.below-min-predicted` predicted-tier reads `row.cacheable_tokens_estimated` directly. Threshold is per-call by provider rule; if cacheable is cohort, threshold check is units-mismatched.
 
 The intended outcome:
 
@@ -37,7 +37,7 @@ These are RESEARCH-FILE defects this plan does NOT solve.
 
 **Status**: deferred permanently.
 
-**Why**: verifier walked `select-chorus.prompt.md` content. Template refs are interleaved with static text, not preceded by a single static block. First-`${...}`-boundary heuristic yields ~25-30 tokens × 4 calls = ~100-120 tokens; below Anthropic's 1024 minimum → returns None after threshold gating. Codebase already deleted a similar prefix-style heuristic (F-04 fix, commit `544b377d`) precisely because it fabricated counts and produced false-positive `cache.below-min-tokens` warnings. Re-introducing one would repeat the F-04 mistake and violate the "honest unmeasurable" convention (see `cache_analysis/CLAUDE.md`, token_estimation.py section).
+**Why**: verifier walked `select-chorus.prompt.md` content. Template refs are interleaved with static text, not preceded by a single static block. First-`${...}`-boundary heuristic yields ~25-30 tokens × 4 calls = ~100-120 tokens; below Anthropic's 1024 minimum → returns None after threshold gating. Codebase already deleted a similar prefix-style heuristic (F-04 fix, commit `544b377d`) precisely because it fabricated counts and produced false-positive `cache.below-min-predicted` warnings. Re-introducing one would repeat the F-04 mistake and violate the "honest unmeasurable" convention (see `cache_analysis/CLAUDE.md`, token_estimation.py section).
 
 **What ships instead**: nothing. The existing limitation test (`tests/test_core/test_cache_analysis_analyze.py:4901-4967`) stays. The cross-workflow recommendation `cache.sub-workflow-cache-undeclared` already names `select-chorus` as a beneficiary of declaring `concept` in chorus-chooser's `## Cache`. That IS the agent's actionable signal.
 
@@ -65,7 +65,7 @@ These are RESEARCH-FILE defects this plan does NOT solve.
 
 **Why**: multiplying Tier 2 cacheable to cohort while dividing input to per-call (A.A2's direction) creates asymmetric semantics on sibling fields. Cascades to:
 - Clamp at `analyze.py:1548` (`min(cacheable, input)` becomes silent truncator).
-- `cache.below-min-tokens` predicted-tier detector reads `cacheable_tokens_estimated` directly; threshold is per-call per provider rule, so cohort cacheable mis-fires.
+- `cache.below-min-predicted` predicted-tier detector reads `cacheable_tokens_estimated` directly; threshold is per-call per provider rule, so cohort cacheable mis-fires.
 - Summary aggregator at `analyze.py:4490` mixes per-call and cohort entries.
 
 The "unit mismatch" in select-chorus's row (per-call cacheable=41 next to cohort input=36,289) is a cosmetic display problem on undeclared non-batch repeated rows. Not a cost-correctness issue (cost gate strips cacheable for undeclared rows). Defer with N1.
@@ -80,7 +80,7 @@ Two independent fixes. Each ships with a magnitude-asserting test.
 
 **Defect**: Two predicates with diverging logic. Docstring at `analyze.py:1786` claims byte-equivalence; code at lines 1782-1789 has 3 conditions; renderer at `render_text.py:1527-1554` has 4 (the missing condition is `cacheable_data_source != "unavailable"`).
 
-**Confirmed live failure**: `04-warning-catalog/04-cache.shared-context-undeclared/expected-stdout.txt:181-237` shows three rows with `cacheable_data_source = "parameters"`. Same file at line 276 emits the contradicting note `Per-call cache report hidden — workflow has no run data yet.` while the per-call table actually shows the rows. Same divergence in `02-greenfield-json`, `09-below-min-tokens`, `08-padding-advisory`, `11-cross-workflow-rename-detected`.
+**Confirmed live failure**: `04-warning-catalog/04-cache.shared-context-undeclared/expected-stdout.txt:181-237` shows three rows with `cacheable_data_source = "parameters"`. Same file at line 276 emits the contradicting note `Per-call cache report hidden — workflow has no run data yet.` while the per-call table actually shows the rows. Same divergence in `02-greenfield-json`, `09-below-min-predicted`, `08-padding-advisory`, `11-cross-workflow-rename-detected`.
 
 **Fix**: Consolidate to one predicate in `view_helpers.py`.
 
@@ -165,7 +165,7 @@ Two independent fixes. Each ships with a magnitude-asserting test.
    - Mutation contract: drop the `is_batch` gate; test fails.
 
 6. `test_static_batch_below_min_tokens_predicted_tier_uses_per_call_threshold`:
-   - Static-list batch with declared `prompt_cache:` where per-call cacheable is 600 tokens (below Anthropic 1024 min) but cohort would be 2400 (above). Assert `cache.below-min-tokens` fires.
+   - Static-list batch with declared `prompt_cache:` where per-call cacheable is 600 tokens (below Anthropic 1024 min) but cohort would be 2400 (above). Assert `cache.below-min-predicted` fires.
    - Mutation contract: read cohort instead of per-call in `BelowMinTokensEvidence` construction; test fails because warning is suppressed.
 
 7. `test_static_batch_summary_total_input_tokens_uses_cohort_aggregation`:
@@ -753,7 +753,7 @@ uv run pflow analyze-cache .taskmaster/tasks/task_159/baseline/04-warning-catalo
 | Pass A.A2 mis-multiplies on conditional dispatch (some batch items skip) | Use `observed_call_count` (executed) as divisor. Test #8 locks; documents the implicit "no-cache projection assumes all declared items would run" semantic. |
 | Pass A.A2 integer-floor swallows odd factors (Silent-Failures C1) | Use `round()` not `//`. Test asserts magnitude reconciliation. |
 | Pass A.A2 changes `summary.total_input_tokens_estimated` semantic silently (Impact-Completeness C3) | Update `_build_summary_for_rows` to multiply per-call by `_invocation_count(row)`. Test #7 locks. |
-| Pass A.A2 cascades into `cache.below-min-tokens` predicted-tier (Feature-Interactions C2) | Detector reads per-call cacheable post-A.A2; threshold check is per-call. Test #6 locks. |
+| Pass A.A2 cascades into `cache.below-min-predicted` predicted-tier (Feature-Interactions C2) | Detector reads per-call cacheable post-A.A2; threshold check is per-call. Test #6 locks. |
 | Pass B emission collapses across workflows under future dedup (N4 carry-over) | Test #13 locks current behavior parametrized across all 5 affected IDs. |
 | Pass B threshold uses whole-prompt input instead of missing-chunks tokens | `_estimate_missing_chunks_tokens` per finding. Test #9 + #15 lock. |
 | Pass B × `cache.consolidate-to-root-recommended` contradiction (Feature-Interactions C3) | Suppress Pass B when consolidate covers same root. Test #17 locks. |
@@ -782,7 +782,7 @@ Each step ships independently with passing tests + clean baselines. Regenerate b
 
 ## What "done" means
 
-- Pass A green: `make test` passes; baselines regenerated with strict-improvement diffs; no `Per-call cache report hidden` note on parameter-backed-cacheable workflows; static-batch cost projections match actually-paid totals (within rounding); `cache.below-min-tokens` predicted-tier fires on per-call sub-threshold cacheable; summary aggregates produce cohort totals.
+- Pass A green: `make test` passes; baselines regenerated with strict-improvement diffs; no `Per-call cache report hidden` note on parameter-backed-cacheable workflows; static-batch cost projections match actually-paid totals (within rounding); `cache.below-min-predicted` predicted-tier fires on per-call sub-threshold cacheable; summary aggregates produce cohort totals.
 - Pass B green: `cache.prompt-cache-incomplete` fires for the new baseline workflow; cleanup-first ordering visible in rendered text; missing-chunks tokens drive threshold gate (not whole-prompt); per-node threshold check for heterogeneous models; suppressed when consolidate-to-root covers same root; `compute_overlaps`-derived cleanup hint catches all 3 overlap kinds; per-id-coverage test passes; new ID listed in CLAUDE.md, MCP docstring, guide; full baseline (66/66 with new case) green; near-full sandbox suite passes; lint/format/mypy clean.
 - Manual smoke: `pflow analyze-cache` on the new baseline workflow shows the recommendation in rendered text; cleanup steps appear before declaration steps; multi-node block reads cleanly to a fresh agent.
 

@@ -1,6 +1,6 @@
 # Task 159 Baseline — Index
 
-**75 runnable cases** captured across 11 surfaces (01–06, 10, 12–15).
+**79 runnable cases** captured across 11 surfaces (01–06, 10, 12–15).
 `PLAN.md`, `RECORDING.md`, and the audit files are historical context; the
 filesystem plus `./verify.sh` are the current source of truth. Read
 [PLAN.md](./PLAN.md) for the original strategy and [FINDINGS.md](./FINDINGS.md)
@@ -30,7 +30,7 @@ for the initial construction findings.
 | Surface 01 — parser errors (10 cases) | ✅ done; 1 finding (F-01) |
 | Surface 02 — validator errors (8 cases) | ✅ done |
 | Surface 03 — analyze-cache modes (8 cases, compressed from 17) | ✅ done |
-| Surface 04 — warning catalog (26 cases: 24 IDs + subpath/text variants) | ✅ done; 23/26 trigger target ID; 3 non-trigger cases intentionally lock current silence |
+| Surface 04 — warning catalog (30 cases: 28 IDs + subpath/text variants) | ✅ done; 27/30 trigger target ID; 3 non-trigger cases intentionally lock current silence |
 | Surface 05 — advisory cases (5 cases) | ✅ done |
 | **Surface 06 — dry-run nudge (3 cases)** | ✅ done; positive nudge, optimal silence, and structural cache error |
 | **Surface 10 — live recordings (2 cases)** | ✅ partial; Gemini translation + real lyrics-generator trace committed |
@@ -80,7 +80,7 @@ baseline/
 ├── 01-parser-errors/                  (10 cases)
 ├── 02-validator-errors/               (8 cases)
 ├── 03-analyze-cache-modes/            (8 cases)
-├── 04-warning-catalog/                (26 cases)
+├── 04-warning-catalog/                (30 cases)
 ├── 05-advisory-cases/                 (5 cases)
 ├── 06-dry-run-nudge/                  (3 cases)
 ├── 10-live-recordings/                (2 cases)
@@ -102,7 +102,7 @@ baseline/
 
 01-prompt-cache-out-of-order · 02-prompt-cache-undeclared-name ·
 03-prompt-cache-on-shell-node · 04-prompt-cache-empty-list ·
-05-subworkflow-references-parent-chunk · 06-cache-content-below-min-tokens ·
+05-subworkflow-references-parent-chunk · 06-cache-content-below-min-predicted ·
 07-unused-chunk · 08-analyze-cache-surfaces-undeclared-name
 
 ### Surface 03 — analyze-cache modes (8/8 pass)
@@ -118,7 +118,7 @@ cases. The remaining original Surface 11 variants (`with-fixture-trace` and
 example dry-run footer) are optional because trace mode is covered by Surface
 03/10 and dry-run behavior is covered by Surface 06.
 
-### Surface 04 — Warning catalog (26/26 cases captured; 23 trigger target ID)
+### Surface 04 — Warning catalog (30/30 cases captured; 27 trigger target ID)
 
 | # | ID | Triggered |
 |---|---|---|
@@ -131,7 +131,11 @@ example dry-run footer) are optional because trace mode is covered by Surface
 | 06 | cache.batch-prewarm-recommended | ⏭ (intentional silence fixture) |
 | 07 | cache.dynamic-before-static | ⏭ (intentional silence fixture) |
 | 08 | cache.padding-advisory | ✓ |
-| 09 | cache.below-min-tokens | ✓ |
+| 09a | cache.below-min-predicted | ✓ |
+| 09b | cache.below-min-observed | ✓ |
+| 09c | cache.below-min-rendered | ✓ |
+| 09d | cache.prewarm-disabled-below-min | ✓ |
+| 09e | cache.conditional-warmup-recommended | ✓ |
 | 10 | cache.cross-workflow-prose-mismatch | ✓ |
 | 11 | cache.cross-workflow-rename-detected | ✓ |
 | 12 | cache.discrepancy | ✓ |

@@ -29,7 +29,7 @@ cannot be predicted ahead of an LLM call.
                      candidate subsets). All chunks must resolve; partial
                      resolution falls through to Tier 3.
 3. ``unavailable`` — None propagation (Option C — honest unmeasurable).
-                     Downstream ``cache.below-min-tokens`` naturally
+                     Downstream ``cache.below-min-predicted`` naturally
                      suppresses; runtime-tier observed warning still fires
                      after first run.
 
@@ -71,6 +71,7 @@ def estimate_tokens(
     node_id: str | None = None,
     workflow_path: str | None = None,
     has_unresolved_refs: bool = False,
+    ctx: AnalysisContext | None = None,
 ) -> tuple[int, str]:
     """Return ``(token_count, source)`` per the four-tier strategy.
 
@@ -93,7 +94,7 @@ def estimate_tokens(
 
     # --- Tier 2: memo cache ---------------------------------------------------
     if memo_cache is not None and node_id is not None:
-        token_count = _from_memo(memo_cache, node_id, workflow_path=workflow_path)
+        token_count = _from_memo(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
         if token_count is not None:
             return token_count, "memo"
 
@@ -134,9 +135,6 @@ def estimate_cacheable_tokens(
     workflow_path: str | None,
     prompt: str = "",
     ctx: AnalysisContext | None = None,
-    is_static_batch_trace: bool = False,
-    observed_call_count: int = 1,
-    resolved_chunk_call_count: int = 1,
 ) -> tuple[int | None, str]:
     """Return ``(cacheable_tokens, source)`` using highest-fidelity available data.
 
@@ -145,13 +143,10 @@ def estimate_cacheable_tokens(
     Tier order:
 
     - Tier 1 (``"trace"``): declared subset + trace event with
-      ``cache_creation+cache_read > 0``. Returns the sum. For static-list
-      batch trace rows, the row-level trace event is a cohort aggregate, so
-      the returned value is divided to per-call units at the producer.
+      ``cache_creation+cache_read > 0``. Returns the per-call trace value; the
+      trace aggregator divides token fields at the producer boundary.
     - Tier 2 (``"memo"`` / ``"parameters"``): all chunks resolve to real
-      values via memo or workflow parameters. Returns the chunk sum multiplied
-      by ``resolved_chunk_call_count`` so repeated non-batch trace rows use
-      the same cohort units as their input tokens.
+      values via memo or workflow parameters. Returns the per-call chunk sum.
     - Tier 3 (``"unavailable"``): nothing else is honestly measurable.
       Returns ``(None, "unavailable")``.
 
@@ -162,7 +157,7 @@ def estimate_cacheable_tokens(
 
     Honest unmeasurable contract: the function never fabricates token
     counts when chunks can't be resolved. Downstream
-    ``cache.below-min-tokens`` warnings naturally suppress (the detector
+    ``cache.below-min-predicted`` warnings naturally suppress (the detector
     requires ``estimated_tokens > 0``). The runtime-tier observed
     warning in ``LLMNode.post()`` catches the real failure case after
     first run when the provider exposes cache telemetry (the runtime
@@ -175,12 +170,9 @@ def estimate_cacheable_tokens(
         creation = int(trace_event.get("cache_creation_input_tokens") or 0)
         read = int(trace_event.get("cache_read_input_tokens") or 0)
         if creation + read > 0:
-            trace_total = creation + read
-            if is_static_batch_trace:
-                trace_total = round(trace_total / max(1, observed_call_count))
-            return (trace_total, "trace")
+            return (creation + read, "trace")
         # Fall through: declared but didn't fire. Tier 2/3 computes
-        # "what was attempted" so cache.below-min-tokens fires correctly.
+        # "what was attempted" so cache.below-min-predicted fires correctly.
 
     # Tier 2: memo-resolved chunk tokenization (declared OR candidate).
     # When ``ctx`` is supplied, parameters fallback fires for workflow-input
@@ -194,7 +186,6 @@ def estimate_cacheable_tokens(
             memo_cache,
             workflow_path,
             ctx=ctx,
-            call_count=resolved_chunk_call_count,
         )
         if total is not None:
             # When the source is exclusively parameters, label accordingly so
@@ -216,7 +207,6 @@ def _sum_resolved_chunk_tokens(
     workflow_path: str | None,
     *,
     ctx: AnalysisContext | None = None,
-    call_count: int = 1,
 ) -> int | None:
     """Sum chunk token counts via parameters (preferred) then memo.
 
@@ -228,7 +218,7 @@ def _sum_resolved_chunk_tokens(
         if tokens is None:
             return None
         total += tokens
-    return total * max(1, call_count)
+    return total
 
 
 def _classify_resolution_source(chunks: list[str], ctx: AnalysisContext | None) -> str:
@@ -262,6 +252,7 @@ def estimate_output_tokens(
     memo_cache: _MemoCacheLike | None = None,
     node_id: str | None = None,
     workflow_path: str | None = None,
+    ctx: AnalysisContext | None = None,
 ) -> tuple[int | None, str]:
     """Return ``(output_token_count | None, source)`` for an LLM call.
 
@@ -284,7 +275,7 @@ def estimate_output_tokens(
             return token_count, "trace"
 
     if memo_cache is not None and node_id is not None:
-        token_count = _output_from_memo(memo_cache, node_id, workflow_path=workflow_path)
+        token_count = _output_from_memo(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
         if token_count is not None:
             return token_count, "memo"
 
@@ -339,6 +330,21 @@ def tokenize_prompt_region(
     return estimate_tokens(model, resolved)[0]
 
 
+def tokenize_prompt_region_for_projection(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+) -> int | None:
+    """Projection variant that can resolve refs from trace node outputs."""
+    return _tokenize_prompt_region_with_resolver(
+        region,
+        model=model,
+        ctx=ctx,
+        use_projection_resolver=True,
+    )
+
+
 def tokenize_prompt_region_lower_bound(
     region: str,
     *,
@@ -391,6 +397,91 @@ def tokenize_prompt_region_lower_bound(
     return estimate_tokens(model, stripped)[0], unresolved
 
 
+def tokenize_prompt_region_lower_bound_for_projection(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+) -> tuple[int, tuple[str, ...]]:
+    """Lower-bound projection variant that can resolve refs from trace outputs."""
+    return _tokenize_prompt_region_lower_bound_with_resolver(
+        region,
+        model=model,
+        ctx=ctx,
+        use_projection_resolver=True,
+    )
+
+
+def _tokenize_prompt_region_with_resolver(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+    use_projection_resolver: bool,
+) -> int | None:
+    if not region:
+        return 0
+    if "${" not in region:
+        return estimate_tokens(model, region)[0]
+
+    from pflow.core.cache_render import deterministic_serialize
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    refs = extract_unique_refs(region)
+    if not refs:
+        return estimate_tokens(model, region)[0]
+
+    shared = build_shared_store_for_refs(refs, ctx, use_projection_resolver=use_projection_resolver)
+    try:
+        resolved = TemplateResolver.resolve_template(region, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        logger.debug("tokenize_prompt_region: resolve_template raised", exc_info=True)
+        return None
+
+    if not isinstance(resolved, str):
+        resolved = deterministic_serialize(resolved)
+    if TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+        return None
+    return estimate_tokens(model, resolved)[0]
+
+
+def _tokenize_prompt_region_lower_bound_with_resolver(
+    region: str,
+    *,
+    model: str,
+    ctx: AnalysisContext,
+    use_projection_resolver: bool,
+) -> tuple[int, tuple[str, ...]]:
+    if not region:
+        return 0, ()
+    if "${" not in region:
+        return estimate_tokens(model, region)[0], ()
+
+    from pflow.core.cache_render import deterministic_serialize
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    refs = extract_unique_refs(region)
+    if not refs:
+        return estimate_tokens(model, region)[0], ()
+
+    shared = build_shared_store_for_refs(refs, ctx, use_projection_resolver=use_projection_resolver)
+    try:
+        resolved = TemplateResolver.resolve_template(region, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        logger.debug("tokenize_prompt_region_lower_bound: resolve_template raised", exc_info=True)
+        return 0, tuple(refs)
+
+    if not isinstance(resolved, str):
+        resolved = deterministic_serialize(resolved)
+
+    unresolved = tuple(match.group(1) for match in TemplateResolver.TEMPLATE_PATTERN.finditer(resolved))
+    if not unresolved:
+        return estimate_tokens(model, resolved)[0], ()
+
+    stripped = TemplateResolver.TEMPLATE_PATTERN.sub("", resolved)
+    return estimate_tokens(model, stripped)[0], unresolved
+
+
 def extract_unique_refs(prompt: str) -> list[str]:
     """Walk ``prompt`` for unique template refs, deduped in encounter order."""
     from pflow.runtime.template_resolver import TemplateResolver
@@ -403,7 +494,12 @@ def extract_unique_refs(prompt: str) -> list[str]:
     return refs
 
 
-def build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[str, Any]:
+def build_shared_store_for_refs(
+    refs: list[str],
+    ctx: AnalysisContext,
+    *,
+    use_projection_resolver: bool = False,
+) -> dict[str, Any]:
     """Build a synthetic shared store keyed by root node ids for ``refs``."""
     from pflow.runtime.template_resolver import TemplateResolver
 
@@ -415,7 +511,8 @@ def build_shared_store_for_refs(refs: list[str], ctx: AnalysisContext) -> dict[s
         # Resolve the root, not the full path. TemplateResolver performs
         # dotted/indexed traversal against the root value, while AnalysisContext
         # preserves the parameters-vs-memo resolution policy.
-        value = ctx.resolve_ref_value(root)
+        resolver = ctx.resolve_ref_value_for_projection if use_projection_resolver else ctx.resolve_ref_value
+        value = resolver(root)
         if value is not None:
             shared[root] = value
     return shared
@@ -457,29 +554,51 @@ def _llm_call_field_from_trace(trace: dict[str, Any], node_id: str, field: str) 
     return value if isinstance(value, int) else None
 
 
-def _from_memo(memo_cache: _MemoCacheLike, node_id: str, *, workflow_path: str | None) -> int | None:
+def _from_memo(
+    memo_cache: _MemoCacheLike,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None,
+) -> int | None:
     """Pull ``llm_usage.input_tokens`` from the latest memoized output."""
-    return _llm_usage_field_from_memo(memo_cache, node_id, workflow_path=workflow_path, field="input_tokens")
+    return _llm_usage_field_from_memo(
+        memo_cache,
+        node_id,
+        workflow_path=workflow_path,
+        field="input_tokens",
+        ctx=ctx,
+    )
 
 
-def _output_from_memo(memo_cache: _MemoCacheLike, node_id: str, *, workflow_path: str | None) -> int | None:
+def _output_from_memo(
+    memo_cache: _MemoCacheLike,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None,
+) -> int | None:
     """Pull ``llm_usage.output_tokens`` from the latest memoized output."""
-    return _llm_usage_field_from_memo(memo_cache, node_id, workflow_path=workflow_path, field="output_tokens")
+    return _llm_usage_field_from_memo(
+        memo_cache,
+        node_id,
+        workflow_path=workflow_path,
+        field="output_tokens",
+        ctx=ctx,
+    )
 
 
 def _llm_usage_field_from_memo(
-    memo_cache: _MemoCacheLike, node_id: str, *, workflow_path: str | None, field: str
+    memo_cache: _MemoCacheLike,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    field: str,
+    ctx: AnalysisContext | None,
 ) -> int | None:
     """Read an integer field from the latest memoized output's ``llm_usage`` dict."""
-    try:
-        result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
-    except Exception:
-        logger.debug("memo_cache.get_latest_for_node raised", exc_info=True)
-        return None
-    if result is None:
-        return None
-    output, _created_at = result
-    if not isinstance(output, dict):
+    output = _memo_output_for_freshness_check(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
+    if output is None:
         return None
     llm_usage = output.get("llm_usage")
     if not isinstance(llm_usage, dict):
@@ -488,6 +607,46 @@ def _llm_usage_field_from_memo(
     if isinstance(value, int):
         return value
     return None
+
+
+def _memo_output_for_freshness_check(
+    memo_cache: Any,
+    node_id: str,
+    *,
+    workflow_path: str | None,
+    ctx: AnalysisContext | None,
+) -> dict[str, Any] | None:
+    """Read latest memo output, skipping it when ctx proves the row stale."""
+    if ctx is not None and hasattr(memo_cache, "get_latest_for_node_with_cache_key"):
+        from .context import _PREDICTION_SKIPPED
+
+        try:
+            result = memo_cache.get_latest_for_node_with_cache_key(node_id, workflow_path=workflow_path)
+        except Exception:
+            logger.debug("memo_cache.get_latest_for_node_with_cache_key raised", exc_info=True)
+            return None
+        if result is None:
+            return None
+        output, _created_at, memo_cache_key = result
+        predicted = ctx.predicted_cache_keys.get((workflow_path, node_id))
+        if predicted is None:
+            return output if isinstance(output, dict) else None
+        if predicted == _PREDICTION_SKIPPED:
+            ctx.stale_memo_uncheckable.add((workflow_path, node_id))
+            return output if isinstance(output, dict) else None
+        if memo_cache_key != predicted:
+            ctx.stale_memo_skipped.add((workflow_path, node_id))
+            return None
+        return output if isinstance(output, dict) else None
+    try:
+        result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
+    except Exception:
+        logger.debug("memo_cache.get_latest_for_node raised", exc_info=True)
+        return None
+    if result is None:
+        return None
+    output, _created_at = result
+    return output if isinstance(output, dict) else None
 
 
 def _from_estimator(model: str, text: str) -> int:
@@ -566,15 +725,8 @@ def _latest_value_for_ref(
     from pflow.runtime.template_resolver import TemplateResolver
 
     root = TemplateResolver.extract_root_node_id(ref)
-    try:
-        latest = memo_cache.get_latest_for_node(root, workflow_path=workflow_path)
-    except Exception:
-        logger.debug("memo_cache.get_latest_for_node failed while estimating %s", ref, exc_info=True)
-        return None
-    if latest is None:
-        return None
-    output, _created_at = latest
-    if not isinstance(output, dict):
+    output = _memo_output_for_freshness_check(memo_cache, root, workflow_path=workflow_path, ctx=ctx)
+    if output is None:
         return None
     resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
     if isinstance(resolved, str) and resolved == f"${{{ref}}}":
@@ -589,5 +741,7 @@ __all__ = [
     "estimate_tokens",
     "extract_unique_refs",
     "tokenize_prompt_region",
+    "tokenize_prompt_region_for_projection",
     "tokenize_prompt_region_lower_bound",
+    "tokenize_prompt_region_lower_bound_for_projection",
 ]

@@ -47,6 +47,60 @@ def test_iter_llm_leaves_yields_batch_item_and_nested_events() -> None:
     ]
 
 
+def test_walk_auto_derives_edges_from_pflow_child_workflow_paths() -> None:
+    """``TraceTree.walk(workflow_path=root)`` MUST attribute ``sub_workflow_events``
+    to their child workflow path even when the caller passes no explicit ``edges``.
+
+    Pre-fix: caller had to pass ``edges=_edge_child_paths(cw_result)`` or every
+    sub-workflow event inherited the parent's ``workflow_path``. One production
+    caller (``_workflow_appears_as_child``) forgot the kwarg → redirect-hint
+    detection broke for every non-batch sub-workflow trace.
+
+    Post-fix: ``TraceTree.from_dict`` derives ``default_edges`` from each event's
+    ``node_output._pflow_child_workflow_paths`` (the runtime's authoritative
+    record of which node_id maps to which child workflow path). ``walk()``
+    merges defaults with caller's ``edges`` at top-level entry.
+
+    Mutation contract:
+      - Skip the ``_collect_default_edges`` call in ``from_dict`` →
+        ``default_edges`` stays empty → child event inherits parent path → test
+        fails on the second assertion.
+      - Drop the merge in ``walk()`` (always use caller's ``edges`` as-is) →
+        same failure mode when called without explicit edges.
+    """
+    trace_data: dict = {
+        "format_version": "2.3.0",
+        "workflow_path": "/parent.pflow.md",
+        "nodes": [
+            {
+                "node_id": "call-child",
+                "node_type": "WorkflowExecutor",
+                "success": True,
+                "node_output": {"_pflow_child_workflow_paths": {"call-child": "/child.pflow.md"}},
+                "sub_workflow_events": [
+                    {"node_id": "inner-llm", "llm_call": {"cost_usd": 0.01}},
+                ],
+            },
+        ],
+    }
+    tree = TraceTree.from_dict(trace_data)
+
+    # default_edges populated from node_output._pflow_child_workflow_paths.
+    assert dict(tree.default_edges) == {"call-child": "/child.pflow.md"}
+
+    # Without an explicit edges kwarg, the sub-workflow descendant is correctly
+    # attributed to the child workflow — the bug-A-load-bearing assertion.
+    walk_events = list(tree.walk(workflow_path="/parent.pflow.md"))
+    inner = next(we for we in walk_events if we.event_node_id == "inner-llm")
+    assert inner.workflow_path == "/child.pflow.md"
+
+    # Caller-provided edges win on conflict — preserves existing 8 call sites'
+    # semantics where ``cw_result.edges`` carries authoritative IR-derived paths.
+    walk_events_override = list(tree.walk(workflow_path="/parent.pflow.md", edges={"call-child": "/override.pflow.md"}))
+    inner_override = next(we for we in walk_events_override if we.event_node_id == "inner-llm")
+    assert inner_override.workflow_path == "/override.pflow.md"
+
+
 def test_cost_for_node_does_not_descend_into_sub_workflow_events() -> None:
     tree = TraceTree(
         events=(

@@ -30,9 +30,11 @@
 
 ## Per-call cache report
   How to read each row:
-    · could_cache: extra tokens that would be cached if you declared/extended `prompt_cache:`. `?` if not projectable statically. Numbers below your model's provider minimum won't cache — see notes column.
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
+    · ? means the column applies but the token count can't be measured yet (run the workflow once to populate).
 
-  node       model                       input  could_cache  notes
-  -----------------------------------------------------------
+  node       model                       input  ready  notes
+  -----------------------------------------------------
 
-  summarize  anthropic/claude-haiku-4-5      7            ?  no trace recorded — run with --report to populate this row
+  summarize  anthropic/claude-haiku-4-5      7      ?

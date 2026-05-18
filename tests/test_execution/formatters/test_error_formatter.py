@@ -11,6 +11,7 @@ bug that could break production:
 If a test passes but the feature is broken, the test failed its purpose.
 """
 
+import json
 from copy import deepcopy
 
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -225,6 +226,64 @@ class TestExecutionStateGuardrails:
         steps = formatted["execution"]["steps"]
         assert steps[0]["cached"] is True  # node1 used cache
         assert steps[1]["cached"] is False  # node2 did not
+
+    def test_error_execution_steps_compact_large_batch_error_details(self):
+        """API/JSON error output must not expose full failed batch items."""
+        payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
+        large_item = {"label": "oversized-item", "payload": payload}
+        item_summary = {
+            "summary_version": 1,
+            "type": "dict",
+            "label": "oversized-item",
+            "size_chars": len(payload),
+            "sha256": "123456789abc",
+            "summary": "label='oversized-item'; payload=<str 1909 chars sha256=123456789abc>",
+            "truncated": True,
+        }
+        ir_data = {"nodes": [{"id": "batch"}]}
+        shared_storage = {
+            "__failures__": {
+                "batch": {
+                    "data": {
+                        "count": 1,
+                        "success_count": 0,
+                        "error_count": 1,
+                        "errors": [
+                            {
+                                "index": 0,
+                                "item": large_item,
+                                "item_summary": item_summary,
+                                "error": "forced batch failure for oversized-item",
+                                "exception": RuntimeError("boom"),
+                            }
+                        ],
+                        "batch_metadata": {"execution_mode": "sequential"},
+                    },
+                    "category": "node_action_error",
+                    "error": "forced batch failure for oversized-item",
+                }
+            },
+            "__execution__": {"completed_nodes": [], "failed_node": "batch"},
+        }
+        result = ExecutionResult(
+            success=False,
+            diagnostics=[_diagnostic("forced batch failure for oversized-item", node_id="batch")],
+            shared_after=shared_storage,
+        )
+
+        formatted = format_execution_errors(result, shared_storage, ir_data)
+
+        detail = formatted["execution"]["steps"][0]["batch_error_details"][0]
+        assert detail["index"] == 0
+        assert detail["item_summary"] == item_summary
+        assert detail["item_ref"] == "123456789abc"
+        assert detail["has_full_item"] is True
+        assert "item" not in detail
+        assert "exception" not in detail
+        serialized = json.dumps(formatted, default=str)
+        assert "PAYLOAD-START" not in serialized
+        assert "PAYLOAD-END" not in serialized
+        assert "token199" not in serialized
 
 
 class TestRobustnessGuardrails:

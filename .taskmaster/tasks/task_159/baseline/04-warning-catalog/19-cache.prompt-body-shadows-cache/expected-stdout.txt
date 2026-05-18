@@ -1,5 +1,5 @@
 {
-  "format_version": "4.2",
+  "format_version": "5.0",
   "workflow_path": "<BASELINE_CASE_DIR>/workflow.pflow.md",
   "analyzed_at": "<TIMESTAMP>",
   "estimate_confidence": "low_no_data",
@@ -46,7 +46,11 @@
     },
     "trace_coverage": "none",
     "trace_final_status": null,
+    "trace_workflow_relationship": null,
+    "trace_model_drift_count": 0,
     "trace_recorded_at": null,
+    "stale_memo_skipped_count": 0,
+    "stale_memo_uncheckable_count": 0,
     "evidence_scope": "static_analysis",
     "trace_llm_nodes_static": 1,
     "trace_llm_nodes_executed": 0,
@@ -59,7 +63,15 @@
     "total_llm_invocations_estimated": 1,
     "dynamic_batch_node_count": 0,
     "total_input_tokens_estimated": 12005,
-    "total_cacheable_tokens_estimated": 6000,
+    "total_cache_active_tokens_estimated": 6000,
+    "total_cache_ready_tokens_estimated": 6000,
+    "total_cache_opportunity_tokens_estimated": 0,
+    "total_cache_ready_confidence": "exact",
+    "total_cache_opportunity_confidence": "unknown",
+    "unknown_cache_ready_row_count": 0,
+    "unknown_cache_opportunity_row_count": 0,
+    "lower_bound_cache_ready_row_count": 0,
+    "lower_bound_cache_opportunity_row_count": 0,
     "models_in_use": [
       "anthropic/claude-sonnet-4-5"
     ],
@@ -90,7 +102,7 @@
       "node_id": "summarize",
       "estimated_savings_usd": null,
       "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
-      "message": "Node 'summarize' duplicates cached chunks in the prompt body \u2014 the cache stores these values at 0.1\u00d7 rate but the body sends them inline at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
+      "message": "Node 'summarize' sends the same value twice in each call \u2014 once as a cached chunk AND inline in the prompt body. The cached copy is paid at 0.1\u00d7 rate but the inline copy is paid at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
       "suggestions": [
         "Remove the listed `${...}` references from the prompt body \u2014 the cached chunks already supply these values via the system prompt."
       ]
@@ -124,12 +136,108 @@
       "body_tokens_estimated": 6005,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
-      "cacheable_tokens_estimated": 6000,
-      "cache_ratio_pct": 50,
       "cache_creation_input_tokens": null,
       "cache_read_input_tokens": null,
+      "cached_now_tokens_estimated": null,
+      "cache_configured": {
+        "tokens_estimated": 6000,
+        "data_source": "declared_chunks",
+        "ratio_pct": 50,
+        "action": "none",
+        "actionability": "active",
+        "confidence": "exact",
+        "meets_provider_min": true,
+        "provider_min_tokens": 1024,
+        "blocked_reason": "",
+        "affects_cost_projection": true,
+        "diagnostic_ids": [],
+        "components": [
+          {
+            "tokens_estimated": 6000,
+            "data_source": "declared_chunks",
+            "ratio_pct": 50,
+            "action": "none",
+            "actionability": "active",
+            "confidence": "exact",
+            "meets_provider_min": true,
+            "provider_min_tokens": 1024,
+            "blocked_reason": "",
+            "affects_cost_projection": true,
+            "diagnostic_ids": []
+          }
+        ]
+      },
+      "cache_active": {
+        "tokens_estimated": 6000,
+        "data_source": "declared_chunks",
+        "ratio_pct": 50,
+        "action": "none",
+        "actionability": "active",
+        "confidence": "exact",
+        "meets_provider_min": true,
+        "provider_min_tokens": 1024,
+        "blocked_reason": "",
+        "affects_cost_projection": true,
+        "diagnostic_ids": [],
+        "components": [
+          {
+            "tokens_estimated": 6000,
+            "data_source": "declared_chunks",
+            "ratio_pct": 50,
+            "action": "none",
+            "actionability": "active",
+            "confidence": "exact",
+            "meets_provider_min": true,
+            "provider_min_tokens": 1024,
+            "blocked_reason": "",
+            "affects_cost_projection": true,
+            "diagnostic_ids": []
+          }
+        ]
+      },
+      "cache_ready": {
+        "tokens_estimated": 6000,
+        "data_source": "declared_chunks",
+        "ratio_pct": 50,
+        "action": "none",
+        "actionability": "active",
+        "confidence": "exact",
+        "meets_provider_min": true,
+        "provider_min_tokens": 1024,
+        "blocked_reason": "",
+        "affects_cost_projection": true,
+        "diagnostic_ids": [],
+        "components": [
+          {
+            "tokens_estimated": 6000,
+            "data_source": "declared_chunks",
+            "ratio_pct": 50,
+            "action": "none",
+            "actionability": "active",
+            "confidence": "exact",
+            "meets_provider_min": true,
+            "provider_min_tokens": 1024,
+            "blocked_reason": "",
+            "affects_cost_projection": true,
+            "diagnostic_ids": []
+          }
+        ]
+      },
+      "cache_opportunity": {
+        "tokens_estimated": null,
+        "data_source": "not_applicable",
+        "ratio_pct": null,
+        "action": "none",
+        "actionability": "not_applicable",
+        "confidence": "unknown",
+        "meets_provider_min": null,
+        "provider_min_tokens": null,
+        "blocked_reason": "",
+        "affects_cost_projection": false,
+        "diagnostic_ids": [],
+        "components": []
+      },
       "data_source": "estimator",
-      "cacheable_data_source": "parameters",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "article"
@@ -173,7 +281,7 @@
     },
     {
       "severity": "error",
-      "message": "Node 'summarize' duplicates cached chunks in the prompt body \u2014 the cache stores these values at 0.1\u00d7 rate but the body sends them inline at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
+      "message": "Node 'summarize' sends the same value twice in each call \u2014 once as a cached chunk AND inline in the prompt body. The cached copy is paid at 0.1\u00d7 rate but the inline copy is paid at 1.0\u00d7 every call:\n  - cached `${article}` AND inline `${article}`",
       "source": "validator",
       "id": "cache.prompt-body-duplicates-cache",
       "title": "Cache Failure",

@@ -713,8 +713,14 @@ class WorkflowRunner:
             for diagnostic in getattr(exception, "validation_warnings", [])
             if isinstance(diagnostic, Diagnostic)
         ]
+        shared_after = getattr(exception, "_pflow_shared_store", None)
+        if not isinstance(shared_after, dict):
+            shared_after = {}
+
+        runtime_warnings = self._extract_runtime_warnings(shared_after) if shared_after else []
         diagnostics = deduplicate_diagnostics([
             *exception_to_diagnostics(exception),
+            *runtime_warnings,
             *(validation_warnings or []),
             *parser_diagnostics,
             *exception_validation_warnings,
@@ -724,10 +730,6 @@ class WorkflowRunner:
             trace_collector.set_warnings([
                 diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
             ])
-
-        shared_after = getattr(exception, "_pflow_shared_store", None)
-        if not isinstance(shared_after, dict):
-            shared_after = {}
 
         return ExecutionResult(
             success=False,

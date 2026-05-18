@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 from pflow.core.cache_render import CacheRenderContext
 from pflow.core.exceptions import CompilationError
+from pflow.core.llm_capabilities import get_min_cache_tokens
+from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
     FAILURE_CATEGORY_HTTP,
@@ -31,9 +33,10 @@ from pflow.runtime.node_state import (
     get_node_failure,
     mark_node_failed,
 )
+from pflow.runtime.template_resolver import TemplateResolver
 
 from .api_warning_detector import detect_api_warning
-from .batch_executor import execute_batch
+from .batch_executor import _collect_batch_trace, execute_batch
 from .instrumentation import (
     apply_memo_hit,
     cache_result,
@@ -68,7 +71,10 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 _EMPTY_CACHE_RENDER: Mapping[str, CacheRenderContext] = MappingProxyType({})
 
 
-def build_cache_render_dict(workflow: CompiledWorkflow) -> dict[str, CacheRenderContext]:
+def build_cache_render_dict(
+    workflow: CompiledWorkflow,
+    shared: dict[str, Any],
+) -> dict[str, CacheRenderContext]:
     """Build the per-node ``CacheRenderContext`` map for one engine.run.
 
     Includes only LLM nodes that have at least one cache-relevant declaration
@@ -84,13 +90,18 @@ def build_cache_render_dict(workflow: CompiledWorkflow) -> dict[str, CacheRender
             continue
         if not (config.prompt_cache_items or config.prewarm or cache_block):
             continue
-        out[node_id] = _make_cache_render_context(config, cache_block)
+        prewarm = config.prewarm
+        if _should_disable_below_min_prewarm(node_id, config, shared):
+            prewarm = False
+        out[node_id] = _make_cache_render_context(config, cache_block, prewarm=prewarm)
     return out
 
 
 def _make_cache_render_context(
     config: NodeConfig,
     cache_block: Any,
+    *,
+    prewarm: bool | None = None,
 ) -> CacheRenderContext:
     """Build one node's ``CacheRenderContext`` from its ``NodeConfig``.
 
@@ -102,9 +113,11 @@ def _make_cache_render_context(
     alias = None
     node_inputs = None
     if config.batch_config and config.template_config:
-        unresolved = config.template_config.template_params.get("prompt")
+        unresolved = config.template_config.template_params.get("prompt") or config.template_config.static_params.get(
+            "prompt"
+        )
         alias = config.batch_config.item_alias
-        raw_inputs = config.template_config.template_params.get("inputs")
+        raw_inputs = _node_inputs_from_config(config)
         if isinstance(raw_inputs, Mapping):
             # Snapshot + freeze for parallel-batch safety. CacheRenderContext
             # is shared by batch workers, so the immutability contract is
@@ -113,11 +126,90 @@ def _make_cache_render_context(
     return CacheRenderContext(
         cache_block=cache_block,
         subset=config.prompt_cache_items,
-        prewarm=config.prewarm,
+        prewarm=config.prewarm if prewarm is None else prewarm,
         unresolved_batch_prompt=unresolved,
         batch_alias=alias,
         node_inputs=node_inputs,
     )
+
+
+def _should_disable_below_min_prewarm(
+    node_id: str,
+    config: NodeConfig,
+    shared: dict[str, Any],
+) -> bool:
+    if not config.prewarm or config.batch_config is None or config.template_config is None:
+        return False
+
+    model_raw = config.template_config.template_params.get("model") or config.template_config.static_params.get("model")
+    if model_raw is None:
+        return False
+    model = _resolve_template_string(model_raw, shared)
+    if model is None or model == VALIDATION_PLACEHOLDER:
+        return False
+
+    prompt_raw = config.template_config.template_params.get("prompt") or config.template_config.static_params.get(
+        "prompt"
+    )
+    if not isinstance(prompt_raw, str):
+        return False
+
+    from pflow.core.cache_analysis.below_min_tokens_detector import is_below_min_cache, provider_note
+    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.cache_analysis.token_estimation import tokenize_prompt_region_lower_bound
+    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_refs import first_per_item_position
+
+    alias = config.batch_config.item_alias
+    first = first_per_item_position(prompt_raw, alias, _node_inputs_from_config(config))
+    if first is None or first <= 0:
+        return False
+
+    ctx = AnalysisContext.build(
+        workflow_ir={},
+        parameters=shared,
+        memo_cache=shared.get("__memoization_cache__"),
+        workflow_path=shared.get("_pflow_workflow_file"),
+    )
+    prefix_tokens, unresolved_refs = tokenize_prompt_region_lower_bound(prompt_raw[:first], model=model, ctx=ctx)
+    if unresolved_refs:
+        return False
+    if not is_below_min_cache(model, prefix_tokens):
+        return False
+
+    diagnostic = make_diagnostic(
+        "cache.prewarm-disabled-below-min",
+        node_id=node_id,
+        affected_workflow=shared.get("_pflow_workflow_file") or "<unknown>",
+        model=model,
+        cacheable_tokens=prefix_tokens,
+        min_tokens=get_min_cache_tokens(model),
+        provider_note=provider_note(model),
+        alias=alias,
+    )
+    shared.setdefault("__warnings__", {})[node_id] = diagnostic
+    shared.setdefault("__prewarm_disabled_below_min__", {})[node_id] = "below_min"
+    return True
+
+
+def _node_inputs_from_config(config: NodeConfig) -> Mapping[str, Any] | None:
+    template_config = config.template_config
+    if template_config is None:
+        return None
+    raw_inputs = template_config.template_params.get("inputs") or template_config.static_params.get("inputs")
+    return raw_inputs if isinstance(raw_inputs, Mapping) else None
+
+
+def _resolve_template_string(raw: Any, shared: dict[str, Any]) -> str | None:
+    if not isinstance(raw, str):
+        return str(raw) if raw is not None else None
+    try:
+        resolved = TemplateResolver.resolve_template(raw, shared)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(resolved, str) or TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+        return None
+    return resolved
 
 
 def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:
@@ -253,7 +345,7 @@ class WorkflowEngine:
         # (saved_trace overwritten, finally never fires).
         saved_trace = shared.get("__trace_collector__")
         saved_cache_render = shared.get("__pflow_cache_render__")
-        new_cache_render = MappingProxyType(build_cache_render_dict(workflow))
+        new_cache_render = MappingProxyType(build_cache_render_dict(workflow, shared))
         if self.trace is not None:
             shared["__trace_collector__"] = self.trace
         shared["__pflow_cache_render__"] = new_cache_render
@@ -477,7 +569,13 @@ class WorkflowEngine:
 
             # 9. Execute: batch or single
             if config.batch_config:
-                action, batch_trace_items = execute_batch(node, config, shared, self._execute_single_node)
+                action = execute_batch(node, config, shared, self._execute_single_node)
+                # NOTE: per-item batch trace events stay in ``shared["_batch_trace"]``
+                # until the single drain right before ``record_trace`` below. Draining
+                # here would lose the items if any later step (write_memo_cache,
+                # detect_api_warning, metrics) raised — the except handler's drain
+                # would then pop an already-empty buffer. Symmetry with the except
+                # path is the whole point of Bundle 8's shared-store recovery channel.
             else:
                 # Set resolved params on node and execute
                 if resolved_params is not None:
@@ -498,6 +596,12 @@ class WorkflowEngine:
             # 10. API warning detection
             warning = detect_api_warning(config.node_id, shared)
             if warning:
+                # Drain the per-item buffer even though ``handle_api_warning``
+                # discards batch items today (pre-existing, see W2 in PR #405
+                # review). The drain prevents the accumulator from leaking into
+                # shared state for the rest of the workflow run.
+                if config.batch_config:
+                    _collect_batch_trace(shared, config.node_id)
                 return handle_api_warning(
                     config.node_id,
                     shared,
@@ -543,7 +647,13 @@ class WorkflowEngine:
                 if isinstance(node_data_snapshot, dict):
                     trace_error = node_data_snapshot.get("error")
 
-            # 16. Trace — node returning "error" action is a failure even without exception
+            # 16. Trace — node returning "error" action is a failure even without exception.
+            # Single drain site for batch trace events: collects from the shared
+            # store accumulator just before record_trace consumes them. The
+            # except handler below has a symmetric drain so completed-before-
+            # failure events survive into the trace identically.
+            if config.batch_config:
+                batch_trace_items = _collect_batch_trace(shared, config.node_id)
             record_trace(
                 config.node_id,
                 config.node_type_name,
@@ -604,6 +714,14 @@ class WorkflowEngine:
 
             # Extract partial resolutions from template errors (attached by resolve_templates)
             error_resolutions = getattr(e, "_pflow_partial_resolutions", None) or last_resolutions
+
+            # Drain per-item trace events on the failure path too. When
+            # execute_batch raises (fail_fast all-failed), items that completed
+            # before the failing item still appear in shared["_batch_trace"].
+            # Without this drain, completed nested LLM work would silently vanish
+            # from the trace, and analyze-cache would report `[unexecuted]` for
+            # nodes that actually ran.
+            batch_trace_items = _collect_batch_trace(shared, config.node_id) if config.batch_config else None
 
             record_trace(
                 config.node_id,

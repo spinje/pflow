@@ -368,9 +368,9 @@ async def analyze_cache(
 
     Returns the same JSON shape as ``pflow analyze-cache --format=json``.
 
-    **Schema versioning**: top-level ``format_version`` (string, e.g. ``"4.0"``)
+    **Schema versioning**: top-level ``format_version`` (string, e.g. ``"5.0"``)
     is the FIRST key. Consumers dispatch on
-    ``format_version.startswith(MAJOR + ".")``. Additive 4.x minor fields don't
+    ``format_version.startswith(MAJOR + ".")``. Additive 5.x minor fields don't
     bump; semantic shifts in field meaning bump minor; field-shape removal bumps
     major. Full version history in ``pflow.core.cache_analysis.__init__``.
 
@@ -391,7 +391,7 @@ async def analyze_cache(
       - ``no_cache_hypothetical_usd`` (number | null): pure no-cache
         recompute baseline.
       - ``first_run_with_cache_hypothetical_usd`` (number | null):
-        first-run projection that honors declared ``prompt_cache:``.
+        first-run projection that honors ``per_call[].cache_active`` only.
       - ``rerun_within_ttl_hypothetical_usd`` (number | null): all-cacheable-
         at-read-rate projection.
       - ``total_llm_nodes_estimated`` (number): LLM node rows in the analyzed
@@ -503,7 +503,11 @@ async def analyze_cache(
       - cache.batch-prewarm-recommended
       - cache.dynamic-before-static
       - cache.padding-advisory
-      - cache.below-min-tokens
+      - cache.below-min-predicted
+      - cache.below-min-observed
+      - cache.below-min-rendered
+      - cache.prewarm-disabled-below-min
+      - cache.conditional-warmup-recommended
       - cache.cross-workflow-prose-mismatch
       - cache.cross-workflow-rename-detected
       - cache.discrepancy
@@ -530,19 +534,22 @@ async def analyze_cache(
     **per_call[].data_source** carries the four-value tier: ``trace`` /
     ``memo`` / ``estimator`` / ``heuristic`` (highest-fidelity first).
 
-    **per_call[].cacheable_data_source** is INDEPENDENT from ``data_source``
-    and tracks the cacheable-tokens metric specifically. Values: ``trace``
-    / ``memo`` / ``parameters`` / ``batch_prefix`` /
-    ``cross_workflow_projection`` / ``unavailable``. The
-    two labels may legitimately diverge — e.g., trace fires for input but
-    cacheable falls through to memo when ``cache_creation+cache_read==0``.
-    ``batch_prefix`` covers the static-prefix projection on batch nodes
-    (repeated bytes before the first ``${alias.X}`` ref multiplied by
-    observed call count) — a heuristic projection for undeclared rows;
-    ``cross_workflow_projection`` covers parent-declared values sent into
-    a child workflow that has not declared the receiving input in its own
-    ``## Cache``. The text renderer surfaces footer notes flagging both
-    projection tiers.
+    **per_call token units**: all ``*_tokens_estimated`` fields are per-call,
+    including trace-sourced repeated batch/sub-workflow rows. Workflow-level
+    summary totals multiply by the row invocation count internally. ``cost_usd``
+    is the exception: it remains cohort actually-paid trace cost by design.
+
+    **per_call[] provider-cache projections**: JSON 5.0 removes the legacy
+    ``cacheable_*`` fields. Read ``cached_now_tokens_estimated`` for provider
+    cache tokens observed in the loaded trace. Read ``cache_configured`` for
+    tokens the workflow asks runtime to cache before provider/image gates,
+    ``cache_active`` for tokens that may affect cost projections,
+    ``cache_ready`` for tokens already active or unlockable by a direct cache
+    edit in the current prompt shape, and ``cache_opportunity`` for maximum
+    provable unrealized upside after the required edit. Agents must inspect
+    ``actionability``, ``meets_provider_min``, and ``blocked_reason`` before
+    applying an action. Only ``cache_active.affects_cost_projection`` is
+    cost-bearing; ready/opportunity are prioritization fields.
 
     **per_call[].did_not_execute_in_trace** (boolean): True when the IR
     declares the LLM node but the loaded trace did not record an execution
@@ -578,6 +585,18 @@ async def analyze_cache(
     paths) classifies as ``"complete"`` regardless of unexecuted rows;
     those rows surface in ``trace_unexecuted_llm_rows`` for header
     annotation but don't trigger suppression.
+
+    **summary.trace_workflow_relationship** (string|null): typed trace
+    staleness signal: ``null`` when no trace loaded, else ``"same_fresh"``,
+    ``"same_drifted"``, ``"parent_redirect"``, or ``"different_workflow"``.
+    **summary.trace_model_drift_count** (integer): number of per-node model
+    differences detected between the loaded trace and current workflow IR.
+    **summary.stale_memo_skipped_count** and
+    **summary.stale_memo_uncheckable_count** (integers): local memo rows
+    skipped as stale via cache-key mismatch, or consumed when freshness could
+    not be verified. ``pflow analyze-cache --list-traces`` is CLI-only in
+    this bundle; MCP callers receive these summary fields from normal
+    analysis output.
 
     **summary.actual_vs_no_cache_delta.unavailable_reason** (string when
     ``kind=="unavailable"``): ``"no_trace"`` (trace_coverage is ``"none"``)
