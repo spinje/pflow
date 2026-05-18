@@ -97,8 +97,15 @@ def _handle_workflow_success(
     print_flag = ctx.obj.get("print_flag", False)
     workflow_metadata = ctx.obj.get("workflow_metadata")
     status = getattr(result, "status", None)
+    # Include INFO advisories alongside WARNING so catalog-backed INFO
+    # diagnostics like `cache.routed-provider-degraded` reach the agent-
+    # facing CLI surface. Severity is still used by the renderer to choose
+    # an icon (see `diagnostic_render.py`). Matches the precedent at the
+    # validate/dry-run rendering site below (~line 365) and visualize.py.
     result_warnings = [
-        diagnostic for diagnostic in getattr(result, "diagnostics", []) if diagnostic.severity == Severity.WARNING
+        diagnostic
+        for diagnostic in getattr(result, "diagnostics", [])
+        if diagnostic.severity in {Severity.WARNING, Severity.INFO}
     ]
 
     # Writes data to stdout, summary/advice to stderr; rationale in docstring.

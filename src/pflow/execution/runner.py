@@ -285,8 +285,14 @@ class WorkflowRunner:
 
         trace_collector = shared_store.get("__trace_collector__", trace_collector)
         if trace_collector:
+            # Include INFO advisories alongside WARNING — INFO diagnostics surface
+            # in reports per the severity-aware status contract (see
+            # `_is_degrading_warning`). Filtering INFO out here would make
+            # advisories like `cache.routed-provider-degraded` invisible on the
+            # trace surface even though they're in `result.diagnostics`. Matches
+            # the precedent at `cli/commands/run.py:365` and `visualize.py:84`.
             trace_collector.set_warnings([
-                diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
+                diagnostic for diagnostic in diagnostics if diagnostic.severity in {Severity.WARNING, Severity.INFO}
             ])
 
         return ExecutionResult(
@@ -751,8 +757,10 @@ class WorkflowRunner:
         ])
 
         if trace_collector:
+            # Include INFO advisories alongside WARNING — see parallel site at
+            # the success path (around line 290) for rationale.
             trace_collector.set_warnings([
-                diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
+                diagnostic for diagnostic in diagnostics if diagnostic.severity in {Severity.WARNING, Severity.INFO}
             ])
 
         return ExecutionResult(
