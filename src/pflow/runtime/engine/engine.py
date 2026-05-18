@@ -568,12 +568,12 @@ class WorkflowEngine:
             # 9. Execute: batch or single
             if config.batch_config:
                 action = execute_batch(node, config, shared, self._execute_single_node)
-                # Drain accumulated per-item trace events here, not in execute_batch
-                # itself. The shared store is the recovery channel — if execute_batch
-                # had raised (fail_fast all-failed), the except handler below drains
-                # the same buffer and the completed-before-failure events survive
-                # into the trace.
-                batch_trace_items = _collect_batch_trace(shared, config.node_id)
+                # NOTE: per-item batch trace events stay in ``shared["_batch_trace"]``
+                # until the single drain right before ``record_trace`` below. Draining
+                # here would lose the items if any later step (write_memo_cache,
+                # detect_api_warning, metrics) raised — the except handler's drain
+                # would then pop an already-empty buffer. Symmetry with the except
+                # path is the whole point of Bundle 8's shared-store recovery channel.
             else:
                 # Set resolved params on node and execute
                 if resolved_params is not None:
@@ -594,6 +594,12 @@ class WorkflowEngine:
             # 10. API warning detection
             warning = detect_api_warning(config.node_id, shared)
             if warning:
+                # Drain the per-item buffer even though ``handle_api_warning``
+                # discards batch items today (pre-existing, see W2 in PR #405
+                # review). The drain prevents the accumulator from leaking into
+                # shared state for the rest of the workflow run.
+                if config.batch_config:
+                    _collect_batch_trace(shared, config.node_id)
                 return handle_api_warning(
                     config.node_id,
                     shared,
@@ -639,7 +645,13 @@ class WorkflowEngine:
                 if isinstance(node_data_snapshot, dict):
                     trace_error = node_data_snapshot.get("error")
 
-            # 16. Trace — node returning "error" action is a failure even without exception
+            # 16. Trace — node returning "error" action is a failure even without exception.
+            # Single drain site for batch trace events: collects from the shared
+            # store accumulator just before record_trace consumes them. The
+            # except handler below has a symmetric drain so completed-before-
+            # failure events survive into the trace identically.
+            if config.batch_config:
+                batch_trace_items = _collect_batch_trace(shared, config.node_id)
             record_trace(
                 config.node_id,
                 config.node_type_name,

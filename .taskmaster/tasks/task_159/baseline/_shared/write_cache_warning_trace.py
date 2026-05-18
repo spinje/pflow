@@ -168,7 +168,12 @@ def main(argv: list[str]) -> int:
     if mode not in builders:
         print(f"unknown mode: {mode}", file=sys.stderr)
         return 2
-    Path(output_path).write_text(json.dumps(builders[mode](workflow_path), indent=2), encoding="utf-8")
+    # Trailing newline matches what pre-commit's pretty-format-json +
+    # end-of-file-fixer produce on the committed trace.json files. Without
+    # it, every verify.sh run strips the newline and `git status` shows
+    # drift on these 4 cases. Symmetric with run-case.sh's
+    # `_write_with_newline` helper used for expected-stdout/stderr.
+    Path(output_path).write_text(json.dumps(builders[mode](workflow_path), indent=2) + "\n", encoding="utf-8")
     return 0
 
 

@@ -4139,6 +4139,105 @@ def test_discrepancy_fires_for_key_mismatch_when_prediction_available(
     assert diag.context["actual_cache_key"] == "actual-key"
 
 
+def test_discrepancy_silent_when_prediction_skipped_sentinel_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C1 regression: the ``_PREDICTION_SKIPPED`` sentinel means prediction was
+    attempted but intentionally skipped (sub-workflow placeholder taint,
+    missing required params). It is NOT a real cache_key.
+
+    Two pre-fix failure modes the gate now closes:
+
+    1. ``actual_key`` is a real hash AND ``predicted_key == sentinel`` →
+       ``predicted_key != actual_key`` evaluates True at the discrepancy gate
+       → a spurious ``key_mismatch`` diagnostic emitted, with the internal
+       sentinel string surfacing in ``predicted_cache_key`` context. Agents
+       acted on the wrong root cause AND saw a pflow-internal symbol.
+
+    2. ``chunks_skipped`` truthy AND ``predicted_key == sentinel`` → the
+       observable-only branch fires, emitting ``cache.discrepancy`` with the
+       sentinel as ``predicted_cache_key``. The chunk_skipped attribution is
+       still correct, but the predicted_cache_key context leaked the internal
+       symbol.
+
+    After the fix, ``_predicted_key_for_event`` returns ``None`` for the
+    sentinel — case 1 falls into the existing "no prediction" branch and
+    emits nothing; case 2 still emits a chunk_skipped diagnostic but with
+    ``predicted_cache_key=None`` (no sentinel leak).
+
+    Mutation contract: revert the filter in ``_predicted_key_for_event`` and
+    the first ``assert no diag`` fails (spurious key_mismatch emitted) AND
+    the chunk_skipped assert finds ``"__PREDICTION_SKIPPED__"`` in the
+    context.
+    """
+    from pflow.core.cache_analysis.context import _PREDICTION_SKIPPED
+
+    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    monkeypatch.setattr(
+        analyze_module,
+        "_predict_cache_keys",
+        lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): _PREDICTION_SKIPPED}, []),
+    )
+
+    # Case 1: real actual_key, sentinel prediction, no chunks_skipped.
+    # Pre-fix this fired spurious key_mismatch. Post-fix: silent.
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_key": "actual-key",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 10,
+                    "cache_chunks_skipped": [],
+                },
+            }
+        ],
+    )
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    assert not any(d.id == "cache.discrepancy" for d in result.warnings), (
+        f"unexpected cache.discrepancy when prediction was skipped: "
+        f"{[(d.id, d.context) for d in result.warnings if d.id == 'cache.discrepancy']!r}"
+    )
+    # The sentinel string must not surface in ANY diagnostic context.
+    for diag in result.warnings:
+        ctx = diag.context or {}
+        for value in ctx.values():
+            assert _PREDICTION_SKIPPED not in str(value), f"internal sentinel leaked into {diag.id} context: {ctx!r}"
+
+    # Case 2: chunks_skipped truthy, sentinel prediction. Diagnostic still
+    # emits (chunk_skipped is observable evidence) but predicted_cache_key
+    # must be None, not the sentinel. Overwrites the case 1 trace file.
+    trace_path = _write_trace(
+        tmp_path,
+        [
+            {
+                "node_id": "gen",
+                "llm_call": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "cache_key": "actual-key",
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 0,
+                    "cache_age_sec": 10,
+                    "cache_chunks_skipped": ["concept"],
+                },
+            }
+        ],
+    )
+    result = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
+    diag = next((d for d in result.warnings if d.id == "cache.discrepancy"), None)
+    assert diag is not None, "chunk_skipped observable evidence should still emit"
+    assert diag.context is not None
+    assert diag.context["root_cause"] == "chunk_skipped"
+    assert diag.context.get("predicted_cache_key") is None, (
+        f"predicted_cache_key must not carry the sentinel; got {diag.context.get('predicted_cache_key')!r}"
+    )
+
+
 def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affected_workflow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

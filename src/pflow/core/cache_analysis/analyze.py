@@ -7962,10 +7962,19 @@ def _predicted_key_for_event(
     """Return predicted key for a (workflow_path, node_id) pair.
 
     ``_predict_cache_keys`` emits tuple keys exclusively. The lookup
-    here is direct — no fallback, no implicit re-keying. If the key is missing
-    we have no prediction for that event.
+    here is direct — no fallback, no implicit re-keying.
+
+    Returns ``None`` for both a missing entry AND the ``_PREDICTION_SKIPPED``
+    sentinel (prediction was attempted but intentionally skipped — sub-workflow
+    placeholder taint, missing required params). The discrepancy stage treats
+    both as "no prediction available" so the catalog ID never carries the
+    internal sentinel string in ``predicted_cache_key`` and never fabricates a
+    ``key_mismatch`` attribution against a non-prediction.
     """
-    return predicted_keys.get((workflow_path, node_id))
+    predicted = predicted_keys.get((workflow_path, node_id))
+    if predicted is None or predicted == _PREDICTION_SKIPPED:
+        return None
+    return predicted
 
 
 def _attribute_root_cause(*, chunks_skipped: Any) -> tuple[str, str, str, dict[str, Any]]:

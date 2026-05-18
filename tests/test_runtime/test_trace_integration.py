@@ -389,6 +389,83 @@ class TestFailedBatchItemsInTrace:
         )
         assert before_failure_events[0].get("success") is True
 
+    def test_succeeded_batch_persists_items_when_post_exec_step_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """W1 regression: a successful ``execute_batch`` followed by an
+        exception in a later step (e.g. ``write_memo_cache``) must still
+        preserve batch trace items in the trace.
+
+        Pre-fix shape: ``engine._execute_node`` drained the per-item buffer
+        immediately after ``execute_batch`` returned (line 576). If anything
+        between that drain and ``record_trace`` raised — memo cache SQLite
+        IO, ``detect_api_warning``, metrics — the except handler's drain
+        popped an already-empty buffer and ``record_trace`` got
+        ``batch_trace_items=[]``. Items silently lost.
+
+        Post-fix: the drain happens at exactly one site per branch (right
+        before ``record_trace``). The buffer sits in the shared store until
+        the consumer reads it on whichever branch wins.
+
+        Mutation contract: revert the W1 fix (drain immediately after
+        ``execute_batch`` returns) and this test fails — batch_items would
+        be ``[]`` on the except path.
+        """
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine, instrumentation
+
+        # Make ``write_memo_cache`` raise — this is a step between the
+        # successful ``execute_batch`` call and ``record_trace`` in the engine.
+        call_count = {"n": 0}
+
+        def _failing_write_memo_cache(*_args: Any, **_kwargs: Any) -> None:
+            call_count["n"] += 1
+            raise RuntimeError("simulated SQLite IO error mid-execute_node")
+
+        monkeypatch.setattr(instrumentation, "write_memo_cache", _failing_write_memo_cache)
+        # The engine imports write_memo_cache via "from .instrumentation import ..."
+        # so we need to patch it at the import site too.
+        from pflow.runtime.engine import engine as engine_module
+
+        monkeypatch.setattr(engine_module, "write_memo_cache", _failing_write_memo_cache)
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch-node",
+                    "type": "shell",
+                    "params": {"command": "echo ok-${item}"},
+                    "batch": {"items": "${data}", "as": "item"},
+                },
+            ],
+            "edges": [],
+        }
+        collector = WorkflowTraceCollector("post-exec-raise-test")
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry, initial_params={})
+        shared: dict[str, Any] = {
+            "__trace_collector__": collector,
+            "data": ["one", "two"],
+        }
+        shared.update(workflow.resolved_defaults)
+        engine = WorkflowEngine(trace_collector=collector)
+
+        with pytest.raises(RuntimeError, match="simulated SQLite IO error"):
+            engine.run(workflow, shared)
+
+        assert call_count["n"] >= 1, "write_memo_cache must have been called"
+        assert len(collector.events) == 1
+        event = collector.events[0]
+        assert event["node_id"] == "batch-node"
+        batch_items = event.get("batch_items") or []
+        assert len(batch_items) == 2, (
+            f"both completed batch items must persist to the trace even when "
+            f"a post-exec step raised; got: {batch_items!r}"
+        )
+
 
 class TestSubWorkflowTraceTree:
     """Verify sub-workflow internal nodes appear as sub_workflow_events.
