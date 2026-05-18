@@ -1055,6 +1055,79 @@ class TestAppendOutputsCliMcpParity:
         # The repr fallback is exercised (either "nan" or "NaN" visible somewhere)
         assert "nan" in text.lower()
 
+    def test_cli_mcp_parity_dotted_output_key(self):
+        """PARITY: CLI text mode and MCP text mode emit identical resolved values
+        for a dotted ``-o`` path against the same shared store.
+
+        Locks the §4.7 fix in ``_collect_outputs`` against drift — both surfaces
+        share that function, so a regression that re-introduces flat-only lookup
+        would silently break both at once.
+        """
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {
+            "batch-llm": {
+                "results": [{"r": "a"}],
+                "count": 1,
+                "success_count": 1,
+                "error_count": 0,
+                "errors": None,
+                "batch_metadata": {"timing": {"total_items_ms": 1400.0}},
+            }
+        }
+        outputs = _collect_outputs(shared, workflow_ir={}, output_key="batch-llm.success_count")
+        assert outputs == {"batch-llm.success_count": 1}
+
+        result_dict = {
+            "success": True,
+            "status": "success",
+            "duration_ms": 100,
+            "execution": {"nodes_executed": 1, "steps": []},
+            "result": outputs,
+        }
+        text = format_success_as_text(result_dict)
+        assert "\n1" in text or text.endswith("1")
+
+
+class TestCollectOutputsDottedPath:
+    """JSON-mode dotted ``-o`` resolution in ``_collect_outputs``.
+
+    Drives the same shared helper that backs both CLI ``--output-format json``
+    and MCP ``execute_workflow`` text/JSON output. Symmetric to the CLI text-
+    mode ``TestOutputKeyDottedPath`` in ``test_workflow_output_handling.py``.
+    """
+
+    def test_resolves_dotted_output_key(self):
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {"batch-llm": {"success_count": 2, "count": 2, "errors": None}}
+        result = _collect_outputs(shared, workflow_ir={}, output_key="batch-llm.success_count")
+        assert result == {"batch-llm.success_count": 2}
+
+    def test_resolved_none_emits_null(self):
+        """``-o batch.errors`` on a successful batch preserves the ``None`` value
+        in the JSON outputs dict — distinct from "key missing"."""
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {"batch-llm": {"errors": None, "success_count": 1, "count": 1}}
+        result = _collect_outputs(shared, workflow_ir={}, output_key="batch-llm.errors")
+        assert result == {"batch-llm.errors": None}
+
+    def test_missing_key_returns_empty(self):
+        """JSON-mode silently omits a missed key — no human-prose hint."""
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {"batch-llm": {"success_count": 2}}
+        result = _collect_outputs(shared, workflow_ir={}, output_key="nonexistent.foo")
+        assert result == {}
+
+    def test_list_index_path(self):
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {"batch-llm": {"results": [{"r": "alpha"}, {"r": "beta"}]}}
+        result = _collect_outputs(shared, workflow_ir={}, output_key="batch-llm.results[1].r")
+        assert result == {"batch-llm.results[1].r": "beta"}
+
 
 class TestStderrWarningsCliMcpParity:
     """Tests for ``format_stderr_warnings`` shared helper + MCP rendering parity.

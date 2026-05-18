@@ -101,7 +101,8 @@ def _handle_workflow_success(
         diagnostic for diagnostic in getattr(result, "diagnostics", []) if diagnostic.severity == Severity.WARNING
     ]
 
-    output_produced = _handle_workflow_output(
+    # Writes data to stdout, summary/advice to stderr; rationale in docstring.
+    _handle_workflow_output(
         shared_storage,
         output_key,
         ir_data,
@@ -114,18 +115,6 @@ def _handle_workflow_success(
         status=status,
         warnings=result_warnings,
     )
-
-    if not output_produced:
-        if status and hasattr(status, "value"):
-            status_str = status.value
-            if status_str == "degraded":
-                click.echo("⚠️ Workflow completed with warnings")
-            elif status_str == "failed":
-                click.echo("❌ Workflow execution failed")
-            else:
-                click.echo("Workflow executed successfully")
-        else:
-            click.echo("Workflow executed successfully")
 
 
 def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> None:
