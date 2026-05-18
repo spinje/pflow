@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import click
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.runtime.template_resolver import TemplateResolver
 
 
 def safe_output(value: Any) -> bool:
@@ -146,15 +148,21 @@ def _handle_text_output(
     # Now show the actual output
     output_found = False
 
-    # User-specified key takes priority
+    # User-specified key takes priority. Supports dotted paths (e.g.
+    # ``batch-llm.success_count``, ``items[0].title``) by delegating to
+    # ``TemplateResolver``, which is the same primitive used by ``${...}``
+    # templates inside workflow files and by ``pflow read-fields``.
     if output_key:
-        if output_key in shared_storage:
-            _output_with_header(shared_storage[output_key], print_flag)
+        if TemplateResolver.variable_exists(output_key, shared_storage):
+            value = TemplateResolver.resolve_value(output_key, shared_storage)
+            _output_with_header(value, print_flag)
             output_found = True
-        else:
-            # Suppress warnings in -p mode
-            if not print_flag:
-                click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
+        elif not print_flag:
+            hint = _diagnose_path_failure(shared_storage, output_key)
+            click.echo(
+                f"cli: Warning - output key '{output_key}' not found. {hint}",
+                err=True,
+            )
 
     # --only targets are explicit data-routing requests. Declared workflow
     # outputs describe full runs, so they must not shadow the targeted node.
@@ -192,13 +200,27 @@ def _emit_only_output(shared_storage: dict[str, Any], print_flag: bool) -> bool:
             # action is actionable — without enumeration the agent must either
             # introspect the trace or guess key names.
             available = _list_routable_keys_for_only_target(shared_storage)
-            keys_hint = f" Available shared-store keys: {', '.join(available)}." if available else ""
+            keys_hint = f" Available keys: {', '.join(available)}." if available else ""
             click.echo(
                 f"cli: --only target '{only_node}' produced no output. "
-                f"Pass -o <key> to select a specific shared-store key.{keys_hint}",
+                f"Pass -o <key> to select a specific output.{keys_hint}",
                 err=True,
             )
         return False
+
+    # Batch nodes write a {results, count, success_count, error_count, errors,
+    # batch_metadata} aggregate to shared[node_id]. Dumping that whole dict
+    # consumes tens of KB of agent context; replace with a 2-line summary that
+    # surfaces success ratio + the explicit ``-o`` paths to drill in.
+    # Detection is shape-only (``"batch_metadata" in value``) — the canonical
+    # marker used by execution_state and instrumentation for batch detection.
+    # The label uses ``key_found`` (the actual shared-store key holding the
+    # aggregate, e.g. ``sub-wf``) rather than ``only_node`` (which may be a
+    # dotted target like ``sub-wf.inner``) so the hint ``-o <key>.results``
+    # points at a path that actually resolves.
+    if isinstance(value, dict) and "batch_metadata" in value:
+        _render_batch_compact_summary(key_found, value, print_flag)
+        return True
 
     if not print_flag:
         click.echo(
@@ -221,6 +243,141 @@ def _list_routable_keys_for_only_target(shared_storage: dict[str, Any]) -> list[
     absence.
     """
     return sorted(k for k in shared_storage if isinstance(k, str) and not k.startswith("_"))
+
+
+_PATH_SEGMENT_PATTERN = re.compile(r"[a-zA-Z_][\w-]*|\[\d+\]")
+
+
+def _diagnose_path_failure(shared_storage: dict[str, Any], key: str) -> str:
+    """Walk a failing ``-o`` path; return a hint describing the deepest valid prefix.
+
+    Called when ``TemplateResolver.variable_exists(key, shared_storage)`` has
+    returned False. Walks segment-by-segment from the root, keeping track of
+    the deepest prefix that resolves, then describes what's there so the
+    agent can pick a valid next path.
+
+    The token regex matches either a dotted name segment (``[a-zA-Z_][\\w-]*``)
+    or a bracketed index (``[\\d+]``) — the same token classes
+    ``TemplateResolver.resolve_value`` accepts. Any other character in ``key``
+    is silently ignored by ``re.findall``, which would produce a misleading
+    hint about a path the agent didn't type. Defend against that by
+    reconstructing the path from matched tokens and bailing out with a
+    generic syntax hint when the reconstruction doesn't equal the input.
+    """
+    segments = _PATH_SEGMENT_PATTERN.findall(key)
+    if not segments:
+        return _describe_at("", shared_storage)
+
+    reconstructed = ""
+    for seg in segments:
+        if seg.startswith("["):
+            reconstructed += seg
+        elif reconstructed:
+            reconstructed += "." + seg
+        else:
+            reconstructed = seg
+    if reconstructed != key:
+        return (
+            f"'{key}' contains characters that aren't valid in a path. "
+            f"Use `<name>`, `<name>.<sub>`, or `<name>[N]` syntax."
+        )
+
+    valid_prefix = ""
+    parent: Any = shared_storage
+    for seg in segments:
+        if seg.startswith("["):
+            trial = valid_prefix + seg
+        elif valid_prefix:
+            trial = valid_prefix + "." + seg
+        else:
+            trial = seg
+        if TemplateResolver.variable_exists(trial, shared_storage):
+            valid_prefix = trial
+            parent = TemplateResolver.resolve_value(trial, shared_storage)
+        else:
+            return _describe_at(valid_prefix, parent)
+    return _describe_at(valid_prefix, parent)
+
+
+def _describe_at(prefix: str, parent: Any) -> str:
+    """Describe what's at ``parent`` (the deepest-valid path); used for ``-o`` miss hints."""
+    if isinstance(parent, dict):
+        keys = sorted(k for k in parent if isinstance(k, str) and not k.startswith("_"))
+        if not keys:
+            return f"'{prefix}' has no subkeys." if prefix else "No top-level keys available."
+        if prefix:
+            return f"Available subkeys of '{prefix}': {', '.join(keys)}."
+        return f"Available top-level keys: {', '.join(keys)}."
+    if isinstance(parent, list):
+        n = len(parent)
+        if n == 0:
+            return f"'{prefix}' is an empty list."
+        if n == 1:
+            return f"'{prefix}' is a list of length 1. Valid index: 0."
+        return f"'{prefix}' is a list of length {n}. Valid indices: 0 to {n - 1}."
+    value_repr = _short_repr(parent)
+    return (
+        f"'{prefix}' is a {_friendly_type(parent)} (value: {value_repr}), "
+        f"cannot descend. Drop the trailing segments to read it."
+    )
+
+
+def _friendly_type(value: Any) -> str:
+    """Map Python types to agent-friendly names for error messages."""
+    if value is None:
+        return "null value"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return type(value).__name__
+
+
+def _short_repr(value: Any, max_len: int = 60) -> str:
+    """Render a short, agent-readable value preview for scalar dead-end messages."""
+    rendered = repr(value)
+    if len(rendered) > max_len:
+        return rendered[: max_len - 1] + "…"
+    return rendered
+
+
+def _render_batch_compact_summary(node_id: str, value: dict[str, Any], print_flag: bool) -> None:
+    """Emit a compact summary for ``--only <batch-node>`` instead of the full batch dict.
+
+    Replaces dumping the full ``{results, count, success_count, error_count,
+    errors, batch_metadata}`` aggregate, which can run tens of KB on a real
+    batch. The summary surfaces success ratio + the explicit ``-o`` paths to
+    drill into the parts the agent actually needs.
+
+    The errors hint is appended only when ``error_count > 0`` because batch
+    nodes write ``errors: None`` (not ``[]``) when no items failed (see
+    ``src/pflow/runtime/engine/batch_executor.py``).
+
+    Under ``-p`` (print mode) the hint line is suppressed — the contract for
+    ``-p`` is clean stdout for pipes; the data line stays, the discoverability
+    hint would be noise in a pipeline.
+    """
+    count = value.get("count", 0)
+    success_count = value.get("success_count", 0)
+    error_count = value.get("error_count", 0)
+
+    if count == 0:
+        safe_output(f"batch {node_id}: ran with no items")
+        return
+
+    timing = (value.get("batch_metadata") or {}).get("timing") or {}
+    total_ms = timing.get("total_items_ms")
+    duration = f" in {total_ms / 1000:.1f}s" if isinstance(total_ms, (int, float)) else ""
+
+    safe_output(f"batch {node_id}: {success_count}/{count} items succeeded{duration}")
+    if print_flag:
+        return
+    hint = f"use `-o {node_id}.results` for full payload"
+    if error_count > 0:
+        hint += f", `-o {node_id}.errors` for failures"
+    safe_output(f"  {hint}")
 
 
 def _emit_auto_detected_output(

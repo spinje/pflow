@@ -8,6 +8,7 @@ and various edge cases.
 import json
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import click.testing
@@ -16,6 +17,50 @@ import pytest
 from pflow.cli.main import main
 from pflow.core.node import BaseNode
 from tests.shared.markdown_utils import ir_to_markdown
+
+
+def make_batch_shape(
+    *,
+    results: list[dict[str, Any]] | None = None,
+    errors: list[dict[str, Any]] | None = None,
+    total_items_ms: float | None = 1400.23,
+    parallel: bool = True,
+) -> dict[str, Any]:
+    """Build a realistic batch-aggregate dict matching ``_aggregate_batch_results``.
+
+    Source of truth: ``src/pflow/runtime/engine/batch_executor.py``. Tests that
+    use this helper stay in sync as the schema evolves — single update point.
+    """
+    results = results or []
+    error_list = errors or []
+    count = len(results) + len(error_list)
+    success_count = len(results)
+    error_count = len(error_list)
+    timing: dict[str, float] | None
+    if total_items_ms is not None and count > 0:
+        timing = {
+            "total_items_ms": total_items_ms,
+            "avg_item_ms": total_items_ms / count,
+            "min_item_ms": total_items_ms,
+            "max_item_ms": total_items_ms,
+        }
+    else:
+        timing = None
+    return {
+        "results": results,
+        "count": count,
+        "success_count": success_count,
+        "error_count": error_count,
+        "errors": error_list if error_list else None,
+        "batch_metadata": {
+            "parallel": parallel,
+            "max_concurrent": 10 if parallel else None,
+            "max_retries": 3,
+            "retry_wait": None,
+            "execution_mode": "parallel" if parallel else "sequential",
+            "timing": timing,
+        },
+    }
 
 
 class MockOutputNode(BaseNode):
@@ -335,8 +380,11 @@ class TestWorkflowOutputHandling:
             # Should warn about the missing declared output (warning → stderr)
             assert "expected_output" in result.stderr
             assert "but none could be resolved" in result.stderr
-            # Should show success message since no output was produced (success → stdout)
-            assert "Workflow executed successfully" in result.output
+            # Stdout stays empty when no output is produced. The stderr
+            # summary signals success; stdout is reserved for data so pipe
+            # consumers receive a clean stream.
+            assert result.output == ""
+            assert "Workflow executed successfully" not in result.output
         finally:
             Path(workflow_file).unlink()
 
@@ -770,8 +818,11 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
-            # Should show success message when no output is produced
-            assert "Workflow executed successfully" in result.output
+            # Stdout stays empty when no output is produced (auto-detect
+            # filtered the ``_``-prefixed internal key). The stderr summary
+            # signals success; stdout is reserved for data so pipe consumers
+            # receive a clean stream.
+            assert result.output == ""
             # Should not show the internal value
             assert "Internal value" not in result.output
         finally:
@@ -801,9 +852,14 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             # Should warn about missing key (warning → stderr)
-            assert "Warning - output key 'nonexistent_key' not found in shared store" in result.stderr
-            # Should still show success message (success → stdout)
-            assert "Workflow executed successfully" in result.output
+            assert "Warning - output key 'nonexistent_key' not found." in result.stderr
+            assert "Available top-level keys:" in result.stderr
+            assert "shared store" not in result.stderr
+            # Stdout stays empty on ``-o`` miss. The stderr summary signals
+            # success; pipe consumers (``pflow ... -o nonexistent | jq .``)
+            # receive a clean stream rather than the literal English fallback.
+            assert result.output == ""
+            assert "Workflow executed successfully" not in result.output
         finally:
             Path(workflow_file).unlink()
 
@@ -1383,3 +1439,427 @@ class TestWorkflowOutputHandling:
             assert "missing" not in actual_result
         finally:
             Path(workflow_file).unlink()
+
+
+class TestOutputKeyDottedPath:
+    """Direct tests of ``_handle_text_output`` for dotted ``-o`` resolution.
+
+    These call the function directly (capsys-based) instead of going through
+    the CLI runner — fast, deterministic, and bypasses the
+    ``_emit_summary_or_only_indicator`` early-return on ``metrics_collector=None``.
+    """
+
+    def test_output_key_dotted_path_resolves_nested_value(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"result": "a"}, {"result": "b"}])}
+        _handle_text_output(shared, output_key="batch-llm.success_count", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "2"
+        assert "Warning" not in captured.err
+
+    def test_output_key_dotted_path_resolves_list_index(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"result": "alpha"}, {"result": "beta"}])}
+        _handle_text_output(shared, output_key="batch-llm.results[0].result", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "alpha"
+
+    def test_output_key_dotted_path_returns_null_for_none_value(self, capsys):
+        """``-o node.errors`` on a successful batch emits JSON ``null``, NOT a warning.
+
+        Pins the ``variable_exists`` + ``resolve_value`` design — a future
+        refactor that uses just ``resolve_value`` and checks for None would fail
+        this test.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"result": "ok"}])}
+        assert shared["batch-llm"]["errors"] is None
+        _handle_text_output(shared, output_key="batch-llm.errors", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "null"
+        assert "Warning" not in captured.err
+        assert "not found" not in captured.err
+
+    def test_output_key_flat_hyphenated_key_unchanged(self, capsys):
+        """``-o batch-llm`` (flat lookup, hyphenated key) returns the full batch dict."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"result": "x"}])}
+        _handle_text_output(shared, output_key="batch-llm", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        out = captured.out
+        assert '"success_count": 1' in out
+        assert '"count": 1' in out
+        assert "Warning" not in captured.err
+
+    def test_output_key_dotted_path_crosses_sub_workflow_namespace(self, capsys):
+        """``-o sub-wf.batch-llm.success_count`` traverses a sub-workflow namespace."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "sub-wf": {
+                "batch-llm": make_batch_shape(results=[{"r": 1}, {"r": 2}, {"r": 3}]),
+            },
+        }
+        _handle_text_output(shared, output_key="sub-wf.batch-llm.success_count", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "3"
+
+
+class TestOutputKeyMissHints:
+    """Walk-to-failure hint generation for missing ``-o`` paths."""
+
+    def test_output_key_miss_lists_top_level_keys(self, capsys):
+        """Flat miss lists top-level keys, drops 'shared store' vocabulary."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}]), "result": "hi"}
+        _handle_text_output(shared, output_key="nonexistent", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "Warning - output key 'nonexistent' not found." in captured.err
+        assert "Available top-level keys: batch-llm, result." in captured.err
+        assert "shared store" not in captured.err
+
+    def test_output_key_miss_lists_subkeys_at_failure_point(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}])}
+        _handle_text_output(shared, output_key="batch-llm.missing", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        expected_keys = "batch_metadata, count, error_count, errors, results, success_count"
+        assert f"Available subkeys of 'batch-llm': {expected_keys}." in captured.err
+
+    def test_output_key_miss_describes_list_bounds(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{}, {}])}
+        _handle_text_output(shared, output_key="batch-llm.results[99]", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'batch-llm.results' is a list of length 2. Valid indices: 0 to 1." in captured.err
+
+    def test_output_key_miss_describes_list_length_one(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}])}
+        _handle_text_output(shared, output_key="batch-llm.results[99]", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'batch-llm.results' is a list of length 1. Valid index: 0." in captured.err
+
+    def test_output_key_miss_describes_empty_list(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"data": {"items": []}}
+        _handle_text_output(shared, output_key="data.items[0]", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'data.items' is an empty list." in captured.err
+
+    def test_output_key_miss_describes_scalar_dead_end_with_value(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}, {"r": 2}])}
+        _handle_text_output(shared, output_key="batch-llm.success_count.foo", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'batch-llm.success_count' is a number (value: 2), cannot descend." in captured.err
+
+    def test_output_key_miss_describes_string_dead_end(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"node": {"text": "hello world"}}
+        _handle_text_output(shared, output_key="node.text.foo", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'node.text' is a string (value: 'hello world'), cannot descend." in captured.err
+
+    def test_output_key_miss_describes_null_dead_end(self, capsys):
+        """None mid-path uses 'null value' type label (likely real-world hit:
+        ``node.errors.field`` where ``errors`` is None on a successful batch).
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}])}
+        _handle_text_output(shared, output_key="batch-llm.errors.first", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'batch-llm.errors' is a null value (value: None), cannot descend." in captured.err
+
+    def test_output_key_miss_describes_boolean_dead_end(self, capsys):
+        """Boolean uses its own label, not 'number' (bool subclasses int)."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"node": {"done": True}}
+        _handle_text_output(shared, output_key="node.done.foo", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'node.done' is a boolean (value: True), cannot descend." in captured.err
+
+    def test_output_key_miss_dict_with_only_internal_keys(self, capsys):
+        """Dict containing only underscore-prefixed keys reports as having no subkeys."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"data": {"_internal": "secret", "__hidden__": 1}}
+        _handle_text_output(shared, output_key="data.missing", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "'data' has no subkeys." in captured.err
+        assert "_internal" not in captured.err
+        assert "__hidden__" not in captured.err
+
+    def test_output_key_miss_suppressed_under_print_mode(self, capsys):
+        """``-p`` suppresses the warning and hint entirely."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}])}
+        _handle_text_output(
+            shared,
+            output_key="batch-llm.missing",
+            workflow_ir=None,
+            verbose=False,
+            print_flag=True,
+        )
+        captured = capsys.readouterr()
+        assert "Warning" not in captured.err
+        assert "Available" not in captured.err
+
+    def test_output_key_miss_invalid_path_syntax(self, capsys):
+        """Invalid characters yield a generic syntax hint, not a misleading miss."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}])}
+        _handle_text_output(shared, output_key="batch-llm$.count", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "contains characters that aren't valid in a path" in captured.err
+        assert "Use `<name>`, `<name>.<sub>`, or `<name>[N]` syntax." in captured.err
+
+    def test_output_key_miss_inside_list_element_lists_element_keys(self, capsys):
+        """``-o batch.results[0].typo`` — agent typo'd a field name INSIDE a
+        list element. Walker must advance through three segment kinds
+        (name → bracket-index → name) before reporting the miss, and the hint
+        must surface the actual subkeys of ``results[0]``.
+
+        Realistic "agent fat-fingered a field name on a per-item result"
+        failure mode. Walker logic that handles dotted names but not
+        bracket-index segments as ``valid_prefix`` extensions would
+        false-localize this to ``'batch-llm.results'`` and tell the agent the
+        path is wrong, when really the agent just typo'd a leaf.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"result": "alpha", "tokens": 5}, {"result": "beta"}])}
+        _handle_text_output(shared, output_key="batch-llm.results[0].typo", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        # Hint localizes to results[0] (NOT to results), proving the walker
+        # advanced PAST the bracket-index segment before failing.
+        assert "Available subkeys of 'batch-llm.results[0]': result, tokens." in captured.err, captured.err
+
+    def test_output_key_miss_with_dot_notation_for_list_index_nudges_to_brackets(self, capsys):
+        """``-o batch.results.0.result`` — the documented misuse from issue #400.
+
+        The issue's text itself used dot notation for list indices (``.0``).
+        The plan corrected this to bracket notation (``[0]``) to match
+        ``TemplateResolver``. This test pins the load-bearing UX promise:
+        when an agent makes this dot-notation mistake, the resulting hint
+        must mention the correct ``[N]`` syntax somewhere.
+
+        Two ways this could be delivered:
+        1. Syntax-error hint: bare-digit segments fail the regex
+           reconstruction check, producing the generic "invalid characters"
+           hint that explicitly lists ``<name>[N]`` syntax. (Current path.)
+        2. List-bounds hint: walker descends to ``batch-llm.results``, fails
+           at ``0``, emits "Valid indices: 0 to N".
+
+        Either is acceptable. The contract tested here is the OUTCOME
+        invariant — agent sees ``[N]`` syntax in the hint — not the specific
+        code path that delivers it. A future refactor that switches from
+        path 1 to path 2 (e.g., extending the regex to accept bare digits as
+        a recognized-but-walker-failing segment) would still pass this test
+        as long as the bracket nudge survives.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"result": "alpha"}, {"result": "beta"}, {"result": "gamma"}])}
+        _handle_text_output(
+            shared,
+            output_key="batch-llm.results.0.result",
+            workflow_ir=None,
+            verbose=False,
+        )
+        captured = capsys.readouterr()
+        # The miss is surfaced (not silently ignored).
+        assert "Warning - output key 'batch-llm.results.0.result' not found." in captured.err
+        # Whichever path delivers it, the hint MUST mention bracket syntax —
+        # this is the agent's only on-screen path to discovering the correct
+        # ``[N]`` notation when they typed ``.N``.
+        assert "[N]" in captured.err or "Valid indices:" in captured.err, captured.err
+
+
+class TestOnlyBatchCompactSummary:
+    """``--only <batch-node>`` compact-summary rendering (text mode)."""
+
+    def test_only_batch_node_emits_compact_summary(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "summarize-docs"},
+            "summarize-docs": make_batch_shape(
+                results=[{"result": "alpha"}, {"result": "beta"}],
+                total_items_ms=1400.0,
+            ),
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        lines = captured.out.strip().split("\n")
+        assert lines[0] == "batch summarize-docs: 2/2 items succeeded in 1.4s"
+        assert lines[1] == "  use `-o summarize-docs.results` for full payload"
+        assert "alpha" not in captured.out
+        assert "beta" not in captured.out
+        assert "errors" not in captured.out
+        assert "streaming auto-detected" not in captured.err
+
+    def test_only_batch_node_with_errors_includes_errors_hint(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "batch-llm"},
+            "batch-llm": make_batch_shape(
+                results=[{"result": "ok"}],
+                errors=[{"index": 0, "error": "boom"}],
+                total_items_ms=1400.0,
+            ),
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        lines = captured.out.strip().split("\n")
+        assert lines[0] == "batch batch-llm: 1/2 items succeeded in 1.4s"
+        assert "`-o batch-llm.errors` for failures" in lines[1]
+
+    def test_only_batch_node_no_timing_omits_duration(self, capsys):
+        """``batch_metadata.timing`` is None → no ' in Xs' suffix (not '0.0s')."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "batch-llm"},
+            "batch-llm": make_batch_shape(results=[{"r": 1}], total_items_ms=None),
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert captured.out.split("\n")[0] == "batch batch-llm: 1/1 items succeeded"
+
+    def test_only_batch_node_empty_batch(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "batch-llm"},
+            "batch-llm": make_batch_shape(results=[], total_items_ms=None),
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "batch batch-llm: ran with no items" in captured.out
+        assert "0/0" not in captured.out
+
+    def test_only_batch_node_print_mode_suppresses_hint(self, capsys):
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "batch-llm"},
+            "batch-llm": make_batch_shape(results=[{"r": 1}, {"r": 2}], total_items_ms=1400.0),
+        }
+        _handle_text_output(
+            shared,
+            output_key=None,
+            workflow_ir=None,
+            verbose=False,
+            print_flag=True,
+        )
+        captured = capsys.readouterr()
+        lines = captured.out.strip().split("\n")
+        assert len(lines) == 1
+        assert lines[0] == "batch batch-llm: 2/2 items succeeded in 1.4s"
+
+    def test_only_batch_node_with_explicit_output_key_yields_full_payload(self, capsys):
+        """``--only batch -o batch.results`` opts back into the full list (escape hatch)."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "batch-llm"},
+            "batch-llm": make_batch_shape(results=[{"result": "alpha"}, {"result": "beta"}]),
+        }
+        _handle_text_output(shared, output_key="batch-llm.results", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        out = captured.out
+        assert "alpha" in out
+        assert "beta" in out
+        assert "items succeeded" not in out
+
+    def test_only_dotted_into_batch_subworkflow_namespace(self, capsys):
+        """``--only sub-wf.inner`` where ``shared["sub-wf"]`` IS itself a batch aggregate.
+
+        Case A: the parent invoked the sub-workflow via batch. ``find_only_output``
+        returns ``shared["sub-wf"]`` for any dotted target; if that namespace has
+        ``batch_metadata``, compact summary fires.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "sub-wf.inner"},
+            "sub-wf": make_batch_shape(results=[{"r": 1}, {"r": 2}], total_items_ms=2300.0),
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert "batch sub-wf: 2/2 items succeeded in 2.3s" in captured.out
+
+    def test_only_dotted_namespace_containing_batch_is_unchanged(self, capsys):
+        """Case B: ``shared["sub-wf"]`` is a regular sub-workflow namespace
+        CONTAINING a batch node — ``shared["sub-wf"]["inner-batch"]`` has
+        ``batch_metadata``, but ``shared["sub-wf"]`` itself does NOT.
+
+        Compact summary must NOT fire — ``find_only_output`` returns the parent
+        namespace dict for dotted targets, and our shape detector keys off
+        ``batch_metadata`` at the resolved value's TOP level, not recursively.
+        Regression-guards against a future change that "improves" detection by
+        recursing into namespaces — that would silently break the contract
+        documented in plan §6.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "sub-wf.inner-batch"},
+            "sub-wf": {
+                "inner-batch": make_batch_shape(results=[{"r": 1}, {"r": 2}], total_items_ms=2300.0),
+                "other-node": {"result": "unrelated"},
+            },
+        }
+        _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        # Compact summary must NOT fire (no top-level batch_metadata).
+        assert "items succeeded" not in captured.out
+        # Full namespace payload leaks through instead — verify by inspecting
+        # the raw batch shape that would be hidden if compact summary had fired.
+        assert "batch_metadata" in captured.out
+        assert "inner-batch" in captured.out
+
+
+class TestCollectOutputsOnlyBatchUnchanged:
+    """JSON-mode out-of-scope contract: ``--only batch-node`` (no ``-o``) keeps
+    emitting the full batch aggregate. The compact summary is a text-mode UX;
+    JSON consumers want structured data they parse programmatically.
+
+    Locks the plan §2 out-of-scope decision so a future "let's give JSON the
+    same UX" change doesn't silently break MCP consumers' structured-output
+    expectations.
+    """
+
+    def test_json_mode_only_batch_returns_full_aggregate(self):
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {
+            "__execution__": {"only_node": "batch-llm"},
+            "batch-llm": make_batch_shape(results=[{"r": 1}, {"r": 2}], total_items_ms=1400.0),
+        }
+        outputs = _collect_outputs(shared, workflow_ir={}, output_key=None)
+
+        # Returned under the root key, with full batch shape preserved.
+        assert "batch-llm" in outputs
+        value = outputs["batch-llm"]
+        assert "results" in value
+        assert "batch_metadata" in value
+        assert value["success_count"] == 2
+        assert value["count"] == 2

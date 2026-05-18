@@ -101,7 +101,17 @@ def _handle_workflow_success(
         diagnostic for diagnostic in getattr(result, "diagnostics", []) if diagnostic.severity == Severity.WARNING
     ]
 
-    output_produced = _handle_workflow_output(
+    # ``_handle_workflow_output`` writes to stdout when there's a value to
+    # write and returns a boolean — but we don't act on the boolean. When no
+    # output is produced (``-o`` miss, no declared outputs, no auto-detect
+    # match), stdout stays empty so pipe consumers receive a clean stream;
+    # the stderr summary emitted by ``_emit_summary_or_only_indicator``
+    # already signals success / degraded / failed status. Duplicating that
+    # signal on stdout would mean ``pflow ... -o nonexistent | jq .`` crashed
+    # on the literal English fallback (jq parses ``"Workflow executed
+    # successfully"`` as invalid JSON) — that fallback was the pre-existing
+    # wart this branch removes as part of the GH #400 fix.
+    _handle_workflow_output(
         shared_storage,
         output_key,
         ir_data,
@@ -114,18 +124,6 @@ def _handle_workflow_success(
         status=status,
         warnings=result_warnings,
     )
-
-    if not output_produced:
-        if status and hasattr(status, "value"):
-            status_str = status.value
-            if status_str == "degraded":
-                click.echo("⚠️ Workflow completed with warnings")
-            elif status_str == "failed":
-                click.echo("❌ Workflow execution failed")
-            else:
-                click.echo("Workflow executed successfully")
-        else:
-            click.echo("Workflow executed successfully")
 
 
 def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> None:

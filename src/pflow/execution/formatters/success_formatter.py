@@ -190,9 +190,17 @@ def _collect_outputs(
     result = {}
 
     if output_key:
-        # Specific key requested
-        if output_key in shared_storage:
-            result[output_key] = compact_batch_output_value(parse_json_or_original(shared_storage[output_key]))
+        # Specific key requested. Supports dotted paths (e.g.
+        # ``batch.success_count``, ``items[0].title``) via ``TemplateResolver`` —
+        # the same primitive used by CLI text mode and ``${...}`` templates
+        # inside workflows. ``variable_exists`` distinguishes "path missing"
+        # from "path resolved to None" so a legitimately-None value is
+        # preserved in the JSON output.
+        from pflow.runtime.template_resolver import TemplateResolver
+
+        if TemplateResolver.variable_exists(output_key, shared_storage):
+            resolved: Any = TemplateResolver.resolve_value(output_key, shared_storage)
+            result[output_key] = compact_batch_output_value(parse_json_or_original(resolved))
 
     elif (
         workflow_ir

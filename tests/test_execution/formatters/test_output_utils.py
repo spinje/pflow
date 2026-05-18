@@ -388,8 +388,10 @@ class TestAutoDetectionWarning:
         # ``-o`` candidates from shared storage (covered by
         # ``test_only_no_output_enumerates_available_keys``).
         assert (
-            "cli: --only target 'fetch' produced no output. Pass -o <key> to select a specific shared-store key."
+            "cli: --only target 'fetch' produced no output. Pass -o <key> to select a specific output."
         ) in captured.err
+        assert "shared-store" not in captured.err
+        assert "shared store" not in captured.err
         assert "No outputs declared" not in captured.err
         assert "Declared outputs skipped" not in captured.err
 
@@ -410,8 +412,10 @@ class TestAutoDetectionWarning:
         (leading underscore, including ``__execution__``) are filtered.
 
         Mutation contract: removing the enumeration in
-        ``_emit_only_output``'s no-output branch makes ``Available
-        shared-store keys:`` disappear from the error.
+        ``_emit_only_output``'s no-output branch makes ``Available keys:``
+        disappear from the error. The wording deliberately omits the pflow-
+        internal phrase "shared store" — agent-facing output must read as
+        plain English a non-pflow-developer can understand.
         """
         from pflow.cli.workflow_output import _handle_text_output
 
@@ -429,7 +433,9 @@ class TestAutoDetectionWarning:
         err = captured.err
         # Suggestion + concrete candidates must both appear.
         assert "produced no output" in err, err
-        assert "Available shared-store keys:" in err, err
+        assert "Available keys:" in err, err
+        assert "shared-store" not in err
+        assert "shared store" not in err
         # Routable top-level keys surfaced.
         assert "result" in err
         assert "extract" in err
