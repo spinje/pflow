@@ -1556,3 +1556,40 @@ Docs (1 file):
 This was the last open analyzer-correctness item in the follow-ups-2 sprint. Per the user's directive, **the branch is merge-ready**. Remaining open items in the followups doc are either feature-sized (TTL detection F#5/F#6, replay-from-trace S#8, diff view F#8), polish (F#13/F#14/F#15 wording), or deferred to their own tasks (cross-consumer prompt-file index S#15+S#17+S#20).
 
 S#13 (`-o` keys unclear for `--only` batch nodes) was triaged in parallel during this bundle's investigation and confirmed out of scope for the prompt-cache branch — it belongs to Task 106 (workflow iteration cache) and the general CLI surface. Filed as [#400](https://github.com/spinje/pflow/issues/400) with full repro, current/desired behavior, implementation surface, splitability guidance (PR A discoverability + dotted paths, PR B compact default UX), and acceptance criteria.
+
+## 2026-05-18 — Follow-ups 2 PR opened: #405
+
+Branch is shipped. PR [#405](https://github.com/spinje/pflow/pull/405) opens against `main` with 16 commits (235 files changed, +20,374 / −2,557 lines). Full closeout summary, verification numbers, and reviewer spot-check list live in the PR body — not duplicated here.
+
+### Issue map (created + closed by #405)
+
+Four new thematic tracking issues created during PR prep, all closed by the PR:
+
+- **[#401](https://github.com/spinje/pflow/issues/401)** — Cache analyzer projection model + correctness fixes (cache-ready-opportunity rewrite, per-call unit contract, Bundles 1/3/5/9, three wrong-model sites fixed).
+- **[#402](https://github.com/spinje/pflow/issues/402)** — Runtime cache safety: pre-dispatch defense + provider/memo telemetry split.
+- **[#403](https://github.com/spinje/pflow/issues/403)** — Agent UX hygiene: terminal output, wording, naming, discoverability (Bundles 4/6/7 + batch large-item UX).
+- **[#404](https://github.com/spinje/pflow/issues/404)** — Trace fidelity + cross-workflow attribution structural fixes (Bundle 8).
+
+Existing GH issues also closed by the same PR:
+
+- [#393](https://github.com/spinje/pflow/issues/393) — Runtime pre-check + analyzer-side recommendation symmetry.
+- [#394](https://github.com/spinje/pflow/issues/394) — `PerCallRow.*_tokens_estimated` unit contract to per-call.
+- [#383](https://github.com/spinje/pflow/issues/383) — Cache analyzer: detect prompt-shape opportunities for repeated non-batch LLM nodes.
+- [#385](https://github.com/spinje/pflow/issues/385) — Run-failure error format buries provider message + dumps batch items.
+
+Referenced (left open with cross-reference comments):
+
+- [#369](https://github.com/spinje/pflow/issues/369) — within-batch heterogeneous-model fragmentation; tracked as F#12 in the rewritten followups doc.
+- [#400](https://github.com/spinje/pflow/issues/400) — `-o` + `--only` batch UX; tracked as F#13 in the rewritten followups doc, explicitly externalized by Bundle 9.
+
+### Followups doc rewritten in lockstep
+
+Commit 7524f82c rewrote `.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md`: 787 → 369 lines. All shipped items removed; 5 new findings discovered during follow-ups-2 added (cross-consumer prompt-file index, "without recorded model" wording polish, richer `--list-traces` drift enums, DRY `_memo_for_freshness_check` helpers, `hasattr` fallback removal). Closed-item history lives only here in the progress log — the followups doc is now forward-looking backlog only, no duplication.
+
+### Scope thresholds for what stayed open
+
+Items kept in the rewritten followups doc are either: (a) feature-sized work that wasn't in this branch's scope (TTL detection, diff view, replay-from-trace), (b) polish that's higher leverage to bundle with future doc/refactor work (cache chunk byte boundaries, stale CLAUDE.md, prose lint), or (c) external tracking handoffs (#369 heterogeneous-model, #400 batch UX). The cross-consumer prompt-file index (S#15+S#17+S#20) is the highest-impact deferred item; it's own-task by Bundle 7+8 closeout reasoning.
+
+### What remains for this branch
+
+Step 5 of the merge prep — consolidating the working scratchpads under `scratchpads/pflow-cache-measurement/`, `scratchpads/pflow-cache-repros/`, and `scratchpads/pflow-caching-agent-ux-notes.md`. Anything load-bearing has already been lifted to durable artifacts (progress log, followups doc, GH issues, repros under `scratchpads/pflow-cache-repros/` already referenced in commit messages). The scratchpad cleanup is the last step before merge.
