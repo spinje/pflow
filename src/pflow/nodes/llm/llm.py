@@ -23,9 +23,9 @@ from pflow.core.cache_render import (
     CacheRenderContext,
     _build_cache_control_marker,
     _ChunkAbsentSentinel,
+    _compute_marker_chunk_indices,
     _resolve_chunk_value,
     _resolve_static_prefix_for_cache,
-    compute_marker_chunk_indices,
 )
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
 from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
@@ -294,6 +294,22 @@ def _strip_below_min_cache_markers(
     cached). We suppress the per-channel warning when AT LEAST ONE marker
     survives in that channel — the warning should signal "caching failed",
     not "some sub-markers couldn't activate."
+
+    **Asymmetry to be aware of**: token accounting is cross-channel cumulative
+    (``system_blocks`` then ``user_message_blocks``), but the suppression
+    check is per-channel. A prewarm marker can survive only because the
+    cumulative-through-``system_blocks`` count already crossed the threshold,
+    yet the suppression cares only about the prewarm channel's marker
+    presence. The asymmetry is intentional: a "channel" maps to a user-visible
+    diagnostic (``cache.below-min-rendered`` vs.
+    ``cache.prewarm-disabled-below-min``), so each channel's warning fires
+    or suppresses based on whether THAT diagnostic still has signal.
+
+    **``*_measured_tokens`` semantics**: records the SMALLEST stripped scope
+    in each channel (via ``min(...)``), not the largest. This is the most
+    informative diagnostic value — "this much was below the threshold." When
+    the suppression then clears the value (because a marker survived), the
+    warning correctly doesn't fire.
     """
     threshold = get_min_cache_tokens(model)
     cumulative = 0
@@ -406,11 +422,13 @@ def _build_openai_cache_kwargs(
     Returns an empty dict when no cache rendering happened (``system_blocks``
     is ``None`` or empty) — caller merges into existing ``model_options``.
 
-    The ``prompt_cache_key`` is MD5(deterministic-JSON(system_blocks)). On
-    OpenAI the last block's marker is fixed at ``{"type": "ephemeral"}``
-    (per ``_build_cache_control_marker``), so identical cache content across
-    calls produces byte-identical ``system_blocks`` and thus an identical
-    cache key — sticky routing fires.
+    The ``prompt_cache_key`` is MD5(deterministic-JSON(system_blocks)). OpenAI
+    has ``get_breakpoint_budget("openai") == 1``, so
+    ``_compute_marker_chunk_indices`` returns ``(n-1,)`` — a single
+    ``{"type": "ephemeral"}`` marker on the terminal block, regardless of
+    how many chunks the workflow declared. Identical cache content across
+    calls therefore produces byte-identical ``system_blocks`` and an
+    identical cache key — sticky routing fires.
     """
     if not system_blocks:
         return {}
@@ -640,6 +658,14 @@ def _build_user_message_blocks(
     # prompt_cache is non-empty. Keep this check here for prewarm-only batch
     # nodes, where the cache marker is rendered in the user-message split.
     _ensure_provider_supports_cache_ttl(provider_name=provider_name, ttl=ttl, node_id=node_id, model=model)
+    # Auto-batch-prefix is a single static-prefix block, so this path emits
+    # exactly one cache_control marker by construction — it doesn't route
+    # through ``_compute_marker_chunk_indices`` (which spreads markers across
+    # the multi-block list rendered by ``_build_system_blocks``). The
+    # 4-marker per-request cap is honored across both paths: when
+    # ``cache_ctx.prewarm`` is True, ``_build_system_blocks`` reserves one
+    # slot via ``prewarm_consumes_slot=True`` so this marker fits within
+    # Anthropic's budget.
     return [
         {
             "type": "text",
@@ -803,7 +829,7 @@ def _build_system_blocks(
     2. One block per declared chunk in declaration order: ``prose_before``
        concatenated with the deterministic-serialized chunk value.
     3. Per-provider ``cache_control`` markers placed by
-       ``compute_marker_chunk_indices``: Anthropic gets up to 4 markers (first
+       ``_compute_marker_chunk_indices``: Anthropic gets up to 4 markers (first
        N-1 chunks individual + terminal merge); other providers get a terminal
        marker only. Below-min markers are stripped at request time by
        ``_strip_below_min_cache_markers``.
@@ -864,7 +890,7 @@ def _build_system_blocks(
     # False when _should_disable_below_min_prewarm fires, so the post-pre-flight
     # state is the budget-truth.
     chunk_block_offset = 1 if user_system else 0
-    marker_indices = compute_marker_chunk_indices(
+    marker_indices = _compute_marker_chunk_indices(
         n_rendered_chunks=len(rendered),
         provider_name=provider_name,
         prewarm_consumes_slot=cache_ctx.prewarm,

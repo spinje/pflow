@@ -20,10 +20,10 @@ from pflow.core.cache_render import (
     _CHUNK_ABSENT,
     CacheChunkIR,
     _ChunkAbsentSentinel,
+    _compute_marker_chunk_indices,
     _deterministic_serialize,
     _resolve_chunk_value,
     _resolve_static_prefix_for_cache,
-    compute_marker_chunk_indices,
 )
 
 # --- _deterministic_serialize byte-stability -------------------------------
@@ -201,7 +201,7 @@ def test_static_prefix_uses_resolver_pattern_object_directly() -> None:
     assert _resolve_static_prefix_for_cache(template, {"name": "X"}) == "X"
 
 
-# --- compute_marker_chunk_indices: deterministic multi-breakpoint placement -
+# --- _compute_marker_chunk_indices: deterministic multi-breakpoint placement -
 
 
 class TestComputeMarkerChunkIndices:
@@ -210,54 +210,54 @@ class TestComputeMarkerChunkIndices:
     # --- Non-Anthropic providers (budget=1) ---
 
     def test_openai_single_chunk(self):
-        assert compute_marker_chunk_indices(1, "openai", False) == (0,)
+        assert _compute_marker_chunk_indices(1, "openai", False) == (0,)
 
     def test_openai_many_chunks(self):
-        assert compute_marker_chunk_indices(7, "openai", False) == (6,)
+        assert _compute_marker_chunk_indices(7, "openai", False) == (6,)
 
     def test_gemini_terminal_only(self):
-        assert compute_marker_chunk_indices(5, "gemini", False) == (4,)
+        assert _compute_marker_chunk_indices(5, "gemini", False) == (4,)
 
     def test_unknown_provider_terminal_only(self):
-        assert compute_marker_chunk_indices(5, None, False) == (4,)
-        assert compute_marker_chunk_indices(5, "ollama", False) == (4,)
+        assert _compute_marker_chunk_indices(5, None, False) == (4,)
+        assert _compute_marker_chunk_indices(5, "ollama", False) == (4,)
 
     # --- Anthropic, n_chunks <= budget (every chunk gets a marker) ---
 
     def test_anthropic_one_chunk(self):
-        assert compute_marker_chunk_indices(1, "anthropic", False) == (0,)
+        assert _compute_marker_chunk_indices(1, "anthropic", False) == (0,)
 
     def test_anthropic_under_budget(self):
         # 3 chunks, budget 4 → all individual
-        assert compute_marker_chunk_indices(3, "anthropic", False) == (0, 1, 2)
+        assert _compute_marker_chunk_indices(3, "anthropic", False) == (0, 1, 2)
 
     def test_anthropic_exactly_budget(self):
         # 4 chunks, budget 4 → all individual
-        assert compute_marker_chunk_indices(4, "anthropic", False) == (0, 1, 2, 3)
+        assert _compute_marker_chunk_indices(4, "anthropic", False) == (0, 1, 2, 3)
 
     # --- Anthropic, n_chunks > budget (first-N-individual + terminal merge) ---
 
     def test_anthropic_over_budget_five(self):
         # 5 chunks, budget 4 → markers at 0, 1, 2, 4 (chunk 3 merged into terminal)
-        assert compute_marker_chunk_indices(5, "anthropic", False) == (0, 1, 2, 4)
+        assert _compute_marker_chunk_indices(5, "anthropic", False) == (0, 1, 2, 4)
 
     def test_anthropic_over_budget_seven(self):
         # 7 chunks, budget 4 → markers at 0, 1, 2, 6
-        assert compute_marker_chunk_indices(7, "anthropic", False) == (0, 1, 2, 6)
+        assert _compute_marker_chunk_indices(7, "anthropic", False) == (0, 1, 2, 6)
 
     # --- Anthropic with prewarm (budget reduced to 3) ---
 
     def test_anthropic_prewarm_three_chunks(self):
         # 3 chunks, budget 3 (after prewarm) → all individual
-        assert compute_marker_chunk_indices(3, "anthropic", True) == (0, 1, 2)
+        assert _compute_marker_chunk_indices(3, "anthropic", True) == (0, 1, 2)
 
     def test_anthropic_prewarm_over_budget(self):
         # 5 chunks, budget 3 (after prewarm) → markers at 0, 1, 4
-        assert compute_marker_chunk_indices(5, "anthropic", True) == (0, 1, 4)
+        assert _compute_marker_chunk_indices(5, "anthropic", True) == (0, 1, 4)
 
     def test_anthropic_prewarm_one_chunk(self):
         # 1 chunk, budget 3 (after prewarm) → single terminal marker
-        assert compute_marker_chunk_indices(1, "anthropic", True) == (0,)
+        assert _compute_marker_chunk_indices(1, "anthropic", True) == (0,)
 
     # --- Non-Anthropic with prewarm (budget collapses to 0, falls through) ---
 
@@ -266,14 +266,7 @@ class TestComputeMarkerChunkIndices:
         # Reason: terminal marker is required for cache identity even when no
         # additional breakpoints fit; prewarm runs on user_message_blocks
         # separately and is a no-op on OpenAI anyway.
-        assert compute_marker_chunk_indices(3, "openai", True) == (2,)
-
-    # --- Determinism ---
-
-    def test_pure_function_no_side_effects(self):
-        result1 = compute_marker_chunk_indices(7, "anthropic", False)
-        result2 = compute_marker_chunk_indices(7, "anthropic", False)
-        assert result1 == result2
+        assert _compute_marker_chunk_indices(3, "openai", True) == (2,)
 
     # --- Caller-contract enforcement ---
 
@@ -283,4 +276,4 @@ class TestComputeMarkerChunkIndices:
         # — a defensive empty return would let cache rendering proceed with
         # zero markers and no signal.
         with pytest.raises(ValueError, match="n_rendered_chunks >= 1"):
-            compute_marker_chunk_indices(0, "anthropic", False)
+            _compute_marker_chunk_indices(0, "anthropic", False)

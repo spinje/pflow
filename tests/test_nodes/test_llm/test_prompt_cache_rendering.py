@@ -192,7 +192,7 @@ def test_multi_chunk_declaration_order_preserved(mock_llm_client) -> None:
     """3 chunks on default Anthropic model (budget=4) → marker on every chunk.
 
     Triple: (n_rendered_chunks=3, provider="anthropic", prewarm=False)
-    Expected indices from compute_marker_chunk_indices: (0, 1, 2).
+    Expected indices from _compute_marker_chunk_indices: (0, 1, 2).
     """
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
@@ -824,6 +824,40 @@ def test_openai_emits_prompt_cache_key_when_subset_non_empty(mock_llm_client) ->
     assert len(options["prompt_cache_key"]) == 32
 
 
+def test_openai_prompt_cache_key_pinned_hash_for_known_content(mock_llm_client) -> None:
+    """Pin the OpenAI ``prompt_cache_key`` MD5 hex for a fixed cache input.
+
+    OpenAI sticky routing depends on a stable hash across deploys. If a
+    future change to ``_compute_marker_chunk_indices`` accidentally bumps
+    OpenAI to budget > 1 (which would inject multi-marker dicts into
+    ``system_blocks``), or if ``_build_cache_control_marker`` changes the
+    marker shape on the OpenAI path, the MD5 input bytes shift and every
+    existing user's cache-routing key changes silently — invalidating
+    sticky routing across deploys with no user-facing signal.
+
+    This test pins the exact MD5 hex produced by today's
+    OpenAI=budget-1 / terminal-only-marker path for a known cache input.
+    A drift in this value means at least one of the following changed:
+    ``get_breakpoint_budget("openai")``, ``_build_cache_control_marker``
+    on the OpenAI path, ``_compute_marker_chunk_indices`` for budget=1,
+    or the deterministic-JSON serialization in ``runtime/cache.py``. Any
+    of those is a backward-compat break worth a deliberate decision.
+    """
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node("write-lyrics", model=OPENAI)
+    shared = {"concept": "a song about courage"}
+    _install_cache_render(
+        shared,
+        "write-lyrics",
+        _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
+    )
+
+    node.run(shared)
+
+    options = mock_llm_client.call_history_full[-1]["model_options"]
+    assert options["prompt_cache_key"] == "180791359f4acd84630ff34114e4bf39"
+
+
 def test_openai_prompt_cache_key_deterministic_across_calls(mock_llm_client) -> None:
     """Two LLM calls with byte-identical cache content must produce the same
     prompt_cache_key — that's the load-bearing routing invariant."""
@@ -1128,7 +1162,7 @@ class TestMultiBreakpointPlacement:
     """Verify multi-breakpoint placement on Anthropic; terminal-only on others.
 
     Each test documents its (n_rendered_chunks, provider, prewarm) → expected
-    marker indices triple per ``compute_marker_chunk_indices``.
+    marker indices triple per ``_compute_marker_chunk_indices``.
     """
 
     def test_anthropic_three_chunks_individual_markers(self, mock_llm_client) -> None:
@@ -1294,11 +1328,16 @@ class TestMultiBreakpointPlacement:
         for idx in range(3):
             assert "cache_control" in sent[idx]
 
-    def test_marker_placement_uses_fresh_dict_per_block(self, mock_llm_client) -> None:
-        """Mutating one block's cache_control must not affect another block's.
+    def test_mutating_one_markers_top_level_does_not_leak_to_others(self, mock_llm_client) -> None:
+        """Behavioral guard against shallow-copy aliasing.
 
-        Anthropic 3-chunk → 3 markers. The implementation calls dict(marker)
-        per block; if it shared a reference, mutating one would mutate all.
+        ``_build_system_blocks`` copies the marker per block via ``dict(marker)``.
+        If a future contributor changes ``_build_cache_control_marker`` to return a
+        nested dict (e.g., ``{"type": "ephemeral", "config": {"ttl": "1h"}}``), the
+        shallow copy would alias ``config`` across all blocks — mutating one
+        block's config would mutate every block's. Today markers are flat, so this
+        test exercises the simpler top-level case. The inline comment at
+        ``_build_system_blocks`` already calls out the migration trigger.
         """
         mock_llm_client.set_response("*", None, "ok")
         node = _make_node("write-lyrics")
@@ -1312,8 +1351,9 @@ class TestMultiBreakpointPlacement:
         node.run(shared)
 
         sent = mock_llm_client.call_history_full[-1]["system"]
-        marker_ids = {id(b["cache_control"]) for b in sent if "cache_control" in b}
-        assert len(marker_ids) == 3, "each chunk block must have its own marker dict instance"
+        sent[0]["cache_control"]["type"] = "MUTATED"
+        assert sent[1]["cache_control"]["type"] == "ephemeral"
+        assert sent[2]["cache_control"]["type"] == "ephemeral"
 
     def test_prewarm_declared_but_bailed_out_still_reserves_slot(self, mock_llm_client) -> None:
         """Conservative budget: cache_ctx.prewarm=True is the post-pre-flight

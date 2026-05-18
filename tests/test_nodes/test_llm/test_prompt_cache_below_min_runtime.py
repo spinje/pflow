@@ -543,3 +543,51 @@ class TestStripBelowMinSuppression:
         assert "cache_control" not in user_blocks[0]
         assert "cache_control" in user_blocks[1]
         assert result is None
+
+    def test_cross_channel_cumulative_prewarm_marker_survives_via_system_accumulation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Token accounting is cross-channel cumulative — a prewarm marker
+        can survive purely because of the system_blocks accumulation that
+        preceded it.
+
+        Setup: 3 declared markers at 400 tokens each (cumulative 400/800/1200,
+        threshold 1024 → declared 0 stripped, declared 1 stripped, declared 2
+        survives) followed by a prewarm marker on a 50-token block
+        (cumulative-through-prewarm = 1250, survives because the prewarm
+        block extends the already-above-threshold accumulation).
+
+        Expected: declared channel has 1 survivor (terminal) → declared
+        warning suppressed. Prewarm channel has 1 survivor → prewarm warning
+        suppressed. Final ``result`` is None. Locks the cross-channel
+        cumulative + per-channel suppression asymmetry called out in
+        ``_strip_below_min_cache_markers`` docstring.
+        """
+
+        def _by_text(_text: str, _model: str) -> int:
+            return 50 if _text == "tiny-prewarm" else 400
+
+        monkeypatch.setattr(llm_module, "_count_text_tokens", _by_text)
+        system_blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": "decl-0", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "decl-1", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "decl-2", "cache_control": {"type": "ephemeral"}},
+        ]
+        user_blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": "tiny-prewarm", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "suffix"},
+        ]
+        result = llm_module._strip_below_min_cache_markers(
+            system_blocks=system_blocks,
+            user_message_blocks=user_blocks,
+            model=ANTHROPIC_1024,
+        )
+        # Declared: 0,1 stripped (cum 400, 800 < 1024); 2 survives (cum 1200).
+        assert "cache_control" not in system_blocks[0]
+        assert "cache_control" not in system_blocks[1]
+        assert "cache_control" in system_blocks[2]
+        # Prewarm marker survives — cumulative is 1250 by the time it's
+        # checked, only because system_blocks already brought us past 1024.
+        assert "cache_control" in user_blocks[0]
+        # Both channels have surviving markers → no warning.
+        assert result is None

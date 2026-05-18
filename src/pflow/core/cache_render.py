@@ -181,7 +181,7 @@ def _resolve_chunk_value(chunk: CacheChunkIR, shared: dict[str, Any]) -> ChunkRe
 
 def _build_cache_control_marker(provider_name: str | None, ttl: str | None) -> dict[str, Any]:
     """Per-provider ``cache_control`` marker dict. Placement is determined by
-    ``compute_marker_chunk_indices`` (called from ``_build_system_blocks``):
+    ``_compute_marker_chunk_indices`` (called from ``_build_system_blocks``):
     Anthropic gets up to 4 markers per request; other providers get a terminal
     marker only.
 
@@ -259,7 +259,7 @@ def _resolve_static_prefix_for_cache(template_str: str, shared: dict[str, Any]) 
 # --- Multi-breakpoint marker placement (task-159 follow-up) ----------------
 
 
-def compute_marker_chunk_indices(
+def _compute_marker_chunk_indices(
     n_rendered_chunks: int,
     provider_name: str | None,
     prewarm_consumes_slot: bool,
@@ -288,6 +288,17 @@ def compute_marker_chunk_indices(
     ``plan_node._render_cache_for_hash`` (hash side intentionally doesn't
     track wire-format markers — DD#19 byte-identity preserved by design).
 
+    **Scope of "centralized" placement**: this function owns placement for
+    declared ``## Cache`` chunks (the multi-block list rendered by
+    ``_build_system_blocks``). The auto-batch-prefix path in
+    ``_build_user_message_blocks`` emits its own single ``cache_control``
+    marker on the static prefix block — it does NOT route through this
+    function because there is only one prefix block by construction
+    (no chunks to spread across). The 4-marker Anthropic per-request cap
+    is shared across both paths: prewarm reserves one slot here via
+    ``prewarm_consumes_slot=True`` so the system_blocks placement stays
+    within budget when the prewarm path also emits a marker.
+
     **Caller contract**: ``n_rendered_chunks >= 1``. ``_build_system_blocks``
     guards via ``if not rendered: return None`` before calling this. A
     ``ValueError`` enforces the contract — a silent empty return would hide
@@ -296,12 +307,21 @@ def compute_marker_chunk_indices(
     """
     if n_rendered_chunks < 1:
         raise ValueError(
-            "compute_marker_chunk_indices requires n_rendered_chunks >= 1 — "
+            "_compute_marker_chunk_indices requires n_rendered_chunks >= 1 — "
             "the caller (_build_system_blocks) must guard the empty list."
         )
     budget = get_breakpoint_budget(provider_name)
     if prewarm_consumes_slot:
         budget -= 1
+    # ``budget <= 1`` covers two cases: (a) the natural budget-1 providers
+    # (openai/gemini/unknown — single terminal marker only), and (b) the
+    # hypothetical budget=0 case where prewarm consumed the only slot on a
+    # budget-1 provider. In (b) we still emit a terminal marker because no
+    # provider in pflow's current matrix shares a hard per-request cap
+    # between prewarm and content markers — Anthropic's 4-cap is shared and
+    # handled by the prewarm slot reservation above; the budget-1 providers
+    # treat cache_control as a no-op on the prewarm channel. Revisit if a
+    # future provider has a strict shared cap.
     if budget <= 1:
         return (n_rendered_chunks - 1,)
     if n_rendered_chunks <= budget:

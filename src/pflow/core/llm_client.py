@@ -235,7 +235,7 @@ def complete(
               ``"cache_control": {"type": "ephemeral", ...}`` marker.
               Markers may appear on any subset of content blocks (Anthropic
               supports up to 4 per request); placement is determined upstream
-              by ``compute_marker_chunk_indices``. Used by ``LLMNode.prep``
+              by ``_compute_marker_chunk_indices``. Used by ``LLMNode.prep``
               when a workflow declares ``## Cache`` and the node opts in
               via ``prompt_cache:``.
         temperature: 0.0 to 2.0. NOTE: Anthropic models with thinking enabled
