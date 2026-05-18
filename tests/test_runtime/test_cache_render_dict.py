@@ -172,6 +172,34 @@ def test_builder_disables_prewarm_when_static_prefix_below_min(monkeypatch: pyte
     assert shared["__prewarm_disabled_below_min__"]["score"] == "below_min"
 
 
+def test_builder_keeps_prewarm_when_static_prefix_has_unresolved_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-flight must not treat lower-bound token counts as proof.
+
+    Runtime inputs or upstream outputs in the static prefix may resolve before
+    LLM prep. If the workflow-entry check disables prewarm on the stripped
+    lower bound, the accurate per-call rendering path never gets a chance to
+    keep or strip the marker based on real bytes.
+    """
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        lambda model, text: (10, "test"),
+    )
+    workflow = _make_workflow({"score": _make_prewarm_llm_config("prefix ${rubric}\n${item.text}")})
+    shared: dict[str, Any] = {
+        "items": [{"text": "a"}, {"text": "b"}],
+        "rubric": "long runtime value " * 2_000,
+        "_pflow_workflow_file": "wf.pflow.md",
+    }
+
+    out = build_cache_render_dict(workflow, shared)
+
+    assert out["score"].prewarm is True
+    assert "__warnings__" not in shared
+    assert "__prewarm_disabled_below_min__" not in shared
+
+
 def test_builder_keeps_prewarm_when_static_prefix_clears_min(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "pflow.core.cache_analysis.token_estimation.estimate_tokens",

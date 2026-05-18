@@ -1516,6 +1516,79 @@ def test_memo_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path:
     assert result.summary.trace_local_cache_input_tokens == 6000
 
 
+def test_in_process_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path: Path) -> None:
+    """Same evidence split as memo hits, but for same-run in-process reuse."""
+    from pflow.core.cache_analysis.render_json import render_json
+
+    workflow_ir = {
+        "cache": {
+            "items": [
+                {
+                    "name": "source",
+                    "var": "content",
+                    "prose_before": "Source content:\n",
+                }
+            ]
+        },
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "prompt_cache": ["source"],
+                "params": {
+                    "model": "gemini/gemini-2.5-flash-lite",
+                    "prompt": "Summarize the source content.",
+                },
+            }
+        ],
+    }
+    trace_path = tmp_path / "in-process-hit-trace.json"
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.2.0",
+            "workflow_path": "x",
+            "final_status": "success",
+            "nodes": [
+                {
+                    "node_id": "summarize",
+                    "node_type": "LLMNode",
+                    "success": True,
+                    "cached": True,
+                    "llm_call": {
+                        "model": "gemini/gemini-2.5-flash-lite",
+                        "input_tokens": 6000,
+                        "output_tokens": 100,
+                        "cost_usd": 0.25,
+                        "cache_source": "in_process",
+                        "cache_read_input_tokens": 5900,
+                        "cache_creation_input_tokens": 0,
+                    },
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = analyze(
+        workflow_ir,
+        parameters={"content": "large source " * 2000},
+        workflow_path="x",
+        trace_path=trace_path,
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+
+    assert result.summary.trace_provider_llm_call_count == 0
+    assert result.summary.trace_provider_cache_read_input_tokens == 0
+    assert result.summary.trace_local_in_process_llm_hit_count == 1
+    assert result.summary.trace_local_cache_input_tokens == 6000
+    summary = render_json(result)["summary"]
+    assert summary["trace_provider_llm_call_count"] == 0
+    assert summary["trace_provider_cache_read_input_tokens"] == 0
+    assert summary["trace_local_in_process_llm_hit_count"] == 1
+    assert summary["trace_local_cache_input_tokens"] == 6000
+
+
 def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actual_delta(tmp_path: Path) -> None:
     """Heterogeneous exclusions don't kill the actual-vs-no-cache delta.
 

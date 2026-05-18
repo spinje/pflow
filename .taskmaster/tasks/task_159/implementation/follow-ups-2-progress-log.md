@@ -1609,3 +1609,14 @@ Three fixes from a multi-agent code review of the staged PR.
 **S1 + S2 — `--list-traces` polish (suggestions).** `TraceListEntry.recorded_at` was typed `str` but stored `""` on missing input; the JSON renderer translated `""` → `None` (wire format already correct, but the dataclass annotation lied). Typed to `str | None` and store `None` directly. Cosmetic: `"1 LLM call(s)"` now reads `"1 LLM call"` (matches the `"difference"/"differences"` pattern at line 46), and sub-second runs render as `"47ms"` instead of `"0.0s"` via a new `_format_duration` helper. No baseline regen (no `--list-traces` baseline exists; the `"LLM call(s)"` text in render_text.py is unchanged).
 
 Verification: cache-analysis + runtime + trace focused suite **2006 passed, 1 skipped**; baseline oracle **87 passed, 0 drifted**; `ruff check` + `mypy` on touched files clean. W2/W3/W4/W6 from the review (lower severity) deferred — captured in `scratchpads/code-review-pr405-20260518.md`.
+
+## 2026-05-18 — PR #405 final review follow-up fixes
+
+Minimal closeout for the focused five-agent review pass.
+
+- **C1 — Runtime prewarm lower-bound false-disable**: fixed by the parallel agent in `engine.py` / `test_cache_render_dict.py`; those changes are intentionally left **unstaged** here.
+- **C3 — Failed traces dropped runtime cache warnings**: `_exception_to_result` now extracts `__warnings__` from `_pflow_shared_store` before setting trace warnings, so cache runtime diagnostics survive later failures.
+- **C4 — Missing production trace coverage**: added runner-path trace tests for rendered marker strip, below-min prewarm disable, and failed-run warning preservation. Added analyzer-path coverage for `cache_source="in_process"` so historical provider cache reads are not counted as current-run provider evidence.
+- **C5 — Prompt-caching guide drift**: added missing prompt-caching catalog IDs and moved `cache.discrepancy` back into the findings table. The guide test now checks every catalog ID whose `see_also` points at `prompt-caching`.
+
+Verification: focused runner tests **36 passed**; prompt-caching guide tests **63 passed**; memo/in-process analyzer tests **2 passed**; `ruff check` on touched files clean; `mypy src/pflow/execution/runner.py` clean. Initial direct `uv run pytest` failed before Python due sandbox `uv` cache permissions; reran with the repo sandbox pattern (`HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest ...`).

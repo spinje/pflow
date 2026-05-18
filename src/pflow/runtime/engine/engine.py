@@ -171,7 +171,9 @@ def _should_disable_below_min_prewarm(
         memo_cache=shared.get("__memoization_cache__"),
         workflow_path=shared.get("_pflow_workflow_file"),
     )
-    prefix_tokens, _unresolved_refs = tokenize_prompt_region_lower_bound(prompt_raw[:first], model=model, ctx=ctx)
+    prefix_tokens, unresolved_refs = tokenize_prompt_region_lower_bound(prompt_raw[:first], model=model, ctx=ctx)
+    if unresolved_refs:
+        return False
     if not is_below_min_cache(model, prefix_tokens):
         return False
 

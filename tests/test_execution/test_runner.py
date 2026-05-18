@@ -4,8 +4,11 @@ Verifies that validation gates compilation (spec 9b) and that a valid
 workflow runs through the full pipeline producing structured results.
 """
 
+import json
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
@@ -228,6 +231,129 @@ def test_llm_declared_cache_observed_cache_activity_suppresses_catalog_warning(m
 
     assert not result.shared_after.get("__warnings__")
     assert result.status == WorkflowStatus.SUCCESS
+
+
+@pytest.mark.trace_files
+def test_llm_rendered_below_min_warning_reaches_trace_json(mock_llm_client, monkeypatch) -> None:
+    """Production runner path must serialize runtime cache-strip evidence.
+
+    Node-level tests prove ``LLMNode`` strips the marker. This locks the
+    runner/trace handoff: ``llm_usage.cache_skipped_reason`` and the
+    catalog-backed runtime warning both survive into trace JSON.
+    """
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10)
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    workflow_ir = {
+        "inputs": {"small_doc": {"type": "string"}},
+        "cache": {"items": [{"name": "small_doc", "var": "small_doc", "prose_before": "Small doc:\n"}]},
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "prompt_cache": ["small_doc"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {"small_doc": "short"}, RunnerConfig())
+
+    assert result.success is True
+    assert result.trace is not None
+    trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    llm_call = trace_data["nodes"][0]["llm_call"]
+    assert llm_call["cache_skipped_reason"] == "below_min"
+    assert any(warning.get("id") == "cache.below-min-rendered" for warning in trace_data["warnings"])
+
+
+@pytest.mark.trace_files
+def test_batch_prewarm_disabled_below_min_reaches_trace_json(mock_llm_client) -> None:
+    """Production runner path must serialize prewarm-disabled runtime evidence."""
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    workflow_ir = {
+        "inputs": {"items": {"type": "array"}},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "prewarm": True,
+                "batch": {"items": "${items}", "as": "item"},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Short stable prefix.\n\nItem: ${item.text}",
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(
+        workflow_ir,
+        {"items": [{"text": "one"}, {"text": "two"}]},
+        RunnerConfig(),
+    )
+
+    assert result.success is True
+    assert result.trace is not None
+    trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    batch_items = trace_data["nodes"][0]["batch_items"]
+    assert {item["llm_call"]["prewarm_disabled_reason"] for item in batch_items} == {"below_min"}
+    assert any(warning.get("id") == "cache.prewarm-disabled-below-min" for warning in trace_data["warnings"])
+
+
+@pytest.mark.trace_files
+def test_exception_trace_preserves_prior_runtime_cache_warnings(mock_llm_client, monkeypatch) -> None:
+    """Runtime warnings emitted before a later exception must reach trace warnings."""
+    monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10)
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    workflow_ir = {
+        "inputs": {"small_doc": {"type": "string"}},
+        "cache": {"items": [{"name": "small_doc", "var": "small_doc", "prose_before": "Small doc:\n"}]},
+        "nodes": [
+            {
+                "id": "ask",
+                "type": "llm",
+                "prompt_cache": ["small_doc"],
+                "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
+            }
+        ],
+        "outputs": {"broken": {"source": "${ask.missing_field}", "description": "forces post-run failure"}},
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(workflow_ir, {"small_doc": "short"}, RunnerConfig())
+
+    assert result.success is False
+    assert result.trace is not None
+    assert any(warning.id == "cache.below-min-rendered" for warning in result.warnings)
+    trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    assert trace_data["nodes"][0]["llm_call"]["cache_skipped_reason"] == "below_min"
+    assert any(warning.get("id") == "cache.below-min-rendered" for warning in trace_data["warnings"])
 
 
 def test_llm_empty_response_warning_overwrites_cache_miss_observation(mock_llm_client) -> None:

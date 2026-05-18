@@ -8,6 +8,7 @@ import click.testing
 import pytest
 
 from pflow.cli.commands.guide import guide_cmd
+from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
 from pflow.guide import (
     GuideError,
     compose_guide,
@@ -134,19 +135,9 @@ def test_prompt_caching_guide_avoids_internal_analyzer_vocabulary() -> None:
 def test_prompt_caching_guide_covers_cache_ids_that_link_to_it() -> None:
     """Cache diagnostics that point here should be searchable by exact ID."""
     result = compose_guide(["prompt-caching"])
-    for warning_id in [
-        "cache.order-mismatch",
-        "cache.invalid-on-non-llm",
-        "cache.unused-chunk",
-        "cache.padding-advisory",
-        "cache.prewarm-no-prefix",
-        "cache.consolidate-to-root-recommended",
-        "cache.heterogeneous-models-fragment-cache",
-        "cache.first-call-write-penalty",
-        "cache.cross-workflow-prose-mismatch",
-        "cache.discrepancy",
-        "cache.cross-workflow-rename-detected",
-    ]:
+    for warning_id, spec in CACHE_WARNING_CATALOG.items():
+        if "prompt-caching" not in spec.see_also:
+            continue
         assert warning_id in result
 
 
