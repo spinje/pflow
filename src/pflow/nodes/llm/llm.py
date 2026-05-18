@@ -25,6 +25,7 @@ from pflow.core.cache_render import (
     _ChunkAbsentSentinel,
     _resolve_chunk_value,
     _resolve_static_prefix_for_cache,
+    compute_marker_chunk_indices,
 )
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
 from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
@@ -286,6 +287,13 @@ def _strip_below_min_cache_markers(
     were stripped. Mutates the block dicts in place via
     ``del block["cache_control"]`` — block text content is unchanged so the
     call still goes out, it just no longer claims a cache.
+
+    **Multi-marker semantics**: under multi-breakpoint placement (Anthropic),
+    early markers' cumulative scopes are often below the provider minimum
+    even when caching IS working (terminal marker survives, full prefix
+    cached). We suppress the per-channel warning when AT LEAST ONE marker
+    survives in that channel — the warning should signal "caching failed",
+    not "some sub-markers couldn't activate."
     """
     threshold = get_min_cache_tokens(model)
     cumulative = 0
@@ -304,6 +312,13 @@ def _strip_below_min_cache_markers(
                     declared_min = cumulative if declared_min is None else min(declared_min, cumulative)
                 else:
                     prewarm_min = cumulative if prewarm_min is None else min(prewarm_min, cumulative)
+
+    # Suppress warnings on channels where at least one marker survived.
+    # True caching failure = ALL markers in a channel stripped.
+    if declared_min is not None and system_blocks and any("cache_control" in b for b in system_blocks):
+        declared_min = None
+    if prewarm_min is not None and user_message_blocks and any("cache_control" in b for b in user_message_blocks):
+        prewarm_min = None
 
     if declared_min is None and prewarm_min is None:
         return None
@@ -787,8 +802,11 @@ def _build_system_blocks(
     1. The user's ``system`` param (when set) as the FIRST block, no marker.
     2. One block per declared chunk in declaration order: ``prose_before``
        concatenated with the deterministic-serialized chunk value.
-    3. A per-provider ``cache_control`` marker on the LAST block only
-       (v1 single-breakpoint strategy, task-159 DD#11).
+    3. Per-provider ``cache_control`` markers placed by
+       ``compute_marker_chunk_indices``: Anthropic gets up to 4 markers (first
+       N-1 chunks individual + terminal merge); other providers get a terminal
+       marker only. Below-min markers are stripped at request time by
+       ``_strip_below_min_cache_markers``.
 
     The ABSENT filter MUST stay symmetric with
     ``runtime/engine/plan_node._render_cache_for_hash`` — both sites import
@@ -838,10 +856,26 @@ def _build_system_blocks(
         node_id=node_id,
         model=model,
     )
-    blocks[-1]["cache_control"] = _build_cache_control_marker(
-        provider_name,
-        cache_ctx.cache_block.ttl,
+
+    # Multi-breakpoint placement (Anthropic only — others get terminal marker).
+    # Indices are into the RENDERED chunks (post-ABSENT-filter), so we offset
+    # by the optional leading user_system block. Use cache_ctx.prewarm (NOT
+    # config.prewarm or any other source) — the engine pre-strips this to
+    # False when _should_disable_below_min_prewarm fires, so the post-pre-flight
+    # state is the budget-truth.
+    chunk_block_offset = 1 if user_system else 0
+    marker_indices = compute_marker_chunk_indices(
+        n_rendered_chunks=len(rendered),
+        provider_name=provider_name,
+        prewarm_consumes_slot=cache_ctx.prewarm,
     )
+    # Shallow dict copy is sufficient TODAY because _build_cache_control_marker
+    # returns flat dicts ({"type": ..., "ttl": ...}). If a future provider needs
+    # a nested marker shape (e.g., {"type": ..., "config": {...}}), switch to
+    # copy.deepcopy here to prevent aliasing across blocks.
+    marker = _build_cache_control_marker(provider_name, cache_ctx.cache_block.ttl)
+    for chunk_idx in marker_indices:
+        blocks[chunk_block_offset + chunk_idx]["cache_control"] = dict(marker)
     return blocks, chunks_skipped
 
 

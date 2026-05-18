@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Final, Union
 
 from pflow.core.cache_ttl import parse_cache_ttl
+from pflow.core.llm_capabilities import get_breakpoint_budget
 
 
 @dataclass(frozen=True)
@@ -179,8 +180,10 @@ def _resolve_chunk_value(chunk: CacheChunkIR, shared: dict[str, Any]) -> ChunkRe
 
 
 def _build_cache_control_marker(provider_name: str | None, ttl: str | None) -> dict[str, Any]:
-    """Per-provider ``cache_control`` marker for the LAST chunk of a cached
-    system prefix (v1 single-breakpoint strategy, task-159 DD#11).
+    """Per-provider ``cache_control`` marker dict. Placement is determined by
+    ``compute_marker_chunk_indices`` (called from ``_build_system_blocks``):
+    Anthropic gets up to 4 markers per request; other providers get a terminal
+    marker only.
 
     TTL wire-format translation (task-159 spec "TTL wire-format translation"):
 
@@ -251,3 +254,56 @@ def _resolve_static_prefix_for_cache(template_str: str, shared: dict[str, Any]) 
 
     result: str = TemplateResolver.TEMPLATE_PATTERN.sub(_replace_one, template_str)
     return result
+
+
+# --- Multi-breakpoint marker placement (task-159 follow-up) ----------------
+
+
+def compute_marker_chunk_indices(
+    n_rendered_chunks: int,
+    provider_name: str | None,
+    prewarm_consumes_slot: bool,
+) -> tuple[int, ...]:
+    """Return chunk indices (into the rendered subset) that receive cache_control markers.
+
+    The rendered subset is the post-ABSENT-filter chunk list produced by
+    ``_build_system_blocks``. Indices are 0-based into THAT list, not into the
+    declared ``## Cache`` block.
+
+    **Anthropic** (budget=4): first ``(budget - 1 - prewarm_slot)`` chunks each
+    get their own marker; remaining chunks merge into the terminal marker.
+    Convention: chunks declared stable-to-volatile in ``## Cache`` so dense
+    early markers capture rarely-changing prefixes and the terminal marker
+    catches the all-stable case.
+
+    **All other providers** (budget=1): terminal marker only — identical to
+    today's behavior.
+
+    Below-minimum markers are stripped later by
+    ``LLMNode._strip_below_min_cache_markers`` (already plural-aware). No
+    token reasoning needed here.
+
+    **Pure function**: deterministic given inputs. Called from
+    ``LLMNode._build_system_blocks`` (prep side) and NOT from
+    ``plan_node._render_cache_for_hash`` (hash side intentionally doesn't
+    track wire-format markers — DD#19 byte-identity preserved by design).
+
+    **Caller contract**: ``n_rendered_chunks >= 1``. ``_build_system_blocks``
+    guards via ``if not rendered: return None`` before calling this. A
+    ``ValueError`` enforces the contract — a silent empty return would hide
+    caller bugs (cache rendering would proceed with zero markers and no
+    signal).
+    """
+    if n_rendered_chunks < 1:
+        raise ValueError(
+            "compute_marker_chunk_indices requires n_rendered_chunks >= 1 — "
+            "the caller (_build_system_blocks) must guard the empty list."
+        )
+    budget = get_breakpoint_budget(provider_name)
+    if prewarm_consumes_slot:
+        budget -= 1
+    if budget <= 1:
+        return (n_rendered_chunks - 1,)
+    if n_rendered_chunks <= budget:
+        return tuple(range(n_rendered_chunks))
+    return (*range(budget - 1), n_rendered_chunks - 1)

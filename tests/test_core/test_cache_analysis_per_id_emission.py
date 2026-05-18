@@ -2865,9 +2865,10 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
 ) -> None:
     """The threshold gate compares PER-CALL cache prefix bytes, NOT cohort.
 
-    pflow emits one cache_control marker on the last cached block per call.
-    The provider checks ``min_cache_tokens`` against the per-call prefix —
-    multiplying by call count doesn't help the provider activate caching.
+    pflow emits one or more cache_control markers per call; the terminal
+    marker spans the full per-call prefix — that's what the provider checks
+    against min_cache_tokens. Multiplying by call count doesn't help the
+    provider activate caching.
 
     Regression: an earlier implementation stored ``per_call x call_count`` as
     ``cumulative_tokens`` and gated on it, silently misclassifying low-per-call

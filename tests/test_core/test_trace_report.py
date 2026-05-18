@@ -874,6 +874,27 @@ class TestBuildNodeFile:
         assert "## Cached System" in md
         assert "Skipped chunks" not in md
 
+    def test_cached_system_renders_all_multi_breakpoint_markers(self) -> None:
+        """Under multi-breakpoint placement (Anthropic), an LLM event may carry
+        multiple ``cache_control`` markers on its system blocks. The report's
+        JSON dump must surface every one — agents reading ``pflow report`` rely
+        on this to verify which chunks created cache breakpoints.
+
+        Locks the agent-facing surface against future renderer regressions
+        (e.g., a renderer that flattened or dedup'd the marker dicts).
+        """
+        event = _make_event(
+            llm_system=[
+                {"type": "text", "text": "Stable system", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "Knowledge ref", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "Session ctx", "cache_control": {"type": "ephemeral"}},
+            ],
+            llm_prompt="Answer.",
+        )
+        md = _build_node_file(event)
+        # All three blocks' markers must round-trip through the JSON dump.
+        assert md.count('"cache_control"') == 3
+
 
 class TestCacheTelemetrySection:
     """Trace report per-call cache telemetry rendering."""

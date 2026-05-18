@@ -42,6 +42,21 @@ from pflow.core.llm_providers import detect_provider, model_name_without_provide
 CONSERVATIVE_FLOOR: int = 4096
 
 
+CONSERVATIVE_BREAKPOINT_BUDGET: int = 1
+"""Conservative breakpoint budget for unknown/non-Anthropic providers.
+
+Anthropic supports up to 4 cache_control breakpoints per request; every other
+provider in pflow's matrix (openai, gemini) either ignores cache_control
+markers or routes them through a different mechanism that pflow handles as a
+single terminal marker. Conservative default is 1 — emit only the terminal
+marker on unknown providers to avoid silently exceeding API limits."""
+
+ANTHROPIC_BREAKPOINT_BUDGET: int = 4
+"""Anthropic's documented maximum cache_control breakpoints per request.
+API returns 400 error if exceeded. See:
+https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching"""
+
+
 @dataclass(frozen=True)
 class ModelCapability:
     """Per-model capability row.
@@ -141,3 +156,14 @@ def anthropic_models_at_threshold(threshold: int) -> tuple[str, ...]:
         for cap in MODEL_CAPABILITIES
         if cap.provider == "anthropic" and cap.model_pattern and cap.min_cache_tokens == threshold
     )
+
+
+def get_breakpoint_budget(provider_name: str | None) -> int:
+    """Return the maximum cache_control breakpoints supported per request.
+
+    Anthropic: 4 (native multi-breakpoint support).
+    All others (openai, gemini, unknown, None): 1 (terminal marker only).
+    """
+    if provider_name == "anthropic":
+        return ANTHROPIC_BREAKPOINT_BUDGET
+    return CONSERVATIVE_BREAKPOINT_BUDGET

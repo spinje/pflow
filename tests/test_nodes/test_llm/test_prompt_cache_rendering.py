@@ -1,4 +1,4 @@
-"""C1.2 — LLMNode.prep cache rendering (Anthropic-flavored single-breakpoint).
+"""C1.2 — LLMNode.prep cache rendering (Anthropic-flavored multi-breakpoint).
 
 Both the hash side (``runtime/engine/plan_node._render_cache_for_hash``) and
 the prep side (``LLMNode.prep`` in this test) must call the SHARED
@@ -189,6 +189,11 @@ def test_chunk_text_is_prose_plus_value(mock_llm_client) -> None:
 
 
 def test_multi_chunk_declaration_order_preserved(mock_llm_client) -> None:
+    """3 chunks on default Anthropic model (budget=4) → marker on every chunk.
+
+    Triple: (n_rendered_chunks=3, provider="anthropic", prewarm=False)
+    Expected indices from compute_marker_chunk_indices: (0, 1, 2).
+    """
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"a": "alpha-value", "b": "beta-value", "c": "gamma-value"}
@@ -205,10 +210,10 @@ def test_multi_chunk_declaration_order_preserved(mock_llm_client) -> None:
 
     sent = mock_llm_client.call_history_full[-1]["system"]
     assert [b["text"] for b in sent] == ["A:\nalpha-value", "B:\nbeta-value", "C:\ngamma-value"]
-    # Marker on LAST block only
-    assert "cache_control" in sent[-1]
-    assert "cache_control" not in sent[0]
-    assert "cache_control" not in sent[1]
+    # Markers on every chunk (Anthropic budget=4, 3 chunks <= budget)
+    assert "cache_control" in sent[0]
+    assert "cache_control" in sent[1]
+    assert "cache_control" in sent[2]
 
 
 # --- Three-state equivalence: no opt-in falls back to plain string ---------
@@ -1111,3 +1116,272 @@ def test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store(mo
     prep_texts = [b["text"] for b in sent]
 
     assert hash_texts == prep_texts, f"hash-vs-prep byte divergence:\n  hash: {hash_texts!r}\n  prep: {prep_texts!r}"
+
+
+# --- Multi-breakpoint placement (Anthropic up to 4; others terminal-only) --
+
+
+GEMINI = "gemini/gemini-2.5-pro"
+
+
+class TestMultiBreakpointPlacement:
+    """Verify multi-breakpoint placement on Anthropic; terminal-only on others.
+
+    Each test documents its (n_rendered_chunks, provider, prewarm) → expected
+    marker indices triple per ``compute_marker_chunk_indices``.
+    """
+
+    def test_anthropic_three_chunks_individual_markers(self, mock_llm_client) -> None:
+        """3 chunks on Anthropic, no prewarm → markers at (0, 1, 2)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        shared = {"a": "alpha", "b": "beta", "c": "gamma"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 3
+        for idx in (0, 1, 2):
+            assert "cache_control" in sent[idx], f"chunk block {idx} should carry cache_control"
+
+    def test_anthropic_seven_chunks_first_three_plus_terminal(self, mock_llm_client) -> None:
+        """7 chunks on Anthropic, no prewarm → markers at (0, 1, 2, 6)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        names = list("abcdefg")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 7
+        for idx in (0, 1, 2, 6):
+            assert "cache_control" in sent[idx], f"chunk block {idx} should carry cache_control"
+        for idx in (3, 4, 5):
+            assert "cache_control" not in sent[idx], f"chunk block {idx} should NOT carry cache_control"
+
+    def test_anthropic_with_prewarm_reduces_budget(self, mock_llm_client) -> None:
+        """5 chunks on Anthropic + prewarm=True → budget 3 → markers at (0, 1, 4)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        names = list("abcde")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+                prewarm=True,
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 5
+        for idx in (0, 1, 4):
+            assert "cache_control" in sent[idx], f"chunk block {idx} should carry cache_control"
+        for idx in (2, 3):
+            assert "cache_control" not in sent[idx], f"chunk block {idx} should NOT carry cache_control"
+
+    def test_openai_seven_chunks_terminal_only(self, mock_llm_client) -> None:
+        """7 chunks on OpenAI → budget=1 → marker only on the terminal block."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", model="openai/gpt-4o-mini")
+        names = list("abcdefg")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 7
+        for idx in range(6):
+            assert "cache_control" not in sent[idx], f"non-terminal block {idx} must not carry cache_control on OpenAI"
+        assert "cache_control" in sent[6]
+
+    def test_gemini_terminal_only(self, mock_llm_client) -> None:
+        """Gemini → budget=1 → terminal marker only (cachedContents via LiteLLM)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", model=GEMINI)
+        names = list("abc")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 3
+        assert "cache_control" not in sent[0]
+        assert "cache_control" not in sent[1]
+        assert "cache_control" in sent[2]
+
+    def test_user_system_block_does_not_receive_marker(self, mock_llm_client) -> None:
+        """When ``system:`` is set, the leading user_system block is at index 0
+        and NEVER gets a marker. Chunk block indices are offset accordingly.
+
+        3 chunks on Anthropic → marker on every chunk block. user_system has
+        no marker. sent layout: [user_system, chunk0, chunk1, chunk2].
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", system="Be concise.")
+        shared = {"a": "alpha", "b": "beta", "c": "gamma"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 4  # user_system + 3 chunk blocks
+        assert sent[0]["text"] == "Be concise."
+        assert "cache_control" not in sent[0]
+        for idx in (1, 2, 3):
+            assert "cache_control" in sent[idx], f"chunk block at sent index {idx} should carry cache_control"
+
+    def test_absent_chunks_excluded_from_marker_count(self, mock_llm_client) -> None:
+        """5 chunks declared, 2 ABSENT → marker placement operates on the 3
+        rendered chunks, not the 5 declared. Anthropic budget=4 → 3 chunks
+        ≤ budget → every rendered chunk gets a marker.
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        # a, c, e resolve; b, d are absent (no entry in shared)
+        shared = {"a": "alpha", "c": "gamma", "e": "epsilon"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n"), ("d", "D:\n"), ("e", "E:\n")],
+                subset=("a", "b", "c", "d", "e"),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 3  # absent chunks filtered
+        for idx in range(3):
+            assert "cache_control" in sent[idx]
+
+    def test_marker_placement_uses_fresh_dict_per_block(self, mock_llm_client) -> None:
+        """Mutating one block's cache_control must not affect another block's.
+
+        Anthropic 3-chunk → 3 markers. The implementation calls dict(marker)
+        per block; if it shared a reference, mutating one would mutate all.
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        shared = {"a": "alpha", "b": "beta", "c": "gamma"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        marker_ids = {id(b["cache_control"]) for b in sent if "cache_control" in b}
+        assert len(marker_ids) == 3, "each chunk block must have its own marker dict instance"
+
+    def test_prewarm_declared_but_bailed_out_still_reserves_slot(self, mock_llm_client) -> None:
+        """Conservative budget: cache_ctx.prewarm=True is the post-pre-flight
+        truth even if user_message prewarm itself bails out at runtime (images
+        present, alignment fail, etc.). 5-chunk Anthropic with prewarm flagged
+        → budget=3 → markers at (0, 1, 4). Sub-optimal but never exceeds the
+        4-marker cap on the wire.
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        names = list("abcde")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+                prewarm=True,
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 5
+        for idx in (0, 1, 4):
+            assert "cache_control" in sent[idx]
+        for idx in (2, 3):
+            assert "cache_control" not in sent[idx]
+
+    def test_user_system_contributes_to_strip_threshold(self, mock_llm_client, monkeypatch) -> None:
+        """Integration: a long user_system PLUS a tiny chunk 0 can still get
+        chunk 0's marker above threshold via cumulative count. Locks the
+        user_system token contribution into the strip-path cumulative walk.
+
+        Setup: user_system contributes 4000 tokens; each chunk contributes
+        100 tokens. Threshold (Sonnet 4.5) is 1024. Cumulative through
+        chunk 0 = user_system + chunk0 = 4100, well above 1024 → chunk 0
+        marker survives the strip. With multi-marker, all chunk markers
+        survive (cumulative monotonically grows).
+        """
+
+        # We need to remove the autouse bypass so the strip actually runs.
+        # Replace with a finer-grained stub so user_system block adds 4000
+        # tokens and each chunk block adds 100.
+        def _by_text(text: str, _model: str) -> int:
+            if text == "LONG_SYSTEM":
+                return 4000
+            return 100
+
+        monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", _by_text)
+
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", system="LONG_SYSTEM")
+        shared = {"a": "alpha", "b": "beta"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        # sent layout: [user_system, chunk_a, chunk_b]
+        assert len(sent) == 3
+        # All chunk markers should survive — user_system pushes cumulative
+        # past the 1024 threshold before any chunk block.
+        assert "cache_control" in sent[1]
+        assert "cache_control" in sent[2]

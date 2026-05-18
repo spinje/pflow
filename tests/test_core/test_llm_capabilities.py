@@ -258,3 +258,31 @@ def test_anthropic_models_at_threshold_excludes_provider_wildcards() -> None:
 
     assert "" not in anthropic_models_at_threshold(1024)
     assert all("/" not in model for model in anthropic_models_at_threshold(1024))
+
+
+class TestGetBreakpointBudget:
+    def test_anthropic_returns_4(self):
+        from pflow.core.llm_capabilities import get_breakpoint_budget
+
+        assert get_breakpoint_budget("anthropic") == 4
+
+    def test_openai_returns_1(self):
+        from pflow.core.llm_capabilities import get_breakpoint_budget
+
+        assert get_breakpoint_budget("openai") == 1
+
+    def test_gemini_returns_1(self):
+        from pflow.core.llm_capabilities import get_breakpoint_budget
+
+        assert get_breakpoint_budget("gemini") == 1
+
+    def test_none_returns_conservative(self):
+        from pflow.core.llm_capabilities import get_breakpoint_budget
+
+        assert get_breakpoint_budget(None) == 1
+
+    def test_unknown_returns_conservative(self):
+        from pflow.core.llm_capabilities import get_breakpoint_budget
+
+        assert get_breakpoint_budget("ollama") == 1
+        assert get_breakpoint_budget("bedrock") == 1

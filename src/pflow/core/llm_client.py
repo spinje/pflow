@@ -232,11 +232,12 @@ def complete(
             - ``list[dict]``: structured content blocks per the LiteLLM /
               Anthropic / OpenAI SDK convention. Each block is
               ``{"type": "text", "text": "..."}`` with an optional
-              ``"cache_control": {"type": "ephemeral", ...}`` marker. The
-              marker must appear on the LAST chunk only (v1
-              single-breakpoint strategy per task-159 DD#11). Used by
-              ``LLMNode.prep`` when a workflow declares ``## Cache`` and
-              the node opts in via ``prompt_cache:``.
+              ``"cache_control": {"type": "ephemeral", ...}`` marker.
+              Markers may appear on any subset of content blocks (Anthropic
+              supports up to 4 per request); placement is determined upstream
+              by ``compute_marker_chunk_indices``. Used by ``LLMNode.prep``
+              when a workflow declares ``## Cache`` and the node opts in
+              via ``prompt_cache:``.
         temperature: 0.0 to 2.0. NOTE: Anthropic models with thinking enabled
             require temperature=1.0 (LiteLLM/Anthropic enforces; the adapter
             does not pre-validate). Violation surfaces as ``LLMCallError``

@@ -442,3 +442,104 @@ def test_token_counter_exception_falls_back_to_chars_over_four(
     assert all("cache_control" not in b for b in sent)
     warning = shared["__warnings__"]["n"]
     assert warning.context["cacheable_tokens"] == 1000  # 4000 // 4
+
+
+# --- Multi-marker warning-suppression (Anthropic) --------------------------
+
+
+class TestStripBelowMinSuppression:
+    """Verify ``cache.below-min-rendered`` only fires when ALL markers in a
+    channel were stripped (true caching failure), not when some sub-markers
+    couldn't activate but caching is working via the terminal marker.
+
+    Locks the multi-marker UX hygiene contract: today's single-marker
+    rarely tripped this warning; multi-marker placement makes it common
+    that EARLY markers are below threshold while the terminal marker
+    survives — that's working caching, not failed caching.
+    """
+
+    def test_warning_when_all_markers_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Single terminal marker below threshold → all-stripped → warning."""
+        _stub_token_counter(monkeypatch, tokens=100)  # under Anthropic 1024
+        system_blocks: list[dict[str, Any]] = [{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}]
+        result = llm_module._strip_below_min_cache_markers(
+            system_blocks=system_blocks,
+            user_message_blocks=None,
+            model=ANTHROPIC_1024,
+        )
+        assert result is not None
+        assert result.declared_measured_tokens == 100
+        assert system_blocks[0].get("cache_control") is None
+
+    def test_no_warning_when_terminal_survives_but_early_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """4 markers, early below threshold, terminal above → strip early,
+        suppress warning (caching IS working via the terminal marker).
+
+        Per-block tokens 500 each (cumulative 500/1000/1500/2000). Threshold
+        1024. Block 0 (cum=500) and block 1 (cum=1000) get stripped. Block 2
+        (cum=1500) and block 3 (cum=2000) survive. Declared channel still has
+        surviving markers → no warning.
+        """
+        _stub_token_counter(monkeypatch, tokens=500)
+        system_blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "y", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "z", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "w", "cache_control": {"type": "ephemeral"}},
+        ]
+        result = llm_module._strip_below_min_cache_markers(
+            system_blocks=system_blocks,
+            user_message_blocks=None,
+            model=ANTHROPIC_1024,
+        )
+        # Early markers stripped, terminal survives.
+        assert "cache_control" not in system_blocks[0]
+        assert "cache_control" not in system_blocks[1]
+        assert "cache_control" in system_blocks[2]
+        assert "cache_control" in system_blocks[3]
+        # Warning suppressed for declared channel.
+        assert result is None
+
+    def test_no_warning_when_no_markers_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """All markers above threshold → nothing stripped → no warning."""
+        _stub_token_counter(monkeypatch, tokens=5000)
+        system_blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "y", "cache_control": {"type": "ephemeral"}},
+        ]
+        result = llm_module._strip_below_min_cache_markers(
+            system_blocks=system_blocks,
+            user_message_blocks=None,
+            model=ANTHROPIC_1024,
+        )
+        assert result is None
+        assert "cache_control" in system_blocks[0]
+        assert "cache_control" in system_blocks[1]
+
+    def test_prewarm_channel_suppresses_when_any_marker_survives(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Multi-marker prewarm channel: early below threshold, terminal above.
+        Strip the early marker, but suppress the warning because a marker
+        survives in the channel.
+
+        Cross-channel cumulative measurement makes "declared survives +
+        prewarm stripped" structurally rare (once declared pushes past
+        threshold, no later prewarm marker strips). This test covers the
+        same suppression rule on prewarm-only configurations.
+        """
+
+        def _by_text(text: str, _model: str) -> int:
+            return 5000 if text == "BIG" else 100
+
+        monkeypatch.setattr(llm_module, "_count_text_tokens", _by_text)
+        user_blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": "tiny", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "BIG", "cache_control": {"type": "ephemeral"}},
+        ]
+        result = llm_module._strip_below_min_cache_markers(
+            system_blocks=None,
+            user_message_blocks=user_blocks,
+            model=ANTHROPIC_1024,
+        )
+        assert "cache_control" not in user_blocks[0]
+        assert "cache_control" in user_blocks[1]
+        assert result is None
