@@ -544,18 +544,17 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        assert (
-            _handle_text_output(
-                shared,
-                output_key=None,
-                workflow_ir=workflow_ir,
-                verbose=False,
-                print_flag=True,
-                metrics_collector=metrics,
-            )
-            is True
+        _handle_text_output(
+            shared,
+            output_key=None,
+            workflow_ir=workflow_ir,
+            verbose=False,
+            print_flag=True,
+            metrics_collector=metrics,
         )
 
+        # Behavior under -p + --only: data line on stdout, --only mode
+        # indicator on stderr, routing note ("--only active...") suppressed.
         captured = capsys.readouterr()
         assert "UPSTREAM_TARGET_OUTPUT" in captured.out
         assert "--only active" not in captured.err
@@ -1695,6 +1694,10 @@ class TestOnlyBatchCompactSummary:
     """``--only <batch-node>`` compact-summary rendering (text mode)."""
 
     def test_only_batch_node_emits_compact_summary(self, capsys):
+        """Data line on stdout, advisory hint on stderr (stream-discipline parity
+        with the rest of ``workflow_output.py``: ``-o`` miss hint, ``--only``
+        no-output advisory, declared-output warnings all use stderr for advice).
+        """
         from pflow.cli.workflow_output import _handle_text_output
 
         shared = {
@@ -1706,12 +1709,15 @@ class TestOnlyBatchCompactSummary:
         }
         _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
         captured = capsys.readouterr()
-        lines = captured.out.strip().split("\n")
-        assert lines[0] == "batch summarize-docs: 2/2 items succeeded in 1.4s"
-        assert lines[1] == "  use `-o summarize-docs.results` for full payload"
+        # Data line — stdout, alone.
+        assert captured.out.strip() == "batch summarize-docs: 2/2 items succeeded in 1.4s"
         assert "alpha" not in captured.out
         assert "beta" not in captured.out
-        assert "errors" not in captured.out
+        # Hint line — stderr.
+        assert "use `-o summarize-docs.results` for full payload" in captured.err
+        # error_count == 0, so no errors hint.
+        assert "for failures" not in captured.err
+        # The advisory line from the non-batch path must not appear.
         assert "streaming auto-detected" not in captured.err
 
     def test_only_batch_node_with_errors_includes_errors_hint(self, capsys):
@@ -1727,9 +1733,11 @@ class TestOnlyBatchCompactSummary:
         }
         _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
         captured = capsys.readouterr()
-        lines = captured.out.strip().split("\n")
-        assert lines[0] == "batch batch-llm: 1/2 items succeeded in 1.4s"
-        assert "`-o batch-llm.errors` for failures" in lines[1]
+        # Data line — stdout.
+        assert captured.out.strip() == "batch batch-llm: 1/2 items succeeded in 1.4s"
+        # Hint line — stderr, includes the failures hint when error_count > 0.
+        assert "`-o batch-llm.errors` for failures" in captured.err
+        assert "use `-o batch-llm.results` for full payload" in captured.err
 
     def test_only_batch_node_no_timing_omits_duration(self, capsys):
         """``batch_metadata.timing`` is None → no ' in Xs' suffix (not '0.0s')."""
@@ -1756,6 +1764,7 @@ class TestOnlyBatchCompactSummary:
         assert "0/0" not in captured.out
 
     def test_only_batch_node_print_mode_suppresses_hint(self, capsys):
+        """``-p`` keeps the data line on stdout, suppresses the stderr hint."""
         from pflow.cli.workflow_output import _handle_text_output
 
         shared = {
@@ -1770,9 +1779,10 @@ class TestOnlyBatchCompactSummary:
             print_flag=True,
         )
         captured = capsys.readouterr()
-        lines = captured.out.strip().split("\n")
-        assert len(lines) == 1
-        assert lines[0] == "batch batch-llm: 2/2 items succeeded in 1.4s"
+        assert captured.out.strip() == "batch batch-llm: 2/2 items succeeded in 1.4s"
+        # Hint must be suppressed on BOTH streams under -p.
+        assert "for full payload" not in captured.err
+        assert "for full payload" not in captured.out
 
     def test_only_batch_node_with_explicit_output_key_yields_full_payload(self, capsys):
         """``--only batch -o batch.results`` opts back into the full list (escape hatch)."""

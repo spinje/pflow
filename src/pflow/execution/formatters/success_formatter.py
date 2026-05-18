@@ -20,6 +20,7 @@ from pflow.execution.formatters.batch_errors import (
 from pflow.execution.formatters.batch_errors import (
     format_batch_errors_section as _shared_format_batch_errors_section,
 )
+from pflow.runtime.template_resolver import TemplateResolver
 
 
 def format_execution_success(
@@ -196,8 +197,6 @@ def _collect_outputs(
         # inside workflows. ``variable_exists`` distinguishes "path missing"
         # from "path resolved to None" so a legitimately-None value is
         # preserved in the JSON output.
-        from pflow.runtime.template_resolver import TemplateResolver
-
         if TemplateResolver.variable_exists(output_key, shared_storage):
             resolved: Any = TemplateResolver.resolve_value(output_key, shared_storage)
             result[output_key] = compact_batch_output_value(parse_json_or_original(resolved))

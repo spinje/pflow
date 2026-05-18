@@ -113,12 +113,20 @@ def _handle_text_output(
     workflow_metadata: dict[str, Any] | None = None,
     status: Any = None,
     warnings: list[Any] | None = None,
-) -> bool:
+) -> None:
     """Handle text formatted output with execution summary.
 
-    Shows execution summary first, then workflow output.
+    Shows execution summary first, then workflow output. When ``print_flag``
+    (``-p``) is True, suppresses stderr warnings/advice.
 
-    When print_flag (-p) is True, suppresses all warnings.
+    When no output is produced (``-o`` miss, no declared outputs, no
+    auto-detect match), stdout stays empty so pipe consumers receive a clean
+    stream. The stderr summary emitted by ``_emit_summary_or_only_indicator``
+    already signals success / degraded / failed status, so duplicating it on
+    stdout would mean ``pflow ... -o nonexistent | jq .`` crashed on a literal
+    English fallback (jq parses ``"Workflow executed successfully"`` as
+    invalid JSON). That fallback was the pre-existing wart this branch
+    removes as part of the GH #400 fix.
 
     Args:
         shared_storage: The shared store after execution
@@ -128,9 +136,6 @@ def _handle_text_output(
         print_flag: Whether -p flag is set (suppress warnings)
         metrics_collector: Optional MetricsCollector for execution metrics
         workflow_metadata: Optional workflow metadata
-
-    Returns:
-        True if output was produced, False otherwise.
     """
     # Display execution summary or --only mode indicator (dispatch in helper)
     _emit_summary_or_only_indicator(
@@ -145,9 +150,6 @@ def _handle_text_output(
         print_flag=print_flag,
     )
 
-    # Now show the actual output
-    output_found = False
-
     # User-specified key takes priority. Supports dotted paths (e.g.
     # ``batch-llm.success_count``, ``items[0].title``) by delegating to
     # ``TemplateResolver``, which is the same primitive used by ``${...}``
@@ -156,33 +158,34 @@ def _handle_text_output(
         if TemplateResolver.variable_exists(output_key, shared_storage):
             value = TemplateResolver.resolve_value(output_key, shared_storage)
             _output_with_header(value, print_flag)
-            output_found = True
         elif not print_flag:
             hint = _diagnose_path_failure(shared_storage, output_key)
             click.echo(
                 f"cli: Warning - output key '{output_key}' not found. {hint}",
                 err=True,
             )
+        return
 
     # --only targets are explicit data-routing requests. Declared workflow
     # outputs describe full runs, so they must not shadow the targeted node.
-    elif shared_storage.get("__execution__", {}).get("only_node"):
-        output_found = _emit_only_output(shared_storage, print_flag)
+    if shared_storage.get("__execution__", {}).get("only_node"):
+        _emit_only_output(shared_storage, print_flag)
+        return
 
-    # Check workflow-declared outputs for full runs.
-    elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
-        if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag, print_flag):
-            output_found = True
+    # Check workflow-declared outputs for full runs. Declared outputs that
+    # fail to resolve do NOT fall through to auto-detect — the workflow
+    # author's declared contract is authoritative; an unresolved declared
+    # output is a workflow-author error, not a cue to guess.
+    if workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
+        _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag, print_flag)
+        return
 
     # Fall back to auto-detect from common keys (using unified function)
-    else:
-        output_found = _emit_auto_detected_output(
-            shared_storage,
-            print_flag,
-            "cli: No outputs declared — showing auto-detected key '{key}'. Declare outputs for reliable results.",
-        )
-
-    return output_found
+    _emit_auto_detected_output(
+        shared_storage,
+        print_flag,
+        "cli: No outputs declared — showing auto-detected key '{key}'. Declare outputs for reliable results.",
+    )
 
 
 def _emit_only_output(shared_storage: dict[str, Any], print_flag: bool) -> bool:
@@ -245,6 +248,12 @@ def _list_routable_keys_for_only_target(shared_storage: dict[str, Any]) -> list[
     return sorted(k for k in shared_storage if isinstance(k, str) and not k.startswith("_"))
 
 
+# Token grammar: dotted name (``[a-zA-Z_][\w-]*``) or bracket index (``[N]``).
+# Bare digits are intentionally NOT a name segment — that makes inputs like
+# ``batch.results.0.r`` (dot-notation indexing, a documented misuse from #400)
+# fail the reconstruction check and fall into the syntax-hint branch, which
+# explicitly nudges the agent toward ``<name>[N]`` syntax. Pinned by
+# ``test_output_key_miss_with_dot_notation_for_list_index_nudges_to_brackets``.
 _PATH_SEGMENT_PATTERN = re.compile(r"[a-zA-Z_][\w-]*|\[\d+\]")
 
 
@@ -367,6 +376,10 @@ def _render_batch_compact_summary(node_id: str, value: dict[str, Any], print_fla
         safe_output(f"batch {node_id}: ran with no items")
         return
 
+    # ``batch_metadata`` is guaranteed dict-or-absent per ``batch_executor.py``
+    # contract; the outer ``or {}`` covers absent. ``timing`` is dict-or-None
+    # per ``batch_executor.py:823`` (None when ``item_timings`` is empty); the
+    # second ``or {}`` covers that real case.
     timing = (value.get("batch_metadata") or {}).get("timing") or {}
     total_ms = timing.get("total_items_ms")
     duration = f" in {total_ms / 1000:.1f}s" if isinstance(total_ms, (int, float)) else ""
@@ -377,7 +390,10 @@ def _render_batch_compact_summary(node_id: str, value: dict[str, Any], print_fla
     hint = f"use `-o {node_id}.results` for full payload"
     if error_count > 0:
         hint += f", `-o {node_id}.errors` for failures"
-    safe_output(f"  {hint}")
+    # Hint is advisory (drill-deeper guidance), not data — stderr matches the
+    # module-wide convention (data → stdout, advice → stderr) used by the
+    # ``-o`` miss hint and the ``--only`` no-output advisory.
+    click.echo(f"  {hint}", err=True)
 
 
 def _emit_auto_detected_output(
@@ -839,12 +855,12 @@ def _handle_json_output(
     workflow_trace: Any | None = None,
     status: Any = None,
     warnings: list[Any] | None = None,
-) -> bool:
+) -> None:
     """Handle JSON formatted output.
 
-    Returns all declared outputs or specified key as JSON, optionally with metrics.
-    Emits execution summary to stderr (same as text mode) — ``--output-format``
-    controls stdout format, ``-p`` controls stderr verbosity.
+    Emits all declared outputs (or the specified key) as JSON, optionally with
+    metrics. Execution summary still flows to stderr — ``--output-format``
+    controls stdout format only; ``-p`` controls stderr verbosity.
     """
     # Use shared formatter for consistency with MCP
     from pflow.execution.formatters.success_formatter import format_execution_success
@@ -877,7 +893,7 @@ def _handle_json_output(
         print_flag=print_flag,
     )
 
-    return _serialize_json_result(result, verbose)
+    _serialize_json_result(result, verbose)
 
 
 def _create_workflow_metadata(name: str | None, action: str) -> dict[str, Any]:
@@ -943,8 +959,11 @@ def _handle_workflow_output(
     workflow_trace: Any | None = None,
     status: Any = None,
     warnings: list[Any] | None = None,
-) -> bool:
+) -> None:
     """Handle output from workflow execution.
+
+    Dispatches to ``_handle_json_output`` or ``_handle_text_output`` based on
+    ``output_format``. Stream contract: data → stdout, summary/advice → stderr.
 
     Args:
         shared_storage: The shared store after execution
@@ -956,12 +975,9 @@ def _handle_workflow_output(
         print_flag: Whether -p flag is set (suppress warnings)
         workflow_metadata: Optional workflow metadata for JSON output
         workflow_trace: Optional workflow trace collector for saving JSON output
-
-    Returns:
-        True if output was produced, False otherwise.
     """
     if output_format == "json":
-        return _handle_json_output(
+        _handle_json_output(
             shared_storage,
             output_key,
             workflow_ir,
@@ -973,15 +989,16 @@ def _handle_workflow_output(
             status=status,
             warnings=warnings,
         )
-    else:  # text format (default)
-        return _handle_text_output(
-            shared_storage,
-            output_key,
-            workflow_ir,
-            verbose,
-            print_flag,
-            metrics_collector,
-            workflow_metadata,
-            status=status,
-            warnings=warnings,
-        )
+        return
+
+    _handle_text_output(
+        shared_storage,
+        output_key,
+        workflow_ir,
+        verbose,
+        print_flag,
+        metrics_collector,
+        workflow_metadata,
+        status=status,
+        warnings=warnings,
+    )

@@ -69,10 +69,10 @@ def test_only_batch_node_compact_summary_end_to_end(batch_shell_workflow_ir, cap
 
     _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
     captured = capsys.readouterr()
-    out_lines = captured.out.strip().split("\n")
 
-    assert out_lines[0].startswith("batch echo-items: 2/2 items succeeded"), captured.out
-    assert out_lines[1] == "  use `-o echo-items.results` for full payload"
+    # Data line on stdout; hint line on stderr (stream-discipline parity).
+    assert captured.out.strip().startswith("batch echo-items: 2/2 items succeeded"), captured.out
+    assert "use `-o echo-items.results` for full payload" in captured.err, captured.err
     assert "alpha" not in captured.out
     assert "beta" not in captured.out
 
