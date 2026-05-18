@@ -77,10 +77,14 @@ def test_catalog_size_matches_v1_inventory() -> None:
       ``cache.below-min-rendered``, and
       ``cache.prewarm-disabled-below-min``
     - ``cache.conditional-warmup-recommended`` (mixed-size batch traces).
+    - ``cache.routed-provider-degraded`` (multi-breakpoint follow-up:
+      Anthropic routed via proxy prefixes — per-chunk caching disabled,
+      INFO advisory so compliance-routed callers aren't permanently
+      DEGRADED).
 
     The catalog is closed per DD#29; expanding requires design review.
     """
-    assert len(CACHE_WARNING_CATALOG) == 30
+    assert len(CACHE_WARNING_CATALOG) == 31
 
 
 def test_entries_use_known_namespaces() -> None:
@@ -980,6 +984,12 @@ def _minimal_context_kwargs(warning_id: str) -> dict:
             "model": "anthropic/claude-haiku-4-5",
             "reasoning_effort": "low",
             "temperature": 0.3,
+        },
+        "cache.routed-provider-degraded": {
+            "node_id": "write-lyrics",
+            "affected_workflow": "x.pflow.md",
+            "model": "openrouter/anthropic/claude-sonnet-4-5",
+            "n_rendered_chunks": 3,
         },
     }
     return samples[warning_id]

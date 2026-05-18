@@ -24,6 +24,7 @@ from pflow.core.cache_render import (
     _build_cache_control_marker,
     _ChunkAbsentSentinel,
     _compute_marker_chunk_indices,
+    _looks_like_routed_anthropic,
     _resolve_chunk_value,
     _resolve_static_prefix_for_cache,
 )
@@ -403,6 +404,34 @@ def _emit_prewarm_dispatch_stripped_warning(
         alias=alias,
     )
     shared.setdefault("__warnings__", {})[node_id] = diagnostic
+
+
+def _emit_routed_provider_degraded_advisory(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    model: str,
+    n_rendered_chunks: int,
+) -> None:
+    """Emit ``cache.routed-provider-degraded`` when a multi-chunk cache is
+    declared on a routed-Anthropic model (e.g., OpenRouter, Bedrock, Vertex).
+
+    INFO-severity advisory — surfaces in reports but does not flip workflow
+    status (see ``WorkflowRunner._determine_status``). ``setdefault`` so
+    authoritative warnings (cache.below-min-rendered, prewarm-disabled-*) take
+    precedence; this is supplementary observability, not the primary signal.
+    """
+    if node_id is None:
+        return
+    workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
+    diagnostic = make_diagnostic(
+        "cache.routed-provider-degraded",
+        node_id=node_id,
+        affected_workflow=workflow_path,
+        model=model,
+        n_rendered_chunks=n_rendered_chunks,
+    )
+    shared.setdefault("__warnings__", {}).setdefault(node_id, diagnostic)
 
 
 def _build_openai_cache_kwargs(
@@ -902,6 +931,20 @@ def _build_system_blocks(
     marker = _build_cache_control_marker(provider_name, cache_ctx.cache_block.ttl)
     for chunk_idx in marker_indices:
         blocks[chunk_block_offset + chunk_idx]["cache_control"] = dict(marker)
+
+    # Routed-Anthropic INFO advisory: when the model looks like Anthropic
+    # routed through a proxy (OpenRouter, Bedrock, Vertex), pflow's per-chunk
+    # placement collapsed to terminal-only because detect_provider didn't
+    # recognize the prefix. The terminal cache still works; per-chunk reuse
+    # is lost. Fire only when multi-chunk would have benefited (>1 rendered).
+    if len(rendered) > 1 and _looks_like_routed_anthropic(model):
+        _emit_routed_provider_degraded_advisory(
+            shared=shared,
+            node_id=node_id,
+            model=model,
+            n_rendered_chunks=len(rendered),
+        )
+
     return blocks, chunks_skipped
 
 

@@ -32,6 +32,19 @@ from .workflow_resolver import resolve_workflow
 logger = logging.getLogger(__name__)
 
 
+def _is_degrading_warning(value: Any) -> bool:
+    """Return True when a ``__warnings__`` entry should flip workflow status to DEGRADED.
+
+    ``Severity.INFO`` Diagnostics are advisories — they surface in reports but
+    don't represent a regression. Everything else (WARNING/ERROR diagnostics
+    and the legacy string/dict warning shapes used by the LLM adapter and
+    on-error recovery) flips DEGRADED.
+    """
+    if isinstance(value, Diagnostic):
+        return value.severity is not Severity.INFO
+    return True
+
+
 # Backward-compat alias: the helper moved to ``core/workflow_id.py`` so the
 # analyzer can import it without crossing the ``core/`` ← ``execution/`` layer
 # boundary. Tests and module-private callers under this prefix continue to
@@ -551,12 +564,23 @@ class WorkflowRunner:
             del params[k]
 
     def _determine_status(self, action_result: Any, shared_store: dict[str, Any]) -> tuple[bool, WorkflowStatus]:
-        """Map action result + store state to (success, status)."""
+        """Map action result + store state to (success, status).
+
+        DEGRADED fires when ``__template_errors__`` is non-empty OR
+        ``__warnings__`` contains at least one entry the catalog tags as a
+        regression signal (``Severity.WARNING`` or ``Severity.ERROR``).
+        ``Severity.INFO`` entries are advisories — they surface in the
+        diagnostics list and reports but do not flip workflow status.
+        Legacy string/dict warning shapes (pre-catalog producers like the LLM
+        adapter and on-error recovery) default to degrading since they don't
+        carry a typed severity.
+        """
         if action_result and isinstance(action_result, str) and action_result.startswith("error"):
             return False, WorkflowStatus.FAILED
+        if shared_store.get("__template_errors__"):
+            return True, WorkflowStatus.DEGRADED
         warnings = shared_store.get("__warnings__", {})
-        template_errors = shared_store.get("__template_errors__", {})
-        if warnings or template_errors:
+        if any(_is_degrading_warning(value) for value in warnings.values()):
             return True, WorkflowStatus.DEGRADED
         return True, WorkflowStatus.SUCCESS
 

@@ -1425,3 +1425,142 @@ class TestMultiBreakpointPlacement:
         # past the 1024 threshold before any chunk block.
         assert "cache_control" in sent[1]
         assert "cache_control" in sent[2]
+
+
+# --- Routed-Anthropic advisory --------------------------------------------
+
+
+class TestRoutedAnthropicAdvisory:
+    """``cache.routed-provider-degraded`` fires from ``_build_system_blocks``
+    when the model looks like routed Anthropic AND multiple chunks are
+    rendered. INFO-severity advisory — surfaces in the report but does not
+    flip workflow status (per the severity-aware ``_determine_status``).
+    """
+
+    def _run(self, *, model: str, chunks: list[tuple[str, str]], subset: tuple[str, ...], mock_llm_client) -> dict:
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("n", model=model)
+        shared = {name: f"val-{name}" for name, _ in chunks}
+        _install_cache_render(shared, "n", _ctx(chunks=chunks, subset=subset))
+        node.run(shared)
+        return shared
+
+    def test_openrouter_multi_chunk_emits_advisory(self, mock_llm_client) -> None:
+        shared = self._run(
+            model="openrouter/anthropic/claude-sonnet-4-5",
+            chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")],
+            subset=("a", "b", "c"),
+            mock_llm_client=mock_llm_client,
+        )
+        warning = shared.get("__warnings__", {}).get("n")
+        assert warning is not None
+        assert warning.id == "cache.routed-provider-degraded"
+        assert warning.severity.value == "info"
+        assert warning.context["model"] == "openrouter/anthropic/claude-sonnet-4-5"
+        assert warning.context["n_rendered_chunks"] == 3
+
+    def test_bedrock_multi_chunk_emits_advisory(self, mock_llm_client) -> None:
+        shared = self._run(
+            model="bedrock/anthropic.claude-sonnet-4-5-v1:0",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        warning = shared.get("__warnings__", {}).get("n")
+        assert warning is not None
+        assert warning.id == "cache.routed-provider-degraded"
+
+    def test_vertex_multi_chunk_emits_advisory(self, mock_llm_client) -> None:
+        shared = self._run(
+            model="vertex_ai/claude-sonnet-4-5@20250514",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert shared["__warnings__"]["n"].id == "cache.routed-provider-degraded"
+
+    def _advisory_present(self, shared: dict) -> bool:
+        """Return True if the routed-Anthropic advisory was emitted for node 'n'.
+
+        The post-call observed-tier (``cache.below-min-observed``) can also
+        write to ``__warnings__['n']`` when the mock supplies zero cache
+        telemetry. These negative tests assert on the SPECIFIC catalog ID, not
+        on warning absence, so unrelated warnings don't cause false failures.
+        """
+        warning = shared.get("__warnings__", {}).get("n")
+        return warning is not None and getattr(warning, "id", None) == "cache.routed-provider-degraded"
+
+    def test_native_anthropic_does_not_emit(self, mock_llm_client) -> None:
+        """Native ``anthropic/`` prefix already gets multi-marker placement —
+        no advisory needed."""
+        shared = self._run(
+            model=ANTHROPIC,
+            chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")],
+            subset=("a", "b", "c"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_bare_claude_does_not_emit(self, mock_llm_client) -> None:
+        """Bare ``claude-*`` names match ``detect_provider`` via
+        bare_prefixes — already on the native path."""
+        shared = self._run(
+            model="claude-sonnet-4-5",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_routed_single_chunk_does_not_emit(self, mock_llm_client) -> None:
+        """Single-chunk caches don't benefit from multi-marker on ANY provider —
+        no degradation, no advisory."""
+        shared = self._run(
+            model="openrouter/anthropic/claude-sonnet-4-5",
+            chunks=[("a", "A:\n")],
+            subset=("a",),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_unknown_provider_no_substring_does_not_emit(self, mock_llm_client) -> None:
+        """Unknown provider whose model name doesn't contain claude/anthropic
+        is genuinely unknown, not routed-Anthropic — no advisory."""
+        shared = self._run(
+            model="ollama/llama-3",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_advisory_uses_setdefault_so_authoritative_warnings_win(self, mock_llm_client) -> None:
+        """Authoritative warnings (cache.below-min-rendered, etc.) take
+        precedence when both would fire. The advisory ``setdefault``s into
+        ``__warnings__[node_id]`` so an existing entry survives.
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("n", model="openrouter/anthropic/claude-sonnet-4-5")
+        pre_existing = Diagnostic(
+            severity=Severity.WARNING,
+            source="runtime",
+            message="prior authoritative signal",
+            node_id="n",
+        )
+        shared: dict[str, Any] = {
+            "a": "alpha",
+            "b": "beta",
+            "__warnings__": {"n": pre_existing},
+        }
+        _install_cache_render(
+            shared,
+            "n",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),
+        )
+
+        node.run(shared)
+
+        # Pre-existing authoritative warning survives.
+        assert shared["__warnings__"]["n"] is pre_existing

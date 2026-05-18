@@ -1106,3 +1106,114 @@ def test_caller_injected_workflow_file_preserved():
     result = WorkflowRunner().run(ir, params, RunnerConfig())
     assert result.success, f"Run failed: {result.errors}"
     assert result.shared_after["_pflow_workflow_file"] == caller_path
+
+
+# --- Severity-aware _determine_status -------------------------------------
+
+
+class TestDetermineStatusSeverity:
+    """`_determine_status` reads severity from catalog-emitted Diagnostics so
+    INFO advisories surface without flipping workflow status.
+
+    Earlier behavior treated any ``__warnings__`` entry as DEGRADED regardless
+    of severity. That conflated "this is an advisory" with "this run is a
+    regression". Severity-aware status determination matches the catalog's
+    typed intent.
+    """
+
+    def _run_status(self, *, warnings_dict=None, template_errors=None, action="default"):
+        """Drive ``_determine_status`` directly with a synthetic shared store."""
+        runner = WorkflowRunner()
+        shared = {}
+        if warnings_dict is not None:
+            shared["__warnings__"] = warnings_dict
+        if template_errors is not None:
+            shared["__template_errors__"] = template_errors
+        return runner._determine_status(action, shared)
+
+    def _info(self, node_id: str = "n") -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.INFO,
+            source="cache_analyzer",
+            message="advisory",
+            node_id=node_id,
+        )
+
+    def _warning(self, node_id: str = "n") -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.WARNING,
+            source="cache_analyzer",
+            message="regression",
+            node_id=node_id,
+        )
+
+    def _error(self, node_id: str = "n") -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="runtime",
+            message="error",
+            node_id=node_id,
+        )
+
+    def test_no_warnings_is_success(self):
+        success, status = self._run_status()
+        assert success is True
+        assert status == WorkflowStatus.SUCCESS
+
+    def test_info_only_warning_is_success(self):
+        """An INFO-severity Diagnostic surfaces as a warning in the report
+        but does not flip workflow status."""
+        success, status = self._run_status(warnings_dict={"n": self._info()})
+        assert success is True
+        assert status == WorkflowStatus.SUCCESS
+
+    def test_warning_severity_diagnostic_is_degraded(self):
+        success, status = self._run_status(warnings_dict={"n": self._warning()})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_error_severity_diagnostic_is_degraded(self):
+        """ERROR severity in __warnings__ also flips DEGRADED — only INFO is
+        treated as non-regressing. ERROR-on-warnings is rare in practice but
+        the catalog allows it and the contract should be consistent."""
+        success, status = self._run_status(warnings_dict={"n": self._error()})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_mixed_info_and_warning_is_degraded(self):
+        """One WARNING is enough to flip DEGRADED even when INFO entries coexist."""
+        success, status = self._run_status(warnings_dict={"a": self._info("a"), "b": self._warning("b")})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_legacy_string_warning_is_degraded(self):
+        """Pre-catalog producers (LLM adapter, on-error recovery) write
+        strings or dicts to __warnings__. They have no severity, so the
+        defensive default is to treat them as degrading — preserving today's
+        behavior for everything not catalog-emitted."""
+        success, status = self._run_status(warnings_dict={"n": "legacy string warning"})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_legacy_dict_warning_is_degraded(self):
+        """LLM adapter warning shape (kind/text/context dict) — also degrades."""
+        warning_dict = {"kind": "llm_empty", "text": "empty response", "context": {}}
+        success, status = self._run_status(warnings_dict={"n": warning_dict})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_template_errors_flip_degraded_independent_of_severity(self):
+        """Template errors are their own channel; presence alone means
+        the run was incomplete enough to warrant DEGRADED."""
+        success, status = self._run_status(
+            warnings_dict={"n": self._info()},
+            template_errors={"x": "unresolved"},
+        )
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_error_action_overrides_warnings(self):
+        """An ``"error"`` action result is FAILED regardless of warnings."""
+        success, status = self._run_status(warnings_dict={"n": self._warning()}, action="error")
+        assert success is False
+        assert status == WorkflowStatus.FAILED

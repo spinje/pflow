@@ -507,6 +507,7 @@ async def analyze_cache(
       - cache.below-min-observed
       - cache.below-min-rendered
       - cache.prewarm-disabled-below-min
+      - cache.routed-provider-degraded
       - cache.conditional-warmup-recommended
       - cache.cross-workflow-prose-mismatch
       - cache.cross-workflow-rename-detected

@@ -327,3 +327,35 @@ def _compute_marker_chunk_indices(
     if n_rendered_chunks <= budget:
         return tuple(range(n_rendered_chunks))
     return (*range(budget - 1), n_rendered_chunks - 1)
+
+
+def _looks_like_routed_anthropic(model: str | None) -> bool:
+    """Heuristic: model identifier looks like routed Anthropic but doesn't
+    match pflow's native Anthropic prefix.
+
+    Returns True when:
+      - ``detect_provider(model)`` returns None (unknown to pflow), AND
+      - the model string contains ``"claude"`` or ``"anthropic"`` (substring,
+        case-insensitive).
+
+    Catches the common router shapes ``openrouter/anthropic/claude-...``,
+    ``bedrock/anthropic.claude-...``, ``vertex_ai/claude-...`` and any
+    similar future variant — without enumerating routers. False-positive
+    surface is tiny because no shipping non-Anthropic model name today
+    contains those substrings.
+
+    This helper is the detection rule behind ``cache.routed-provider-degraded``:
+    users running a multi-chunk ``## Cache`` on a routed-Anthropic model are
+    silently losing per-chunk caching (terminal marker still works, but
+    chunks-individual reuse is lost). The diagnostic surfaces this so the
+    user can either switch to the canonical ``anthropic/`` prefix or, for
+    compliance-routed callers, knowingly accept the limitation.
+    """
+    from pflow.core.llm_providers import detect_provider
+
+    if not model:
+        return False
+    if detect_provider(model) is not None:
+        return False
+    lowered = model.lower()
+    return "claude" in lowered or "anthropic" in lowered

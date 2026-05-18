@@ -22,6 +22,7 @@ from pflow.core.cache_render import (
     _ChunkAbsentSentinel,
     _compute_marker_chunk_indices,
     _deterministic_serialize,
+    _looks_like_routed_anthropic,
     _resolve_chunk_value,
     _resolve_static_prefix_for_cache,
 )
@@ -277,3 +278,62 @@ class TestComputeMarkerChunkIndices:
         # zero markers and no signal.
         with pytest.raises(ValueError, match="n_rendered_chunks >= 1"):
             _compute_marker_chunk_indices(0, "anthropic", False)
+
+
+# --- _looks_like_routed_anthropic ------------------------------------------
+
+
+class TestLooksLikeRoutedAnthropic:
+    """Detection heuristic for routed-Anthropic models (OpenRouter, Bedrock,
+    Vertex, etc.) — the trigger condition for the
+    ``cache.routed-provider-degraded`` advisory.
+    """
+
+    # --- True: model looks like routed Anthropic ---
+
+    def test_openrouter_anthropic(self):
+        assert _looks_like_routed_anthropic("openrouter/anthropic/claude-sonnet-4-5") is True
+
+    def test_bedrock_anthropic(self):
+        assert _looks_like_routed_anthropic("bedrock/anthropic.claude-sonnet-4-5-v1:0") is True
+
+    def test_vertex_ai_claude(self):
+        assert _looks_like_routed_anthropic("vertex_ai/claude-sonnet-4-5@20250514") is True
+
+    def test_aws_bedrock_claude(self):
+        assert _looks_like_routed_anthropic("aws/bedrock/anthropic.claude-3-haiku") is True
+
+    def test_case_insensitive(self):
+        assert _looks_like_routed_anthropic("OpenRouter/Anthropic/Claude-Sonnet") is True
+
+    # --- False: pflow knows the provider (native path handles it) ---
+
+    def test_native_anthropic_prefix_excluded(self):
+        # detect_provider returns "anthropic" → already handled by native path
+        assert _looks_like_routed_anthropic("anthropic/claude-sonnet-4-5") is False
+
+    def test_bare_claude_excluded(self):
+        # detect_provider matches bare_prefixes "claude-" → native path
+        assert _looks_like_routed_anthropic("claude-sonnet-4-5") is False
+
+    def test_native_openai_excluded(self):
+        assert _looks_like_routed_anthropic("openai/gpt-4o") is False
+
+    def test_native_gemini_excluded(self):
+        assert _looks_like_routed_anthropic("gemini/gemini-2.5-pro") is False
+
+    # --- False: unknown provider, no Anthropic-flavored substring ---
+
+    def test_unknown_provider_no_substring(self):
+        assert _looks_like_routed_anthropic("ollama/llama-3") is False
+
+    def test_unknown_router_unrelated_model(self):
+        assert _looks_like_routed_anthropic("openrouter/openai/gpt-4o") is False
+
+    # --- Edge cases ---
+
+    def test_empty_string(self):
+        assert _looks_like_routed_anthropic("") is False
+
+    def test_none(self):
+        assert _looks_like_routed_anthropic(None) is False

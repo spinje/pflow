@@ -163,7 +163,8 @@ If you route Anthropic through OpenRouter, Bedrock, or Vertex (for example
 `openrouter/anthropic/claude-sonnet-4-5`, `bedrock/anthropic.claude-sonnet-*`,
 or `vertex_ai/claude-sonnet-*`), the model identifier doesn't match those
 patterns. Caching still works — but only as a single cached prefix, not
-per-chunk.
+per-chunk. pflow emits a `cache.routed-provider-degraded` advisory in this
+case so you see it in `pflow report` without having to dig.
 
 To get per-chunk caching, address the model directly with `model:
 anthropic/claude-...` and provide `ANTHROPIC_API_KEY`.

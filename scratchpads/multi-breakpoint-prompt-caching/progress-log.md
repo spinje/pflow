@@ -355,3 +355,178 @@ Key facts:
 So multiple breakpoints are strictly an improvement: the write side is
 free, and the read side gains independence (a change in chunk[N] no
 longer invalidates the cached portion through chunk[N-1]).
+
+---
+
+# Follow-up: code review pass (3 specialist agents + 1 verifier)
+
+After the initial commit landed, ran `/code-review` with the 3 most relevant
+agents in parallel: **review-impact-completeness**, **review-silent-failures**,
+**review-feature-interactions**. A targeted **pflow-codebase-searcher** agent
+verified two analyzer-side claims before classification.
+
+## Verdicts
+
+| Class | Count | Notes |
+|---|---|---|
+| Critical | 0 | No correctness bugs found. |
+| Confirmed (action taken) | 6 | All addressed in the follow-up commit. |
+| Confirmed but deferred | 3 | GH issue work, per user instruction to handle separately. |
+| Disputed | 4 | See below for evidence. |
+
+## Disputed findings (with evidence)
+
+**Cost projection under-estimated 4× under multi-marker** — feature-interactions
+claimed Anthropic charges per-write per scope so 4 markers = 4 × cache_creation
+cost. Verifier confirmed `core/cache_analysis/cost_estimation.py:281-318, 494-593`
+uses `row.cache_active.tokens_estimated` (cumulative-through-terminal) once
+per call with a single `write_rate × tokens` math. This matches Anthropic's
+documented delta-pricing — writing markers at [0..K] and [0..N] in the same
+request charges deltas, not duplicates. The reviewer mis-modeled the pricing.
+
+**Parallel batch heterogeneous ABSENT × OpenAI sticky routing** — flagged
+as a multi-marker regression. Pre-existing behavior (ABSENT-filter and
+per-item rendering existed before this commit). Not introduced.
+
+**`cache_skipped_reason` partial-survival** — reviewer noted "This is actually
+correct behavior" inline; the observability gap is real but is covered by
+deferred follow-up #410 (per-marker telemetry).
+
+**Trace report `default=str` for hypothetical nested markers** — markers
+today are flat. The implementation comment already documents the migration
+trigger to `copy.deepcopy`. Adding a test for a hypothetical state isn't
+useful; the new deepcopy-aliasing regression test (item #1 below) covers
+the migration trigger.
+
+## Follow-up commit content
+
+Six in-commit fixes (3 tests, 3 docstring/comment touch-ups):
+
+1. **`test_mutating_one_markers_top_level_does_not_leak_to_others`** — behavioral
+   guard for the shallow-copy footgun documented at `_build_system_blocks:872-875`.
+   Today markers are flat, so this tests the simpler top-level case; the
+   inline comment documents the deepcopy migration trigger for nested markers.
+
+2. **Centralization docstrings tightened across 3 sites**:
+   - `_compute_marker_chunk_indices`: added "Scope of centralized placement"
+     block explaining `_build_user_message_blocks` is a parallel emitter by
+     construction; the 4-marker cap is shared via `prewarm_consumes_slot`.
+   - `_build_user_message_blocks`: inline cross-reference at the
+     `cache_control` emit site.
+   - `_build_openai_cache_kwargs`: replaced "last block" framing with the
+     explicit budget-1 + `_compute_marker_chunk_indices` derivation.
+
+3. **`_strip_below_min_cache_markers` docstring**: added "Asymmetry to be
+   aware of" + "`*_measured_tokens` semantics" paragraphs documenting the
+   cross-channel cumulative vs per-channel suppression interaction, and the
+   smallest-stripped-scope semantics of the measured tokens field.
+
+4. **`_compute_marker_chunk_indices` body**: inline comment on the `budget <= 1`
+   guard explaining the budget=0 hypothetical (when a future budget=1 provider
+   also debits a prewarm slot — still emits terminal marker; revisit if a
+   future provider has a strict shared cap).
+
+5. **`test_cross_channel_cumulative_prewarm_marker_survives_via_system_accumulation`**
+   — locks the cross-channel cumulative + per-channel suppression asymmetry
+   newly documented in #3 above. 3 declared (cum 400/800/1200, threshold 1024,
+   so 0,1 strip and 2 survives) + prewarm marker (cum 1250, survives because
+   the system-channel already crossed threshold).
+
+6. **`test_openai_prompt_cache_key_pinned_hash_for_known_content`** — pins
+   the OpenAI MD5 hex (`180791359f4acd84630ff34114e4bf39`) for known cache
+   content. Trips loudly if `get_breakpoint_budget("openai")`,
+   `_build_cache_control_marker`, `_compute_marker_chunk_indices` for
+   budget=1, or the deterministic-JSON serialization changes in a way that
+   would silently invalidate sticky routing across deploys.
+
+## Additional cleanup (after follow-up commit)
+
+Three more touch-ups landed after the review pass:
+
+**A. Function renamed: `compute_marker_chunk_indices` → `_compute_marker_chunk_indices`.**
+Aligns with the project convention for one-call-site private helpers in
+`cache_render.py` (`_resolve_chunk_value`, `_build_cache_control_marker`,
+`_resolve_static_prefix_for_cache`). Signals the private-contract intent —
+future callers can't sneak in without acknowledging the empty-input guard.
+
+**B. End-to-end `WorkflowRunner` test** at
+`tests/test_integration/test_prompt_cache_multi_chunk.py`. Drives the
+committed `examples/core/prompt-caching-multi-chunk.pflow.md` through
+`WorkflowRunner.run()` with the mock LLM and asserts that both consumer
+LLM nodes (`summarize`, `translate`) reach the adapter with 3 system blocks,
+each carrying a `cache_control` marker. Closes the cross-layer test gap
+that unit-level placement tests don't cover.
+
+**C. This addendum.**
+
+## Confirmed but deferred (filed for separate GH follow-up)
+
+1. **Routed-Anthropic silent degradation** — both reviewers flagged. Currently
+   covered by the guide doc; deferred to GH #409 per the commit message.
+   Real user-visible silent failure: a workflow with `model:
+   openrouter/anthropic/claude-sonnet-4-5` and 4 declared chunks silently
+   gets 1 marker. Fix would emit an INFO diagnostic
+   `cache.routed-provider-degraded` from `_compute_marker_chunk_indices` when
+   `provider_name is None AND n_rendered_chunks > 1 AND bare_model matches
+   /anthropic|claude-/`. ~20 LOC + 3-4 tests + warning-catalog entry.
+
+2. **`_attribute_root_cause` priority under multi-marker.** Verifier confirmed
+   the function reads ONLY `chunks_skipped` (`analyze.py:7983-8008`); zero-cache
+   telemetry and below_min are not consulted. When suppressed-below-min +
+   ABSENT chunks coexist, the analyzer attributes to ABSENT branches —
+   pointing the user at the wrong root cause. Pre-existing design choice;
+   multi-marker just makes "suppressed below_min + ABSENT" the more common
+   case. Worth filing as analyzer follow-up.
+
+3. **Storage-mode-shared × parallel batch × `## Cache` UNSUPPORTED COMBO.**
+   Pre-existing silent-but-benign behavior documented in `runtime/CLAUDE.md`.
+   Multi-marker widens the corrupted-state surface (N possible marker
+   topologies vs. just N positions). No current consumer reads parent's
+   `__pflow_cache_render__` after a parallel batch, so the corruption is
+   unobservable today. File the runtime guard before Task 160's analyzer
+   refactor lands and might add such a consumer.
+
+## Final state — verification
+
+Both commits combined:
+
+| Gate | Result |
+|---|---|
+| `make check` | clean (ruff/ruff-format/mypy/deptry) |
+| Targeted tests (cache_render, capabilities, hash, rendering, below-min, batch, multi-chunk integration) | 198/198 pass |
+| `make test` (full suite) | 7002 passed, 1 skipped |
+| Pre-implementation grep audit (stale single-marker phrases) | zero hits |
+| JSON fixture audit (`'"cache_control"'` in committed fixtures) | zero hits |
+| Hash byte-identity (`test_golden_baseline_hashes_match`) | pass unchanged |
+
+## Test counts — running total
+
+Initial commit (76334d0): +39 new tests across 5 files.
+Follow-up commit (review pass fixes): +3 tests (deepcopy-aliasing,
+cross-channel cumulative, OpenAI MD5 pin).
+This cleanup pass: +1 end-to-end test through `WorkflowRunner`.
+
+Total new test coverage attributable to multi-breakpoint work: **43 tests**.
+
+## Lessons recorded for future readers
+
+1. **The "fully centralized" framing was technically false.** `_build_user_message_blocks`
+   is a parallel `cache_control` emission site (single-marker by construction).
+   Both reviewer + this addendum now document the constraint explicitly.
+
+2. **One reviewer was confidently wrong about Anthropic's pricing semantics.**
+   The cost-projection 4×-under-estimate claim was a categorical error
+   contradicting both the implementation plan's pricing citation and the
+   actual Anthropic docs. Verification before classification caught this —
+   trusting the reviewer's verdict on the surface would have triggered a
+   wrong analyzer-refactor.
+
+3. **The deepcopy comment was paper without a test.** The reviewer was
+   right: a single behavioral test (mutate one marker, assert neighbors
+   unchanged) makes the migration trigger enforceable.
+
+4. **The strip walker's cross-channel cumulative vs per-channel suppression
+   asymmetry is subtle.** Documenting it explicitly in the function docstring
+   prevents future contributors from "fixing" the cumulative to reset
+   per-channel — which would silently break Anthropic's documented
+   "cumulative through preceding content" semantics.
