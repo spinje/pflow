@@ -352,6 +352,149 @@ Desired fix (own task, est. 2–3 days):
 - New catalog warning recommending a parent warm node when ≥2 parallel
   sub-workflow children share overlapping `prompt_cache`.
 
+### Inlined repros
+
+Both originally lived under `scratchpads/pflow-cache-repros/`
+(throwaway by design — preserved here so the bug shape doesn't die
+with the scratchpads).
+
+**Repro A — opaque prompt-file batch.** The batch LLM node references
+`prompt: ${item.prompt}` where each item value is a local prompt file.
+Both prompt files reference the same `${source_text}` variable. The
+analyzer does not currently inspect the referenced prompt files, so the
+shared variable is invisible to it.
+
+```markdown
+# Repro: Opaque Prompt-File Batch
+
+## Inputs
+
+### source_text
+
+Shared text used by both prompt files.
+
+- type: string
+- required: false
+- default: "This is shared source text. Repeat it mentally as if it were much larger."
+
+## Steps
+
+### analyze
+
+Run two prompt files that both reference `${source_text}`.
+
+- type: llm
+- temperature: 0
+- reasoning_effort: none
+- max_tokens: 16
+- prompt: ${item.prompt}
+
+\`\`\`yaml batch
+items:
+  - prompt: ./prompt-a.md
+  - prompt: ./prompt-b.md
+parallel: true
+\`\`\`
+
+## Outputs
+
+### results
+
+- source: ${analyze.results}
+```
+
+Where `prompt-a.md` and `prompt-b.md` both contain:
+
+```markdown
+Shared source:
+
+${source_text}
+
+Task A / B: reply with one sentence about the source.
+```
+
+Verification: `pflow analyze-cache <wrapper>.pflow.md --no-trace-autoload --all-rows`.
+Observed: `Cost data unavailable: run the workflow once for cost figures.`
+No static recommendation that `prompt: ${item.prompt}` points at
+local prompt files which share `${source_text}`.
+
+**Repro B — shared prompt missing surrounding context.** A
+`shared-context.prompt.md` was refactored to rely on context supplied
+by the surrounding workflow (via `## Cache`/`prompt_cache:`). A second
+workflow uses the same prompt file but doesn't declare the matching
+`prompt_cache`. Both workflows validate; both execute and return `OK`.
+The broken consumer fails silently — the prompt assumes context that
+isn't there.
+
+**The shared prompt** (`shared-context.prompt.md`):
+
+```markdown
+Use the source material from the surrounding context.
+
+Return exactly:
+
+OK
+```
+
+**The well-behaved consumer:**
+
+```markdown
+# With-Context Wrapper
+
+## Inputs
+
+### source_text
+
+- type: string
+- required: false
+- default: "This source text is supplied as surrounding context."
+
+## Cache
+
+- ttl: 5m
+
+\`\`\`cache
+Source material:
+
+${source_text}
+\`\`\`
+
+## Steps
+
+### answer
+
+- type: llm
+- prompt_cache: [source_text]
+- temperature: 0
+- reasoning_effort: none
+- max_tokens: 8
+- prompt: ./shared-context.prompt.md
+```
+
+**The broken consumer** (missing `## Cache` + `prompt_cache:`):
+
+```markdown
+# Missing-Context Wrapper
+
+## Steps
+
+### answer
+
+- type: llm
+- temperature: 0
+- reasoning_effort: none
+- max_tokens: 8
+- prompt: ./shared-context.prompt.md
+```
+
+Verification: `pflow <broken-consumer>.pflow.md --validate-only` passes;
+runtime succeeds; neither validator nor analyzer flags that the prompt
+prose assumes context the workflow does not supply. This is a
+semantic/context-contract bug, not a template-variable bug — the fix
+needs the cross-consumer prompt-file index described above to detect
+which workflows consume each prompt file and compare their declared
+`prompt_cache` against the prompt's prose assumptions.
+
 ## Run Output and General CLI UX
 
 ### 13. `-o` flag dotted paths / `--only` batch UX
