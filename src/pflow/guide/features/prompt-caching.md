@@ -131,6 +131,44 @@ Fix by reordering the node field:
 Keep stable bytes first. Provider prompt caches work on shared prefixes, so
 dynamic per-item text should come after stable instructions and cached chunks.
 
+## Order chunks stable-to-volatile
+
+On Anthropic, every chunk you declare in `## Cache` (up to 4) becomes its
+own independently cacheable boundary. Each chunk's cache covers everything
+declared before it — so the order you list chunks in changes what survives
+when something changes.
+
+**Declare the most stable content first, then progressively more volatile
+content.** Example:
+
+1. System prompt (rarely changes)
+2. Knowledge base reference (occasionally updated)
+3. User session context (per-session)
+4. Per-call dynamic content (every call)
+
+When chunk 3 changes in this layout, the caches built from chunks 1 and 2
+still hit on the next call. With the reverse ordering, a single change at
+the top invalidates everything.
+
+If you can't order the chunks this way, caching still works — you just
+won't get the per-chunk reuse benefit. The end of the full cached prefix
+remains cacheable as a single block on every provider.
+
+## Anthropic via proxies: per-chunk caching only fires with the `anthropic/` prefix
+
+Per-chunk caching is detected from the model identifier. It fires when the
+model name starts with `anthropic/` or `claude-`.
+
+If you route Anthropic through OpenRouter, Bedrock, or Vertex (for example
+`openrouter/anthropic/claude-sonnet-4-5`, `bedrock/anthropic.claude-sonnet-*`,
+or `vertex_ai/claude-sonnet-*`), the model identifier doesn't match those
+patterns. Caching still works — but only as a single cached prefix, not
+per-chunk. pflow emits a `cache.routed-provider-degraded` advisory in this
+case so you see it in `pflow report` without having to dig.
+
+To get per-chunk caching, address the model directly with `model:
+anthropic/claude-...` and provide `ANTHROPIC_API_KEY`.
+
 ## TTL
 
 Default TTL is 5 minutes. Omit `ttl` for the default `5m` behavior, or set

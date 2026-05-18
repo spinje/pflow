@@ -6168,10 +6168,12 @@ class _GroupedConsumerProjection:
 
     ``per_call_prefix_tokens`` is the sum of input tokens this consumer receives
     on each call. It's what the provider's cache minimum is checked against —
-    pflow emits a single ``cache_control`` marker on the last cached block per
-    call, so the marker sees the per-call prefix bytes. The threshold gate must
-    use this field, NOT a cohort total (per_call × call_count), which mixes
-    units and silently mis-classifies low-per-call high-call-count cases.
+    pflow emits one or more ``cache_control`` markers per call (Anthropic
+    multi-breakpoint); the terminal marker sees the full per-call prefix bytes.
+    The threshold gate must use this field (per-call prefix tokens), NOT a
+    cohort total (per_call × call_count), which mixes units and silently
+    mis-classifies low-per-call high-call-count cases. Multi-breakpoint
+    placement does not change the per-call denominator.
 
     ``threshold`` is the provider's per-call minimum for this consumer's model.
     ``savings_usd`` is cohort-level (already multiplied by call count) — the

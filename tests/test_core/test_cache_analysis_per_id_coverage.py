@@ -369,6 +369,14 @@ def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
                 "affected_workflow": "x.pflow.md",
             },
         ),
+        "cache.routed-provider-degraded": (
+            "write-lyrics",
+            {
+                "model": "openrouter/anthropic/claude-sonnet-4-5",
+                "n_rendered_chunks": 3,
+                "affected_workflow": "x.pflow.md",
+            },
+        ),
     }
     return samples[warning_id]
 
@@ -807,6 +815,23 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     assert rendered.id == "cache.below-min-rendered"
     _round_trip(rendered)
     seen_ids.add("cache.below-min-rendered")
+
+    # cache.routed-provider-degraded: runtime advisory emitted by
+    # _build_system_blocks when the model looks like Anthropic routed
+    # through a proxy AND multi-chunk caching would have applied.
+    from pflow.nodes.llm.llm import _emit_routed_provider_degraded_advisory
+
+    routed_shared: dict[str, Any] = {"_pflow_workflow_file": "x.pflow.md"}
+    _emit_routed_provider_degraded_advisory(
+        shared=routed_shared,
+        node_id="ask",
+        model="openrouter/anthropic/claude-sonnet-4-5",
+        n_rendered_chunks=3,
+    )
+    routed_advisory = routed_shared["__warnings__"]["ask"]
+    assert routed_advisory.id == "cache.routed-provider-degraded"
+    _round_trip(routed_advisory)
+    seen_ids.add("cache.routed-provider-degraded")
 
     # cache.conditional-warmup-recommended: complete trace shows a mixed
     # cohort, with some provider calls stripped below-min and some not.

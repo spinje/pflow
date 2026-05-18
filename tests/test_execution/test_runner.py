@@ -1106,3 +1106,235 @@ def test_caller_injected_workflow_file_preserved():
     result = WorkflowRunner().run(ir, params, RunnerConfig())
     assert result.success, f"Run failed: {result.errors}"
     assert result.shared_after["_pflow_workflow_file"] == caller_path
+
+
+# --- Severity-aware _determine_status -------------------------------------
+
+
+class TestDetermineStatusSeverity:
+    """`_determine_status` reads severity from catalog-emitted Diagnostics so
+    INFO advisories surface without flipping workflow status.
+
+    Earlier behavior treated any ``__warnings__`` entry as DEGRADED regardless
+    of severity. That conflated "this is an advisory" with "this run is a
+    regression". Severity-aware status determination matches the catalog's
+    typed intent.
+    """
+
+    def _run_status(self, *, warnings_dict=None, template_errors=None, action="default"):
+        """Drive ``_determine_status`` directly with a synthetic shared store."""
+        runner = WorkflowRunner()
+        shared = {}
+        if warnings_dict is not None:
+            shared["__warnings__"] = warnings_dict
+        if template_errors is not None:
+            shared["__template_errors__"] = template_errors
+        return runner._determine_status(action, shared)
+
+    def _info(self, node_id: str = "n") -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.INFO,
+            source="cache_analyzer",
+            message="advisory",
+            node_id=node_id,
+        )
+
+    def _warning(self, node_id: str = "n") -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.WARNING,
+            source="cache_analyzer",
+            message="regression",
+            node_id=node_id,
+        )
+
+    def _error(self, node_id: str = "n") -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="runtime",
+            message="error",
+            node_id=node_id,
+        )
+
+    def test_no_warnings_is_success(self):
+        success, status = self._run_status()
+        assert success is True
+        assert status == WorkflowStatus.SUCCESS
+
+    def test_info_only_warning_is_success(self):
+        """An INFO-severity Diagnostic surfaces as a warning in the report
+        but does not flip workflow status."""
+        success, status = self._run_status(warnings_dict={"n": self._info()})
+        assert success is True
+        assert status == WorkflowStatus.SUCCESS
+
+    def test_warning_severity_diagnostic_is_degraded(self):
+        success, status = self._run_status(warnings_dict={"n": self._warning()})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_error_severity_diagnostic_is_degraded(self):
+        """ERROR severity in __warnings__ also flips DEGRADED — only INFO is
+        treated as non-regressing. ERROR-on-warnings is rare in practice but
+        the catalog allows it and the contract should be consistent."""
+        success, status = self._run_status(warnings_dict={"n": self._error()})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_mixed_info_and_warning_is_degraded(self):
+        """One WARNING is enough to flip DEGRADED even when INFO entries coexist."""
+        success, status = self._run_status(warnings_dict={"a": self._info("a"), "b": self._warning("b")})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_legacy_string_warning_is_degraded(self):
+        """Pre-catalog producers (LLM adapter, on-error recovery) write
+        strings or dicts to __warnings__. They have no severity, so the
+        defensive default is to treat them as degrading — preserving today's
+        behavior for everything not catalog-emitted."""
+        success, status = self._run_status(warnings_dict={"n": "legacy string warning"})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_legacy_dict_warning_is_degraded(self):
+        """LLM adapter warning shape (kind/text/context dict) — also degrades."""
+        warning_dict = {"kind": "llm_empty", "text": "empty response", "context": {}}
+        success, status = self._run_status(warnings_dict={"n": warning_dict})
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_template_errors_flip_degraded_independent_of_severity(self):
+        """Template errors are their own channel; presence alone means
+        the run was incomplete enough to warrant DEGRADED."""
+        success, status = self._run_status(
+            warnings_dict={"n": self._info()},
+            template_errors={"x": "unresolved"},
+        )
+        assert success is True
+        assert status == WorkflowStatus.DEGRADED
+
+    def test_error_action_overrides_warnings(self):
+        """An ``"error"`` action result is FAILED regardless of warnings."""
+        success, status = self._run_status(warnings_dict={"n": self._warning()}, action="error")
+        assert success is False
+        assert status == WorkflowStatus.FAILED
+
+
+class TestInfoDiagnosticsReachSurfaces:
+    """INFO-severity Diagnostics emitted by runtime nodes must reach the
+    user-facing surfaces (CLI rendering filter + trace JSON warnings array),
+    not just the programmatic `result.diagnostics` list.
+
+    The earlier shape filtered both surfaces to ``severity == Severity.WARNING``
+    — INFO advisories like ``cache.routed-provider-degraded`` landed in
+    ``result.diagnostics`` correctly but were invisible on the two paths
+    most users actually look at. Catalog-typed INFO + severity-aware status
+    only matter if the renderers also honor them.
+    """
+
+    def test_info_diagnostic_appears_in_result_trace_warnings(self, mock_llm_client, tmp_path: Path):
+        """A workflow whose runtime emits an INFO Diagnostic into
+        ``shared['__warnings__']`` (here: the routed-Anthropic advisory
+        from a multi-chunk ``## Cache`` on a proxy-prefixed model) must
+        surface that diagnostic in ``result.trace.execution_warnings``
+        (the list serialized to the trace JSON's ``warnings`` array).
+
+        Catches the regression where ``runner.py:_run()`` filtered the
+        trace warnings to WARNING-only, dropping INFO advisories from the
+        JSON trace surface even though the catalog typed them as
+        user-visible. Without this fix, the routed-Anthropic advisory
+        emitted by ``_emit_routed_provider_degraded_advisory`` is invisible
+        on the trace surface despite landing correctly in
+        ``shared['__warnings__']`` and in ``result.diagnostics``.
+        """
+        # Bypass the runtime below-min strip — short chunk text would
+        # otherwise strip the cache markers and dominate the warning set.
+        # We're testing the INFO surface contract, not strip semantics.
+        from unittest.mock import patch
+
+        from pflow.core.diagnostic import Severity
+        from pflow.execution.runner import WorkflowRunner
+
+        mock_llm_client.set_response("*", None, "ok", cache_creation_input_tokens=512)
+
+        # Multi-chunk ## Cache on a routed-Anthropic model (OpenRouter shape).
+        # `_looks_like_routed_anthropic` returns True for this prefix because
+        # `detect_provider` returns None but the model contains "claude" and
+        # "anthropic" substrings.
+        workflow_md = """# Routed Anthropic test
+
+Test that INFO advisories reach the trace surface.
+
+## Inputs
+
+### q
+
+The question.
+
+- type: string
+- required: true
+
+## Cache
+
+```cache
+Stable context:
+
+${chunk_a.stdout}
+
+Knowledge base:
+
+${chunk_b.stdout}
+```
+
+## Steps
+
+### chunk_a
+
+Stable content.
+
+- type: shell
+
+```command
+echo "stable A"
+```
+
+### chunk_b
+
+Knowledge content.
+
+- type: shell
+
+```command
+echo "stable B"
+```
+
+### answer
+
+LLM node using a routed-Anthropic model identifier.
+
+- type: llm
+- model: openrouter/anthropic/claude-sonnet-4-5
+- prompt_cache: [chunk_a.stdout, chunk_b.stdout]
+- prompt: "respond ok ${q}"
+"""
+        workflow_file = tmp_path / "test.pflow.md"
+        workflow_file.write_text(workflow_md)
+
+        runner = WorkflowRunner()
+        with patch("pflow.nodes.llm.llm._count_text_tokens", return_value=10_000):
+            result = runner.run(str(workflow_file), {"q": "test"}, config=RunnerConfig())
+
+        # `result.diagnostics` should include the INFO advisory.
+        info_diags = [d for d in result.diagnostics if d.severity == Severity.INFO]
+        assert any(d.id == "cache.routed-provider-degraded" for d in info_diags), (
+            f"INFO advisory should reach result.diagnostics; got: "
+            f"{[(d.severity.value, d.id) for d in result.diagnostics]}"
+        )
+
+        # Trace surface — the serialized JSON warnings array consumers read.
+        assert result.trace is not None, "trace_collector should be created"
+        execution_warnings = result.trace.execution_warnings or []
+        ids_in_trace = [w.get("id") for w in execution_warnings]
+        assert "cache.routed-provider-degraded" in ids_in_trace, (
+            f"INFO advisory must reach the trace warnings surface (not filtered out). "
+            f"Got execution_warnings ids: {ids_in_trace}"
+        )

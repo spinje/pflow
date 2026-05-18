@@ -10,7 +10,7 @@ from typing import Any
 
 import click
 
-from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
 
 
@@ -56,7 +56,17 @@ def _display_text_error_details(
         click.echo("cli: Check node output above for details", err=True)
         return
 
-    warnings = result.warnings
+    # Include INFO advisories alongside WARNING on the surface — INFO
+    # diagnostics surface in reports per the severity-aware status contract
+    # (see `_is_degrading_warning` in `execution/runner.py`). The
+    # `result.warnings` property filters to WARNING-only by name; pull from
+    # diagnostics directly to include INFO too. Matches the parallel filter
+    # in `cli/commands/run.py` on the success path.
+    warnings = [
+        diagnostic
+        for diagnostic in getattr(result, "diagnostics", [])
+        if diagnostic.severity in {Severity.WARNING, Severity.INFO}
+    ]
     errors = result.errors
 
     if len(errors) > 1:

@@ -544,6 +544,31 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         path_template="nodes[id={node_id}]",
         headline_template="Prewarm cache did not fire on {node_id}",
     ),
+    "cache.routed-provider-degraded": CacheWarningSpec(
+        severity=Severity.INFO,
+        source="cache_analyzer",
+        category=CACHE_ADVISORY_CATEGORY,
+        message_template=(
+            "{node_id}: model '{model}' looks like Anthropic routed through a "
+            "proxy. pflow's per-chunk cache placement only fires when the "
+            "model uses the canonical 'anthropic/' prefix (or a bare 'claude-*' "
+            "name). The terminal cache prefix still works, but per-chunk reuse "
+            "is lost for {n_rendered_chunks} declared chunks."
+        ),
+        required_context_keys=(
+            ("node_id", str),
+            ("model", str),
+            ("n_rendered_chunks", int),
+        ),
+        suggestions_template=(
+            "Address the model directly with `model: anthropic/claude-...` and "
+            "set ANTHROPIC_API_KEY to enable per-chunk caching. If routing "
+            "through a proxy is required (e.g. for compliance), the terminal "
+            "cache prefix still fires; per-chunk reuse is the only thing lost.",
+        ),
+        path_template="nodes[id={node_id}]",
+        headline_template="Routed-Anthropic model — per-chunk caching disabled on {node_id}",
+    ),
     "cache.cross-workflow-prose-mismatch": CacheWarningSpec(
         severity=Severity.INFO,
         source="cache_analyzer",
@@ -1003,6 +1028,7 @@ RECOMMENDED_ACTION_PRIORITY: dict[str, int] = {
     "cache.below-min-rendered": 29,
     "cache.below-min-observed": 30,
     "cache.below-min-predicted": 31,
+    "cache.routed-provider-degraded": 30,
     "cache.prewarm-no-prefix": 30,
     "cache.batch-prewarm-below-min": 30,
     "cache.consolidate-to-root-recommended": 30,

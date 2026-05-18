@@ -1,4 +1,4 @@
-"""C1.2 — LLMNode.prep cache rendering (Anthropic-flavored single-breakpoint).
+"""C1.2 — LLMNode.prep cache rendering (Anthropic-flavored multi-breakpoint).
 
 Both the hash side (``runtime/engine/plan_node._render_cache_for_hash``) and
 the prep side (``LLMNode.prep`` in this test) must call the SHARED
@@ -189,6 +189,11 @@ def test_chunk_text_is_prose_plus_value(mock_llm_client) -> None:
 
 
 def test_multi_chunk_declaration_order_preserved(mock_llm_client) -> None:
+    """3 chunks on default Anthropic model (budget=4) → marker on every chunk.
+
+    Triple: (n_rendered_chunks=3, provider="anthropic", prewarm=False)
+    Expected indices from _compute_marker_chunk_indices: (0, 1, 2).
+    """
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"a": "alpha-value", "b": "beta-value", "c": "gamma-value"}
@@ -205,10 +210,10 @@ def test_multi_chunk_declaration_order_preserved(mock_llm_client) -> None:
 
     sent = mock_llm_client.call_history_full[-1]["system"]
     assert [b["text"] for b in sent] == ["A:\nalpha-value", "B:\nbeta-value", "C:\ngamma-value"]
-    # Marker on LAST block only
-    assert "cache_control" in sent[-1]
-    assert "cache_control" not in sent[0]
-    assert "cache_control" not in sent[1]
+    # Markers on every chunk (Anthropic budget=4, 3 chunks <= budget)
+    assert "cache_control" in sent[0]
+    assert "cache_control" in sent[1]
+    assert "cache_control" in sent[2]
 
 
 # --- Three-state equivalence: no opt-in falls back to plain string ---------
@@ -819,6 +824,40 @@ def test_openai_emits_prompt_cache_key_when_subset_non_empty(mock_llm_client) ->
     assert len(options["prompt_cache_key"]) == 32
 
 
+def test_openai_prompt_cache_key_pinned_hash_for_known_content(mock_llm_client) -> None:
+    """Pin the OpenAI ``prompt_cache_key`` MD5 hex for a fixed cache input.
+
+    OpenAI sticky routing depends on a stable hash across deploys. If a
+    future change to ``_compute_marker_chunk_indices`` accidentally bumps
+    OpenAI to budget > 1 (which would inject multi-marker dicts into
+    ``system_blocks``), or if ``_build_cache_control_marker`` changes the
+    marker shape on the OpenAI path, the MD5 input bytes shift and every
+    existing user's cache-routing key changes silently — invalidating
+    sticky routing across deploys with no user-facing signal.
+
+    This test pins the exact MD5 hex produced by today's
+    OpenAI=budget-1 / terminal-only-marker path for a known cache input.
+    A drift in this value means at least one of the following changed:
+    ``get_breakpoint_budget("openai")``, ``_build_cache_control_marker``
+    on the OpenAI path, ``_compute_marker_chunk_indices`` for budget=1,
+    or the deterministic-JSON serialization in ``runtime/cache.py``. Any
+    of those is a backward-compat break worth a deliberate decision.
+    """
+    mock_llm_client.set_response("*", None, "ok")
+    node = _make_node("write-lyrics", model=OPENAI)
+    shared = {"concept": "a song about courage"}
+    _install_cache_render(
+        shared,
+        "write-lyrics",
+        _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
+    )
+
+    node.run(shared)
+
+    options = mock_llm_client.call_history_full[-1]["model_options"]
+    assert options["prompt_cache_key"] == "180791359f4acd84630ff34114e4bf39"
+
+
 def test_openai_prompt_cache_key_deterministic_across_calls(mock_llm_client) -> None:
     """Two LLM calls with byte-identical cache content must produce the same
     prompt_cache_key — that's the load-bearing routing invariant."""
@@ -1111,3 +1150,417 @@ def test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store(mo
     prep_texts = [b["text"] for b in sent]
 
     assert hash_texts == prep_texts, f"hash-vs-prep byte divergence:\n  hash: {hash_texts!r}\n  prep: {prep_texts!r}"
+
+
+# --- Multi-breakpoint placement (Anthropic up to 4; others terminal-only) --
+
+
+GEMINI = "gemini/gemini-2.5-pro"
+
+
+class TestMultiBreakpointPlacement:
+    """Verify multi-breakpoint placement on Anthropic; terminal-only on others.
+
+    Each test documents its (n_rendered_chunks, provider, prewarm) → expected
+    marker indices triple per ``_compute_marker_chunk_indices``.
+    """
+
+    def test_anthropic_three_chunks_individual_markers(self, mock_llm_client) -> None:
+        """3 chunks on Anthropic, no prewarm → markers at (0, 1, 2)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        shared = {"a": "alpha", "b": "beta", "c": "gamma"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 3
+        for idx in (0, 1, 2):
+            assert "cache_control" in sent[idx], f"chunk block {idx} should carry cache_control"
+
+    def test_anthropic_seven_chunks_first_three_plus_terminal(self, mock_llm_client) -> None:
+        """7 chunks on Anthropic, no prewarm → markers at (0, 1, 2, 6)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        names = list("abcdefg")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 7
+        for idx in (0, 1, 2, 6):
+            assert "cache_control" in sent[idx], f"chunk block {idx} should carry cache_control"
+        for idx in (3, 4, 5):
+            assert "cache_control" not in sent[idx], f"chunk block {idx} should NOT carry cache_control"
+
+    def test_anthropic_with_prewarm_reduces_budget(self, mock_llm_client) -> None:
+        """5 chunks on Anthropic + prewarm=True → budget 3 → markers at (0, 1, 4)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        names = list("abcde")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+                prewarm=True,
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 5
+        for idx in (0, 1, 4):
+            assert "cache_control" in sent[idx], f"chunk block {idx} should carry cache_control"
+        for idx in (2, 3):
+            assert "cache_control" not in sent[idx], f"chunk block {idx} should NOT carry cache_control"
+
+    def test_openai_seven_chunks_terminal_only(self, mock_llm_client) -> None:
+        """7 chunks on OpenAI → budget=1 → marker only on the terminal block."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", model="openai/gpt-4o-mini")
+        names = list("abcdefg")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 7
+        for idx in range(6):
+            assert "cache_control" not in sent[idx], f"non-terminal block {idx} must not carry cache_control on OpenAI"
+        assert "cache_control" in sent[6]
+
+    def test_gemini_terminal_only(self, mock_llm_client) -> None:
+        """Gemini → budget=1 → terminal marker only (cachedContents via LiteLLM)."""
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", model=GEMINI)
+        names = list("abc")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 3
+        assert "cache_control" not in sent[0]
+        assert "cache_control" not in sent[1]
+        assert "cache_control" in sent[2]
+
+    def test_user_system_block_does_not_receive_marker(self, mock_llm_client) -> None:
+        """When ``system:`` is set, the leading user_system block is at index 0
+        and NEVER gets a marker. Chunk block indices are offset accordingly.
+
+        3 chunks on Anthropic → marker on every chunk block. user_system has
+        no marker. sent layout: [user_system, chunk0, chunk1, chunk2].
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", system="Be concise.")
+        shared = {"a": "alpha", "b": "beta", "c": "gamma"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 4  # user_system + 3 chunk blocks
+        assert sent[0]["text"] == "Be concise."
+        assert "cache_control" not in sent[0]
+        for idx in (1, 2, 3):
+            assert "cache_control" in sent[idx], f"chunk block at sent index {idx} should carry cache_control"
+
+    def test_absent_chunks_excluded_from_marker_count(self, mock_llm_client) -> None:
+        """5 chunks declared, 2 ABSENT → marker placement operates on the 3
+        rendered chunks, not the 5 declared. Anthropic budget=4 → 3 chunks
+        ≤ budget → every rendered chunk gets a marker.
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        # a, c, e resolve; b, d are absent (no entry in shared)
+        shared = {"a": "alpha", "c": "gamma", "e": "epsilon"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n"), ("d", "D:\n"), ("e", "E:\n")],
+                subset=("a", "b", "c", "d", "e"),
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 3  # absent chunks filtered
+        for idx in range(3):
+            assert "cache_control" in sent[idx]
+
+    def test_mutating_one_markers_top_level_does_not_leak_to_others(self, mock_llm_client) -> None:
+        """Behavioral guard against shallow-copy aliasing.
+
+        ``_build_system_blocks`` copies the marker per block via ``dict(marker)``.
+        If a future contributor changes ``_build_cache_control_marker`` to return a
+        nested dict (e.g., ``{"type": "ephemeral", "config": {"ttl": "1h"}}``), the
+        shallow copy would alias ``config`` across all blocks — mutating one
+        block's config would mutate every block's. Today markers are flat, so this
+        test exercises the simpler top-level case. The inline comment at
+        ``_build_system_blocks`` already calls out the migration trigger.
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        shared = {"a": "alpha", "b": "beta", "c": "gamma"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        sent[0]["cache_control"]["type"] = "MUTATED"
+        assert sent[1]["cache_control"]["type"] == "ephemeral"
+        assert sent[2]["cache_control"]["type"] == "ephemeral"
+
+    def test_prewarm_declared_but_bailed_out_still_reserves_slot(self, mock_llm_client) -> None:
+        """Conservative budget: cache_ctx.prewarm=True is the post-pre-flight
+        truth even if user_message prewarm itself bails out at runtime (images
+        present, alignment fail, etc.). 5-chunk Anthropic with prewarm flagged
+        → budget=3 → markers at (0, 1, 4). Sub-optimal but never exceeds the
+        4-marker cap on the wire.
+        """
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics")
+        names = list("abcde")
+        shared = {n: f"val-{n}" for n in names}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(
+                chunks=[(n, f"{n.upper()}:\n") for n in names],
+                subset=tuple(names),
+                prewarm=True,
+            ),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        assert len(sent) == 5
+        for idx in (0, 1, 4):
+            assert "cache_control" in sent[idx]
+        for idx in (2, 3):
+            assert "cache_control" not in sent[idx]
+
+    def test_user_system_contributes_to_strip_threshold(self, mock_llm_client, monkeypatch) -> None:
+        """Integration: a long user_system PLUS a tiny chunk 0 can still get
+        chunk 0's marker above threshold via cumulative count. Locks the
+        user_system token contribution into the strip-path cumulative walk.
+
+        Setup: user_system contributes 4000 tokens; each chunk contributes
+        100 tokens. Threshold (Sonnet 4.5) is 1024. Cumulative through
+        chunk 0 = user_system + chunk0 = 4100, well above 1024 → chunk 0
+        marker survives the strip. With multi-marker, all chunk markers
+        survive (cumulative monotonically grows).
+        """
+
+        # We need to remove the autouse bypass so the strip actually runs.
+        # Replace with a finer-grained stub so user_system block adds 4000
+        # tokens and each chunk block adds 100.
+        def _by_text(text: str, _model: str) -> int:
+            if text == "LONG_SYSTEM":
+                return 4000
+            return 100
+
+        monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", _by_text)
+
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("write-lyrics", system="LONG_SYSTEM")
+        shared = {"a": "alpha", "b": "beta"}
+        _install_cache_render(
+            shared,
+            "write-lyrics",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),
+        )
+
+        node.run(shared)
+
+        sent = mock_llm_client.call_history_full[-1]["system"]
+        # sent layout: [user_system, chunk_a, chunk_b]
+        assert len(sent) == 3
+        # All chunk markers should survive — user_system pushes cumulative
+        # past the 1024 threshold before any chunk block.
+        assert "cache_control" in sent[1]
+        assert "cache_control" in sent[2]
+
+
+# --- Routed-Anthropic advisory --------------------------------------------
+
+
+class TestRoutedAnthropicAdvisory:
+    """``cache.routed-provider-degraded`` fires from ``_build_system_blocks``
+    when the model looks like routed Anthropic AND multiple chunks are
+    rendered. INFO-severity advisory — surfaces in the report but does not
+    flip workflow status (per the severity-aware ``_determine_status``).
+    """
+
+    def _run(self, *, model: str, chunks: list[tuple[str, str]], subset: tuple[str, ...], mock_llm_client) -> dict:
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("n", model=model)
+        shared = {name: f"val-{name}" for name, _ in chunks}
+        _install_cache_render(shared, "n", _ctx(chunks=chunks, subset=subset))
+        node.run(shared)
+        return shared
+
+    def test_openrouter_multi_chunk_emits_advisory(self, mock_llm_client) -> None:
+        shared = self._run(
+            model="openrouter/anthropic/claude-sonnet-4-5",
+            chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")],
+            subset=("a", "b", "c"),
+            mock_llm_client=mock_llm_client,
+        )
+        warning = shared.get("__warnings__", {}).get("n")
+        assert warning is not None
+        assert warning.id == "cache.routed-provider-degraded"
+        assert warning.severity.value == "info"
+        assert warning.context["model"] == "openrouter/anthropic/claude-sonnet-4-5"
+        assert warning.context["n_rendered_chunks"] == 3
+
+    def test_bedrock_multi_chunk_emits_advisory(self, mock_llm_client) -> None:
+        shared = self._run(
+            model="bedrock/anthropic.claude-sonnet-4-5-v1:0",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        warning = shared.get("__warnings__", {}).get("n")
+        assert warning is not None
+        assert warning.id == "cache.routed-provider-degraded"
+
+    def test_vertex_multi_chunk_emits_advisory(self, mock_llm_client) -> None:
+        shared = self._run(
+            model="vertex_ai/claude-sonnet-4-5@20250514",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert shared["__warnings__"]["n"].id == "cache.routed-provider-degraded"
+
+    def _advisory_present(self, shared: dict) -> bool:
+        """Return True if the routed-Anthropic advisory was emitted for node 'n'.
+
+        The post-call observed-tier (``cache.below-min-observed``) can also
+        write to ``__warnings__['n']`` when the mock supplies zero cache
+        telemetry. These negative tests assert on the SPECIFIC catalog ID, not
+        on warning absence, so unrelated warnings don't cause false failures.
+        """
+        warning = shared.get("__warnings__", {}).get("n")
+        return warning is not None and getattr(warning, "id", None) == "cache.routed-provider-degraded"
+
+    def test_native_anthropic_does_not_emit(self, mock_llm_client) -> None:
+        """Native ``anthropic/`` prefix already gets multi-marker placement —
+        no advisory needed."""
+        shared = self._run(
+            model=ANTHROPIC,
+            chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")],
+            subset=("a", "b", "c"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_bare_claude_does_not_emit(self, mock_llm_client) -> None:
+        """Bare ``claude-*`` names match ``detect_provider`` via
+        bare_prefixes — already on the native path."""
+        shared = self._run(
+            model="claude-sonnet-4-5",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_routed_single_chunk_does_not_emit(self, mock_llm_client) -> None:
+        """Single-chunk caches don't benefit from multi-marker on ANY provider —
+        no degradation, no advisory."""
+        shared = self._run(
+            model="openrouter/anthropic/claude-sonnet-4-5",
+            chunks=[("a", "A:\n")],
+            subset=("a",),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_unknown_provider_no_substring_does_not_emit(self, mock_llm_client) -> None:
+        """Unknown provider whose model name doesn't contain claude/anthropic
+        is genuinely unknown, not routed-Anthropic — no advisory."""
+        shared = self._run(
+            model="ollama/llama-3",
+            chunks=[("a", "A:\n"), ("b", "B:\n")],
+            subset=("a", "b"),
+            mock_llm_client=mock_llm_client,
+        )
+        assert not self._advisory_present(shared)
+
+    def test_advisory_uses_setdefault_so_authoritative_warnings_win(self, mock_llm_client) -> None:
+        """Authoritative warnings (cache.below-min-rendered, etc.) take
+        precedence when both would fire. The advisory ``setdefault``s into
+        ``__warnings__[node_id]`` so an existing entry survives.
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+
+        mock_llm_client.set_response("*", None, "ok")
+        node = _make_node("n", model="openrouter/anthropic/claude-sonnet-4-5")
+        pre_existing = Diagnostic(
+            severity=Severity.WARNING,
+            source="runtime",
+            message="prior authoritative signal",
+            node_id="n",
+        )
+        shared: dict[str, Any] = {
+            "a": "alpha",
+            "b": "beta",
+            "__warnings__": {"n": pre_existing},
+        }
+        _install_cache_render(
+            shared,
+            "n",
+            _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),
+        )
+
+        node.run(shared)
+
+        # Pre-existing authoritative warning survives.
+        assert shared["__warnings__"]["n"] is pre_existing

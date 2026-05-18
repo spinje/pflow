@@ -258,3 +258,23 @@ def test_anthropic_models_at_threshold_excludes_provider_wildcards() -> None:
 
     assert "" not in anthropic_models_at_threshold(1024)
     assert all("/" not in model for model in anthropic_models_at_threshold(1024))
+
+
+@pytest.mark.parametrize(
+    "provider_name,expected_budget",
+    [
+        ("anthropic", 4),
+        ("openai", 1),
+        ("gemini", 1),
+        (None, 1),
+        ("ollama", 1),
+        ("bedrock", 1),
+    ],
+)
+def test_get_breakpoint_budget(provider_name: str | None, expected_budget: int) -> None:
+    """Anthropic gets 4 (native multi-breakpoint); everyone else (including
+    routed Anthropic via proxy prefixes that don't classify as ``anthropic``)
+    falls through to the conservative floor of 1."""
+    from pflow.core.llm_capabilities import get_breakpoint_budget
+
+    assert get_breakpoint_budget(provider_name) == expected_budget
