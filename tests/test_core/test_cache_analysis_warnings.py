@@ -255,10 +255,52 @@ def test_make_diagnostic_batch_prewarm_below_min_anthropic() -> None:
     assert "declared cache" not in diag.message
     assert "prompt_cache:" not in diag.message
 
-    # Suggestions name the two remediation paths.
+    # Suggestions name the three remediation paths (grow, remove prewarm,
+    # OR switch model — F#4 follow-ups-2 model-switch bullet).
     suggestions_blob = "\n".join(diag.suggestions or ())
     assert "Grow the static prefix" in suggestions_blob
     assert "remove `- prewarm: true`" in suggestions_blob
+    assert "switch `- model:`" in suggestions_blob
+
+
+def test_make_diagnostic_batch_prewarm_below_min_suggestions_include_model_switch_bullet() -> None:
+    """F#4 (follow-ups-2): the third suggestion bullet must explicitly name a
+    concrete lower-min model so agents on Gemini / Opus 4.5+ workflows have
+    a provider-aware out beyond growing the prefix or removing prewarm.
+
+    Mutation contract: revert the third bullet (the ``Switch
+    `- model:` ...`` line) from ``warning_catalog.py`` —
+    ``cache.batch-prewarm-below-min``'s ``suggestions_template`` collapses
+    back to two entries and this test fails on length and on the
+    ``anthropic/claude-sonnet-4-5`` substring.
+
+    Provider-aware framing: the bullet always recommends a model with cache
+    minimum ≤ 1,024 (the floor across published providers), so it never
+    suggests a model that would worsen the situation regardless of the
+    caller's current model.
+    """
+    diag = make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id="score",
+        affected_workflow="x.pflow.md",
+        model="gemini/gemini-2.5-flash",
+        prefix_tokens=1129,
+        min_tokens=4096,
+        batch_alias="item",
+        provider_note="explicit `cachedContents` won't fire, but Gemini's automatic implicit cache may still apply for stable prefixes",
+    )
+    suggestions = list(diag.suggestions or ())
+    assert len(suggestions) == 3, f"expected 3 suggestion bullets, got {len(suggestions)}: {suggestions}"
+    model_switch_bullet = suggestions[2]
+    # Lock the bullet's load-bearing pieces — wording can refactor but the
+    # contract is: name a concrete model with min ≤ 1,024 + point at the guide.
+    assert "switch `- model:`" in model_switch_bullet
+    assert "anthropic/claude-sonnet-4-5" in model_switch_bullet
+    assert "1,024" in model_switch_bullet
+    assert "pflow guide prompt-caching" in model_switch_bullet
+    # Naming the failing node keeps the suggestion actionable in
+    # multi-node workflows.
+    assert "score" in model_switch_bullet
 
 
 def test_make_diagnostic_batch_prewarm_below_min_gemini_implicit_cache_note() -> None:

@@ -1466,3 +1466,93 @@ The cross-consumer prompt-file index work (S#15+S#17+S#20) remains its own
 task per the Bundle 7 closeout. With S#5 + S#9 closed in Bundle 8, the
 remaining open scratchpad items are either feature-sized (S#8 replay-from-
 trace) or already deferred to their own task. The branch is merge-ready.
+
+## 2026-05-16 — Bundle 9: F#4 — converge prewarm Recommended-Actions surface with the per-call row UX
+
+Final follow-ups-2 item. The user's reframe was load-bearing: F#4 in the followups doc was scoped as *"the analyzer can still tell users to add prewarm: true for a prefix that would not fire — suppress the recommendation when below-min,"* but the user rejected that framing — *"show the recommendation and give notes about the limitation so the agent knows how close they are to min threshold, can change model etc."* This matches Bundle 5's Option B reasoning that structural recommendations stay visible with explicit blocker fields. The per-call row already did this via `_prewarm_opportunity_projection_component` (`blocked_reason="below_provider_min"`, `meets_provider_min=False`, `affects_cost_projection=False`); the Recommended-Actions block was silently suppressing the same case at two sites.
+
+### What shipped
+
+**Production (2 files):**
+
+- `src/pflow/core/cache_analysis/analyze.py` — new `_emit_batch_prewarm_below_min(node_id, model, prefix_tokens, batch_alias, workflow_path)` helper that routes all three callers through a single producer for `cache.batch-prewarm-below-min` emission:
+  - `_per_node_warnings` (existing site — declared `prewarm: true` with measured below-min prefix; behavior preserved, refactored to use the helper).
+  - `_confident_batch_prewarm_recommendation` (was `return []` when below-min; now emits `cache.batch-prewarm-below-min`).
+  - `_batch_prewarm_recommendations` lower-bound branch (was `return []` when below-min with unresolved refs; now emits `cache.batch-prewarm-below-min`).
+
+  Predicate stays `is_below_min_cache` (honest-unmeasurable) per Bundle 5 Option B — user-visible recommendation gates do not migrate to `is_likely_below_min_cache`. Empty/unknown model still returns False at this surface, matching the per-call row's behavior.
+
+- `src/pflow/core/cache_analysis/warning_catalog.py` — third suggestion bullet on `cache.batch-prewarm-below-min`:
+
+  > "OR switch `- model:` on {node_id} to one with a lower cache minimum — e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table."
+
+  Provider-aware in the safe direction: always recommends the published floor (1,024 tokens, Anthropic Sonnet 4.5), never a model that increases the minimum vs the caller's current. Known minor wart: when the user is *already* on Sonnet 4.5, the bullet is degenerate (suggests switching to the model they're on); see "Known limitation" below.
+
+**Tests (3 files):**
+
+- `tests/test_core/test_cache_analysis_per_id_emission.py` — new `test_cache_batch_prewarm_below_min_fires_on_undeclared_measurable_below_min_prefix` (real-shape fixture matching the lyrics-generator `score-choruses` case, batch with 34 observed calls, anthropic/claude-sonnet-4-5, sub-threshold prefix) and `test_cache_batch_prewarm_below_min_fires_on_undeclared_lower_bound_below_min_prefix` (unresolvable `${missing.context}` ref forcing the lower-bound branch). Both have explicit mutation contracts in the docstring. Updated `test_batch_prewarm_lower_bound_recommended_silent_when_measurable_prefix_below_min` to also assert the new below-min emission instead of asserting silence.
+- `tests/test_core/test_cache_analysis_warnings.py` — new `test_make_diagnostic_batch_prewarm_below_min_suggestions_include_model_switch_bullet` (locks the third bullet's load-bearing pieces: `switch \`- model:\``, `anthropic/claude-sonnet-4-5`, `1,024`, `pflow guide prompt-caching`, node-id substitution); extended existing `test_make_diagnostic_batch_prewarm_below_min_anthropic` to assert the three-bullet shape.
+- `tests/test_core/test_cache_analysis_renderers.py` — extended `test_batch_prewarm_below_min_renders_prewarm_remediation_not_declared_cache` to assert the new bullet renders in text output.
+
+**Baselines (4 regenerated, intentional drift):**
+
+- `04-warning-catalog/22-cache.batch-prewarm-below-min` — new bullet added (declared-branch existing case; previously two suggestion lines, now three).
+- `04-warning-catalog/09d-cache.prewarm-disabled-below-min`, `04-warning-catalog/09e-cache.conditional-warmup-recommended` — same new bullet (these cases declare `prewarm: true` on Sonnet 4.5 with sub-threshold prefixes).
+- `10-live-recordings/05-gemini-lyrics-generator` — the biggest payoff. Two new full Recommended-Actions entries (#12 `curate-briefs`, #13 `score-choruses`) surface where the analyzer previously suppressed the recommendation silently. Recommended-actions count: 12 → 14. Per-call row `score-choruses` blocker note also gains `; batch-prewarm-below-min` suffix (the catalog warning that now fires; previously suppressed). No cost-math drift — below-min still has `affects_cost_projection=False`.
+
+### Why this shape (top-10% simplicity)
+
+Same pattern Bundles 4 / 7 / 8 codified: **single producer at the seam, structured data flowing to consumers, no per-site duplicated logic.** Three call sites that previously each constructed their own `cache.batch-prewarm-below-min` diagnostic (or, in two cases, suppressed silently) now share one helper. If a future site adds a new branch needing the same emission, it calls the helper; no copy-paste drift surface.
+
+The helper deliberately takes `workflow_path: str | None` to mirror `PerCallRow.workflow_path` nullability. The catalog's `_ensure_workflow_scope` rejects None at construction (raising `KeyError`), which is the correct contract — analyzer rows without a workflow_path should not produce workflow-scoped diagnostics.
+
+The convergence story is now complete: per-call row + Recommended-Actions block both show the same structural blocker on the same evidence, with three actionable remediations (grow, remove prewarm, switch model). Bundle 5's Option B narrow scope is preserved — `is_likely_below_min_cache` remains at internal cost-math gates only.
+
+### Known limitation (worth a future polish pass)
+
+The third suggestion bullet names `anthropic/claude-sonnet-4-5` (1,024-token min) as the lowest-min model. When the user is *already* on Sonnet 4.5, the suggestion reads "switch to anthropic/claude-sonnet-4-5" — degenerate. Affects synthetic baseline cases `09d` and `09e` and any production workflow with sub-1,024-token prefixes on Sonnet 4.5.
+
+Not actively harmful (the bullet stays factually correct — Sonnet 4.5 is a model with a 1,024-token min — they just already have it), but a UX wart. Two refinement options for a future pass:
+- Catalog-level conditional emission: drop the bullet when `min_tokens <= 1024` (requires `_select_message_template`-style filtering not currently in the catalog framework).
+- Soften the wording: "if a different model fits your workflow, see `pflow guide prompt-caching`; lowest published min is 1,024 tokens (`anthropic/claude-sonnet-4-5`)." Loses the directive verb but degenerate-safe.
+
+Out of scope for this bundle — the directive wording matches the user's "agent can change model" framing and the test suite locks the load-bearing pieces. Flag for a future catalog-polish sweep.
+
+### Verification
+
+- **Targeted tests** (`test_cache_analysis_per_id_emission`, `test_cache_analysis_per_id_coverage`, `test_cache_analysis_warnings`, `test_cache_analysis_renderers`): **429 passed**.
+- **Full cache-analysis family** (`test_cache_analysis_*.py`): **751 passed**.
+- **Broader regression sweep** (`tests/test_core/`, `tests/test_runtime/`, `tests/test_cli/`, `tests/test_execution/`, excluding `test_dry_run_subprocess.py` sandbox flake): **5,558 passed, 1 skipped**.
+- **Baseline oracle** (`verify.sh`): **87 passed, 0 drifted, 0 harness errors** after regenerating the 4 intentional drift cases.
+- **Lint/type**: `ruff check` clean on all touched files; `mypy src/pflow/core/cache_analysis/` clean (14 source files).
+- **Mutation contract**: each new test's docstring names what production-side mutation would cause it to fail (revert the helper extraction → silenced emission → second assertion fails).
+
+### Files touched
+
+Production (2 files):
+- `src/pflow/core/cache_analysis/analyze.py` (+78 / −20 — new helper + two suppression-to-emission conversions + comment additions)
+- `src/pflow/core/cache_analysis/warning_catalog.py` (+4 — third suggestion bullet)
+
+Tests (3 files):
+- `tests/test_core/test_cache_analysis_per_id_emission.py` (+150 — two new emission tests + one updated mutation contract)
+- `tests/test_core/test_cache_analysis_warnings.py` (+38 — new catalog regression test + updated existing test)
+- `tests/test_core/test_cache_analysis_renderers.py` (+3 — extended existing renderer test)
+
+Baselines (4 regenerated):
+- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/22-cache.batch-prewarm-below-min/expected-stdout.txt`
+- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/09d-cache.prewarm-disabled-below-min/expected-stdout.txt`
+- `.taskmaster/tasks/task_159/baseline/04-warning-catalog/09e-cache.conditional-warmup-recommended/expected-stdout.txt`
+- `.taskmaster/tasks/task_159/baseline/10-live-recordings/05-gemini-lyrics-generator/expected-stdout.txt`
+
+Docs (1 file):
+- `.taskmaster/tasks/task_159/implementation/reports/open-bugs-and-ux-followups.md` — F#4 marked closed with reasoning + reopen criteria.
+
+### Closes
+
+- **F#4** (prewarm recommendation can ignore provider minimum) — closed at both surfaces. Convergence with the per-call row UX is now complete; the actions block matches the row's structural blocker via the same `cache.batch-prewarm-below-min` catalog entry.
+
+### What's next
+
+This was the last open analyzer-correctness item in the follow-ups-2 sprint. Per the user's directive, **the branch is merge-ready**. Remaining open items in the followups doc are either feature-sized (TTL detection F#5/F#6, replay-from-trace S#8, diff view F#8), polish (F#13/F#14/F#15 wording), or deferred to their own tasks (cross-consumer prompt-file index S#15+S#17+S#20).
+
+S#13 (`-o` keys unclear for `--only` batch nodes) was triaged in parallel during this bundle's investigation and confirmed out of scope for the prompt-cache branch — it belongs to Task 106 (workflow iteration cache) and the general CLI surface. Filed as [#400](https://github.com/spinje/pflow/issues/400) with full repro, current/desired behavior, implementation surface, splitability guidance (PR A discoverability + dotted paths, PR B compact default UX), and acceptance criteria.

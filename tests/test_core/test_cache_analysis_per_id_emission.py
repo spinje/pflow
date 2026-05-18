@@ -196,12 +196,17 @@ def test_batch_prewarm_lower_bound_recommended_fires_when_measurable_prefix_clea
 
 
 def test_batch_prewarm_lower_bound_recommended_silent_when_measurable_prefix_below_min() -> None:
-    """A lower-bound below the provider minimum proves no actionable prewarm
-    advice yet; unresolved refs may help, but the analyzer cannot count them
-    without a real run.
+    """A lower-bound below the provider minimum suppresses the
+    ``lower-bound-recommended`` advice; instead the analyzer surfaces
+    ``cache.batch-prewarm-below-min`` (F#4 follow-ups-2 convergence) so the
+    Recommended-Actions block matches the per-call row's structural blocker.
 
-    Mutation contract: emit whenever unresolved refs exist; this test fails
-    because the lower-bound diagnostic appears for a sub-threshold prefix.
+    Mutation contract: emit ``cache.batch-prewarm-lower-bound-recommended``
+    whenever unresolved refs exist (i.e. revert the below-min guard); this
+    test fails because the lower-bound-recommended ID appears for a
+    sub-threshold prefix. Separately, restoring ``return []`` at the
+    lower-bound below-min branch silences the new below-min emission and
+    the second assertion fails.
     """
     workflow_ir = {
         "nodes": [
@@ -219,6 +224,150 @@ def test_batch_prewarm_lower_bound_recommended_silent_when_measurable_prefix_bel
     warning_ids = {warning.id for warning in result.warnings}
     assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
     assert "cache.batch-prewarm-recommended" not in warning_ids
+    # F#4 convergence: undeclared below-min surfaces at Recommended-Actions.
+    assert "cache.batch-prewarm-below-min" in warning_ids
+
+
+def test_cache_batch_prewarm_below_min_fires_on_undeclared_measurable_below_min_prefix(
+    tmp_path: Path,
+) -> None:
+    """F#4 (follow-ups-2): below-min batch prefix without declared ``prewarm``
+    must still emit ``cache.batch-prewarm-below-min`` at the
+    Recommended-Actions surface so the agent sees the structural blocker
+    the per-call row already renders.
+
+    Mutation contract: reverting ``_confident_batch_prewarm_recommendation``
+    to ``if is_below_min_cache(...): return []`` (without routing through
+    ``_emit_batch_prewarm_below_min``) silences this emission. The per-call
+    row's ``blocked_reason='below_provider_min'`` would still render, but the
+    Recommended-Actions block would lose the diagnostic — exactly the
+    convergence gap this test guards against.
+
+    Real-shape fixture matches the lyrics-generator ``score-choruses`` case:
+    a multi-item batch with a small but non-zero static prefix before
+    ``${item.X}``, no declared ``prewarm``, trace evidence proving 34
+    observed calls so the row-evidence branch of
+    ``_batch_prewarm_recommendations`` (the production hot path under
+    real traces) is exercised.
+    """
+    from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+
+    # 5 words = 5 tokens (deterministic word-count tokenizer). Below the
+    # patched 10-token threshold.
+    prefix = "tiny prefix below the min "
+    workflow_path = str(tmp_path / "batch-prewarm-below.pflow.md")
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                # No "prewarm" declared — _batch_prewarm_recommendations branch.
+                "batch": {"items": [{"text": str(i)} for i in range(34)], "as": "item"},
+                "params": {"prompt": prefix + "${item.text}"},
+            }
+        ],
+    }
+    builder = TraceFixtureBuilder()
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(
+        json.dumps(
+            builder.trace(
+                workflow_path=workflow_path,
+                nodes=[
+                    builder.batch_event(
+                        "score",
+                        [
+                            {
+                                "index": index,
+                                "success": True,
+                                "llm_call": {
+                                    "model": "anthropic/claude-sonnet-4-5",
+                                    "input_tokens": 50,
+                                    "output_tokens": 5,
+                                    "total_tokens": 55,
+                                    "cost_usd": 0.001,
+                                },
+                            }
+                            for index in range(34)
+                        ],
+                    )
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
+
+    warning_ids = {w.id for w in result.warnings}
+    assert "cache.batch-prewarm-below-min" in warning_ids, (
+        f"undeclared below-min batch prefix did not surface "
+        f"cache.batch-prewarm-below-min: got {sorted(str(w) for w in warning_ids)}"
+    )
+    # The confident-recommendation ID must NOT fire on a below-min prefix —
+    # that would be the bug shape this test guards against.
+    assert "cache.batch-prewarm-recommended" not in warning_ids
+
+    diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-below-min")
+    assert diag.context is not None
+    assert diag.context["model"] == "anthropic/claude-sonnet-4-5"
+    assert diag.context["batch_alias"] == "item"
+    # node_id flows through as the diagnostic's primary key.
+    assert diag.node_id == "score"
+    # Prefix tokens are positive but below the patched 10-token min.
+    assert diag.context["prefix_tokens"] > 0
+    assert diag.context["prefix_tokens"] < diag.context["min_tokens"]
+
+
+def test_cache_batch_prewarm_below_min_fires_on_undeclared_lower_bound_below_min_prefix() -> None:
+    """F#4 (follow-ups-2): the lower-bound (unresolvable refs) branch of
+    ``_batch_prewarm_recommendations`` must also emit
+    ``cache.batch-prewarm-below-min`` when the measurable prefix portion is
+    below the provider minimum.
+
+    Mutation contract: reverting the ``is_below_min_cache(measurable_tokens)``
+    guard at the lower-bound branch to ``return []`` silences this
+    emission. The agent would receive only the per-call row blocker note
+    without an actionable diagnostic at the Recommended-Actions surface.
+
+    Distinguishing fixture: prompt has an unresolvable ``${missing.context}``
+    inside the static prefix region (forces the lower-bound branch),
+    measurable text is sub-threshold. Same convergence story as the
+    measurable-branch sibling test above but exercises the second
+    silenced-suppression site.
+    """
+    workflow_ir = {
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                # No "prewarm" declared — _batch_prewarm_recommendations branch.
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                # ``short`` tokenizes to 1 token; the unresolvable
+                # ``${missing.context}`` forces the lower-bound branch.
+                "params": {"prompt": "short ${missing.context} ${item.text}"},
+            }
+        ],
+    }
+    result = analyze(workflow_ir, workflow_path="x.pflow.md", auto_load_trace=False, memo_cache=None)
+
+    warning_ids = {w.id for w in result.warnings}
+    assert "cache.batch-prewarm-below-min" in warning_ids, (
+        f"lower-bound below-min batch prefix did not surface "
+        f"cache.batch-prewarm-below-min: got {sorted(str(w) for w in warning_ids)}"
+    )
+    # The lower-bound-recommended ID must NOT fire when the measurable
+    # prefix is below min — verifying upstream refs cannot change the floor.
+    assert "cache.batch-prewarm-lower-bound-recommended" not in warning_ids
+    assert "cache.batch-prewarm-recommended" not in warning_ids
+
+    diag = next(d for d in result.warnings if d.id == "cache.batch-prewarm-below-min")
+    assert diag.context is not None
+    assert diag.context["model"] == "anthropic/claude-sonnet-4-5"
+    assert diag.context["batch_alias"] == "item"
+    assert diag.node_id == "score"
 
 
 def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min(

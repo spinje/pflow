@@ -119,7 +119,8 @@
       "message": "score: the static prefix before the first `${item.X}` reference is ~4 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024; cache_control markers will silently no-op at the provider",
       "suggestions": [
         "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
-        "OR remove `- prewarm: true` from score \u2014 the prewarm marker will not fire at the provider with a ~4-token prefix."
+        "OR remove `- prewarm: true` from score \u2014 the prewarm marker will not fire at the provider with a ~4-token prefix.",
+        "OR switch `- model:` on score to one with a lower cache minimum \u2014 e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table."
       ]
     }
   ],
@@ -223,7 +224,8 @@
       "title": "Cache Warning",
       "suggestions": [
         "Grow the static prefix above 1024 tokens \u2014 move shared instructions, examples, or rubric content into the bytes before `${item.X}` so the cached region clears the provider threshold.",
-        "OR remove `- prewarm: true` from score \u2014 the prewarm marker will not fire at the provider with a ~4-token prefix."
+        "OR remove `- prewarm: true` from score \u2014 the prewarm marker will not fire at the provider with a ~4-token prefix.",
+        "OR switch `- model:` on score to one with a lower cache minimum \u2014 e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See `pflow guide prompt-caching` for the per-model threshold table."
       ],
       "node_id": "score",
       "context": {

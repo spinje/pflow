@@ -3978,27 +3978,15 @@ def _per_node_warnings(
                 # conditional-warmup detector below can still run.
                 prefix_tokens = tokenize_prompt_region_for_projection(prompt[:first], model=row.model, ctx=ctx)
                 if prefix_tokens is not None:
-                    prewarm_finding = detect_batch_prewarm_below_min(
-                        BatchPrewarmBelowMinEvidence(
-                            node_id=node_id,
-                            model=row.model,
-                            prefix_tokens=prefix_tokens,
-                            batch_alias=alias,
-                        )
+                    prewarm_diag = _emit_batch_prewarm_below_min(
+                        node_id=node_id,
+                        model=row.model,
+                        prefix_tokens=prefix_tokens,
+                        batch_alias=alias,
+                        workflow_path=row.workflow_path,
                     )
-                    if prewarm_finding is not None:
-                        diagnostics.append(
-                            make_diagnostic(
-                                "cache.batch-prewarm-below-min",
-                                node_id=prewarm_finding.node_id,
-                                affected_workflow=row.workflow_path,
-                                model=prewarm_finding.model,
-                                prefix_tokens=prewarm_finding.prefix_tokens,
-                                min_tokens=prewarm_finding.min_tokens,
-                                batch_alias=prewarm_finding.batch_alias,
-                                provider_note=prewarm_finding.provider_note,
-                            )
-                        )
+                    if prewarm_diag is not None:
+                        diagnostics.append(prewarm_diag)
 
         below_min_count = sum(
             1 for call in row.provider_trace_llm_calls if call.get("cache_skipped_reason") == "below_min"
@@ -4020,6 +4008,61 @@ def _per_node_warnings(
     return diagnostics
 
 
+def _emit_batch_prewarm_below_min(
+    *,
+    node_id: str,
+    model: str,
+    prefix_tokens: int,
+    batch_alias: str,
+    workflow_path: str | None,
+) -> Diagnostic | None:
+    """Shared producer for ``cache.batch-prewarm-below-min``.
+
+    Routes three call sites through one helper so the convergence between
+    per-call row UX and Recommended-Actions UX stays in lockstep:
+
+    * ``_per_node_warnings``: declared ``prewarm: true`` with a measured
+      static prefix below the provider minimum (original site).
+    * ``_confident_batch_prewarm_recommendation``: undeclared prewarm where
+      the analyzer has a measured prefix that is below min (F#4 — silenced
+      previously by an early ``return []``).
+    * ``_batch_prewarm_recommendations`` lower-bound branch: undeclared
+      prewarm with unresolved refs; even the lower-bound measurable prefix
+      is below min (F#4 — same silenced shape).
+
+    Predicate stays ``is_below_min_cache`` via the detector — honest
+    unmeasurable for empty/unknown model, matching Bundle 5 Option B scope.
+    Returns ``None`` when the detector decides no finding applies (e.g.
+    threshold met or unknown model); callers append only when non-None.
+
+    ``workflow_path`` is typed ``str | None`` to mirror ``PerCallRow``'s
+    field nullability; the catalog's ``_ensure_workflow_scope`` will reject
+    None at construction (raising ``KeyError``), which is the desired
+    contract — analyzer rows without a workflow_path shouldn't surface
+    workflow-scoped diagnostics.
+    """
+    finding = detect_batch_prewarm_below_min(
+        BatchPrewarmBelowMinEvidence(
+            node_id=node_id,
+            model=model,
+            prefix_tokens=prefix_tokens,
+            batch_alias=batch_alias,
+        )
+    )
+    if finding is None:
+        return None
+    return make_diagnostic(
+        "cache.batch-prewarm-below-min",
+        node_id=finding.node_id,
+        affected_workflow=workflow_path,
+        model=finding.model,
+        prefix_tokens=finding.prefix_tokens,
+        min_tokens=finding.min_tokens,
+        batch_alias=finding.batch_alias,
+        provider_note=finding.provider_note,
+    )
+
+
 def _batch_prewarm_recommendations(
     node: dict[str, Any],
     row: PerCallRow,
@@ -4030,6 +4073,11 @@ def _batch_prewarm_recommendations(
 
     ``prewarm: false`` is an explicit opt-out and suppresses this warning; only
     absence of the field means the author has not made a decision.
+
+    When the analyzer can prove the would-be prefix is below the provider
+    minimum (measurable or lower-bound), this function instead emits
+    ``cache.batch-prewarm-below-min`` so the Recommended-Actions surface
+    matches the per-call row's structural blocker (F#4 follow-ups-2).
     """
     batch = node.get("batch")
     if "prewarm" in node or not isinstance(batch, dict):
@@ -4064,6 +4112,7 @@ def _batch_prewarm_recommendations(
             affected_calls=affected_calls,
             prefix_tokens=prefix_tokens,
             dynamic_tokens=dynamic_tokens,
+            alias=alias,
         )
 
     if prefix_tokens is None and not uses_existing_prefix_evidence:
@@ -4072,7 +4121,23 @@ def _batch_prewarm_recommendations(
             model=row.model,
             ctx=ctx,
         )
-        if is_below_min_cache(row.model, measurable_tokens) or not unresolved_refs:
+        # F#4 (follow-ups-2): below-min on the lower-bound branch must surface
+        # at the Recommended-Actions block so the agent sees the structural
+        # blocker, not just the per-call row. Same convergence rationale as
+        # the confident branch below.
+        if is_below_min_cache(row.model, measurable_tokens):
+            below_min_diag = _emit_batch_prewarm_below_min(
+                node_id=row.node_path,
+                model=row.model,
+                prefix_tokens=measurable_tokens,
+                batch_alias=alias,
+                workflow_path=row.workflow_path,
+            )
+            return [below_min_diag] if below_min_diag is not None else []
+        if not unresolved_refs:
+            # No refs to verify with --report AND measurable cleared min — but
+            # if there were no refs the confident branch above would have
+            # taken this case. Defensive: nothing actionable to recommend.
             return []
         return [
             make_diagnostic(
@@ -4100,9 +4165,24 @@ def _confident_batch_prewarm_recommendation(
     affected_calls: int,
     prefix_tokens: int,
     dynamic_tokens: int,
+    alias: str,
 ) -> list[Diagnostic]:
+    # F#4 (follow-ups-2): converge with the per-call row UX. The row already
+    # renders ``add prewarm; below provider min`` via
+    # ``_prewarm_opportunity_projection_component`` (blocked_reason=
+    # ``below_provider_min``). The Recommended-Actions block must also
+    # surface the structural blocker so the agent can act on it without
+    # cross-referencing the row table — emit ``cache.batch-prewarm-below-min``
+    # in place of the previous silent ``return []``.
     if is_below_min_cache(row.model, prefix_tokens):
-        return []
+        below_min_diag = _emit_batch_prewarm_below_min(
+            node_id=row.node_path,
+            model=row.model,
+            prefix_tokens=prefix_tokens,
+            batch_alias=alias,
+            workflow_path=row.workflow_path,
+        )
+        return [below_min_diag] if below_min_diag is not None else []
 
     savings_ratio = ((affected_calls - 1) * 1.15 * prefix_tokens) / (
         affected_calls * ((1.25 * prefix_tokens) + dynamic_tokens)

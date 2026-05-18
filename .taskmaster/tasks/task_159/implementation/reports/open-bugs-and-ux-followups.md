@@ -15,10 +15,10 @@ Scope rules:
 
 ## GitHub Tracking Audit
 
-Checked against GitHub issues on 2026-05-13. Exact matches and genuinely
-related issues are linked inline below. Most items in this file are not yet
-tracked as standalone GitHub issues; issue #395 is intentionally not counted as
-tracking because it only catalogs fixed PR #396 work.
+Checked against GitHub issues on 2026-05-13 (later updates 2026-05-16, 2026-05-18).
+Exact matches and genuinely related issues are linked inline below. Most items in
+this file are not yet tracked as standalone GitHub issues; issue #395 is
+intentionally not counted as tracking because it only catalogs fixed PR #396 work.
 
 Exact or substantially matching tracking found:
 
@@ -26,6 +26,12 @@ Exact or substantially matching tracking found:
   remaining `PerCallRow.input_tokens_estimated` mixed-unit contract.
 - Item 16: [#385](https://github.com/spinje/pflow/issues/385) tracks the
   provider-error-first and large batch-payload formatting problem.
+- S#13 (scratchpad-only — `-o` keys unclear for `--only` batch nodes; out of
+  scope for Task 159 prompt-caching): [#400](https://github.com/spinje/pflow/issues/400)
+  tracks the full `-o`/`--only` UX gap (no dotted-path support, no key hints
+  on miss, default streams full batch payload). Filed during Bundle 9
+  closeout (2026-05-18) with inlined repro, implementation surface, and
+  splitability guidance.
 
 Related but not fully covering tracking found:
 
@@ -51,11 +57,30 @@ Highest-value open items:
 
 1. Combined `prewarm: true` + `prompt_cache` hides additive prewarm evidence
    (will be subsumed by cache-ready-opportunity plan Phase 1).
-2. Prewarm recommendation can still ignore provider minimum in one path.
-3. Run output still hides the actionable provider error behind large payloads.
+2. Run output still hides the actionable provider error behind large payloads.
 
 Closed:
 
+- ~~F#4 — Prewarm recommendation can ignore provider minimum~~ — closed in
+  Bundle 9 (2026-05-16). The user's reframe was load-bearing: not "suppress
+  the recommendation when below-min," but "show the recommendation and give
+  notes about the limitation so the agent knows how close they are to min
+  threshold, can change model etc." The per-call row already did this via
+  `_prewarm_opportunity_projection_component`; the Recommended-Actions
+  block was silently suppressing at two sites
+  (`_confident_batch_prewarm_recommendation` and the lower-bound branch of
+  `_batch_prewarm_recommendations`). Bundle 9 routed all three call sites
+  through a new shared producer `_emit_batch_prewarm_below_min` and
+  augmented the `cache.batch-prewarm-below-min` catalog with a third
+  suggestion bullet for model-switch. Convergence is now complete: per-call
+  row + Recommended-Actions show the same structural blocker on the same
+  evidence, with three actionable remediations (grow, remove prewarm,
+  switch model). Known minor wart: the model-switch bullet names Sonnet 4.5
+  as the floor; degenerate when the user is already on Sonnet 4.5. Flagged
+  for a future catalog-polish pass — not actively misleading, just self-
+  referential. **Reopen criteria**: if a real workflow on Sonnet 4.5 with a
+  sub-1,024-token prefix surfaces user confusion from the degenerate bullet,
+  add a `_select_message_template`-style conditional emission gate.
 - ~~S#5 — Failed-batch trace drops completed nested LLM events~~ — closed in
   Bundle 8 (2026-05-15). Runtime trace-capture bug: ``execute_batch`` popped
   per-item trace items into a local before raising for fail_fast errors,
@@ -206,35 +231,99 @@ Desired fix:
 GitHub tracking: exact match
 [#394](https://github.com/spinje/pflow/issues/394).
 
-### 4. Prewarm recommendation can still ignore provider minimum in one path
+### 4. Prewarm recommendation can ignore provider minimum — CLOSED (Bundle 9, 2026-05-16)
 
-Original failure: after adding `cache.batch-prewarm-below-min`, one adjacent
-recommendation path remains asymmetric. `_batch_prewarm_recommendations` has an
-existing-prefix-evidence branch that can emit `cache.batch-prewarm-recommended`
-without applying the provider-minimum threshold check used by the prompt-walk
-branch.
+**Status: closed.** Investigation found the doc's framing inverted what the
+user actually wanted. The original framing was *"suppress the recommendation
+when below-min — the analyzer should not tell users to add prewarm for a
+prefix that won't fire."* The user's reframe (during Bundle 9 triage) was:
 
-Trigger shape:
+> "Show the recommendation and give notes about the limitation so the agent
+> knows how close they are to min threshold, can change model etc."
 
-- Analyzer has batch-prefix evidence for a node.
-- `prewarm` is not declared yet.
-- The inferred prefix is non-zero but below the model's explicit cache minimum.
+This matches Bundle 5's Option B reasoning: structural recommendations stay
+visible with explicit blocker fields so the agent retains the insight and
+the actionable next steps. The cache-ready/opportunity refactor
+(2026-05-15) already shipped this at the **per-call row level** via
+`_prewarm_opportunity_projection_component` — `meets_provider_min=False`,
+`blocked_reason="below_provider_min"`, `action="add_prewarm"`,
+`affects_cost_projection=False`. The row table renders `add prewarm; below
+provider min (need ≥4,096 for this model)` and the Gemini live recording
+baseline (`10-live-recordings/05-gemini-lyrics-generator`) demonstrates the
+intended UX.
 
-Why it matters: the analyzer can still tell a user to add `prewarm: true` for a
-prefix that would not fire at the provider. The below-min warning appears only
-after the user adds prewarm, which is too late.
+The remaining gap was that the **Recommended-Actions block** was silent for
+the below-min case. Two production sites silently suppressed:
 
-Desired fix:
+- `_confident_batch_prewarm_recommendation`: `if is_below_min_cache(...): return []`
+- `_batch_prewarm_recommendations` lower-bound branch: same `return []`
+  shape with unresolved refs
 
-- Apply the same provider-minimum guard in the existing-prefix-evidence branch
-  before emitting `cache.batch-prewarm-recommended`.
-- If the prefix is below minimum, emit the appropriate below-min or conditional
-  advice instead of a confident prewarm recommendation.
+An agent reading only the actions block would miss the structural blocker
+that the per-call row was already showing.
 
-GitHub tracking: related issue
-[#393](https://github.com/spinje/pflow/issues/393) covers the runtime-side
-prewarm below-min defense. It does not fully cover this analyzer-side
-recommendation path.
+**What Bundle 9 changed:**
+
+- New shared producer `_emit_batch_prewarm_below_min(node_id, model,
+  prefix_tokens, batch_alias, workflow_path)` in `analyze.py`. All three
+  call sites (the existing declared-prewarm site in `_per_node_warnings`,
+  plus the two previously-silent undeclared sites) now route through it.
+  Catalog ID stays `cache.batch-prewarm-below-min` — no new ID, no DD#29
+  design review needed.
+- Predicate stays `is_below_min_cache` (honest-unmeasurable, returns False
+  for unknown/empty model). Bundle 5 Option B scope preserved — the new
+  sibling `is_likely_below_min_cache` remains at internal cost-math gates
+  only.
+- Catalog `cache.batch-prewarm-below-min` gains a third suggestion bullet
+  for model-switch:
+
+  > "OR switch `- model:` on {node_id} to one with a lower cache minimum —
+  > e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 tokens. See
+  > `pflow guide prompt-caching` for the per-model threshold table."
+
+  Provider-aware in the safe direction: always names the published floor
+  (1,024 tokens), never a model that would worsen the minimum.
+
+The convergence story is now complete: per-call row + Recommended-Actions
+block surface the same structural blocker on the same evidence with three
+actionable remediations (grow prefix / remove prewarm / switch model). The
+biggest visible payoff is the Gemini live recording — Recommended-Actions
+count went 12 → 14 with two new full entries for `curate-briefs` and
+`score-choruses` that were previously suppressed silently.
+
+**Known minor wart (deferred):** the third suggestion bullet names Sonnet
+4.5 as the floor. When the user is *already* on Sonnet 4.5, the bullet is
+self-referential ("switch to anthropic/claude-sonnet-4-5" from
+anthropic/claude-sonnet-4-5). Not actively misleading — the bullet stays
+factually correct, the user simply already has the recommended model — but
+a UX wart. Two refinement options for a future catalog-polish pass:
+
+- Catalog-level conditional emission: drop the bullet when
+  `min_tokens <= 1024` (requires `_select_message_template`-style
+  filtering not currently in the catalog framework).
+- Soften the wording: "if a different model fits your workflow, see
+  `pflow guide prompt-caching`; lowest published min is 1,024 tokens
+  (`anthropic/claude-sonnet-4-5`)." Loses the directive verb but
+  degenerate-safe.
+
+**Reopen criteria:**
+
+- If a real workflow on Sonnet 4.5 with sub-1,024-token prefix surfaces
+  user confusion from the degenerate self-reference, apply one of the two
+  refinement options above.
+- If `is_below_min_cache`'s "honest unmeasurable" semantics produce a
+  user-visible regression (empty/unknown model rows silently missing the
+  recommendation when a real prefix is below min), reconsider migrating
+  this site to `is_likely_below_min_cache` — but check Bundle 5's
+  documented trade-off first (the conservative predicate suppresses
+  structurally-useful "savings unavailable" recommendations on unresolved-
+  model workflows).
+
+GitHub tracking (historical): related issue
+[#393](https://github.com/spinje/pflow/issues/393) covered the runtime-side
+prewarm below-min defense. The runtime pre-dispatch strip shipped in this
+sprint (2026-05-14, see `follow-ups-2-progress-log.md` first entry) closed
+that. Bundle 9 closes the analyzer-side recommendation symmetry.
 
 ### 5. Provider prompt-cache TTL expiry detection is still missing
 

@@ -3249,9 +3249,12 @@ def test_batch_prewarm_below_min_renders_prewarm_remediation_not_declared_cache(
     assert "1024" in text
     # Provider note flows through.
     assert "cache_control markers" in text
-    # Suggestions name the two prewarm remediation paths.
+    # Suggestions name the three prewarm remediation paths (grow / remove /
+    # switch model — model-switch bullet added in F#4 follow-ups-2).
     assert "Grow the static prefix" in text
     assert "remove `- prewarm: true`" in text
+    assert "switch `- model:`" in text
+    assert "anthropic/claude-sonnet-4-5" in text
     # Negative regression: lock declared-cache vocabulary OUT of this code path.
     # The agent has no ``prompt_cache:`` to remove; mentioning it would
     # mislead about the remediation.

@@ -652,6 +652,10 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "threshold.",
             "OR remove `- prewarm: true` from {node_id} — the prewarm marker will "
             "not fire at the provider with a ~{prefix_tokens}-token prefix.",
+            "OR switch `- model:` on {node_id} to one with a lower cache "
+            "minimum — e.g. `anthropic/claude-sonnet-4-5` caches at 1,024 "
+            "tokens. See `pflow guide prompt-caching` for the per-model "
+            "threshold table.",
         ),
         path_template="nodes[id={node_id}].prompt",
         headline_template="Batch prewarm prefix below provider minimum on {node_id}",
