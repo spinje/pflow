@@ -764,7 +764,10 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     from types import MappingProxyType
 
     from pflow.core.cache_render import CacheRenderContext
-    from pflow.nodes.llm.llm import _emit_observed_below_min_cache_warning, _emit_rendered_below_min_warning
+    from pflow.nodes.llm.llm import (
+        _emit_declared_rendered_below_min_warning,
+        _emit_observed_below_min_cache_warning,
+    )
 
     runtime_shared: dict[str, Any] = {
         "__pflow_cache_render__": MappingProxyType({
@@ -793,7 +796,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     _round_trip(observed)
     seen_ids.add("cache.below-min-observed")
 
-    _emit_rendered_below_min_warning(
+    _emit_declared_rendered_below_min_warning(
         shared=runtime_shared,
         node_id="ask",
         model="anthropic/claude-sonnet-4-5",
@@ -843,7 +846,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
                                     "output_tokens": 5,
                                     "total_tokens": 205,
                                     "cost_usd": 0.01,
-                                    **({"cache_skipped_reason": "below_min"} if index in {0, 1} else {}),
+                                    **({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else {}),
                                 },
                             }
                             for index in range(4)

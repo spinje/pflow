@@ -152,7 +152,7 @@
         "blocked_reason": "below_provider_min",
         "affects_cost_projection": false,
         "diagnostic_ids": [
-          "cache.batch-prewarm-below-min"
+          "cache.prewarm-disabled-below-min"
         ],
         "components": [
           {
@@ -167,7 +167,7 @@
             "blocked_reason": "below_provider_min",
             "affects_cost_projection": false,
             "diagnostic_ids": [
-              "cache.batch-prewarm-below-min"
+              "cache.prewarm-disabled-below-min"
             ]
           }
         ]
@@ -198,7 +198,7 @@
         "blocked_reason": "below_provider_min",
         "affects_cost_projection": false,
         "diagnostic_ids": [
-          "cache.batch-prewarm-below-min"
+          "cache.prewarm-disabled-below-min"
         ],
         "components": [
           {
@@ -213,7 +213,7 @@
             "blocked_reason": "below_provider_min",
             "affects_cost_projection": false,
             "diagnostic_ids": [
-              "cache.batch-prewarm-below-min"
+              "cache.prewarm-disabled-below-min"
             ]
           }
         ]

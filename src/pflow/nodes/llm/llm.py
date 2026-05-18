@@ -5,6 +5,7 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -239,12 +240,37 @@ def _count_text_tokens(text: str, model: str) -> int:
         return len(text) // 4
 
 
+@dataclass(frozen=True)
+class CacheStripResult:
+    """Records which cache markers were stripped at dispatch.
+
+    Channels:
+      - ``declared``: system_blocks markers (rendered ``prompt_cache:`` chunks).
+      - ``prewarm``: user_message_blocks markers (auto-batch-prefix when
+        ``prewarm: true`` fires).
+
+    Per-channel ``*_measured_tokens`` is set only when that channel's
+    marker was stripped — its value is the cumulative token count through
+    the stripped block (the same number the existing warning template
+    interpolates as ``cacheable_tokens``).
+
+    Cumulative-token monotonicity guarantees ``prewarm`` strip without
+    ``declared`` strip can only happen on pure-prewarm nodes (no
+    ``system_blocks`` marker). Combined nodes either strip nothing,
+    strip declared only, or strip both.
+    """
+
+    threshold: int
+    declared_measured_tokens: int | None = None
+    prewarm_measured_tokens: int | None = None
+
+
 def _strip_below_min_cache_markers(
     *,
     system_blocks: list[dict[str, Any]] | None,
     user_message_blocks: list[dict[str, Any]] | None,
     model: str,
-) -> tuple[int, int] | None:
+) -> CacheStripResult | None:
     """Strip ``cache_control`` markers whose cumulative cache scope is below
     the provider minimum.
 
@@ -255,31 +281,40 @@ def _strip_below_min_cache_markers(
     measure cumulative tokens through its block and strip the marker when
     below ``get_min_cache_tokens(model)``.
 
-    Returns ``(measured_tokens, threshold)`` for the smallest stripped scope
-    (most informative for "how far below was I?"), or ``None`` when no
-    markers were stripped. Mutates the block dicts in place via
+    Returns a ``CacheStripResult`` carrying per-channel ``measured_tokens``
+    (smallest stripped scope in each channel), or ``None`` when no markers
+    were stripped. Mutates the block dicts in place via
     ``del block["cache_control"]`` — block text content is unchanged so the
     call still goes out, it just no longer claims a cache.
     """
     threshold = get_min_cache_tokens(model)
     cumulative = 0
-    stripped_scopes: list[int] = []
-
-    for blocks in (system_blocks, user_message_blocks):
+    declared_min: int | None = None
+    prewarm_min: int | None = None
+    # channel_label argument keeps the walker linear; per-channel
+    # captures replace the previous flat ``stripped_scopes`` list.
+    for channel_label, blocks in (("declared", system_blocks), ("prewarm", user_message_blocks)):
         if not blocks:
             continue
         for block in blocks:
             cumulative += _count_text_tokens(str(block.get("text", "")), model)
             if "cache_control" in block and cumulative < threshold:
                 del block["cache_control"]
-                stripped_scopes.append(cumulative)
+                if channel_label == "declared":
+                    declared_min = cumulative if declared_min is None else min(declared_min, cumulative)
+                else:
+                    prewarm_min = cumulative if prewarm_min is None else min(prewarm_min, cumulative)
 
-    if not stripped_scopes:
+    if declared_min is None and prewarm_min is None:
         return None
-    return min(stripped_scopes), threshold
+    return CacheStripResult(
+        threshold=threshold,
+        declared_measured_tokens=declared_min,
+        prewarm_measured_tokens=prewarm_min,
+    )
 
 
-def _emit_rendered_below_min_warning(
+def _emit_declared_rendered_below_min_warning(
     *,
     shared: dict[str, Any],
     node_id: str | None,
@@ -287,14 +322,11 @@ def _emit_rendered_below_min_warning(
     measured_tokens: int,
     min_tokens: int,
 ) -> None:
-    """Emit runtime ``cache.below-min-rendered`` for stripped markers.
+    """Emit ``cache.below-min-rendered`` for a stripped DECLARED-channel marker.
 
-    Authoritative for this run (``=`` assignment per ``nodes/CLAUDE.md``):
-    the strip is a definitive event for the LLM call about to go out. The
-    observed-tier emission in ``_emit_observed_below_min_cache_warning``
-    naturally suppresses itself afterward because — with the marker gone —
-    the provider does not return cache telemetry, so ``has_cache_telemetry``
-    is false.
+    Authoritative for this run (``=`` assignment per ``nodes/CLAUDE.md``);
+    the observed-tier emitter naturally suppresses itself afterward because
+    the stripped marker means the provider returns no cache telemetry.
     """
     if node_id is None:
         return
@@ -307,6 +339,37 @@ def _emit_rendered_below_min_warning(
         min_tokens=min_tokens,
         cacheable_tokens=measured_tokens,
         provider_note=provider_note(model),
+    )
+    shared.setdefault("__warnings__", {})[node_id] = diagnostic
+
+
+def _emit_prewarm_dispatch_stripped_warning(
+    *,
+    shared: dict[str, Any],
+    node_id: str | None,
+    model: str,
+    measured_tokens: int,
+    min_tokens: int,
+    alias: str,
+) -> None:
+    """Emit ``cache.prewarm-disabled-below-min`` for a stripped PREWARM-channel marker.
+
+    Same catalog ID the engine pre-flight emits; the catalog template was
+    loosened so the wording is truthful for both producers (pre-flight
+    disable + dispatch strip).
+    """
+    if node_id is None:
+        return
+    workflow_path = shared.get("_pflow_workflow_file") or "<unknown>"
+    diagnostic = make_diagnostic(
+        "cache.prewarm-disabled-below-min",
+        node_id=node_id,
+        affected_workflow=workflow_path,
+        model=model,
+        min_tokens=min_tokens,
+        cacheable_tokens=measured_tokens,
+        provider_note=provider_note(model),
+        alias=alias,
     )
     shared.setdefault("__warnings__", {})[node_id] = diagnostic
 
@@ -611,11 +674,12 @@ def _assemble_cache_prep(
     list[str],
     dict[str, Any],
     str | None,
+    str | None,
 ]:
     """Build the cache-rendering quad for ``prep_res``.
 
     Returns ``(system_blocks, user_message_blocks, chunks_skipped,
-    model_options, cache_skipped_reason)``:
+    model_options, cache_skipped_reason, prewarm_disabled_reason)``:
 
     - ``system_blocks`` — declared cache rendered as content blocks (C1.2),
       or ``None`` when no cache opt-in applies.
@@ -626,12 +690,15 @@ def _assemble_cache_prep(
     - ``model_options`` — user options with OpenAI cache kwargs merged in
       (only on OpenAI; other providers pass through unchanged).
     - ``cache_skipped_reason`` — ``"below_min"`` when runtime strips a
-      cache marker before dispatch, else ``None``.
+      declared-channel cache marker before dispatch, else ``None``.
+    - ``prewarm_disabled_reason`` — ``"below_min"`` when runtime strips a
+      pure prewarm-channel cache marker before dispatch, else ``None``.
 
     Extracted from ``LLMNode.prep`` to keep cyclomatic complexity below the
     project's C901 threshold.
     """
     cache_skipped_reason: str | None = None
+    prewarm_disabled_reason: str | None = None
     system_blocks, chunks_skipped = _build_system_blocks(
         user_system=user_system,
         cache_ctx=cache_ctx,
@@ -652,21 +719,41 @@ def _assemble_cache_prep(
     # before sending. Otherwise Gemini hard-rejects the call ("Cached
     # content is too small") and Anthropic silently no-ops the marker
     # without surfacing a warning until post-call telemetry.
-    stripped = _strip_below_min_cache_markers(
+    result = _strip_below_min_cache_markers(
         system_blocks=system_blocks,
         user_message_blocks=user_message_blocks,
         model=model,
     )
-    if stripped is not None:
-        measured_tokens, threshold = stripped
-        cache_skipped_reason = "below_min"
-        _emit_rendered_below_min_warning(
-            shared=shared,
-            node_id=node_id,
-            model=model,
-            measured_tokens=measured_tokens,
-            min_tokens=threshold,
-        )
+    if result is not None:
+        if result.declared_measured_tokens is not None:
+            # Declared-channel strip: primary cause when both channels strip
+            # (cumulative monotonicity — fix declared first; prewarm strip
+            # is downstream consequence). Emit declared warning only.
+            cache_skipped_reason = "below_min"
+            _emit_declared_rendered_below_min_warning(
+                shared=shared,
+                node_id=node_id,
+                model=model,
+                measured_tokens=result.declared_measured_tokens,
+                min_tokens=result.threshold,
+            )
+        elif result.prewarm_measured_tokens is not None:
+            # Pure prewarm-only strip (impossible on combined nodes per
+            # monotonicity). cache_ctx.batch_alias is guaranteed non-None
+            # because _build_user_message_blocks returns None when alias
+            # is missing, so the strip above could only have happened with
+            # a valid alias in scope.
+            prewarm_disabled_reason = "below_min"
+            alias = cache_ctx.batch_alias if cache_ctx else None
+            if alias is not None:
+                _emit_prewarm_dispatch_stripped_warning(
+                    shared=shared,
+                    node_id=node_id,
+                    model=model,
+                    measured_tokens=result.prewarm_measured_tokens,
+                    min_tokens=result.threshold,
+                    alias=alias,
+                )
 
     options = dict(user_model_options)
     provider = detect_provider(model)
@@ -676,7 +763,7 @@ def _assemble_cache_prep(
             # ``setdefault`` so a user-provided override wins (e.g., a test
             # pinning a specific prompt_cache_key for fixture stability).
             options.setdefault(key, value)
-    return system_blocks, user_message_blocks, chunks_skipped, options, cache_skipped_reason
+    return system_blocks, user_message_blocks, chunks_skipped, options, cache_skipped_reason, prewarm_disabled_reason
 
 
 def _build_system_blocks(
@@ -917,18 +1004,32 @@ class LLMNode(Node):
         # silent-stale-cache gate).
         node_id = getattr(self, "node_id", None)
         cache_ctx = _read_cache_render_context(shared, node_id)
-        system_blocks, user_message_blocks, chunks_skipped, merged_model_options, cache_skipped_reason = (
-            _assemble_cache_prep(
-                user_system=system,
-                cache_ctx=cache_ctx,
-                shared=shared,
-                model=model,
-                resolved_prompt=prompt,
-                user_model_options=self.params.get("model_options") or {},
-                attachments=attachments,
-                node_id=node_id,
-            )
+        (
+            system_blocks,
+            user_message_blocks,
+            chunks_skipped,
+            merged_model_options,
+            cache_skipped_reason,
+            prewarm_disabled_reason_dispatch,
+        ) = _assemble_cache_prep(
+            user_system=system,
+            cache_ctx=cache_ctx,
+            shared=shared,
+            model=model,
+            resolved_prompt=prompt,
+            user_model_options=self.params.get("model_options") or {},
+            attachments=attachments,
+            node_id=node_id,
         )
+
+        # Pre-flight wrote __prewarm_disabled_below_min__[node_id] BEFORE batch
+        # dispatch (engine.py:_should_disable_below_min_prewarm); dispatch strip
+        # writes prewarm_disabled_reason_dispatch per-call. Pre-flight wins when
+        # both fire — it disabled prewarm sequencing for the whole batch, so the
+        # per-call dispatch strip is downstream of that decision.
+        prewarm_disabled_reason = (shared.get("__prewarm_disabled_below_min__") or {}).get(
+            node_id
+        ) or prewarm_disabled_reason_dispatch
 
         prep_res = {
             "prompt": prompt,
@@ -939,7 +1040,7 @@ class LLMNode(Node):
             "user_message_blocks": user_message_blocks,
             "__cache_chunks_skipped__": chunks_skipped,
             "__cache_skipped_reason__": cache_skipped_reason,
-            "__prewarm_disabled_reason__": (shared.get("__prewarm_disabled_below_min__") or {}).get(node_id),
+            "__prewarm_disabled_reason__": prewarm_disabled_reason,
             "max_tokens": self.params.get("max_tokens"),
             "attachments": attachments,
             "output_schema": self.params.get("output_schema"),

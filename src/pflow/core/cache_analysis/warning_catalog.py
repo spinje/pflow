@@ -530,10 +530,10 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         source="cache_analyzer",
         category=CACHE_WARNING_CATEGORY,
         message_template=(
-            "{node_id}: prewarm disabled at workflow entry — static batch prefix "
-            "is {cacheable_tokens} tokens, below {model}'s minimum of {min_tokens}. "
-            "Items will run in parallel (sequencing skipped) and the LLM calls will "
-            "go uncached{provider_clause}"
+            "{node_id}: prewarm cache marker did not reach the provider — "
+            "static batch prefix is {cacheable_tokens} tokens, below "
+            "{model}'s minimum of {min_tokens}. LLM calls will go "
+            "uncached{provider_clause}"
         ),
         required_context_keys=(*_BELOW_MIN_REQUIRED_CONTEXT, ("alias", str)),
         suggestions_template=(
@@ -542,7 +542,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "`prewarm: true` since the prefix is too small to benefit.",
         ),
         path_template="nodes[id={node_id}]",
-        headline_template="Prewarm disabled below provider minimum on {node_id}",
+        headline_template="Prewarm cache did not fire on {node_id}",
     ),
     "cache.cross-workflow-prose-mismatch": CacheWarningSpec(
         severity=Severity.INFO,

@@ -362,11 +362,20 @@ provider minimum. If a marker is below the threshold, pflow removes the
 provider cache marker and records `cache_skipped_reason: "below_min"` in the
 trace event so `analyze-cache --from-trace` can attribute that exact call.
 
-For batch nodes with `prewarm: true`, pflow also checks the static prefix at
-workflow entry. If the prefix is below the provider minimum, pflow disables
-prewarm sequencing for that node, emits `cache.prewarm-disabled-below-min`,
-and records `prewarm_disabled_reason: "below_min"` on each LLM event for the
-node.
+For batch nodes with `prewarm: true`, pflow checks the static batch prefix
+at workflow entry. If the prefix is provably below the provider minimum,
+pflow disables prewarm sequencing for that node and emits
+`cache.prewarm-disabled-below-min`.
+
+When pflow can't prove the prefix size ahead of time — for example, the
+model is templated (`model: ${item.model}`), or the prefix contains
+references to upstream node outputs that aren't known until runtime —
+pflow re-checks before each LLM call. If the rendered prefix is below the
+provider minimum, pflow removes the prewarm cache marker for that call and
+emits the same `cache.prewarm-disabled-below-min` finding.
+
+The fix is the same in both cases: grow the static batch prefix above the
+provider minimum, or remove `prewarm: true`.
 
 `cache.cross-workflow-rename-detected` is informational. Different variable
 names alone do not break provider cache hits; edit names only when it improves

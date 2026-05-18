@@ -125,7 +125,7 @@ def _prewarm_disabled(workflow_path: str) -> dict[str, Any]:
 def _conditional(workflow_path: str) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for index in range(4):
-        call = _llm_call({"cache_skipped_reason": "below_min"} if index in {0, 1} else None)
+        call = _llm_call({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else None)
         items.append({
             "index": index,
             "success": True,

@@ -105,7 +105,7 @@
       "node_id": "score",
       "estimated_savings_usd": null,
       "scope_workflow": "<BASELINE_CASE_DIR>/workflow.pflow.md",
-      "message": "score: prewarm disabled at workflow entry \u2014 static batch prefix is 5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024. Items will run in parallel (sequencing skipped) and the LLM calls will go uncached; cache_control markers will silently no-op at the provider",
+      "message": "score: prewarm cache marker did not reach the provider \u2014 static batch prefix is 5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024. LLM calls will go uncached; cache_control markers will silently no-op at the provider",
       "suggestions": [
         "Add stable content above 1024 tokens before the first `${item.*}` reference in score's prompt, OR remove `prewarm: true` since the prefix is too small to benefit."
       ]
@@ -244,7 +244,7 @@
     },
     {
       "severity": "warning",
-      "message": "score: prewarm disabled at workflow entry \u2014 static batch prefix is 5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024. Items will run in parallel (sequencing skipped) and the LLM calls will go uncached; cache_control markers will silently no-op at the provider",
+      "message": "score: prewarm cache marker did not reach the provider \u2014 static batch prefix is 5 tokens, below anthropic/claude-sonnet-4-5's minimum of 1024. LLM calls will go uncached; cache_control markers will silently no-op at the provider",
       "source": "cache_analyzer",
       "id": "cache.prewarm-disabled-below-min",
       "title": "Cache Warning",

@@ -246,6 +246,176 @@ def test_observed_tier_suppressed_after_rendered_strip(mock_llm_client, monkeypa
 # --- Heuristic fallback when token_counter raises ----------------------------
 
 
+# --- Channel-aware strip — declared vs prewarm vs combined -------------------
+
+
+def _ctx_prewarm_batch(
+    *,
+    chunks: list[tuple[str, str]] | None = None,
+    subset: tuple[str, ...] = (),
+    unresolved_batch_prompt: str,
+    batch_alias: str = "item",
+    ttl: str | None = None,
+) -> CacheRenderContext:
+    items = tuple(CacheChunkIR(name=n, var_expr=n, prose_before=p, source_line=0) for n, p in (chunks or []))
+    block = CacheBlockIR(ttl=ttl, items=items, source_line=0) if (items or ttl is not None) else None
+    return CacheRenderContext(
+        cache_block=block,
+        subset=subset,
+        prewarm=True,
+        unresolved_batch_prompt=unresolved_batch_prompt,
+        batch_alias=batch_alias,
+    )
+
+
+def test_prewarm_only_strip_records_prewarm_disabled_reason_and_emits_prewarm_id(
+    mock_llm_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pure prewarm-channel strip — no declared cache, only auto-batch-prefix.
+
+    Mutation contract: reverting ``_strip_below_min_cache_markers`` to drop
+    per-channel tracking causes ``prewarm_disabled_reason`` to be None and
+    ``cache_skipped_reason`` to be ``'below_min'``, failing assertions 1+2.
+    """
+    mock_llm_client.set_response("*", None, "ok")
+    _stub_token_counter(monkeypatch, tokens=500)  # below Anthropic 1024
+
+    node = LLMNode()
+    node.node_id = "score"  # type: ignore[attr-defined]
+    node.set_params({
+        "prompt": "Score this:\n\nhello world",
+        "model": ANTHROPIC_1024,
+    })
+    shared: dict[str, Any] = {}
+    _install_cache_render(
+        shared,
+        "score",
+        _ctx_prewarm_batch(
+            unresolved_batch_prompt="Score this:\n\n${item.text}",
+            batch_alias="item",
+        ),
+    )
+
+    node.run(shared)
+
+    assert shared["llm_usage"]["prewarm_disabled_reason"] == "below_min"
+    assert shared["llm_usage"]["cache_skipped_reason"] is None
+
+    warning = shared["__warnings__"]["score"]
+    assert warning.id == "cache.prewarm-disabled-below-min"
+    assert warning.context["alias"] == "item"
+    assert warning.context["cacheable_tokens"] == 500
+    assert warning.context["min_tokens"] == 1024
+
+    sent_user_blocks = mock_llm_client.call_history_full[-1]["user_message_blocks"]
+    assert sent_user_blocks is not None
+    assert all("cache_control" not in block for block in sent_user_blocks), (
+        f"expected prewarm marker stripped; got: {sent_user_blocks}"
+    )
+
+
+def test_combined_declared_and_prewarm_strip_records_declared_reason_only(
+    mock_llm_client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Combined strip — declared chunk + prewarm batch, both stripped.
+
+    Mutation contract: introducing an OR branch that also sets
+    ``prewarm_disabled_reason`` in the combined case overwrites the declared
+    warning in ``__warnings__[node_id]``, failing assertion 3.
+    """
+    mock_llm_client.set_response("*", None, "ok")
+    _stub_token_counter(monkeypatch, tokens=300)  # well below Anthropic 1024
+
+    node = LLMNode()
+    node.node_id = "score"  # type: ignore[attr-defined]
+    node.set_params({
+        "prompt": "Score this:\n\nhello world",
+        "model": ANTHROPIC_1024,
+    })
+    shared: dict[str, Any] = {"rubric": "be brief"}
+    _install_cache_render(
+        shared,
+        "score",
+        _ctx_prewarm_batch(
+            chunks=[("rubric", "Rubric:\n")],
+            subset=("rubric",),
+            unresolved_batch_prompt="Score this:\n\n${item.text}",
+            batch_alias="item",
+        ),
+    )
+
+    node.run(shared)
+
+    assert shared["llm_usage"]["cache_skipped_reason"] == "below_min"
+    assert shared["llm_usage"]["prewarm_disabled_reason"] is None
+
+    warning = shared["__warnings__"]["score"]
+    assert warning.id == "cache.below-min-rendered"
+
+
+def test_strip_result_dataclass_carries_per_channel_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct unit test on ``_strip_below_min_cache_markers``.
+
+    Asserts the per-channel ``CacheStripResult`` shape:
+      - declared-only strip → declared set, prewarm None
+      - prewarm-only strip → declared None, prewarm set
+      - combined → both set, declared <= prewarm (cumulative monotonicity)
+      - no strip → None return
+    """
+    _stub_token_counter(monkeypatch, tokens=100)  # under Anthropic 1024
+
+    # Declared-only
+    system_blocks: list[dict[str, Any]] = [{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}]
+    result = llm_module._strip_below_min_cache_markers(
+        system_blocks=system_blocks,
+        user_message_blocks=None,
+        model=ANTHROPIC_1024,
+    )
+    assert result is not None
+    assert result.declared_measured_tokens == 100
+    assert result.prewarm_measured_tokens is None
+
+    # Prewarm-only
+    user_blocks: list[dict[str, Any]] = [
+        {"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "y"},
+    ]
+    result = llm_module._strip_below_min_cache_markers(
+        system_blocks=None,
+        user_message_blocks=user_blocks,
+        model=ANTHROPIC_1024,
+    )
+    assert result is not None
+    assert result.declared_measured_tokens is None
+    assert result.prewarm_measured_tokens == 100
+
+    # Combined
+    system_blocks = [{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}]
+    user_blocks = [
+        {"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "y"},
+    ]
+    result = llm_module._strip_below_min_cache_markers(
+        system_blocks=system_blocks,
+        user_message_blocks=user_blocks,
+        model=ANTHROPIC_1024,
+    )
+    assert result is not None
+    assert result.declared_measured_tokens == 100
+    assert result.prewarm_measured_tokens == 200
+    assert result.declared_measured_tokens <= result.prewarm_measured_tokens
+
+    # No strip (above threshold)
+    _stub_token_counter(monkeypatch, tokens=5000)
+    system_blocks = [{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}]
+    result = llm_module._strip_below_min_cache_markers(
+        system_blocks=system_blocks,
+        user_message_blocks=None,
+        model=ANTHROPIC_1024,
+    )
+    assert result is None
+
+
 def test_token_counter_exception_falls_back_to_chars_over_four(
     mock_llm_client, monkeypatch: pytest.MonkeyPatch
 ) -> None:

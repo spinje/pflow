@@ -34,7 +34,7 @@
               "cache_creation_input_tokens": 0,
               "cache_read_input_tokens": 0,
               "has_cache_telemetry": true,
-              "cache_skipped_reason": "below_min"
+              "prewarm_disabled_reason": "below_min"
             }
           },
           "llm_call": {
@@ -46,7 +46,7 @@
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
             "has_cache_telemetry": true,
-            "cache_skipped_reason": "below_min"
+            "prewarm_disabled_reason": "below_min"
           },
           "llm_prompt": "Item 0",
           "llm_response": "ok"
@@ -67,7 +67,7 @@
               "cache_creation_input_tokens": 0,
               "cache_read_input_tokens": 0,
               "has_cache_telemetry": true,
-              "cache_skipped_reason": "below_min"
+              "prewarm_disabled_reason": "below_min"
             }
           },
           "llm_call": {
@@ -79,7 +79,7 @@
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
             "has_cache_telemetry": true,
-            "cache_skipped_reason": "below_min"
+            "prewarm_disabled_reason": "below_min"
           },
           "llm_prompt": "Item 1",
           "llm_response": "ok"

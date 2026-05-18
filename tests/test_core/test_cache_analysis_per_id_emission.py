@@ -657,7 +657,7 @@ def test_conditional_warmup_recommended_fires_when_static_prefix_has_unresolvabl
                                     "output_tokens": 5,
                                     "total_tokens": 205,
                                     "cost_usd": 0.01,
-                                    **({"cache_skipped_reason": "below_min"} if index in {0, 1} else {}),
+                                    **({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else {}),
                                 },
                             }
                             for index in range(4)

@@ -1620,3 +1620,71 @@ Minimal closeout for the focused five-agent review pass.
 - **C5 — Prompt-caching guide drift**: added missing prompt-caching catalog IDs and moved `cache.discrepancy` back into the findings table. The guide test now checks every catalog ID whose `see_also` points at `prompt-caching`.
 
 Verification: focused runner tests **36 passed**; prompt-caching guide tests **63 passed**; memo/in-process analyzer tests **2 passed**; `ruff check` on touched files clean; `mypy src/pflow/execution/runner.py` clean. Initial direct `uv run pytest` failed before Python due sandbox `uv` cache permissions; reran with the repo sandbox pattern (`HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest ...`).
+
+## 2026-05-18 — Prewarm marker strip channel-aware evidence
+
+Structural fix to the runtime pre-dispatch strip. Before this change,
+`_strip_below_min_cache_markers` walked both system_blocks (declared
+`prompt_cache:` markers) and user_message_blocks (auto-batch-prefix `prewarm:
+true` markers) but collapsed the result into a single `(measured, threshold)`
+pair. Every downstream consumer routed through `cache_skipped_reason` +
+`cache.below-min-rendered`, regardless of which channel was actually
+stripped. For pure-prewarm nodes (no declared `prompt_cache:`) the trace
+attributed the strip to a declared-cache problem; the analyzer then routed
+the agent to "remove your `prompt_cache:`" which didn't exist on that node.
+
+The producer-side cleanup: the strip seam now returns a frozen
+`CacheStripResult(threshold, declared_measured_tokens,
+prewarm_measured_tokens)`. `_assemble_cache_prep` widens its return tuple to
+six elements (adds `prewarm_disabled_reason`). Channel-aware dispatch:
+
+- Declared-channel strip → `cache_skipped_reason="below_min"` + the existing
+  `cache.below-min-rendered` warning (unchanged behavior).
+- Pure prewarm-channel strip → `prewarm_disabled_reason="below_min"` + a
+  new dispatch-side `cache.prewarm-disabled-below-min` warning, same catalog
+  ID the engine pre-flight already emits.
+- Combined strip (declared + prewarm both below min) → declared evidence
+  only; cumulative-token monotonicity means fixing the declared marker
+  often resolves the prewarm one too, so we surface the root cause.
+
+The `cache.prewarm-disabled-below-min` catalog wording loosened to cover
+both producers truthfully ("prewarm cache marker did not reach the
+provider") instead of the pre-flight-specific "prewarm disabled at workflow
+entry / Items will run in parallel (sequencing skipped)". One catalog ID,
+two producers — agents don't need to learn two IDs for the same fix.
+
+`analyze.py:3993` (conditional-warmup detector inside `if prewarm is True
+and isinstance(batch, dict):`) flipped from `cache_skipped_reason` to
+`prewarm_disabled_reason` — that's where per-item prewarm strip evidence
+now lands. `_runtime_trace_blocker`, `_declared_projection_component`, and
+`_configured_prewarm_projection_component` already routed by channel via
+their `kind=` arg, so once the producer writes the right field the routing
+works automatically.
+
+Tests + fixtures:
+
+- 3 new production-shape tests in
+  `test_prompt_cache_below_min_runtime.py` — prewarm-only strip, combined
+  strip (declared wins), and per-channel `CacheStripResult` shape.
+- Flipped 2 analyzer-side synthetic fixtures
+  (`test_cache_analysis_per_id_emission.py`,
+  `test_cache_analysis_per_id_coverage.py`) from `cache_skipped_reason` to
+  `prewarm_disabled_reason` — they encoded the producer-side bug.
+- Updated `_shared/write_cache_warning_trace.py`'s `_conditional` builder
+  to match production-shape (`prewarm_disabled_reason: below_min` for
+  batch+prewarm cases).
+- Guide prose at `prompt-caching.md:365-373` rewritten with fresh-agent
+  eyes (no JSON field names in prose, no internal "LLM dispatch"
+  vocabulary) to cover both producers honestly.
+
+Baselines regenerated: `09d-cache.prewarm-disabled-below-min` (message +
+headline wording), `09e-cache.conditional-warmup-recommended` (per-call
+projection's `diagnostic_ids` now references the runtime-evidence ID
+`cache.prewarm-disabled-below-min` because the trace correctly records
+runtime evidence in the prewarm channel), `12-real-world-lyrics-generator/
+04-guide-auto-detect` (guide prose update + stale catalog rows from prior
+guide edits).
+
+Verification: targeted cache test suite **369 passed**; full suite
+**6963 passed, 1 skipped**; baseline oracle **87 passed, 0 drifted**;
+`ruff check` + `mypy` on touched files clean.

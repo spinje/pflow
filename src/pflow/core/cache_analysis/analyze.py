@@ -3990,7 +3990,7 @@ def _per_node_warnings(
                         diagnostics.append(prewarm_diag)
 
         below_min_count = sum(
-            1 for call in row.provider_trace_llm_calls if call.get("cache_skipped_reason") == "below_min"
+            1 for call in row.provider_trace_llm_calls if call.get("prewarm_disabled_reason") == "below_min"
         )
         total_count = len(row.provider_trace_llm_calls)
         if below_min_count >= 1 and below_min_count < total_count and total_count >= 2:
