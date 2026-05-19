@@ -526,10 +526,19 @@ def _execute_synthetic_warmup(
 ) -> dict[str, Any] | None:
     """Issue a minimal LLM call to populate the provider's cache prefix.
 
-    Returns the usage dict on success, None on failure or when the call
-    cannot be issued (missing model, missing system blocks). Exceptions are
-    logged at WARNING; early-return paths (missing model / system blocks)
-    are silent.
+    Warms two independent cache channels in a single call when both apply:
+
+    - **System blocks** — from declared ``## Cache`` chunks. Sent via
+      ``system=system_blocks`` to populate the system-message cache prefix.
+    - **User-message blocks** — from the auto-batch-prefix (static text in
+      the prompt template before the first ``${item.X}`` ref). Sent via
+      ``user_message_blocks`` to populate the user-message cache prefix
+      using the same byte-identical prefix the real batch items will send.
+
+    Returns the usage dict on success, None on failure or when no blocks
+    were buildable (neither declared cache nor auto-batch-prefix applies).
+    Exceptions are logged at WARNING; early-return paths (missing model,
+    no buildable blocks) are silent.
     """
     from pflow.runtime.engine.engine import _resolve_template_string
 
@@ -552,7 +561,7 @@ def _execute_synthetic_warmup(
             user_system = resolved
 
     from pflow.core.llm_client import complete
-    from pflow.core.prompt_cache import build_cache_system_blocks
+    from pflow.core.prompt_cache import build_cache_system_blocks, build_warmup_user_message_blocks
 
     try:
         system_blocks, _ = build_cache_system_blocks(
@@ -561,13 +570,19 @@ def _execute_synthetic_warmup(
             shared=shared,
             model=model,
         )
-        if system_blocks is None:
+        user_message_blocks = build_warmup_user_message_blocks(
+            cache_ctx=cache_ctx,
+            shared=shared,
+            model=model,
+        )
+        if system_blocks is None and user_message_blocks is None:
             return None
 
         resp = complete(
             model=model,
             system=system_blocks,
             prompt="Reply with: OK",
+            user_message_blocks=user_message_blocks,
             max_tokens=16,
             temperature=0,
         )
@@ -711,26 +726,31 @@ def _execute_parallel(
         return idx, result, error, duration_ms, buffered_events
 
     # Task 159 D.2 — synthetic cache warmup. When the user sets
-    # ``prewarm: true`` AND the node has declared cache chunks
-    # (prompt_cache: [...]) AND there are at least 2 items, issue a
-    # minimal LLM call (max_tokens=16) to populate the provider's
-    # system-message cache prefix, then fan out ALL items in parallel.
+    # ``prewarm: true`` AND there is buildable cache content (declared
+    # ``## Cache`` chunks OR an auto-batch-prefix in the prompt template)
+    # AND there are at least 2 items, issue a minimal LLM call
+    # (max_tokens=16) to populate the provider's cache prefix, then fan
+    # out ALL items in parallel.
     #
     # The gate reads ``config.prewarm`` (the user's original declaration)
-    # rather than ``cache_ctx.prewarm`` (post-pre-flight). The pre-flight
+    # for the declared-cache arm because the pre-flight
     # ``_should_disable_below_min_prewarm`` sets ``cache_ctx.prewarm=False``
-    # when the USER MESSAGE prefix is too small — but the warmup targets
-    # SYSTEM blocks (declared cache), which may be large. Using
-    # ``config.prewarm`` respects user intent without being killed by the
-    # unrelated user-message check.
+    # when the USER MESSAGE prefix is too small — but declared-cache system
+    # blocks may still be large.
+    #
+    # The auto-batch-prefix arm gates on ``cache_ctx.prewarm`` (post-pre-flight)
+    # because that prefix lives in the user message, exactly what the
+    # pre-flight check measures. If the pre-flight disabled it, the marker
+    # would no-op at the provider anyway.
     cache_ctx = (shared.get("__pflow_prompt_cache__") or {}).get(config.node_id)
-    should_warmup = (
-        config.prewarm
-        and cache_ctx is not None
-        and cache_ctx.cache_block is not None
-        and bool(cache_ctx.subset)
-        and len(items) > 1
+    has_declared_cache = cache_ctx is not None and cache_ctx.cache_block is not None and bool(cache_ctx.subset)
+    has_auto_batch_prefix = (
+        cache_ctx is not None
+        and cache_ctx.prewarm
+        and cache_ctx.unresolved_batch_prompt is not None
+        and cache_ctx.batch_alias is not None
     )
+    should_warmup = config.prewarm and len(items) > 1 and (has_declared_cache or has_auto_batch_prefix)
 
     if should_warmup and cache_ctx is not None:
         warmup_start_perf = time.perf_counter()

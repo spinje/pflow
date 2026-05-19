@@ -444,3 +444,60 @@ def build_cache_system_blocks(
         blocks[chunk_block_offset + chunk_idx]["cache_control"] = dict(marker)
 
     return blocks, chunks_skipped
+
+
+# --- Warmup user-message blocks (auto-batch-prefix counterpart) ---
+
+
+def build_warmup_user_message_blocks(
+    *,
+    cache_ctx: CacheRenderContext,
+    shared: dict[str, Any],
+    model: str,
+) -> list[dict[str, Any]] | None:
+    """Build user_message_blocks for a synthetic warmup call's auto-batch-prefix.
+
+    Mirrors what ``nodes/llm/llm.py::_build_user_message_blocks`` produces
+    for a real batch item — same resolved static prefix, same ``cache_control``
+    marker — but with a tiny ``"OK"`` suffix instead of a per-item value.
+    This lets the warmup populate the provider's user-message prefix cache
+    so subsequent batch items get reads instead of racing to write.
+
+    Returns ``None`` when no auto-batch-prefix would be rendered:
+    - No unresolved batch prompt or batch alias.
+    - No per-item reference in the prompt (no ``${item.X}``).
+    - Boundary at position 0 (no static prefix exists).
+
+    TTL handling matches ``_build_user_message_blocks`` line 684: when
+    ``cache_ctx.cache_block is None``, ``ttl=None`` is passed to
+    ``_build_cache_control_marker`` which defaults to 5m via ``parse_cache_ttl``.
+    """
+    from pflow.core.llm_providers import detect_provider
+    from pflow.core.prompt_refs import first_per_item_position
+
+    if cache_ctx.unresolved_batch_prompt is None or cache_ctx.batch_alias is None:
+        return None
+
+    boundary = first_per_item_position(
+        cache_ctx.unresolved_batch_prompt,
+        cache_ctx.batch_alias,
+        cache_ctx.node_inputs,
+    )
+    if boundary is None or boundary == 0:
+        return None
+
+    static_prefix = _resolve_static_prefix_for_cache(
+        cache_ctx.unresolved_batch_prompt[:boundary],
+        shared,
+    )
+    if not static_prefix:
+        return None
+
+    provider = detect_provider(model)
+    provider_name = provider.name if provider else None
+    ttl = cache_ctx.cache_block.ttl if cache_ctx.cache_block else None
+    marker = _build_cache_control_marker(provider_name, ttl)
+    return [
+        {"type": "text", "text": static_prefix, "cache_control": marker},
+        {"type": "text", "text": "OK"},
+    ]

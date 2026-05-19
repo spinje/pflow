@@ -77,19 +77,27 @@ def _install_prewarm_ctx(
     *,
     prewarm: bool,
     with_declared_cache: bool = False,
+    with_auto_batch_prefix: bool = False,
 ) -> None:
     """Install a minimal CacheRenderContext for batch-executor tests.
 
     ``with_declared_cache=True`` populates ``cache_block`` and ``subset``
-    so the synthetic warmup gate fires (it checks for declared chunks,
-    not the ``prewarm`` flag).
+    so the declared-cache arm of the warmup gate fires.
+
+    ``with_auto_batch_prefix=True`` populates ``unresolved_batch_prompt``
+    and ``batch_alias`` so the auto-batch-prefix arm of the warmup gate
+    fires (requires ``prewarm=True`` on the context per the gate logic).
     """
     ctx = CacheRenderContext(
         cache_block=_DUMMY_CACHE_BLOCK if with_declared_cache else None,
         subset=("ctx",) if with_declared_cache else (),
         prewarm=prewarm,
-        unresolved_batch_prompt=None,
-        batch_alias=None,
+        unresolved_batch_prompt=(
+            "You are evaluating against this rubric:\n\nRule 1 ... Rule 100.\n\nScore: ${item.text}"
+            if with_auto_batch_prefix
+            else None
+        ),
+        batch_alias="item" if with_auto_batch_prefix else None,
     )
     shared["__pflow_prompt_cache__"] = MappingProxyType({node_id: ctx})
 
@@ -207,11 +215,11 @@ def test_declared_cache_without_prewarm_skips_warmup() -> None:
     assert sorted(call_log) == list(range(N))
 
 
-def test_prewarm_true_without_declared_cache_skips_warmup() -> None:
-    """prewarm: true alone (without declared cache chunks) does NOT trigger
-    synthetic warmup. The prewarm flag enables auto-batch-prefix markers
-    on the user message, but without declared cache there are no system
-    blocks to warm."""
+def test_prewarm_true_without_buildable_blocks_skips_warmup() -> None:
+    """prewarm: true with no declared cache AND no auto-batch-prefix
+    (no unresolved_batch_prompt or batch_alias) does NOT trigger warmup.
+    There's nothing to warm. The gate checks both arms — declared cache OR
+    auto-batch-prefix — and falls through when neither applies."""
     N = 3
     node = _MockLLMNode()
     config = _make_node_config(prewarm=True)
@@ -220,7 +228,113 @@ def test_prewarm_true_without_declared_cache_skips_warmup() -> None:
         "data": [{"i": i} for i in range(N)],
         "__test_call_log__": call_log,
     }
+    # _install_prewarm_ctx with with_declared_cache=False sets cache_block=None,
+    # subset=(), unresolved_batch_prompt=None, batch_alias=None — neither arm
+    # of the warmup gate fires.
     _install_prewarm_ctx(shared, "test_node", prewarm=True, with_declared_cache=False)
+
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+    ) as mock_warmup:
+        execute_batch(node, config, shared, _execute_single)
+
+    mock_warmup.assert_not_called()
+    assert sorted(call_log) == list(range(N))
+
+
+# --- Auto-batch-prefix warmup (declared cache not required) ---------------
+
+
+def test_warmup_fires_for_auto_batch_prefix_without_declared_cache() -> None:
+    """When prewarm: true is set on a batch with a large static prompt prefix
+    (auto-batch-prefix) but no declared ## Cache, the warmup STILL fires —
+    it warms the user-message cache via the same prefix the batch items will
+    send. This was a regression from the initial implementation where the
+    gate required declared cache to be present."""
+    N = 3
+    node = _MockLLMNode()
+    config = _make_node_config(prewarm=True)
+    call_log: list[int] = []
+    shared: dict = {
+        "data": [{"i": i} for i in range(N)],
+        "__test_call_log__": call_log,
+    }
+    # prewarm=True on the ctx (post-pre-flight) + auto-batch-prefix populated.
+    # No declared cache → has_declared_cache=False, has_auto_batch_prefix=True.
+    _install_prewarm_ctx(
+        shared,
+        "test_node",
+        prewarm=True,
+        with_declared_cache=False,
+        with_auto_batch_prefix=True,
+    )
+
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+        return_value={"model": "test", "input_tokens": 100, "output_tokens": 2, "cost_usd": 0.001},
+    ) as mock_warmup:
+        execute_batch(node, config, shared, _execute_single)
+
+    mock_warmup.assert_called_once()
+    assert sorted(call_log) == list(range(N))
+
+
+def test_warmup_fires_when_both_declared_cache_and_auto_batch_prefix_exist() -> None:
+    """When BOTH cache mechanisms apply, warmup fires once and the warmup
+    function builds both system_blocks AND user_message_blocks internally
+    (verified by the _execute_synthetic_warmup unit tests). The gate just
+    needs at least one arm true."""
+    N = 3
+    node = _MockLLMNode()
+    config = _make_node_config(prewarm=True)
+    call_log: list[int] = []
+    shared: dict = {
+        "data": [{"i": i} for i in range(N)],
+        "__test_call_log__": call_log,
+    }
+    _install_prewarm_ctx(
+        shared,
+        "test_node",
+        prewarm=True,
+        with_declared_cache=True,
+        with_auto_batch_prefix=True,
+    )
+
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+        return_value={"model": "test", "input_tokens": 100, "output_tokens": 2, "cost_usd": 0.001},
+    ) as mock_warmup:
+        execute_batch(node, config, shared, _execute_single)
+
+    mock_warmup.assert_called_once()
+    assert sorted(call_log) == list(range(N))
+
+
+def test_auto_batch_prefix_warmup_skipped_when_pre_flight_disabled() -> None:
+    """The auto-batch-prefix arm requires cache_ctx.prewarm=True (post-pre-flight).
+    When the pre-flight check _should_disable_below_min_prewarm has set
+    cache_ctx.prewarm=False (user-message prefix below provider minimum), the
+    auto-batch-prefix arm of the gate is False. If no declared cache exists
+    either, no warmup fires — the user-message marker would no-op at the
+    provider, so warming it would be wasted."""
+    N = 3
+    node = _MockLLMNode()
+    config = _make_node_config(prewarm=True)  # user declared prewarm: true
+    call_log: list[int] = []
+    shared: dict = {
+        "data": [{"i": i} for i in range(N)],
+        "__test_call_log__": call_log,
+    }
+    # cache_ctx.prewarm=False simulates the pre-flight disabling auto-batch-prefix.
+    # No declared cache. has_declared_cache=False, has_auto_batch_prefix=False
+    # (requires cache_ctx.prewarm=True).
+    _install_prewarm_ctx(
+        shared,
+        "test_node",
+        prewarm=False,  # post-pre-flight value on ctx
+        with_declared_cache=False,
+        with_auto_batch_prefix=True,
+    )
 
     with patch(
         "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
