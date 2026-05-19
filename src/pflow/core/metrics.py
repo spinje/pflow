@@ -215,9 +215,16 @@ class MetricsCollector:
         tokens_total = tokens["input"] + tokens["output"]
 
         # Extract unique models used (drop the "unknown" fallback so genuinely
-        # unrecorded model fields don't leak into the displayed model list)
+        # unrecorded model fields don't leak into the displayed model list).
+        # Skip warmup entries — the synthetic warmup is infrastructure, not a
+        # workflow LLM call. Mirrors _LLMSummaryAccumulator.add_leaf in
+        # workflow_trace.py so the CLI's models_used matches the trace JSON's.
         models = sorted({
-            m for m in (call.get("model") for call in llm_calls if call) if m and m != VALIDATION_PLACEHOLDER
+            m
+            for call in llm_calls
+            if call and not call.get("is_warmup")
+            for m in [call.get("model")]
+            if m and m != VALIDATION_PLACEHOLDER
         })
 
         metrics = {

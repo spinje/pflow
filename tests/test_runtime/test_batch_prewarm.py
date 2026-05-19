@@ -826,3 +826,42 @@ def test_warmup_with_unpriced_model_excluded_from_unavailable_count() -> None:
     assert total.get("unavailable_models_unnamed_count", 0) == 0
     assert summary.get("unavailable_models", []) == []
     assert summary.get("unavailable_models_unnamed_count", 0) == 0
+
+
+def test_warmup_model_excluded_from_metrics_models_used() -> None:
+    """MetricsCollector.get_summary builds models_used from the flat llm_calls
+    list. Warmup entries must NOT contribute their model to that list — the
+    synthetic warmup is infrastructure, not one of the workflow's models.
+
+    Parity check: this mirrors test_warmup_model_excluded_from_models_used in
+    test_workflow_trace.py, which locks the same invariant for the trace JSON
+    path (_LLMSummaryAccumulator). Both consumers must agree because they're
+    documented in CLAUDE.md as parallel filtering sites."""
+    from pflow.core.metrics import MetricsCollector
+
+    collector = MetricsCollector()
+    collector.record_workflow_start()
+    # Register a node so the workflow-level metrics block (which carries
+    # models_used) gets built. Without this, get_summary skips the workflow
+    # metrics path entirely and there's no models_used field to check.
+    collector.record_node_execution("test-node", duration_ms=1.0)
+    collector.record_workflow_end()
+
+    llm_calls = [
+        # Real call — model should appear in models_used
+        {"model": "anthropic/claude-sonnet-4-5", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.005},
+        # Warmup call with a DIFFERENT model — should NOT appear in models_used
+        {
+            "model": "anthropic/claude-warmup-only",
+            "input_tokens": 150,
+            "output_tokens": 2,
+            "cost_usd": 0.001,
+            "is_warmup": True,
+        },
+    ]
+
+    summary = collector.get_summary(llm_calls)
+    models_used = summary["metrics"]["workflow"]["models_used"]
+
+    assert "anthropic/claude-sonnet-4-5" in models_used
+    assert "anthropic/claude-warmup-only" not in models_used
