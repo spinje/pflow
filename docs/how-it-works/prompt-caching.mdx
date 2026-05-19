@@ -102,9 +102,15 @@ Score each candidate against the rubric.
 - prewarm: true
 ````
 
-With `prewarm: true`, pflow runs the first item synchronously to write the cache, then fans out the remaining N-1 calls in parallel as cache reads. Without `prewarm:`, all N calls write the cache simultaneously — paying the write cost N times for no read benefit.
+With `prewarm: true`, pflow makes one short LLM call before the batch dispatches to warm up the provider's cache. All N batch items then run in parallel against the warm cache, paying cache-read prices instead of each writing the cache themselves. Without `prewarm:`, all N calls write the cache simultaneously — paying the write cost N times with no read benefit.
 
-`pflow run --dry-run` and `pflow analyze-cache` recommend `prewarm: true` when the savings ratio crosses 5%. The decision is the agent's — `prewarm: true` adds one call's latency to the batch in exchange for ~5-10× cost reduction on the remaining items.
+The warmup covers two kinds of cached content:
+- Values declared in `## Cache` (when the batch node lists them in `prompt_cache:`).
+- The fixed portion of the prompt template that's the same for every item — the text before the first `${item.X}` reference.
+
+The warmup is a real LLM call with a real cost. That cost shows up in the `Cost:` line, in trace cost totals, and in `--report`. It's not counted in the "N calls" total because it's setup work pflow does for you, not one of your workflow's calls. For a 4,000-token cached prefix on Anthropic Sonnet 4.5, the warmup costs roughly $0.015 and each batch item then costs about $0.0015 (10% of an uncached call). Savings grow with prefix size and batch count.
+
+`pflow run --dry-run` and `pflow analyze-cache` recommend `prewarm: true` when the savings clear 5%. The trade-off: the warmup adds 5-10 seconds of wall time to the batch, in exchange for every real item running at cache-read prices.
 
 ## Sub-workflows
 
