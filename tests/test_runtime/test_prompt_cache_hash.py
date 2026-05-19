@@ -22,8 +22,8 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_render import _CHUNK_ABSENT, _ChunkAbsentSentinel
 from pflow.core.markdown_parser import parse_markdown
+from pflow.core.prompt_cache import _CHUNK_ABSENT, _ChunkAbsentSentinel
 from pflow.registry.registry import Registry
 from pflow.runtime.cache import _make_serializable
 from pflow.runtime.compilation.compiler import compile_workflow
@@ -193,7 +193,7 @@ def test_plan_node_renders_cache_into_hash() -> None:
     """When plan_node runs over a workflow with prompt_cache, the rendered
     cache content flows into compute_node_config and changes the hash —
     while a no-cache run of the same node produces the pre-task hash."""
-    from pflow.runtime.engine.engine import build_cache_render_dict
+    from pflow.runtime.engine.engine import build_prompt_cache_dict
     from pflow.runtime.engine.plan_node import plan_node
 
     ir = parse_markdown(_WORKFLOW_NO_CACHE).ir
@@ -206,7 +206,7 @@ def test_plan_node_renders_cache_into_hash() -> None:
     plan_no_cache = plan_node(base_node, base_config, shared_no_cache)
 
     # State 2: same workflow but with cache block + subset, rendered through
-    # the engine's build_cache_render_dict (skipping engine.run; we want
+    # the engine's build_prompt_cache_dict (skipping engine.run; we want
     # the bare hash impact)
     ir_with_cache = copy.deepcopy(ir)
     ir_with_cache["nodes"][0]["prompt_cache"] = ["concept"]
@@ -218,7 +218,7 @@ def test_plan_node_renders_cache_into_hash() -> None:
     cache_config = cache_workflow.node_configs["gen"]
     shared_with_cache: dict[str, Any] = {
         "concept": "x",
-        "__pflow_cache_render__": build_cache_render_dict(cache_workflow, {}),
+        "__pflow_prompt_cache__": build_prompt_cache_dict(cache_workflow, {}),
     }
     plan_with_cache = plan_node(cache_node, cache_config, shared_with_cache)
 
@@ -274,7 +274,7 @@ def test_render_cache_for_hash_filters_absent_chunks() -> None:
     the hash while LLMNode.prep skipped the chunk entirely — the silent
     stale-cache class for branch-absent upstreams.
     """
-    from pflow.runtime.engine.engine import build_cache_render_dict
+    from pflow.runtime.engine.engine import build_prompt_cache_dict
     from pflow.runtime.engine.plan_node import _render_cache_for_hash
 
     ir = parse_markdown(_WORKFLOW_NO_CACHE).ir
@@ -300,7 +300,7 @@ def test_render_cache_for_hash_filters_absent_chunks() -> None:
     # Note: absent_input is NOT in shared. get_node_status returns ABSENT.
     shared: dict[str, Any] = {
         "concept": "the concept value",
-        "__pflow_cache_render__": build_cache_render_dict(workflow, {}),
+        "__pflow_prompt_cache__": build_prompt_cache_dict(workflow, {}),
     }
 
     rendered = _render_cache_for_hash(config, shared)
@@ -322,13 +322,13 @@ def test_render_cache_for_hash_returns_none_on_no_opt_in() -> None:
     ir = parse_markdown(_WORKFLOW_NO_CACHE).ir
     workflow = compile_workflow(ir, Registry())
     config = workflow.node_configs["gen"]
-    # Empty cache_render dict — no opt-in, no block.
-    assert _render_cache_for_hash(config, {"__pflow_cache_render__": {}}) is None
+    # Empty prompt_cache dict — no opt-in, no block.
+    assert _render_cache_for_hash(config, {"__pflow_prompt_cache__": {}}) is None
 
 
 def test_render_cache_for_hash_returns_none_on_empty_subset() -> None:
     """``prompt_cache: []`` is byte-equivalent to absent (DD#19)."""
-    from pflow.runtime.engine.engine import build_cache_render_dict
+    from pflow.runtime.engine.engine import build_prompt_cache_dict
     from pflow.runtime.engine.plan_node import _render_cache_for_hash
 
     ir = parse_markdown(_WORKFLOW_NO_CACHE).ir
@@ -338,7 +338,7 @@ def test_render_cache_for_hash_returns_none_on_empty_subset() -> None:
     config = workflow.node_configs["gen"]
     shared: dict[str, Any] = {
         "concept": "x",
-        "__pflow_cache_render__": build_cache_render_dict(workflow, {}),
+        "__pflow_prompt_cache__": build_prompt_cache_dict(workflow, {}),
     }
     assert _render_cache_for_hash(config, shared) is None
 

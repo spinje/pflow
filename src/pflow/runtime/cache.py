@@ -51,7 +51,7 @@ def _make_serializable(obj: Any) -> Any:
     # a stable type-name string and fold it into the cache hash — the
     # silent-stale-cache regression class. Lazy-import keeps cache.py
     # dependency-free at module load.
-    from pflow.core.cache_render import _ChunkAbsentSentinel
+    from pflow.core.prompt_cache import _ChunkAbsentSentinel
 
     if isinstance(obj, _ChunkAbsentSentinel):
         raise TypeError(

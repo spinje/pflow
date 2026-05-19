@@ -369,7 +369,7 @@ def test_make_diagnostic_batch_prewarm_lower_bound_recommended() -> None:
     suggestions_blob = "\n".join(diag.suggestions or ())
     assert "--report" in suggestions_blob
     assert "prewarm: true" in suggestions_blob
-    assert "wall-clock" in suggestions_blob
+    assert "synthetic" in suggestions_blob
 
 
 def test_make_diagnostic_batch_prewarm_lower_bound_savings_unavailable() -> None:

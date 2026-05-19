@@ -15,9 +15,9 @@ import json
 import logging
 from typing import Any, Optional, Union
 
-from pflow.core.cache_render import CacheBlockIR, CacheChunkIR
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
+from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR
 from pflow.registry import Registry
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
 

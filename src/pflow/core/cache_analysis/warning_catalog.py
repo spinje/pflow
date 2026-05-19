@@ -373,9 +373,11 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
         ),
         suggestions_template=(
             "Add `- prewarm: true` to {node_id} to opt in.",
-            "Trade-off: `prewarm: true` runs the first batch item alone before "
-            "fanning out the rest, adding roughly one item's wall-clock latency "
-            "to every run. Measure end-to-end duration before committing on "
+            "Trade-off: `prewarm: true` issues a synthetic ~16-token LLM call "
+            "to populate the provider's prompt cache prefix, then all batch items "
+            "fan out in parallel. Overhead is one extra cache_read per run plus "
+            "the latency of the synthetic call (~5-10 seconds depending on prefix "
+            "size). Measure end-to-end duration before committing on "
             "latency-sensitive workflows.",
             "OR add `- prewarm: false` to {node_id} to silence this recommendation (use when you've decided not to prewarm — `false` is a marker for the analyzer, not a runtime toggle).",
         ),
@@ -406,9 +408,12 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
             "full prefix; then the analyzer can measure it and produce a confident "
             "recommendation.",
             "If you've confirmed the upstream refs are stable across batch items, add `- prewarm: true` to {node_id}.",
-            "Trade-off: `prewarm: true` serializes the first batch item, adding roughly "
-            "one item's wall-clock latency per run. Measure end-to-end duration before "
-            "committing on latency-sensitive workflows.",
+            "Trade-off: `prewarm: true` issues a synthetic ~16-token LLM call "
+            "to populate the provider's prompt cache prefix, then all batch items "
+            "fan out in parallel. Overhead is one extra cache_read per run plus "
+            "the latency of the synthetic call (~5-10 seconds depending on prefix "
+            "size). Measure end-to-end duration before committing on "
+            "latency-sensitive workflows.",
         ),
         path_template="nodes[id={node_id}]",
         nullable_cost_keys=frozenset({"savings_lower_bound_usd"}),

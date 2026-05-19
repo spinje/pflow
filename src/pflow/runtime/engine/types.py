@@ -8,7 +8,7 @@ through the shared store, not through these types.
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from pflow.core.cache_render import CacheBlockIR
+from pflow.core.prompt_cache import CacheBlockIR
 
 
 @dataclass

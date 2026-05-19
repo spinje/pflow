@@ -1,4 +1,4 @@
-"""Direct unit tests for core/cache_render helpers (Task 159 B3.3).
+"""Direct unit tests for core/prompt_cache helpers (Task 159 B3.3).
 
 Tests ``_deterministic_serialize`` byte-stability, ``_resolve_chunk_value``
 ABSENT-detection + deterministic serialization, and the regex-parity invariant
@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from pflow.core.cache_render import (
+from pflow.core.prompt_cache import (
     _CHUNK_ABSENT,
     CacheChunkIR,
     _ChunkAbsentSentinel,
@@ -337,3 +337,109 @@ class TestLooksLikeRoutedAnthropic:
 
     def test_none(self):
         assert _looks_like_routed_anthropic(None) is False
+
+
+# --- build_warmup_user_message_blocks --------------------------------------
+
+
+class TestBuildWarmupUserMessageBlocks:
+    """Unit tests for the synthetic-warmup counterpart of LLMNode._build_user_message_blocks.
+
+    The function builds a user_message_blocks list that mirrors what a real
+    batch item will send (same static prefix, same cache_control marker) but
+    with a tiny 'OK' suffix instead of a per-item value. This lets the warmup
+    call populate the provider's user-message cache prefix so subsequent
+    batch items get cache reads.
+    """
+
+    @staticmethod
+    def _make_ctx(
+        *,
+        unresolved_batch_prompt: str | None = None,
+        batch_alias: str | None = None,
+        cache_block_ttl: str | None = "5m",
+        prewarm: bool = True,
+    ):
+        from pflow.core.prompt_cache import CacheBlockIR, CacheRenderContext
+
+        cache_block = None
+        if cache_block_ttl is not None and unresolved_batch_prompt is None:
+            # Mimic the "## Cache declared but no auto-batch-prefix" case
+            cache_block = CacheBlockIR(ttl=cache_block_ttl, items=(), source_line=1)
+        return CacheRenderContext(
+            cache_block=cache_block,
+            subset=(),
+            prewarm=prewarm,
+            unresolved_batch_prompt=unresolved_batch_prompt,
+            batch_alias=batch_alias,
+        )
+
+    def test_returns_none_when_no_unresolved_batch_prompt(self):
+        from pflow.core.prompt_cache import build_warmup_user_message_blocks
+
+        ctx = self._make_ctx(unresolved_batch_prompt=None, batch_alias=None)
+        assert build_warmup_user_message_blocks(cache_ctx=ctx, shared={}, model="anthropic/claude-sonnet-4-5") is None
+
+    def test_returns_none_when_no_batch_alias(self):
+        from pflow.core.prompt_cache import build_warmup_user_message_blocks
+
+        ctx = self._make_ctx(unresolved_batch_prompt="Score: ${item.text}", batch_alias=None)
+        assert build_warmup_user_message_blocks(cache_ctx=ctx, shared={}, model="anthropic/claude-sonnet-4-5") is None
+
+    def test_returns_none_when_no_per_item_ref_in_prompt(self):
+        """If the prompt has no ${item.X} reference, there's no boundary to
+        split at — first_per_item_position returns None."""
+        from pflow.core.prompt_cache import build_warmup_user_message_blocks
+
+        ctx = self._make_ctx(unresolved_batch_prompt="No batch refs here.", batch_alias="item")
+        assert build_warmup_user_message_blocks(cache_ctx=ctx, shared={}, model="anthropic/claude-sonnet-4-5") is None
+
+    def test_returns_none_when_boundary_at_position_zero(self):
+        """If the per-item ref is at position 0, the static prefix is empty
+        and there's nothing to cache."""
+        from pflow.core.prompt_cache import build_warmup_user_message_blocks
+
+        ctx = self._make_ctx(unresolved_batch_prompt="${item.text} more text", batch_alias="item")
+        assert build_warmup_user_message_blocks(cache_ctx=ctx, shared={}, model="anthropic/claude-sonnet-4-5") is None
+
+    def test_happy_path_builds_blocks_with_marker_and_ok_suffix(self):
+        """Normal case: resolved static prefix + cache_control marker +
+        'OK' suffix. Anthropic marker shape is {'type': 'ephemeral'} for 5m TTL."""
+        from pflow.core.prompt_cache import build_warmup_user_message_blocks
+
+        prompt = "You are evaluating with rubric:\n\n${rubric}\n\nScore: ${item.text}"
+        ctx = self._make_ctx(unresolved_batch_prompt=prompt, batch_alias="item")
+        shared = {"rubric": "Rule 1: be thorough.\nRule 2: be fair."}
+
+        blocks = build_warmup_user_message_blocks(cache_ctx=ctx, shared=shared, model="anthropic/claude-sonnet-4-5")
+
+        assert blocks is not None
+        assert len(blocks) == 2
+        # First block: resolved static prefix with cache_control marker
+        assert blocks[0]["type"] == "text"
+        assert "${rubric}" not in blocks[0]["text"]  # template was resolved
+        assert "Rule 1: be thorough." in blocks[0]["text"]  # actual value substituted
+        assert "${item.text}" not in blocks[0]["text"]  # boundary cuts before this
+        assert blocks[0]["cache_control"] == {"type": "ephemeral"}  # Anthropic 5m
+        # Second block: tiny "OK" suffix (no marker)
+        assert blocks[1] == {"type": "text", "text": "OK"}
+
+    def test_uses_default_ttl_when_no_cache_block(self):
+        """When cache_block is None (no workflow-level ## Cache),
+        ttl=None is passed and parse_cache_ttl defaults to 5m."""
+        from pflow.core.prompt_cache import CacheRenderContext, build_warmup_user_message_blocks
+
+        prompt = "Static instructions here. Score: ${item.text}"
+        ctx = CacheRenderContext(
+            cache_block=None,  # No ## Cache block
+            subset=(),
+            prewarm=True,
+            unresolved_batch_prompt=prompt,
+            batch_alias="item",
+        )
+
+        blocks = build_warmup_user_message_blocks(cache_ctx=ctx, shared={}, model="anthropic/claude-sonnet-4-5")
+
+        assert blocks is not None
+        # Anthropic 5m (default) → {'type': 'ephemeral'}
+        assert blocks[0]["cache_control"] == {"type": "ephemeral"}

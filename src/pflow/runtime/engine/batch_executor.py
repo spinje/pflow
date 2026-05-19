@@ -14,10 +14,14 @@ import copy
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from pflow.core.exceptions import CompilationError
 from pflow.core.json_utils import try_parse_json
+
+if TYPE_CHECKING:
+    from pflow.core.prompt_cache import CacheRenderContext
+
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .batch_item_summary import summarize_batch_item
@@ -515,6 +519,83 @@ def _drain_worker_buffer(callback: Any, buffered_events: list[tuple[tuple, dict]
             callback(*args, **kwargs)
 
 
+def _execute_synthetic_warmup(
+    config: NodeConfig,
+    shared: dict[str, Any],
+    cache_ctx: "CacheRenderContext",
+) -> dict[str, Any] | None:
+    """Issue a minimal LLM call to populate the provider's cache prefix.
+
+    Warms two independent cache channels in a single call when both apply:
+
+    - **System blocks** — from declared ``## Cache`` chunks. Sent via
+      ``system=system_blocks`` to populate the system-message cache prefix.
+    - **User-message blocks** — from the auto-batch-prefix (static text in
+      the prompt template before the first ``${item.X}`` ref). Sent via
+      ``user_message_blocks`` to populate the user-message cache prefix
+      using the same byte-identical prefix the real batch items will send.
+
+    Returns the usage dict on success, None on failure or when no blocks
+    were buildable (neither declared cache nor auto-batch-prefix applies).
+    Exceptions are logged at WARNING; early-return paths (missing model,
+    no buildable blocks) are silent.
+    """
+    from pflow.runtime.engine.engine import _resolve_template_string
+
+    tc = config.template_config
+    if tc is None:
+        return None
+    model_raw = tc.template_params.get("model") or tc.static_params.get("model")
+    if not model_raw:
+        return None
+
+    model = _resolve_template_string(model_raw, shared)
+    if not model:
+        return None
+
+    system_raw = tc.static_params.get("system") or tc.template_params.get("system")
+    user_system: str | None = None
+    if system_raw is not None:
+        resolved = _resolve_template_string(system_raw, shared)
+        if resolved is not None:
+            user_system = resolved
+
+    from pflow.core.llm_client import complete
+    from pflow.core.prompt_cache import build_cache_system_blocks, build_warmup_user_message_blocks
+
+    try:
+        system_blocks, _ = build_cache_system_blocks(
+            user_system=user_system,
+            cache_ctx=cache_ctx,
+            shared=shared,
+            model=model,
+        )
+        user_message_blocks = build_warmup_user_message_blocks(
+            cache_ctx=cache_ctx,
+            shared=shared,
+            model=model,
+        )
+        if system_blocks is None and user_message_blocks is None:
+            return None
+
+        resp = complete(
+            model=model,
+            system=system_blocks,
+            prompt="Reply with: OK",
+            user_message_blocks=user_message_blocks,
+            max_tokens=16,
+            temperature=0,
+        )
+        return resp.usage
+    except Exception as e:
+        logger.warning(
+            "Synthetic cache warmup failed for node '%s': %s; batch items will each write cache independently.",
+            config.node_id,
+            str(e),
+        )
+        return None
+
+
 def _collect_parallel_results(
     future_to_idx: dict,
     items: list[Any],
@@ -536,10 +617,9 @@ def _collect_parallel_results(
     before reporting batch progress, producing atomic per-item
     transcripts in completion order.
 
-    ``initial_completed`` and ``total`` (Task 159 D.2) account for items
-    that already ran synchronously BEFORE the parallel pool dispatched —
-    notably item[0] when prewarm-split is active. Defaults preserve
-    today's behavior: ``completed_count = 0`` and ``total =
+    ``initial_completed`` and ``total`` (Task 159 D.2) allow callers to
+    offset progress accounting when items ran outside the pool. Defaults
+    preserve standard behavior: ``completed_count = 0`` and ``total =
     len(future_to_idx)``.
     """
     should_stop = False
@@ -645,40 +725,54 @@ def _execute_parallel(
         )
         return idx, result, error, duration_ms, buffered_events
 
-    # Task 159 D.2 — prewarm-split. When the cache_render context says
-    # ``prewarm: true`` AND there are at least 2 items, run item[0]
-    # synchronously through the SAME ``process_item`` closure the pool
-    # would use, drain its buffered events, then dispatch items[1:] in
-    # parallel. The single-item-then-fan-out shape lets item[0] populate
-    # the LLM provider's cache prefix so items[1:] read at 0.1x cost
-    # instead of all writing in parallel at 1.25-2x cost. ``fail_fast`` +
-    # item[0] failure: append to pending_errors and skip fan-out (early
-    # return); execute_batch raises post-aggregation. ``continue`` +
-    # item[0] failure: dispatch items[1:] anyway (they each pay full write
-    # cost — documented expectation).
-    cache_ctx = (shared.get("__pflow_cache_render__") or {}).get(config.node_id)
-    do_prewarm = cache_ctx is not None and cache_ctx.prewarm and len(items) > 1
+    # Task 159 D.2 — synthetic cache warmup. When the user sets
+    # ``prewarm: true`` AND there is buildable cache content (declared
+    # ``## Cache`` chunks OR an auto-batch-prefix in the prompt template)
+    # AND there are at least 2 items, issue a minimal LLM call
+    # (max_tokens=16) to populate the provider's cache prefix, then fan
+    # out ALL items in parallel.
+    #
+    # The gate reads ``config.prewarm`` (the user's original declaration)
+    # for the declared-cache arm because the pre-flight
+    # ``_should_disable_below_min_prewarm`` sets ``cache_ctx.prewarm=False``
+    # when the USER MESSAGE prefix is too small — but declared-cache system
+    # blocks may still be large.
+    #
+    # The auto-batch-prefix arm gates on ``cache_ctx.prewarm`` (post-pre-flight)
+    # because that prefix lives in the user message, exactly what the
+    # pre-flight check measures. If the pre-flight disabled it, the marker
+    # would no-op at the provider anyway.
+    cache_ctx = (shared.get("__pflow_prompt_cache__") or {}).get(config.node_id)
+    has_declared_cache = cache_ctx is not None and cache_ctx.cache_block is not None and bool(cache_ctx.subset)
+    has_auto_batch_prefix = (
+        cache_ctx is not None
+        and cache_ctx.prewarm
+        and cache_ctx.unresolved_batch_prompt is not None
+        and cache_ctx.batch_alias is not None
+    )
+    should_warmup = config.prewarm and len(items) > 1 and (has_declared_cache or has_auto_batch_prefix)
+
+    if should_warmup and cache_ctx is not None:
+        warmup_start_perf = time.perf_counter()
+        warmup_usage = _execute_synthetic_warmup(config, shared, cache_ctx)
+        if warmup_usage is not None:
+            warmup_usage["is_warmup"] = True
+            warmup_duration_ms = (time.perf_counter() - warmup_start_perf) * 1000
+            batch_trace = shared.get("_batch_trace", {}).get(config.node_id)
+            if isinstance(batch_trace, list):
+                batch_trace.append({
+                    "index": -1,
+                    "item": "__cache_warmup__",
+                    "success": True,
+                    "duration_ms": round(warmup_duration_ms, 2),
+                    "node_output": {},
+                    "llm_call": warmup_usage,
+                    "llm_prompt": "Reply with: OK",
+                })
 
     pool = ThreadPoolExecutor(max_workers=batch_config.max_concurrent)
     try:
-        if do_prewarm:
-            idx0, result0, error0, duration_ms0, buffered_events0 = process_item(0, items[0])
-            results[idx0] = result0
-            timings[idx0] = duration_ms0
-            _drain_worker_buffer(callback, buffered_events0)
-            _report_batch_progress(callback, config.node_id, duration_ms0, depth, 1, len(items), error0 is None)
-            if error0:
-                pending_errors.append(error0)
-                if batch_config.error_handling == "fail_fast":
-                    # Skip fan-out. ``execute_batch`` raises post-aggregation
-                    # via the existing path at line 236, preserving the
-                    # partial-state contract.
-                    return results, pending_errors, timings
-            start_idx = 1
-        else:
-            start_idx = 0
-
-        future_to_idx = {pool.submit(process_item, idx, items[idx]): idx for idx in range(start_idx, len(items))}
+        future_to_idx = {pool.submit(process_item, idx, items[idx]): idx for idx in range(len(items))}
         _collect_parallel_results(
             future_to_idx,
             items,
@@ -689,7 +783,7 @@ def _execute_parallel(
             batch_config,
             callback,
             depth,
-            initial_completed=start_idx,
+            initial_completed=0,
             total=len(items),
         )
     finally:

@@ -3135,18 +3135,17 @@ def test_text_recommended_actions_render_savings_with_adaptive_precision() -> No
 
 
 def test_batch_prewarm_recommended_discloses_wall_clock_tradeoff() -> None:
-    """Bug 17: the prewarm recommendation surfaces the wall-clock trade-off
+    """Bug 17: the prewarm recommendation surfaces the cost/latency trade-off
     so agents can make an informed decision.
 
     Pre-fix output framed ``prewarm: true`` as pure upside (``saves ~$X/run``)
-    with no mention that prewarm serializes the first batch item (~T(slowest)
-    extra wall-clock per run). For latency-sensitive workflows this could
-    make the recommendation a net loss.
+    with no mention of the synthetic warmup call overhead. For
+    latency-sensitive workflows this could make the recommendation a net loss.
 
     A provider-specific Gemini implicit-cache caveat was considered and
     rejected: it would need per-row model dispatch to apply cleanly, and
-    the "measure end-to-end duration" guidance in the wall-clock bullet
-    already covers the same reasoning agents would do on Gemini.
+    the "measure end-to-end duration" guidance already covers the same
+    reasoning agents would do on Gemini.
     """
     from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 
@@ -3165,8 +3164,8 @@ def test_batch_prewarm_recommended_discloses_wall_clock_tradeoff() -> None:
     # Positive: savings still rendered (Bug 17 doesn't suppress savings, just
     # contextualizes them).
     assert "saves ~$0.42/run" in text
-    # Positive: wall-clock trade-off is surfaced with the actionable hint.
-    assert "wall-clock" in text
+    # Positive: synthetic warmup trade-off is surfaced with the actionable hint.
+    assert "synthetic" in text
     assert "Measure end-to-end duration" in text
     # Positive: the framing names this as a trade-off, not pure upside.
     assert "Trade-off" in text

@@ -2439,3 +2439,71 @@ class TestItemCountsInStatus:
         _format_pipeline_table(events, lines)
         table = "\n".join(lines)
         assert "ok (1/2)" in table
+
+
+class TestWarmupItemReportFiltering:
+    """Synthetic batch warmup items (llm_call.is_warmup=True) MUST be filtered
+    from user-facing per-batch counts in --report output. The warmup file itself
+    is still generated (intentional — useful for cost inspection), but counts
+    and anomaly detection treat the batch as having N real items, not N+1.
+
+    Convention documented in src/pflow/runtime/engine/CLAUDE.md → 'Synthetic
+    Cache Warmup Item' (8 filtering sites; 3 of them live in trace_report.py).
+    """
+
+    def _warmup(self) -> dict[str, Any]:
+        return {
+            "index": -1,
+            "item": "__cache_warmup__",
+            "success": True,
+            "duration_ms": 2700.0,
+            "node_output": {},
+            "llm_call": {"model": "anthropic/claude-sonnet-4-5", "cost_usd": 0.015, "is_warmup": True},
+        }
+
+    def test_pipeline_status_excludes_warmup_from_count(self) -> None:
+        """_format_event_status: '(N/M)' counts only real items, not the warmup."""
+        batch_event = _make_event(
+            node_id="score-batch",
+            batch_items=[
+                self._warmup(),
+                {"index": 0, "success": True, "duration_ms": 50},
+                {"index": 1, "success": True, "duration_ms": 60},
+                {"index": 2, "success": True, "duration_ms": 70},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        md = _build_summary(trace)
+        # 3 real items, NOT 4
+        assert "ok (3/3)" in md
+        assert "ok (4/4)" not in md
+
+    def test_anomaly_detection_skips_warmup(self) -> None:
+        """_detect_batch_item_anomalies: empty node_output on warmup is expected
+        (warmup has no node output by design); MUST NOT produce a spurious
+        'item -1 produced no output' anomaly."""
+        batch_items = [
+            self._warmup(),  # has empty node_output by design
+            {"index": 0, "success": True, "duration_ms": 50, "node_output": {"x": 1}},
+            {"index": 1, "success": True, "duration_ms": 60, "node_output": {"x": 2}},
+        ]
+        parent_event = _make_event(node_id="score-batch", batch_items=batch_items)
+        anomalies = _detect_batch_item_anomalies(batch_items, parent_event)
+        # The warmup's empty node_output should NOT be reported as an anomaly.
+        assert not any("-1" in str(a) or "__cache_warmup__" in str(a) for a in anomalies)
+
+    def test_node_summary_excludes_warmup_from_items_count(self) -> None:
+        """_build_node_summary: 'Items: N (N/N succeeded)' counts only real items."""
+        event = _make_event(
+            node_id="score-batch",
+            node_type="LLMNode",
+            batch_items=[
+                self._warmup(),
+                {"index": 0, "success": True, "duration_ms": 50, "node_output": {}},
+                {"index": 1, "success": True, "duration_ms": 60, "node_output": {}},
+                {"index": 2, "success": True, "duration_ms": 70, "node_output": {}},
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "Items: 3 (3/3 succeeded)" in md
+        assert "Items: 4" not in md

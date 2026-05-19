@@ -210,6 +210,8 @@ The pflow-owned LiteLLM adapter — single seam for all LLM calls (LLMNode + 3 d
 
 **Metrics flow**: LLM usage is captured via trace events (WorkflowTraceCollector). Consumers call `trace.collect_llm_calls()` to get a flat list, then `MetricsCollector.get_summary(llm_calls)` aggregates costs.
 
+**`is_warmup` filtering**: synthetic batch warmup items (created by `_execute_parallel` when `prewarm: true` + declared cache) carry `llm_call.is_warmup = True`. `MetricsCollector` excludes these from `total_calls` and `unavailable_models` (the "N calls" / "N calls with unavailable pricing" counters) but INCLUDES their `cost_usd` and tokens in totals. See `runtime/engine/CLAUDE.md` → "Synthetic Cache Warmup Item" for the full convention and all 8 filtering sites.
+
 ### output_controller.py
 
 **`is_interactive()`** (ALL must pass): no `-p/--print`, stdin+stdout are TTY. Only `cli/mcp_sync.py` reads it (MCP discovery gating). **Progress during workflow execution is NOT TTY-gated** — `create_progress_callback()` always returns a callable; only `_handle_batch_progress`'s `\r` inline counter gates on `sys.stderr.isatty()` because `\r` renders as garbage in non-TTY capture.

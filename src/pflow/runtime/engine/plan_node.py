@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pflow.core.cache_render import (
+from pflow.core.prompt_cache import (
     CacheRenderContext,
     _ChunkAbsentSentinel,
     _resolve_chunk_value,
@@ -193,8 +193,8 @@ def _render_cache_for_hash(config: NodeConfig, shared: dict[str, Any]) -> list[d
 
 
 def _read_cache_context(shared: dict[str, Any], node_id: str) -> CacheRenderContext | None:
-    """Canonical defensive read of ``shared["__pflow_cache_render__"]``."""
-    return (shared.get("__pflow_cache_render__") or {}).get(node_id)
+    """Canonical defensive read of ``shared["__pflow_prompt_cache__"]``."""
+    return (shared.get("__pflow_prompt_cache__") or {}).get(node_id)
 
 
 def _make_plan(

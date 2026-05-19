@@ -219,8 +219,11 @@ ${item.text}
 
 `${rubric}` here is a placeholder for substantial stable text — detailed
 scoring criteria, reference materials, etc. — repeated identically across
-every batch call. With `prewarm`, the first item writes that prefix to the
-provider's cache, then the remaining items fan out as reads.
+every batch call. With `prewarm`, a synthetic ~16-token LLM call writes that
+prefix to the provider's cache, then all batch items fan out in parallel as
+cache reads. The cost is one extra cache_read of the prompt prefix per run
+plus the latency of the synthetic call (~5-10 seconds depending on prefix
+size).
 
 **The cache prefix ends at the first per-item reference.** Everything
 before `${item.text}` — including static refs like `${rubric}` — is

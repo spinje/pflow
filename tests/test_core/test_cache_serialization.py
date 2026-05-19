@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pflow.core.cache_render import _deterministic_serialize, deterministic_serialize
+from pflow.core.prompt_cache import _deterministic_serialize, deterministic_serialize
 
 
 def test_string_passes_through_verbatim() -> None:

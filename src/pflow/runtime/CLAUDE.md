@@ -134,6 +134,7 @@ Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, 
 - **Per-node aggregation rule — "last event per `node_id` = final state"**: Status determination and the `failed_node_ids` list (written to the trace file by `save_to_file`) both derive from `final_events_by_node(events)` (module-level helper, also imported by `core/trace_report.py::_collect_errors`). Loop recovery records two events for the same node_id; only the later one counts for workflow-level aggregation. Single source of truth — if the rule changes, it changes in one place. See GH #240.
 - **`nodes_executed` vs `nodes_failed` semantics**: `nodes_executed = len(self.events)` counts **per-visit** (total invocations). `nodes_failed = len(failed_node_ids)` counts **per-node** (unique failed nodes). Under loop recovery the two diverge: 2 visits, 0 failed nodes → `nodes_executed=2, nodes_failed=0`. `failed_node_ids` is sorted alphabetically for deterministic JSON output.
 - **`mark_last_event_failed(node_id, *, error)`**: mutation API used by the engine's `_handle_no_successor` in the non-error-action branch. Flips the most recent event for `node_id` to `success=False` so the trace and `__failures__` agree for routing failures on custom actions. See GH #250.
+- **Synthetic cache warmup item (`is_warmup: True`)**: When a parallel batch LLM node prewarms the provider cache, the warmup's `complete()` usage is captured as a synthetic `batch_items[]` entry with `llm_call.is_warmup = True`. Cost-summing consumers include this entry (warmup cost is real); call-counting consumers (`total_calls`, `unavailable_models`, analyzer per-node counts) MUST filter `is_warmup` to avoid inflating user-facing counts. See `engine/CLAUDE.md` → "Synthetic Cache Warmup Item" for the full filtering convention and the 8 sites that apply it.
 
 ### Output Resolver (`output_resolver.py`)
 
@@ -179,12 +180,12 @@ shared["__template_errors__"] = {}        # Permissive mode errors
 shared["__mcp_pool__"] = MCPConnectionPool
 shared["__memoization_cache__"] = MemoizationCache
 shared["__index__"] = int                 # 0-based batch item index
-shared["__pflow_cache_render__"] = MappingProxyType[node_id, CacheRenderContext]
-                                          # Task 159 B3.2: per-workflow cache rendering map.
+shared["__pflow_prompt_cache__"] = MappingProxyType[node_id, CacheRenderContext]
+                                          # Task 159 B3.2: per-workflow prompt cache rendering map.
                                           # Read-only proxy over a dict keyed by node_id.
                                           # Engine-installed at WorkflowEngine.run() entry,
                                           # save+restore mirrors __trace_collector__. Restore
-                                          # from absent writes _EMPTY_CACHE_RENDER (a frozen
+                                          # from absent writes _EMPTY_PROMPT_CACHE (a frozen
                                           # empty proxy), NEVER None. Consumers use the
                                           # canonical (shared.get(K) or {}).get(node_id)
                                           # defensive pattern. NOT in _PROPAGATED_KEYS — each
@@ -205,7 +206,7 @@ shared["__pflow_cache_render__"] = MappingProxyType[node_id, CacheRenderContext]
                                           # Each child reads its own installed value during
                                           # execution (correct), but the parent's value AFTER
                                           # the batch is whichever child restored last. Today
-                                          # no consumer reads parent's cache_render after a
+                                          # no consumer reads parent's prompt_cache after a
                                           # parallel batch completes, so this is silent-but-
                                           # benign. If a future code path adds such a consumer,
                                           # add a runtime guard at engine.run entry rejecting

@@ -2,7 +2,7 @@
 
 Both the hash side (``runtime/engine/plan_node._render_cache_for_hash``) and
 the prep side (``LLMNode.prep`` in this test) must call the SHARED
-``_resolve_chunk_value`` helper from ``pflow.core.cache_render`` and apply the
+``_resolve_chunk_value`` helper from ``pflow.core.prompt_cache`` and apply the
 SAME ``_CHUNK_ABSENT`` filter. If they diverge, memo cache hash is keyed on
 bytes A while the adapter sends bytes A' — the silent stale-cache class.
 
@@ -20,8 +20,8 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_render import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.core.exceptions import UnsupportedCacheTTLError
+from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.nodes.llm import LLMNode
 
 ANTHROPIC = "anthropic/claude-sonnet-4-5"
@@ -58,8 +58,8 @@ def _ctx(
     )
 
 
-def _install_cache_render(shared: dict[str, Any], node_id: str, ctx: CacheRenderContext) -> None:
-    shared["__pflow_cache_render__"] = MappingProxyType({node_id: ctx})
+def _install_prompt_cache(shared: dict[str, Any], node_id: str, ctx: CacheRenderContext) -> None:
+    shared["__pflow_prompt_cache__"] = MappingProxyType({node_id: ctx})
 
 
 def _make_node(node_id: str, *, model: str = ANTHROPIC, system: str | None = None) -> LLMNode:
@@ -79,7 +79,7 @@ def test_anthropic_default_ttl_emits_bare_ephemeral_marker(mock_llm_client) -> N
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",), ttl=None),
@@ -99,7 +99,7 @@ def test_anthropic_ttl_5m_emits_bare_ephemeral_marker(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",), ttl="5m"),
@@ -118,7 +118,7 @@ def test_anthropic_ttl_1h_emits_marker_with_ttl(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",), ttl="1h"),
@@ -134,7 +134,7 @@ def test_anthropic_dynamic_minute_ttl_raises_structured_error(mock_llm_client) -
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",), ttl="11m"),
@@ -156,7 +156,7 @@ def test_user_system_prepended_without_marker(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", system="Be concise.")
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",)),
@@ -176,7 +176,7 @@ def test_chunk_text_is_prose_plus_value(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",)),
@@ -197,7 +197,7 @@ def test_multi_chunk_declaration_order_preserved(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"a": "alpha-value", "b": "beta-value", "c": "gamma-value"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(
@@ -219,8 +219,8 @@ def test_multi_chunk_declaration_order_preserved(mock_llm_client) -> None:
 # --- Three-state equivalence: no opt-in falls back to plain string ---------
 
 
-def test_no_cache_render_falls_back_to_plain_string_system(mock_llm_client) -> None:
-    """No __pflow_cache_render__ at all → today's plain-string system path."""
+def test_no_prompt_cache_falls_back_to_plain_string_system(mock_llm_client) -> None:
+    """No __pflow_prompt_cache__ at all → today's plain-string system path."""
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", system="Be concise.")
     shared: dict[str, Any] = {}
@@ -235,7 +235,7 @@ def test_empty_subset_falls_back_to_plain_string(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", system="Be concise.")
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "")], subset=()),
@@ -252,7 +252,7 @@ def test_no_subset_for_this_node_falls_back_to_plain_string(mock_llm_client) -> 
     node = _make_node("write-lyrics", system="Be concise.")
     shared: dict[str, Any] = {}
     other_ctx = _ctx(chunks=[("concept", "")], subset=("concept",))
-    shared["__pflow_cache_render__"] = MappingProxyType({"some-other-node": other_ctx})
+    shared["__pflow_prompt_cache__"] = MappingProxyType({"some-other-node": other_ctx})
 
     node.run(shared)
 
@@ -270,7 +270,7 @@ def test_branch_absent_chunk_silently_skipped(mock_llm_client) -> None:
     node = _make_node("write-lyrics")
     # ``a`` resolves; ``b`` references an unresolved/absent value (no entry)
     shared: dict[str, Any] = {"a": "alpha-value"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(
@@ -295,7 +295,7 @@ def test_branch_absent_records_skipped_chunk_in_llm_usage(mock_llm_client) -> No
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared: dict[str, Any] = {"a": "alpha-value"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(
@@ -315,7 +315,7 @@ def test_no_skipped_chunks_writes_empty_list(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"a": "alpha-value"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("a", "A:\n")], subset=("a",)),
@@ -332,7 +332,7 @@ def test_all_chunks_absent_falls_back_to_plain_string(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", system="Be concise.")
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(
@@ -357,7 +357,7 @@ def test_prompt_cache_independent_of_cache_false(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",)),
@@ -380,7 +380,7 @@ def test_dict_value_serialized_as_canonical_json(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"concept": {"theme": "courage", "genre": "ballad"}}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -397,7 +397,7 @@ def test_list_value_serialized_as_canonical_json(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics")
     shared = {"items": [1, 2, 3]}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("items", "Items:\n")], subset=("items",)),
@@ -427,7 +427,7 @@ def _import_module(dotted: str) -> Any:
 def test_resolve_chunk_value_is_imported_locally_at_both_sites() -> None:
     """Both ``plan_node._render_cache_for_hash`` and ``LLMNode.prep`` must
     expose ``_resolve_chunk_value`` as a LOCAL module attribute pointing at
-    the canonical helper from ``pflow.core.cache_render``.
+    the canonical helper from ``pflow.core.prompt_cache``.
 
     This identity check catches "Break B": one site reimports the helper
     from a different location. It does NOT catch "Break A" (one site inlines
@@ -438,7 +438,7 @@ def test_resolve_chunk_value_is_imported_locally_at_both_sites() -> None:
     plan_node_module = _import_module("pflow.runtime.engine.plan_node")
 
     # Both modules must expose ``_resolve_chunk_value`` as a local attribute
-    # (set up by ``from pflow.core.cache_render import _resolve_chunk_value``).
+    # (set up by ``from pflow.core.prompt_cache import _resolve_chunk_value``).
     assert hasattr(llm_module, "_resolve_chunk_value")
     assert hasattr(plan_node_module, "_resolve_chunk_value")
     # And both must point at the same function object (same shared helper).
@@ -485,7 +485,7 @@ def test_hash_render_and_prep_render_byte_equivalent_with_absent_chunks(mock_llm
         chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")],
         subset=("a", "b", "c"),
     )
-    _install_cache_render(shared, "write-lyrics", cache_ctx)
+    _install_prompt_cache(shared, "write-lyrics", cache_ctx)
 
     # Hash side
     config = NodeConfig(
@@ -542,7 +542,7 @@ def test_cache_chunks_skipped_survives_call_llm_error(monkeypatch, mock_llm_clie
 
     node = _make_node("write-lyrics")
     shared: dict[str, Any] = {"a": "alpha"}  # only "a" resolves; "b" is ABSENT
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),
@@ -569,7 +569,7 @@ def test_cache_chunks_skipped_empty_list_keeps_legacy_zero_usage(monkeypatch, mo
 
     node = _make_node("write-lyrics")
     shared: dict[str, Any] = {"a": "alpha"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("a", "A:\n")], subset=("a",)),  # no absent chunks
@@ -595,7 +595,7 @@ def test_cache_chunks_skipped_survives_exec_fallback(monkeypatch, mock_llm_clien
     node.node_id = "write-lyrics"  # type: ignore[attr-defined]
     node.set_params({"prompt": "hi", "model": ANTHROPIC})
     shared: dict[str, Any] = {"a": "alpha"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),
@@ -622,7 +622,7 @@ def test_structured_output_schema_does_not_displace_cache_marker(mock_llm_client
         "output_schema": {"type": "object", "properties": {}},
     })
     shared = {"a": "alpha"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("a", "A:\n")], subset=("a",)),
@@ -646,7 +646,7 @@ def test_node_without_node_id_skips_cache_rendering(mock_llm_client) -> None:
     # Deliberately do NOT set node.node_id
     node.set_params({"prompt": "hi", "model": ANTHROPIC})
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("a", "A:\n")], subset=("a",)),
@@ -662,13 +662,13 @@ def test_node_without_node_id_skips_cache_rendering(mock_llm_client) -> None:
 
 
 def test_build_cache_control_marker_anthropic_default() -> None:
-    from pflow.core.cache_render import _build_cache_control_marker
+    from pflow.core.prompt_cache import _build_cache_control_marker
 
     assert _build_cache_control_marker("anthropic", None) == {"type": "ephemeral"}
 
 
 def test_build_cache_control_marker_anthropic_5m_omits_ttl() -> None:
-    from pflow.core.cache_render import _build_cache_control_marker
+    from pflow.core.prompt_cache import _build_cache_control_marker
 
     marker = _build_cache_control_marker("anthropic", "5m")
     assert marker == {"type": "ephemeral"}
@@ -676,7 +676,7 @@ def test_build_cache_control_marker_anthropic_5m_omits_ttl() -> None:
 
 
 def test_build_cache_control_marker_anthropic_1h() -> None:
-    from pflow.core.cache_render import _build_cache_control_marker
+    from pflow.core.prompt_cache import _build_cache_control_marker
 
     assert _build_cache_control_marker("anthropic", "1h") == {"type": "ephemeral", "ttl": "1h"}
     assert _build_cache_control_marker("anthropic", "60m") == {"type": "ephemeral", "ttl": "1h"}
@@ -685,7 +685,7 @@ def test_build_cache_control_marker_anthropic_1h() -> None:
 def test_build_cache_control_marker_unknown_provider_emits_bare() -> None:
     """Unknown / out-of-vocab provider gets a bare ephemeral marker (no ttl).
     Graceful no-op for providers without explicit cache support."""
-    from pflow.core.cache_render import _build_cache_control_marker
+    from pflow.core.prompt_cache import _build_cache_control_marker
 
     assert _build_cache_control_marker(None, "1h") == {"type": "ephemeral"}
     assert _build_cache_control_marker("ollama", "1h") == {"type": "ephemeral"}
@@ -700,7 +700,7 @@ def test_gemini_default_ttl_emits_300s_marker(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=GEMINI)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl=None),
@@ -718,7 +718,7 @@ def test_gemini_ttl_5m_emits_300s_marker(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=GEMINI)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="5m"),
@@ -734,7 +734,7 @@ def test_gemini_ttl_1h_emits_3600s_marker(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=GEMINI)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="1h"),
@@ -759,7 +759,7 @@ def test_gemini_dynamic_minute_ttl_emits_seconds_marker(mock_llm_client, ttl: st
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=GEMINI)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl=ttl),
@@ -772,19 +772,19 @@ def test_gemini_dynamic_minute_ttl_emits_seconds_marker(mock_llm_client, ttl: st
 
 
 def test_build_cache_control_marker_gemini_default() -> None:
-    from pflow.core.cache_render import _build_cache_control_marker
+    from pflow.core.prompt_cache import _build_cache_control_marker
 
     assert _build_cache_control_marker("gemini", None) == {"type": "ephemeral", "ttl": "300s"}
 
 
 def test_build_cache_control_marker_gemini_5m_seconds_suffix() -> None:
-    from pflow.core.cache_render import _build_cache_control_marker
+    from pflow.core.prompt_cache import _build_cache_control_marker
 
     assert _build_cache_control_marker("gemini", "5m") == {"type": "ephemeral", "ttl": "300s"}
 
 
 def test_build_cache_control_marker_gemini_1h_seconds_suffix() -> None:
-    from pflow.core.cache_render import _build_cache_control_marker
+    from pflow.core.prompt_cache import _build_cache_control_marker
 
     assert _build_cache_control_marker("gemini", "1h") == {"type": "ephemeral", "ttl": "3600s"}
     assert _build_cache_control_marker("gemini", "60m") == {"type": "ephemeral", "ttl": "3600s"}
@@ -808,7 +808,7 @@ def test_openai_emits_prompt_cache_key_when_subset_non_empty(mock_llm_client) ->
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=OPENAI)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -846,7 +846,7 @@ def test_openai_prompt_cache_key_pinned_hash_for_known_content(mock_llm_client) 
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=OPENAI)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -865,7 +865,7 @@ def test_openai_prompt_cache_key_deterministic_across_calls(mock_llm_client) -> 
     shared = {"concept": "a song about courage"}
 
     node1 = _make_node("write-lyrics", model=OPENAI)
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -874,7 +874,7 @@ def test_openai_prompt_cache_key_deterministic_across_calls(mock_llm_client) -> 
     key1 = mock_llm_client.call_history_full[-1]["model_options"]["prompt_cache_key"]
 
     node2 = _make_node("rewrite-emotional", model=OPENAI)
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "rewrite-emotional",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -892,7 +892,7 @@ def test_openai_prompt_cache_key_differs_for_different_content(mock_llm_client) 
     # Run 1: concept = "courage"
     node1 = _make_node("write-lyrics", model=OPENAI)
     shared1 = {"concept": "courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared1,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -903,7 +903,7 @@ def test_openai_prompt_cache_key_differs_for_different_content(mock_llm_client) 
     # Run 2: concept = "loss"
     node2 = _make_node("write-lyrics", model=OPENAI)
     shared2 = {"concept": "loss"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared2,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -935,7 +935,7 @@ def test_openai_prompt_cache_retention_24h_for_ttl_1h(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=OPENAI)
     shared = {"concept": "a song"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="1h"),
@@ -951,7 +951,7 @@ def test_openai_prompt_cache_retention_24h_for_ttl_60m(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=OPENAI)
     shared = {"concept": "a song"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="60m"),
@@ -969,7 +969,7 @@ def test_openai_no_prompt_cache_retention_for_default_ttl(mock_llm_client) -> No
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=OPENAI)
     shared = {"concept": "a song"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl=None),
@@ -985,7 +985,7 @@ def test_openai_no_prompt_cache_retention_for_5m(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=OPENAI)
     shared = {"concept": "a song"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="5m"),
@@ -1009,7 +1009,7 @@ def test_openai_user_provided_model_options_preserved(mock_llm_client) -> None:
         "model_options": {"frequency_penalty": 0.5},
     })
     shared = {"concept": "a song"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="1h"),
@@ -1028,7 +1028,7 @@ def test_openai_no_cache_keys_for_anthropic_node(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=ANTHROPIC)  # not OPENAI
     shared = {"concept": "a song"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",), ttl="1h"),
@@ -1047,7 +1047,7 @@ def test_openai_still_emits_system_blocks(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("write-lyrics", model=OPENAI)
     shared = {"concept": "a song"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "Concept:\n")], subset=("concept",)),
@@ -1082,7 +1082,7 @@ def test_dotted_path_chunk_resolves_through_namespaced_shared_store(mock_llm_cli
         "upstream": {"response": "important upstream content"},
         "emit": {},
     }
-    _install_cache_render(
+    _install_prompt_cache(
         raw_shared,
         "emit",
         _ctx(
@@ -1125,7 +1125,7 @@ def test_hash_render_and_prep_render_byte_equivalent_through_namespaced_store(mo
         chunks=[("topic", "Topic:\n"), ("upstream.response", "Upstream:\n")],
         subset=("topic", "upstream.response"),
     )
-    _install_cache_render(raw_shared, "emit", cache_ctx)
+    _install_prompt_cache(raw_shared, "emit", cache_ctx)
 
     # Hash side — receives raw dict
     config = NodeConfig(
@@ -1170,7 +1170,7 @@ class TestMultiBreakpointPlacement:
         mock_llm_client.set_response("*", None, "ok")
         node = _make_node("write-lyrics")
         shared = {"a": "alpha", "b": "beta", "c": "gamma"}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
@@ -1189,7 +1189,7 @@ class TestMultiBreakpointPlacement:
         node = _make_node("write-lyrics")
         names = list("abcdefg")
         shared = {n: f"val-{n}" for n in names}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(
@@ -1213,7 +1213,7 @@ class TestMultiBreakpointPlacement:
         node = _make_node("write-lyrics")
         names = list("abcde")
         shared = {n: f"val-{n}" for n in names}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(
@@ -1238,7 +1238,7 @@ class TestMultiBreakpointPlacement:
         node = _make_node("write-lyrics", model="openai/gpt-4o-mini")
         names = list("abcdefg")
         shared = {n: f"val-{n}" for n in names}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(
@@ -1261,7 +1261,7 @@ class TestMultiBreakpointPlacement:
         node = _make_node("write-lyrics", model=GEMINI)
         names = list("abc")
         shared = {n: f"val-{n}" for n in names}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(
@@ -1288,7 +1288,7 @@ class TestMultiBreakpointPlacement:
         mock_llm_client.set_response("*", None, "ok")
         node = _make_node("write-lyrics", system="Be concise.")
         shared = {"a": "alpha", "b": "beta", "c": "gamma"}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
@@ -1312,7 +1312,7 @@ class TestMultiBreakpointPlacement:
         node = _make_node("write-lyrics")
         # a, c, e resolve; b, d are absent (no entry in shared)
         shared = {"a": "alpha", "c": "gamma", "e": "epsilon"}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(
@@ -1342,7 +1342,7 @@ class TestMultiBreakpointPlacement:
         mock_llm_client.set_response("*", None, "ok")
         node = _make_node("write-lyrics")
         shared = {"a": "alpha", "b": "beta", "c": "gamma"}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(chunks=[("a", "A:\n"), ("b", "B:\n"), ("c", "C:\n")], subset=("a", "b", "c")),
@@ -1366,7 +1366,7 @@ class TestMultiBreakpointPlacement:
         node = _make_node("write-lyrics")
         names = list("abcde")
         shared = {n: f"val-{n}" for n in names}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(
@@ -1410,7 +1410,7 @@ class TestMultiBreakpointPlacement:
         mock_llm_client.set_response("*", None, "ok")
         node = _make_node("write-lyrics", system="LONG_SYSTEM")
         shared = {"a": "alpha", "b": "beta"}
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "write-lyrics",
             _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),
@@ -1441,7 +1441,7 @@ class TestRoutedAnthropicAdvisory:
         mock_llm_client.set_response("*", None, "ok")
         node = _make_node("n", model=model)
         shared = {name: f"val-{name}" for name, _ in chunks}
-        _install_cache_render(shared, "n", _ctx(chunks=chunks, subset=subset))
+        _install_prompt_cache(shared, "n", _ctx(chunks=chunks, subset=subset))
         node.run(shared)
         return shared
 
@@ -1554,7 +1554,7 @@ class TestRoutedAnthropicAdvisory:
             "b": "beta",
             "__warnings__": {"n": pre_existing},
         }
-        _install_cache_render(
+        _install_prompt_cache(
             shared,
             "n",
             _ctx(chunks=[("a", "A:\n"), ("b", "B:\n")], subset=("a", "b")),

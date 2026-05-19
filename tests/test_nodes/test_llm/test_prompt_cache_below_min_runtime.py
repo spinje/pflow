@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_render import CacheBlockIR, CacheChunkIR, CacheRenderContext
+from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.nodes.llm import LLMNode
 from pflow.nodes.llm import llm as llm_module
 
@@ -50,8 +50,8 @@ def _ctx(
     )
 
 
-def _install_cache_render(shared: dict[str, Any], node_id: str, ctx: CacheRenderContext) -> None:
-    shared["__pflow_cache_render__"] = MappingProxyType({node_id: ctx})
+def _install_prompt_cache(shared: dict[str, Any], node_id: str, ctx: CacheRenderContext) -> None:
+    shared["__pflow_prompt_cache__"] = MappingProxyType({node_id: ctx})
 
 
 def _make_node(node_id: str, *, model: str = ANTHROPIC_1024, system: str | None = None) -> LLMNode:
@@ -82,7 +82,7 @@ def test_below_min_strips_cache_control_and_emits_warning(mock_llm_client, monke
 
     node = _make_node("write-lyrics", model=ANTHROPIC_1024)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",), ttl=None),
@@ -113,7 +113,7 @@ def test_above_min_keeps_cache_control_no_rendered_warning(mock_llm_client, monk
 
     node = _make_node("write-lyrics", model=ANTHROPIC_1024)
     shared = {"concept": "a song about courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "write-lyrics",
         _ctx(chunks=[("concept", "The concept:\n")], subset=("concept",), ttl=None),
@@ -152,7 +152,7 @@ def test_at_threshold_minus_one_strips(mock_llm_client, monkeypatch: pytest.Monk
 
     node = _make_node("n", model=ANTHROPIC_1024)
     shared = {"concept": "x"}
-    _install_cache_render(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
+    _install_prompt_cache(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
     node.run(shared)
 
     sent = mock_llm_client.call_history_full[-1]["system"]
@@ -166,7 +166,7 @@ def test_at_exact_threshold_keeps(mock_llm_client, monkeypatch: pytest.MonkeyPat
 
     node = _make_node("n", model=ANTHROPIC_1024)
     shared = {"concept": "x"}
-    _install_cache_render(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
+    _install_prompt_cache(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
     node.run(shared)
 
     sent = mock_llm_client.call_history_full[-1]["system"]
@@ -185,7 +185,7 @@ def test_gemini_below_4096_strips(mock_llm_client, monkeypatch: pytest.MonkeyPat
 
     node = _make_node("score-choruses", model=GEMINI)
     shared = {"concept": "x"}
-    _install_cache_render(shared, "score-choruses", _ctx(chunks=[("concept", "")], subset=("concept",)))
+    _install_prompt_cache(shared, "score-choruses", _ctx(chunks=[("concept", "")], subset=("concept",)))
     node.run(shared)
 
     sent = mock_llm_client.call_history_full[-1]["system"]
@@ -206,7 +206,7 @@ def test_unknown_model_uses_conservative_floor(mock_llm_client, monkeypatch: pyt
 
     node = _make_node("n", model=UNKNOWN)
     shared = {"concept": "x"}
-    _install_cache_render(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
+    _install_prompt_cache(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
     node.run(shared)
 
     sent = mock_llm_client.call_history_full[-1]["system"]
@@ -236,7 +236,7 @@ def test_observed_tier_suppressed_after_rendered_strip(mock_llm_client, monkeypa
 
     node = _make_node("write-lyrics", model=ANTHROPIC_1024)
     shared = {"concept": "x"}
-    _install_cache_render(shared, "write-lyrics", _ctx(chunks=[("concept", "")], subset=("concept",)))
+    _install_prompt_cache(shared, "write-lyrics", _ctx(chunks=[("concept", "")], subset=("concept",)))
     node.run(shared)
 
     warning = shared["__warnings__"]["write-lyrics"]
@@ -287,7 +287,7 @@ def test_prewarm_only_strip_records_prewarm_disabled_reason_and_emits_prewarm_id
         "model": ANTHROPIC_1024,
     })
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score",
         _ctx_prewarm_batch(
@@ -333,7 +333,7 @@ def test_combined_declared_and_prewarm_strip_records_declared_reason_only(
         "model": ANTHROPIC_1024,
     })
     shared: dict[str, Any] = {"rubric": "be brief"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score",
         _ctx_prewarm_batch(
@@ -435,7 +435,7 @@ def test_token_counter_exception_falls_back_to_chars_over_four(
 
     node = _make_node("n", model=ANTHROPIC_1024)
     shared = {"concept": big_concept}
-    _install_cache_render(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
+    _install_prompt_cache(shared, "n", _ctx(chunks=[("concept", "")], subset=("concept",)))
     node.run(shared)
 
     sent = mock_llm_client.call_history_full[-1]["system"]

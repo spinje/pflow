@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_render import CacheBlockIR, CacheChunkIR, CacheRenderContext
+from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.nodes.llm import LLMNode
 
 ANTHROPIC = "anthropic/claude-sonnet-4-5"
@@ -62,8 +62,8 @@ def _ctx_batch(
     )
 
 
-def _install_cache_render(shared: dict[str, Any], node_id: str, ctx: CacheRenderContext) -> None:
-    shared["__pflow_cache_render__"] = MappingProxyType({node_id: ctx})
+def _install_prompt_cache(shared: dict[str, Any], node_id: str, ctx: CacheRenderContext) -> None:
+    shared["__pflow_prompt_cache__"] = MappingProxyType({node_id: ctx})
 
 
 def _make_node(node_id: str, *, model: str = ANTHROPIC, resolved_prompt: str = "Score this: hello") -> LLMNode:
@@ -85,7 +85,7 @@ def test_prewarm_batch_with_static_prefix_emits_user_message_blocks(mock_llm_cli
         resolved_prompt="Rubric: be brief.\n\nScore this chorus: hello world",
     )
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -107,7 +107,7 @@ def test_prewarm_batch_with_static_prefix_emits_user_message_blocks(mock_llm_cli
 
 
 def test_prewarm_batch_without_unresolved_template_skips(mock_llm_client) -> None:
-    """No unresolved_batch_prompt set → not a batch node from cache_render's
+    """No unresolved_batch_prompt set → not a batch node from prompt_cache's
     perspective; auto-batch-prefix doesn't fire."""
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("score-choruses", resolved_prompt="Score this: hello")
@@ -119,7 +119,7 @@ def test_prewarm_batch_without_unresolved_template_skips(mock_llm_client) -> Non
         unresolved_batch_prompt=None,  # not a batch node
         batch_alias=None,
     )
-    _install_cache_render(shared, "score-choruses", ctx)
+    _install_prompt_cache(shared, "score-choruses", ctx)
 
     node.run(shared)
 
@@ -132,7 +132,7 @@ def test_prewarm_false_skips_auto_batch_prefix(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("score-choruses", resolved_prompt="Static: hello")
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -164,7 +164,7 @@ def test_no_batch_alias_reference_in_template_skips(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("score-choruses", resolved_prompt="Static prompt only")
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(unresolved_prompt="Static prompt only"),  # no ${item.X}
@@ -183,7 +183,7 @@ def test_batch_ref_at_position_zero_skips(mock_llm_client) -> None:
     mock_llm_client.set_response("*", None, "ok")
     node = _make_node("score-choruses", resolved_prompt="hello world")
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(unresolved_prompt="${item.text}"),
@@ -203,7 +203,7 @@ def test_non_batch_ref_before_batch_alias_does_not_break_detection(mock_llm_clie
         resolved_prompt="Rubric for SongOfHope: detailed text. Now score: hello",
     )
     shared = {"workflow_name": "SongOfHope"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -235,7 +235,7 @@ def test_anthropic_auto_batch_prefix_marker_with_ttl_1h(mock_llm_client) -> None
         resolved_prompt="Rubric: brief\n\nScore: hello",
     )
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -261,7 +261,7 @@ def test_gemini_auto_batch_prefix_marker_uses_seconds(mock_llm_client) -> None:
         resolved_prompt="Rubric: brief\n\nScore: hello",
     )
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -285,7 +285,7 @@ def test_gemini_auto_batch_prefix_marker_uses_dynamic_ttl_seconds(mock_llm_clien
         resolved_prompt="Rubric: brief\n\nScore: hello",
     )
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -315,7 +315,7 @@ def test_declared_cache_plus_auto_batch_prefix_both_markers_emitted(mock_llm_cli
         resolved_prompt="Rubric.\n\nScore: hello",
     )
     shared = {"concept": "courage"}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -357,7 +357,7 @@ def test_static_prefix_resolves_dict_via_canonical_json(mock_llm_client) -> None
         resolved_prompt='Context: {"k": "v"}\nScore: hello',
     )
     shared = {"concept": {"k": "v"}}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(
@@ -450,7 +450,7 @@ def test_prewarm_with_images_disables_prewarm_with_warning(mock_llm_client) -> N
         "images": ["https://example.com/img.jpg"],
     })
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-images",
         _ctx_batch(
@@ -484,7 +484,7 @@ def test_prewarm_with_images_falls_back_to_attachment_path(mock_llm_client) -> N
         "images": ["https://example.com/img.jpg"],
     })
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-images",
         _ctx_batch(unresolved_prompt="Rubric: brief\n\nScore this: ${item.text}"),
@@ -511,7 +511,7 @@ def test_prewarm_without_images_unaffected_by_graceful_degradation(mock_llm_clie
         resolved_prompt="Rubric: brief\n\nScore: hello",
     )
     shared: dict[str, Any] = {}
-    _install_cache_render(
+    _install_prompt_cache(
         shared,
         "score-choruses",
         _ctx_batch(unresolved_prompt="Rubric: brief\n\nScore: ${item.text}"),
@@ -556,7 +556,7 @@ def test_combined_declared_cache_and_auto_batch_prefix_through_namespaced_store(
         "concept": "courage",
         "score-choruses": {},
     }
-    _install_cache_render(
+    _install_prompt_cache(
         raw_shared,
         "score-choruses",
         _ctx_batch(

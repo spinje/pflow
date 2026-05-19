@@ -410,7 +410,7 @@ def test_emit_observed_below_min_cache_warning_skips_when_no_provider_telemetry(
     """
     from types import MappingProxyType
 
-    from pflow.core.cache_render import CacheRenderContext
+    from pflow.core.prompt_cache import CacheRenderContext
     from pflow.nodes.llm.llm import _emit_observed_below_min_cache_warning
 
     cache_ctx = CacheRenderContext(
@@ -421,7 +421,7 @@ def test_emit_observed_below_min_cache_warning_skips_when_no_provider_telemetry(
         batch_alias=None,
     )
     shared: dict[str, object] = {
-        "__pflow_cache_render__": MappingProxyType({"ask": cache_ctx}),
+        "__pflow_prompt_cache__": MappingProxyType({"ask": cache_ctx}),
         "_pflow_workflow_file": "/abs/x.pflow.md",
     }
 
@@ -452,7 +452,7 @@ def test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry
     """
     from types import MappingProxyType
 
-    from pflow.core.cache_render import CacheRenderContext
+    from pflow.core.prompt_cache import CacheRenderContext
     from pflow.nodes.llm.llm import _emit_observed_below_min_cache_warning
 
     cache_ctx = CacheRenderContext(
@@ -463,7 +463,7 @@ def test_emit_observed_below_min_skips_when_provider_returned_no_cache_telemetry
         batch_alias=None,
     )
     shared: dict[str, object] = {
-        "__pflow_cache_render__": MappingProxyType({"ask": cache_ctx}),
+        "__pflow_prompt_cache__": MappingProxyType({"ask": cache_ctx}),
         "_pflow_workflow_file": "/abs/x.pflow.md",
     }
 

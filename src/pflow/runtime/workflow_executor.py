@@ -115,7 +115,7 @@ class WorkflowExecutor(BaseNode):
     #   __execution__         — node completion/failure tracking
     #   __cache_hits__        — per-workflow cache hit display
     #   __template_errors__   — per-workflow template error accumulation
-    #   __pflow_cache_render__ — Task 159 B3.2: per-workflow CacheRenderContext map.
+    #   __pflow_prompt_cache__ — Task 159 B3.2: per-workflow CacheRenderContext map.
     #     Each .pflow.md file declares its own ## Cache block scoped to its own
     #     inputs and step outputs (DD#12). The child engine builds its own dict at
     #     engine.run() entry; sub-workflow save/restore at engine.py masks the

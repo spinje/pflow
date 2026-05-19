@@ -309,7 +309,7 @@ def tokenize_prompt_region(
     if "${" not in region:
         return estimate_tokens(model, region)[0]
 
-    from pflow.core.cache_render import deterministic_serialize
+    from pflow.core.prompt_cache import deterministic_serialize
     from pflow.runtime.template_resolver import TemplateResolver
 
     refs = extract_unique_refs(region)
@@ -372,7 +372,7 @@ def tokenize_prompt_region_lower_bound(
     if "${" not in region:
         return estimate_tokens(model, region)[0], ()
 
-    from pflow.core.cache_render import deterministic_serialize
+    from pflow.core.prompt_cache import deterministic_serialize
     from pflow.runtime.template_resolver import TemplateResolver
 
     refs = extract_unique_refs(region)
@@ -424,7 +424,7 @@ def _tokenize_prompt_region_with_resolver(
     if "${" not in region:
         return estimate_tokens(model, region)[0]
 
-    from pflow.core.cache_render import deterministic_serialize
+    from pflow.core.prompt_cache import deterministic_serialize
     from pflow.runtime.template_resolver import TemplateResolver
 
     refs = extract_unique_refs(region)
@@ -457,7 +457,7 @@ def _tokenize_prompt_region_lower_bound_with_resolver(
     if "${" not in region:
         return estimate_tokens(model, region)[0], ()
 
-    from pflow.core.cache_render import deterministic_serialize
+    from pflow.core.prompt_cache import deterministic_serialize
     from pflow.runtime.template_resolver import TemplateResolver
 
     refs = extract_unique_refs(region)
@@ -696,8 +696,8 @@ def _estimate_ref_tokens(
     """
     value = _latest_value_for_ref(ref, memo_cache=memo_cache, workflow_path=workflow_path, ctx=ctx)
     if value is not None:
-        # Lazy-import to avoid heavy ``cache_render`` import at module load.
-        from pflow.core.cache_render import deterministic_serialize
+        # Lazy-import to avoid heavy ``prompt_cache`` import at module load.
+        from pflow.core.prompt_cache import deterministic_serialize
 
         return estimate_tokens(model, deterministic_serialize(value))[0]
     return None

@@ -248,6 +248,16 @@ Peak memory is `O(events_per_item x max_concurrent)`. No hard cap today.
 
 `{results, count, success_count, error_count, errors, batch_metadata}`. `results` contains only successful items (failed items filtered out via `error_indices`). `errors` is the authoritative failure record with index, item, and error message per failure. `count` = total items attempted. `success_count` = `len(results)`. `error_count` = `len(errors)`. Verified by `BATCH_OUTPUTS` contract in `template_validation/validator.py`.
 
+### Synthetic Cache Warmup Item (`is_warmup` flag)
+
+When a parallel batch LLM node has `prewarm: true` + declared `prompt_cache:` chunks, `_execute_synthetic_warmup` issues a tiny LLM call to populate the provider's cache prefix, then appends its usage to `_batch_trace[node_id]` as a synthetic batch item (`index=-1`, `item="__cache_warmup__"`, `llm_call.is_warmup=True`). Flows through the existing batch trace pipeline — no sideband key, drained on both happy/except paths.
+
+**Filtering rule for consumers that walk `iter_llm_leaves()` or `collect_llm_calls()`:**
+- **Sum cost / accumulate tokens** → include warmup (it's real money paid; ~1.25× input rate)
+- **Count calls / per-node averages / discrepancy detection** → exclude via `if call.get("is_warmup"): continue`
+
+Filters live at 8 sites across `metrics.py`, `workflow_trace.py::_LLMSummaryAccumulator`, `cache_analysis/analyze.py` (3), and `trace_report.py` (3). Grep `is_warmup` to find them. Cost-summing paths (`calculate_costs`, `cost_for_event`, `iter_actual_cost_events`) need no filter — they only look at `cost_usd`.
+
 ## Instrumentation (`instrumentation.py`)
 
 ### Execution state

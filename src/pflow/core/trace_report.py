@@ -845,8 +845,9 @@ def _format_event_status(event: dict[str, Any]) -> str:
         base += " [cached]"
     batch_items = event.get("batch_items")
     if batch_items:
-        total = len(batch_items)
-        succeeded = sum(1 for i in batch_items if i.get("success"))
+        real_items = [i for i in batch_items if not (i.get("llm_call") or {}).get("is_warmup")]
+        total = len(real_items)
+        succeeded = sum(1 for i in real_items if i.get("success"))
         return f"{base} ({succeeded}/{total})"
     return base
 
@@ -1183,6 +1184,8 @@ def _detect_batch_item_anomalies(batch_items: list[dict[str, Any]], parent_event
     for item in batch_items:
         if not item.get("success"):
             continue
+        if (item.get("llm_call") or {}).get("is_warmup"):
+            continue
         idx = item.get("index", "?")
         output = item.get("node_output", {})
         if not output:
@@ -1229,25 +1232,26 @@ def _build_node_summary(event: dict[str, Any]) -> str:
         lines.append(f"- Cost: ${container_cost:.4f}")
 
     batch_items = event.get("batch_items", [])
+    real_batch_items = [i for i in batch_items if not (i.get("llm_call") or {}).get("is_warmup")]
     if batch_items:
-        succeeded = sum(1 for i in batch_items if i.get("success"))
-        lines.append(f"- Items: {len(batch_items)} ({succeeded}/{len(batch_items)} succeeded)")
+        succeeded = sum(1 for i in real_batch_items if i.get("success"))
+        lines.append(f"- Items: {len(real_batch_items)} ({succeeded}/{len(real_batch_items)} succeeded)")
         lines.append("")
 
-        notable = _find_notable_items(batch_items, event)
-        has_labels = any(_extract_item_label(item) for item in batch_items)
+        notable = _find_notable_items(real_batch_items, event)
+        has_labels = any(_extract_item_label(item) for item in real_batch_items)
 
         if notable:
             _build_items_table(notable, has_labels, lines)
-            hidden = len(batch_items) - len(notable)
+            hidden = len(real_batch_items) - len(notable)
             if hidden > 0:
                 lines.append(f"*... and {hidden} more succeeded*")
                 lines.append("")
         else:
             # All items normal — show aggregate stats for quick orientation
-            _append_batch_stats(batch_items, lines)
+            _append_batch_stats(real_batch_items, lines)
 
-        _append_batch_item_warnings(batch_items, lines, parent_event=event)
+        _append_batch_item_warnings(real_batch_items, lines, parent_event=event)
 
     sub_events = event.get("sub_workflow_events", [])
     _format_pipeline_table(sub_events, lines)
