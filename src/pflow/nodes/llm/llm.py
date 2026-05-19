@@ -19,15 +19,6 @@ from pflow.core.cache_analysis.below_min_tokens_detector import (
     detect as detect_below_min_tokens,
 )
 from pflow.core.cache_analysis.warning_catalog import make_diagnostic
-from pflow.core.cache_render import (
-    CacheRenderContext,
-    _build_cache_control_marker,
-    _ChunkAbsentSentinel,
-    _compute_marker_chunk_indices,
-    _looks_like_routed_anthropic,
-    _resolve_chunk_value,
-    _resolve_static_prefix_for_cache,
-)
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
 from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
 from pflow.core.llm_capabilities import get_min_cache_tokens
@@ -39,6 +30,14 @@ from pflow.core.llm_reasoning_map import (
     map_reasoning_options,
 )
 from pflow.core.node import Node
+from pflow.core.prompt_cache import (
+    CacheRenderContext,
+    _build_cache_control_marker,
+    _ChunkAbsentSentinel,  # noqa: F401 — meta-test identity check
+    _looks_like_routed_anthropic,
+    _resolve_chunk_value,  # noqa: F401 — meta-test identity check
+    _resolve_static_prefix_for_cache,
+)
 from pflow.core.prompt_refs import first_per_item_position
 
 logger = logging.getLogger(__name__)
@@ -159,17 +158,17 @@ def _error_dict_for_generic_failure(model: str, exc: Exception, attempts: int) -
     }
 
 
-def _read_cache_render_context(shared: dict[str, Any], node_id: str | None) -> CacheRenderContext | None:
-    """Canonical defensive read of ``shared['__pflow_cache_render__'][node_id]``.
+def _read_prompt_cache_context(shared: dict[str, Any], node_id: str | None) -> CacheRenderContext | None:
+    """Canonical defensive read of ``shared['__pflow_prompt_cache__'][node_id]``.
 
     Mirrors ``runtime/engine/plan_node._read_cache_context`` byte-for-byte —
     the same defensive read ensures hash-side and prep-side see the same
     context (or both miss). The ``or {}`` guard handles legacy/test paths
-    where ``__pflow_cache_render__`` may be absent or set to ``None``.
+    where ``__pflow_prompt_cache__`` may be absent or set to ``None``.
     """
     if node_id is None:
         return None
-    return (shared.get("__pflow_cache_render__") or {}).get(node_id)
+    return (shared.get("__pflow_prompt_cache__") or {}).get(node_id)
 
 
 def _emit_observed_below_min_cache_warning(
@@ -180,7 +179,7 @@ def _emit_observed_below_min_cache_warning(
     llm_usage: dict[str, Any],
 ) -> None:
     """Emit observed-tier cache.below-min-observed for LLMNode cache misses."""
-    cache_ctx = _read_cache_render_context(shared, node_id)
+    cache_ctx = _read_prompt_cache_context(shared, node_id)
     declared_prompt_cache = list(cache_ctx.subset) if cache_ctx and cache_ctx.subset else []
     if node_id is None or not declared_prompt_cache:
         return
@@ -846,104 +845,49 @@ def _build_system_blocks(
 ) -> tuple[list[dict[str, Any]] | None, list[str]]:
     """Render the cached system prefix as structured content blocks.
 
-    Returns ``(system_blocks, chunks_skipped)``. ``system_blocks`` is
-    ``None`` when no cache rendering applies (no ctx, empty subset, or every
-    chunk filtered as ABSENT) — caller falls back to today's plain-string
-    ``system`` path so byte-for-byte behavior is preserved for opt-out
-    nodes.
+    Pure block-building logic lives in
+    ``prompt_cache.build_cache_system_blocks``; this wrapper adds
+    LLM-node-specific warning emissions on top:
 
-    When at least one chunk renders, the returned list is:
+    - ``_ensure_provider_supports_cache_ttl`` — warns when the declared TTL
+      is unsupported by the resolved provider.
+    - ``_emit_routed_provider_degraded_advisory`` — INFO advisory when a
+      multi-chunk cache targets a routed-Anthropic model (per-chunk reuse
+      lost, terminal marker still works).
 
-    1. The user's ``system`` param (when set) as the FIRST block, no marker.
-    2. One block per declared chunk in declaration order: ``prose_before``
-       concatenated with the deterministic-serialized chunk value.
-    3. Per-provider ``cache_control`` markers placed by
-       ``_compute_marker_chunk_indices``: Anthropic gets up to 4 markers (first
-       N-1 chunks individual + terminal merge); other providers get a terminal
-       marker only. Below-min markers are stripped at request time by
-       ``_strip_below_min_cache_markers``.
+    Below-min markers are stripped at request time by
+    ``_strip_below_min_cache_markers``.
 
     The ABSENT filter MUST stay symmetric with
     ``runtime/engine/plan_node._render_cache_for_hash`` — both sites import
-    ``_resolve_chunk_value`` and ``_ChunkAbsentSentinel`` from
-    ``pflow.core.cache_render``. If they diverge, hash and prep render
-    different bytes for the same logical state — the silent stale-cache
-    regression class B3.3/C1.2 close together.
+    ``_resolve_chunk_value`` from ``pflow.core.prompt_cache``.
     """
-    if cache_ctx is None or not cache_ctx.subset or cache_ctx.cache_block is None:
-        return None, []
+    from pflow.core.prompt_cache import build_cache_system_blocks
 
-    chunks_by_name = {c.name: c for c in cache_ctx.cache_block.items}
-    rendered: list[tuple[str, str]] = []  # (prose_before, value_str)
-    chunks_skipped: list[str] = []
-
-    for name in cache_ctx.subset:
-        chunk = chunks_by_name.get(name)
-        if chunk is None:
-            # Validator rejects undeclared subset entries (B2.3). Defensive
-            # skip here for direct-compile bypass paths (logged at the hash
-            # site; we silently match the hash-side filter so bytes stay
-            # symmetric).
-            continue
-        value = _resolve_chunk_value(chunk, shared)
-        if isinstance(value, _ChunkAbsentSentinel):
-            chunks_skipped.append(name)
-            continue
-        rendered.append((chunk.prose_before, value))
-
-    if not rendered:
-        # Every chunk was filtered. Fall back to the plain-string system
-        # path (return None) but still record the skip list so the trace
-        # channel can attribute discrepancies to runtime branch skips.
-        return None, chunks_skipped
-
-    blocks: list[dict[str, Any]] = []
-    if user_system:
-        blocks.append({"type": "text", "text": user_system})
-    for prose, value in rendered:
-        blocks.append({"type": "text", "text": prose + value})
-
-    provider = detect_provider(model)
-    provider_name = provider.name if provider else None
-    _ensure_provider_supports_cache_ttl(
-        provider_name=provider_name,
-        ttl=cache_ctx.cache_block.ttl,
-        node_id=node_id,
+    blocks, chunks_skipped = build_cache_system_blocks(
+        user_system=user_system,
+        cache_ctx=cache_ctx,
+        shared=shared,
         model=model,
     )
 
-    # Multi-breakpoint placement (Anthropic only — others get terminal marker).
-    # Indices are into the RENDERED chunks (post-ABSENT-filter), so we offset
-    # by the optional leading user_system block. Use cache_ctx.prewarm (NOT
-    # config.prewarm or any other source) — the engine pre-strips this to
-    # False when _should_disable_below_min_prewarm fires, so the post-pre-flight
-    # state is the budget-truth.
-    chunk_block_offset = 1 if user_system else 0
-    marker_indices = _compute_marker_chunk_indices(
-        n_rendered_chunks=len(rendered),
-        provider_name=provider_name,
-        prewarm_consumes_slot=cache_ctx.prewarm,
-    )
-    # Shallow dict copy is sufficient TODAY because _build_cache_control_marker
-    # returns flat dicts ({"type": ..., "ttl": ...}). If a future provider needs
-    # a nested marker shape (e.g., {"type": ..., "config": {...}}), switch to
-    # copy.deepcopy here to prevent aliasing across blocks.
-    marker = _build_cache_control_marker(provider_name, cache_ctx.cache_block.ttl)
-    for chunk_idx in marker_indices:
-        blocks[chunk_block_offset + chunk_idx]["cache_control"] = dict(marker)
-
-    # Routed-Anthropic INFO advisory: when the model looks like Anthropic
-    # routed through a proxy (OpenRouter, Bedrock, Vertex), pflow's per-chunk
-    # placement collapsed to terminal-only because detect_provider didn't
-    # recognize the prefix. The terminal cache still works; per-chunk reuse
-    # is lost. Fire only when multi-chunk would have benefited (>1 rendered).
-    if len(rendered) > 1 and _looks_like_routed_anthropic(model):
-        _emit_routed_provider_degraded_advisory(
-            shared=shared,
+    if blocks is not None and cache_ctx is not None and cache_ctx.cache_block is not None:
+        provider = detect_provider(model)
+        provider_name = provider.name if provider else None
+        _ensure_provider_supports_cache_ttl(
+            provider_name=provider_name,
+            ttl=cache_ctx.cache_block.ttl,
             node_id=node_id,
             model=model,
-            n_rendered_chunks=len(rendered),
         )
+        rendered_count = len(blocks) - (1 if user_system else 0)
+        if rendered_count > 1 and _looks_like_routed_anthropic(model):
+            _emit_routed_provider_degraded_advisory(
+                shared=shared,
+                node_id=node_id,
+                model=model,
+                n_rendered_chunks=rendered_count,
+            )
 
     return blocks, chunks_skipped
 
@@ -1106,7 +1050,7 @@ class LLMNode(Node):
         # render byte-identical bytes for the same logical state (DD#19
         # silent-stale-cache gate).
         node_id = getattr(self, "node_id", None)
-        cache_ctx = _read_cache_render_context(shared, node_id)
+        cache_ctx = _read_prompt_cache_context(shared, node_id)
         (
             system_blocks,
             user_message_blocks,

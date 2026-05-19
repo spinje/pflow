@@ -139,7 +139,7 @@ class MetricsCollector:
                 total_cost += cost
                 continue
             model = call.get("model") or ""
-            if model and model != VALIDATION_PLACEHOLDER:
+            if model and model != VALIDATION_PLACEHOLDER and not call.get("is_warmup"):
                 unavailable_models[model] += 1
             else:
                 unavailable_models_unnamed_count += 1
@@ -312,7 +312,7 @@ class MetricsCollector:
         # calculate_costs does, so the displayed count never reports phantom
         # invocations). Used by CLI/MCP renderers to surface a "Total LLM
         # calls: N" sibling line under the cost summary (Bundle 7 / F#17).
-        total_calls = sum(1 for call in llm_calls if call)
+        total_calls = sum(1 for call in llm_calls if call and not call.get("is_warmup"))
 
         # Add total metrics
         total_metrics: dict[str, Any] = {

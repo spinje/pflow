@@ -17,9 +17,9 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Optional
 
-from pflow.core.cache_render import CacheRenderContext
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_capabilities import get_min_cache_tokens
+from pflow.core.prompt_cache import CacheRenderContext
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
@@ -65,13 +65,13 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
     "LLMNode": FAILURE_CATEGORY_LLM,
 }
 
-# Read-only empty mapping used to restore ``__pflow_cache_render__`` after a
+# Read-only empty mapping used to restore ``__pflow_prompt_cache__`` after a
 # child engine.run completes when the parent had no value installed. Module
 # level so deeply-nested sub-workflow restores don't allocate per call.
-_EMPTY_CACHE_RENDER: Mapping[str, CacheRenderContext] = MappingProxyType({})
+_EMPTY_PROMPT_CACHE: Mapping[str, CacheRenderContext] = MappingProxyType({})
 
 
-def build_cache_render_dict(
+def build_prompt_cache_dict(
     workflow: CompiledWorkflow,
     shared: dict[str, Any],
 ) -> dict[str, CacheRenderContext]:
@@ -93,11 +93,11 @@ def build_cache_render_dict(
         prewarm = config.prewarm
         if _should_disable_below_min_prewarm(node_id, config, shared):
             prewarm = False
-        out[node_id] = _make_cache_render_context(config, cache_block, prewarm=prewarm)
+        out[node_id] = _make_prompt_cache_context(config, cache_block, prewarm=prewarm)
     return out
 
 
-def _make_cache_render_context(
+def _make_prompt_cache_context(
     config: NodeConfig,
     cache_block: Any,
     *,
@@ -313,7 +313,7 @@ class WorkflowEngine:
 
         Installs ``self.trace`` into ``shared["__trace_collector__"]`` and a
         per-workflow ``CacheRenderContext`` map into
-        ``shared["__pflow_cache_render__"]`` for the duration of the run.
+        ``shared["__pflow_prompt_cache__"]`` for the duration of the run.
         The save/restore pattern correctly handles nested sub-workflow runs
         (parent's values reinstated after a child engine.run completes) for
         both ``mapped`` and ``shared`` storage modes.
@@ -335,26 +335,26 @@ class WorkflowEngine:
         # parent's value during sub-workflow execution. MappingProxyType
         # enforces read-only at the call sites; consumers use the
         # ``(shared.get(K) or {}).get(node_id)`` defensive pattern. On
-        # restore-from-absent, write the module-level _EMPTY_CACHE_RENDER
+        # restore-from-absent, write the module-level _EMPTY_PROMPT_CACHE
         # constant rather than ``None`` so a future consumer that drops the
         # ``or {}`` defense hits a Mapping, not None.get(...).
         #
         # Build BEFORE installing anything so an exception during
-        # ``build_cache_render_dict`` leaves shared completely unchanged —
+        # ``build_prompt_cache_dict`` leaves shared completely unchanged —
         # otherwise a build-time exception would leak the trace install
         # (saved_trace overwritten, finally never fires).
         saved_trace = shared.get("__trace_collector__")
-        saved_cache_render = shared.get("__pflow_cache_render__")
-        new_cache_render = MappingProxyType(build_cache_render_dict(workflow, shared))
+        saved_prompt_cache = shared.get("__pflow_prompt_cache__")
+        new_prompt_cache = MappingProxyType(build_prompt_cache_dict(workflow, shared))
         if self.trace is not None:
             shared["__trace_collector__"] = self.trace
-        shared["__pflow_cache_render__"] = new_cache_render
+        shared["__pflow_prompt_cache__"] = new_prompt_cache
         try:
             return self._run_inner(workflow, shared)
         finally:
             shared["__trace_collector__"] = saved_trace
-            shared["__pflow_cache_render__"] = (
-                saved_cache_render if saved_cache_render is not None else _EMPTY_CACHE_RENDER
+            shared["__pflow_prompt_cache__"] = (
+                saved_prompt_cache if saved_prompt_cache is not None else _EMPTY_PROMPT_CACHE
             )
 
     def _run_inner(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:

@@ -752,18 +752,18 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     # when the static prefix is below the provider minimum.
     from pflow.registry.registry import Registry
     from pflow.runtime.compilation.compiler import compile_workflow
-    from pflow.runtime.engine.engine import build_cache_render_dict
+    from pflow.runtime.engine.engine import build_prompt_cache_dict
 
     compiled = compile_workflow(batch_prewarm_below_min_ir, Registry(), initial_params={"items": [{"text": "a"}]})
     shared_for_prewarm = {"items": [{"text": "a"}], "_pflow_workflow_file": "x.pflow.md"}
-    render_dict = build_cache_render_dict(compiled, shared_for_prewarm)
+    render_dict = build_prompt_cache_dict(compiled, shared_for_prewarm)
     assert render_dict["score"].prewarm is False
     found = [
         d
         for d in (shared_for_prewarm.get("__warnings__", {}) or {}).values()
         if getattr(d, "id", None) == "cache.prewarm-disabled-below-min"
     ]
-    assert found, "build_cache_render_dict did not emit cache.prewarm-disabled-below-min"
+    assert found, "build_prompt_cache_dict did not emit cache.prewarm-disabled-below-min"
     _round_trip(found[0])
     seen_ids.add("cache.prewarm-disabled-below-min")
 
@@ -771,14 +771,14 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     # producer-path diagnostics outside analyze().
     from types import MappingProxyType
 
-    from pflow.core.cache_render import CacheRenderContext
+    from pflow.core.prompt_cache import CacheRenderContext
     from pflow.nodes.llm.llm import (
         _emit_declared_rendered_below_min_warning,
         _emit_observed_below_min_cache_warning,
     )
 
     runtime_shared: dict[str, Any] = {
-        "__pflow_cache_render__": MappingProxyType({
+        "__pflow_prompt_cache__": MappingProxyType({
             "ask": CacheRenderContext(
                 cache_block=None,
                 subset=("topic",),

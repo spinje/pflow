@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_render import CacheBlockIR, CacheChunkIR
 from pflow.core.exceptions import CompilationError
+from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR
 from pflow.registry.registry import Registry
 from pflow.runtime.compilation.compiler import compile_workflow
 

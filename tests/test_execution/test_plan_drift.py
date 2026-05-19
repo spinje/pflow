@@ -2087,11 +2087,11 @@ parallel: false
 
 def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_client) -> None:
     """A workflow with `## Cache` declared: the planner's plan_node must see
-    the same `__pflow_cache_render__` dict as the engine, otherwise plan and
+    the same `__pflow_prompt_cache__` dict as the engine, otherwise plan and
     runtime hashes diverge — the planner mispredicts ``cached`` vs ``execute``.
 
     Pre-fix bug (Task 159 B3 review-feature-interactions C1): the planner's
-    ``_create_planner_shared`` did not install ``__pflow_cache_render__``.
+    ``_create_planner_shared`` did not install ``__pflow_prompt_cache__``.
     Engine's ``plan_node`` saw a populated dict via ``WorkflowEngine.run``'s
     save/restore; planner's ``plan_node`` saw ``None``. config_hash diverged
     silently for cache-using workflows.
@@ -2145,7 +2145,7 @@ def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_c
     finally:
         conn.close()
 
-    # Plan via the planner. Must see the SAME __pflow_cache_render__ dict the
+    # Plan via the planner. Must see the SAME __pflow_prompt_cache__ dict the
     # engine installs — otherwise plan_node's hash diverges and the plan
     # incorrectly predicts "execute".
     plan = build_plan(
@@ -2164,7 +2164,7 @@ def test_plan_matches_engine_for_workflow_with_prompt_cache(tmp_path, mock_llm_c
     statuses = [entry.status for entry in plan.entries]
     assert all(s == "cached" for s in statuses), (
         f"planner mispredicted for prompt_cache workflow: statuses={statuses!r}. "
-        "Likely cause: _create_planner_shared did not install __pflow_cache_render__, "
+        "Likely cause: _create_planner_shared did not install __pflow_prompt_cache__, "
         "so plan_node's config_hash excludes cache content while engine's includes it."
     )
 

@@ -3,7 +3,7 @@
 Drives the committed multi-chunk example through ``WorkflowRunner.run()`` and
 asserts that both consumer LLM nodes receive system_blocks with 3 markers
 each (Anthropic budget=4, 3 declared chunks → all individual). Locks the
-full cross-layer pipeline (parser → engine → cache_render → LLMNode →
+full cross-layer pipeline (parser → engine → prompt_cache → LLMNode →
 adapter) against regressions that the unit-level placement tests would
 miss.
 

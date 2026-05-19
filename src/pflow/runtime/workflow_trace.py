@@ -69,7 +69,9 @@ class _LLMSummaryAccumulator:
     unavailable_models_unnamed_count: int = 0
 
     def add_leaf(self, call: dict[str, Any]) -> None:
-        self.total_calls += 1
+        is_warmup = call.get("is_warmup", False)
+        if not is_warmup:
+            self.total_calls += 1
         self.total_tokens += call.get("total_tokens", 0)
         self.total_input_tokens += call.get("input_tokens", 0)
         self.total_output_tokens += call.get("output_tokens", 0)
@@ -77,9 +79,9 @@ class _LLMSummaryAccumulator:
         model = call.get("model") or ""
         is_real_model = bool(model) and model != VALIDATION_PLACEHOLDER
         if cost is None:
-            if is_real_model:
+            if is_real_model and not is_warmup:
                 self.unavailable_models[model] += 1
-            else:
+            elif not is_real_model and not is_warmup:
                 self.unavailable_models_unnamed_count += 1
         else:
             self.priced_cost += cost

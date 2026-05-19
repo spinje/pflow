@@ -1,37 +1,36 @@
-"""D.2 — Prewarm execution: serialize first item, fan out the rest.
+"""D.2 — Synthetic cache warmup for parallel batch LLM nodes.
 
-When a parallel batch LLM node has ``prewarm: true``, the executor splits
-dispatch: item[0] runs synchronously through the SAME ``process_item``
-closure the pool would use, then items[1:] dispatch through the pool. This
-trades ~one item's latency for cache-write savings on the remaining N-1
-items (which now read at 0.1x cost instead of writing at 1.25-2x cost).
+When a parallel batch LLM node has declared cache chunks (prompt_cache: [...]),
+the executor issues a minimal synthetic LLM call (max_tokens=16) to populate
+the provider's system-message cache prefix, then fans out ALL items in
+parallel. The warmup decision is based on declared cache presence (subset),
+NOT the ``prewarm`` flag — ``prewarm`` controls auto-batch-prefix markers
+on the user message, which is an independent concern.
 
 The tests pin the load-bearing invariants:
-- Item[0] runs before any item[i>0] (barrier-based ordering).
-- Items[1:] cluster temporally (still parallel after item[0]).
-- ``fail_fast`` + item[0] failure → items[1:] not dispatched.
-- ``continue`` + item[0] failure → items[1:] dispatch anyway.
-- N=1 batches skip prewarm split (no fan-out opportunity).
-- prewarm=False → full fan-out from the start (today's behavior).
+- All N items fan out in parallel (no item-0 serialization).
+- ``_execute_synthetic_warmup`` is called when declared cache chunks exist.
+- Synthetic warmup failure is non-fatal (batch continues).
+- N=1 batches skip warmup (no fan-out benefit).
+- No declared cache → no warmup call (regardless of prewarm flag).
 - ``_collect_parallel_results`` accepts ``initial_completed`` /
-  ``total`` kwargs so progress accounts for the synchronously-run item[0].
+  ``total`` kwargs (signature compatibility).
 """
 
 from __future__ import annotations
 
 import threading
-import time
 from types import MappingProxyType
 from typing import Any
+from unittest.mock import patch
 
-import pytest
-
-from pflow.core.cache_render import CacheRenderContext
+from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.runtime.engine.batch_executor import (
     _collect_parallel_results,
+    _execute_synthetic_warmup,
     execute_batch,
 )
-from pflow.runtime.engine.types import BatchConfig, NodeConfig
+from pflow.runtime.engine.types import BatchConfig, NodeConfig, TemplateConfig
 
 # --- Test helpers ----------------------------------------------------------
 
@@ -43,11 +42,12 @@ def _make_node_config(
     parallel: bool = True,
     error_handling: str = "continue",
     max_concurrent: int = 10,
+    template_config: TemplateConfig | None = None,
 ) -> NodeConfig:
     return NodeConfig(
         node_id=node_id,
         node_type_name="LLMNode",
-        template_config=None,
+        template_config=template_config,
         batch_config=BatchConfig(
             items_template="${data}",
             item_alias="item",
@@ -64,24 +64,41 @@ def _make_node_config(
     )
 
 
-def _install_prewarm_ctx(shared: dict, node_id: str, *, prewarm: bool) -> None:
-    """Install a minimal CacheRenderContext that toggles prewarm at the
-    batch-executor read site."""
+_DUMMY_CACHE_BLOCK = CacheBlockIR(
+    ttl="5m",
+    items=(CacheChunkIR(name="ctx", var_expr="upstream.result", prose_before="Context:\n\n", source_line=1),),
+    source_line=1,
+)
+
+
+def _install_prewarm_ctx(
+    shared: dict,
+    node_id: str,
+    *,
+    prewarm: bool,
+    with_declared_cache: bool = False,
+) -> None:
+    """Install a minimal CacheRenderContext for batch-executor tests.
+
+    ``with_declared_cache=True`` populates ``cache_block`` and ``subset``
+    so the synthetic warmup gate fires (it checks for declared chunks,
+    not the ``prewarm`` flag).
+    """
     ctx = CacheRenderContext(
-        cache_block=None,
-        subset=(),
+        cache_block=_DUMMY_CACHE_BLOCK if with_declared_cache else None,
+        subset=("ctx",) if with_declared_cache else (),
         prewarm=prewarm,
         unresolved_batch_prompt=None,
         batch_alias=None,
     )
-    shared["__pflow_cache_render__"] = MappingProxyType({node_id: ctx})
+    shared["__pflow_prompt_cache__"] = MappingProxyType({node_id: ctx})
 
 
 class _MockLLMNode:
     """Mock LLM node simulating per-item processing for prewarm tests.
 
     The optional ``execute_hook`` callable is invoked on every ``_run`` —
-    barrier-based tests use it to coordinate item[0] and items[1:].
+    barrier-based tests use it to coordinate thread ordering.
 
     Per-item state (timestamps, call counts) is written into ``shared``
     (which the batch executor shallow-copies so nested lists/dicts share
@@ -98,9 +115,6 @@ class _MockLLMNode:
     def _run(self, shared: dict) -> str:
         idx = shared.get("__index__", 0)
         item = shared.get("item")
-        timestamps = shared.get("__test_timestamps__")
-        if timestamps is not None:
-            timestamps[idx] = time.monotonic()
         call_log = shared.get("__test_call_log__")
         if call_log is not None:
             # GIL-protected list append.
@@ -116,61 +130,21 @@ def _execute_single(node, config, item_shared):
     return (action or "default", {}, [])
 
 
-# --- Barrier-based ordering test (the load-bearing invariant) -------------
+# --- All items fan out in parallel (the load-bearing invariant) ----------
 
 
-def test_prewarm_serializes_item_zero_then_fans_out() -> None:
-    """Item[0] runs synchronously (does NOT enter the worker barrier);
-    items[1:] all wait at a barrier with ``parties=N-1`` and unblock
-    together. If item[0] is incorrectly submitted to the pool, it would
-    enter the barrier (parties=N-1 is wrong for N) and the test deadlocks
-    via the 1.0s timeout."""
+def test_prewarm_all_items_fan_out_in_parallel() -> None:
+    """All N items enter the pool and run in parallel. A barrier with
+    parties=N verifies all items are dispatched concurrently. No declared
+    cache is installed, so the synthetic warmup gate does not fire."""
     N = 4
-    barrier = threading.Barrier(parties=N - 1, timeout=1.0)
-    item_zero_completed = threading.Event()
+    barrier = threading.Barrier(parties=N, timeout=2.0)
 
     def hook(*, idx: int, **kwargs: Any) -> None:
-        if idx == 0:
-            time.sleep(0.05)  # item[0]'s synchronous "cache write"
-            item_zero_completed.set()
-        else:
-            assert item_zero_completed.is_set(), f"item[{idx}] started before item[0] completed"
-            barrier.wait()
+        barrier.wait()
 
     node = _MockLLMNode(execute_hook=hook)
     config = _make_node_config(prewarm=True)
-    timestamps: dict[int, float] = {}
-    shared: dict = {
-        "data": [{"i": i} for i in range(N)],
-        "__test_timestamps__": timestamps,
-    }
-    _install_prewarm_ctx(shared, "test_node", prewarm=True)
-
-    execute_batch(node, config, shared, _execute_single)
-
-    # Item[0]'s timestamp precedes ALL workers' timestamps.
-    assert all(timestamps[0] <= timestamps[i] for i in range(1, N))
-    # Items[1:] cluster (all unblocked simultaneously when barrier filled).
-    worker_ts = [timestamps[i] for i in range(1, N)]
-    spread_ms = (max(worker_ts) - min(worker_ts)) * 1000
-    assert spread_ms < 200, f"workers should cluster within 200ms, got {spread_ms:.1f}ms"
-
-
-# --- Error handling: fail_fast + item[0] failure --------------------------
-
-
-def test_prewarm_fail_fast_stops_after_item_zero_fails() -> None:
-    """fail_fast + item[0] errors → items[1:] are NOT dispatched. Match the
-    documented behavior at execute_batch:236 — raise AFTER aggregation so
-    shared[node_id] retains the partial batch_metadata."""
-    N = 5
-
-    def hook(*, idx: int, **kwargs: Any) -> None:
-        if idx == 0:
-            raise RuntimeError("item[0] cache write failed")
-
-    node = _MockLLMNode(execute_hook=hook)
-    config = _make_node_config(prewarm=True, error_handling="fail_fast")
     call_log: list[int] = []
     shared: dict = {
         "data": [{"i": i} for i in range(N)],
@@ -178,63 +152,142 @@ def test_prewarm_fail_fast_stops_after_item_zero_fails() -> None:
     }
     _install_prewarm_ctx(shared, "test_node", prewarm=True)
 
-    with pytest.raises(RuntimeError, match=r"item.0. cache write failed"):
+    execute_batch(node, config, shared, _execute_single)
+
+    # All N items were dispatched.
+    assert sorted(call_log) == list(range(N))
+
+
+# --- Synthetic warmup is called when declared cache exists ----------------
+
+
+def test_prewarm_calls_synthetic_warmup() -> None:
+    """When declared cache chunks exist and N>1, _execute_synthetic_warmup
+    is called before the parallel fan-out."""
+    N = 3
+    node = _MockLLMNode()
+    config = _make_node_config(prewarm=True)
+    call_log: list[int] = []
+    shared: dict = {
+        "data": [{"i": i} for i in range(N)],
+        "__test_call_log__": call_log,
+    }
+    _install_prewarm_ctx(shared, "test_node", prewarm=True, with_declared_cache=True)
+
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+        return_value={"model": "test", "input_tokens": 10, "output_tokens": 2, "cost_usd": 0.001},
+    ) as mock_warmup:
         execute_batch(node, config, shared, _execute_single)
 
-    # Only item[0] was attempted; items[1:] never dispatched.
-    assert call_log == [0]
+    mock_warmup.assert_called_once()
+    # All items still dispatched after warmup.
+    assert sorted(call_log) == list(range(N))
 
 
-# --- Error handling: continue + item[0] failure ---------------------------
-
-
-def test_prewarm_continue_dispatches_remainder_after_item_zero_fails() -> None:
-    """error_handling=continue + item[0] errors → items[1:] dispatch anyway.
-    They each pay the full cache-write cost (cache wasn't populated by
-    item[0]) — documented expectation; runtime emits no warning."""
-    N = 4
-
-    def hook(*, idx: int, **kwargs: Any) -> None:
-        if idx == 0:
-            raise RuntimeError("item[0] write failed; continue")
-
-    node = _MockLLMNode(execute_hook=hook)
-    config = _make_node_config(prewarm=True, error_handling="continue")
+def test_declared_cache_without_prewarm_skips_warmup() -> None:
+    """Declared cache chunks alone do NOT trigger warmup. The user must
+    also set prewarm: true to opt in to the synthetic warmup call."""
+    N = 3
+    node = _MockLLMNode()
+    config = _make_node_config(prewarm=False)
     call_log: list[int] = []
     shared: dict = {
         "data": [{"i": i} for i in range(N)],
         "__test_call_log__": call_log,
     }
-    _install_prewarm_ctx(shared, "test_node", prewarm=True)
+    _install_prewarm_ctx(shared, "test_node", prewarm=False, with_declared_cache=True)
 
-    execute_batch(node, config, shared, _execute_single)
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+    ) as mock_warmup:
+        execute_batch(node, config, shared, _execute_single)
 
-    # item[0] (failed) + items[1:N] (succeeded) all attempted.
+    mock_warmup.assert_not_called()
+    assert sorted(call_log) == list(range(N))
+
+
+def test_prewarm_true_without_declared_cache_skips_warmup() -> None:
+    """prewarm: true alone (without declared cache chunks) does NOT trigger
+    synthetic warmup. The prewarm flag enables auto-batch-prefix markers
+    on the user message, but without declared cache there are no system
+    blocks to warm."""
+    N = 3
+    node = _MockLLMNode()
+    config = _make_node_config(prewarm=True)
+    call_log: list[int] = []
+    shared: dict = {
+        "data": [{"i": i} for i in range(N)],
+        "__test_call_log__": call_log,
+    }
+    _install_prewarm_ctx(shared, "test_node", prewarm=True, with_declared_cache=False)
+
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+    ) as mock_warmup:
+        execute_batch(node, config, shared, _execute_single)
+
+    mock_warmup.assert_not_called()
+    assert sorted(call_log) == list(range(N))
+
+
+# --- Synthetic warmup failure is non-fatal --------------------------------
+
+
+def test_prewarm_warmup_failure_does_not_block_batch() -> None:
+    """If _execute_synthetic_warmup returns False (failure), all items
+    still fan out in parallel."""
+    N = 4
+    barrier = threading.Barrier(parties=N, timeout=2.0)
+
+    def hook(*, idx: int, **kwargs: Any) -> None:
+        barrier.wait()
+
+    node = _MockLLMNode(execute_hook=hook)
+    config = _make_node_config(prewarm=True)
+    call_log: list[int] = []
+    shared: dict = {
+        "data": [{"i": i} for i in range(N)],
+        "__test_call_log__": call_log,
+    }
+    _install_prewarm_ctx(shared, "test_node", prewarm=True, with_declared_cache=True)
+
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+        return_value=None,
+    ):
+        execute_batch(node, config, shared, _execute_single)
+
     assert sorted(call_log) == list(range(N))
 
 
 # --- N=1 skip + prewarm=False fall-through --------------------------------
 
 
-def test_prewarm_n1_skips_split() -> None:
-    """N=1 batch with prewarm=True still completes (skipping the split is
-    safe — no fan-out opportunity). Item[0] is the only call."""
+def test_prewarm_n1_skips_warmup() -> None:
+    """N=1 batch with declared cache still completes (skipping warmup —
+    no fan-out benefit). Item[0] is the only call."""
     node = _MockLLMNode()
     config = _make_node_config(prewarm=True)
     call_log: list[int] = []
     shared: dict = {"data": [{"i": 0}], "__test_call_log__": call_log}
-    _install_prewarm_ctx(shared, "test_node", prewarm=True)
+    _install_prewarm_ctx(shared, "test_node", prewarm=True, with_declared_cache=True)
 
-    execute_batch(node, config, shared, _execute_single)
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+    ) as mock_warmup:
+        execute_batch(node, config, shared, _execute_single)
 
+    # Warmup not called for N=1 (should_warmup is False when len(items) <= 1).
+    mock_warmup.assert_not_called()
     assert call_log == [0]
 
 
-def test_prewarm_false_full_fanout_no_serialization() -> None:
+def test_prewarm_false_full_fanout_no_warmup() -> None:
     """prewarm=False + N=4 → all N items enter a barrier with parties=N
-    and unblock together (today's behavior; nothing serialized)."""
+    and unblock together. No warmup call."""
     N = 4
-    barrier = threading.Barrier(parties=N, timeout=1.0)
+    barrier = threading.Barrier(parties=N, timeout=2.0)
 
     def hook(*, idx: int, **kwargs: Any) -> None:
         barrier.wait()
@@ -254,10 +307,10 @@ def test_prewarm_false_full_fanout_no_serialization() -> None:
 
 
 def test_prewarm_no_cache_ctx_full_fanout() -> None:
-    """No __pflow_cache_render__ at all (legacy non-cache workflow) → full
+    """No __pflow_prompt_cache__ at all (legacy non-cache workflow) → full
     fan-out. Defensive read at the executor must handle the absent key."""
     N = 4
-    barrier = threading.Barrier(parties=N, timeout=1.0)
+    barrier = threading.Barrier(parties=N, timeout=2.0)
 
     def hook(*, idx: int, **kwargs: Any) -> None:
         barrier.wait()
@@ -276,16 +329,148 @@ def test_prewarm_no_cache_ctx_full_fanout() -> None:
     assert sorted(call_log) == list(range(N))
 
 
+# --- _execute_synthetic_warmup unit tests ---------------------------------
+
+
+def test_synthetic_warmup_returns_false_when_no_template_config() -> None:
+    """No template_config → cannot resolve model → returns False."""
+    config = _make_node_config(prewarm=True)
+    ctx = CacheRenderContext(
+        cache_block=None,
+        subset=(),
+        prewarm=True,
+        unresolved_batch_prompt=None,
+        batch_alias=None,
+    )
+    assert _execute_synthetic_warmup(config, {}, ctx) is None
+
+
+def test_synthetic_warmup_returns_none_when_no_model() -> None:
+    """template_config exists but no model param → returns None."""
+    tc = TemplateConfig(
+        template_params={},
+        static_params={"system": "You are helpful."},
+        expected_types={},
+        resolution_mode="strict",
+    )
+    config = _make_node_config(prewarm=True, template_config=tc)
+    ctx = CacheRenderContext(
+        cache_block=None,
+        subset=(),
+        prewarm=True,
+        unresolved_batch_prompt=None,
+        batch_alias=None,
+    )
+    assert _execute_synthetic_warmup(config, {}, ctx) is None
+
+
+def test_synthetic_warmup_returns_none_when_no_system_blocks() -> None:
+    """Model resolves but build_cache_system_blocks returns None → None."""
+    tc = TemplateConfig(
+        template_params={},
+        static_params={"model": "anthropic/claude-sonnet-4-5"},
+        expected_types={},
+        resolution_mode="strict",
+    )
+    config = _make_node_config(prewarm=True, template_config=tc)
+    # cache_block=None + empty subset → build_cache_system_blocks returns (None, [])
+    ctx = CacheRenderContext(
+        cache_block=None,
+        subset=(),
+        prewarm=True,
+        unresolved_batch_prompt=None,
+        batch_alias=None,
+    )
+    assert _execute_synthetic_warmup(config, {}, ctx) is None
+
+
+def test_synthetic_warmup_catches_exception_and_returns_none() -> None:
+    """If the LLM call raises, warmup catches the exception and returns None."""
+    tc = TemplateConfig(
+        template_params={},
+        static_params={"model": "anthropic/claude-sonnet-4-5"},
+        expected_types={},
+        resolution_mode="strict",
+    )
+    config = _make_node_config(prewarm=True, template_config=tc)
+    ctx = CacheRenderContext(
+        cache_block=None,
+        subset=(),
+        prewarm=True,
+        unresolved_batch_prompt=None,
+        batch_alias=None,
+    )
+
+    # Patch build_cache_system_blocks to return real blocks, then make complete() raise.
+    with (
+        patch(
+            "pflow.core.prompt_cache.build_cache_system_blocks",
+            return_value=([{"type": "text", "text": "system"}], []),
+        ),
+        patch(
+            "pflow.core.llm_client.complete",
+            side_effect=RuntimeError("connection failed"),
+        ),
+    ):
+        result = _execute_synthetic_warmup(config, {}, ctx)
+
+    assert result is None
+
+
+def test_synthetic_warmup_happy_path_calls_complete_correctly() -> None:
+    """Happy path: model resolves, system blocks build, complete() is called
+    with the expected warmup parameters (max_tokens=16, temperature=0).
+    Returns the usage dict from the response."""
+    tc = TemplateConfig(
+        template_params={},
+        static_params={"model": "anthropic/claude-sonnet-4-5", "system": "You are helpful."},
+        expected_types={},
+        resolution_mode="strict",
+    )
+    config = _make_node_config(prewarm=True, template_config=tc)
+    ctx = CacheRenderContext(
+        cache_block=_DUMMY_CACHE_BLOCK,
+        subset=("ctx",),
+        prewarm=True,
+        unresolved_batch_prompt=None,
+        batch_alias=None,
+    )
+    shared: dict[str, Any] = {"upstream": {"result": "large cached content here"}}
+
+    mock_usage = {
+        "model": "anthropic/claude-sonnet-4-5",
+        "input_tokens": 150,
+        "output_tokens": 2,
+        "total_tokens": 152,
+        "cache_creation_input_tokens": 140,
+        "cache_read_input_tokens": 0,
+        "cost_usd": 0.0015,
+    }
+
+    class _MockResp:
+        usage = mock_usage
+
+    with patch("pflow.core.llm_client.complete", return_value=_MockResp()) as mock_complete:
+        result = _execute_synthetic_warmup(config, shared, ctx)
+
+    assert result is mock_usage
+    mock_complete.assert_called_once()
+    call_kwargs = mock_complete.call_args
+    assert call_kwargs.kwargs["model"] == "anthropic/claude-sonnet-4-5"
+    assert call_kwargs.kwargs["max_tokens"] == 16
+    assert call_kwargs.kwargs["temperature"] == 0
+    assert call_kwargs.kwargs["prompt"] == "Reply with: OK"
+    assert isinstance(call_kwargs.kwargs["system"], list)
+    assert len(call_kwargs.kwargs["system"]) >= 1
+
+
 # --- _collect_parallel_results signature widening -------------------------
 
 
 def test_collect_parallel_results_accepts_initial_completed_and_total() -> None:
-    """The widening must keep today's callers source-compatible (defaults),
-    AND the new kwargs must flow through to the progress reporting site —
+    """The kwargs must flow through to the progress reporting site —
     callback fires with ``batch_current = initial_completed + 1`` and
-    ``batch_total = total``. Without that flow-through the prewarm-split
-    progress numbers would silently desync (item[0] reported as 1/N from
-    synchronous run, item[1] reported as 1/N+1 from pool — off by one)."""
+    ``batch_total = total``."""
     from concurrent.futures import Future
     from unittest.mock import Mock
 
@@ -304,9 +489,6 @@ def test_collect_parallel_results_accepts_initial_completed_and_total() -> None:
 
     progress_callback = Mock()
 
-    # Calling with initial_completed=1, total=2 simulates "item[0] already
-    # ran synchronously; item[1] in the pool". After draining the single
-    # future, completed_count = 1 (initial) + 1 (drained) = 2 and total = 2.
     _collect_parallel_results(
         future_to_idx,
         items,
@@ -325,9 +507,6 @@ def test_collect_parallel_results_accepts_initial_completed_and_total() -> None:
     assert pending_errors == []
 
     # Verify the callback received the correct progress accounting kwargs.
-    # _report_batch_progress signature:
-    #   callback(node_id, "batch_progress", duration_ms, depth,
-    #            batch_current=..., batch_total=..., batch_success=...)
     progress_calls = [
         call for call in progress_callback.call_args_list if len(call.args) >= 2 and call.args[1] == "batch_progress"
     ]
@@ -396,3 +575,94 @@ def test_prewarm_ignored_in_sequential_mode() -> None:
     execute_batch(node, config, shared, _execute_single)
 
     assert call_log == [0, 1, 2]
+
+
+# --- Warmup cost telemetry tests -------------------------------------------
+
+
+def test_warmup_cost_in_trace_as_synthetic_batch_item() -> None:
+    """When warmup succeeds, a synthetic batch trace item with is_warmup=True
+    appears in _batch_trace so cost flows through the existing trace pipeline."""
+    N = 3
+    node = _MockLLMNode()
+    tc = TemplateConfig(
+        template_params={},
+        static_params={"model": "anthropic/claude-sonnet-4-5", "system": "You are helpful."},
+        expected_types={},
+        resolution_mode="strict",
+    )
+    config = _make_node_config(prewarm=True, template_config=tc)
+    shared: dict = {
+        "data": [{"i": i} for i in range(N)],
+        "upstream": {"result": "cached content"},
+    }
+    _install_prewarm_ctx(shared, "test_node", prewarm=True, with_declared_cache=True)
+
+    mock_usage = {
+        "model": "anthropic/claude-sonnet-4-5",
+        "input_tokens": 150,
+        "output_tokens": 2,
+        "total_tokens": 152,
+        "cache_creation_input_tokens": 140,
+        "cache_read_input_tokens": 0,
+        "cost_usd": 0.0015,
+    }
+
+    class _MockResp:
+        usage = mock_usage
+
+    with patch("pflow.core.llm_client.complete", return_value=_MockResp()):
+        execute_batch(node, config, shared, _execute_single)
+
+    # The batch trace should contain N regular items + 1 warmup item
+    batch_trace = shared.get("_batch_trace", {}).get("test_node", [])
+    warmup_items = [item for item in batch_trace if item.get("llm_call", {}).get("is_warmup")]
+    assert len(warmup_items) == 1
+
+    warmup = warmup_items[0]
+    assert warmup["index"] == -1
+    assert warmup["item"] == "__cache_warmup__"
+    assert warmup["success"] is True
+    assert warmup["duration_ms"] > 0
+    assert warmup["llm_call"]["cost_usd"] == 0.0015
+    assert warmup["llm_call"]["is_warmup"] is True
+    assert warmup["llm_prompt"] == "Reply with: OK"
+
+
+def test_warmup_failure_produces_no_synthetic_item() -> None:
+    """When warmup returns None (failure), no synthetic item is appended."""
+    N = 3
+    node = _MockLLMNode()
+    config = _make_node_config(prewarm=True)
+    shared: dict = {"data": [{"i": i} for i in range(N)]}
+    _install_prewarm_ctx(shared, "test_node", prewarm=True, with_declared_cache=True)
+
+    with patch(
+        "pflow.runtime.engine.batch_executor._execute_synthetic_warmup",
+        return_value=None,
+    ):
+        execute_batch(node, config, shared, _execute_single)
+
+    batch_trace = shared.get("_batch_trace", {}).get("test_node", [])
+    warmup_items = [item for item in batch_trace if item.get("llm_call", {}).get("is_warmup")]
+    assert len(warmup_items) == 0
+
+
+def test_warmup_cost_excluded_from_call_count() -> None:
+    """MetricsCollector.get_summary excludes warmup from total_calls but
+    includes warmup cost in total_cost_usd."""
+    from pflow.core.metrics import MetricsCollector
+
+    collector = MetricsCollector()
+    collector.record_workflow_start()
+    collector.record_workflow_end()
+
+    llm_calls = [
+        {"model": "test-model", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.005},
+        {"model": "test-model", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.005},
+        {"model": "test-model", "input_tokens": 150, "output_tokens": 2, "cost_usd": 0.015, "is_warmup": True},
+    ]
+
+    summary = collector.get_summary(llm_calls)
+    assert summary["metrics"]["total"]["total_calls"] == 2
+    assert summary["metrics"]["total"]["cost_usd"] == 0.025

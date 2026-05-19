@@ -1,4 +1,4 @@
-"""Cache rendering primitives for Task 159 prompt caching.
+"""Prompt cache rendering primitives for Task 159 prompt caching.
 
 Frozen IR types and shared rendering helpers used at three sites:
 - ``runtime/engine/plan_node.py`` — hash-time chunk rendering.
@@ -45,7 +45,7 @@ class CacheBlockIR:
 class CacheRenderContext:
     """Per-node cache rendering context, built once at engine.run() entry.
 
-    Delivered through ``shared["__pflow_cache_render__"]`` (a
+    Delivered through ``shared["__pflow_prompt_cache__"]`` (a
     ``MappingProxyType`` keyed by ``node_id``). Every consumer (plan_node hash
     rendering, LLMNode prep message rendering, batch_executor static-prefix
     detection) reads the same context.
@@ -82,7 +82,7 @@ class _ChunkAbsentSentinel:
     Distinct type so neither ``isinstance`` checks at the filter sites nor
     the ``runtime/cache.py`` defense can ever confuse it with a real value.
     A leaked sentinel reaching ``_make_serializable`` would otherwise
-    serialize to a stable string ``"<pflow.core.cache_render._ChunkAbsentSentinel>"``
+    serialize to a stable string ``"<pflow.core.prompt_cache._ChunkAbsentSentinel>"``
     and fold into the cache hash byte-identically across runs — the silent
     stale-cache regression class B3.3 closes via the explicit guard at
     ``runtime/cache.py:_make_serializable``.
@@ -359,3 +359,84 @@ def _looks_like_routed_anthropic(model: str | None) -> bool:
         return False
     lowered = model.lower()
     return "claude" in lowered or "anthropic" in lowered
+
+
+# --- Public block builder (extracted core of LLMNode._build_system_blocks) ---
+
+
+def build_cache_system_blocks(
+    *,
+    user_system: str | None,
+    cache_ctx: CacheRenderContext | None,
+    shared: dict[str, Any],
+    model: str,
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Build cache system content blocks with provider-specific ``cache_control`` markers.
+
+    Pure function: no warnings, no side effects. Extracts the core
+    block-building logic from ``LLMNode._build_system_blocks`` so both the
+    LLM node prep path and future synthetic cache warmup can share it.
+
+    Returns ``(system_blocks, chunks_skipped)`` — same contract as
+    ``_build_system_blocks``. ``system_blocks`` is ``None`` when no cache
+    rendering applies (no ctx, empty subset, or every chunk filtered as
+    ABSENT) — caller falls back to the plain-string ``system`` path so
+    byte-for-byte behavior is preserved for opt-out nodes.
+
+    When at least one chunk renders, the returned list is:
+
+    1. The user's ``system`` param (when set) as the FIRST block, no marker.
+    2. One block per declared chunk in declaration order: ``prose_before``
+       concatenated with the deterministic-serialized chunk value.
+    3. Per-provider ``cache_control`` markers placed by
+       ``_compute_marker_chunk_indices``: Anthropic gets up to 4 markers
+       (first N-1 chunks individual + terminal merge); other providers get
+       a terminal marker only.
+
+    The ABSENT filter is symmetric with
+    ``runtime/engine/plan_node._render_cache_for_hash`` — both sites import
+    ``_resolve_chunk_value`` from this module. If they diverge, hash and
+    prep render different bytes for the same logical state.
+    """
+    if cache_ctx is None or not cache_ctx.subset or cache_ctx.cache_block is None:
+        return None, []
+
+    chunks_by_name = {c.name: c for c in cache_ctx.cache_block.items}
+    rendered: list[tuple[str, str]] = []  # (prose_before, value_str)
+    chunks_skipped: list[str] = []
+
+    for name in cache_ctx.subset:
+        chunk = chunks_by_name.get(name)
+        if chunk is None:
+            continue
+        value = _resolve_chunk_value(chunk, shared)
+        if isinstance(value, _ChunkAbsentSentinel):
+            chunks_skipped.append(name)
+            continue
+        rendered.append((chunk.prose_before, value))
+
+    if not rendered:
+        return None, chunks_skipped
+
+    blocks: list[dict[str, Any]] = []
+    if user_system:
+        blocks.append({"type": "text", "text": user_system})
+    for prose, value in rendered:
+        blocks.append({"type": "text", "text": prose + value})
+
+    from pflow.core.llm_providers import detect_provider
+
+    provider = detect_provider(model)
+    provider_name = provider.name if provider else None
+
+    chunk_block_offset = 1 if user_system else 0
+    marker_indices = _compute_marker_chunk_indices(
+        n_rendered_chunks=len(rendered),
+        provider_name=provider_name,
+        prewarm_consumes_slot=cache_ctx.prewarm,
+    )
+    marker = _build_cache_control_marker(provider_name, cache_ctx.cache_block.ttl)
+    for chunk_idx in marker_indices:
+        blocks[chunk_block_offset + chunk_idx]["cache_control"] = dict(marker)
+
+    return blocks, chunks_skipped

@@ -1,4 +1,4 @@
-"""Direct unit tests for core/cache_render helpers (Task 159 B3.3).
+"""Direct unit tests for core/prompt_cache helpers (Task 159 B3.3).
 
 Tests ``_deterministic_serialize`` byte-stability, ``_resolve_chunk_value``
 ABSENT-detection + deterministic serialization, and the regex-parity invariant
@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from pflow.core.cache_render import (
+from pflow.core.prompt_cache import (
     _CHUNK_ABSENT,
     CacheChunkIR,
     _ChunkAbsentSentinel,

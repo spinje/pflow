@@ -13,7 +13,7 @@
 
 **Predicted cache_key byte-identity** (load-bearing, Round 4 high-value fix):
 this module imports ``_resolve_chunk_value`` and ``_resolve_static_prefix_for_cache``
-from ``pflow.core.cache_render`` so the analyzer's predicted cache_keys are
+from ``pflow.core.prompt_cache`` so the analyzer's predicted cache_keys are
 byte-identical to the runtime's. Inline reimplementation diverges from runtime
 resolution and produces false ``cache.discrepancy`` reports.
 """
@@ -40,17 +40,11 @@ if TYPE_CHECKING:
 
 # Imported for the predicted-cache_key contract (Round 4 high-value fix #2):
 # when ``cache.discrepancy`` detection wires up in v1.x, it MUST use the shared
-# resolution helpers from ``core.cache_render`` so predicted cache_keys are
+# resolution helpers from ``core.prompt_cache`` so predicted cache_keys are
 # byte-identical to runtime's. Eager import here locks the layer-policy
 # contract — if a future contributor moves either helper, this file fails to
 # import and the test suite catches it. v1 scaffolds the discrepancy slot but
 # defers full prediction; the helpers will be consumed when that lands.
-from pflow.core.cache_render import (  # noqa: F401 — see docstring.
-    _CHUNK_ABSENT,
-    _resolve_chunk_value,
-    _resolve_static_prefix_for_cache,
-    deterministic_serialize,
-)
 from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError, MarkdownParseError, SchemaValidationError, WorkflowValidationError
@@ -58,6 +52,12 @@ from pflow.core.llm_capabilities import anthropic_models_at_threshold, get_min_c
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import detect_provider, normalize_model_name
 from pflow.core.llm_usage import normalize_litellm_usage_tokens
+from pflow.core.prompt_cache import (  # noqa: F401 — see docstring.
+    _CHUNK_ABSENT,
+    _resolve_chunk_value,
+    _resolve_static_prefix_for_cache,
+    deterministic_serialize,
+)
 from pflow.core.prompt_refs import PromptRef, classify_prompt_refs, first_per_item_position
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
@@ -2225,7 +2225,7 @@ def _collect_trace_llm_call_lists(
         workflow_path=root_workflow_path,
     ):
         call = leaf.llm_call
-        if call is None:
+        if call is None or call.get("is_warmup"):
             continue
         node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
         key = (leaf.workflow_path or root_workflow_path, node_id)
@@ -2621,6 +2621,9 @@ def _build_call_counts_by_node(ctx: AnalysisContext, cw_result: Any) -> dict[tup
     counts: dict[tuple[str | None, str], int] = {}
     edges_map = _edge_child_paths(cw_result)
     for leaf in ctx.trace.iter_llm_leaves(edges=edges_map, workflow_path=ctx.workflow_path):
+        llm_call = leaf.llm_call
+        if llm_call is not None and llm_call.get("is_warmup"):
+            continue
         node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
         key = (leaf.workflow_path, node_id)
         counts[key] = counts.get(key, 0) + 1
@@ -3872,7 +3875,7 @@ def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: di
 
     if not isinstance(resolved, str):
         # Single-ref templates can return non-string values (e.g. dict).
-        from pflow.core.cache_render import deterministic_serialize
+        from pflow.core.prompt_cache import deterministic_serialize
 
         resolved = deterministic_serialize(resolved)
 
@@ -7924,6 +7927,8 @@ def _emit_discrepancy_diagnostics(
         leaf_workflow_path = leaf.workflow_path or workflow_path
         llm_call = event.get("llm_call") or {}
         if not isinstance(llm_call, dict):
+            continue
+        if llm_call.get("is_warmup"):
             continue
 
         chunks_skipped = llm_call.get("cache_chunks_skipped")

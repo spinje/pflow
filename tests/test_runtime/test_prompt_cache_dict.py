@@ -1,11 +1,11 @@
-"""Tests for Task 159 B3.2: ``build_cache_render_dict`` + engine save/restore.
+"""Tests for Task 159 B3.2: ``build_prompt_cache_dict`` + engine save/restore.
 
 Covers:
-- Unit tests for the ``build_cache_render_dict`` builder against synthetic
+- Unit tests for the ``build_prompt_cache_dict`` builder against synthetic
   ``CompiledWorkflow`` objects.
 - Integration tests for the engine boundary save/restore semantics:
   pre-installed values are restored on exit; restore-from-absent writes
-  ``_EMPTY_CACHE_RENDER`` (a frozen empty proxy), never ``None``.
+  ``_EMPTY_PROMPT_CACHE`` (a frozen empty proxy), never ``None``.
 - Sub-workflow isolation: a parent's value is masked during child execution
   and reinstated on exit. Captured via a ``BaseNode.prep`` monkeypatch.
 - Read-only invariants: ``MappingProxyType`` rejects mutation; the
@@ -20,14 +20,14 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_render import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.core.markdown_parser import parse_markdown
+from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR, CacheRenderContext
 from pflow.registry.registry import Registry
 from pflow.runtime.compilation.compiler import compile_workflow
 from pflow.runtime.engine.engine import (
-    _EMPTY_CACHE_RENDER,
+    _EMPTY_PROMPT_CACHE,
     WorkflowEngine,
-    build_cache_render_dict,
+    build_prompt_cache_dict,
 )
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
 
@@ -94,7 +94,7 @@ def test_builder_includes_llm_node_with_subset() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode", prompt_cache_items=("concept",))},
     )
-    out = build_cache_render_dict(workflow, {})
+    out = build_prompt_cache_dict(workflow, {})
     assert set(out.keys()) == {"a"}
     assert out["a"].subset == ("concept",)
     assert out["a"].prewarm is False
@@ -105,7 +105,7 @@ def test_builder_includes_llm_node_with_prewarm() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode", prewarm=True)},
     )
-    out = build_cache_render_dict(workflow, {})
+    out = build_prompt_cache_dict(workflow, {})
     assert "a" in out
     assert out["a"].prewarm is True
 
@@ -118,7 +118,7 @@ def test_builder_includes_llm_node_when_workflow_has_cache_block() -> None:
         {"a": _make_node_config("a", "LLMNode")},
         cache_block=block,
     )
-    out = build_cache_render_dict(workflow, {})
+    out = build_prompt_cache_dict(workflow, {})
     assert "a" in out
     assert out["a"].cache_block is block
     assert out["a"].subset == ()
@@ -133,7 +133,7 @@ def test_builder_excludes_non_llm_nodes() -> None:
         },
         cache_block=_simple_block("x"),
     )
-    out = build_cache_render_dict(workflow, {})
+    out = build_prompt_cache_dict(workflow, {})
     assert set(out.keys()) == {"llm1"}
 
 
@@ -142,7 +142,7 @@ def test_builder_excludes_llm_without_any_cache_state() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode")},
     )
-    assert build_cache_render_dict(workflow, {}) == {}
+    assert build_prompt_cache_dict(workflow, {}) == {}
 
 
 def test_builder_returns_plain_dict_not_proxy() -> None:
@@ -152,7 +152,7 @@ def test_builder_returns_plain_dict_not_proxy() -> None:
     workflow = _make_workflow(
         {"a": _make_node_config("a", "LLMNode", prompt_cache_items=("x",))},
     )
-    out = build_cache_render_dict(workflow, {})
+    out = build_prompt_cache_dict(workflow, {})
     assert isinstance(out, dict)
 
 
@@ -164,7 +164,7 @@ def test_builder_disables_prewarm_when_static_prefix_below_min(monkeypatch: pyte
     workflow = _make_workflow({"score": _make_prewarm_llm_config("short prefix ${item.text}")})
     shared: dict[str, Any] = {"items": [{"text": "a"}, {"text": "b"}], "_pflow_workflow_file": "wf.pflow.md"}
 
-    out = build_cache_render_dict(workflow, shared)
+    out = build_prompt_cache_dict(workflow, shared)
 
     assert out["score"].prewarm is False
     warning = shared["__warnings__"]["score"]
@@ -193,7 +193,7 @@ def test_builder_keeps_prewarm_when_static_prefix_has_unresolved_refs(
         "_pflow_workflow_file": "wf.pflow.md",
     }
 
-    out = build_cache_render_dict(workflow, shared)
+    out = build_prompt_cache_dict(workflow, shared)
 
     assert out["score"].prewarm is True
     assert "__warnings__" not in shared
@@ -208,7 +208,7 @@ def test_builder_keeps_prewarm_when_static_prefix_clears_min(monkeypatch: pytest
     workflow = _make_workflow({"score": _make_prewarm_llm_config("long prefix ${item.text}")})
     shared: dict[str, Any] = {"items": [{"text": "a"}, {"text": "b"}]}
 
-    out = build_cache_render_dict(workflow, shared)
+    out = build_prompt_cache_dict(workflow, shared)
 
     assert out["score"].prewarm is True
     assert "__warnings__" not in shared
@@ -245,28 +245,28 @@ def test_save_restore_round_trip_preserves_pre_existing_value() -> None:
     registry = Registry()
     workflow = _compile_minimal(registry)
     sentinel: Any = MappingProxyType({"sentinel": object()})  # type: ignore[var-annotated]
-    shared: dict[str, Any] = {"__pflow_cache_render__": sentinel}
+    shared: dict[str, Any] = {"__pflow_prompt_cache__": sentinel}
     WorkflowEngine().run(workflow, shared)
-    assert shared["__pflow_cache_render__"] is sentinel
+    assert shared["__pflow_prompt_cache__"] is sentinel
 
 
 def test_restore_from_absent_writes_empty_proxy_not_none() -> None:
-    """When the parent had no value, restore writes ``_EMPTY_CACHE_RENDER``
+    """When the parent had no value, restore writes ``_EMPTY_PROMPT_CACHE``
     so a future consumer that drops the ``or {}`` defense doesn't hit
     ``None.get(...)``."""
     registry = Registry()
     workflow = _compile_minimal(registry)
     shared: dict[str, Any] = {}  # no pre-existing key
     WorkflowEngine().run(workflow, shared)
-    restored = shared["__pflow_cache_render__"]
-    assert restored is _EMPTY_CACHE_RENDER
+    restored = shared["__pflow_prompt_cache__"]
+    assert restored is _EMPTY_PROMPT_CACHE
     assert isinstance(restored, MappingProxyType)
     assert dict(restored) == {}
     assert restored is not None  # explicit — the load-bearing invariant
 
 
 def test_dict_is_installed_during_run() -> None:
-    """During execution, ``shared["__pflow_cache_render__"]`` is a Mapping.
+    """During execution, ``shared["__pflow_prompt_cache__"]`` is a Mapping.
     Captured via a ``ShellNode.prep`` monkeypatch — leaf classes override
     ``prep``, so a ``BaseNode.prep`` patch would not fire (CPython MRO finds
     the subclass override first)."""
@@ -276,7 +276,7 @@ def test_dict_is_installed_during_run() -> None:
     original_prep = ShellNode.prep
 
     def capturing_prep(self: ShellNode, shared: dict[str, Any]) -> Any:
-        captured.append(shared.get("__pflow_cache_render__"))
+        captured.append(shared.get("__pflow_prompt_cache__"))
         return original_prep(self, shared)
 
     registry = Registry()
@@ -302,12 +302,12 @@ def test_outer_dict_is_read_only() -> None:
     workflow = _compile_minimal(registry)
     shared: dict[str, Any] = {}
     WorkflowEngine().run(workflow, shared)
-    proxy = shared["__pflow_cache_render__"]
+    proxy = shared["__pflow_prompt_cache__"]
     with pytest.raises(TypeError):
         proxy["new_node"] = object()  # type: ignore[index]
 
 
-def test_cache_render_context_is_frozen() -> None:
+def test_prompt_cache_context_is_frozen() -> None:
     """``CacheRenderContext`` mutation raises ``FrozenInstanceError`` — both
     the outer mapping AND the per-node values are mutation-proof."""
     block = _simple_block("x")
@@ -398,7 +398,7 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
 
     def capturing_prep(self: ShellNode, shared: dict[str, Any]) -> Any:
         node_id = getattr(self, "node_id", "<unknown>")
-        captured.append((node_id, shared.get("__pflow_cache_render__")))
+        captured.append((node_id, shared.get("__pflow_prompt_cache__")))
         return original_prep(self, shared)
 
     parent_initial: Any = MappingProxyType({"sentinel-key": object()})  # type: ignore[var-annotated]
@@ -407,7 +407,7 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
     shared: dict[str, Any] = {
         "text": "hi",
         "_pflow_workflow_file": str(parent_path),
-        "__pflow_cache_render__": parent_initial,
+        "__pflow_prompt_cache__": parent_initial,
     }
 
     registry = Registry()
@@ -425,21 +425,21 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
         ShellNode.prep = original_prep  # type: ignore[method-assign]
 
     # Parent's pre-installed value is restored after the run completes.
-    assert shared["__pflow_cache_render__"] is parent_initial
+    assert shared["__pflow_prompt_cache__"] is parent_initial
 
     # During child execution the child's shell node saw the proxy the child
     # engine built from its OWN compiled workflow — NOT the parent's sentinel.
     # Compare contents against a freshly-built proxy from
-    # ``build_cache_render_dict(child_workflow, {})``: the child workflow has no
+    # ``build_prompt_cache_dict(child_workflow, {})``: the child workflow has no
     # LLM node and no ``## Cache`` block, so the dict must be empty (sparse
-    # by design — see build_cache_render_dict's docstring).
+    # by design — see build_prompt_cache_dict's docstring).
     child_ir = parse_markdown(_CHILD_PFLOW).ir
     child_workflow = compile_workflow(
         child_ir,
         registry,
         initial_params={"text": "hi"},
     )
-    expected_child_render = build_cache_render_dict(child_workflow, {})
+    expected_child_render = build_prompt_cache_dict(child_workflow, {})
     assert dict(expected_child_render) == {}, (
         "production builder must produce an empty dict for the child shape — test invariant broken if this fails"
     )
@@ -450,10 +450,10 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
         # Both child and parent install proxies, never None.
         assert isinstance(child_value, MappingProxyType)
         # The child saw a proxy whose CONTENTS match what its own
-        # ``build_cache_render_dict`` produces — proves the install path is
-        # `MappingProxyType(build_cache_render_dict(child_workflow, {}))` and
+        # ``build_prompt_cache_dict`` produces — proves the install path is
+        # `MappingProxyType(build_prompt_cache_dict(child_workflow, {}))` and
         # NOT a leaked parent value.
         assert dict(child_value) == dict(expected_child_render), (
-            "child saw a __pflow_cache_render__ that doesn't match its own "
-            f"build_cache_render_dict output: got {dict(child_value)!r}"
+            "child saw a __pflow_prompt_cache__ that doesn't match its own "
+            f"build_prompt_cache_dict output: got {dict(child_value)!r}"
         )

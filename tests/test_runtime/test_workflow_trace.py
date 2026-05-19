@@ -1102,6 +1102,142 @@ class TestCollectLLMCalls:
         assert models == {"top-model", "nested-model"}
 
 
+class TestWarmupItemAccounting:
+    """Synthetic batch warmup items (llm_call.is_warmup=True) MUST contribute
+    cost and tokens to totals, but MUST NOT inflate per-call counts. This
+    convention is documented in src/pflow/runtime/engine/CLAUDE.md → 'Synthetic
+    Cache Warmup Item' and applies at every site that walks iter_llm_leaves().
+
+    These tests pin the contract at the trace JSON path (_LLMSummaryAccumulator),
+    which is parallel to the CLI/MetricsCollector path tested in test_batch_prewarm.py.
+    """
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test-workflow")
+
+    @pytest.fixture
+    def temp_home(self, tmp_path):
+        home_dir = tmp_path / "home"
+        home_dir.mkdir()
+        return home_dir
+
+    def _warmup_item(self, *, cost_usd: float | None = 0.0154) -> dict:
+        """Build a synthetic batch warmup item matching the shape produced by
+        _execute_parallel in batch_executor.py."""
+        return {
+            "index": -1,
+            "item": "__cache_warmup__",
+            "success": True,
+            "duration_ms": 2700.0,
+            "node_output": {},
+            "llm_call": {
+                "model": "anthropic/claude-sonnet-4-5",
+                "input_tokens": 4103,
+                "output_tokens": 4,
+                "total_tokens": 4107,
+                "cache_creation_input_tokens": 4093,
+                "cache_read_input_tokens": 0,
+                "cost_usd": cost_usd,
+                "is_warmup": True,
+            },
+            "llm_prompt": "Reply with: OK",
+        }
+
+    def _real_item(self, idx: int, *, cost_usd: float = 0.0016) -> dict:
+        return {
+            "index": idx,
+            "item": f"item-{idx}",
+            "success": True,
+            "duration_ms": 1500.0,
+            "node_output": {},
+            "llm_call": {
+                "model": "anthropic/claude-sonnet-4-5",
+                "input_tokens": 4103,
+                "output_tokens": 50,
+                "total_tokens": 4153,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 4093,
+                "cost_usd": cost_usd,
+            },
+        }
+
+    def test_warmup_cost_in_llm_summary_but_not_in_call_count(self, collector, temp_home):
+        """Trace JSON llm_summary: warmup cost adds to total_cost_usd but
+        total_calls counts only the 3 real batch items."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="score-batch",
+                node_type="LLMNode",
+                duration_ms=4000.0,
+                success=True,
+                batch_items=[
+                    self._warmup_item(cost_usd=0.0154),
+                    self._real_item(0),
+                    self._real_item(1),
+                    self._real_item(2),
+                ],
+            )
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+        summary = trace_data["llm_summary"]
+        # 3 real items, NOT 4 (warmup excluded from count)
+        assert summary["total_calls"] == 3
+        # Cost includes warmup: 0.0154 + 3 * 0.0016 = 0.0202
+        assert summary["total_cost_usd"] == pytest.approx(0.0202, abs=1e-4)
+
+    def test_warmup_tokens_roll_into_summary_totals(self, collector, temp_home):
+        """Warmup tokens are real tokens consumed by the provider — they
+        should be included in token totals even though warmup isn't counted
+        as a 'call' for the user-facing count."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="score-batch",
+                node_type="LLMNode",
+                duration_ms=4000.0,
+                success=True,
+                batch_items=[self._warmup_item(), self._real_item(0), self._real_item(1)],
+            )
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+        summary = trace_data["llm_summary"]
+        # Tokens: warmup (4107) + 2 real (2 * 4153) = 12413
+        assert summary["total_tokens"] == 4107 + 2 * 4153
+
+    def test_warmup_with_unavailable_pricing_does_not_inflate_unavailable_models(self, collector, temp_home):
+        """When cost_usd is None (e.g., Ollama, new models), the warmup MUST NOT
+        be counted in unavailable_models — only real user-visible calls should.
+        Parallel to MetricsCollector.calculate_costs filtering."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="score-batch",
+                node_type="LLMNode",
+                duration_ms=4000.0,
+                success=True,
+                batch_items=[
+                    self._warmup_item(cost_usd=None),  # unpriced warmup
+                    self._real_item(0, cost_usd=None),  # unpriced real call
+                    self._real_item(1, cost_usd=None),
+                ],
+            )
+            filepath = collector.save_to_file()
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+        summary = trace_data["llm_summary"]
+        unavailable = summary.get("unavailable_models", [])
+        # The warmup should NOT inflate the count to 3 — only 2 real calls.
+        # Format varies by collector — assert on what's reported for the model.
+        if unavailable:
+            entry = next((e for e in unavailable if e.get("name") == "anthropic/claude-sonnet-4-5"), None)
+            assert entry is not None, f"expected model in unavailable_models, got {unavailable!r}"
+            assert entry.get("calls") == 2, f"expected 2 calls (warmup excluded), got {entry!r}"
+
+
 class TestCachedCostExclusion:
     """Cached events should not contribute to LLM cost aggregation."""
 
