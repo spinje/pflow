@@ -138,8 +138,10 @@ class MetricsCollector:
             if cost is not None:
                 total_cost += cost
                 continue
+            if call.get("is_warmup"):
+                continue
             model = call.get("model") or ""
-            if model and model != VALIDATION_PLACEHOLDER and not call.get("is_warmup"):
+            if model and model != VALIDATION_PLACEHOLDER:
                 unavailable_models[model] += 1
             else:
                 unavailable_models_unnamed_count += 1

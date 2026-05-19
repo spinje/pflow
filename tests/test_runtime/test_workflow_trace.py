@@ -1237,6 +1237,39 @@ class TestWarmupItemAccounting:
             assert entry is not None, f"expected model in unavailable_models, got {unavailable!r}"
             assert entry.get("calls") == 2, f"expected 2 calls (warmup excluded), got {entry!r}"
 
+    def test_warmup_model_excluded_from_models_used(self, collector, temp_home):
+        """A warmup call (is_warmup=True) should NOT contribute its model name
+        to the llm_summary.models_used set. The warmup is infrastructure, not
+        a user-visible 'model used by the workflow'.
+
+        Mirrors the parallel filtering applied in MetricsCollector for the CLI
+        path. See runtime/engine/CLAUDE.md for the is_warmup filtering convention.
+        """
+        # Use the _LLMSummaryAccumulator class directly for a focused unit test:
+        from pflow.runtime.workflow_trace import _LLMSummaryAccumulator
+
+        acc = _LLMSummaryAccumulator()
+        # Real call — model should appear in models_used
+        acc.add_leaf({
+            "model": "anthropic/claude-sonnet-4-5",
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cost_usd": 0.005,
+        })
+        # Warmup call with a DIFFERENT model — should NOT appear in models_used
+        acc.add_leaf({
+            "model": "anthropic/claude-warmup-only",
+            "input_tokens": 150,
+            "output_tokens": 2,
+            "cost_usd": 0.001,
+            "is_warmup": True,
+        })
+
+        assert "anthropic/claude-sonnet-4-5" in acc.models
+        assert "anthropic/claude-warmup-only" not in acc.models
+        # And confirm the existing invariants (parity check):
+        assert acc.total_calls == 1  # warmup excluded
+
 
 class TestCachedCostExclusion:
     """Cached events should not contribute to LLM cost aggregation."""

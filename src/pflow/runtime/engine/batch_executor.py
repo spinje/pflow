@@ -527,9 +527,9 @@ def _execute_synthetic_warmup(
     """Issue a minimal LLM call to populate the provider's cache prefix.
 
     Returns the usage dict on success, None on failure or when the call
-    cannot be issued (missing model, missing system blocks). Failures are
-    logged at WARNING; the batch continues with all items paying
-    independent cache-write cost.
+    cannot be issued (missing model, missing system blocks). Exceptions are
+    logged at WARNING; early-return paths (missing model / system blocks)
+    are silent.
     """
     from pflow.runtime.engine.engine import _resolve_template_string
 
@@ -551,10 +551,10 @@ def _execute_synthetic_warmup(
         if resolved is not None:
             user_system = resolved
 
-    try:
-        from pflow.core.llm_client import complete
-        from pflow.core.prompt_cache import build_cache_system_blocks
+    from pflow.core.llm_client import complete
+    from pflow.core.prompt_cache import build_cache_system_blocks
 
+    try:
         system_blocks, _ = build_cache_system_blocks(
             user_system=user_system,
             cache_ctx=cache_ctx,
@@ -733,18 +733,18 @@ def _execute_parallel(
     )
 
     if should_warmup and cache_ctx is not None:
-        _warmup_start = time.perf_counter()
+        warmup_start_perf = time.perf_counter()
         warmup_usage = _execute_synthetic_warmup(config, shared, cache_ctx)
         if warmup_usage is not None:
             warmup_usage["is_warmup"] = True
-            _warmup_ms = (time.perf_counter() - _warmup_start) * 1000
+            warmup_duration_ms = (time.perf_counter() - warmup_start_perf) * 1000
             batch_trace = shared.get("_batch_trace", {}).get(config.node_id)
             if isinstance(batch_trace, list):
                 batch_trace.append({
                     "index": -1,
                     "item": "__cache_warmup__",
                     "success": True,
-                    "duration_ms": round(_warmup_ms, 2),
+                    "duration_ms": round(warmup_duration_ms, 2),
                     "node_output": {},
                     "llm_call": warmup_usage,
                     "llm_prompt": "Reply with: OK",

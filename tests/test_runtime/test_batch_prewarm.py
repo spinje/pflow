@@ -332,8 +332,8 @@ def test_prewarm_no_cache_ctx_full_fanout() -> None:
 # --- _execute_synthetic_warmup unit tests ---------------------------------
 
 
-def test_synthetic_warmup_returns_false_when_no_template_config() -> None:
-    """No template_config → cannot resolve model → returns False."""
+def test_synthetic_warmup_returns_none_when_no_template_config() -> None:
+    """No template_config → cannot resolve model → returns None."""
     config = _make_node_config(prewarm=True)
     ctx = CacheRenderContext(
         cache_block=None,
@@ -666,3 +666,49 @@ def test_warmup_cost_excluded_from_call_count() -> None:
     summary = collector.get_summary(llm_calls)
     assert summary["metrics"]["total"]["total_calls"] == 2
     assert summary["metrics"]["total"]["cost_usd"] == 0.025
+
+
+def test_warmup_with_unpriced_model_excluded_from_unavailable_count() -> None:
+    """A warmup call with cost_usd=None and a real model name should NOT
+    be counted in unavailable_models or unavailable_models_unnamed_count.
+    Regression test for the if/else miscount in metrics.calculate_costs:
+    before the fix, an is_warmup call with cost_usd=None + real model would
+    fall into the else branch and inflate unavailable_models_unnamed_count."""
+    from pflow.core.metrics import MetricsCollector
+
+    collector = MetricsCollector()
+    collector.record_workflow_start()
+    collector.record_workflow_end()
+
+    llm_calls = [
+        # Real call with known model and pricing.
+        {"model": "test-model", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.005},
+        # Warmup call with unpriced model (e.g., Ollama, brand-new release).
+        {
+            "model": "ollama/custom-llama",
+            "input_tokens": 150,
+            "output_tokens": 2,
+            "cost_usd": None,
+            "is_warmup": True,
+        },
+    ]
+
+    summary = collector.get_summary(llm_calls)
+    total = summary["metrics"]["total"]
+
+    # Warmup must not inflate the call count.
+    assert total["total_calls"] == 1
+    # Only the priced call contributes to total cost.
+    assert total["cost_usd"] == 0.005
+
+    # KEY INVARIANT: warmup with unpriced model leaves both unavailable
+    # counters at zero. Pricing is considered available because the only
+    # non-warmup call has a recorded cost.
+    assert summary.get("pricing_available", True) is True
+    # When pricing is available, calculate_costs does not emit unavailable_*
+    # keys at all — assert they're absent (or empty if any consumer ever
+    # adds them defensively).
+    assert total.get("unavailable_models", []) == []
+    assert total.get("unavailable_models_unnamed_count", 0) == 0
+    assert summary.get("unavailable_models", []) == []
+    assert summary.get("unavailable_models_unnamed_count", 0) == 0

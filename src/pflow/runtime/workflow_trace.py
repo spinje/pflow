@@ -85,7 +85,7 @@ class _LLMSummaryAccumulator:
                 self.unavailable_models_unnamed_count += 1
         else:
             self.priced_cost += cost
-        if is_real_model:
+        if is_real_model and not is_warmup:
             self.models.add(model)
 
     def as_dict(self) -> dict[str, Any]:

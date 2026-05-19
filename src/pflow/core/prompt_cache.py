@@ -435,6 +435,10 @@ def build_cache_system_blocks(
         provider_name=provider_name,
         prewarm_consumes_slot=cache_ctx.prewarm,
     )
+    # Shallow dict copy is sufficient TODAY because _build_cache_control_marker
+    # returns flat dicts ({"type": ..., "ttl": ...}). If a future provider needs
+    # a nested marker shape (e.g., {"type": ..., "config": {...}}), switch to
+    # copy.deepcopy here to prevent aliasing across blocks.
     marker = _build_cache_control_marker(provider_name, cache_ctx.cache_block.ttl)
     for chunk_idx in marker_indices:
         blocks[chunk_block_offset + chunk_idx]["cache_control"] = dict(marker)
