@@ -178,8 +178,9 @@ Specific sub-cases without empirical grounding in this codebase:
   by model and version (o1 series originally hard-rejected non-1 temp;
   newer models may silently downgrade). Adding a validator without
   empirical verification risks false positives.
-- **Gemini constraints**: explicitly noted as permissive in existing
-  tests; no known constraints worth validating.
+- **Gemini constraints**: general generation parameters remain permissive
+  in existing tests, but below-min explicit cache/prewarm behavior now has
+  an empirically verified UX gap; see item 5a.
 - **`max_tokens` caps**: no awareness anywhere; would need
   provider-specific tables.
 
@@ -194,6 +195,47 @@ Then mirror the Bundle 3 pattern: new catalog row, `_extract_X_violation`
 helper in `data_flow.py`, wire into `_validate_data_flow`, per-id
 sample, emission test, baseline case, MCP docstring update,
 `_is_cache_focused_for_advisory` predicate update.
+
+### 5a. Dry-run does not surface below-min Gemini prewarm fallback
+
+Runtime now handles a below-min `prewarm: true` batch prefix much better:
+it attempts the synthetic warmup, catches Gemini's "Cached content is too
+small" error, disables prewarm for that node, completes the batch, and emits
+`cache.prewarm-disabled-below-min`.
+
+The remaining UX gap is that `--dry-run` still does not warn even when the
+static batch prefix is already known to be below the provider threshold.
+
+Trigger shape:
+
+- Gemini-backed batch LLM node.
+- `prewarm: true`.
+- Stable prefix before the first `${item.*}` reference is below Gemini's
+  explicit cache minimum.
+
+Why it matters: users run `--dry-run` specifically to learn what will happen
+before spending on a workflow. In this case the runtime already diagnoses the
+issue, but only after an actual run.
+
+Desired fix:
+
+- Make dry-run emit the same cache-focused warning class, or a dry-run
+  equivalent, when static analysis can prove the prewarm prefix is below the
+  relevant provider minimum.
+- Validation can remain permissive if desired; the important fix is that
+  dry-run previews "prewarm will be disabled / will not help" before runtime.
+
+Verified repro:
+
+```bash
+pflow scratchpads/pflow-cache-repros/repro-01-prewarm-below-min.pflow.md --dry-run
+pflow scratchpads/pflow-cache-repros/repro-01-prewarm-below-min.pflow.md --no-cache --report
+```
+
+Current behavior on 2026-05-20:
+
+- `--dry-run`: no warning.
+- Runtime: completes with `cache.prewarm-disabled-below-min`.
 
 ## Analyze-cache Evidence and Iteration UX
 
@@ -250,6 +292,58 @@ Desired fix:
   valid.
 - Explain that runtime cache can still fire if declarations are correct.
 - Point to `pflow guide prompt-caching` for the relevant pattern.
+
+### 8a. Local memo-cache traces still use "executed" / "calls" terminology inconsistently
+
+The local memo-cache vs provider-cache summary is now much clearer than the
+original behavior: it separates local pflow memo-cache reuse from provider
+prompt-cache reads and tells users to run with `--no-cache` for a clean
+provider-cache measurement.
+
+Residual issue: the same trace-backed report can still say:
+
+```text
+Evidence: complete trace (1 LLM nodes executed)
+...
+calls 1
+```
+
+while the Summary correctly says:
+
+```text
+Local pflow cache reuse:     skipped 1 memo LLM call(s)
+Provider cache in this run:  0 provider LLM call(s), 0 cache-read tokens
+```
+
+Trigger shape:
+
+- Run a workflow once normally or with `--no-cache`.
+- Run it again with pflow local memo-cache enabled so the LLM node is skipped.
+- Analyze the second trace with `analyze-cache --from-trace`.
+
+Why it matters: the Summary is now accurate, but agents often scan the header
+and per-call table. Calling a memo-cache hit an "executed" LLM node or `calls 1`
+can still lead users to over-read local memo-cache reuse as provider behavior.
+
+Desired fix:
+
+- Use distinct terms for historical/memoized LLM rows versus provider calls
+  made during this trace.
+- In the header, count provider-executed LLM calls separately from memoized
+  LLM nodes represented by historical usage metadata.
+- In the table, avoid `calls 1` for a provider call that did not happen in
+  the analyzed trace, or mark it explicitly as `memoized`.
+
+Verified repro:
+
+```bash
+pflow scratchpads/pflow-cache-repros/repro-07-local-memo-vs-provider-cache.pflow.md --no-cache --report -o answer_text
+pflow scratchpads/pflow-cache-repros/repro-07-local-memo-vs-provider-cache.pflow.md --report -o answer_text
+pflow analyze-cache scratchpads/pflow-cache-repros/repro-07-local-memo-vs-provider-cache.pflow.md --from-trace <second-trace> --all-rows
+```
+
+Current behavior on 2026-05-20: Summary says `0 provider LLM call(s)` while
+header/table still report `1 LLM nodes executed` / `calls 1`.
 
 ### 9. Gemini cache telemetry caveat may still be too low-visibility
 
