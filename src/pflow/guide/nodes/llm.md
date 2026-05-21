@@ -20,6 +20,8 @@ analyzer tells you when to add a workflow-level `## Cache`, add
 move stable prompt text before per-item data. Load `pflow guide prompt-caching`
 for the full rules and examples.
 
+**API keys**: see `pflow settings llm providers` for the list of LiteLLM provider names and their required env vars.
+
 ### Node Creation Pattern
 
 `````markdown
