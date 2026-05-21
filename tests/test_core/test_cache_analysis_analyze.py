@@ -18,11 +18,11 @@ from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.prompt_cache_analysis.analyze import (
     _aggregate_confidence,
     _build_summary,
-    _build_trace_execution_index,
     _maybe_append_gemini_note,
     analyze,
 )
 from pflow.core.prompt_cache_analysis.context import AnalysisContext
+from pflow.core.prompt_cache_analysis.trace_loading import _build_trace_execution_index
 from pflow.core.prompt_cache_analysis.types import (
     CacheAnalysis,
     PerCallRow,
@@ -726,7 +726,7 @@ def test_resolve_trace_scope_returns_three_tuple_with_appears_as_child() -> None
     the relationship enum silently regresses to ``different_workflow`` for
     every parent-redirect case.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _resolve_trace_scope
+    from pflow.core.prompt_cache_analysis.trace_loading import _resolve_trace_scope
 
     # No trace loaded — short-circuit returns 3-tuple with default values.
     notes: list[str] = []

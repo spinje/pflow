@@ -128,8 +128,8 @@ def analyze_cache(
     # to pay the import cost on every CLI invocation.
     from pflow.cli.param_parsing import parse_workflow_params
     from pflow.core.prompt_cache_analysis import analyze, render_json, render_text
-    from pflow.core.prompt_cache_analysis.analyze import list_traces_for_workflow
     from pflow.core.prompt_cache_analysis.render_traces_list import render_traces_list_json, render_traces_list_text
+    from pflow.core.prompt_cache_analysis.trace_loading import list_traces_for_workflow
     from pflow.core.workflow_id import synthesize_inline_workflow_id
     from pflow.execution.workflow_resolver import resolve_workflow
 
