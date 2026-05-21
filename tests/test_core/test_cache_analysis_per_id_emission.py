@@ -1672,9 +1672,9 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_parameter
     """Tier 0: current workflow parameters estimate sub-workflow boundary tokens.
 
     No trace or memo entry is needed. Mutation contract: drop the
-    ``_resolve_value_in_workflow_parameters`` call from
-    ``_estimate_parent_value_tokens`` and this falls back to unavailable
-    savings.
+    workflow-parameter tier from
+    ``AnalysisContext.resolve_ref_value_for_projection_in_workflow`` and this
+    falls back to unavailable savings.
     """
     from pflow.runtime.cache import MemoizationCache
 

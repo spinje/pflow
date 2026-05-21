@@ -827,7 +827,6 @@ def test_analyze_skips_stale_llm_memo_when_predicted_cache_key_differs(
 def test_cross_workflow_memo_value_resolver_skips_stale_parent_memo(tmp_path: Path) -> None:
     """Regression for the cross-workflow value path using freshness-aware memo."""
     from pflow.core.prompt_cache_analysis.context import AnalysisContext
-    from pflow.core.prompt_cache_analysis.stages.cross_workflow import _resolve_value_in_workflow_memo
     from pflow.runtime.cache import MemoizationCache
 
     parent_path = str(tmp_path / "parent.pflow.md")
@@ -846,7 +845,7 @@ def test_cross_workflow_memo_value_resolver_skips_stale_parent_memo(tmp_path: Pa
         predicted_cache_keys={(parent_path, "creative"): "current-parent-key"},
     )
 
-    resolved = _resolve_value_in_workflow_memo("creative.direction", workflow_path=parent_path, ctx=ctx)
+    resolved = ctx.resolve_ref_value_in_workflow("creative.direction", workflow_path=parent_path)
 
     assert resolved is None
     assert ctx.stale_memo_skipped == {(parent_path, "creative")}

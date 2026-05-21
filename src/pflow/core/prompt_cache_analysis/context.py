@@ -215,6 +215,46 @@ class AnalysisContext:
         # Node-output root (or workflow-input not in parameters): consult memo.
         return self._resolve_from_memo(ref, root)
 
+    def resolve_ref_value_in_workflow(
+        self,
+        ref: str,
+        *,
+        workflow_path: str | None,
+        irs_by_workflow: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> Any | None:
+        """Resolve ``ref`` against a specific workflow's scope.
+
+        Workflow-path-parametric form of :meth:`resolve_ref_value` for
+        sub-workflow boundary analysis, where the value may live in a parent
+        workflow rather than the analyzer root.
+
+        Default behavior preserves the previous cross-workflow mirror helper:
+        try workflow-scoped parameters first, with root-parameter fallback,
+        then workflow-scoped memo. When ``irs_by_workflow`` is supplied, the
+        parameter tier is limited to refs whose root is declared as an input on
+        the targeted workflow, matching :meth:`resolve_ref_value`'s
+        workflow-input-vs-node-id branching.
+        """
+        template_resolver_cls = template_resolver()
+        root = template_resolver_cls.extract_root_node_id(ref)
+        if not root:
+            return None
+
+        should_try_parameters = True
+        if irs_by_workflow is not None:
+            should_try_parameters = False
+            target_ir = irs_by_workflow.get(str(workflow_path)) if workflow_path is not None else None
+            if isinstance(target_ir, Mapping):
+                declared_inputs = target_ir.get("inputs")
+                should_try_parameters = isinstance(declared_inputs, Mapping) and root in declared_inputs
+
+        if should_try_parameters:
+            value = self._resolve_from_parameters_in_workflow(ref, root, workflow_path=workflow_path)
+            if value is not None:
+                return value
+
+        return self._resolve_from_memo_in_workflow(ref, root, workflow_path=workflow_path)
+
     def resolve_ref_value_for_projection(self, ref: str) -> Any | None:
         """Resolve ``ref`` for analyzer projections using trace outputs as evidence.
 
@@ -246,6 +286,41 @@ class AnalysisContext:
             return None
         return _normalize_empty(resolved)
 
+    def resolve_ref_value_for_projection_in_workflow(
+        self,
+        ref: str,
+        *,
+        workflow_path: str | None,
+        cw_result: Any,
+    ) -> Any | None:
+        """Resolve ``ref`` for projections against a specific workflow's scope.
+
+        Extends :meth:`resolve_ref_value_in_workflow` with the trace-output
+        tier used by cross-workflow cache recommendations. Last matching trace
+        event wins, mirroring trace recovery semantics elsewhere in the
+        analyzer.
+        """
+        value = self.resolve_ref_value_in_workflow(ref, workflow_path=workflow_path)
+        if value is not None:
+            return value
+
+        template_resolver_cls = template_resolver()
+        root = template_resolver_cls.extract_root_node_id(ref)
+        if not root:
+            return None
+
+        output = self._trace_node_output_in_workflow(root, workflow_path=workflow_path, cw_result=cw_result)
+        if output is None:
+            return None
+        try:
+            resolved = template_resolver_cls.resolve_template(f"${{{ref}}}", {root: output})
+        except Exception:
+            logger.debug("trace-output resolve failed for %s in %s", ref, workflow_path, exc_info=True)
+            return None
+        if isinstance(resolved, str) and resolved == f"${{{ref}}}":
+            return None
+        return _normalize_empty(resolved)
+
     def _resolve_from_parameters(self, ref: str, root: str) -> Any | None:
         """Resolve ``ref`` against ``self.parameters`` for a workflow-input root."""
         if root not in self.parameters:
@@ -264,6 +339,33 @@ class AnalysisContext:
         if isinstance(resolved, str) and resolved == f"${{{ref}}}":
             # Ref didn't resolve (e.g., dotted path missed). Fall through
             # so memo gets a chance.
+            return None
+        return _normalize_empty(resolved)
+
+    def _resolve_from_parameters_in_workflow(
+        self,
+        ref: str,
+        root: str,
+        *,
+        workflow_path: str | None,
+    ) -> Any | None:
+        """Resolve ``ref`` against workflow-scoped parameters.
+
+        Preserves the cross-workflow fallback where a root missing from the
+        workflow-scoped parameter view may still resolve from root parameters.
+        """
+        params = self.parameters_for_workflow(workflow_path)
+        if root not in params and root in self.parameters:
+            params = self.parameters
+        if root not in params:
+            return None
+        template_resolver_cls = template_resolver()
+        try:
+            resolved = template_resolver_cls.resolve_template(f"${{{ref}}}", {root: params[root]})
+        except Exception:
+            logger.debug("parameters resolve failed for %s in %s", ref, workflow_path, exc_info=True)
+            return None
+        if isinstance(resolved, str) and resolved == f"${{{ref}}}":
             return None
         return _normalize_empty(resolved)
 
@@ -296,6 +398,66 @@ class AnalysisContext:
         if isinstance(resolved, str) and resolved == f"${{{ref}}}":
             return None
         return _normalize_empty(resolved)
+
+    def _resolve_from_memo_in_workflow(
+        self,
+        ref: str,
+        root: str,
+        *,
+        workflow_path: str | None,
+    ) -> Any | None:
+        """Resolve ``ref`` against memo cache scoped to ``workflow_path``."""
+        if self.memo_cache is None:
+            return None
+        template_resolver_cls = template_resolver()
+        try:
+            latest = _latest_memo_for_freshness_check(
+                self.memo_cache,
+                root,
+                workflow_path=workflow_path,
+                ctx=self,
+            )
+        except Exception:
+            logger.debug("memo cache freshness-aware lookup failed for %s in %s", ref, workflow_path, exc_info=True)
+            return None
+        if latest is None:
+            return None
+        output, _created_at = latest
+        if not isinstance(output, dict):
+            return None
+        try:
+            resolved = template_resolver_cls.resolve_template(f"${{{ref}}}", {root: output})
+        except Exception:
+            logger.debug("memo resolve failed for %s in %s", ref, workflow_path, exc_info=True)
+            return None
+        if isinstance(resolved, str) and resolved == f"${{{ref}}}":
+            return None
+        return _normalize_empty(resolved)
+
+    def _trace_node_output_in_workflow(
+        self,
+        node_id: str,
+        *,
+        workflow_path: str | None,
+        cw_result: Any,
+    ) -> dict[str, Any] | None:
+        """Latest trace output for ``(workflow_path, node_id)``."""
+        if self.trace is None:
+            return None
+        from .trace_loading import _edge_child_paths
+
+        output: dict[str, Any] | None = None
+        for walk_event in self.trace.walk(edges=_edge_child_paths(cw_result), workflow_path=self.workflow_path):
+            if walk_event.workflow_path != workflow_path or walk_event.event.get("node_id") != node_id:
+                continue
+            event_output = walk_event.event.get("node_output")
+            if isinstance(event_output, Mapping):
+                output = dict(event_output)
+                continue
+            llm_response = walk_event.event.get("llm_response")
+            if isinstance(llm_response, str):
+                output = {"response": llm_response}
+        return output
 
 
 def _normalize_empty(value: Any) -> Any | None:

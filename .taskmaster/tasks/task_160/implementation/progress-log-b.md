@@ -199,3 +199,41 @@ Trust boundary for next phase:
 - Verified: Phase 5 behavior is stable against the baseline harness and full sandbox-safe tests; `row.has_real_data` is now the single row-visibility predicate used by analyzer and text rendering.
 - Assumed correct: preserving Phase 4 for later remains safe because Phase 5 did not modify the mirror resolution helpers that Phase 4 targets.
 - Unable to verify in Phase 5: whether Phase 4's test migration count is complete; it was intentionally not started in this phase.
+
+## 2026-05-21 - Phase 4 AnalysisContext Workflow-Path Parametric Resolution
+
+Phase completed: Phase 4 only, implemented after the already-committed Phase 5 per the current branch state.
+
+Implemented:
+- G4.1: added `AnalysisContext.resolve_ref_value_in_workflow(ref, *, workflow_path, irs_by_workflow=None)`.
+- G4.2: added `AnalysisContext.resolve_ref_value_for_projection_in_workflow(ref, *, workflow_path, cw_result)`.
+- Added context-owned helpers for workflow-scoped parameters, workflow-scoped memo freshness checks, and scoped trace-output lookup.
+- G4.3: deleted the cross-workflow mirror helpers `_resolve_value_in_workflow_memo`, `_resolve_value_in_workflow_parameters`, `_resolve_value_in_workflow_trace`, and `_trace_node_output_for`.
+- Kept `_resolve_input_at_workflow_node_invocation()` and `_resolve_child_suffix_in_value()` in `stages/cross_workflow.py`; they are domain-specific to parent workflow-node input passthrough and child-ref suffix navigation.
+- Migrated the stale parent memo regression test to call `ctx.resolve_ref_value_in_workflow(...)` directly.
+
+Deviations and rationale:
+- Phase 4 ran after Phase 5 because Phase 5 was already committed by another agent. I verified the Phase 5 changes first; they did not alter the cross-workflow mirror resolution cluster, but they did make `AnalysisContext`/summary stale-memo accounting more important to preserve.
+- `resolve_ref_value_in_workflow(...)` defaults to trying workflow-scoped parameters before memo even when `irs_by_workflow` is not supplied. This preserves the previous cross-workflow helper behavior exactly. When `irs_by_workflow` is supplied, it can enforce the root-input-vs-node-id branch, matching the root-scoped resolver without changing existing call behavior.
+- `_estimate_parent_value_tokens()` now delegates once to `ctx.resolve_ref_value_for_projection_in_workflow(...)` for parameters/memo/trace, then applies the existing workflow-node invocation fallback. This is simpler than three separate delegation calls and preserves the same tier order.
+- No code-implementer subagents were used. The implementation required coordinated edits across `context.py`, `stages/cross_workflow.py`, and direct tests; I used one read-only `pflow-codebase-searcher` subagent to verify current helper/test blast radius after Phase 5.
+
+Verification:
+- Focused Phase 4 tests: `4 passed`.
+- Affected cache-analysis files: `340 passed`.
+- Task 159 harness: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0 exactly.
+- Sandbox-safe non-e2e pytest: `7102 passed, 1 skipped`.
+- `uv lock --locked`: passed after escalation for uv cache access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for sandboxed metadata-file access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 224 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- Phase 4 structural checks:
+  - `stages/cross_workflow.py`: `813` lines.
+  - `context.py`: `509` lines.
+  - `rg "def _resolve_value_in_workflow_|def _trace_node_output_for|_resolve_value_in_workflow_memo" stages/cross_workflow.py tests/test_core/test_cache_analysis_analyze.py` returns no matches.
+  - Import check confirms `AnalysisContext` exposes both new parametric methods and `stages.cross_workflow` no longer exposes `_resolve_value_in_workflow_memo`.
+
+Trust boundary for next phase:
+- Verified: stale memo skipping still keys on the passed parent workflow path; trace fallback, workflow-node invocation fallback, and workflow-parameter fallback all remain covered by focused tests.
+- Assumed correct: the lazy import of `_edge_child_paths` inside `AnalysisContext._trace_node_output_in_workflow()` is acceptable to avoid a module-load cycle while keeping the public parametric resolver on `AnalysisContext`.
+- Unable to verify in Phase 4: whether Phase 6 helper relocations will need to move `_estimate_parent_value_tokens()` out of `stages/cross_workflow.py`; Phase 4 intentionally preserved that existing analyze-side lazy import surface.

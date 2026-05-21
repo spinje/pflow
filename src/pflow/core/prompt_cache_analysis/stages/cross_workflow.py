@@ -12,7 +12,7 @@ from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import classify_prompt_refs
 
-from ..context import AnalysisContext, _latest_memo_for_freshness_check, _normalize_empty, template_resolver
+from ..context import AnalysisContext, _normalize_empty, template_resolver
 from ..rendering.cross_workflow_edits import format_grouped_body_block
 from ..token_estimation import estimate_tokens
 from ..trace_loading import _edge_child_paths
@@ -331,144 +331,6 @@ def _aggregate_sub_workflow_cache_candidates_by_child(
     return groups
 
 
-def _resolve_value_in_workflow_memo(
-    ref: str,
-    *,
-    workflow_path: str,
-    ctx: AnalysisContext,
-) -> Any | None:
-    """Resolve ``ref`` against memo cache scoped to a specific workflow path.
-
-    Cross-workflow analog to ``AnalysisContext._resolve_from_memo`` (which
-    keys on ``self.workflow_path``). For sub-workflow boundary findings the
-    parent value lives in the parent workflow, not the root.
-    """
-    if ctx.memo_cache is None:
-        return None
-    root = template_resolver().extract_root_node_id(ref)
-    if not root:
-        return None
-    try:
-        latest = _latest_memo_for_freshness_check(ctx.memo_cache, root, workflow_path=workflow_path, ctx=ctx)
-    except Exception:
-        logger.debug("memo_cache freshness check failed for %s in %s", ref, workflow_path, exc_info=True)
-        return None
-    if latest is None:
-        return None
-    output, _created_at = latest
-    if not isinstance(output, dict):
-        return None
-    try:
-        resolved = template_resolver().resolve_template(f"${{{ref}}}", {root: output})
-    except Exception:
-        logger.debug("memo resolve failed for %s in %s", ref, workflow_path, exc_info=True)
-        return None
-    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
-        return None
-    return _normalize_empty(resolved)
-
-
-def _resolve_value_in_workflow_parameters(
-    ref: str,
-    *,
-    workflow_path: str,
-    ctx: AnalysisContext,
-) -> Any | None:
-    """Resolve ``ref`` against workflow-scoped parameters (Tier 0).
-
-    Cross-workflow analog to ``AnalysisContext._resolve_from_parameters``.
-    For sub-workflow boundary findings the parent value lives in the parent
-    workflow, not necessarily the analyzed root.
-
-    Reads from ``ctx.parameters_for_workflow(workflow_path)``. For the analyzed
-    root that is the caller's current parameters; for nested children that is
-    the walker-resolved parameter dict from ``_build_parameters_by_workflow``.
-    Both are honest signals because the walker resolves parent ``inputs:``
-    expressions through the same template resolver used elsewhere in analysis.
-
-    Placement before memo mirrors ``AnalysisContext.resolve_ref_value``:
-    current parameters win over historical memo values from prior runs.
-    """
-    params = ctx.parameters_for_workflow(workflow_path)
-    root = template_resolver().extract_root_node_id(ref)
-    if not root:
-        return None
-    if root not in params and root in ctx.parameters:
-        params = ctx.parameters
-    if root not in params:
-        return None
-    try:
-        resolved = template_resolver().resolve_template(f"${{{ref}}}", {root: params[root]})
-    except Exception:
-        logger.debug("parameters resolve failed for %s in %s", ref, workflow_path, exc_info=True)
-        return None
-    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
-        return None
-    return _normalize_empty(resolved)
-
-
-def _trace_node_output_for(
-    node_id: str,
-    *,
-    workflow_path: str,
-    ctx: AnalysisContext,
-    cw_result: Any,
-) -> dict[str, Any] | None:
-    """Latest event output for ``(workflow_path, node_id)`` from trace.
-
-    Last match wins (loop-recovery semantics — ``workflow_trace.py`` uses the
-    final event per node id as the canonical "current state"). Prefers
-    ``event["node_output"]`` (full namespaced dict — supports dotted paths)
-    over ``event["llm_response"]`` (literal string for ``${node.response}``
-    refs on LLM nodes that didn't write a structured output).
-    """
-    if ctx.trace is None:
-        return None
-    edges = _edge_child_paths(cw_result)
-    output: dict[str, Any] | None = None
-    for we in ctx.trace.walk(edges=edges, workflow_path=ctx.workflow_path):
-        if we.workflow_path != workflow_path or we.event.get("node_id") != node_id:
-            continue
-        event_output = we.event.get("node_output")
-        if isinstance(event_output, Mapping):
-            output = dict(event_output)
-            continue
-        llm_response = we.event.get("llm_response")
-        if isinstance(llm_response, str):
-            output = {"response": llm_response}
-    return output
-
-
-def _resolve_value_in_workflow_trace(
-    ref: str,
-    *,
-    workflow_path: str,
-    ctx: AnalysisContext,
-    cw_result: Any,
-) -> Any | None:
-    """Resolve ``ref`` against trace data scoped to ``workflow_path``.
-
-    Walker attribution: ``TraceTree.walk(edges=...)`` threads workflow_path
-    via the cross-workflow edge map for sub-workflows / batch items; we
-    filter on ``we.workflow_path == workflow_path AND we.event['node_id']
-    == root`` to find the parent's event.
-    """
-    root = template_resolver().extract_root_node_id(ref)
-    if not root:
-        return None
-    output = _trace_node_output_for(root, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
-    if output is None:
-        return None
-    try:
-        resolved = template_resolver().resolve_template(f"${{{ref}}}", {root: output})
-    except Exception:
-        logger.debug("trace resolve failed for %s in %s", ref, workflow_path, exc_info=True)
-        return None
-    if isinstance(resolved, str) and resolved == f"${{{ref}}}":
-        return None
-    return _normalize_empty(resolved)
-
-
 def _resolve_input_at_workflow_node_invocation(
     *,
     parent_node_id: str,
@@ -480,7 +342,7 @@ def _resolve_input_at_workflow_node_invocation(
 ) -> Any | None:
     """Read the resolved input value from the parent's workflow-node trace event.
 
-    Closes the input-passthrough gap left by ``_resolve_value_in_workflow_trace``:
+    Closes the input-passthrough gap left by the trace-output resolver:
     when the parent passes a workflow-input value (e.g. ``${concept}`` where
     ``concept`` is the parent's own input parameter, not a node output), the
     by-node-id walker finds nothing because no node in the parent produces
@@ -494,7 +356,7 @@ def _resolve_input_at_workflow_node_invocation(
     expressions and is unaffected by the size-trimming applied to
     ``template_resolutions`` in long-running real-world fixtures.
 
-    Last match wins (loop-recovery semantics — mirrors ``_trace_node_output_for``).
+    Last match wins (loop-recovery semantics — mirrors trace output lookup).
     Returns ``None`` if the trace is missing, the parent event has no
     ``node_params['inputs']`` mapping, or the keyed value isn't present.
     """
@@ -544,12 +406,8 @@ def _estimate_parent_value_tokens(
 ) -> int | None:
     """Tokens for the parent value flowing across a sub-workflow boundary.
 
-    Tier 0: workflow parameters (caller-provided for the analyzed root, or
-    walker-propagated values for nested children). Mirrors the "parameters win
-    over memo" convention so current inputs beat stale memo from prior runs.
-    Tier 1: memo cache (cross-workflow scoped, by ``parent_value_expr`` root).
-    Tier 2: trace by node_id — for node-output-rooted refs (e.g. ``${creative.direction}``)
-    where ``creative`` is a node id in the parent workflow.
+    Tier 0-2: context-level projection resolver scoped to the parent workflow
+    (current parameters, memo, then trace by node id).
     Tier 3: parent workflow-node ``node_params['inputs'][child_input_name]`` —
     closes the input-passthrough case (e.g. ``${concept}`` where ``concept`` is
     the parent's own workflow input). Reads from the runtime invocation site
@@ -564,11 +422,7 @@ def _estimate_parent_value_tokens(
     if "??" in ref:
         return None
     workflow_path = parent_workflow
-    value = _resolve_value_in_workflow_parameters(ref, workflow_path=workflow_path, ctx=ctx)
-    if value is None:
-        value = _resolve_value_in_workflow_memo(ref, workflow_path=workflow_path, ctx=ctx)
-    if value is None:
-        value = _resolve_value_in_workflow_trace(ref, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
+    value = ctx.resolve_ref_value_for_projection_in_workflow(ref, workflow_path=workflow_path, cw_result=cw_result)
     if value is None:
         value = _resolve_input_at_workflow_node_invocation(
             parent_node_id=parent_node_id,
