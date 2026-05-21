@@ -86,3 +86,7 @@ Side effects happen inline as decisions crystallize:
 - **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. Use the format in [ADR-FORMAT.md](context/adr/ADR-FORMAT.md).
 - **Want to explore alternative interfaces for the deepened module?** See [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md).
 - **Design agreed and ready for execution?** Ask the user if they want to proceed with `/refactor` to execute the structural change. Never invoke it automatically — the user decides when the design is complete and all unknowns are resolved.
+
+## Context directory
+
+`context/` is located at the root of the project.
