@@ -215,6 +215,41 @@ def test_builder_keeps_prewarm_when_static_prefix_clears_min(monkeypatch: pytest
     assert "__prewarm_disabled_below_min__" not in shared
 
 
+def test_builder_keeps_prewarm_when_declared_chunks_exist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-flight skips the below-min check when declared ``prompt_cache``
+    chunks exist because ``_strip_below_min_cache_markers`` counts tokens
+    cumulatively across both system blocks (declared) and user-message blocks
+    (prewarm prefix).
+    """
+    monkeypatch.setattr(
+        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        lambda model, text: (10, "test"),
+    )
+    config = NodeConfig(
+        node_id="score",
+        node_type_name="LLMNode",
+        template_config=TemplateConfig(
+            template_params={"prompt": "short prefix ${item.text}"},
+            static_params={"model": "anthropic/claude-sonnet-4-5"},
+            expected_types={},
+            resolution_mode="strict",
+        ),
+        batch_config=BatchConfig(items_template="${items}", item_alias="item"),
+        namespaced=True,
+        interface_metadata=None,
+        prewarm=True,
+        prompt_cache_items=("ctx",),
+    )
+    workflow = _make_workflow({"score": config})
+    shared: dict[str, Any] = {"items": [{"text": "a"}, {"text": "b"}], "_pflow_workflow_file": "wf.pflow.md"}
+
+    out = build_prompt_cache_dict(workflow, shared)
+
+    assert out["score"].prewarm is True
+    assert "__warnings__" not in shared
+    assert "__prewarm_disabled_below_min__" not in shared
+
+
 # --- Integration tests: engine save/restore --------------------------------
 
 

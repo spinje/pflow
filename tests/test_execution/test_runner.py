@@ -319,6 +319,75 @@ def test_batch_prewarm_disabled_below_min_reaches_trace_json(mock_llm_client) ->
 
 
 @pytest.mark.trace_files
+def test_batch_prewarm_not_disabled_when_declared_prompt_cache_exists(mock_llm_client) -> None:
+    """When declared ``prompt_cache`` chunks exist, the pre-flight must not
+    disable prewarm — ``_strip_below_min_cache_markers`` counts tokens
+    cumulatively across both system blocks (declared chunks) and user-message
+    blocks (prewarm prefix), so a tiny prefix survives when declared chunks
+    push the cumulative count above the provider minimum.
+
+    Mirror of ``test_batch_prewarm_disabled_below_min_reaches_trace_json``
+    which verifies the disable DOES fire without declared chunks.
+    """
+    mock_llm_client.set_response(
+        "*",
+        None,
+        "ok",
+        cache_creation_input_tokens=500,
+        cache_read_input_tokens=2000,
+    )
+    large_context = "shared context token " * 600
+    workflow_ir = {
+        "cache": {"items": [{"name": "ctx", "var": "ctx", "prose_before": "Shared context:\n"}]},
+        "inputs": {
+            "ctx": {"type": "string"},
+            "items": {"type": "array"},
+        },
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "prewarm": True,
+                "prompt_cache": ["ctx"],
+                "batch": {"items": "${items}", "as": "item", "parallel": True},
+                "params": {
+                    "model": "anthropic/claude-sonnet-4-5",
+                    "prompt": "Short stable prefix.\n\nItem: ${item.text}",
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    result = WorkflowRunner().run(
+        workflow_ir,
+        {"ctx": large_context, "items": [{"text": "one"}, {"text": "two"}]},
+        RunnerConfig(),
+    )
+
+    assert result.success is True, f"diagnostics: {result.diagnostics}"
+    assert result.trace is not None
+    trace_path = result.trace.save_to_file()
+    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    batch_items = trace_data["nodes"][0]["batch_items"]
+    non_warmup = [item for item in batch_items if not item.get("llm_call", {}).get("is_warmup")]
+    for item in non_warmup:
+        assert item["llm_call"].get("prewarm_disabled_reason") is None, (
+            f"batch item {item.get('index')} has prewarm_disabled_reason="
+            f"{item['llm_call']['prewarm_disabled_reason']!r} — pre-flight should not disable "
+            f"prewarm when declared prompt_cache chunks exist"
+        )
+
+    assert not any(
+        warning.get("id") == "cache.prewarm-disabled-below-min" for warning in trace_data.get("warnings", [])
+    )
+
+    warmup_items = [item for item in batch_items if item.get("llm_call", {}).get("is_warmup")]
+    assert len(warmup_items) == 1, "synthetic warmup call should fire when declared chunks exist"
+
+
+@pytest.mark.trace_files
 def test_exception_trace_preserves_prior_runtime_cache_warnings(mock_llm_client, monkeypatch) -> None:
     """Runtime warnings emitted before a later exception must reach trace warnings."""
     monkeypatch.setattr("pflow.nodes.llm.llm._count_text_tokens", lambda text, model: 10)
