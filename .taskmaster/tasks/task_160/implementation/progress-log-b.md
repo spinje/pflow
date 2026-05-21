@@ -1,0 +1,91 @@
+# Task 160 Implementation Progress Log B
+
+## 2026-05-21 - Phase 0 Pre-flight Baseline
+
+Phase completed: Phase 0 only. No production or test code was changed.
+
+Baseline harness:
+- Command: `PATH="$PWD/.venv/bin:$PATH" bash .taskmaster/tasks/task_159/baseline/verify.sh 2>&1 | tee /tmp/baseline-pre-refactor.log`
+- Result: `80 passed, 7 drifted, 0 harness errors`
+- Drifted cases captured as the known-drift set:
+  - `03-analyze-cache-modes/07-autoload-prefers-success`
+  - `03-analyze-cache-modes/08-autoload-failed-only`
+  - `03-analyze-cache-modes/09-autoload-rejected-names-file`
+  - `04-warning-catalog/23-cache.batch-prewarm-lower-bound-recommended`
+  - `04-warning-catalog/23b-cache.batch-prewarm-lower-bound-recommended-text`
+  - `12-real-world-lyrics-generator/04-guide-auto-detect`
+  - `15-run-flag-interactions/03-report-with-only`
+
+Unit test baseline:
+- Used the `pflow-sandbox-testing` guidance instead of raw `make test` / `uv run`.
+- Command: `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e" -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'`
+- Result: `7102 passed, 1 skipped`
+- Rationale for deviation: the three excluded tests are documented sandbox/tooling failures in `pflow-sandbox-testing`; this preserves the intended non-e2e baseline without treating sandbox subprocess limitations as product failures.
+
+Collected-test reference:
+- Command: `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest --collect-only -q 2>&1 | tee /tmp/baseline-collected-tests.log`
+- Result: `7155 tests collected`
+
+Quality baseline:
+- `uv lock --locked`: passed after escalation because sandboxed uv could not read `/Users/andfal/.cache/uv/...`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation because pre-commit needed to fetch hook environments from GitHub.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 223 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+
+Package metrics:
+- Private prompt-cache-analysis imports in tests: `59`. This differs from the plan's expected `75`, so Phase 1's "reduce by at least 15" target should be interpreted against the observed baseline, not the stale estimate.
+- `src/pflow/core/prompt_cache_analysis/analyze.py`: `1095` lines.
+- `src/pflow/core/prompt_cache_analysis/stages/cross_workflow.py`: `1344` lines.
+- `_template_resolver` duplicates: 4 sites:
+  - `stages/cross_workflow.py`
+  - `stages/row_builder.py`
+  - `stages/warnings.py`
+  - `stages/discrepancy/predict.py`
+
+Subagent use:
+- No code-implementer subagents were used in Phase 0. This phase was read-only baseline capture with no mechanical implementation work to parallelize. Using an implementer here would add coordination cost without advancing the phase.
+
+Trust boundary for Phase 1:
+- Verified: harness works in this sandbox with `.venv/bin` on `PATH`; baseline drift set is known; unit/quality gates are green with the documented sandbox substitutions.
+- Assumed correct: the implementation plan's Phase 1 file list remains current enough to start from, but the observed private-import count shows at least one metric in the plan is stale.
+- Unable to verify in Phase 0: whether Phase 1 import hoisting has no hidden cycle. That must be verified during Phase 1 with targeted imports and the full harness.
+
+## 2026-05-21 - Phase 1 Foundation Cleanups
+
+Phase completed: Phase 1 only.
+
+Implemented:
+- G5: renamed exported cost helpers in `cost_estimation.py`:
+  - `_aggregate_no_cache_cost` -> `aggregate_no_cache_cost`
+  - `_aggregate_with_cache_projection` -> `aggregate_with_cache_projection`
+  - `_row_body_only_cost` -> `row_body_only_cost`
+  - `_row_first_run_with_cache_cost` -> `row_first_run_with_cache_cost`
+  - `_pricing_from_dict` -> `pricing_from_dict`
+- Added `pricing_from_dict` to `cost_estimation.__all__`.
+- Updated cost helper tests and internal callers to use the new names.
+- G5.4: hoisted stale cost-estimation lazy imports out of stage function bodies.
+- G6.1: added canonical `template_resolver()` to `context.py`; removed four duplicate stage-local resolver helpers and updated callers.
+
+Deviations and rationale:
+- Cost imports were hoisted as module imports (`cost_estimation.*`) rather than direct function aliases in stage modules. Direct aliases broke existing monkeypatch seams in `test_cache_analysis_per_id_emission.py` where tests patch `cost_estimation.get_model_pricing`; module lookup preserves that test contract while still removing the stale function-body lazy imports.
+- The plan's literal lazy-import check (`import pflow.core.prompt_cache_analysis.context` must not load `pflow.runtime.template_resolver`) is not a valid assertion in the current package shape because importing that submodule executes package `__init__`, which imports the analyzer surface and already reaches runtime modules through pre-existing paths. Verified the Phase 1 invariant instead: no stage file imports `TemplateResolver` directly, no `_template_resolver` duplicates remain, and importing the package does not eagerly import `litellm`.
+- Private prompt-cache-analysis imports in tests stayed at `59`. The Phase 0 baseline already showed the plan's `75 -> <=60` metric was stale; Phase 1 still removes the misleading underscored cost-helper imports, but that metric no longer moves.
+- No code-implementer subagents were used. Phase 1 was a tightly coupled rename/import edit across shared stage modules; parallelizing it would have increased the chance of conflicting import style changes without meaningful time savings.
+
+Verification:
+- Task 159 harness after implementation and after formatting: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0 exactly.
+- Sandbox-safe non-e2e pytest: `7102 passed, 1 skipped`.
+- Focused pricing seam regression after import-hoist adjustment: `test_fragmentation_skips_when_any_group_cost_is_none` and `test_write_penalty_fires_for_single_call_with_declared_cache` both pass.
+- `uv lock --locked`: passed after escalation for uv home-cache access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for sandboxed metadata-file writes.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 223 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- G6.1 checks:
+  - `rg "def _template_resolver|_template_resolver\\(" src/pflow/core/prompt_cache_analysis` returns no matches.
+  - `rg "from pflow\\.runtime\\.template_resolver import TemplateResolver" src/pflow/core/prompt_cache_analysis/stages` returns no matches.
+  - Importing `pflow.core.prompt_cache_analysis.context` leaves `litellm` absent from `sys.modules`.
+
+Trust boundary for Phase 2:
+- Verified: behavior harness and unit/quality gates are green after Phase 1; cost-helper public names import successfully; resolver duplicates are gone.
+- Assumed correct: stage-level module imports from `.. import cost_estimation` remain acceptable architecture because they preserve patchability and avoid reintroducing function-body lazy imports.
+- Unable to verify in Phase 1: Phase 2 string-path rename blast radius. It must use the plan's defensive exact-match strategy and preserve `stages.cross_workflow` references.

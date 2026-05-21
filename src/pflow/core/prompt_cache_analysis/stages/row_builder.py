@@ -14,7 +14,7 @@ from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import PromptRef, classify_prompt_refs, first_per_item_position
 
 from ..below_min_tokens_detector import is_likely_below_min_cache
-from ..context import AnalysisContext
+from ..context import AnalysisContext, template_resolver
 from ..token_estimation import (
     _estimate_ref_tokens,
     estimate_cacheable_tokens,
@@ -46,12 +46,6 @@ from ..types import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _template_resolver() -> Any:
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    return TemplateResolver
 
 
 @dataclass(frozen=True)
@@ -977,8 +971,8 @@ def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: di
     shared = _build_shared_store_for_refs(refs, ctx)
 
     try:
-        template_resolver = _template_resolver()
-        resolved = template_resolver.resolve_template(prompt, shared)
+        template_resolver_cls = template_resolver()
+        resolved = template_resolver_cls.resolve_template(prompt, shared)
     except Exception:
         # Defensive: a malformed template shouldn't take down the analyzer.
         logger.debug("template resolution raised on prompt for node %r", node.get("id"), exc_info=True)
@@ -990,7 +984,7 @@ def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: di
 
         resolved = deterministic_serialize(resolved)
 
-    has_unresolved = bool(template_resolver.TEMPLATE_PATTERN.search(resolved))
+    has_unresolved = bool(template_resolver_cls.TEMPLATE_PATTERN.search(resolved))
     return resolved, has_unresolved
 
 

@@ -2453,8 +2453,8 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
 
 def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> None:
     from pflow.core.prompt_cache_analysis.cost_estimation import (
-        _row_first_run_with_cache_cost,
         get_model_pricing,
+        row_first_run_with_cache_cost,
     )
 
     workflow_ir = {
@@ -2506,8 +2506,8 @@ def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> Non
     warning = next(d for d in result.warnings if d.id == "cache.prompt-body-shadows-cache")
 
     invocation_count = invocation_count_for(row)
-    expected_1h = _row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="1h") / invocation_count
-    default_5m = _row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="5m") / invocation_count
+    expected_1h = row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="1h") / invocation_count
+    default_5m = row_first_run_with_cache_cost(row, pricing, row.output_tokens_estimated, ttl="5m") / invocation_count
     assert warning.context["with_cache_cost_usd_per_call"] == pytest.approx(expected_1h)
     assert warning.context["with_cache_cost_usd_per_call"] > default_5m
 

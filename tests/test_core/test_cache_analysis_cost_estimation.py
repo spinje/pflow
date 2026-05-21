@@ -34,13 +34,13 @@ import pflow.core.prompt_cache_analysis.cost_estimation as cost_estimation_modul
 from pflow.core.prompt_cache_analysis.analyze import analyze
 from pflow.core.prompt_cache_analysis.cost_estimation import (
     ModelPricing,
-    _aggregate_with_cache_projection,
-    _pricing_from_dict,
-    _row_body_only_cost,
-    _row_first_run_with_cache_cost,
+    aggregate_with_cache_projection,
     compute_actually_paid,
     compute_projections,
     get_model_pricing,
+    pricing_from_dict,
+    row_body_only_cost,
+    row_first_run_with_cache_cost,
 )
 from pflow.core.prompt_cache_analysis.types import PerCallRow, ProjectionExclusion
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
@@ -76,7 +76,7 @@ def test_row_body_only_cost_excludes_chunks() -> None:
     })
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
-    assert _row_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
+    assert row_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
 
 
 def test_row_first_run_with_cache_cost_matches_single_row_projection() -> None:
@@ -92,8 +92,8 @@ def test_row_first_run_with_cache_cost_matches_single_row_projection() -> None:
     })
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
-    row_cost = _row_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
-    projection = _aggregate_with_cache_projection([(row, pricing, 3)], ttl="5m")
+    row_cost = row_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
+    projection = aggregate_with_cache_projection([(row, pricing, 3)], ttl="5m")
 
     assert projection == pytest.approx(row_cost)
 
@@ -435,16 +435,16 @@ def test_pricing_dict_synthesises_cache_rates_when_absent() -> None:
     documented Anthropic ratios (1.25x write, 0.1x read) so an estimate
     still surfaces. Plausible-default beats refusing-to-price."""
     sparse = {"input_cost_per_token": 1e-6, "output_cost_per_token": 5e-6}
-    pricing = _pricing_from_dict(sparse)
+    pricing = pricing_from_dict(sparse)
     assert pricing is not None
     assert pricing.cache_creation_rate == pytest.approx(1.25e-6)
     assert pricing.cache_read_rate == pytest.approx(1e-7)
 
 
 def test_pricing_dict_returns_none_when_input_or_output_missing() -> None:
-    assert _pricing_from_dict({"output_cost_per_token": 1e-6}) is None
-    assert _pricing_from_dict({"input_cost_per_token": 1e-6}) is None
-    assert _pricing_from_dict({}) is None
+    assert pricing_from_dict({"output_cost_per_token": 1e-6}) is None
+    assert pricing_from_dict({"input_cost_per_token": 1e-6}) is None
+    assert pricing_from_dict({}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +587,7 @@ def test_with_cache_projection_separates_cohorts_by_model() -> None:
     MUST equal the sum of solo projections (no cross-model amortization).
 
     Mutation contract: removing ``row.model`` from the cohort key in
-    ``cost_estimation.py::_aggregate_with_cache_projection`` would let the
+    ``cost_estimation.py::aggregate_with_cache_projection`` would let the
     second model's row apply at ``cache_read_rate`` instead of ``write_rate``,
     breaking the additivity.
     """
@@ -687,7 +687,7 @@ def test_first_run_savings_separates_cohorts_by_model() -> None:
 
 
 def test_cohort_arithmetic_identity_preserved_across_models() -> None:
-    """Locks the lockstep invariant: ``_aggregate_with_cache_projection`` and
+    """Locks the lockstep invariant: ``aggregate_with_cache_projection`` and
     ``_aggregate_first_run_savings`` MUST group identically.
 
     Identity (input-side only — output cancels per the savings docstring):

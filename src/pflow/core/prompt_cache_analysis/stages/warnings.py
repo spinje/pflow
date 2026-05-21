@@ -9,6 +9,7 @@ from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_refs import classify_prompt_refs, first_per_item_position
 
+from .. import cost_estimation
 from ..below_min_tokens_detector import (
     BatchPrewarmBelowMinEvidence,
     BelowMinTokensEvidence,
@@ -18,7 +19,7 @@ from ..below_min_tokens_detector import (
 from ..below_min_tokens_detector import (
     detect as detect_below_min_tokens,
 )
-from ..context import AnalysisContext
+from ..context import AnalysisContext, template_resolver
 from ..token_estimation import (
     tokenize_prompt_region,
     tokenize_prompt_region_for_projection,
@@ -32,12 +33,6 @@ from .row_builder import (
     _static_excerpt,
 )
 from .suggestions import _estimate_token_savings_usd
-
-
-def _template_resolver() -> Any:
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    return TemplateResolver
 
 
 def _per_node_warnings(
@@ -483,14 +478,14 @@ def _opaque_prompt_warnings(
     if not isinstance(prompt, str):
         return []
     stripped = prompt.strip()
-    template_resolver = _template_resolver()
-    if not template_resolver.is_simple_template(stripped):
+    template_resolver_cls = template_resolver()
+    if not template_resolver_cls.is_simple_template(stripped):
         return []
 
     inner = stripped[2:-1]
-    if template_resolver.is_coalesce_expression(inner):
+    if template_resolver_cls.is_coalesce_expression(inner):
         return []
-    root = template_resolver.extract_root_node_id(inner)
+    root = template_resolver_cls.extract_root_node_id(inner)
 
     upstream_node = nodes_by_id.get(root)
     if upstream_node is None:
@@ -527,13 +522,13 @@ def _resolve_through_batch_alias(
     if not isinstance(items_expr, str):
         return None
     items_stripped = items_expr.strip()
-    template_resolver = _template_resolver()
-    if not template_resolver.is_simple_template(items_stripped):
+    template_resolver_cls = template_resolver()
+    if not template_resolver_cls.is_simple_template(items_stripped):
         return None
     items_inner = items_stripped[2:-1]
-    if template_resolver.is_coalesce_expression(items_inner):
+    if template_resolver_cls.is_coalesce_expression(items_inner):
         return None
-    items_root = template_resolver.extract_root_node_id(items_inner)
+    items_root = template_resolver_cls.extract_root_node_id(items_inner)
     return nodes_by_id.get(items_root)
 
 
@@ -569,12 +564,6 @@ def _enrich_one_shadow_warning(
     output_tokens_by_node: Mapping[tuple[str | None, str], int | None],
     ttl_by_workflow: Mapping[str | None, str | None],
 ) -> None:
-    from ..cost_estimation import (
-        _row_body_only_cost,
-        _row_first_run_with_cache_cost,
-        get_model_pricing,
-    )
-
     if diag.id != "cache.prompt-body-shadows-cache" or diag.context is None:
         return
     context = diag.context
@@ -590,16 +579,18 @@ def _enrich_one_shadow_warning(
     )
     if row is None or not row.model:
         return
-    pricing = get_model_pricing(row.model)
+    pricing = cost_estimation.get_model_pricing(row.model)
     output_tokens = _output_tokens_for_row(row, output_tokens_by_node)
     shadowed_chunks = _shadowed_chunk_names(cache_contains_body_pairs)
     if pricing is None or output_tokens is None or not shadowed_chunks:
         return
 
     invocation_count = invocation_count_for(row)
-    context["body_only_cost_usd_per_call"] = _row_body_only_cost(row, pricing, output_tokens) / invocation_count
+    context["body_only_cost_usd_per_call"] = (
+        cost_estimation.row_body_only_cost(row, pricing, output_tokens) / invocation_count
+    )
     context["with_cache_cost_usd_per_call"] = (
-        _row_first_run_with_cache_cost(
+        cost_estimation.row_first_run_with_cache_cost(
             row,
             pricing,
             output_tokens,

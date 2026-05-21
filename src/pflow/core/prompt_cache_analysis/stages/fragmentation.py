@@ -8,6 +8,7 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_providers import normalize_model_name
 
+from .. import cost_estimation
 from ..below_min_tokens_detector import is_likely_below_min_cache
 from ..context import AnalysisContext
 from ..types import PerCallRow
@@ -297,14 +298,12 @@ def _compute_fragmentation_costs(
     Mirrors ``_check_root_for_consolidation``'s "any None → skip" pattern so
     the warning never fabricates dollars when chunk-level data is unavailable.
     """
-    from ..cost_estimation import _write_rate_for_ttl, get_model_pricing
-
     costs: dict[str, float] = {}
     for group in groups:
         model = representative_model_fn(group)
         if model is None:
             return None
-        pricing = get_model_pricing(model)
+        pricing = cost_estimation.get_model_pricing(model)
         if pricing is None:
             return None
         group_shared = group["chunks"] & shared_chunks
@@ -313,7 +312,7 @@ def _compute_fragmentation_costs(
             return None
         if is_likely_below_min_cache(model, total_tokens):
             continue
-        costs[str(group["key"] or "")] = total_tokens * _write_rate_for_ttl(pricing, ttl, model)
+        costs[str(group["key"] or "")] = total_tokens * cost_estimation._write_rate_for_ttl(pricing, ttl, model)
     return costs
 
 
@@ -373,17 +372,15 @@ def _single_call_write_penalty(row: PerCallRow, *, ttl: str | None) -> float | N
     Positive value = removing the declaration saves money. Mirrors the catalog's
     ``savings_usd`` semantics ("savings from fixing it").
     """
-    from ..cost_estimation import _write_rate_for_ttl, get_model_pricing
-
     tokens = row.cacheable_tokens_estimated
     if tokens is None:
         return None
     if is_likely_below_min_cache(row.model, tokens):
         return None
-    pricing = get_model_pricing(row.model)
+    pricing = cost_estimation.get_model_pricing(row.model)
     if pricing is None:
         return None
     input_rate = _input_rate(row.model)
     if input_rate is None:
         return None
-    return tokens * _write_rate_for_ttl(pricing, ttl, row.model) - tokens * input_rate
+    return tokens * cost_estimation._write_rate_for_ttl(pricing, ttl, row.model) - tokens * input_rate

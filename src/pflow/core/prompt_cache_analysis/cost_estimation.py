@@ -208,10 +208,10 @@ def get_model_pricing(model: str) -> ModelPricing | None:
     if not isinstance(pricing_dict, dict):
         return None
 
-    return _pricing_from_dict(pricing_dict)
+    return pricing_from_dict(pricing_dict)
 
 
-def _pricing_from_dict(d: dict) -> ModelPricing | None:
+def pricing_from_dict(d: dict) -> ModelPricing | None:
     """Construct a ``ModelPricing`` from one ``litellm.model_cost`` entry.
 
     Returns ``None`` if the entry lacks the minimum (input + output) rates.
@@ -271,7 +271,7 @@ def _row_no_cache_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: in
     return float(invocations) * (row.input_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
 
 
-def _row_body_only_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
+def row_body_only_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: int) -> float:
     """Row cohort cost if ``## Cache`` declarations were removed from this node.
 
     The model receives only the resolved prompt body; declared chunks disappear
@@ -282,7 +282,7 @@ def _row_body_only_cost(row: PerCallRow, pricing: ModelPricing, output_tokens: i
     return float(invocations) * (row.body_tokens_estimated * pricing.input_rate + output_tokens * pricing.output_rate)
 
 
-def _row_first_run_with_cache_cost(
+def row_first_run_with_cache_cost(
     row: PerCallRow,
     pricing: ModelPricing,
     output_tokens: int,
@@ -291,7 +291,7 @@ def _row_first_run_with_cache_cost(
 ) -> float:
     """Row cohort cost with declared cache on the first workflow run.
 
-    Mirrors ``_aggregate_with_cache_projection`` for a one-row cohort: one
+    Mirrors ``aggregate_with_cache_projection`` for a one-row cohort: one
     cache write, then cache reads for additional static-batch invocations.
     """
     invocations = invocation_count_for(row)
@@ -388,10 +388,10 @@ def compute_projections(
             _row_no_cache_cost(row, pricing, output) for row, pricing, output in rows_with_output
         )
         rerun_within_ttl_hypothetical_usd = sum(_row_rerun_cost(r, p, o) or 0.0 for r, p, o in rows_with_output)
-        no_cache_inactive = _aggregate_no_cache_cost(
+        no_cache_inactive = aggregate_no_cache_cost(
             [r for r in rows_with_output if not r[0].cache_active.affects_cost_projection], ttl
         )
-        with_cache_active = _aggregate_with_cache_projection(
+        with_cache_active = aggregate_with_cache_projection(
             [r for r in rows_with_output if r[0].cache_active.affects_cost_projection], ttl
         )
         first_run_with_cache_hypothetical_usd = (
@@ -484,7 +484,7 @@ def _partition_priced_rows(
     return priced_rows, unavailable_models, tuple(exclusions)
 
 
-def _aggregate_no_cache_cost(
+def aggregate_no_cache_cost(
     priced_rows: Sequence[tuple[PerCallRow, ModelPricing, int]],
     ttl: str | None,
 ) -> float | None:
@@ -495,7 +495,7 @@ def _aggregate_no_cache_cost(
     return sum(_row_no_cache_cost(row, pricing, output) for row, pricing, output in priced_rows)
 
 
-def _aggregate_with_cache_projection(
+def aggregate_with_cache_projection(
     priced_rows: Sequence[tuple[PerCallRow, ModelPricing, int]],
     ttl: str | None,
 ) -> float | None:
@@ -544,7 +544,7 @@ def _aggregate_first_run_savings(
 
     Greenfield-safe: doesn't depend on output tokens.
     """
-    # Cohort key includes ``row.model`` for symmetry with ``_aggregate_with_cache_projection``
+    # Cohort key includes ``row.model`` for symmetry with ``aggregate_with_cache_projection``
     # — provider caches are model-keyed; both functions must group identically to preserve
     # the ``no_cache - first_run_with_cache == savings_first_run_usd`` arithmetic identity.
     by_subset: dict[tuple[str | None, str, tuple[str, ...], str] | None, list[tuple[PerCallRow, ModelPricing]]] = {}
@@ -590,7 +590,7 @@ def _aggregate_rerun_savings(
         if not row.cache_active.affects_cost_projection:
             continue
         invocations = invocation_count_for(row)
-        # See Option C note in ``_aggregate_with_cache_projection`` — None → 0.
+        # See Option C note in ``aggregate_with_cache_projection`` — None → 0.
         cacheable = row.cache_active.tokens_estimated or 0
         # no-cache: cacheable * input_rate ; rerun: cacheable * read_rate
         total_savings += invocations * cacheable * (pricing.input_rate - pricing.cache_read_rate)
@@ -661,11 +661,12 @@ __all__ = [
     "CostTier",
     "ModelPricing",
     "ProjectionBreakdown",
-    "_aggregate_no_cache_cost",
-    "_aggregate_with_cache_projection",
-    "_row_body_only_cost",
-    "_row_first_run_with_cache_cost",
+    "aggregate_no_cache_cost",
+    "aggregate_with_cache_projection",
     "compute_actually_paid",
     "compute_projections",
     "get_model_pricing",
+    "pricing_from_dict",
+    "row_body_only_cost",
+    "row_first_run_with_cache_cost",
 ]

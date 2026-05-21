@@ -11,17 +11,11 @@ from typing import Any, Final
 from pflow.core.exceptions import CompilationError, MarkdownParseError, SchemaValidationError, WorkflowValidationError
 from pflow.core.validation_utils import generate_dummy_parameters
 
-from ...context import _PREDICTION_SKIPPED, AnalysisContext
+from ...context import _PREDICTION_SKIPPED, AnalysisContext, template_resolver
 from ...cross_workflow import DynamicBatchInfo
 from ...trace_loading import _is_llm_node
 
 logger = logging.getLogger(__name__)
-
-
-def _template_resolver() -> Any:
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    return TemplateResolver
 
 
 _PREDICTION_RECOVERABLE_EXCEPTIONS: Final[tuple[type[Exception], ...]] = (
@@ -371,9 +365,9 @@ def _node_templates_touch(node: Mapping[str, Any], dummied_keys: frozenset[str])
     if not dummied_keys:
         return False
     for text in _walk_strings(node):
-        for match in _template_resolver().TEMPLATE_PATTERN.finditer(text):
-            for operand in _template_resolver().split_coalesce_operands(match.group(1)):
-                root = _template_resolver().extract_root_node_id(operand)
+        for match in template_resolver().TEMPLATE_PATTERN.finditer(text):
+            for operand in template_resolver().split_coalesce_operands(match.group(1)):
+                root = template_resolver().extract_root_node_id(operand)
                 if root and root in dummied_keys:
                     return True
     return False
@@ -411,7 +405,7 @@ def _dummied_cache_chunks(
         var = item.get("var")
         if not isinstance(var, str):
             continue
-        root = _template_resolver().extract_root_node_id(var)
+        root = template_resolver().extract_root_node_id(var)
         if root and root in dummied_keys:
             name = item.get("name")
             if isinstance(name, str):

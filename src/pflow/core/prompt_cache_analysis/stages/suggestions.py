@@ -11,6 +11,7 @@ from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_refs import classify_prompt_refs
 
+from .. import cost_estimation
 from ..context import AnalysisContext
 from ..token_estimation import _estimate_ref_tokens, estimate_tokens
 from ..types import (
@@ -787,9 +788,7 @@ def _estimate_token_savings_usd(model: str, tokens: int, calls: int) -> float | 
 
 
 def _input_rate(model: str) -> float | None:
-    from ..cost_estimation import get_model_pricing
-
-    pricing = get_model_pricing(model)
+    pricing = cost_estimation.get_model_pricing(model)
     return pricing.input_rate if pricing is not None else None
 
 

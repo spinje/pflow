@@ -12,7 +12,7 @@ from pflow.core.llm_capabilities import anthropic_models_at_threshold, get_min_c
 from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import classify_prompt_refs
 
-from ..context import AnalysisContext, _latest_memo_for_freshness_check, _normalize_empty
+from ..context import AnalysisContext, _latest_memo_for_freshness_check, _normalize_empty, template_resolver
 from ..token_estimation import estimate_tokens
 from ..trace_loading import _edge_child_paths
 from ..types import CrossWorkflowFindings, CrossWorkflowInputContribution, PerCallRow, invocation_count_for
@@ -22,12 +22,6 @@ from .suggestions import _estimate_token_savings_usd
 
 logger = logging.getLogger(__name__)
 _PARENT_PROSE_PREVIEW_LIMIT = 40
-
-
-def _template_resolver() -> Any:
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    return TemplateResolver
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +404,7 @@ def _resolve_value_in_workflow_memo(
     """
     if ctx.memo_cache is None:
         return None
-    root = _template_resolver().extract_root_node_id(ref)
+    root = template_resolver().extract_root_node_id(ref)
     if not root:
         return None
     try:
@@ -424,7 +418,7 @@ def _resolve_value_in_workflow_memo(
     if not isinstance(output, dict):
         return None
     try:
-        resolved = _template_resolver().resolve_template(f"${{{ref}}}", {root: output})
+        resolved = template_resolver().resolve_template(f"${{{ref}}}", {root: output})
     except Exception:
         logger.debug("memo resolve failed for %s in %s", ref, workflow_path, exc_info=True)
         return None
@@ -455,7 +449,7 @@ def _resolve_value_in_workflow_parameters(
     current parameters win over historical memo values from prior runs.
     """
     params = ctx.parameters_for_workflow(workflow_path)
-    root = _template_resolver().extract_root_node_id(ref)
+    root = template_resolver().extract_root_node_id(ref)
     if not root:
         return None
     if root not in params and root in ctx.parameters:
@@ -463,7 +457,7 @@ def _resolve_value_in_workflow_parameters(
     if root not in params:
         return None
     try:
-        resolved = _template_resolver().resolve_template(f"${{{ref}}}", {root: params[root]})
+        resolved = template_resolver().resolve_template(f"${{{ref}}}", {root: params[root]})
     except Exception:
         logger.debug("parameters resolve failed for %s in %s", ref, workflow_path, exc_info=True)
         return None
@@ -518,14 +512,14 @@ def _resolve_value_in_workflow_trace(
     filter on ``we.workflow_path == workflow_path AND we.event['node_id']
     == root`` to find the parent's event.
     """
-    root = _template_resolver().extract_root_node_id(ref)
+    root = template_resolver().extract_root_node_id(ref)
     if not root:
         return None
     output = _trace_node_output_for(root, workflow_path=workflow_path, ctx=ctx, cw_result=cw_result)
     if output is None:
         return None
     try:
-        resolved = _template_resolver().resolve_template(f"${{{ref}}}", {root: output})
+        resolved = template_resolver().resolve_template(f"${{{ref}}}", {root: output})
     except Exception:
         logger.debug("trace resolve failed for %s in %s", ref, workflow_path, exc_info=True)
         return None
@@ -590,9 +584,9 @@ def _resolve_child_suffix_in_value(value: Any, child_input_name: str, child_cach
     if not suffix:
         return value
     synthetic_ref = f"__value{suffix}"
-    if not _template_resolver().variable_exists(synthetic_ref, {"__value": value}):
+    if not template_resolver().variable_exists(synthetic_ref, {"__value": value}):
         return None
-    return _template_resolver().resolve_value(synthetic_ref, {"__value": value})
+    return template_resolver().resolve_value(synthetic_ref, {"__value": value})
 
 
 def _estimate_parent_value_tokens(

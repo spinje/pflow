@@ -9,6 +9,7 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.llm_providers import detect_provider
 
+from .. import cost_estimation
 from ..context import AnalysisContext
 from ..types import (
     _PROJECTION_NOT_APPLICABLE,
@@ -133,10 +134,6 @@ def _build_summary(
     don't). Aggregate savings figures are input-only (output cost cancels)
     and therefore work on greenfield even when absolutes stay ``None``.
     """
-    # Lazy-import to avoid a circular when ``cost_estimation.py`` imports
-    # ``PerCallRow`` from this module at module load time.
-    from ..cost_estimation import CostTier, compute_actually_paid, compute_projections
-
     total_nodes = len(rows)
     # Phase 6 split: count root rows vs sub-workflow rows. Mirrors the
     # text renderer's previous inline ``sum(...)`` comprehensions in
@@ -194,8 +191,8 @@ def _build_summary(
     output_tokens_by_node: Mapping[tuple[str | None, str] | str, int | None] = {
         (r.workflow_path, r.node_path): r.output_tokens_estimated for r in rows
     }
-    projections = compute_projections(rows, output_tokens_by_node=output_tokens_by_node, ttl=ttl)
-    actually_paid = compute_actually_paid(
+    projections = cost_estimation.compute_projections(rows, output_tokens_by_node=output_tokens_by_node, ttl=ttl)
+    actually_paid = cost_estimation.compute_actually_paid(
         rows,
         trace=ctx.trace if ctx is not None else None,
         edges=edge_child_paths,
@@ -205,7 +202,7 @@ def _build_summary(
     # Partial flag: actually-paid trace_partial OR projection partial. The
     # renderer uses one boolean to decide whether to mark numbers as
     # incomplete (which can happen on EITHER stream independently).
-    partial_cost_usd = actually_paid.tier == CostTier.TRACE_PARTIAL or projections.partial
+    partial_cost_usd = actually_paid.tier == cost_estimation.CostTier.TRACE_PARTIAL or projections.partial
 
     no_cache_baseline = "no_cache_hypothetical_usd"
     first_run_delta = _cost_delta(
@@ -484,13 +481,11 @@ def _estimate_total_invocations(rows: list[PerCallRow]) -> tuple[int | None, int
 
 def _unavailable_models_by_workflow(rows: list[PerCallRow]) -> dict[str | None, tuple[str, ...]]:
     """Return unpriced models grouped by workflow path for JSON/text attribution."""
-    from ..cost_estimation import get_model_pricing
-
     grouped: dict[str | None, set[str]] = {}
     for row in rows:
         if row.did_not_execute_in_trace or row.model_is_heterogeneous or not row.model:
             continue
-        if get_model_pricing(row.model) is None:
+        if cost_estimation.get_model_pricing(row.model) is None:
             grouped.setdefault(row.workflow_path, set()).add(row.model)
     return {workflow_path: tuple(sorted(models)) for workflow_path, models in grouped.items()}
 
@@ -545,8 +540,6 @@ def _build_sub_workflow_rollup(
     notes: list[str],
 ) -> SubWorkflowRollup | None:
     """Build metadata and dollar attribution for included child workflows."""
-    from ..cost_estimation import compute_projections
-
     workflows = [path for path in getattr(cw_result, "irs_by_workflow", {}) if path != root_workflow_path]
     if not workflows:
         return None
@@ -563,7 +556,7 @@ def _build_sub_workflow_rollup(
         output_tokens: Mapping[tuple[str | None, str] | str, int | None] = {
             (row.workflow_path, row.node_path): row.output_tokens_estimated for row in workflow_rows
         }
-        projections = compute_projections(workflow_rows, output_tokens_by_node=output_tokens, ttl=ttl)
+        projections = cost_estimation.compute_projections(workflow_rows, output_tokens_by_node=output_tokens, ttl=ttl)
         entries_list.append(
             SubWorkflowRollupEntry(
                 workflow_path=str(path),

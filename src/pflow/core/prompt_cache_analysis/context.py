@@ -40,6 +40,18 @@ _PREDICTION_SKIPPED: Final[str] = "__PREDICTION_SKIPPED__"
 """Cache-key prediction was attempted but intentionally skipped for this node."""
 
 
+def template_resolver() -> Any:
+    """Lazy-imported ``TemplateResolver`` class for ``${var}`` resolution.
+
+    Do not hoist this import. ``pflow.runtime.template_resolver`` transitively
+    loads the runtime stack, so importing it at module load would make the
+    analyzer package pay that cost on cheap dry-run and inspection paths.
+    """
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    return TemplateResolver
+
+
 @dataclass(frozen=True)
 class AnalysisContext:
     """Immutable inputs threaded through the analyzer's helper graph.
@@ -332,4 +344,4 @@ def _latest_memo_for_freshness_check(
     return output, created_at
 
 
-__all__ = ["_PREDICTION_SKIPPED", "AnalysisContext"]
+__all__ = ["_PREDICTION_SKIPPED", "AnalysisContext", "template_resolver"]
