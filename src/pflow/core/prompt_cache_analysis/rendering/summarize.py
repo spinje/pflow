@@ -41,9 +41,9 @@ from typing import Any
 
 from pflow.core.diagnostic import CACHE_ADVISORY_CATEGORY, Diagnostic, Severity
 
-from .analyze import analyze
-from .types import CacheAnalysis
-from .warning_catalog import CACHE_OPPORTUNITIES_NUDGE_ID, format_dry_run_nudge
+from ..analyze import analyze
+from ..types import CacheAnalysis
+from ..warning_catalog import CACHE_OPPORTUNITIES_NUDGE_ID, format_dry_run_nudge
 
 
 def summarize(
@@ -78,7 +78,7 @@ def summarize_from_analysis(analysis: CacheAnalysis) -> Diagnostic | None:
     diagnostic count, e.g. 19 on lyrics-generator) stays in JSON for machine
     consumers.
     """
-    from .view_helpers import count_rendered_findings
+    from .views import count_rendered_findings
 
     rec_count, bnd_count = count_rendered_findings(list(analysis.warnings))
     actionable = rec_count + bnd_count

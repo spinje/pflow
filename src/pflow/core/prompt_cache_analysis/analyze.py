@@ -123,7 +123,6 @@ from .types import (
     aggregate_projection,
     invocation_count_for,
 )
-from .view_helpers import per_call_row_has_real_data
 from .warning_catalog import CACHE_WARNING_CATALOG, make_diagnostic
 
 logger = logging.getLogger(__name__)
@@ -378,6 +377,8 @@ def analyze(
     # empty so agents understand the absence is intentional. The renderer uses
     # the same predicate (``_row_has_real_data``) to decide visibility; we
     # mirror it here at analyze-time so the note appears in JSON too.
+    from .rendering.views import per_call_row_has_real_data
+
     if per_call_rows and not any(per_call_row_has_real_data(r) for r in per_call_rows):
         notes.append(
             "Per-call cache report hidden — workflow has no run data yet. "

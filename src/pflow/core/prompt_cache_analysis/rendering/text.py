@@ -47,7 +47,7 @@ from typing import cast
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
 
-from .types import (
+from ..types import (
     AnalysisSummary,
     CacheAnalysis,
     CostDelta,
@@ -797,7 +797,7 @@ def _append_summary_counts(summary_lines: list[str], analysis: CacheAnalysis) ->
     # entries that don't exist. Severity counts stay in JSON
     # (``warnings_count``/``info_count`` on AnalysisSummary) for machine
     # consumers.
-    from .view_helpers import count_rendered_findings
+    from .views import count_rendered_findings
 
     s = analysis.summary
     rec_count, bnd_count = count_rendered_findings(list(analysis.warnings))
@@ -964,7 +964,7 @@ def _render_blocking_errors(analysis: CacheAnalysis) -> str:
     ``_render_other_blocking_errors`` so agents distinguish caching work from
     env-config issues.
     """
-    from .view_helpers import build_blocking_errors
+    from .views import build_blocking_errors
 
     actions = build_blocking_errors(list(analysis.warnings))
     if not actions:
@@ -992,7 +992,7 @@ def _render_other_blocking_errors(analysis: CacheAnalysis, *, cache_blocking_pre
     renders alongside. When cache-domain errors are absent, drop the qualifier
     and emit ``## Blocking errors`` so the heading reads complete on its own.
     """
-    from .view_helpers import build_other_blocking_errors
+    from .views import build_other_blocking_errors
 
     actions = build_other_blocking_errors(list(analysis.warnings))
     if not actions:
@@ -1020,7 +1020,7 @@ def _render_recommended_actions(analysis: CacheAnalysis) -> str:
     models (and trace-mode workflows where every projection is unavailable)
     drop the qualifier — there's no impact to order by.
     """
-    from .view_helpers import build_recommended_actions
+    from .views import build_recommended_actions
 
     actions = build_recommended_actions(list(analysis.warnings))
     if not actions:
@@ -2305,7 +2305,7 @@ def _per_call_confidence_footer(
 
 
 def _row_has_real_data(row: PerCallRow) -> bool:
-    from .view_helpers import per_call_row_has_real_data
+    from .views import per_call_row_has_real_data
 
     return per_call_row_has_real_data(row)
 

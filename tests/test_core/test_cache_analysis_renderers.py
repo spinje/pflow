@@ -1876,7 +1876,7 @@ def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
     renders ``0``, fresh agents reading a sub-workflow analyzed standalone
     misread it as "this node never runs".
     """
-    from pflow.core.prompt_cache_analysis.render_text import _cell_calls
+    from pflow.core.prompt_cache_analysis.rendering.text import _cell_calls
 
     row_unobserved = PerCallRow(
         node_path="generate",
@@ -2311,7 +2311,7 @@ def test_format_delta_parenthetical_translates_baseline_identifier_to_human_phra
     reappears for the known producer value, this test fails on the explicit
     ``not in`` assertion.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.rendering.text import _format_delta_parenthetical
     from pflow.core.prompt_cache_analysis.types import CostDelta
 
     savings = CostDelta(
@@ -2362,7 +2362,7 @@ def test_format_delta_parenthetical_drops_dollar_and_excluded_nodes() -> None:
     Mutation contract: re-add a dollar amount or ``(excludes ...)`` qualifier
     to ``_format_delta_parenthetical`` → these ``not in`` assertions fail.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.rendering.text import _format_delta_parenthetical
     from pflow.core.prompt_cache_analysis.types import CostDelta
 
     with_excludes = CostDelta(
@@ -2386,7 +2386,7 @@ def test_format_delta_parenthetical_unavailable_returns_empty() -> None:
     percentage as the load-bearing signal, so without it there's nothing
     useful to render.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.rendering.text import _format_delta_parenthetical
     from pflow.core.prompt_cache_analysis.types import CostDelta
 
     unavailable = CostDelta(
@@ -2414,7 +2414,7 @@ def test_format_delta_parenthetical_break_even_returns_neutral_phrase() -> None:
     reading the cost line knows the delta WAS computed (vs. ``unavailable``
     which means we couldn't compute it). Different signal from absent.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.rendering.text import _format_delta_parenthetical
     from pflow.core.prompt_cache_analysis.types import CostDelta
 
     break_even = CostDelta(
@@ -2434,7 +2434,7 @@ def test_format_delta_parenthetical_local_cache_reuse_qualifier() -> None:
     with pflow's local memo cache. Without the qualifier the agent might
     over-attribute savings to provider caching alone.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.rendering.text import _format_delta_parenthetical
     from pflow.core.prompt_cache_analysis.types import CostDelta
 
     delta = CostDelta(
@@ -2461,7 +2461,7 @@ def test_baseline_labels_map_covers_every_producer_value() -> None:
     (``"no_cache_hypothetical_usd"``); if a new value is added without
     updating ``_BASELINE_LABELS``, this test fires.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _BASELINE_LABELS
+    from pflow.core.prompt_cache_analysis.rendering.text import _BASELINE_LABELS
 
     producer_values = {
         "no_cache_hypothetical_usd",
@@ -3478,7 +3478,7 @@ def test_indent_message_preserves_blank_lines() -> None:
     ``_indent_message`` and the blank-indented row between the prose lines
     disappears, this assertion fails.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _indent_message
+    from pflow.core.prompt_cache_analysis.rendering.text import _indent_message
 
     rendered = _indent_message("alpha\n\nbeta", prefix=">>>")
 

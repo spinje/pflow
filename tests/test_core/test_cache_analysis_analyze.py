@@ -354,7 +354,7 @@ def test_below_threshold_emits_conditional_recommendation_not_paste_block(
     assert conditional.context["node_count"] == 2
     assert conditional.context["affected_nodes"] == ["draft", "review"]
     assert conditional.context["shared_chunks"] == ["topic"]
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     text = render_text(result)
     assert "Shared context conditional" in text
@@ -382,8 +382,8 @@ def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.M
     assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
     assert result.summary.actionable_opportunities == 0
     assert any("the analyzer cannot yet tell whether a cache edit would fire" in note for note in result.notes)
-    from pflow.core.prompt_cache_analysis.render_json import render_json
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.json import render_json
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     payload = render_json(result)
     assert payload["recommended_actions"] == []
@@ -869,7 +869,7 @@ def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics(tmp_path:
         auto_load_trace=False,
         memo_cache=None,
     )
-    from pflow.core.prompt_cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.rendering.json import render_json
 
     summary = render_json(result)["summary"]
     assert summary["no_cache_hypothetical_usd"] == pytest.approx(0.031284)
@@ -961,7 +961,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
     # cache.first-call-write-penalty would not fire here (2 nodes, not 1), so
     # we don't assert its absence; the dedicated truncated-filter test owns that.
     assert result.suggested_blocks == ()
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     text = render_text(result)
     assert "Evidence: trace truncated (1 of 2 LLM nodes executed)" in text
@@ -1128,8 +1128,8 @@ def test_truncated_trace_filters_cost_projection_findings(tmp_path: Path) -> Non
     assert complete_result.summary.evidence_scope == "complete_trace"
     assert any(d.id == "cache.first-call-write-penalty" for d in complete_result.warnings)
 
-    from pflow.core.prompt_cache_analysis.render_json import render_json
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.json import render_json
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     payload = render_json(result)
     # Cost-projection actions filtered, but IR-derived findings (if any) flow.
@@ -1232,7 +1232,7 @@ def test_complete_trace_with_conditional_dispatch_keeps_ir_findings(tmp_path: Pa
     )
 
     # Header rendering: complete + unexecuted should show "X of Y; Z not reached".
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     text = render_text(result)
     assert "Evidence: complete trace (1 of 2 LLM nodes executed; 1 not reached for these inputs)" in text
@@ -1520,7 +1520,7 @@ def test_memo_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path:
 
 def test_in_process_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path: Path) -> None:
     """Same evidence split as memo hits, but for same-run in-process reuse."""
-    from pflow.core.prompt_cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.rendering.json import render_json
 
     workflow_ir = {
         "cache": {
@@ -1695,8 +1695,8 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     assert result.summary.projection_exclusions[0].reason == "heterogeneous_model"
     assert result.summary.projection_exclusions[0].actual_cost_usd == pytest.approx(0.03)
 
-    from pflow.core.prompt_cache_analysis.render_json import render_json
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.json import render_json
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     payload = render_json(result)
     assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] != "unavailable"
@@ -1859,7 +1859,7 @@ def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
     assert row.model == ""
     assert row.model_is_heterogeneous is False
     assert row.observed_models == ("gemini/a", "gemini/b")
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     assert "model varies per batch item" not in render_text(result)
 
@@ -1996,7 +1996,7 @@ def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
     assert rows["defaulted"].model == "openai/gpt-4o-mini"
     assert rows["heterogeneous"].model == ""
     assert rows["heterogeneous"].model_is_heterogeneous is True
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     assert "IR/settings declares: gemini/gemini-2.5-flash (overridden by trace evidence)" in render_text(result)
 
@@ -2397,7 +2397,7 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
     # bypasses the enrichment pipeline. Mutation contract: drop
     # ``context=dict(ctx)`` in ``view_helpers._build_actions`` -> the
     # cost-comparison line never reaches text output -> assertion fails.
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     rendered = render_text(result)
     assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field`" in rendered
@@ -2692,7 +2692,7 @@ def test_truncated_trace_preserves_non_cache_validator_errors(tmp_path: Path) ->
     assert len(unknown_param) == 1
     assert unknown_param[0].severity == Severity.ERROR
 
-    from pflow.core.prompt_cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.rendering.json import render_json
 
     payload = render_json(result)
     # Unknown LLM param is a non-cache validator error → other_blocking_errors[]
@@ -3926,7 +3926,7 @@ def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     ``test_recommended_actions_filters_cross_workflow_alignment_ids`` for
     that contract.)
     """
-    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.unused-chunk", Severity.INFO),
@@ -3943,7 +3943,7 @@ def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
     boundaries" section. This keeps each finding visible in exactly ONE
     section (Stage 0 + B.3).
     """
-    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.cross-workflow-rename-detected", Severity.INFO),
@@ -3957,7 +3957,7 @@ def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
 
 def test_blocking_errors_rank_deterministically_after_split() -> None:
     """ERRORs no longer live in Recommended actions; their own list ranks locally."""
-    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors
+    from pflow.core.prompt_cache_analysis.rendering.views import build_blocking_errors
 
     actions = build_blocking_errors([
         _make_diag("llm.thinking-temperature-mismatch", Severity.ERROR),  # priority 5
@@ -3968,7 +3968,7 @@ def test_blocking_errors_rank_deterministically_after_split() -> None:
 
 
 def test_recommended_actions_filter_out_errors_after_split() -> None:
-    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.order-mismatch", Severity.ERROR),
@@ -3983,7 +3983,7 @@ def test_recommended_actions_savings_orders_within_priority_tier() -> None:
     Two same-priority IDs (priority 10) with different savings — higher
     savings ranks first.
     """
-    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.dynamic-before-static", Severity.INFO, savings_usd=0.50),
@@ -3998,7 +3998,7 @@ def test_recommended_actions_savings_beats_severity_within_priority_tier() -> No
     """The rendered header says ordered by impact; a lower-value WARNING must
     not outrank a higher-value INFO finding in the same action class.
     """
-    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.batch-prewarm-recommended", Severity.WARNING, savings_usd=0.04),
@@ -4014,7 +4014,7 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
     hasn't been added to the dict) gets ``DEFAULT_RECOMMENDED_ACTION_PRIORITY``
     (100 — lowest). Defensive: graceful degradation rather than KeyError.
     """
-    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.future-unknown-id", Severity.INFO),  # no priority entry
@@ -4027,7 +4027,7 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
 
 def test_recommended_actions_filter_non_cache_advisories_after_unification() -> None:
     """Full validation can emit non-cache warnings; cache actions stay focused."""
-    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_recommended_actions
 
     actions = build_recommended_actions([
         Diagnostic(
@@ -4044,7 +4044,7 @@ def test_recommended_actions_filter_non_cache_advisories_after_unification() -> 
 
 
 def test_blocking_errors_filters_out_warnings_and_info() -> None:
-    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors
+    from pflow.core.prompt_cache_analysis.rendering.views import build_blocking_errors
 
     actions = build_blocking_errors([
         _make_diag("cache.order-mismatch", Severity.ERROR),
@@ -4055,7 +4055,7 @@ def test_blocking_errors_filters_out_warnings_and_info() -> None:
 
 
 def test_blocking_errors_rank_starts_at_one_independent_of_recommended_actions() -> None:
-    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors, build_recommended_actions
+    from pflow.core.prompt_cache_analysis.rendering.views import build_blocking_errors, build_recommended_actions
 
     warnings = [
         _make_diag("cache.order-mismatch", Severity.ERROR),
@@ -4080,7 +4080,7 @@ def test_build_blocking_errors_filters_non_cache_errors() -> None:
     clause from ``build_blocking_errors`` — the non-cache ERROR leaks back
     into the cache-domain list; this test fails.
     """
-    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors
+    from pflow.core.prompt_cache_analysis.rendering.views import build_blocking_errors
 
     non_cache_error = Diagnostic(
         severity=Severity.ERROR,
@@ -4108,7 +4108,7 @@ def test_build_other_blocking_errors_filters_cache_errors() -> None:
     clause from ``build_other_blocking_errors`` — the cache ERROR leaks
     into the Other list; this test fails.
     """
-    from pflow.core.prompt_cache_analysis.view_helpers import build_other_blocking_errors
+    from pflow.core.prompt_cache_analysis.rendering.views import build_other_blocking_errors
 
     non_cache_error = Diagnostic(
         severity=Severity.ERROR,
@@ -4219,7 +4219,7 @@ def test_summary_message_zero_llm_nodes() -> None:
     distinct; re-conflating them lets the zero-LLM message mention LLM
     nodes.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {"nodes": [{"id": "shell", "type": "shell", "params": {"command": "echo"}}]}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
@@ -4242,7 +4242,7 @@ def test_summary_message_no_model_resolved(monkeypatch: pytest.MonkeyPatch) -> N
 
     analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
         "nodes": [
@@ -4274,7 +4274,7 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
-    from pflow.core.prompt_cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     # Single LLM node — no shared context → no aggregate-savings → falls into
     # the third sub-branch.
@@ -4353,7 +4353,7 @@ def test_render_text_emits_suggested_line_on_unavailable_cost_branch(
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
-    from pflow.core.prompt_cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
         "inputs": {"article": {"type": "string"}},
@@ -4459,7 +4459,7 @@ def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest
 
     analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
         "nodes": [
@@ -4488,7 +4488,7 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
 
     analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     workflow_ir = {
         "nodes": [
@@ -4516,7 +4516,7 @@ def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch)
 
     analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     workflow_ir = {
         "nodes": [
@@ -4554,7 +4554,7 @@ def test_format_cost_names_single_unpriced_model() -> None:
     phrasing ``"all 1 models lack pricing data"`` would not let the agent
     tell which model from the summary alone.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _format_cost
+    from pflow.core.prompt_cache_analysis.rendering.text import _format_cost
 
     rendered = _format_cost(value=None, partial=False, unavailable_models=("ollama/llama3.2:8b",))
 
@@ -4569,7 +4569,7 @@ def test_format_cost_keeps_plural_phrasing_for_multiple_unpriced() -> None:
     ``_render_summary`` when ``partial_cost_usd``) lists them all, so this
     line stays terse.
     """
-    from pflow.core.prompt_cache_analysis.render_text import _format_cost
+    from pflow.core.prompt_cache_analysis.rendering.text import _format_cost
 
     rendered = _format_cost(
         value=None,

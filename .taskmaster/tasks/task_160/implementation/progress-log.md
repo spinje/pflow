@@ -58,3 +58,31 @@ Trust boundary:
 - Verified: no remaining direct imports of `list_traces_for_workflow`, `_resolve_trace_scope`, `_build_trace_execution_index`, or `_resolve_current_workflow_model_set` from `.analyze` in `src` or `tests`.
 - Assumed correct: moving `_is_llm_node` into `trace_loading.py` is acceptable until Phase 5 creates a better home for shared IR helpers; this avoids duplication and import cycles now.
 - Unable to verify: Task 159 golden harness remains unusable as a phase oracle for the stale-expected-output reason documented in Phase 1.
+
+## 2026-05-21 - Phase 3 complete, awaiting review
+
+Scope completed:
+- Moved the five renderer modules into `src/pflow/core/prompt_cache_analysis/rendering/`: `text.py`, `json.py`, `views.py`, `summarize.py`, and `traces_list.py`.
+- Added `rendering/__init__.py` with the planned public re-exports for `render_json`, `render_text`, `summarize`, and `summarize_from_analysis`; trace-list renderers remain direct imports from `rendering.traces_list`.
+- Updated package exports, CLI trace-list imports, tests, and internal relative imports to the new rendering paths.
+
+Verification:
+- Import sanity passed for package-level analyzer/render/summarize/list-trace exports plus direct `rendering.traces_list` and `rendering.views` imports.
+- Focused renderer/analyzer tests passed: `548 passed`.
+- Cache-analysis CLI/MCP/core slice passed: `798 passed`.
+- Sandbox near-full pytest hit 4 Homebrew `uv` subprocess panics; the same command rerun outside the sandbox passed with `7142 passed, 1 skipped`.
+- Quality checks passed: `ruff check src tests`, `ruff format --check src tests`, `mypy src`, and `deptry src`. The first incremental mypy run had stale cache state for the deleted root `render_json.py`; `mypy --no-incremental src` passed and refreshed the cache, then the normal `mypy src` run passed.
+
+Deviations from plan:
+- Made `analyze.py` import `per_call_row_has_real_data` lazily inside `analyze()` instead of at module scope. Reason: importing `rendering.views` at module import time executes `rendering/__init__.py`, which re-exports `summarize`; `summarize.py` imports `analyze`, creating a partial-initialization cycle. The lazy import keeps the final public rendering exports and avoids a new cycle.
+- Used the `pflow-sandbox-testing` command style instead of literal `make test && make check`, because the documented sandbox guidance says `uv`/`make` can panic before Python starts here. This is a verification substitution, not a skipped gate: pytest, ruff, mypy, and deptry all ran.
+- Did not spawn code-implementer subagents for this phase. The write scope was one tightly coupled module move plus import rewiring; splitting it would create overlapping edits in the same import surfaces without meaningful parallelism.
+
+Key learnings:
+- Moving `views.py` under a package with public re-exports changes import-order behavior even though the code body is unchanged; package `__init__` execution is an integration point that needed explicit verification.
+- The renderer package boundary is now clean for consumers: public render functions come from `prompt_cache_analysis` or `prompt_cache_analysis.rendering`, while trace-list rendering stays intentionally narrower.
+
+Trust boundary:
+- Verified: no old direct root renderer module import paths remain in `src` or `tests`; only valid local imports inside `rendering/` remain.
+- Assumed correct: leaving renderer-related doc/comment references such as `render_text.py` and `view_helpers.py` for Phase 6 documentation cleanup is acceptable because Phase 3's plan scope is code/test imports, not docs.
+- Unable to verify: Task 159 golden harness remains unusable as a phase oracle for the stale-expected-output reason documented in Phase 1.

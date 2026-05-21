@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from pflow.core.prompt_cache_analysis.render_traces_list import render_traces_list_json, render_traces_list_text
+from pflow.core.prompt_cache_analysis.rendering.traces_list import render_traces_list_json, render_traces_list_text
 from pflow.core.prompt_cache_analysis.trace_loading import (
     _resolve_current_workflow_model_set,
     list_traces_for_workflow,

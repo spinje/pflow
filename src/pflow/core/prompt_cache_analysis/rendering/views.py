@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pflow.core.diagnostic import Diagnostic, Severity
 
-from .types import PerCallRow, RecommendedAction
+from ..types import PerCallRow, RecommendedAction
 
 # ---------------------------------------------------------------------------
 # Cross-workflow alignment filter
@@ -167,7 +167,7 @@ def _is_cache_focused_for_advisory(diag: Diagnostic) -> bool:
 
 def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
     """Sort eligible findings and project them to ``RecommendedAction``."""
-    from .warning_catalog import (
+    from ..warning_catalog import (
         DEFAULT_RECOMMENDED_ACTION_PRIORITY,
         RECOMMENDED_ACTION_PRIORITY,
         resolve_headline_for,

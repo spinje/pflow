@@ -20,7 +20,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 
-from .types import (
+from ..types import (
     CacheAnalysis,
     CacheProjection,
     CacheProjectionComponent,
@@ -50,8 +50,8 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
     # Local import: ``JSON_FORMAT_VERSION`` lives at the package root for
     # consumer-side reachability; importing here avoids a circular ref between
     # ``__init__.py`` and the renderers.
-    from . import JSON_FORMAT_VERSION
-    from .view_helpers import build_blocking_errors, build_other_blocking_errors, build_recommended_actions
+    from .. import JSON_FORMAT_VERSION
+    from .views import build_blocking_errors, build_other_blocking_errors, build_recommended_actions
 
     blocking = build_blocking_errors(list(analysis.warnings))
     other_blocking = build_other_blocking_errors(list(analysis.warnings))

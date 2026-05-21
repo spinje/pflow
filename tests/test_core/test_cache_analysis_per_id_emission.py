@@ -21,8 +21,8 @@ from pflow.core.file_resolver import resolve_file_references
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.prompt_cache_analysis.analyze import analyze
 from pflow.core.prompt_cache_analysis.cost_estimation import ModelPricing
-from pflow.core.prompt_cache_analysis.render_json import render_json
-from pflow.core.prompt_cache_analysis.render_text import render_text
+from pflow.core.prompt_cache_analysis.rendering.json import render_json
+from pflow.core.prompt_cache_analysis.rendering.text import render_text
 from pflow.core.prompt_cache_analysis.types import CrossWorkflowInputContribution
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 from pflow.core.workflow.validator import WorkflowValidator
@@ -2359,7 +2359,7 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
     assert found[0].context is not None
     assert found[0].context["affected_workflow"] == "/abs/child.pflow.md"
     assert found[0].context["inputs"][0]["child_input_name"] == "concept"
-    from pflow.core.prompt_cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.rendering.json import render_json
 
     payload = render_json(result)
     warning = next(w for w in payload["warnings"] if w.get("id") == "cache.sub-workflow-cache-undeclared")

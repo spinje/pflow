@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pflow.core.diagnostic import Severity
 from pflow.core.prompt_cache_analysis.cost_estimation import CostTier
-from pflow.core.prompt_cache_analysis.summarize import summarize, summarize_from_analysis
+from pflow.core.prompt_cache_analysis.rendering.summarize import summarize, summarize_from_analysis
 from pflow.core.prompt_cache_analysis.types import (
     AnalysisSummary,
     CacheAnalysis,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from .render_text import _format_recorded_timestamp
-from .types import TraceListEntry
+from ..types import TraceListEntry
+from .text import _format_recorded_timestamp
 
 
 def _format_duration(duration_ms: float | None) -> str:
@@ -71,7 +71,7 @@ def render_traces_list_json(
     workflow_path: str,
     disclosure_note: str | None = None,
 ) -> str:
-    from . import JSON_FORMAT_VERSION
+    from .. import JSON_FORMAT_VERSION
 
     payload = {
         "format_version": JSON_FORMAT_VERSION,
