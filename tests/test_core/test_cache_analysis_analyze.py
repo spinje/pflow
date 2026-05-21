@@ -7506,3 +7506,28 @@ def test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow(
     assert not any("trace file references workflow" in n for n in result.notes), (
         f"unexpected scope-mismatch note when trace.workflow_path == lookup_path: {result.notes}"
     )
+
+
+def test_configured_prewarm_projection_uses_cumulative_declared_tokens() -> None:
+    """The prewarm projection threshold check must add ``declared_active_tokens``
+    to ``batch_prefix_tokens`` — matching ``_strip_below_min_cache_markers``
+    which counts cumulatively across system blocks then user-message blocks.
+    """
+    from pflow.core.cache_analysis.analyze import _configured_prewarm_projection_component
+
+    base = {
+        "model": "anthropic/claude-sonnet-4-5",
+        "input_tokens": 10_000,
+        "batch_prefix_tokens": 10,
+        "has_images": False,
+        "provider_trace_llm_calls": (),
+    }
+
+    without = _configured_prewarm_projection_component(**base, declared_active_tokens=0)
+    assert without.meets_provider_min is False
+    assert without.affects_cost_projection is False
+
+    with_cumulative = _configured_prewarm_projection_component(**base, declared_active_tokens=5000)
+    assert with_cumulative.meets_provider_min is True
+    assert with_cumulative.affects_cost_projection is True
+    assert with_cumulative.tokens_estimated == 10

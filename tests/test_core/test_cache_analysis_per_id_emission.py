@@ -478,12 +478,12 @@ def test_batch_prewarm_below_min_silent_when_first_per_item_at_position_zero() -
     assert "cache.batch-prewarm-below-min" not in warning_ids
 
 
-def test_batch_prewarm_below_min_emits_when_declared_prompt_cache_present() -> None:
-    """Declared ``prompt_cache:`` and ``prewarm: true`` are additive.
-
-    A too-short prewarm prompt-body prefix remains worth reporting even when a
-    separate declared cache chunk exists, because the two mechanisms emit
-    separate provider cache markers at runtime.
+def test_batch_prewarm_below_min_suppressed_when_declared_prompt_cache_present() -> None:
+    """When ``prompt_cache:`` chunks are declared, the runtime's
+    ``_strip_below_min_cache_markers`` counts tokens cumulatively across both
+    the declared system blocks and the user-message prefix.  The prompt-body-
+    only prefix check is incomplete; suppress the warning and let the per-call
+    cumulative strip handle correctness.
     """
     short_prefix = "tiny "
     workflow_ir = {
@@ -509,7 +509,40 @@ def test_batch_prewarm_below_min_emits_when_declared_prompt_cache_present() -> N
         auto_load_trace=False,
         memo_cache=None,
     )
-    assert "cache.batch-prewarm-below-min" in {d.id for d in result.warnings}
+    assert "cache.batch-prewarm-below-min" not in {d.id for d in result.warnings}
+
+
+def test_prewarm_no_prefix_suppressed_when_declared_prompt_cache_present() -> None:
+    """When ``prompt_cache:`` chunks are declared, a fully dynamic prompt body
+    (``first_per_item_position == 0``) should not trigger ``prewarm-no-prefix``
+    because the declared chunks provide the stable cache content.
+    """
+    workflow_ir = {
+        "cache": {"items": [{"name": "ctx", "var_expr": "ctx"}]},
+        "nodes": [
+            {
+                "id": "score",
+                "type": "llm",
+                "model": "anthropic/claude-sonnet-4-5",
+                "prewarm": True,
+                "prompt_cache": ["ctx"],
+                "batch": {"items": [{"text": "a"}, {"text": "b"}], "as": "item"},
+                "params": {"prompt": "${item.prompt}"},
+            }
+        ],
+        "inputs": {"ctx": {"type": "string"}},
+    }
+
+    result = analyze(
+        workflow_ir,
+        parameters={"ctx": "x"},
+        workflow_path="x.pflow.md",
+        auto_load_trace=False,
+        memo_cache=None,
+    )
+    warning_ids = {d.id for d in result.warnings}
+    assert "cache.prewarm-no-prefix" not in warning_ids
+    assert "cache.batch-prewarm-below-min" not in warning_ids
 
 
 def test_dynamic_before_static_silent_for_heterogeneous_batch_with_no_stable_tail(tmp_path: Path) -> None:

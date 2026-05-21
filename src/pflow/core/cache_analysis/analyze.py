@@ -3501,8 +3501,9 @@ def _configured_prewarm_projection_component(
     batch_prefix_tokens: int,
     has_images: bool,
     provider_trace_llm_calls: tuple[dict[str, Any], ...],
+    declared_active_tokens: int = 0,
 ) -> CacheProjectionComponent:
-    meets_min, provider_min, blocked = _provider_min_state(model, batch_prefix_tokens)
+    meets_min, provider_min, blocked = _provider_min_state(model, batch_prefix_tokens + declared_active_tokens)
     runtime_blocked = _runtime_trace_blocker(provider_trace_llm_calls, kind="prewarm")
     if runtime_blocked:
         blocked = runtime_blocked
@@ -3625,6 +3626,7 @@ def _build_cache_projection_components(
 
     cached_now = _provider_trace_cached_now(provider_trace_llm_call)
 
+    declared_active_tokens = 0
     if declared_subset:
         declared_component = _declared_projection_component(
             model=model,
@@ -3637,6 +3639,7 @@ def _build_cache_projection_components(
         configured.append(declared_component)
         ready.append(declared_component)
         if declared_component.affects_cost_projection:
+            declared_active_tokens = declared_component.tokens_estimated or 0
             active.append(replace(declared_component, affects_cost_projection=True, actionability="active"))
 
     prewarm = node.get("prewarm")
@@ -3648,6 +3651,7 @@ def _build_cache_projection_components(
             batch_prefix_tokens=batch_prefix_tokens,
             has_images=has_images,
             provider_trace_llm_calls=provider_trace_llm_calls,
+            declared_active_tokens=declared_active_tokens,
         )
         configured.append(prewarm_component)
         ready.append(prewarm_component)
@@ -3963,7 +3967,9 @@ def _per_node_warnings(
     if prewarm is True and isinstance(batch, dict):
         alias = str(batch.get("as", "item"))
         prompt = node.get("params", {}).get("prompt", "") or ""
-        if isinstance(prompt, str):
+        # Per-call _strip_below_min_cache_markers is authoritative for combined channels.
+        has_declared_cache = bool(node.get("prompt_cache"))
+        if isinstance(prompt, str) and not has_declared_cache:
             node_inputs = _node_inputs(node)
             first = first_per_item_position(prompt, alias, node_inputs)
             if first == 0:
