@@ -45,7 +45,7 @@ src/pflow/core/
 ├── prompt_refs.py           # Classify template refs in prompt bodies + `params.inputs` dealiasing (Task 159)
 ├── cache_overlap.py         # Overlap detection between cache groups and prompt body (Task 159)
 ├── cache_ttl.py             # TTL handling for prompt caching (Task 159)
-├── prompt_cache_analysis/          # Cache analysis subdirectory (see prompt_cache_analysis/CLAUDE.md)
+├── prompt_cache_analysis/          # Prompt cache analysis package (see prompt_cache_analysis/CLAUDE.md)
 ├── workflow/                # Workflow lifecycle subdirectory (see workflow/CLAUDE.md)
 │   ├── __init__.py          # Re-exports public API
 │   ├── manager.py           # Workflow lifecycle (save/load/list/delete)

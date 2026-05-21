@@ -817,7 +817,7 @@ def test_text_summary_greenfield_cost_note_drops_pflow_internals() -> None:
     storage layers is replaced with the agent-readable "real cost figures
     and cacheable projections" symmetric with the Notes string.
 
-    Mutation test: revert ``_render_summary`` at ``render_text.py:185-188`` to
+    Mutation test: revert ``_render_summary`` in ``rendering/text.py`` to
     the old wording; both negative assertions fire — "memo cache" and
     "2.1.0 trace" return to the rendered output.
     """
@@ -850,7 +850,7 @@ def test_text_summary_priced_with_savings_branch_emits_suggested_line() -> None:
     exact command at either site.
 
     Mutation contract: removing the ``if s.suggested_run_command``
-    block at the priced-with-savings branch in ``render_text.py`` fails
+    block at the priced-with-savings branch in ``rendering/text.py`` fails
     this test. The companion test above
     (``test_text_summary_greenfield_cost_note_drops_pflow_internals``)
     locks the upstream "Absolute cost figures need a prior run" message
@@ -2367,7 +2367,7 @@ def test_format_delta_parenthetical_drops_dollar_and_excluded_nodes() -> None:
     line establishes the cohort once.
 
     The ``excluded_nodes`` data field is preserved for JSON consumers
-    (``render_json.py``) — only the text parenthetical is minimal.
+    (``rendering/json.py``) — only the text parenthetical is minimal.
 
     Mutation contract: re-add a dollar amount or ``(excludes ...)`` qualifier
     to ``_format_delta_parenthetical`` → these ``not in`` assertions fail.
@@ -2479,7 +2479,7 @@ def test_baseline_labels_map_covers_every_producer_value() -> None:
     missing = producer_values - _BASELINE_LABELS.keys()
     assert not missing, (
         f"Producer adds baseline values without _BASELINE_LABELS entry: {missing}. "
-        f"Add to render_text.py::_BASELINE_LABELS so rendered text reads correctly."
+        f"Add to rendering/text.py::_BASELINE_LABELS so rendered text reads correctly."
     )
 
 

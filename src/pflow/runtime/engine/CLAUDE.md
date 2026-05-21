@@ -256,7 +256,7 @@ When a parallel batch LLM node has `prewarm: true` + declared `prompt_cache:` ch
 - **Sum cost / accumulate tokens** → include warmup (it's real money paid; ~1.25× input rate)
 - **Count calls / per-node averages / discrepancy detection** → exclude via `if call.get("is_warmup"): continue`
 
-Filters live at 8 sites across `metrics.py`, `workflow_trace.py::_LLMSummaryAccumulator`, `prompt_cache_analysis/analyze.py` (3), and `trace_report.py` (3). Grep `is_warmup` to find them. Cost-summing paths (`calculate_costs`, `cost_for_event`, `iter_actual_cost_events`) need no filter — they only look at `cost_usd`.
+Filters live at 8 sites across `metrics.py`, `workflow_trace.py::_LLMSummaryAccumulator`, `prompt_cache_analysis/analyze.py`, `prompt_cache_analysis.trace_loading`, `prompt_cache_analysis/stages/discrepancy/diagnose.py`, and `trace_report.py` (3). Grep `is_warmup` to find them. Cost-summing paths (`calculate_costs`, `cost_for_event`, `iter_actual_cost_events`) need no filter — they only look at `cost_usd`.
 
 ## Instrumentation (`instrumentation.py`)
 

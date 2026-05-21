@@ -48,6 +48,7 @@ from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 
+from . import types as _types
 from .context import AnalysisContext, _normalize_empty
 from .cross_workflow import CrossWorkflowEdge, walk_cross_workflow
 from .stages.cross_workflow import _build_cross_workflow_findings
@@ -95,12 +96,6 @@ from .trace_loading import (
     _resolve_trace_scope,
     _scope_workflow_paths,
 )
-from .types import (
-    CacheAnalysis,
-    PerCallRow,
-    SuggestedBlock,
-    TraceExecutionIndex,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +107,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class _PerCallRowsResult:
-    rows: list[PerCallRow]
+    rows: list[_types.PerCallRow]
     warnings: list[Diagnostic]
     call_counts_by_node: dict[tuple[str | None, str], int]
     cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]]
@@ -133,7 +128,7 @@ def analyze(
     trace_path: Path | None = None,
     auto_load_trace: bool = True,
     memo_cache: Any = None,
-) -> CacheAnalysis:
+) -> _types.CacheAnalysis:
     """Compose the full analysis.
 
     ``parameters`` is optional per DD#35; token estimation falls back when
@@ -148,7 +143,7 @@ def analyze(
     tier. Pass ``None`` to disable that tier.
     """
     notes: list[str] = []
-    suggested_blocks: list[SuggestedBlock] = []
+    suggested_blocks: list[_types.SuggestedBlock] = []
 
     # Canonical lookup identifier — mirrors ``runner.py``'s trace_workflow_path
     # AND ``MemoizationCache.workflow_path`` at write time (both use
@@ -441,7 +436,7 @@ def analyze(
     if trace_data is not None:
         _maybe_append_gemini_note(per_call_rows, notes)
 
-    return CacheAnalysis(
+    return _types.CacheAnalysis(
         workflow_path=workflow_path or "<inline>",
         analyzed_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         estimate_confidence=confidence,
@@ -472,7 +467,7 @@ def _extract_declared_chunks(cache_block: Any) -> list[str]:
 
 
 def _row_model_drift(
-    row: PerCallRow,
+    row: _types.PerCallRow,
     irs_by_workflow: Mapping[str, Mapping[str, Any]],
     default_model: str | None,
 ) -> tuple[str, str] | None:
@@ -501,7 +496,7 @@ def _row_model_drift(
 
 
 def _detect_per_node_model_drift(
-    per_call_rows: Sequence[PerCallRow],
+    per_call_rows: Sequence[_types.PerCallRow],
     irs_by_workflow: Mapping[str, Mapping[str, Any]],
     default_model: str | None,
 ) -> tuple[str | None, int]:
@@ -728,10 +723,10 @@ def _build_per_call_rows_and_warnings(
     *,
     ctx: AnalysisContext,
     cw_result: Any,
-    trace_index: TraceExecutionIndex,
+    trace_index: _types.TraceExecutionIndex,
 ) -> _PerCallRowsResult:
     """Walk every reachable workflow IR and build LLM rows."""
-    rows: list[PerCallRow] = []
+    rows: list[_types.PerCallRow] = []
     warnings: list[Diagnostic] = []
     call_counts_by_node = _build_call_counts_by_node(ctx, cw_result)
     cross_workflow_candidates_by_row = _build_cross_workflow_candidates_by_row(
@@ -844,7 +839,7 @@ def _build_cross_workflow_candidates_by_row(
     ctx: AnalysisContext,
     cw_result: Any,
     call_counts_by_node: dict[tuple[str | None, str], int],
-    trace_index: TraceExecutionIndex,
+    trace_index: _types.TraceExecutionIndex,
 ) -> dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]]:
     """Build row-level cross-workflow projections for trace-backed attribution."""
     candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] = {}
@@ -870,7 +865,7 @@ def _row_cross_workflow_candidates_for_edge(
     ctx: AnalysisContext,
     cw_result: Any,
     call_counts_by_node: dict[tuple[str | None, str], int],
-    trace_index: TraceExecutionIndex,
+    trace_index: _types.TraceExecutionIndex,
 ) -> tuple[_RowCrossWorkflowCandidate, ...]:
     """Return gated row-level candidates for one cross-workflow edge."""
     from .stages.cross_workflow import (
@@ -981,7 +976,7 @@ def _resolved_models_for_child(
     *,
     workflow_path: str | None = None,
     node_ids: tuple[str, ...] = (),
-    trace_index: TraceExecutionIndex | None = None,
+    trace_index: _types.TraceExecutionIndex | None = None,
 ) -> list[str]:
     """Resolved LLM models in child source order; template strings are skipped."""
     models: list[str] = []

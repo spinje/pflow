@@ -411,7 +411,7 @@ def _filter_trace_dependent_warnings(warnings: list[Diagnostic]) -> list[Diagnos
     so cost-projection cohorts are misleading). IR-derived findings (the
     default) flow regardless because they describe workflow structure, not
     execution evidence — the contract documented at
-    ``prompt_cache_analysis/CLAUDE.md`` § "Trace coverage is first-class".
+    ``prompt_cache_analysis/CLAUDE.md`` § "Trace Loading".
 
     Lookup mirrors ``resolve_headline_for`` (warning_catalog.py:1236-1238) —
     catalog SSoT consulted by ID at runtime.

@@ -3081,7 +3081,7 @@ def test_autoload_uses_trace_when_root_node_removed_orphans_ignored(
     Per-row mechanism ignores orphans. Trace IS loaded because the IR's
     remaining node DID execute in the trace.
 
-    Mutation contract: restore the deleted drift gate (``_trace_aligns_with_ir``)
+    Mutation contract: restore the deleted all-root-LLM-nodes equality drift gate
     → set inequality of {ask} vs {ask, summarize} fires → assertion fails."""
     builder = TraceFixtureBuilder()
     result, trace_path = _autoload_analysis(

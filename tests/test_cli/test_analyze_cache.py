@@ -287,7 +287,7 @@ def test_analyze_cache_json_format(tmp_path: Path) -> None:
     payload = _json_payload(result.output)
     # Version-gated contract: ``format_version`` is the first key + matches
     # the package constant. JSON consumers dispatch on
-    # ``startswith(MAJOR + ".")`` per ``cache_analysis/__init__.py``.
+    # ``startswith(MAJOR + ".")`` per ``prompt_cache_analysis/__init__.py``.
     assert payload.get("format_version") == JSON_FORMAT_VERSION
     assert "summary" in payload
     assert payload["blocking_errors"] == []

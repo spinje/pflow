@@ -188,3 +188,34 @@ Trust boundary:
 - Verified: all commands listed above pass in this sandbox using the `pflow-sandbox-testing` command style; `analyze.py` meets the hard Phase 5 size limit exactly at 1,100 lines.
 - Assumed correct: leaving Phase 6 documentation cleanup for the next phase is acceptable; stale package-level `CLAUDE.md` structure notes are known and explicitly scoped to Phase 6/7.
 - Unable to verify: literal `make test && make check`, because this sandbox's `uv`/subprocess behavior is documented as unreliable here.
+
+## 2026-05-21 - Phase 6 complete, awaiting human review
+
+Scope completed:
+- Finalized the public/private import boundary: `analyze.py` now imports `types.py` as a private namespace, so report dataclasses are no longer directly importable from `prompt_cache_analysis.analyze`; `types.py` is the direct type home.
+- Rewrote `prompt_cache_analysis/CLAUDE.md` for the post-refactor structure: public API, orchestrator -> stages -> rendering flow, the two `cross_workflow.py` files, runtime trace contract, validation delegation, and where to add future warnings/features.
+- Updated stale documentation/comment references in core/runtime docs and tests from pre-refactor paths (`cache_analysis`, root renderer files, `view_helpers.py`) to the current `prompt_cache_analysis`, `rendering/`, `trace_loading.py`, and stage-module ownership.
+- Confirmed `__init__.py` already matched the planned final package exports; no code change was needed there.
+
+Verification:
+- Focused Phase 6 tests passed: `643 passed`.
+- Quality gates passed: `ruff check src tests`, `ruff format --check src tests`, `mypy src`, and `deptry src`.
+- Import sanity passed for package-level `analyze`, `render_json`, `render_text`, and `summarize`.
+- Type-isolation sanity passed: `CacheAnalysis` imports from `prompt_cache_analysis.types`, and importing it from `prompt_cache_analysis.analyze` raises `ImportError`.
+- Structural checks passed: no old `pflow.core.cache_analysis` imports, no public report dataclass imports from `analyze.py`, `padding_advisor.py` absent, planned `stages/` and `rendering/` files present, and `analyze.py` is 1,095 lines.
+- Sandbox near-full pytest hit 4 Homebrew `uv` subprocess panics before pflow code started; the same near-full command rerun outside the sandbox passed with `7142 passed, 1 skipped`.
+
+Deviations from plan:
+- Included the documentation cleanup in Phase 6, even though the detailed implementation plan labels it Phase 7. Reason: the task summary and Phase 5 handoff both identify final test cleanup + documentation as the remaining phase, and leaving docs stale would preserve the agent-navigation confusion this task is meant to remove.
+- Changed `analyze.py` internals to use a private `types` module namespace instead of public type imports. Reason: shrinking `__all__` alone does not prevent `from prompt_cache_analysis.analyze import CacheAnalysis`; private module-namespace access is the simplest way to enforce the no-dual-path type import contract.
+- Did not rerun the Task 159 golden harness. Reason: earlier phase logs verified the checked-in expected outputs are stale relative to successful local execution, making the harness an invalid oracle until those baselines are regenerated.
+
+Key learnings:
+- Python module imports create accidental public surfaces even when `__all__` is narrow; enforcing a single type home required changing the orchestrator's import style, not only tests.
+- Documentation cleanup was load-bearing for this refactor: stale file names in comments and CLAUDE docs would send future agents back to deleted root renderer/padding modules.
+- The broad sandbox pytest command is not enough for this repo when tests invoke Homebrew `uv`; unsandboxed rerun is the reliable discriminator between sandbox tooling failure and product failure.
+
+Trust boundary:
+- Verified: all checks listed above, including the unsandboxed near-full pytest rerun and structural import/layout checks.
+- Assumed correct: preserving `tests/fixtures/cache_analysis/` and `test_cache_analysis_*` names is still intentional per the implementation plan; those names now describe fixtures/test topic, not the production package path.
+- Unable to verify: Task 159 golden outputs for the stale-baseline reason documented in prior phases.

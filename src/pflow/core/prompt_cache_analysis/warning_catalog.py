@@ -1409,9 +1409,9 @@ def resolve_headline_for(diag: Diagnostic) -> str:
     constructed — both ``make_diagnostic`` (cache_analyzer-emitted) and raw
     ``Diagnostic(...)`` (validator-emitted in ``data_flow.py``) get headlines.
 
-    Used by ``view_helpers.build_recommended_actions`` for the rank line.
+    Used by ``rendering.views.build_recommended_actions`` for the rank line.
     Cross-workflow findings render via parent-grouped helpers in
-    ``render_text.py`` (the renderer no longer reads catalog headlines for
+    ``rendering/text.py`` (the renderer no longer reads catalog headlines for
     that section — its grouped structure carries the action label inline).
     """
     if not diag.id or diag.id not in CACHE_WARNING_CATALOG:

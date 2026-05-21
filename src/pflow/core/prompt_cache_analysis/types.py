@@ -395,10 +395,10 @@ class PerCallRow:
     chunk_tokens_estimated: int = 0
     # Stage 0.3 (Task 159): the inline ``warnings: tuple[str, ...]`` field was
     # vestigial — single production producer never populated it; renderer
-    # fallbacks at ``render_text.py:497, 617`` and the JSON ``per_call.warnings``
+    # fallbacks in ``rendering/text.py`` and the JSON ``per_call.warnings``
     # key were dead. Per-row inline warning markers are derived at render time
     # from ``analysis.warnings`` filtered by node_id (see
-    # ``render_text._render_per_call``).
+    # ``rendering.text._render_per_call``).
 
     def __post_init__(self) -> None:
         """Bridge legacy direct test constructors to explicit projections.

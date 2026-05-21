@@ -32,7 +32,7 @@ def _iter_llm_events(events: list[dict[str, Any]]) -> Iterator[tuple[str, dict[s
     """Walk trace events recursively, including cached events.
 
     Test-only helper. Was previously at ``analyze.py:2991`` with no production
-    callers (documented in ``cache_analysis/CLAUDE.md`` as dead production
+    callers (documented in ``prompt_cache_analysis/CLAUDE.md`` as dead production
     code after the per-call rendering migration to
     ``TraceTree.iter_llm_leaves``). Relocated here in the post-review sweep
     since the only consumers are the 2 structural tests in this file.
@@ -4349,7 +4349,7 @@ def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affect
     """Bug 6 regression: ``cache.discrepancy`` for a sub-workflow LLM node
     must record the CHILD workflow's path in ``context.affected_workflow``,
     not the analyzed root. Otherwise renderer scope-suppression at
-    ``view_helpers.py`` treats the finding as root-scoped and drops the
+    ``rendering/views.py`` treats the finding as root-scoped and drops the
     ``in <basename>`` suffix that Bug 1's fix adds for cross-workflow per-
     node findings — agents see ``review`` instead of ``review in
     child.pflow.md`` and can't tell which file's ``## Cache`` block to edit.
