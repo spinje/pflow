@@ -372,7 +372,7 @@ async def analyze_cache(
     is the FIRST key. Consumers dispatch on
     ``format_version.startswith(MAJOR + ".")``. Additive 5.x minor fields don't
     bump; semantic shifts in field meaning bump minor; field-shape removal bumps
-    major. Full version history in ``pflow.core.cache_analysis.__init__``.
+    major. Full version history in ``pflow.core.prompt_cache_analysis.__init__``.
 
     Top-level keys: ``format_version``, ``workflow_path``, ``analyzed_at``,
     ``estimate_confidence``, ``estimate_confidence_coverage``, ``trace_path``,

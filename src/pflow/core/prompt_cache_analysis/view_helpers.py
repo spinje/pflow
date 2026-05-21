@@ -13,13 +13,9 @@ call into this module; no caller in ``analyze.py`` needs them.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from pflow.core.diagnostic import Diagnostic, Severity
 
-if TYPE_CHECKING:
-    from .analyze import PerCallRow, RecommendedAction
-
+from .types import PerCallRow, RecommendedAction
 
 # ---------------------------------------------------------------------------
 # Cross-workflow alignment filter
@@ -171,9 +167,6 @@ def _is_cache_focused_for_advisory(diag: Diagnostic) -> bool:
 
 def _build_actions(eligible: list[Diagnostic]) -> list[RecommendedAction]:
     """Sort eligible findings and project them to ``RecommendedAction``."""
-    # Local imports keep this module light and avoid a circular import with
-    # ``analyze`` (RecommendedAction) and ``warning_catalog`` (priority table).
-    from .analyze import RecommendedAction
     from .warning_catalog import (
         DEFAULT_RECOMMENDED_ACTION_PRIORITY,
         RECOMMENDED_ACTION_PRIORITY,

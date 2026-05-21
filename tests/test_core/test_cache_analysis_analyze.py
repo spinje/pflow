@@ -14,19 +14,21 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis.analyze import (
-    CacheAnalysis,
-    PerCallRow,
-    TraceUnexecutedLLMRow,
+from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.prompt_cache_analysis.analyze import (
     _aggregate_confidence,
     _build_summary,
     _build_trace_execution_index,
     _maybe_append_gemini_note,
     analyze,
+)
+from pflow.core.prompt_cache_analysis.context import AnalysisContext
+from pflow.core.prompt_cache_analysis.types import (
+    CacheAnalysis,
+    PerCallRow,
+    TraceUnexecutedLLMRow,
     invocation_count_for,
 )
-from pflow.core.cache_analysis.context import AnalysisContext
-from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
@@ -319,7 +321,7 @@ def test_below_threshold_emits_conditional_recommendation_not_paste_block(
     Mutation contract: removing the BELOW_THRESHOLD branch from
     ``_populate_suggested_blocks`` makes the conditional diagnostic disappear.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
@@ -352,7 +354,7 @@ def test_below_threshold_emits_conditional_recommendation_not_paste_block(
     assert conditional.context["node_count"] == 2
     assert conditional.context["affected_nodes"] == ["draft", "review"]
     assert conditional.context["shared_chunks"] == ["topic"]
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     text = render_text(result)
     assert "Shared context conditional" in text
@@ -361,7 +363,7 @@ def test_below_threshold_emits_conditional_recommendation_not_paste_block(
 
 def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unknown model/token evidence stays out of paste-ready action sections."""
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
     workflow_ir = {
@@ -380,8 +382,8 @@ def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.M
     assert not any(d.id == "cache.shared-context-undeclared" for d in result.warnings)
     assert result.summary.actionable_opportunities == 0
     assert any("the analyzer cannot yet tell whether a cache edit would fire" in note for note in result.notes)
-    from pflow.core.cache_analysis.render_json import render_json
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     payload = render_json(result)
     assert payload["recommended_actions"] == []
@@ -397,7 +399,7 @@ def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatc
     """Only eligible readers count toward savings; the first eligible node is
     the writer that pays the cache_creation premium.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
@@ -431,7 +433,7 @@ def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatc
 
 
 def test_suggested_block_savings_multiplies_batch_consumer_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
@@ -469,7 +471,7 @@ def test_below_threshold_emits_conditional_even_when_only_one_node_below(
     Mutation contract: using the least restrictive provider minimum instead of
     the strictest one reports ``10`` here and understates the precondition.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
@@ -599,7 +601,7 @@ def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
     """Defends trace-driven current-cost rollup: workflow nodes are not LLM rows,
     but their ``sub_workflow_events`` still represent real paid calls.
     """
-    import pflow.core.cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"
@@ -724,7 +726,7 @@ def test_resolve_trace_scope_returns_three_tuple_with_appears_as_child() -> None
     the relationship enum silently regresses to ``different_workflow`` for
     every parent-redirect case.
     """
-    from pflow.core.cache_analysis.analyze import _resolve_trace_scope
+    from pflow.core.prompt_cache_analysis.analyze import _resolve_trace_scope
 
     # No trace loaded — short-circuit returns 3-tuple with default values.
     notes: list[str] = []
@@ -751,7 +753,7 @@ def test_analyze_skips_stale_llm_memo_when_predicted_cache_key_differs(
     """Regression for Bundle 6 per-workflow contexts preserving predictions."""
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     workflow_path = str(tmp_path / "workflow.pflow.md")
     monkeypatch.setattr(
         analyze_module,
@@ -787,8 +789,8 @@ def test_analyze_skips_stale_llm_memo_when_predicted_cache_key_differs(
 
 def test_cross_workflow_memo_value_resolver_skips_stale_parent_memo(tmp_path: Path) -> None:
     """Regression for the cross-workflow value path using freshness-aware memo."""
-    from pflow.core.cache_analysis.analyze import _resolve_value_in_workflow_memo
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.analyze import _resolve_value_in_workflow_memo
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
     from pflow.runtime.cache import MemoizationCache
 
     parent_path = str(tmp_path / "parent.pflow.md")
@@ -867,7 +869,7 @@ def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics(tmp_path:
         auto_load_trace=False,
         memo_cache=None,
     )
-    from pflow.core.cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.render_json import render_json
 
     summary = render_json(result)["summary"]
     assert summary["no_cache_hypothetical_usd"] == pytest.approx(0.031284)
@@ -959,7 +961,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
     # cache.first-call-write-penalty would not fire here (2 nodes, not 1), so
     # we don't assert its absence; the dedicated truncated-filter test owns that.
     assert result.suggested_blocks == ()
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     text = render_text(result)
     assert "Evidence: trace truncated (1 of 2 LLM nodes executed)" in text
@@ -1126,8 +1128,8 @@ def test_truncated_trace_filters_cost_projection_findings(tmp_path: Path) -> Non
     assert complete_result.summary.evidence_scope == "complete_trace"
     assert any(d.id == "cache.first-call-write-penalty" for d in complete_result.warnings)
 
-    from pflow.core.cache_analysis.render_json import render_json
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     payload = render_json(result)
     # Cost-projection actions filtered, but IR-derived findings (if any) flow.
@@ -1230,7 +1232,7 @@ def test_complete_trace_with_conditional_dispatch_keeps_ir_findings(tmp_path: Pa
     )
 
     # Header rendering: complete + unexecuted should show "X of Y; Z not reached".
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     text = render_text(result)
     assert "Evidence: complete trace (1 of 2 LLM nodes executed; 1 not reached for these inputs)" in text
@@ -1321,7 +1323,7 @@ def test_filter_consults_catalog_flag_not_severity() -> None:
     (``warning.severity == Severity.ERROR``) → this test fails because
     INFO-severity IR-derived findings get dropped.
     """
-    from pflow.core.cache_analysis.analyze import _filter_trace_dependent_warnings
+    from pflow.core.prompt_cache_analysis.analyze import _filter_trace_dependent_warnings
 
     flagged = Diagnostic(
         severity=Severity.INFO,
@@ -1518,7 +1520,7 @@ def test_memo_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path:
 
 def test_in_process_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path: Path) -> None:
     """Same evidence split as memo hits, but for same-run in-process reuse."""
-    from pflow.core.cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.render_json import render_json
 
     workflow_ir = {
         "cache": {
@@ -1693,8 +1695,8 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     assert result.summary.projection_exclusions[0].reason == "heterogeneous_model"
     assert result.summary.projection_exclusions[0].actual_cost_usd == pytest.approx(0.03)
 
-    from pflow.core.cache_analysis.render_json import render_json
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     payload = render_json(result)
     assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] != "unavailable"
@@ -1741,7 +1743,7 @@ def test_observed_model_replaces_ir_when_trace_consistent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
@@ -1770,7 +1772,7 @@ def test_observed_model_overrides_ir_when_mismatched(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     workflow_ir = {
         "nodes": [
@@ -1857,7 +1859,7 @@ def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
     assert row.model == ""
     assert row.model_is_heterogeneous is False
     assert row.observed_models == ("gemini/a", "gemini/b")
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     assert "model varies per batch item" not in render_text(result)
 
@@ -1865,7 +1867,7 @@ def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
 def test_greenfield_effective_model_path_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     workflow_ir = {
         "nodes": [
@@ -1890,7 +1892,7 @@ def test_l1_cost_projection_works_with_observed_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
@@ -1918,7 +1920,7 @@ def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "gemini/gemini-2.5-flash")
     workflow_ir = {
         "nodes": [
@@ -1994,7 +1996,7 @@ def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
     assert rows["defaulted"].model == "openai/gpt-4o-mini"
     assert rows["heterogeneous"].model == ""
     assert rows["heterogeneous"].model_is_heterogeneous is True
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     assert "IR/settings declares: gemini/gemini-2.5-flash (overridden by trace evidence)" in render_text(result)
 
@@ -2007,7 +2009,7 @@ def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
     mappings; the child prompt/cache tokenizer must use child parameters, not
     the root parameter dict.
     """
-    import pflow.core.cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"
@@ -2064,7 +2066,7 @@ def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization_but_is
     analyzer keeps the useful memo-backed projection while incrementing the
     uncheckable memo counter so the trust boundary is visible.
     """
-    import pflow.core.cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
     from pflow.runtime.cache import MemoizationCache
 
@@ -2131,7 +2133,7 @@ def test_child_workflow_unresolved_input_remains_unavailable(
     coerced to cacheable token evidence. Input tokens still fall back to
     estimator-partial because ``data_source`` is a separate metric.
     """
-    import pflow.core.cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"
@@ -2234,7 +2236,7 @@ def test_clamp_logs_debug_when_cacheable_exceeds_input(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    token_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
     monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 200 if ref == "context" else None)
 
     workflow_path = str(tmp_path / "clamp.pflow.md")
@@ -2257,7 +2259,7 @@ def test_clamp_logs_debug_when_cacheable_exceeds_input(
         nodes=[_llm_trace_event("judge", model="anthropic/claude-sonnet-4-5", input_tokens=100)],
     )
 
-    with caplog.at_level(logging.DEBUG, logger="pflow.core.cache_analysis.analyze"):
+    with caplog.at_level(logging.DEBUG, logger="pflow.core.prompt_cache_analysis.analyze"):
         result = analyze(
             workflow_ir,
             parameters={"context": "stable"},
@@ -2395,7 +2397,7 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
     # bypasses the enrichment pipeline. Mutation contract: drop
     # ``context=dict(ctx)`` in ``view_helpers._build_actions`` -> the
     # cost-comparison line never reaches text output -> assertion fails.
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     rendered = render_text(result)
     assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field`" in rendered
@@ -2413,7 +2415,7 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
 
 
 def test_shadow_warning_with_cache_cost_uses_workflow_ttl(tmp_path: Path) -> None:
-    from pflow.core.cache_analysis.cost_estimation import (
+    from pflow.core.prompt_cache_analysis.cost_estimation import (
         _row_first_run_with_cache_cost,
         get_model_pricing,
     )
@@ -2522,7 +2524,7 @@ def test_shadow_warning_unenriched_when_pricing_unavailable(tmp_path: Path) -> N
 
 def test_total_input_tokens_trace_total_style_keeps_prompt_tokens() -> None:
     """Trace event where ``input_tokens`` already includes cache portions."""
-    from pflow.core.cache_analysis.analyze import _estimate_row_tokens
+    from pflow.core.prompt_cache_analysis.analyze import _estimate_row_tokens
 
     trace_llm_call = {
         "input_tokens": 2000,
@@ -2548,7 +2550,7 @@ def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
     don't double-count. The analyzer uses the shared LiteLLM usage
     normalization rule rather than provider metadata.
     """
-    from pflow.core.cache_analysis.analyze import _estimate_row_tokens
+    from pflow.core.prompt_cache_analysis.analyze import _estimate_row_tokens
 
     trace_llm_call = {
         "input_tokens": 2000,
@@ -2571,7 +2573,7 @@ def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
 
 def test_total_input_tokens_trace_split_style_adds_cache_portions() -> None:
     """Legacy split-style trace event: ``input_tokens`` is uncached-only."""
-    from pflow.core.cache_analysis.analyze import _estimate_row_tokens
+    from pflow.core.prompt_cache_analysis.analyze import _estimate_row_tokens
 
     trace_llm_call = {
         "input_tokens": 50,
@@ -2690,7 +2692,7 @@ def test_truncated_trace_preserves_non_cache_validator_errors(tmp_path: Path) ->
     assert len(unknown_param) == 1
     assert unknown_param[0].severity == Severity.ERROR
 
-    from pflow.core.cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.render_json import render_json
 
     payload = render_json(result)
     # Unknown LLM param is a non-cache validator error → other_blocking_errors[]
@@ -3156,7 +3158,7 @@ def test_autoload_tolerates_root_heterogeneous_batch(tmp_path: Path, monkeypatch
 
 
 def test_autoload_includes_default_model_in_ir_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     builder = TraceFixtureBuilder()
     result, trace_path = _autoload_analysis(
@@ -3176,7 +3178,7 @@ def test_autoload_uses_trace_and_warns_when_default_model_changed(
     changed since trace was recorded): trace is consumed; Notes entry mentions
     both old and new model. Replaces the prior whole-trace rejection contract.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     builder = TraceFixtureBuilder()
     result, trace_path = _autoload_analysis(
@@ -3924,7 +3926,7 @@ def test_recommended_actions_prioritize_actionable_over_informational() -> None:
     ``test_recommended_actions_filters_cross_workflow_alignment_ids`` for
     that contract.)
     """
-    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.unused-chunk", Severity.INFO),
@@ -3941,7 +3943,7 @@ def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
     boundaries" section. This keeps each finding visible in exactly ONE
     section (Stage 0 + B.3).
     """
-    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.cross-workflow-rename-detected", Severity.INFO),
@@ -3955,7 +3957,7 @@ def test_recommended_actions_filters_cross_workflow_alignment_ids() -> None:
 
 def test_blocking_errors_rank_deterministically_after_split() -> None:
     """ERRORs no longer live in Recommended actions; their own list ranks locally."""
-    from pflow.core.cache_analysis.view_helpers import build_blocking_errors
+    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors
 
     actions = build_blocking_errors([
         _make_diag("llm.thinking-temperature-mismatch", Severity.ERROR),  # priority 5
@@ -3966,7 +3968,7 @@ def test_blocking_errors_rank_deterministically_after_split() -> None:
 
 
 def test_recommended_actions_filter_out_errors_after_split() -> None:
-    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.order-mismatch", Severity.ERROR),
@@ -3981,7 +3983,7 @@ def test_recommended_actions_savings_orders_within_priority_tier() -> None:
     Two same-priority IDs (priority 10) with different savings — higher
     savings ranks first.
     """
-    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.dynamic-before-static", Severity.INFO, savings_usd=0.50),
@@ -3996,7 +3998,7 @@ def test_recommended_actions_savings_beats_severity_within_priority_tier() -> No
     """The rendered header says ordered by impact; a lower-value WARNING must
     not outrank a higher-value INFO finding in the same action class.
     """
-    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.batch-prewarm-recommended", Severity.WARNING, savings_usd=0.04),
@@ -4012,7 +4014,7 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
     hasn't been added to the dict) gets ``DEFAULT_RECOMMENDED_ACTION_PRIORITY``
     (100 — lowest). Defensive: graceful degradation rather than KeyError.
     """
-    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
 
     actions = build_recommended_actions([
         _make_diag("cache.future-unknown-id", Severity.INFO),  # no priority entry
@@ -4025,7 +4027,7 @@ def test_recommended_actions_unknown_id_falls_back_to_default_priority() -> None
 
 def test_recommended_actions_filter_non_cache_advisories_after_unification() -> None:
     """Full validation can emit non-cache warnings; cache actions stay focused."""
-    from pflow.core.cache_analysis.view_helpers import build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_recommended_actions
 
     actions = build_recommended_actions([
         Diagnostic(
@@ -4042,7 +4044,7 @@ def test_recommended_actions_filter_non_cache_advisories_after_unification() -> 
 
 
 def test_blocking_errors_filters_out_warnings_and_info() -> None:
-    from pflow.core.cache_analysis.view_helpers import build_blocking_errors
+    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors
 
     actions = build_blocking_errors([
         _make_diag("cache.order-mismatch", Severity.ERROR),
@@ -4053,7 +4055,7 @@ def test_blocking_errors_filters_out_warnings_and_info() -> None:
 
 
 def test_blocking_errors_rank_starts_at_one_independent_of_recommended_actions() -> None:
-    from pflow.core.cache_analysis.view_helpers import build_blocking_errors, build_recommended_actions
+    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors, build_recommended_actions
 
     warnings = [
         _make_diag("cache.order-mismatch", Severity.ERROR),
@@ -4078,7 +4080,7 @@ def test_build_blocking_errors_filters_non_cache_errors() -> None:
     clause from ``build_blocking_errors`` — the non-cache ERROR leaks back
     into the cache-domain list; this test fails.
     """
-    from pflow.core.cache_analysis.view_helpers import build_blocking_errors
+    from pflow.core.prompt_cache_analysis.view_helpers import build_blocking_errors
 
     non_cache_error = Diagnostic(
         severity=Severity.ERROR,
@@ -4106,7 +4108,7 @@ def test_build_other_blocking_errors_filters_cache_errors() -> None:
     clause from ``build_other_blocking_errors`` — the cache ERROR leaks
     into the Other list; this test fails.
     """
-    from pflow.core.cache_analysis.view_helpers import build_other_blocking_errors
+    from pflow.core.prompt_cache_analysis.view_helpers import build_other_blocking_errors
 
     non_cache_error = Diagnostic(
         severity=Severity.ERROR,
@@ -4139,12 +4141,12 @@ def test_effective_model_falls_back_to_workflow_default(monkeypatch: pytest.Monk
     lyrics-generator parent workflow's ``~2 LLM calls · 0 models in use`` bug
     re-appears.
     """
-    # ``pflow.core.cache_analysis.analyze`` resolves to the FUNCTION via
+    # ``pflow.core.prompt_cache_analysis.analyze`` resolves to the FUNCTION via
     # ``__init__.py``'s ``from .analyze import analyze`` re-export, shadowing the
     # submodule. Reach the actual module via ``sys.modules`` for monkeypatch.
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(
         analyze_module,
         "get_default_workflow_model",
@@ -4169,7 +4171,7 @@ def test_effective_model_explicit_wins_over_default(monkeypatch: pytest.MonkeyPa
     """Per-node ``model:`` always wins; default is only the fallback."""
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "should-not-be-used")
     workflow_ir = {
         "nodes": [
@@ -4194,7 +4196,7 @@ def test_effective_model_empty_when_no_default_resolved(monkeypatch: pytest.Monk
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
@@ -4217,7 +4219,7 @@ def test_summary_message_zero_llm_nodes() -> None:
     distinct; re-conflating them lets the zero-LLM message mention LLM
     nodes.
     """
-    from pflow.core.cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.render_text import _render_summary
 
     workflow_ir = {"nodes": [{"id": "shell", "type": "shell", "params": {"command": "echo"}}]}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
@@ -4238,9 +4240,9 @@ def test_summary_message_no_model_resolved(monkeypatch: pytest.MonkeyPatch) -> N
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.render_text import _render_summary
 
     workflow_ir = {
         "nodes": [
@@ -4261,18 +4263,18 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
     ``current_cost_per_run_usd`` is None (output tokens unavailable) AND
     aggregate savings is None (no shared context detected).
     """
-    # ``pflow.core.cache_analysis.analyze`` resolves to the FUNCTION via
+    # ``pflow.core.prompt_cache_analysis.analyze`` resolves to the FUNCTION via
     # ``__init__.py``'s ``from .analyze import analyze`` re-export, shadowing the
     # submodule. Reach the actual module via ``sys.modules`` for monkeypatch.
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(
         analyze_module,
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
-    from pflow.core.cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.render_text import _render_summary
 
     # Single LLM node — no shared context → no aggregate-savings → falls into
     # the third sub-branch.
@@ -4302,7 +4304,7 @@ def test_suggested_run_command_populated_for_workflow_with_inputs(
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(
         analyze_module,
         "get_default_workflow_model",
@@ -4345,13 +4347,13 @@ def test_render_text_emits_suggested_line_on_unavailable_cost_branch(
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(
         analyze_module,
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
-    from pflow.core.cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.render_text import _render_summary
 
     workflow_ir = {
         "inputs": {"article": {"type": "string"}},
@@ -4378,7 +4380,7 @@ def test_heterogeneous_model_detected_end_to_end(monkeypatch: pytest.MonkeyPatch
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
@@ -4421,7 +4423,7 @@ def test_heterogeneous_model_excluded_from_pricing_aggregation(monkeypatch: pyte
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
     # All-heterogeneous workflow — every row is unpriceable.
     workflow_ir = {
@@ -4455,9 +4457,9 @@ def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.cache_analysis.render_text import _render_summary
+    from pflow.core.prompt_cache_analysis.render_text import _render_summary
 
     workflow_ir = {
         "nodes": [
@@ -4484,9 +4486,9 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     workflow_ir = {
         "nodes": [
@@ -4512,9 +4514,9 @@ def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch)
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
-    from pflow.core.cache_analysis.render_text import render_text
+    from pflow.core.prompt_cache_analysis.render_text import render_text
 
     workflow_ir = {
         "nodes": [
@@ -4552,7 +4554,7 @@ def test_format_cost_names_single_unpriced_model() -> None:
     phrasing ``"all 1 models lack pricing data"`` would not let the agent
     tell which model from the summary alone.
     """
-    from pflow.core.cache_analysis.render_text import _format_cost
+    from pflow.core.prompt_cache_analysis.render_text import _format_cost
 
     rendered = _format_cost(value=None, partial=False, unavailable_models=("ollama/llama3.2:8b",))
 
@@ -4567,7 +4569,7 @@ def test_format_cost_keeps_plural_phrasing_for_multiple_unpriced() -> None:
     ``_render_summary`` when ``partial_cost_usd``) lists them all, so this
     line stays terse.
     """
-    from pflow.core.cache_analysis.render_text import _format_cost
+    from pflow.core.prompt_cache_analysis.render_text import _format_cost
 
     rendered = _format_cost(
         value=None,
@@ -5606,7 +5608,7 @@ class _NodeMemoStub:
 
 
 def _batch_edge(*, parent_input_value: Any = "${item.concept_brief}") -> Any:
-    from pflow.core.cache_analysis.cross_workflow import CrossWorkflowEdge
+    from pflow.core.prompt_cache_analysis.cross_workflow import CrossWorkflowEdge
 
     return CrossWorkflowEdge(
         parent_workflow="/abs/parent.pflow.md",
@@ -5627,7 +5629,7 @@ def test_resolve_child_input_value_propagates_via_batch_alias() -> None:
     ``_resolve_child_input_value``; this test fails because ``${item...}``
     remains unresolved.
     """
-    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
 
     parent_ir = {
         "nodes": [
@@ -5662,7 +5664,7 @@ def test_resolve_child_input_value_returns_none_when_batch_items_unresolvable() 
     alias; this test fails because unresolved runtime values stop returning
     ``None``.
     """
-    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
 
     parent_ir = {
         "nodes": [
@@ -5685,7 +5687,7 @@ def test_resolve_child_input_value_handles_inline_static_batch_items() -> None:
     Mutation contract: only handle template-string ``items``; this test fails
     because literal-list batches no longer propagate child parameters.
     """
-    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
 
     parent_ir = {
         "nodes": [
@@ -5710,9 +5712,9 @@ def test_resolve_child_input_value_swallows_batch_items_resolve_exceptions(
     Mutation contract: remove the ``try/except`` around batch-items template
     resolution; this test fails by raising the injected exception.
     """
-    from pflow.core.cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     parent_ir = {
         "nodes": [
@@ -5740,9 +5742,9 @@ def test_build_parameters_by_workflow_propagates_batch_alias_child_input() -> No
     Mutation contract: keep the old caller that passes ``edge.parent_input_value``
     instead of the edge; this test fails because batch-alias metadata is lost.
     """
-    from pflow.core.cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
+    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
 
     fixtures_dir = Path("tests/fixtures/cache_analysis").resolve()
     parent_path = fixtures_dir / "batch-alias-parent.pflow.md"
@@ -5777,8 +5779,8 @@ def test_build_parameters_by_workflow_uses_trace_batch_item_when_items_expr_unre
     ``_resolve_first_batch_item``; this test fails because the child workflow
     receives no propagated ``brief`` parameter.
     """
-    from pflow.core.cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
+    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     parent_path = "/abs/parent.pflow.md"
@@ -5844,7 +5846,7 @@ def test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch(tmp_pat
     ``_build_per_call_row``; this test fails because the row's
     ``could_cache`` projection returns to unavailable/tiny chunk-only evidence.
     """
-    from pflow.core.cache_analysis.token_estimation import estimate_tokens
+    from pflow.core.prompt_cache_analysis.token_estimation import estimate_tokens
 
     model = "anthropic/claude-haiku-4-5"
     prefix = "Shared rubric:\n" + ("stable context sentence. " * 300)
@@ -5915,9 +5917,9 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
     ``batch_size_estimated``; this test fails because dynamic ``batch.items:
     ${items}`` rows have no static size even when trace observed repeated calls.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
-    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
+    token_estimation_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
     monkeypatch.setattr(
         token_estimation_module,
@@ -6006,7 +6008,7 @@ def test_batch_prefix_cacheable_does_not_inflate_to_100pct_when_prefix_is_trunca
     row's ``cache_ratio_pct`` jumps back to 100 and
     ``cacheable_tokens_estimated`` equals ``input_tokens_estimated``.
     """
-    from pflow.core.cache_analysis.token_estimation import estimate_tokens
+    from pflow.core.prompt_cache_analysis.token_estimation import estimate_tokens
 
     model = "anthropic/claude-haiku-4-5"
     prefix_before_item_ref = "Brief intro:\n" + ("stable sentence. " * 5)
@@ -6054,7 +6056,7 @@ def test_batch_prefix_prewarm_action_respects_explicit_prewarm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
 
@@ -6081,7 +6083,7 @@ def test_batch_prefix_prewarm_action_respects_explicit_opt_out(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
 
@@ -6108,7 +6110,7 @@ def test_batch_prefix_prewarm_action_suppresses_low_call_count(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
 
@@ -6289,7 +6291,7 @@ def test_tier2_chunk_cacheable_stays_per_call_for_repeated_non_batch_trace_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2 chunk estimates use the same per-call units as trace input."""
-    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    token_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
     monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 123 if ref == "context" else None)
 
     workflow_path = str(tmp_path / "repeated-non-batch.pflow.md")
@@ -6344,7 +6346,7 @@ def test_tier2_chunk_cacheable_single_call_remains_per_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    token_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
     monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 123 if ref == "context" else None)
 
     workflow_path = str(tmp_path / "single-non-batch.pflow.md")
@@ -6389,7 +6391,7 @@ def test_tier2_chunk_cacheable_unresolved_repeated_row_stays_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    token_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    token_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
     monkeypatch.setattr(token_module, "_estimate_ref_tokens", lambda _ref, **_kwargs: None)
 
     workflow_path = str(tmp_path / "unresolved-repeated.pflow.md")
@@ -6512,8 +6514,8 @@ def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:
     suppressed, and the root params dict stays byte-identical to its
     input.
     """
-    from pflow.core.cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
+    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     a_path = "/abs/a.pflow.md"
@@ -6823,7 +6825,7 @@ def test_format_fidelity_skip_note_is_single_source_of_truth() -> None:
     - Inline the helper at any emit site (bypassing the SSoT) → those notes
       drift from the rest; the integration tests for that site fail.
     """
-    from pflow.core.cache_analysis.analyze import _format_fidelity_skip_note
+    from pflow.core.prompt_cache_analysis.analyze import _format_fidelity_skip_note
 
     # Default (applicable=True): "skipped for" prefix.
     note = _format_fidelity_skip_note("x.pflow.md", "workflow failed to compile")
@@ -6854,7 +6856,7 @@ def test_skipped_workflows_note_single_renders_plain_english() -> None:
     Mutation contract: drop the ``len(paths) == 1`` branch → this test fails
     (renders the multi-summary phrasing for one workflow).
     """
-    from pflow.core.cache_analysis.analyze import _format_skipped_workflows_note
+    from pflow.core.prompt_cache_analysis.analyze import _format_skipped_workflows_note
 
     note = _format_skipped_workflows_note(["song-creator.pflow.md"])
     # Plain-English framing with the workflow named.
@@ -6877,7 +6879,7 @@ def test_skipped_workflows_note_multi_collapses_to_summary() -> None:
     Mutation contract: revert _predict_one_workflow to call ``notes.append``
     directly → 3 separate lines instead of one summary; this test fails.
     """
-    from pflow.core.cache_analysis.analyze import _format_skipped_workflows_note
+    from pflow.core.prompt_cache_analysis.analyze import _format_skipped_workflows_note
 
     paths = [
         "/abs/song-creator/review-rhyme.pflow.md",
@@ -6906,7 +6908,7 @@ def test_skipped_workflows_note_multi_truncates_at_five_with_overflow_marker() -
     """L-4: more than 5 skipped workflows show ``+N more`` suffix to keep the
     note bounded.
     """
-    from pflow.core.cache_analysis.analyze import _format_skipped_workflows_note
+    from pflow.core.prompt_cache_analysis.analyze import _format_skipped_workflows_note
 
     paths = [f"/abs/wf-{i}.pflow.md" for i in range(8)]
     note = _format_skipped_workflows_note(paths)
@@ -6937,7 +6939,7 @@ def test_predict_cache_keys_memo_empty_note_uses_plain_english() -> None:
     Mutation contract: revert the new wording in ``_predict_cache_keys`` →
     the negative assertions fail.
     """
-    from pflow.core.cache_analysis.analyze import _predict_cache_keys
+    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
 
     ctx = AnalysisContext.build(
         workflow_ir={"nodes": []},
@@ -6978,7 +6980,7 @@ def test_predict_cache_keys_aggregates_skip_notes_via_production_path() -> None:
     """
     from types import SimpleNamespace
 
-    from pflow.core.cache_analysis.analyze import _predict_cache_keys
+    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
 
     # 3 sub-workflows each declaring inputs but with no params resolved.
     irs = {
@@ -7035,8 +7037,8 @@ def test_dynamic_batches_note_single_keeps_legacy_phrasing() -> None:
     Mutation contract: drop the ``len(batches) == 1`` branch → this test
     fails (renders the multi-summary phrasing for one batch).
     """
-    from pflow.core.cache_analysis.analyze import _format_dynamic_batches_note
-    from pflow.core.cache_analysis.cross_workflow import DynamicBatchInfo
+    from pflow.core.prompt_cache_analysis.analyze import _format_dynamic_batches_note
+    from pflow.core.prompt_cache_analysis.cross_workflow import DynamicBatchInfo
 
     note = _format_dynamic_batches_note((
         DynamicBatchInfo(
@@ -7062,8 +7064,8 @@ def test_dynamic_batches_note_multi_collapses_to_summary() -> None:
     return per-batch strings) → this test fails because the listing
     enumeration disappears.
     """
-    from pflow.core.cache_analysis.analyze import _format_dynamic_batches_note
-    from pflow.core.cache_analysis.cross_workflow import DynamicBatchInfo
+    from pflow.core.prompt_cache_analysis.analyze import _format_dynamic_batches_note
+    from pflow.core.prompt_cache_analysis.cross_workflow import DynamicBatchInfo
 
     batches = (
         DynamicBatchInfo(
@@ -7098,7 +7100,7 @@ def test_dynamic_batches_note_returns_none_for_empty_input() -> None:
     the helper returns ``None`` so workflows without runtime batches don't
     pick up an empty Note line.
     """
-    from pflow.core.cache_analysis.analyze import _format_dynamic_batches_note
+    from pflow.core.prompt_cache_analysis.analyze import _format_dynamic_batches_note
 
     assert _format_dynamic_batches_note(()) is None
 
@@ -7175,7 +7177,7 @@ def test_parent_origin_clause_surfaces_rename_and_hides_passthrough() -> None:
       - Drop the ``not expr`` guard → None/empty case returns ``"flows in from
         parent as `${None}`"`` or similar; this test fails.
     """
-    from pflow.core.cache_analysis.analyze import _parent_origin_clause, _SubWorkflowCacheCandidate
+    from pflow.core.prompt_cache_analysis.analyze import _parent_origin_clause, _SubWorkflowCacheCandidate
 
     def _make(parent_value_expr: str | None, child_input_name: str) -> _SubWorkflowCacheCandidate:
         return _SubWorkflowCacheCandidate(
@@ -7456,7 +7458,7 @@ def test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow(
         the ``trace_root != lookup_path`` gate) → tree-wide sum is lost; the
         $0.10 child cost gets filtered out; assertion fails.
     """
-    import pflow.core.cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"
@@ -7518,7 +7520,7 @@ def test_configured_prewarm_projection_uses_cumulative_declared_tokens() -> None
     to ``batch_prefix_tokens`` — matching ``_strip_below_min_cache_markers``
     which counts cumulatively across system blocks then user-message blocks.
     """
-    from pflow.core.cache_analysis.analyze import _configured_prewarm_projection_component
+    from pflow.core.prompt_cache_analysis.analyze import _configured_prewarm_projection_component
 
     base = {
         "model": "anthropic/claude-sonnet-4-5",

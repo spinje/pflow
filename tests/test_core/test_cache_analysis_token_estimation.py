@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis.context import AnalysisContext
-from pflow.core.cache_analysis.token_estimation import (
+from pflow.core.prompt_cache_analysis.context import AnalysisContext
+from pflow.core.prompt_cache_analysis.token_estimation import (
     _find_llm_event,
     estimate_cacheable_tokens,
     estimate_tokens,
@@ -104,7 +104,7 @@ def test_heuristic_when_text_is_none_and_warning_emitted(
 ) -> None:
     """text=None must NOT crash — falls through to heuristic with logger.warning
     (review-silent-failures W2: a model-name typo deserves visibility)."""
-    caplog.set_level(logging.WARNING, logger="pflow.core.cache_analysis.token_estimation")
+    caplog.set_level(logging.WARNING, logger="pflow.core.prompt_cache_analysis.token_estimation")
     count, source = estimate_tokens("claude-sonnet-4-5", None)  # type: ignore[arg-type]
     assert source == "heuristic"
     assert count == 0  # heuristic on None falls back to len("") // 4
@@ -241,7 +241,7 @@ def test_memo_tier_reachable_via_default_construct_in_analyze(tmp_path: Any, mon
     to fall back to ``"estimator"`` (or ``"heuristic"`` for the unknown-model
     case) — this assertion catches it.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
     from pflow.runtime.cache import MemoizationCache
 
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
@@ -293,7 +293,7 @@ def test_memo_tier_falls_back_gracefully_when_cache_db_absent(tmp_path: Any, mon
     Locks the load-bearing read-only invariant: analyze is a pure function of
     the workflow + optional state; it never mutates disk.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
 
@@ -665,7 +665,7 @@ def test_cacheable_tier_2_memo_sums_resolved_chunk_tokens(monkeypatch: pytest.Mo
         return {"a": 100, "b": 200}.get(ref)
 
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation._estimate_ref_tokens",
         _fake_estimate,
     )
     memo = _FakeMemoCache({"some": "data"})
@@ -694,7 +694,7 @@ def test_cacheable_tier_2_for_declared_partial_memo_falls_through_to_unavailable
         return 100 if ref == "a" else None  # b has no data
 
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation._estimate_ref_tokens",
         _fake_estimate,
     )
     memo = _FakeMemoCache({"some": "data"})
@@ -773,7 +773,7 @@ def test_cacheable_tier_2_short_circuits_when_model_empty(monkeypatch: pytest.Mo
         return 100  # would return data if called — but Tier 2 short-circuits
 
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation._estimate_ref_tokens",
         _fake_estimate,
     )
     memo = _FakeMemoCache({"some": "data"})
@@ -825,7 +825,7 @@ def test_cacheable_tier_2_partial_memo_position_independent_falls_through_to_una
         return {"a": 100, "b": None, "c": 200}.get(ref)
 
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation._estimate_ref_tokens",
         _fake_estimate,
     )
     memo = _FakeMemoCache({"some": "data"})
@@ -855,7 +855,7 @@ def test_cacheable_tier_2_for_candidate_with_full_memo_fires(monkeypatch: pytest
         return {"a": 50, "b": 75}.get(ref)
 
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation._estimate_ref_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation._estimate_ref_tokens",
         _fake_estimate,
     )
     memo = _FakeMemoCache({"some": "data"})
@@ -908,8 +908,8 @@ def test_estimate_cacheable_tokens_uses_parameters_for_workflow_input_ref() -> N
     Tier 2 dispatch must light up the parameters-tier projection;
     otherwise cacheable falls through to Tier 3 / 4 unavailable.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
-    from pflow.core.cache_analysis.token_estimation import estimate_cacheable_tokens
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.token_estimation import estimate_cacheable_tokens
 
     workflow_ir = {"inputs": {"context": {"type": "string"}}}
     ctx = AnalysisContext.build(
@@ -937,7 +937,7 @@ def test_resolve_ref_value_workflow_input_wins_over_memo() -> None:
     The agent's ``--inputs`` represent their CURRENT question; memo from a
     prior run with different inputs MUST NOT override.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     class FakeMemo:
         def get_latest_for_node(self, node_id, *, workflow_path=None):  # type: ignore[no-untyped-def]
@@ -962,7 +962,7 @@ def test_resolve_ref_value_returns_none_for_empty_string() -> None:
     signaling "we have a real value." Returning None pushes the caller to
     Tier-4 unavailable.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     workflow_ir = {"inputs": {"context": {"type": "string"}}}
     ctx = AnalysisContext.build(
@@ -988,7 +988,7 @@ def test_estimate_tokens_marks_partial_when_unresolved_refs_present() -> None:
     couldn't be substituted), the source label shifts to
     ``"estimator-partial"`` so agents see the lower confidence.
     """
-    from pflow.core.cache_analysis.token_estimation import estimate_tokens
+    from pflow.core.prompt_cache_analysis.token_estimation import estimate_tokens
 
     tokens, source = estimate_tokens(
         "anthropic/claude-sonnet-4-5",

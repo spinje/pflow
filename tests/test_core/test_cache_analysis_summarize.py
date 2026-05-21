@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from pflow.core.cache_analysis.analyze import (
+from pflow.core.diagnostic import Severity
+from pflow.core.prompt_cache_analysis.cost_estimation import CostTier
+from pflow.core.prompt_cache_analysis.summarize import summarize, summarize_from_analysis
+from pflow.core.prompt_cache_analysis.types import (
     AnalysisSummary,
     CacheAnalysis,
     CostDelta,
     CrossWorkflowFindings,
 )
-from pflow.core.cache_analysis.cost_estimation import CostTier
-from pflow.core.cache_analysis.summarize import summarize, summarize_from_analysis
-from pflow.core.diagnostic import Severity
 
 
 def _build_actionable_warnings(n: int) -> tuple:
@@ -21,7 +21,7 @@ def _build_actionable_warnings(n: int) -> tuple:
     counter and the live diagnostic list agree. Pitfall #19: counter-only
     fixtures bypass the real code path.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     return tuple(
         make_diagnostic(
@@ -147,7 +147,7 @@ def test_dry_run_nudge_counts_rendered_prose_mismatch_boundary_findings() -> Non
     message would render ``0`` and return ``None`` instead of the visible prose
     mismatch.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     prose_diag = make_diagnostic(
         "cache.cross-workflow-prose-mismatch",
@@ -174,7 +174,7 @@ def test_dry_run_nudge_excludes_renames_from_actionable_count() -> None:
     """Rename diagnostics are emitted for JSON consumers but text-silent, so the
     dry-run nudge must stay silent when no rendered opportunities exist.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     rename_diags = tuple(
         make_diagnostic(

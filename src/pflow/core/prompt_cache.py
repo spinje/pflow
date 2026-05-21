@@ -3,7 +3,7 @@
 Frozen IR types and shared rendering helpers used at three sites:
 - ``runtime/engine/plan_node.py`` — hash-time chunk rendering.
 - ``nodes/llm/llm.py`` — message-time chunk rendering (C1.2).
-- ``core/cache_analysis/analyze.py`` — predicted cache_key rendering (F2).
+- ``core/prompt_cache_analysis/analyze.py`` — predicted cache_key rendering (F2).
 
 This module sits in ``core/`` because it is reachable from all three layers
 without violating ``nodes/`` -> ``runtime/`` import policy. Helpers

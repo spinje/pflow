@@ -407,7 +407,7 @@ class ExecutionService(BaseService):
                 provided via parameters) cannot be loaded. Pre-rendered
                 rich text matching the CLI surface.
         """
-        from pflow.core.cache_analysis import analyze, render_json
+        from pflow.core.prompt_cache_analysis import analyze, render_json
 
         validated_params: dict[str, Any] = {}
         if parameters:

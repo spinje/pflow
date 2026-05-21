@@ -30,9 +30,9 @@ from typing import Any
 
 import pytest
 
-import pflow.core.cache_analysis.cost_estimation as cost_estimation_module
-from pflow.core.cache_analysis.analyze import PerCallRow, ProjectionExclusion, analyze
-from pflow.core.cache_analysis.cost_estimation import (
+import pflow.core.prompt_cache_analysis.cost_estimation as cost_estimation_module
+from pflow.core.prompt_cache_analysis.analyze import analyze
+from pflow.core.prompt_cache_analysis.cost_estimation import (
     ModelPricing,
     _aggregate_with_cache_projection,
     _pricing_from_dict,
@@ -42,6 +42,7 @@ from pflow.core.cache_analysis.cost_estimation import (
     compute_projections,
     get_model_pricing,
 )
+from pflow.core.prompt_cache_analysis.types import PerCallRow, ProjectionExclusion
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 
@@ -1094,7 +1095,7 @@ def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None
     ``(None, "unavailable")`` would force the recompute fallback to
     fabricate a fictional cost based on tokens x rate.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     trace = {
         "format_version": "2.1.0",
@@ -1121,7 +1122,7 @@ def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:
     sub_workflow_events in the parent's cost would double-count + leak
     sub-workflow cost into parent attribution.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     trace = {
         "format_version": "2.1.0",
@@ -1156,7 +1157,7 @@ def test_cost_usd_for_node_returns_trace_partial_when_some_leaves_unpriced() -> 
     Without the 4-state distinction, agents can't tell pure trace from
     mixed.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     trace = {
         "format_version": "2.1.0",

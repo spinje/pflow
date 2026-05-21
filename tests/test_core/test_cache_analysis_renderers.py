@@ -18,11 +18,14 @@ from typing import Any, cast
 
 import pytest
 
-from pflow.core.cache_analysis import (
+from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.prompt_cache_analysis import (
     render_json,
     render_text,
 )
-from pflow.core.cache_analysis.analyze import (
+from pflow.core.prompt_cache_analysis.analyze import _format_workflow_run_command
+from pflow.core.prompt_cache_analysis.cost_estimation import CostTier
+from pflow.core.prompt_cache_analysis.types import (
     AnalysisSummary,
     CacheAnalysis,
     CostDelta,
@@ -33,11 +36,8 @@ from pflow.core.cache_analysis.analyze import (
     SubWorkflowRollup,
     SubWorkflowRollupEntry,
     TraceUnexecutedLLMRow,
-    _format_workflow_run_command,
     invocation_count_for,
 )
-from pflow.core.cache_analysis.cost_estimation import CostTier
-from pflow.core.diagnostic import Diagnostic, Severity
 
 
 def _make_analysis(
@@ -370,7 +370,7 @@ class TestMakeAnalysisShapeParity:
         )
 
     def test_documented_defaults_get_overwritten_by_production(self, tmp_path: Path) -> None:
-        from pflow.core.cache_analysis.analyze import analyze
+        from pflow.core.prompt_cache_analysis.analyze import analyze
         from pflow.execution.workflow_resolver import resolve_workflow
         from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
@@ -576,7 +576,7 @@ def test_json_format_version_present_and_first_key() -> None:
     line in ``render_json`` makes this test fail with the package constant
     diff so the regression class is observable.
     """
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+    from pflow.core.prompt_cache_analysis import JSON_FORMAT_VERSION
 
     result = render_json(_make_analysis())
     assert "format_version" in result
@@ -605,9 +605,9 @@ def test_json_summary_emits_suggested_run_command() -> None:
 
 
 def test_json_summary_includes_ir_default_model_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     analysis = analyze(
         {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
@@ -619,9 +619,9 @@ def test_json_summary_includes_ir_default_model_when_set(monkeypatch: pytest.Mon
 
 
 def test_json_summary_ir_default_model_null_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
     analysis = analyze(
         {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
@@ -811,7 +811,7 @@ def test_text_summary_greenfield_cost_note_drops_pflow_internals() -> None:
     the old wording; both negative assertions fire — "memo cache" and
     "2.1.0 trace" return to the rendered output.
     """
-    from pflow.core.cache_analysis.analyze import AnalysisSummary
+    from pflow.core.prompt_cache_analysis.types import AnalysisSummary
 
     # Greenfield path: no current cost, but first-run delta is set so the
     # branch fires.
@@ -846,7 +846,7 @@ def test_text_summary_priced_with_savings_branch_emits_suggested_line() -> None:
     locks the upstream "Absolute cost figures need a prior run" message
     that this branch precedes.
     """
-    from pflow.core.cache_analysis.analyze import AnalysisSummary
+    from pflow.core.prompt_cache_analysis.types import AnalysisSummary
 
     base = _make_analysis(workflow_path="/abs/x.pflow.md")
     summary = AnalysisSummary(**{
@@ -895,8 +895,8 @@ def test_text_summary_renders_blocking_errors_categorically() -> None:
     ``_append_summary_counts``; this test fails because "1 error blocking"
     no longer appears.
     """
-    from pflow.core.cache_analysis.analyze import AnalysisSummary
     from pflow.core.diagnostic import Diagnostic, Severity
+    from pflow.core.prompt_cache_analysis.types import AnalysisSummary
 
     base = _make_analysis()
     summary = AnalysisSummary(**{
@@ -925,7 +925,7 @@ def test_text_summary_omits_blocking_line_when_no_errors() -> None:
     Mutation test: change the conditional to an unconditional emission;
     this test fails on a greenfield analysis.
     """
-    from pflow.core.cache_analysis.analyze import AnalysisSummary
+    from pflow.core.prompt_cache_analysis.types import AnalysisSummary
 
     base = _make_analysis()
     summary = AnalysisSummary(**{
@@ -951,7 +951,7 @@ def test_text_renders_suggested_block_placeholder_verbatim() -> None:
     skip ``chunk.prose_placeholder`` (e.g. emit a hardcoded string instead);
     this test fails because the placeholder is missing from output.
     """
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -994,7 +994,7 @@ def test_analyze_emits_starter_prose_placeholder_end_to_end() -> None:
     test drives analyze() so the production placeholder shape is what
     flows into the assertion.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
     # Two LLM nodes referencing the same input so ``_populate_suggested_blocks``
     # detects shared context and emits a SuggestedBlock with a chunk for ``topic``.
@@ -1035,7 +1035,7 @@ def test_starter_prose_for_dotted_path_renders_field_from_node() -> None:
     ``creative-direction.response`` would render as
     ``The creative-direction.response:`` instead.
     """
-    from pflow.core.cache_analysis.analyze import _starter_prose_for_ref
+    from pflow.core.prompt_cache_analysis.analyze import _starter_prose_for_ref
 
     assert _starter_prose_for_ref("concept") == "The concept:"
     assert _starter_prose_for_ref("concept_brief") == "The concept brief:"
@@ -1052,7 +1052,7 @@ def test_text_suggested_block_intro_explains_starter_prose_audience() -> None:
     Mutation test: drop the intro lines from ``_render_suggested_blocks``;
     every assertion below fires.
     """
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -1090,7 +1090,7 @@ def test_text_suggested_block_documents_ttl_allowed_values() -> None:
     surfacing the accepted pflow syntax beside the generated ``- ttl:`` line
     prevents authoring-time guesses.
     """
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -1284,7 +1284,7 @@ def test_text_truncated_trace_labels_executed_scope() -> None:
 
 
 def test_json_truncated_trace_exposes_evidence_scope_and_observed_models(tmp_path: Path) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
     wf_path = str(tmp_path / "x.pflow.md")
@@ -1366,7 +1366,7 @@ def test_json_truncated_trace_exposes_evidence_scope_and_observed_models(tmp_pat
 
 
 def test_json_summary_exposes_projection_exclusions_and_delta_reason(tmp_path: Path) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
     workflow_ir = {
         "nodes": [
@@ -1876,7 +1876,7 @@ def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
     renders ``0``, fresh agents reading a sub-workflow analyzed standalone
     misread it as "this node never runs".
     """
-    from pflow.core.cache_analysis.render_text import _cell_calls
+    from pflow.core.prompt_cache_analysis.render_text import _cell_calls
 
     row_unobserved = PerCallRow(
         node_path="generate",
@@ -1953,9 +1953,9 @@ def test_header_discloses_ir_default_when_overridden_by_trace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(
@@ -1976,9 +1976,9 @@ def test_header_does_not_disclose_when_ir_matches_observed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(
@@ -1996,9 +1996,9 @@ def test_header_does_not_disclose_when_ir_matches_observed(
 
 
 def test_header_does_not_disclose_when_no_observed(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
@@ -2019,9 +2019,9 @@ def test_trace_mode_attaches_delta_parenthetical_to_actually_paid_line(
     Mutation contract: restoring the deleted ``_render_trace_deltas`` →
     a separate ``Actual cost delta`` line reappears.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(
@@ -2061,9 +2061,9 @@ def test_trace_mode_parentheticals_use_consistent_baseline_phrase(
     may be unavailable, but the rerun delta is still computed). The
     legacy ``Actual trace delta:`` label must NOT reappear.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
     priced = analyze(
         {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
@@ -2153,9 +2153,9 @@ def test_truncated_trace_attaches_parentheticals_without_executed_suffix(
     ``Cost on first run`` cost line in trace mode at all), so we just
     confirm the legacy label doesn't appear.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
     workflow_ir = {
         "nodes": [
@@ -2228,7 +2228,7 @@ def test_actual_savings_falls_back_to_unavailable_when_no_priced_rows_remain(tmp
     elif branch doesn't fire → the ``Actual cost delta (this run):`` label
     disappears from text → assertion fails.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
     workflow_ir = {
         "nodes": [
@@ -2311,8 +2311,8 @@ def test_format_delta_parenthetical_translates_baseline_identifier_to_human_phra
     reappears for the known producer value, this test fails on the explicit
     ``not in`` assertion.
     """
-    from pflow.core.cache_analysis.analyze import CostDelta
-    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.types import CostDelta
 
     savings = CostDelta(
         amount_usd=0.10,
@@ -2362,8 +2362,8 @@ def test_format_delta_parenthetical_drops_dollar_and_excluded_nodes() -> None:
     Mutation contract: re-add a dollar amount or ``(excludes ...)`` qualifier
     to ``_format_delta_parenthetical`` → these ``not in`` assertions fail.
     """
-    from pflow.core.cache_analysis.analyze import CostDelta
-    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.types import CostDelta
 
     with_excludes = CostDelta(
         amount_usd=0.49,
@@ -2386,8 +2386,8 @@ def test_format_delta_parenthetical_unavailable_returns_empty() -> None:
     percentage as the load-bearing signal, so without it there's nothing
     useful to render.
     """
-    from pflow.core.cache_analysis.analyze import CostDelta
-    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.types import CostDelta
 
     unavailable = CostDelta(
         amount_usd=None,
@@ -2414,8 +2414,8 @@ def test_format_delta_parenthetical_break_even_returns_neutral_phrase() -> None:
     reading the cost line knows the delta WAS computed (vs. ``unavailable``
     which means we couldn't compute it). Different signal from absent.
     """
-    from pflow.core.cache_analysis.analyze import CostDelta
-    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.types import CostDelta
 
     break_even = CostDelta(
         amount_usd=0.0,
@@ -2434,8 +2434,8 @@ def test_format_delta_parenthetical_local_cache_reuse_qualifier() -> None:
     with pflow's local memo cache. Without the qualifier the agent might
     over-attribute savings to provider caching alone.
     """
-    from pflow.core.cache_analysis.analyze import CostDelta
-    from pflow.core.cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.render_text import _format_delta_parenthetical
+    from pflow.core.prompt_cache_analysis.types import CostDelta
 
     delta = CostDelta(
         amount_usd=0.1,
@@ -2461,7 +2461,7 @@ def test_baseline_labels_map_covers_every_producer_value() -> None:
     (``"no_cache_hypothetical_usd"``); if a new value is added without
     updating ``_BASELINE_LABELS``, this test fires.
     """
-    from pflow.core.cache_analysis.render_text import _BASELINE_LABELS
+    from pflow.core.prompt_cache_analysis.render_text import _BASELINE_LABELS
 
     producer_values = {
         "no_cache_hypothetical_usd",
@@ -2477,9 +2477,9 @@ def test_fragmentation_grouping_uses_effective_model_in_trace_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.cache_analysis.analyze"]
+    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     big_context = "shared context " * 3000
     workflow_ir = {
@@ -2718,7 +2718,7 @@ def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findi
     workflow-level finding renders with no scope line, indistinguishable
     from a fully-unscoped finding.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         # Workflow-scope finding (no node_id; affected_workflow is the path).
@@ -2756,7 +2756,7 @@ def test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_mu
     """Same-id per-node findings render as ``<node> in <workflow>`` when the
     warning context identifies different workflow files.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         make_diagnostic(
@@ -2785,7 +2785,7 @@ def test_text_recommended_actions_per_node_finding_includes_workflow_scope_in_mu
 
 def test_text_recommended_actions_single_workflow_omits_scope_suffix() -> None:
     """Root-workflow findings keep the old compact ``<node>`` scope line."""
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         make_diagnostic(
@@ -2812,7 +2812,7 @@ def test_shadow_warning_text_renders_cost_comparison_with_ratio() -> None:
     removed in Bundle 1 \u2014 they asserted "unused" (unprovable) and conceded
     a "different baseline" framing that F#1 reframing closed out.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warning = make_diagnostic(
         "cache.prompt-body-shadows-cache",
@@ -2841,7 +2841,7 @@ def test_json_recommended_actions_per_node_finding_carries_scope_workflow() -> N
     """JSON keeps both the symbol and its workflow location for consumers that
     dispatch on same-id nodes across parent/child workflows.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         make_diagnostic(
@@ -2981,7 +2981,7 @@ def test_text_recommended_actions_inline_label_passes_through() -> None:
     load-bearing contract is that ``<inline>`` survives intact (no
     accidental basename chopping).
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         make_diagnostic(
@@ -3062,7 +3062,7 @@ def test_text_recommended_actions_render_savings_with_adaptive_precision() -> No
     Stage 0: warnings are built via ``make_diagnostic``; ``recommended_actions``
     is renderer-derived via ``view_helpers.build_recommended_actions``.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         # Sub-cent savings (0.0012) — renders with 4-decimal precision.
@@ -3147,7 +3147,7 @@ def test_batch_prewarm_recommended_discloses_wall_clock_tradeoff() -> None:
     the "measure end-to-end duration" guidance already covers the same
     reasoning agents would do on Gemini.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.batch-prewarm-recommended",
@@ -3185,7 +3185,7 @@ def test_batch_prewarm_lower_bound_renders_at_least_savings_and_verification() -
     formatter; this test fails because the text says ``saves`` or
     ``savings unavailable`` instead of the lower-bound wording.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     priced = make_diagnostic(
         "cache.batch-prewarm-lower-bound-recommended",
@@ -3226,7 +3226,7 @@ def test_batch_prewarm_below_min_renders_prewarm_remediation_not_declared_cache(
     Agents reading this ID have NO ``prompt_cache:`` declaration to remove,
     so leaking declared-cache vocabulary would mislead.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.batch-prewarm-below-min",
@@ -3304,7 +3304,7 @@ def _make_sub_workflow_cache_diag(
     child_workflow: str = "/abs/child.pflow.md",
 ) -> Diagnostic:
     """Build the child-scoped sub-workflow cache diagnostic."""
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     child_basename = child_workflow.rsplit("/", 1)[-1] if "/" in child_workflow else child_workflow
     return make_diagnostic(
@@ -3404,7 +3404,7 @@ def test_text_cross_workflow_section_uses_sub_workflow_boundaries_header() -> No
     fails because the agent-facing section name regresses to internal pflow
     architecture jargon.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.cross-workflow-prose-mismatch",
@@ -3478,7 +3478,7 @@ def test_indent_message_preserves_blank_lines() -> None:
     ``_indent_message`` and the blank-indented row between the prose lines
     disappears, this assertion fails.
     """
-    from pflow.core.cache_analysis.render_text import _indent_message
+    from pflow.core.prompt_cache_analysis.render_text import _indent_message
 
     rendered = _indent_message("alpha\n\nbeta", prefix=">>>")
 
@@ -3560,7 +3560,7 @@ def test_text_cross_workflow_prose_mismatch_finding_full_format() -> None:
     Layout: ``Prose mismatches in <parent>:`` header + per-finding entry with
     child basename + chunk name + the two prose values labeled.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.cross-workflow-prose-mismatch",
@@ -3596,7 +3596,7 @@ def test_text_per_node_assignments_render_as_pflow_md_syntax() -> None:
     (``f"    {node_id}: {assignment}"``); this test fails because Python
     repr brackets/quotes return.
     """
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -3634,7 +3634,7 @@ def test_text_per_node_assignments_include_order_warning() -> None:
     Mutation test: drop the explainer block from ``_render_suggested_blocks``;
     this test fails because the order-warning text disappears.
     """
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -3779,7 +3779,7 @@ def test_shared_chunks_csv_typed_alias_in_make_diagnostic() -> None:
     the message renders ``{shared_chunks_csv}`` literally (KeyError-free
     because str.format is permissive — but the typed alias would be missing).
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.shared-context-undeclared",
@@ -4078,7 +4078,7 @@ def test_text_does_NOT_render_all_warnings_section() -> None:
     branch to ``render_text()``; this test fails because "## All warnings"
     re-appears in the text output.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.shared-context-undeclared",
@@ -4118,7 +4118,7 @@ def test_text_brownfield_error_diagnostic_visible_in_blocking_errors_not_recomme
     triggers ``cache.order-mismatch``, then asserts the diagnostic survives
     in Blocking errors and is absent from Recommended actions.
     """
-    from pflow.core.cache_analysis import analyze
+    from pflow.core.prompt_cache_analysis import analyze
 
     workflow_ir = {
         "ir_version": "0.1.0",
@@ -5086,7 +5086,7 @@ def test_render_text_unpriced_model_includes_child_workflow_attribution() -> Non
 def test_render_json_includes_rollup_workflow_paths_and_unavailable_models_by_workflow(
     tmp_path: Path,
 ) -> None:
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
     from tests.shared.markdown_utils import write_workflow_file
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
@@ -5186,7 +5186,7 @@ def test_discrepancy_message_includes_workflow_scope() -> None:
     ``workflow_path_short`` so the rendered message names the child
     scope (``draft in child``).
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.discrepancy",
@@ -5222,7 +5222,7 @@ def test_json_emits_root_and_sub_workflow_llm_node_counts() -> None:
     """
     from pathlib import Path
 
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
     from pflow.execution.workflow_resolver import resolve_workflow
 
     fixture_dir = Path("tests/fixtures/cache_analysis")
@@ -5262,7 +5262,7 @@ def test_suggested_block_carries_prompt_body_cleanup_for_greenfield() -> None:
     ref in ## Cache AND surface that the same ref still appears in each
     node's prompt body (so agents pasting the suggestion know to also
     remove the inline reference)."""
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
     workflow_ir = {
         "inputs": {"concept": {"type": "string"}},
@@ -5306,7 +5306,7 @@ def test_declared_cache_workflow_does_not_emit_suggested_blocks_note() -> None:
     ``_skip_suggested_blocks_for_declared_cache``; this test fails because
     the literal returns to the rendered Notes section.
     """
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
     workflow_ir = {
         "inputs": {"concept": {"type": "string"}},
@@ -5347,7 +5347,7 @@ def test_suggested_block_skips_prompt_body_cleanup_when_cache_already_declared()
     so prompt_body_cleanup never gets populated. Pins the documented scope
     boundary (Phase 2 covers greenfield only; brownfield is covered by the
     Phase 1 validator ERROR at validate time)."""
-    from pflow.core.cache_analysis.analyze import analyze
+    from pflow.core.prompt_cache_analysis.analyze import analyze
 
     workflow_ir = {
         "inputs": {"concept": {"type": "string"}},
@@ -5379,7 +5379,7 @@ def test_suggested_block_skips_prompt_body_cleanup_when_cache_already_declared()
 def test_render_text_emits_also_remove_from_prompt_body_line() -> None:
     """Renderer surfaces the cleanup hint inline under each
     ``- prompt_cache: [...]`` line."""
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -5408,7 +5408,7 @@ def test_render_text_omits_cleanup_line_when_no_overlaps() -> None:
     """When prompt_body_cleanup is empty for a node, the renderer does NOT
     emit the cleanup line — keeps the suggested block clean for greenfield
     workflows that don't need cleanup."""
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -5437,7 +5437,7 @@ def test_render_json_includes_prompt_body_cleanup_key() -> None:
     """JSON shape carries ``prompt_body_cleanup`` per suggested block (MCP
     consumers read the same shape; agents acting on suggested_blocks[] see
     the cleanup hint without round-tripping through the text renderer)."""
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -5465,7 +5465,7 @@ def test_render_json_includes_prompt_body_cleanup_key() -> None:
 
 
 def test_render_text_includes_per_node_threshold_statuses() -> None:
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -5529,7 +5529,7 @@ def test_render_text_includes_per_node_threshold_statuses() -> None:
 
 
 def test_render_json_includes_per_node_thresholds() -> None:
-    from pflow.core.cache_analysis.analyze import SuggestedBlock, SuggestedBlockChunk
+    from pflow.core.prompt_cache_analysis.types import SuggestedBlock, SuggestedBlockChunk
 
     block = SuggestedBlock(
         target_file="/abs/x.pflow.md",
@@ -5626,7 +5626,7 @@ def test_recommended_actions_drops_ordered_by_impact_when_no_savings() -> None:
     next to "savings unavailable" lose trust in the ranking. Mutation contract:
     hardcode header to the qualified form → this test fails.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         make_diagnostic(
@@ -5647,7 +5647,7 @@ def test_recommended_actions_keeps_ordered_by_impact_when_priced() -> None:
 
     Mutation contract: hardcode header to unqualified → this test fails.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         make_diagnostic(
@@ -5670,7 +5670,7 @@ def test_recommended_actions_keeps_ordered_by_impact_when_priced() -> None:
 
 def _rename_diag(*, source: str, target: str, parent: str, child: str, line: int):
     """Build a single ``cache.cross-workflow-rename-detected`` diagnostic."""
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     return make_diagnostic(
         "cache.cross-workflow-rename-detected",
@@ -5684,7 +5684,7 @@ def _rename_diag(*, source: str, target: str, parent: str, child: str, line: int
 
 
 def _prose_mismatch_diag(*, parent: str, child: str, chunk: str):
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     return make_diagnostic(
         "cache.cross-workflow-prose-mismatch",
@@ -5705,7 +5705,7 @@ def test_summary_renders_section_mapped_counts_when_both_present() -> None:
     "recommended action" / "cross-workflow boundary finding" no longer
     appear and the agent can't anchor to either downstream section.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     warnings = [
         make_diagnostic(
@@ -5756,8 +5756,8 @@ def test_summary_renders_blocking_only_when_no_opportunities() -> None:
     count line); this test fails because ``0 recommended actions`` would
     leak under the blocking line.
     """
-    from pflow.core.cache_analysis.analyze import AnalysisSummary
     from pflow.core.diagnostic import Diagnostic, Severity
+    from pflow.core.prompt_cache_analysis.types import AnalysisSummary
 
     base = _make_analysis()
     summary = AnalysisSummary(**{**base.summary.__dict__, "blocking_errors": 1})
@@ -5877,7 +5877,7 @@ def test_recommended_actions_header_includes_count() -> None:
     Mutation contract: drop ``count`` from either branch in
     ``_render_recommended_actions``; this test fails on the relevant case.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     # No-savings branch: ``(N)`` only.
     no_savings = [
@@ -6158,11 +6158,11 @@ def test_renderer_never_emits_cd_commands() -> None:
     ``_display_edit_target``. Both already anchor at cwd.
 
     Mutation contract: re-add a ``lines.append(f"    cd ...")`` shape to
-    any renderer module under ``cache_analysis/``; this test fails because
+    any renderer module under ``prompt_cache_analysis/``; this test fails because
     the literal string ``"    cd "`` reappears in production rendering
     source.
     """
-    cache_analysis_dir = Path(__file__).resolve().parents[2] / "src" / "pflow" / "core" / "cache_analysis"
+    cache_analysis_dir = Path(__file__).resolve().parents[2] / "src" / "pflow" / "core" / "prompt_cache_analysis"
     forbidden = re.compile(r'["\']\s{0,8}cd\s+[^"\']*["\']')
     offenders: list[str] = []
     for source_file in sorted(cache_analysis_dir.glob("*.py")):

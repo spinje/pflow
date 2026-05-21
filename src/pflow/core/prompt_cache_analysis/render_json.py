@@ -20,7 +20,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 
-from .analyze import (
+from .types import (
     CacheAnalysis,
     CacheProjection,
     CacheProjectionComponent,
@@ -58,7 +58,7 @@ def render_json(analysis: CacheAnalysis) -> dict[str, Any]:
     actions = build_recommended_actions(list(analysis.warnings))
     return {
         # First key — agents version-gate via ``startswith(MAJOR + ".")`` per
-        # the consumer rule documented in ``cache_analysis/__init__.py``.
+        # the consumer rule documented in ``prompt_cache_analysis/__init__.py``.
         "format_version": JSON_FORMAT_VERSION,
         "workflow_path": analysis.workflow_path,
         "analyzed_at": analysis.analyzed_at,

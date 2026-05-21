@@ -13,7 +13,7 @@ This is the most common source of agent confusion. Read this before anything els
 | **Memoization** (pflow's local cache layer) | `cache: bool` (default `true`; `false` opts out) | `runtime/cache.py` `MemoizationCache` (SQLite at `~/.pflow/cache/cache.db`) | Memo hits skip re-execution entirely |
 | **LLM provider prompt cache** (Anthropic / OpenAI / Gemini) | `prompt_cache: [name1, name2, ...]` (subset of `## Cache` block) | `prompt_cache.py` (renders content blocks with `cache_control` markers); LiteLLM adapter at `llm_client.py` emits to provider | Provider serves cached prefix; pflow still calls the LLM |
 
-**This package (`cache_analysis/`) is exclusively about the second.** The CLI flag `--no-cache` controls *memoization* — orthogonal to this package's analysis.
+**This package (`prompt_cache_analysis/`) is exclusively about the second.** The CLI flag `--no-cache` controls *memoization* — orthogonal to this package's analysis.
 
 The two layers interact at one point: declared `prompt_cache` content is conditionally included in the memoization config-hash so that workflows upgraded to declare prompt caching produce a fresh memo cache_key (not a stale hit on a cached output computed without the prompt prefix).
 
@@ -30,7 +30,7 @@ The discrepancy stage in `analyze.py` predicts **memo config-hashes** (not provi
 ## Module Structure
 
 ```
-src/pflow/core/cache_analysis/
+src/pflow/core/prompt_cache_analysis/
 ├── __init__.py                  # public API re-exports
 ├── analyze.py                   # orchestrator + 13 frozen dataclasses + algorithm clusters (largest module — task 160 will split)
 ├── context.py                   # AnalysisContext (immutable input bundle)
@@ -223,7 +223,7 @@ The discrepancy stage and the actually-paid cost path read trace 2.1.0 fields th
 | `event["cache_source"]` (`"memo"` \| `"in_process"`) | `runtime/engine/instrumentation.py::apply_memo_hit`, `write_memo_cache`, etc. | discrepancy diagnose; trace cost summation |
 | `event["cache_key"]` | same — the memo config-hash MD5 | discrepancy diagnose (compares predicted vs actual) |
 | `event["cache_age_sec"]` (cache-hit events only) | `apply_memo_hit` | consumed by `trace_report.py` for "Result age" display (memo replay age only — NOT a provider-TTL signal) |
-| `trace["workflow_path"]` | `runtime/workflow_trace.py::WorkflowTraceCollector` (constructor accepts it; saved to JSON unconditionally) | autoload matching by `cache_analysis.analyze:_autoload_trace`; cross-trace correlation |
+| `trace["workflow_path"]` | `runtime/workflow_trace.py::WorkflowTraceCollector` (constructor accepts it; saved to JSON unconditionally) | autoload matching by `prompt_cache_analysis.analyze:_autoload_trace`; cross-trace correlation |
 
 Auto-load silently skips when the trace's root-level LLM `(node_id, model)` context drifts from the current IR. This mirrors the existing silent format-version / workflow-path miss behavior: `analyze-cache <workflow.pflow.md>` falls back to greenfield analysis, while explicit `--from-trace <path>` bypasses the drift gate. Sub-workflow drift is root-scoped out here; run `analyze-cache <child.pflow.md>` directly to catch child workflow changes.
 
@@ -241,7 +241,7 @@ There is no duplicate predictor. `create_planner_shared` was originally `_create
 
 **Lazy imports in the discrepancy cluster are intentional.** `_build_predict_scaffold` lazy-imports `compile_workflow`, `Registry`, `create_planner_shared`, `plan_node`. These are lazy because:
 
-- `cache_analysis.__init__` re-exports `summarize`, called on every `pflow run --dry-run`.
+- `prompt_cache_analysis.__init__` re-exports `summarize`, called on every `pflow run --dry-run`.
 - LiteLLM (transitively imported by the runtime modules) costs ~700ms to load.
 - Eager runtime imports would slow every dry-run by ~700ms.
 

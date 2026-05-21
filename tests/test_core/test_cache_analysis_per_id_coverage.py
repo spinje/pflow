@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis.warning_catalog import (
+from pflow.core.prompt_cache_analysis.warning_catalog import (
     CACHE_OPPORTUNITIES_NUDGE_ID,
     CACHE_WARNING_CATALOG,
     EXPECTED_CATALOG_COUNT,
@@ -447,7 +447,7 @@ def test_analyze_rehydrates_catalog_warnings_from_trace(tmp_path: Any) -> None:
     the static analyzer. Trace replay is therefore the production boundary that
     keeps those IDs observable after the run that produced them.
     """
-    from pflow.core.cache_analysis import analyze
+    from pflow.core.prompt_cache_analysis import analyze
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
     workflow_path = str(tmp_path / "trace-replay.pflow.md")
@@ -549,14 +549,14 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     - ``analyze`` → ``cache.below-min-predicted``, ``cache.prewarm-no-prefix``
     - ``summarize_from_analysis`` → ``cache.opportunities-available``
     """
-    from pflow.core.cache_analysis import analyze, summarize_from_analysis
-    from pflow.core.cache_analysis.cost_estimation import ModelPricing
+    from pflow.core.prompt_cache_analysis import analyze, summarize_from_analysis
+    from pflow.core.prompt_cache_analysis.cost_estimation import ModelPricing
     from pflow.core.workflow.data_flow import validate_data_flow
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
-    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
-    cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
+    token_estimation_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
+    cost_module = importlib.import_module("pflow.core.prompt_cache_analysis.cost_estimation")
     monkeypatch.setattr(
         analyze_module,
         "estimate_tokens",
@@ -1262,7 +1262,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
 
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
 
     # cache.sub-workflow-cache-undeclared: parent passes a value into a child
     # workflow that has repeated LLM consumers but no child-local ## Cache.

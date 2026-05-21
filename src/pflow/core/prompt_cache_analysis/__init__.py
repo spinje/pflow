@@ -137,10 +137,11 @@ from __future__ import annotations
 
 from typing import Final
 
-from .analyze import CacheAnalysis, TraceListEntry, analyze, list_traces_for_workflow
+from .analyze import analyze, list_traces_for_workflow
 from .render_json import render_json
 from .render_text import render_text
 from .summarize import summarize, summarize_from_analysis
+from .types import CacheAnalysis, TraceListEntry
 
 JSON_FORMAT_VERSION: Final[str] = "5.0"
 """Version string emitted as the first key by ``render_json``.

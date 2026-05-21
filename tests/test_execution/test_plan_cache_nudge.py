@@ -114,9 +114,9 @@ def test_nudge_failure_does_not_break_dry_run(tmp_path: Path, monkeypatch: pytes
         raise RuntimeError("synthetic analyzer crash")
 
     # Monkeypatch the analyze function used by the nudge builder.
-    import pflow.core.cache_analysis
+    import pflow.core.prompt_cache_analysis
 
-    monkeypatch.setattr(pflow.core.cache_analysis, "analyze", _boom)
+    monkeypatch.setattr(pflow.core.prompt_cache_analysis, "analyze", _boom)
 
     runner = WorkflowRunner()
     # Should NOT raise.

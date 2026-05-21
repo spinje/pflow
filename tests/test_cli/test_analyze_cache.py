@@ -278,7 +278,7 @@ def test_analyze_cache_text_format_default(tmp_path: Path) -> None:
 
 def test_analyze_cache_json_format(tmp_path: Path) -> None:
     """JSON output shape locked."""
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+    from pflow.core.prompt_cache_analysis import JSON_FORMAT_VERSION
 
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
     runner = CliRunner(mix_stderr=False)
@@ -1066,9 +1066,9 @@ def test_internal_analyzer_crash_exits_nonzero_no_silent_json(tmp_path: Path, mo
 
     monkeypatch.setattr("pflow.cli.commands.analyze_cache.analyze", _boom, raising=False)
     # Patch through the module path that the CLI's lazy import binds.
-    import pflow.core.cache_analysis
+    import pflow.core.prompt_cache_analysis
 
-    monkeypatch.setattr(pflow.core.cache_analysis, "analyze", _boom)
+    monkeypatch.setattr(pflow.core.prompt_cache_analysis, "analyze", _boom)
 
     runner = CliRunner(mix_stderr=False)
     result = runner.invoke(cli, ["analyze-cache", str(workflow_path), "--format=json"])

@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING
 from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
 
-from .analyze import PerCallRow, ProjectionExclusion, invocation_count_for
+from .types import PerCallRow, ProjectionExclusion, invocation_count_for
 
 if TYPE_CHECKING:
     from pflow.core.trace_tree import TraceTree

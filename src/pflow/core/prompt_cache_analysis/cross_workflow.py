@@ -190,7 +190,7 @@ def walk_cross_workflow(
     outset so cycles back to the root (A → B → A) are detected at the
     cycle-check in :func:`_process_one_call` and the back-edge is suppressed.
     Without this seed the back-edge enters ``cw_result.edges`` and downstream
-    consumers like :func:`pflow.core.cache_analysis.analyze._build_parameters_by_workflow`
+    consumers like :func:`pflow.core.prompt_cache_analysis.analyze._build_parameters_by_workflow`
     mutate the root parameter dict.
     """
     resolver = resolve_child or resolve_sub_workflow
@@ -285,7 +285,7 @@ def _maybe_record_dynamic_batch(
 ) -> None:
     """Record one entry per template-items workflow batch encountered.
 
-    The walker is a data primitive (per ``cache_analysis/CLAUDE.md``); it
+    The walker is a data primitive (per ``prompt_cache_analysis/CLAUDE.md``); it
     collects facts and the analyzer formats user-facing prose. Recording
     typed entries here lets the analyzer emit ONE aggregated Note across all
     runtime batches in the workflow tree — replacing the per-batch prose

@@ -157,10 +157,10 @@ def _should_disable_below_min_prewarm(
     if not isinstance(prompt_raw, str):
         return False
 
-    from pflow.core.cache_analysis.below_min_tokens_detector import is_below_min_cache, provider_note
-    from pflow.core.cache_analysis.context import AnalysisContext
-    from pflow.core.cache_analysis.token_estimation import tokenize_prompt_region_lower_bound
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.below_min_tokens_detector import is_below_min_cache, provider_note
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.token_estimation import tokenize_prompt_region_lower_bound
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
     from pflow.core.prompt_refs import first_per_item_position
 
     alias = config.batch_config.item_alias

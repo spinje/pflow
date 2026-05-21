@@ -1015,8 +1015,8 @@ def _emit_prompt_body_overlap_diagnostics(
     # already loaded at module top, but the lazy form keeps this module's
     # import surface unchanged for callers that don't exercise the cache
     # validation path.
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
     from pflow.core.cache_overlap import _batch_aliases, compute_overlaps
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     prompt_text = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt_text, str) or not prompt_text:
@@ -1160,7 +1160,7 @@ def _validate_thinking_temperature_compatibility(
     # Lazy import: keeps catalog import out of the validator hot path
     # (``data_flow.py`` runs on every workflow validation including
     # ones that never touch LLM nodes).
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     affected_workflow = workflow_path or "<unknown>"
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from .analyze import TraceListEntry
 from .render_text import _format_recorded_timestamp
+from .types import TraceListEntry
 
 
 def _format_duration(duration_ms: float | None) -> str:

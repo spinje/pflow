@@ -1,6 +1,7 @@
 """Unit tests for the below-min prompt-cache detectors."""
 
-from pflow.core.cache_analysis.below_min_tokens_detector import (
+from pflow.core.llm_capabilities import CONSERVATIVE_FLOOR
+from pflow.core.prompt_cache_analysis.below_min_tokens_detector import (
     BatchPrewarmBelowMinEvidence,
     BelowMinTokensEvidence,
     detect,
@@ -8,7 +9,6 @@ from pflow.core.cache_analysis.below_min_tokens_detector import (
     is_below_min_cache,
     is_likely_below_min_cache,
 )
-from pflow.core.llm_capabilities import CONSERVATIVE_FLOOR
 
 
 def _evidence(**overrides: object) -> BelowMinTokensEvidence:

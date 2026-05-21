@@ -41,7 +41,8 @@ from typing import Any
 
 from pflow.core.diagnostic import CACHE_ADVISORY_CATEGORY, Diagnostic, Severity
 
-from .analyze import CacheAnalysis, analyze
+from .analyze import analyze
+from .types import CacheAnalysis
 from .warning_catalog import CACHE_OPPORTUNITIES_NUDGE_ID, format_dry_run_nudge
 
 

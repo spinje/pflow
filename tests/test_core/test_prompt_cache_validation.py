@@ -941,7 +941,7 @@ def test_byte_identical_to_make_diagnostic_output() -> None:
 
     Single test; both IDs covered via a parametrized loop inside.
     """
-    from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
+    from pflow.core.prompt_cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
 
     overlap_ids = ("cache.prompt-body-duplicates-cache", "cache.prompt-body-shadows-cache")
     for warning_id in overlap_ids:

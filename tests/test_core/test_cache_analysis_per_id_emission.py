@@ -17,12 +17,13 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis.analyze import CrossWorkflowInputContribution, analyze
-from pflow.core.cache_analysis.cost_estimation import ModelPricing
-from pflow.core.cache_analysis.render_json import render_json
-from pflow.core.cache_analysis.render_text import render_text
 from pflow.core.file_resolver import resolve_file_references
 from pflow.core.markdown_parser import parse_markdown
+from pflow.core.prompt_cache_analysis.analyze import analyze
+from pflow.core.prompt_cache_analysis.cost_estimation import ModelPricing
+from pflow.core.prompt_cache_analysis.render_json import render_json
+from pflow.core.prompt_cache_analysis.render_text import render_text
+from pflow.core.prompt_cache_analysis.types import CrossWorkflowInputContribution
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 from pflow.core.workflow.validator import WorkflowValidator
 
@@ -64,8 +65,8 @@ def _patch_pricing(
     ``missing_chunks`` makes ``_estimate_ref_tokens`` return ``None`` for those
     chunk names (drives "any shared chunk None → skip emit" path).
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    cost_module = importlib.import_module("pflow.core.prompt_cache_analysis.cost_estimation")
     missing = missing_models or set()
     missing_chunk_set = missing_chunks or set()
 
@@ -84,9 +85,9 @@ def _patch_pricing(
 
 @pytest.fixture(autouse=True)
 def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
-    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
+    token_estimation_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", _word_count)
     # Mirror the patch in token_estimation.py — analyze.py-resident callers
     # see the first; token_estimation.py-resident callers (``_estimate_ref_tokens``,
@@ -382,7 +383,7 @@ def test_batch_prewarm_below_min_fires_when_prefix_truncated_below_provider_min(
     the analyzer-patched stub at 10), so the real Sonnet-4-5 threshold of
     1024 applies. A ~5-token prefix is honestly below it.
     """
-    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
+    below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
     capabilities_module = importlib.import_module("pflow.core.llm_capabilities")
     monkeypatch.setattr(below_min_module, "get_min_cache_tokens", capabilities_module.get_min_cache_tokens)
 
@@ -933,7 +934,7 @@ def test_dynamic_before_static_treats_indirected_declared_chunk_as_static() -> N
 
 
 def test_padding_advisory_uses_dotted_path_subset(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
     workflow_ir = {
         "cache": {
@@ -977,7 +978,7 @@ def test_padding_advisory_uses_dotted_path_subset(monkeypatch: pytest.MonkeyPatc
 def test_shared_context_undeclared_populates_suggested_block_with_dotted_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
@@ -1046,7 +1047,7 @@ def test_shared_context_undeclared_conditional_fires_for_greenfield_smoke_value(
     Mutation contract: deleting the BELOW_THRESHOLD branch in
     ``_populate_suggested_blocks`` makes this conditional warning disappear.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
 
     analysis = analyze(
@@ -1085,7 +1086,7 @@ def test_shared_context_undeclared_conditional_silent_when_value_clears_threshol
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Above-threshold values keep the confident sibling as the only action."""
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
 
     analysis = analyze(
@@ -1105,7 +1106,7 @@ def test_shared_context_undeclared_conditional_silent_when_value_clears_threshol
 def test_shared_context_undeclared_conditional_silent_when_evidence_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
 
     analysis = analyze(
@@ -1150,7 +1151,7 @@ def test_shared_context_undeclared_conditional_silent_for_single_node() -> None:
 
 
 def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "cache": {
             "items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "Parent prose\n"}]
@@ -1186,7 +1187,7 @@ def test_cross_workflow_prose_mismatch_fires_for_dotted_path(monkeypatch: pytest
 
 def test_sub_workflow_cache_undeclared_emits_for_reused_child_input(monkeypatch: pytest.MonkeyPatch) -> None:
     """A child workflow with repeated LLM consumers needs its own ## Cache."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -1263,10 +1264,10 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_memo(
     # The autouse ``deterministic_tokens`` fixture patches ``_input_rate`` to
     # always return None for determinism — override locally to exercise the
     # priced path. Mirrors the pattern at line 178 etc.
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -1329,10 +1330,10 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
     → this fails (savings drops to None because memo is empty).
     """
     # See sibling test for the rationale on overriding the autouse fixture.
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -1448,10 +1449,10 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_node_invo
     walk to, and no memo is provided).
     """
     # See sibling test for the rationale on overriding the autouse fixture.
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -1566,7 +1567,7 @@ def test_sub_workflow_cache_undeclared_savings_none_when_unpriced_model(
     """
     from pflow.runtime.cache import MemoizationCache
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -1617,10 +1618,10 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_parameter
     """
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "string"}},
         "nodes": [
@@ -1674,10 +1675,10 @@ def test_sub_workflow_cache_undeclared_parameters_win_over_memo(
     """Current parameters must beat stale memo for the same input root."""
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "string"}},
         "nodes": [
@@ -1742,10 +1743,10 @@ def test_sub_workflow_cache_undeclared_savings_populated_via_walker_propagated_p
     """Tier 0 uses walker-propagated parameters for non-root boundaries."""
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     root_ir = {
         "inputs": {"shared": {"type": "string"}},
         "nodes": [
@@ -1831,11 +1832,11 @@ def test_sub_workflow_cache_undeclared_below_threshold_warns_and_drops_savings(
     # the SOLE reason savings is None) and ``get_min_cache_tokens`` to 10
     # (we need a value larger than the fixture's tokenized size so 200 tokens
     # are below threshold).
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -1904,10 +1905,10 @@ def test_sub_workflow_cache_undeclared_above_threshold_keeps_savings_and_no_clau
     """
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -1972,7 +1973,7 @@ def test_sub_workflow_cache_undeclared_unmeasurable_keeps_clause_empty(
     ``tokens is None`` guard in ``_below_threshold_clause``) → this fails (the
     empty-clause assertion below trips).
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -2016,7 +2017,7 @@ def test_sub_workflow_cache_undeclared_unmeasurable_keeps_clause_empty(
 
 def test_sub_workflow_cache_undeclared_suppresses_when_no_llm_consumers(monkeypatch: pytest.MonkeyPatch) -> None:
     """No child LLM consumers means no child-cache recommendation."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -2038,7 +2039,7 @@ def test_sub_workflow_cache_undeclared_suppresses_when_no_llm_consumers(monkeypa
 
 def test_sub_workflow_cache_undeclared_suppresses_single_child_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
     """A single child LLM consumer has no repeated-read cache leverage."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -2073,7 +2074,7 @@ def test_sub_workflow_cache_undeclared_emits_for_batch_item_input(monkeypatch: p
     Mutation test: reintroduce the old ``is_batch_alias_root`` suppression in
     ``_sub_workflow_cache_candidate`` and this warning disappears.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -2133,7 +2134,7 @@ def test_sub_workflow_cache_undeclared_emits_one_diagnostic_per_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One value flowing to N children creates N child-scoped edits."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     # Names match across the boundary (parent_value_expr.last_segment == child_input_name)
     # so this exercises the VALUE-FLOW branch, not the rename branch. Renames
     # have separate detection logic + their own evidence-basis suppression.
@@ -2204,7 +2205,7 @@ def test_sub_workflow_cache_undeclared_emits_one_diagnostic_per_child(
 
 def test_sub_workflow_cache_undeclared_tracks_child_input_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sub-paths passed to different child inputs produce child-input edits."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     # Use child_input_name == last_segment(parent_value_expr) to avoid the
     # rename branch — names match across the boundary.
     parent_ir = {
@@ -2286,7 +2287,7 @@ def test_sub_workflow_cache_undeclared_tracks_child_input_names(monkeypatch: pyt
 
 def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
     """Parent ## Cache blocks are not inherited by sub-workflows."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "ir_version": "0.1.0",
         # Declare ``concept`` as a workflow input so the ## Cache chunk
@@ -2358,7 +2359,7 @@ def test_parent_cache_declaration_does_not_suppress_child_recommendation(monkeyp
     assert found[0].context is not None
     assert found[0].context["affected_workflow"] == "/abs/child.pflow.md"
     assert found[0].context["inputs"][0]["child_input_name"] == "concept"
-    from pflow.core.cache_analysis.render_json import render_json
+    from pflow.core.prompt_cache_analysis.render_json import render_json
 
     payload = render_json(result)
     warning = next(w for w in payload["warnings"] if w.get("id") == "cache.sub-workflow-cache-undeclared")
@@ -2378,7 +2379,7 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
     test fails because a 1-consumer/2-call boundary either loses the
     recommendation or falls back to unavailable per-call attribution.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "string"}},
         "nodes": [
@@ -2472,7 +2473,7 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
     Mutation contract: change the row projection combinator from ``sum`` to
     ``max``; this test fails because the row drops from 50 to 30 tokens.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
         "nodes": [
@@ -2563,7 +2564,7 @@ def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
     instead of only observed consumers; this test fails because the unreached
     ``review`` row claims a ``could_cache`` value for a branch that did not run.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "string"}},
         "nodes": [
@@ -2657,9 +2658,9 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
     the first child model; this test fails because the low-threshold first node
     admits a projection that the stricter second node could not cache.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda model: 100 if model == "strict/model" else 10)
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "string"}},
         "nodes": [
@@ -2729,9 +2730,9 @@ def test_sub_workflow_cache_undeclared_groups_multiple_inputs_per_child(
     Mutation contract: restore per-input emission and this test fails with two
     diagnostics instead of one child-scoped diagnostic.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
         "nodes": [
@@ -2818,9 +2819,9 @@ def test_sub_workflow_cache_undeclared_case_model_switch(
     sibling ``test_sub_workflow_case_uses_per_call_not_cohort`` fails because
     it engineers a case where per-call < 1024 but cohort > 1024.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 2000)
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
         "nodes": [
@@ -2912,8 +2913,8 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
     per_call_prefix_tokens by call count before comparing to threshold) and
     this test fails with case=actionable/model_switch instead of refactor.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     # Threshold = 4096, MODEL_SWITCH_BAND = 1024.
     # We engineer: per-call ~500 tokens (below 1024 → refactor under correct math),
     # 10 calls in trace → cohort ~5000 (above 4096 → buggy "actionable").
@@ -2996,8 +2997,8 @@ def test_sub_workflow_cache_undeclared_splits_mixed_consumer_cases(
     the body text to pick one representative token count, producing nonsense
     like "~8,504 tokens per call, below the 1,024-token minimum".
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1024)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
@@ -3101,7 +3102,7 @@ def test_sub_workflow_cache_undeclared_case_unmeasurable_no_resolved_consumer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If no child consumer model resolves, the recommendation should say so."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -3142,7 +3143,7 @@ def test_sub_workflow_cache_undeclared_emits_cleanup_hint_when_body_uses_subpath
     "OR rewrite to literal text" alternative; this test fails on the rendered
     context strings.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -3208,7 +3209,7 @@ def test_sub_workflow_cache_undeclared_emits_cleanup_hint_when_body_uses_subpath
 
 def test_sub_workflow_cache_undeclared_direct_root_use_remains_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """Direct root prompt use still recommends the child input root."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "object"}},
         "nodes": [
@@ -3245,7 +3246,7 @@ def test_sub_workflow_cache_candidate_carries_parent_prose_from_matching_chunk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Parent prose is copied only when the parent chunk name exactly matches."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_prose = "Concept brief:\nUse the palette and narrator framing from the parent workflow.\n"
     parent_ir = {
         "inputs": {"concept_brief": {"type": "string"}},
@@ -3310,7 +3311,7 @@ def test_sub_workflow_cache_candidate_omits_parent_prose_for_subpath_when_parent
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Root parent prose must not be copied onto a narrower child subpath."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "object"}},
         "cache": {
@@ -3374,7 +3375,7 @@ def test_sub_workflow_cache_candidate_omits_prose_when_multiple_origins_disagree
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Ambiguous parent prose is flagged in JSON instead of choosing a winner."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept_a": {"type": "string"}, "concept_b": {"type": "string"}},
         "cache": {
@@ -3433,7 +3434,7 @@ def test_sub_workflow_cache_candidate_omits_prose_when_multiple_origins_disagree
 
 def test_sub_workflow_cache_undeclared_mixed_root_and_subpath_use(monkeypatch: pytest.MonkeyPatch) -> None:
     """Root use by one node must not collapse a subpath-only node to root."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "object"}},
         "nodes": [
@@ -3479,7 +3480,7 @@ def test_sub_workflow_cache_undeclared_mixed_root_and_subpath_use(monkeypatch: p
 
 def test_sub_workflow_cache_undeclared_maps_renamed_parent_subpath(monkeypatch: pytest.MonkeyPatch) -> None:
     """Parent-side token resolution follows the child suffix through renames."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"song": {"type": "object"}},
         "nodes": [
@@ -3535,7 +3536,7 @@ def test_sub_workflow_cache_undeclared_trace_fallback_resolves_child_suffix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Trace fallback tokenizes the used child suffix, not the full invocation input."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"song": {"type": "object"}},
         "nodes": [
@@ -3623,7 +3624,7 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Per-call projection uses the actual child cache ref, not the full input root."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "object"}},
         "cache": {
@@ -3734,7 +3735,7 @@ def test_sub_workflow_cache_undeclared_params_inputs_cleanup_uses_prompt_alias(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """`params.inputs` dealiasing should cache the source ref and clean the alias."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "object"}},
         "nodes": [
@@ -3779,7 +3780,7 @@ def test_sub_workflow_cache_undeclared_params_inputs_cleanup_uses_prompt_alias(
 
 def test_sub_workflow_cache_declaration_coverage_is_path_aware(monkeypatch: pytest.MonkeyPatch) -> None:
     """Declared ancestors suppress descendants without confusing similar names."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "object"}},
         "nodes": [
@@ -3823,7 +3824,7 @@ def test_sub_workflow_cache_declaration_coverage_is_path_aware(monkeypatch: pyte
 
 def test_child_cache_declaration_suppresses_child_recommendation(monkeypatch: pytest.MonkeyPatch) -> None:
     """A child-owned ## Cache declaration satisfies the child recommendation."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -3866,7 +3867,7 @@ def test_child_cache_recommendation_emits_only_for_undeclared_children(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When one receiving child declares the input, only the missing child is reported."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -3934,7 +3935,7 @@ def test_rename_warning_suppressed_for_batch_alias_root(monkeypatch: pytest.Monk
     batch-sub-workflow boundary in the lyrics-generator workflow (~6 false
     positives per parent run).
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     # Parent has a batch sub-workflow call; even with ## Cache declared (so
     # Suppression 2 doesn't fire), the batch-alias suppression must still
     # block the warning.
@@ -3967,7 +3968,7 @@ def test_rename_warning_suppressed_for_batch_alias_root(monkeypatch: pytest.Monk
 def test_rename_warning_suppressed_for_dotted_batch_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     """``${item.field}`` is also an iteration-variable reference (root segment
     is the batch alias). Same suppression applies."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "cache": {"items": [{"name": "x", "var": "x", "prose_before": "x:\n"}]},
         "nodes": [
@@ -4002,7 +4003,7 @@ def test_rename_warning_suppressed_when_neither_side_has_cache(monkeypatch: pyte
     this test fails — the warning fires on every cross-workflow rename in
     greenfield workflows (~17 false positives on lyrics-generator).
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -4036,7 +4037,7 @@ def test_rename_warning_FIRES_when_parent_has_cache(monkeypatch: pytest.MonkeyPa
 
     Locks the positive case so the suppression doesn't over-block.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "cache": {"items": [{"name": "concept_brief", "var": "concept_brief", "prose_before": "Brief:\n"}]},
         "nodes": [
@@ -4072,7 +4073,7 @@ def test_rename_warning_FIRES_when_child_has_cache(monkeypatch: pytest.MonkeyPat
     """Same rename, parent has no ``## Cache`` but child does — warning still
     fires because the child's prose label could end up diverging from a
     future parent declaration."""
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "nodes": [
             {
@@ -4142,7 +4143,7 @@ def test_discrepancy_fires_for_key_mismatch_when_prediction_available(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(
         analyze_module,
         "_predict_cache_keys",
@@ -4205,9 +4206,9 @@ def test_discrepancy_silent_when_prediction_skipped_sentinel_present(
     the chunk_skipped assert finds ``"__PREDICTION_SKIPPED__"`` in the
     context.
     """
-    from pflow.core.cache_analysis.context import _PREDICTION_SKIPPED
+    from pflow.core.prompt_cache_analysis.context import _PREDICTION_SKIPPED
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(
         analyze_module,
         "_predict_cache_keys",
@@ -4284,7 +4285,7 @@ def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affect
     node findings — agents see ``review`` instead of ``review in
     child.pflow.md`` and can't tell which file's ``## Cache`` block to edit.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"topic": {"type": "string"}},
         "nodes": [
@@ -4387,7 +4388,7 @@ def test_discrepancy_silent_when_actual_matches_prediction(
     Flipping ``< 5`` to ``> 95`` would emit cache.discrepancy on every
     healthy run.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(
         analyze_module,
         "_predict_cache_keys",
@@ -4480,7 +4481,7 @@ def test_discrepancy_silently_skips_when_actual_key_missing(
     Mutation contract: revert the ``actual_key is None`` clause of the gate
     and this emits a key_mismatch with predicted_key set, actual_key=None.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(
         analyze_module,
         "_predict_cache_keys",
@@ -4506,7 +4507,7 @@ def test_discrepancy_silently_skips_when_actual_key_missing(
 
 def test_attribute_root_cause_returns_chunk_skipped_for_truthy_chunks() -> None:
     """Sanity guard: ``_attribute_root_cause`` keeps the two-branch shape."""
-    from pflow.core.cache_analysis.analyze import _attribute_root_cause
+    from pflow.core.prompt_cache_analysis.analyze import _attribute_root_cause
 
     root_cause, summary, suggestion, extra = _attribute_root_cause(chunks_skipped=["X"])
     assert root_cause == "chunk_skipped"
@@ -4516,7 +4517,7 @@ def test_attribute_root_cause_returns_chunk_skipped_for_truthy_chunks() -> None:
 
 
 def test_attribute_root_cause_returns_key_mismatch_for_falsy_chunks() -> None:
-    from pflow.core.cache_analysis.analyze import _attribute_root_cause
+    from pflow.core.prompt_cache_analysis.analyze import _attribute_root_cause
 
     root_cause, summary, suggestion, extra = _attribute_root_cause(chunks_skipped=None)
     assert root_cause == "key_mismatch"
@@ -4548,8 +4549,8 @@ def test_predict_cache_keys_pads_partial_walker_params_no_schema_failure_note(tm
     """
     from types import SimpleNamespace
 
-    from pflow.core.cache_analysis.analyze import _predict_cache_keys
-    from pflow.core.cache_analysis.context import _PREDICTION_SKIPPED, AnalysisContext
+    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
+    from pflow.core.prompt_cache_analysis.context import _PREDICTION_SKIPPED, AnalysisContext
     from pflow.runtime.cache import MemoizationCache
 
     # Sub-workflow that declares two required inputs. Walker resolves
@@ -4617,7 +4618,7 @@ def test_build_predict_scaffold_silent_on_compile_failure() -> None:
     on scaffold-failure paths (the pre-fix shape) and the negative
     assertions below fail.
     """
-    from pflow.core.cache_analysis.analyze import _build_predict_scaffold
+    from pflow.core.prompt_cache_analysis.analyze import _build_predict_scaffold
 
     class _Stub:
         pass
@@ -4643,7 +4644,7 @@ def test_pad_inputs_for_prediction_preserves_walker_values_and_marks_missing() -
     unconditionally overwrite, and walker values get clobbered — the
     discrepancy stage's predicted cache_keys would never match the trace.
     """
-    from pflow.core.cache_analysis.analyze import _pad_inputs_for_prediction
+    from pflow.core.prompt_cache_analysis.analyze import _pad_inputs_for_prediction
 
     declared = {
         "brief": {"type": "string", "required": True},
@@ -4671,7 +4672,7 @@ def test_node_references_any_detects_cache_chunk_chain() -> None:
     as tainted — its predicted cache_key carries the placeholder bytes
     and never matches the trace.
     """
-    from pflow.core.cache_analysis.analyze import _dummied_cache_chunks, _node_references_any
+    from pflow.core.prompt_cache_analysis.analyze import _dummied_cache_chunks, _node_references_any
 
     workflow_ir = {
         "cache": {
@@ -4712,7 +4713,7 @@ def test_node_references_any_detects_inline_template_ref() -> None:
     ``_node_references_any`` and code-block inputs (``inputs: x: ${k}``)
     that reference dummied keys go undetected.
     """
-    from pflow.core.cache_analysis.analyze import _node_references_any
+    from pflow.core.prompt_cache_analysis.analyze import _node_references_any
 
     code_node = {
         "id": "build-items",
@@ -4747,7 +4748,7 @@ def test_build_predict_scaffold_injects_pflow_workflow_file() -> None:
     sub-workflows resolve against CWD, silently misresolving for any
     workflow not under the current directory.
     """
-    from pflow.core.cache_analysis.analyze import _build_predict_scaffold
+    from pflow.core.prompt_cache_analysis.analyze import _build_predict_scaffold
     from pflow.runtime.cache import MemoizationCache
 
     workflow_ir: dict[str, Any] = {
@@ -4851,7 +4852,7 @@ def test_cross_workflow_prose_mismatch_silent_when_prose_byte_equal(monkeypatch:
     (``parent_prose != child_prose``) at ``_cross_workflow_prose_mismatches``
     would emit prose-mismatch on every shared chunk — this test fails.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "cache": {
             "items": [{"name": "creative.direction", "var": "creative.direction", "prose_before": "Same prose\n"}]
@@ -4891,7 +4892,7 @@ def test_cross_workflow_prose_mismatch_suppressed_by_rename_precedence(
     in ``_cross_workflow_prose_mismatches`` would emit BOTH rename AND
     prose-mismatch on the same edge — this test fails.
     """
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     # Parent passes ``${concept_brief}`` to child as ``creative_brief``
     # (rename detected via tail-comparison) AND the child cache block has
     # different prose for the same chunk name.
@@ -4997,7 +4998,7 @@ def test_aggregate_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow()
     the deterministic-by-tuple version always picks the lex-smaller
     parent_workflow. The pre-fix code returned whichever was first seen.
     """
-    from pflow.core.cache_analysis.analyze import (
+    from pflow.core.prompt_cache_analysis.analyze import (
         _aggregate_sub_workflow_cache_candidates_by_child,
         _SubWorkflowCacheCandidate,
     )
@@ -5052,8 +5053,8 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
     leak ``affected_invocations`` to other diagnostics in the same group
     when ``make_diagnostic`` shares context refs.
     """
-    from pflow.core.cache_analysis.analyze import _aggregate_and_cap_discrepancies
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diags = [
         make_diagnostic(
@@ -5097,8 +5098,8 @@ def test_aggregator_caps_at_max_total_and_notes_truncation() -> None:
     count. Without the note, agents see a silently-truncated discrepancy
     list.
     """
-    from pflow.core.cache_analysis.analyze import _aggregate_and_cap_discrepancies
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diags = [
         make_diagnostic(
@@ -5122,7 +5123,7 @@ def test_aggregator_does_not_mutate_shared_context_refs() -> None:
     ``dataclasses.replace`` so the merged ``affected_invocations`` doesn't
     leak to siblings (which would silently misreport invocation counts).
     """
-    from pflow.core.cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.prompt_cache_analysis.analyze import _aggregate_and_cap_discrepancies
 
     shared_context = {"category": "cache_advisory", "root_cause": "key_mismatch"}
     from pflow.core.diagnostic import Diagnostic, Severity
@@ -5177,8 +5178,8 @@ def test_discrepancy_key_mismatch_via_real_planner_consumption(
     """
     import sqlite3
 
-    from pflow.core.cache_analysis.analyze import analyze as _analyze
     from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.prompt_cache_analysis.analyze import analyze as _analyze
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
     from pflow.runtime.cache import MemoizationCache
@@ -5301,13 +5302,13 @@ def test_predict_cache_keys_includes_sub_workflow_nodes(
     the entries, but a real memo exercises the same memo-aware path the
     analyzer hits in production).
     """
-    from pflow.core.cache_analysis.analyze import (
+    from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.prompt_cache_analysis.analyze import (
         _build_parameters_by_workflow,
         _predict_cache_keys,
     )
-    from pflow.core.cache_analysis.context import AnalysisContext
-    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
-    from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
     from pflow.runtime.cache import MemoizationCache
@@ -5389,7 +5390,7 @@ def test_predict_node_cache_key_returns_none_for_unresolvable_node_output_ref() 
     output isn't in shared. The per-node skip note must name the node so
     the agent can act on it.
     """
-    from pflow.core.cache_analysis.analyze import _predict_node_cache_key
+    from pflow.core.prompt_cache_analysis.analyze import _predict_node_cache_key
 
     # An ``upstream`` shell node exists (so the chunk's var passes parse-time
     # cache validation) but plan_node has no shared output for it because
@@ -5447,10 +5448,10 @@ def test_predict_cache_keys_byte_identical_to_runtime(
     """
     import sqlite3
 
-    from pflow.core.cache_analysis.analyze import _predict_cache_keys
-    from pflow.core.cache_analysis.context import AnalysisContext
-    from pflow.core.cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
     from pflow.runtime.cache import MemoizationCache
@@ -5516,8 +5517,8 @@ def test_analyze_cache_emits_discrepancy_for_sub_workflow_node_via_subprocess(
     only emitted ONE discrepancy because child.review's cache_key prediction
     was silently dropped on the BFS-downstream path.
     """
-    from pflow.core.cache_analysis.analyze import analyze
     from pflow.core.markdown_parser import parse_markdown
+    from pflow.core.prompt_cache_analysis.analyze import analyze
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
     from pflow.runtime.cache import MemoizationCache
@@ -5625,7 +5626,7 @@ def test_template_honest_default_keeps_subpaths_separate(monkeypatch: pytest.Mon
     your prompts actually reference; consolidation is opt-in via
     ``cache.consolidate-to-root-recommended``.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
@@ -5672,7 +5673,7 @@ def test_subpath_sort_clusters_siblings_by_root(monkeypatch: pytest.MonkeyPatch)
     drop the root-grouping dimension; this test fails because individual
     share counts scatter ``concept.angle`` away from its siblings.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
@@ -5719,7 +5720,7 @@ def test_consolidate_to_root_advisory_fires_for_brownfield_subpaths(monkeypatch:
     ``analyze()`` or revert the threshold check; this test fails because
     the advisory disappears.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     # Lock min-cache threshold deterministically.
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
     # Sub-paths return 5 tokens each; the root returns 200 tokens.
@@ -5770,7 +5771,7 @@ def test_consolidate_to_root_advisory_silent_when_subpath_already_above_threshol
     guard; this test fails because the advisory fires despite the sub-path
     being self-sufficient.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
     # core_idea = 200 (above threshold); title = 5; root = 300.
     monkeypatch.setattr(
@@ -5812,7 +5813,7 @@ def test_consolidate_to_root_advisory_silent_when_root_below_threshold(
     Mutation test: remove the ``if root_tokens < min_tokens: continue`` guard;
     this test fails because the advisory fires for a useless consolidation.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
     # All sizes below threshold — consolidation wouldn't help.
     monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kw: 30)
@@ -5851,7 +5852,7 @@ def test_consolidate_to_root_advisory_silent_when_root_already_declared(
     this test fires the advisory for a redundancy that the agent has
     already partly addressed.
     """
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
     monkeypatch.setattr(
         analyze_module,
@@ -6114,7 +6115,7 @@ def test_fragmentation_suppresses_when_only_one_model_group_meets_threshold(
     fragmentation warning.
     """
     _patch_pricing(monkeypatch)
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(
         analyze_module,
         "get_min_cache_tokens",
@@ -6185,7 +6186,7 @@ def test_write_penalty_silent_when_declared_cache_below_threshold(monkeypatch: p
     positive savings from removing a write that never happens.
     """
     _patch_pricing(monkeypatch)
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10_000)
     workflow_ir = {
         "inputs": {"context": {"type": "string"}},
@@ -7005,7 +7006,7 @@ def test_partial_prompt_cache_validator_round_trip_zero_diagnostics_post_edit() 
 
 
 def test_partial_prompt_cache_heterogeneous_models_per_node_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     def fake_min(model: str) -> int:
         return 1000 if "sonnet" in model else 10
@@ -7060,7 +7061,7 @@ def test_partial_prompt_cache_external_prompt_md_file_resolved_at_analyzer_time(
 def test_partial_prompt_cache_suppressed_when_consolidate_to_root_covers_same_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
+    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
 
     def fake_ref_tokens(ref: str, **_kwargs: Any) -> int | None:

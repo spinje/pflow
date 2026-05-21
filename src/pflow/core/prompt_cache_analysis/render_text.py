@@ -47,7 +47,7 @@ from typing import cast
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
 
-from .analyze import (
+from .types import (
     AnalysisSummary,
     CacheAnalysis,
     CostDelta,
