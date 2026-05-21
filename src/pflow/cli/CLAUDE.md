@@ -38,7 +38,7 @@ PflowCLI.resolve_command (Click-native routing)
 src/pflow/cli/
 ├── __init__.py              # Exports cli_main
 ├── __main__.py              # python -m pflow.cli support
-├── main.py                  # Entry point: PflowCLI group class, command registration (~113 lines)
+├── main.py                  # Entry point: PflowCLI group class, command registration
 ├── workflow_output.py       # Output detection, display, execution summaries
 ├── workflow_errors.py       # Text-mode error display for ExecutionResult failures
 ├── error_output.py          # Unified error output (JSON + text for all error types)
@@ -49,7 +49,7 @@ src/pflow/cli/
 ├── find_errors.py           # Shared error handling for LLM-powered find commands
 ├── logging_config.py        # CLI logging configuration (suppresses 7 third-party libraries)
 ├── commands/                # One file per command (see commands/CLAUDE.md)
-│   ├── run.py               # Workflow execution (the big file, ~780 lines)
+│   ├── run.py               # Workflow execution (largest command file)
 │   ├── list.py, find.py, describe.py, history.py, save.py
 │   ├── guide.py, probe.py, _probe_impl.py
 │   ├── mcp.py, settings.py, skills.py
@@ -73,7 +73,7 @@ main.py                    (entry point — registers all commands including run
 
 ## main.py: Entry Point
 
-Small file (~113 lines): `PflowCLI` class, `cli` group definition with `--verbose`/`--version`, command registration via `cli.add_command()`, and `cli_main()`. Re-exports `main = cli` for backward compat with integration tests that do `from pflow.cli.main import main`.
+Thin entry point: `PflowCLI` class, `cli` group definition with `--verbose`/`--version`, command registration via `cli.add_command()`, and `cli_main()`. Re-exports `main = cli` for backward compat with integration tests that do `from pflow.cli.main import main`.
 
 **Group callback** handles: `ctx.obj["verbose"]`, `configure_logging(verbose)`, `_setup_signals()`, and showing help when no subcommand is given.
 
@@ -90,7 +90,7 @@ All workflow execution logic lives here (moved from the old monolithic `main.py`
 
 **Reads `verbose` from `ctx.obj`** (set by the group callback). Does NOT have its own `--verbose` flag.
 
-`execute_json_workflow` is intentionally thin (~55 lines) — pre-execution setup, validation, resource lifecycle, and error boundary all live in `WorkflowRunner`. Don't pull them back into the CLI.
+`execute_json_workflow` is the thin CLI shim that dispatches to `WorkflowRunner` (`plan()`, `validate()`, or `run()` depending on flags). Pre-execution setup, validation, resource lifecycle, and error boundary all live in `WorkflowRunner` — don't pull them back into the CLI.
 
 ## Output Behavior
 

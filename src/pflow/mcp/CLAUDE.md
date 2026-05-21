@@ -29,13 +29,13 @@ pflow mcp add      pflow mcp sync        (called by sync)        pflow run workf
 mcp-servers.json   lists tools+schemas   registry entries         for stateful sessions
 ```
 
-**Auto-sync at startup**: `pflow run` auto-discovers MCP tools before execution (`cli/main.py:_auto_discover_mcp_servers`). Uses smart sync — compares config file mtime + SHA256 hash of server names against stored values in Registry metadata. Skips sync when config hasn't changed. Errors are silently swallowed (auto-discovery is optional).
+**Auto-sync at startup**: `pflow run` auto-discovers MCP tools before execution (`cli/mcp_sync.py:_auto_discover_mcp_servers`, invoked from `cli/commands/run.py`). Uses smart sync — compares config file mtime + SHA256 hash of server names against stored values in Registry metadata. Skips sync when config hasn't changed. Errors are silently swallowed (auto-discovery is optional).
 
 ## Integration Points
 
 | Integration | From → To | Mechanism |
 |-------------|-----------|-----------|
-| Auto-sync at startup | `cli/main.py` → `MCPDiscovery` + `MCPRegistrar` | Smart sync on mtime+hash change; cleans ALL old `mcp-` entries before re-syncing |
+| Auto-sync at startup | `cli/mcp_sync.py` (via `cli/commands/run.py`) → `MCPDiscovery` + `MCPRegistrar` | Smart sync on mtime+hash change; cleans ALL old `mcp-` entries before re-syncing |
 | Compiler param injection | `runtime/compilation/compiler.py:inject_special_parameters` → MCPNode params | Parses node type string with greedy longest-match against known servers. Does **NOT** use `mcp_metadata` from registry |
 | Pool creation | `execution/runner.py:_initialize_shared_store` → `shared["__mcp_pool__"]` | Created unconditionally for every workflow, but background thread starts lazily on first `call_tool()` |
 | Pool consumption | `nodes/mcp/node.py:prep()` → `pool.call_tool()` | Falls back to `asyncio.run()` if no pool (e.g., `pflow probe`) |

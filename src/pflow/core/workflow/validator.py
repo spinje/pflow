@@ -154,8 +154,10 @@ class WorkflowValidator:
         6. Node type validation - Registry verification
         7. Output source validation - Output node references
         8. Unknown param errors - Rejects params not in node interface
-        9. Sub-workflow validation - Recursive validation of child workflows
-        10. Cache lint - Warn about input-less shell nodes without cache: false
+        9. Node-specific static parameter semantics - Per-node-type param checks
+           (e.g. claude-code structured-output schema preflight)
+        10. Sub-workflow validation - Recursive validation of child workflows
+        11. Cache lint - Warn about input-less shell nodes without cache: false
 
         Args:
             workflow_ir: Workflow to validate
@@ -175,7 +177,7 @@ class WorkflowValidator:
         # 1. Structural validation (ALWAYS run)
         diagnostics.extend(WorkflowValidator._validate_structure(workflow_ir))
 
-        # Short-circuit: semantic validators (steps 2-10) assume a structurally-valid IR.
+        # Short-circuit: semantic validators (steps 2-11) assume a structurally-valid IR.
         # Running them on a malformed IR would produce misleading cascades (closes #237).
         if any(d.severity == Severity.ERROR for d in diagnostics):
             return diagnostics

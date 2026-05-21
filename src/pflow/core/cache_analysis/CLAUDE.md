@@ -41,6 +41,7 @@ src/pflow/core/cache_analysis/
 ├── below_min_tokens_detector.py # shared predicted/observed below-threshold detector
 ├── render_json.py               # JSON projection of CacheAnalysis
 ├── render_text.py               # text projection (orchestrator + section renderers)
+├── render_traces_list.py        # text/json projection for trace-listing endpoints
 ├── summarize.py                 # one-line dry-run nudge Diagnostic
 ├── view_helpers.py              # recommended-actions ranking + cross-workflow filter
 └── warning_catalog.py           # Frozen catalog + factory + dispatch
@@ -159,7 +160,7 @@ Four independent staleness signals, four locations, no overloading:
 
 ### warning_catalog.py
 
-**Frozen catalog of warning IDs.** Count is auto-derived as `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (`warning_catalog.py:945`) — trust the code as source of truth (currently 31). Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
+**Frozen catalog of warning IDs.** Count is auto-derived as `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (`warning_catalog.py`) — trust the code as source of truth (currently 31). Per DD#27/29 (task-159.md), warning IDs are stable forever — adding one requires design review. This is the agent-facing API contract. Mostly ``cache.*``; one ``llm.*`` entry (``llm.thinking-temperature-mismatch``) was added when validate-time checks for non-cache provider rules became necessary.
 
 **`Diagnostic.id` is a top-level field, not nested in `context["warning_id"]`.** Mirrors mypy / rustc / ruff / eslint / clippy convention. Identity tuple updated from `(severity, source, node_id, message)` to `(severity, source, node_id, id or message)` — when `id` is set it's the dedup key, falling back to message-keyed dedup when absent (preserves legacy sub-workflow warning dedup byte-for-byte).
 
@@ -250,7 +251,7 @@ There is no duplicate predictor. `create_planner_shared` was originally `_create
 
 ## Validator delegation
 
-`pflow analyze-cache` runs the same `WorkflowValidator.validate()` 10-step pipeline as `pflow run`, `--validate-only`, and `pflow save`. There is no separate cache-only validation subset.
+`pflow analyze-cache` runs the same `WorkflowValidator.validate()` 11-step pipeline as `pflow run`, `--validate-only`, and `pflow save`. There is no separate cache-only validation subset.
 
 Domain focus is preserved at the renderer/aggregator boundary, not at the pipeline boundary:
 
@@ -304,8 +305,8 @@ Plus four un-IDed validation diagnostics (`_make_duplicate_chunk_diagnostic`, `_
 ## Subtle quirks worth knowing
 
 - **`_workflow_short_name` is duplicated** in `analyze.py` and `render_text.py`. Both implement the same basename-strip-`.pflow.md` logic. The duplication is a known follow-up (task 160).
-- **`__init__.py` re-exports 6 names**: `analyze`, `summarize`, `summarize_from_analysis`, `render_text`, `render_json`, `CacheAnalysis`. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
-- **Stable warning ID catalog**: count is auto-derived as `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (`warning_catalog.py:945`) — trust the code as source of truth (currently 31). Per DD#29 (task-159.md), adding new IDs requires design review. The current set spans cache-* IDs plus one `llm.*` entry (`llm.thinking-temperature-mismatch`). To enumerate exhaustively, read `CACHE_WARNING_CATALOG` keys directly rather than maintaining a list here — the code drifts faster than the doc.
+- **`__init__.py` re-exports**: `JSON_FORMAT_VERSION`, `CacheAnalysis`, `TraceListEntry`, `analyze`, `list_traces_for_workflow`, `render_json`, `render_text`, `summarize`, `summarize_from_analysis`. Public dataclasses other than `CacheAnalysis` are reachable transitively as fields of the result; importing them directly requires reaching into `analyze.py`.
+- **Stable warning ID catalog**: count is auto-derived as `EXPECTED_CATALOG_COUNT = len(CACHE_WARNING_CATALOG)` (`warning_catalog.py`) — trust the code as source of truth (currently 31). Per DD#29 (task-159.md), adding new IDs requires design review. The current set spans cache-* IDs plus one `llm.*` entry (`llm.thinking-temperature-mismatch`). To enumerate exhaustively, read `CACHE_WARNING_CATALOG` keys directly rather than maintaining a list here — the code drifts faster than the doc.
 
 ## Where to add a new feature
 

@@ -19,7 +19,7 @@ src/pflow/execution/
     ├── node_output_formatter.py
     ├── validation_formatter.py
     ├── plan_formatter.py
-    └── ... (14 formatters total, see formatters/CLAUDE.md)
+    └── ... (16 modules total — formatters + shared helpers; see formatters/CLAUDE.md)
 ```
 
 ## Dry-Run Planner (`plan.py`)

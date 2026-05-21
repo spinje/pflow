@@ -52,7 +52,7 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ## Project Overview
 
-**pflow** is a CLI-first workflow execution system. AI agents create markdown workflow files (`.pflow.md`), iterate on them via CLI, then save them for reuse. Workflows chain nodes (`shell`, `http`, `llm`, `file`, `mcp`) that communicate through a shared store.
+**pflow** is a CLI-first workflow execution system. AI agents create markdown workflow files (`.pflow.md`), iterate on them via CLI, then save them for reuse. Workflows chain nodes (`shell`, `http`, `llm`, `file`, `mcp`, `python`, `claude-code`) that communicate through a shared store.
 
 > **For conceptual understanding** (why pflow exists, core bets, design decisions): See `architecture/overview.md`
 > **For technical architecture** (execution pipeline, abstractions, components): See `architecture/architecture.md`
@@ -177,29 +177,20 @@ Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading doc
 
 ### Project Status
 
-MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` for version history.
+MVP feature-complete. Published to PyPI (initial release v0.8.0; current version per `pyproject.toml`).
 
 **What's implemented**: shell/http/llm/file/mcp/python/claude-code nodes, template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
 
 **Recently Completed:**
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
 - ✅ Task 103: Preserve Inline Object Type in Template Resolution
-- ✅ Task 102: Remove Parameter Fallback Pattern
 - ✅ Task 96: Support Batch Processing in Workflows
-- ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 - ✅ Task 115: Automatic Stdin Routing for Unix-First Piping
 - ✅ Task 104: Python Code Node
 - ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
-- ✅ Task 119: Publish Workflows as Claude Code Skills
-- ✅ Task 49: Publish to PyPI (v0.8.0)
-- ✅ Task 127: MCP Server Connection Pooling
 - ✅ Task 38: Conditional Branching in Workflows
 - ✅ Task 59: Nested Workflows
 - ✅ Task 128: Branch Convergence for Conditional Workflows
-- ✅ Task 129: External File References for Code Block Parameters
-- ✅ Task 130: Workflow Bundling on Save
-- ✅ Task 131: Batch Error Handling
-- ✅ Task 66: Structured Output for LLM Node
 - ✅ Task 92: Remove Planning Module and Repair System
 - ✅ Task 108: Smart Trace Debug Output
 - ✅ Task 106: Workflow Iteration Cache
@@ -290,7 +281,6 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 > ```
 >
 > **Task files:** `.taskmaster/tasks/task_N/`
-> **Version history:** `.taskmaster/versions.md`
 
 > We have NO USERS yet. No backwards compatibility concerns, but never break existing functionality or rewrite tests without carefully considering implications.
 

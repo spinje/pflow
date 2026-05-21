@@ -123,6 +123,7 @@ def test_node_retries_on_failure():
 - **llm/** - Language model interactions
 - **shell/** - Shell command execution
 - **http/** - HTTP requests
+- **python/** - Python code execution (sandboxed)
 - **claude/** - Claude Code CLI integration
 - **mcp/** - MCP tool bridge
 

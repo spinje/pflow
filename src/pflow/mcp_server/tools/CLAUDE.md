@@ -99,8 +99,6 @@ query="check PRs and notify"
 - `execution_tools.py` — Workflow execute/validate/plan/save/analyze-cache + node testing + read_fields (7 tools)
 - `registry_tools.py` — Node describe + list with optional filter (2 tools)
 - `workflow_tools.py` — Workflow list/describe from library (2 tools)
-- `settings_tools.py` — Settings management (4 tools, **DISABLED**)
-- `test_tools.py` — Infrastructure verification (3 tools, **DISABLED**)
 
 ## Testing
 

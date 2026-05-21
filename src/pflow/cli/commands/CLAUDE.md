@@ -77,7 +77,7 @@ This two-command pipeline allows agents to run a node once, then extract specifi
 Top-level commands: `list`, `find`, `describe`, `history`, `save`.
 
 **Workflow save** (`save.py`):
-- Name validation: lowercase, numbers, hyphens only, max 30 chars (shell/URL/git-safe)
+- Name validation: lowercase, numbers, hyphens only, max 50 chars (shell/URL/git-safe)
 - Description extracted from markdown H1 prose (`--description` flag removed)
 - Delegates parse + full validation + save to `save_workflow_with_options()`
 - `--delete-draft` safety check: only works in `.pflow/workflows/`, resolves symlinks, refuses to delete symlinked files

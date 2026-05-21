@@ -19,6 +19,9 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 | `history_formatter` | Execution history (compact/detailed) | str or None |
 | `field_output_formatter` | Field retrieval results (read-fields) | str or dict |
 | `output_utils` | Full-run auto-detection and target-scoped `--only` output selection | tuple |
+| `batch_errors` | Compact batch failure rendering (failure shape sanitization) | str/list |
+| `registry_error_helpers` | Shared error helpers for registry-related formatters | str |
+| `plan_formatter` | Dry-run plan text rendering | str |
 
 ## Rules (all enforced by tests)
 

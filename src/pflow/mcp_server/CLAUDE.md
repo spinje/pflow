@@ -29,7 +29,7 @@ src/pflow/mcp_server/
 ├── tools/
 │   ├── __init__.py          - Imports enabled tool modules (triggers decorator registration)
 │   ├── discovery_tools.py   - workflow_discover, registry_discover
-│   ├── execution_tools.py   - workflow_execute, validate, plan, save, registry_run, read_fields
+│   ├── execution_tools.py   - workflow_execute, validate, plan, save, registry_run, read_fields, analyze_cache
 │   ├── registry_tools.py    - registry_describe, registry_list
 │   └── workflow_tools.py    - workflow_list, workflow_describe
 ├── resources/
@@ -127,7 +127,7 @@ Every service method creates fresh instances (WorkflowManager, Registry, Metrics
 
 ### Async/Sync Bridge
 
-pflow core is synchronous. MCP protocol is async. Every tool wraps its service call in `asyncio.to_thread()` to avoid blocking the event loop. This is the consistent pattern across all 11 tools.
+pflow core is synchronous. MCP protocol is async. Every tool wraps its service call in `asyncio.to_thread()` to avoid blocking the event loop. This is the consistent pattern across all 13 tools.
 
 ### CLI/MCP Parity
 

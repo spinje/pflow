@@ -35,6 +35,17 @@ src/pflow/core/
 ├── execution_cache.py       # Two-phase execution cache for probe
 ├── trace_report.py          # Execution report generation (--report flag, per-node .md files)
 ├── file_resolver.py         # External file reference detection and resolution
+├── duration_format.py       # Human-readable duration formatting
+├── trace_tree.py            # Tree-structured trace helpers
+├── workflow_id.py           # Synthetic ID for inline-workflow cache scoping (ir-hash:<md5>)
+├── llm_capabilities.py      # Per-model capability table for prompt caching (Task 159)
+├── llm_usage.py             # Shared LLM usage normalization helpers (Task 159)
+├── litellm_runtime.py       # LiteLLM runtime policy — single seam for `import litellm` (Task 158)
+├── prompt_cache.py          # Prompt cache rendering primitives + cache_control placement (Task 159)
+├── prompt_refs.py           # Classify template refs in prompt bodies + `params.inputs` dealiasing (Task 159)
+├── cache_overlap.py         # Overlap detection between cache groups and prompt body (Task 159)
+├── cache_ttl.py             # TTL handling for prompt caching (Task 159)
+├── cache_analysis/          # Cache analysis subdirectory (see cache_analysis/CLAUDE.md)
 ├── workflow/                # Workflow lifecycle subdirectory (see workflow/CLAUDE.md)
 │   ├── __init__.py          # Re-exports public API
 │   ├── manager.py           # Workflow lifecycle (save/load/list/delete)
@@ -63,12 +74,15 @@ PflowError(Exception)                    <- base for all pflow errors
   |- WorkflowValidationError             <- pre-execution validation (summary, validation_errors)
   |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint)
   |- WorkflowExistsError                 <- duplicate workflow save
+  |- UnsupportedCacheTTLError            <- cache TTL not supported by provider (Task 159)
+  |- ReportGenerationError               <- trace report generation failure
   |- LLMCallError                        <- LLM adapter base for ALL provider errors (raised by llm_client)
   |   |- UnknownModelError               <- model identifier not recognized (reason="unknown_name"|"missing_prefix")
   |   |- MissingApiKeyError              <- AuthenticationError or PermissionDeniedError (kind="missing_key"|"lacks_permission")
   |   |- InvalidRequestError             <- any other BadRequestError (schema, content policy, context window, ...)
   |   |- LLMTransientError               <- Timeout, RateLimitError, InternalServerError (retry loop catches)
   |   |- LLMResponseParseError           <- response doesn't parse against output_schema
+  |   |- MissingSdkError                 <- provider SDK not installed (e.g. claude_agent_sdk)
   |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions)
   |   |- MCPError                        <- user_errors.py
   |   |- OutputResolutionError           <- user_errors.py (failures list)

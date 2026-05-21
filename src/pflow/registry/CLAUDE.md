@@ -6,9 +6,10 @@ The registry is pflow's central catalog of available nodes. It stores metadata f
 
 ```
 registry/
-├── __init__.py              # Re-exports: Registry, scan_for_nodes
+├── __init__.py              # Re-exports: Registry, normalize_node_id, scan_for_nodes
 ├── registry.py              # Registry class — load/save/search/filter against ~/.pflow/registry.json
 ├── scanner.py               # Discover Node subclasses via importlib (executes code!)
+├── node_id.py               # normalize_node_id() — canonical kebab-case naming
 ├── metadata_extractor.py    # Parse Interface section from node docstrings into structured metadata
 ├── context_builder.py       # Build LLM-optimized node/component context (build_component_context, build_nodes_context)
 ├── smart_filter.py          # LLM-powered field reduction for structure-only mode
@@ -28,7 +29,7 @@ File: `~/.pflow/registry.json`. Auto-created on first use by scanning `src/pflow
 | Type | Set by | Survives core refresh? |
 |------|--------|----------------------|
 | `"core"` | `_auto_discover_core_nodes()` | No — re-scanned on version change |
-| `"user"` | `scan_user_nodes()` / CLI `pflow registry scan` | Yes |
+| `"user"` | `scan_user_nodes()` (Python API only — `pflow registry scan` CLI was removed in Task 151) | Yes |
 | `"mcp"` | `MCPRegistrar` (from `mcp/registrar.py`) | Yes |
 
 ### Node Naming Convention
@@ -56,7 +57,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 |----------|-------|-------------------|
 | `runtime/compilation/` | Node class resolution, interface metadata, MCP validation, output validation | Default (filtered) |
 | `mcp/registrar.py` | Register/remove virtual MCP tool entries | **True** (safe) |
-| `cli/main.py` auto-sync | Clean old MCP entries before re-syncing | **True** (safe) |
+| `cli/mcp_sync.py` auto-sync (via `cli/commands/run.py`) | Clean old MCP entries before re-syncing | **True** (safe) |
 | `cli/commands/mcp.py`, `_probe_impl.py` | MCP list/find/describe, probe | Default (filtered) |
 | `core/workflow/validator.py` | Validate node types exist | Default (filtered) |
 | `mcp_server/services/` | Registry service for MCP server | Default (filtered) |

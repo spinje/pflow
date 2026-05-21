@@ -19,15 +19,14 @@ examples/
 ├── mcp-integration/       # MCP client integration demos (Python scripts)
 ├── mcp-pflow/             # pflow-as-MCP-server setup and testing
 ├── interfaces/            # Empty
-├── scraped-*-test/        # Test fixture data for markdown parser edge cases
 ├── *.pflow.md             # Root-level workflow examples (batch, MCP, output validation)
-├── *_demo.py              # Python demo scripts (registry, runtime feedback, shell node, workflow manager)
+├── *_demo.py              # Python demo scripts (registry, shell node, workflow manager)
 └── README.md              # ⚠️ STALE — references old JSON format
 ```
 
 ## Test Dependencies
 
-- `tests/test_docs/test_example_validation.py` — runs the full `WorkflowValidator.validate()` 10-step pipeline (same as `pflow --validate-only`) on every `.pflow.md` under `examples/` that isn't in `invalid/` or `legacy/`, plus asserts `examples/invalid/` files fail parsing or schema validation.
+- `tests/test_docs/test_example_validation.py` — runs the full `WorkflowValidator.validate()` 11-step pipeline (same as `pflow --validate-only`) on every `.pflow.md` under `examples/` that isn't in `invalid/`, plus asserts `examples/invalid/` files fail parsing or schema validation.
 - `tests/test_core/test_ir_examples.py` — similar validation of example files
 - `tests/test_integration/test_failed_node_invariant.py` — executes each fixture in `examples/error-handling/` end-to-end via `WorkflowRunner` and asserts on rendered diagnostic text (source lines, paste-able fixes, structured failure blocks). See `examples/error-handling/README.md` for the per-fixture contract.
 

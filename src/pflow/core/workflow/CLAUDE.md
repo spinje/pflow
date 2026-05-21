@@ -11,7 +11,7 @@ core/workflow/
 ├── save_service.py          # Shared save operations for CLI + MCP (with dependency bundling)
 ├── dependency_discovery.py  # Recursive file dependency scanner for bundling
 ├── sub_workflow_resolver.py # Shared sub-workflow resolution (file path or saved name)
-├── validator.py             # Unified 10-step validation orchestrator
+├── validator.py             # Unified 11-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
 ├── mermaid/                 # Mermaid flowchart generation from workflow IR
 │   ├── __init__.py          # Re-exports: generate_mermaid + test-visible helpers
@@ -63,7 +63,7 @@ No cycles. All heavy imports are lazy (inside functions).
 | `save_service.py` | `load_and_validate_workflow`, `save_workflow_with_options`, `validate_workflow_name`, `delete_draft_safely`, `generate_workflow_metadata` |
 | `dependency_discovery.py` | `Dependency`, `discover_dependencies` |
 | `sub_workflow_resolver.py` | `resolve_sub_workflow`, `SubWorkflowResult` |
-| `validator.py` | `WorkflowValidator` (static `.validate()` method — 10-step pipeline) |
+| `validator.py` | `WorkflowValidator` (static `.validate()` method — 11-step pipeline) |
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
 | `mermaid/` | `generate_mermaid` |
 | `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
@@ -110,7 +110,7 @@ The entry point has YAML frontmatter for system metadata (timestamps, execution 
 
 Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Every helper builds `Diagnostic` objects at the detection site with `context["path"]`, `similar_names`, `available_fields`, and `suggestions` populated by the producer. No string intermediates, no pattern-matching post-processing.
 
-**10-step validation pipeline**:
+**11-step validation pipeline**:
 1. Structural (IR schema) — always runs
 2. Stdin inputs — only one `stdin: true` allowed per workflow
 3. Stdout outputs — only one `stdout: true` allowed per workflow
@@ -119,10 +119,11 @@ Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Ever
 6. Node types (registry verification) — unless `skip_node_types=True`
 7. Output sources — validates `${node.key}` refs in outputs via `_validate_template_in_source`. Uses `TemplateResolver.extract_root_node_id()` to support bracket syntax like `${data[0].x}`. Provides fuzzy "did you mean?" suggestions.
 8. Unknown param errors — hard errors for params not in node interface metadata, with fuzzy-matched valid keys. Workflow nodes bypass the registry but declare their allowed top-level fields via `WorkflowExecutor.ALLOWED_PARAMS` (a class attribute); Step 8 reads this and rejects unknown top-level fields the same way it rejects unknown params on any other node.
-9. Sub-workflow validation — recursive validation of referenced child workflows (file or saved name). Checks the parent→child input boundary in both directions: missing required inputs AND undeclared extras in the parent's `inputs:` dict (the silent-drop fix). Opaque template inputs (`inputs: ${item}`) skip the static check — runtime defense-in-depth in `WorkflowExecutor._validate_child_params` catches the mismatch per-item.
-10. Cache lint — warns when shell nodes have no template inputs and no `cache: false` (stale cache risk)
+9. Node-specific static parameter semantics — per-node-type param checks (e.g. claude-code structured-output schema preflight).
+10. Sub-workflow validation — recursive validation of referenced child workflows (file or saved name). Checks the parent→child input boundary in both directions: missing required inputs AND undeclared extras in the parent's `inputs:` dict (the silent-drop fix). Opaque template inputs (`inputs: ${item}`) skip the static check — runtime defense-in-depth in `WorkflowExecutor._validate_child_params` catches the mismatch per-item.
+11. Cache lint — warns when shell nodes have no template inputs and no `cache: false` (stale cache risk)
 
-**Short-circuit on structural errors** (issue #237): if step 1 produces any `Severity.ERROR`, steps 2–10 are skipped and the pipeline returns immediately. Semantic validators assume a structurally-valid IR; running them on a malformed IR produces misleading cascades (e.g. `batch: ${items}` as a string would crash data-flow and template validators with `AttributeError` on `.get()`). Only `_validate_structure` retains a defensive `except Exception` wrapper — it's the boundary to the third-party `jsonschema` library. Downstream validators' producer bugs propagate to the outer CLI/MCP exception boundary, which converts them to structured Diagnostics via `exception_to_diagnostics`.
+**Short-circuit on structural errors** (issue #237): if step 1 produces any `Severity.ERROR`, steps 2–11 are skipped and the pipeline returns immediately. Semantic validators assume a structurally-valid IR; running them on a malformed IR produces misleading cascades (e.g. `batch: ${items}` as a string would crash data-flow and template validators with `AttributeError` on `.get()`). Only `_validate_structure` retains a defensive `except Exception` wrapper — it's the boundary to the third-party `jsonschema` library. Downstream validators' producer bugs propagate to the outer CLI/MCP exception boundary, which converts them to structured Diagnostics via `exception_to_diagnostics`.
 
 **Pipeline order is load-bearing**: step 5 (templates) runs BEFORE step 6 (node types). Template validation silently skips unknown node types via `_register_node_outputs_from_registry` — step 6 produces the rich "Unknown node type" diagnostic. Reversing the order or making step 5 raise on unknown types produces duplicate diagnostics.
 
@@ -164,7 +165,7 @@ Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g
 
 ## Key Lessons
 
-**Concurrent save safety**: `WorkflowManager.save()` uses atomic `os.link()` for the final rename so two parallel saves of the same name don't produce a half-written directory. When testing file-I/O code in this package, use real threads (not `ThreadPoolExecutor` mocks) — single-threaded tests don't exercise the race conditions that tempfile+rename code paths are designed to guard against.
+**Concurrent save safety**: `WorkflowManager.save()` uses atomic `os.rename()` for the final rename (tempdir + `os.rename()` for creates, `os.replace()` for metadata updates) so two parallel saves of the same name don't produce a half-written directory. When testing file-I/O code in this package, use real threads (not `ThreadPoolExecutor` mocks) — single-threaded tests don't exercise the race conditions that tempfile+rename code paths are designed to guard against.
 
 **Content preservation**: Save operations store original markdown with YAML frontmatter prepended. The markdown body is never modified by metadata updates.
 
