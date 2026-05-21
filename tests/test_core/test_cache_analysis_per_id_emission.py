@@ -132,7 +132,6 @@ def _patch_pricing(
 
 @pytest.fixture(autouse=True)
 def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
     cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     fragmentation_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.fragmentation")
@@ -144,14 +143,11 @@ def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cross_stage_module, "estimate_tokens", _word_count)
     monkeypatch.setattr(row_builder_module, "estimate_tokens", _word_count)
     monkeypatch.setattr(suggestions_module, "estimate_tokens", _word_count)
-    # Mirror the patch in token_estimation.py — analyze.py-resident callers
-    # see the first; token_estimation.py-resident callers (``_estimate_ref_tokens``,
-    # ``_sum_resolved_chunk_tokens``) see the second. Without both, Tier 2 of
+    # Mirror the patch in token_estimation.py. Without it, Tier 2 of
     # ``estimate_cacheable_tokens`` calls real ``litellm.token_counter`` and
     # tests that exercise memo-resolved chunk tokenization see non-deterministic
     # values.
     monkeypatch.setattr(token_estimation_module, "estimate_tokens", _word_count)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(fragmentation_module, "get_min_cache_tokens", lambda _model: 10, raising=False)
     monkeypatch.setattr(partial_module, "get_min_cache_tokens", lambda _model: 10)
@@ -5373,10 +5369,9 @@ def test_predict_cache_keys_includes_sub_workflow_nodes(
     analyzer hits in production).
     """
     from pflow.core.markdown_parser import parse_markdown
-    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
     from pflow.core.prompt_cache_analysis.context import AnalysisContext
     from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _predict_cache_keys
-    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _build_parameters_by_workflow, walk_cross_workflow
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
     from pflow.runtime.cache import MemoizationCache

@@ -17,12 +17,20 @@ new ``cache.*`` ID).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
+
+from .context import AnalysisContext, _normalize_empty
+from .token_estimation import (
+    build_shared_store_for_refs as _build_shared_store_for_refs,
+)
+from .token_estimation import (
+    extract_unique_refs as _extract_unique_refs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +198,7 @@ def walk_cross_workflow(
     outset so cycles back to the root (A → B → A) are detected at the
     cycle-check in :func:`_process_one_call` and the back-edge is suppressed.
     Without this seed the back-edge enters ``cw_result.edges`` and downstream
-    consumers like :func:`pflow.core.prompt_cache_analysis.analyze._build_parameters_by_workflow`
+    consumers like :func:`_build_parameters_by_workflow`
     mutate the root parameter dict.
     """
     resolver = resolve_child or resolve_sub_workflow
@@ -444,4 +452,163 @@ def _extract_template_inner(value: Any) -> str | None:
     return inner or None
 
 
-__all__ = ["CrossWorkflowEdge", "CrossWorkflowResult", "DynamicBatchInfo", "walk_cross_workflow"]
+def _build_parameters_by_workflow(
+    cw_result: Any,
+    root_parameters: dict[str, Any],
+    root_workflow_path: str,
+    *,
+    memo_cache: Any | None,
+    trace_data: Mapping[str, Any] | None,
+    base_path: Path | None,
+    trace_outputs_by_key: Mapping[tuple[str | None, str], Any] | None = None,
+    stale_memo_uncheckable: set[tuple[str | None, str]] | None = None,
+) -> dict[str | None, dict[str, Any]]:
+    """Build workflow-scoped parameter views from cross-workflow input edges."""
+    params_by_workflow: dict[str | None, dict[str, Any]] = {root_workflow_path: dict(root_parameters)}
+    irs_by_workflow = getattr(cw_result, "irs_by_workflow", {}) or {}
+    remaining = list(getattr(cw_result, "edges", ()) or ())
+    made_progress = True
+    while remaining and made_progress:
+        made_progress = False
+        next_remaining = []
+        for edge in remaining:
+            parent_workflow = str(getattr(edge, "parent_workflow", root_workflow_path))
+            if parent_workflow not in params_by_workflow:
+                next_remaining.append(edge)
+                continue
+            child_workflow = getattr(edge, "child_workflow", None)
+            child_input_name = getattr(edge, "child_input_name", None)
+            if child_workflow is None or child_input_name is None:
+                continue
+            parent_ctx = AnalysisContext.build(
+                workflow_ir=irs_by_workflow.get(parent_workflow, {}),
+                parameters=params_by_workflow[parent_workflow],
+                memo_cache=memo_cache,
+                trace_data=trace_data,
+                trace_outputs_by_key=trace_outputs_by_key or {},
+                workflow_path=parent_workflow,
+                base_path=base_path,
+                parameters_by_workflow=params_by_workflow,
+            )
+            resolved = _resolve_child_input_value(edge, parent_ctx)
+            if resolved is None:
+                continue
+            if stale_memo_uncheckable is not None:
+                stale_memo_uncheckable.update(_unchecked_parent_memo_roots(edge, parent_ctx))
+            child_params = params_by_workflow.setdefault(str(child_workflow), {})
+            child_params[str(child_input_name)] = resolved
+            made_progress = True
+        remaining = next_remaining
+    return params_by_workflow
+
+
+def _resolve_child_input_value(edge: CrossWorkflowEdge, parent_ctx: AnalysisContext) -> Any | None:
+    """Resolve a child workflow input value from the parent's analysis context.
+
+    Batch sub-workflow calls can pass values rooted on the parent batch alias
+    (for example ``${item}`` or ``${item.field}``). Static analysis cannot know
+    every runtime item, so this uses ``items[0]`` as a deterministic exemplar
+    when the parent's ``batch.items`` expression is resolvable, falling back to
+    trace-recorded batch items when the trace is the only available evidence.
+    """
+    value = edge.parent_input_value
+    if not isinstance(value, str):
+        return _normalize_empty(value)
+    refs = _extract_unique_refs(value)
+    if not refs:
+        return _normalize_empty(value)
+    shared = _build_shared_store_for_refs(refs, parent_ctx)
+    if edge.is_batch_alias_root:
+        first_item = _resolve_first_batch_item(edge, parent_ctx)
+        if first_item is None:
+            return None
+        if edge.parent_batch_alias is not None:
+            shared[edge.parent_batch_alias] = first_item
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    try:
+        resolved = TemplateResolver.resolve_template(value, shared)
+    except Exception:
+        logger.debug("failed to resolve child workflow input value", exc_info=True)
+        return None
+    if isinstance(resolved, str) and TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+        return None
+    return _normalize_empty(resolved)
+
+
+def _unchecked_parent_memo_roots(
+    edge: CrossWorkflowEdge,
+    parent_ctx: AnalysisContext,
+) -> set[tuple[str | None, str]]:
+    """Node-output roots used to seed child params before prediction can verify memo."""
+    value = edge.parent_input_value
+    if not isinstance(value, str) or parent_ctx.memo_cache is None:
+        return set()
+    declared_inputs = parent_ctx.workflow_ir.get("inputs") if isinstance(parent_ctx.workflow_ir, Mapping) else None
+    input_names = set(declared_inputs) if isinstance(declared_inputs, Mapping) else set()
+    tainted: set[tuple[str | None, str]] = set()
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    for ref in _extract_unique_refs(value):
+        root = TemplateResolver.extract_root_node_id(ref)
+        if not root or root in input_names or root == edge.parent_batch_alias:
+            continue
+        tainted.add((parent_ctx.workflow_path, root))
+    return tainted
+
+
+def _resolve_first_batch_item(edge: CrossWorkflowEdge, parent_ctx: AnalysisContext) -> Any | None:
+    """Resolve the parent batch's ``items:`` expression and return its first item."""
+    nodes_by_id = {
+        str(n["id"]): n for n in parent_ctx.workflow_ir.get("nodes", []) if isinstance(n, dict) and "id" in n
+    }
+    parent_node = nodes_by_id.get(edge.parent_node_id)
+    if parent_node is None:
+        return None
+    batch = parent_node.get("batch")
+    if not isinstance(batch, dict):
+        return None
+    items_expr = batch.get("items")
+    if isinstance(items_expr, list):
+        return _normalize_empty(items_expr[0]) if items_expr else None
+    if not isinstance(items_expr, str):
+        return None
+    from pflow.runtime.template_resolver import TemplateResolver
+
+    try:
+        resolved = TemplateResolver.resolve_template(
+            items_expr,
+            _build_shared_store_for_refs(_extract_unique_refs(items_expr), parent_ctx),
+        )
+    except Exception:
+        logger.debug("failed to resolve batch items expression", exc_info=True)
+        return None
+    if isinstance(resolved, list) and resolved:
+        return _normalize_empty(resolved[0])
+    trace_item = _resolve_first_trace_batch_item(edge, parent_ctx)
+    if trace_item is not None:
+        return trace_item
+    return None
+
+
+def _resolve_first_trace_batch_item(edge: CrossWorkflowEdge, parent_ctx: AnalysisContext) -> Any | None:
+    """Return the first recorded runtime batch item for ``edge.parent_node_id``."""
+    event = parent_ctx.trace_event_for(edge.parent_node_id)
+    if not isinstance(event, Mapping):
+        return None
+    batch_items = event.get("batch_items")
+    if not isinstance(batch_items, list):
+        return None
+    item_events = [item for item in batch_items if isinstance(item, Mapping)]
+    if not item_events:
+        return None
+    first = min(item_events, key=lambda item: int(item.get("index") or 0))
+    return _normalize_empty(first.get("item"))
+
+
+__all__ = [
+    "CrossWorkflowEdge",
+    "CrossWorkflowResult",
+    "DynamicBatchInfo",
+    "walk_cross_workflow",
+]

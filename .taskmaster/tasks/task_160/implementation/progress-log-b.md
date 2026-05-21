@@ -237,3 +237,38 @@ Trust boundary for next phase:
 - Verified: stale memo skipping still keys on the passed parent workflow path; trace fallback, workflow-node invocation fallback, and workflow-parameter fallback all remain covered by focused tests.
 - Assumed correct: the lazy import of `_edge_child_paths` inside `AnalysisContext._trace_node_output_in_workflow()` is acceptable to avoid a module-load cycle while keeping the public parametric resolver on `AnalysisContext`.
 - Unable to verify in Phase 4: whether Phase 6 helper relocations will need to move `_estimate_parent_value_tokens()` out of `stages/cross_workflow.py`; Phase 4 intentionally preserved that existing analyze-side lazy import surface.
+
+## 2026-05-21 - Phase 6 Helper Relocations + Cycle Inversion
+
+Phase completed: Phase 6 only.
+
+Implemented:
+- G1.5a: moved workflow-scoped parameter propagation helpers from `analyze.py` to `sub_workflow_walker.py`; updated direct test imports and stale doc references.
+- G1.5b: moved `_PerCallRowsResult`, `_build_per_call_rows_and_warnings`, `_extract_declared_chunks`, and candidate-subset detection into `stages/row_builder.py`.
+- G1.5c: moved per-node model drift detection and trace call-count aggregation into `trace_loading.py`.
+- G1.5d/G1.6: moved `_RowCrossWorkflowCandidate` to `types.py` and the cross-workflow row-level candidate producers to `stages/cross_workflow.py`; the old analyze-side lazy imports from `stages.cross_workflow` are gone.
+
+Deviations and rationale:
+- `row_builder._build_per_call_rows_and_warnings()` uses local imports for `stages.cross_workflow` candidate producers and `_per_node_warnings`. Top-level imports would create cycles because `stages.cross_workflow`, `stages.warnings`, and `stages.suggestions` already import row-builder helpers. A larger shared-helper extraction would be a separate structural decision, not a safe Phase 6 side quest.
+- `analyze.py` is `539` lines, not the plan's `<=400` estimate. The relocation removed the intended large helper clusters (`1109 -> 539`), but Phase 5's retained trace-recovery helper, validation helper, comments, and imports remain. I did not move `_run_full_validation` because the plan explicitly keeps it in `analyze.py`; moving it just to satisfy the LOC metric would contradict G1.5e without a behavioral or ownership problem.
+- No code-implementer subagents were used. The write set centered on `analyze.py` plus cycle-sensitive imports across `row_builder.py` and `stages/cross_workflow.py`; there was no disjoint mechanical source slice that would reduce risk. Test import rewrites were mechanical and done directly after the source move.
+
+Verification:
+- Focused moved-helper tests: `3 passed`.
+- Affected cache-analysis files: `366 passed`.
+- Task 159 harness: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0 exactly.
+- Sandbox-safe non-e2e pytest: `7102 passed, 1 skipped`.
+- Import/cycle check: `HOME=/private/tmp/pflow-test-home .venv/bin/python -c "import pflow.core.prompt_cache_analysis; print('ok')"` prints `ok`.
+- `uv lock --locked`: passed after escalation for uv cache access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for sandboxed metadata-file access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 224 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- Phase 6 structural checks:
+  - `analyze.py`: `539` lines (`1109` before this phase).
+  - `rg "from pflow.core.prompt_cache_analysis.analyze import _" tests --glob "*.py"` returns no matches.
+  - `rg "from \\.stages.cross_workflow import" src/pflow/core/prompt_cache_analysis/analyze.py` returns only the existing top-level `_build_cross_workflow_findings` import.
+
+Trust boundary for next phase:
+- Verified: behavior output is stable; direct helper tests now import from the new homes; package import has no cycle; row-level cross-workflow candidates still flow through production row building.
+- Assumed correct: local imports inside `row_builder._build_per_call_rows_and_warnings()` are the smallest correct cycle boundary until a future shared helper extraction removes the existing row-builder dependencies from warning/cross-workflow stages.
+- Unable to verify in Phase 6: whether the `analyze.py <=400` target can be reached without contradicting the plan's explicit `_run_full_validation` placement or starting a new structural extraction; that should be reviewed before Phase 7 rather than folded into the PerCallRow bridge work.

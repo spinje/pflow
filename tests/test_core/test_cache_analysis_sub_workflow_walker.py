@@ -237,7 +237,7 @@ def test_walk_cross_workflow_does_not_emit_back_edge_to_root() -> None:
     reached B and tried to resolve B → A, the cycle check at
     :func:`_process_one_call` had no prior knowledge of A and accepted
     the back-edge. That edge then mutated root parameters via
-    :func:`pflow.core.prompt_cache_analysis.analyze._build_parameters_by_workflow`.
+    :func:`pflow.core.prompt_cache_analysis.sub_workflow_walker._build_parameters_by_workflow`.
 
     Post-fix the walker seeds ``seen`` with ``root_workflow_path`` so the
     back-edge is suppressed at the cycle check. This test drives the

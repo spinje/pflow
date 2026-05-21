@@ -620,6 +620,23 @@ class CrossWorkflowFindings:
 
 
 @dataclass(frozen=True)
+class _RowCrossWorkflowCandidate:
+    """Per-row cache opportunity from a cross-workflow boundary."""
+
+    parent_workflow: str
+    parent_value_expr: str
+    parent_cache_ref: str
+    parent_node_id: str
+    child_workflow: str
+    child_input_name: str
+    child_cache_ref: str
+    parent_prose: str
+    child_node_ids: tuple[str, ...]
+    estimated_tokens_per_call: int
+    threshold_floor: int
+
+
+@dataclass(frozen=True)
 class _SubWorkflowCacheCandidate:
     """One child-workflow cache declaration opportunity.
 

@@ -21,6 +21,97 @@ from .warning_catalog import CACHE_WARNING_CATALOG, make_diagnostic
 logger = logging.getLogger(__name__)
 
 
+def _row_model_drift(
+    row: PerCallRow,
+    irs_by_workflow: Mapping[str, Mapping[str, Any]],
+    default_model: str | None,
+) -> tuple[str, str] | None:
+    """Return ``(trace_model, ir_model)`` if this row has drift, else ``None``.
+
+    Skip conditions (all return ``None``): heterogeneous row, ambiguous or
+    missing trace model, missing workflow_path/IR, templated or absent
+    IR-static model, normalized models equal.
+    """
+    if row.model_is_heterogeneous or len(row.observed_models) != 1:
+        return None
+    trace_model = normalize_model_name(row.observed_models[0])
+    if not trace_model or row.workflow_path is None:
+        return None
+    ir = irs_by_workflow.get(row.workflow_path)
+    if ir is None:
+        return None
+    ir_node = next(
+        (n for n in (ir.get("nodes") or []) if isinstance(n, dict) and n.get("id") == row.node_path),
+        None,
+    )
+    ir_model = _resolve_ir_static_model_for_node(ir_node, default_model)
+    if ir_model is None or ir_model == trace_model:
+        return None
+    return trace_model, ir_model
+
+
+def _detect_per_node_model_drift(
+    per_call_rows: list[PerCallRow] | tuple[PerCallRow, ...],
+    irs_by_workflow: Mapping[str, Mapping[str, Any]],
+    default_model: str | None,
+) -> tuple[str | None, int]:
+    """Detect per-node model drift between trace and current IR.
+
+    Compares each per-call row's single trace-observed model against the
+    IR-static model for that node. Returns one grouped Notes string when any
+    drift is found, else ``None``.
+
+    Why this matters: row model resolution declares "trace wins", so
+    downstream projections use trace-side pricing. If the workflow's model
+    changed after the trace was recorded, projections silently misprice.
+    Actually-paid remains correct because it comes from recorded ``cost_usd``.
+    """
+    drifts: list[tuple[str, str, str]] = []
+    seen: set[tuple[str | None, str]] = set()
+    for row in per_call_rows:
+        key = (row.workflow_path, row.node_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        drift = _row_model_drift(row, irs_by_workflow, default_model)
+        if drift is not None:
+            drifts.append((row.node_path, drift[0], drift[1]))
+
+    if not drifts:
+        return None, 0
+
+    if len(drifts) == 1:
+        node_id, trace_model, ir_model = drifts[0]
+        return (
+            f"Trace was recorded with model `{trace_model}` for node `{node_id}`; "
+            f"current workflow declares `{ir_model}`. Actually-paid is correct; "
+            f"cost projections use trace-side pricing. Re-record a trace to refresh."
+        ), 1
+
+    items = ", ".join(f"`{node_id}` ({trace_model} → {ir_model})" for node_id, trace_model, ir_model in drifts)
+    return (
+        f"Trace was recorded with different models than current workflow for "
+        f"{len(drifts)} nodes: {items}. Actually-paid is correct; "
+        f"cost projections use trace-side pricing. Re-record a trace to refresh."
+    ), len(drifts)
+
+
+def _build_call_counts_by_node(ctx: Any, cw_result: Any) -> dict[tuple[str | None, str], int]:
+    """Observed LLM call counts keyed like per-call rows."""
+    if ctx.trace is None:
+        return {}
+    counts: dict[tuple[str | None, str], int] = {}
+    edges_map = _edge_child_paths(cw_result)
+    for leaf in ctx.trace.iter_llm_leaves(edges=edges_map, workflow_path=ctx.workflow_path):
+        llm_call = leaf.llm_call
+        if llm_call is not None and llm_call.get("is_warmup"):
+            continue
+        node_id = leaf.event_node_id if leaf.tier == "sub_workflow_descendant" else leaf.owner_node_id
+        key = (leaf.workflow_path, node_id)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def _default_memo_cache() -> Any:
     """Construct a read-only ``MemoizationCache`` from the default location.
 

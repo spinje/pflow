@@ -5665,7 +5665,7 @@ def test_resolve_child_input_value_propagates_via_batch_alias() -> None:
     ``_resolve_child_input_value``; this test fails because ``${item...}``
     remains unresolved.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _resolve_child_input_value
 
     parent_ir = {
         "nodes": [
@@ -5700,7 +5700,7 @@ def test_resolve_child_input_value_returns_none_when_batch_items_unresolvable() 
     alias; this test fails because unresolved runtime values stop returning
     ``None``.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _resolve_child_input_value
 
     parent_ir = {
         "nodes": [
@@ -5723,7 +5723,7 @@ def test_resolve_child_input_value_handles_inline_static_batch_items() -> None:
     Mutation contract: only handle template-string ``items``; this test fails
     because literal-list batches no longer propagate child parameters.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _resolve_child_input_value
 
     parent_ir = {
         "nodes": [
@@ -5748,7 +5748,7 @@ def test_resolve_child_input_value_swallows_batch_items_resolve_exceptions(
     Mutation contract: remove the ``try/except`` around batch-items template
     resolution; this test fails by raising the injected exception.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _resolve_child_input_value
     from pflow.runtime.template_resolver import TemplateResolver
 
     parent_ir = {
@@ -5778,8 +5778,7 @@ def test_build_parameters_by_workflow_propagates_batch_alias_child_input() -> No
     instead of the edge; this test fails because batch-alias metadata is lost.
     """
     from pflow.core.markdown_parser import parse_markdown
-    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _build_parameters_by_workflow, walk_cross_workflow
 
     fixtures_dir = Path("tests/fixtures/cache_analysis").resolve()
     parent_path = fixtures_dir / "batch-alias-parent.pflow.md"
@@ -5814,8 +5813,7 @@ def test_build_parameters_by_workflow_uses_trace_batch_item_when_items_expr_unre
     ``_resolve_first_batch_item``; this test fails because the child workflow
     receives no propagated ``brief`` parameter.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _build_parameters_by_workflow, walk_cross_workflow
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     parent_path = "/abs/parent.pflow.md"
@@ -6549,8 +6547,7 @@ def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:
     suppressed, and the root params dict stays byte-identical to its
     input.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import _build_parameters_by_workflow, walk_cross_workflow
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     a_path = "/abs/a.pflow.md"

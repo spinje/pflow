@@ -9,6 +9,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
+from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import classify_prompt_refs
 
@@ -20,7 +21,9 @@ from ..types import (
     CrossWorkflowFindings,
     CrossWorkflowInputContribution,
     PerCallRow,
+    TraceExecutionIndex,
     _GroupedConsumerProjection,
+    _RowCrossWorkflowCandidate,
     _SubWorkflowCacheCandidate,
     _SubWorkflowCacheGroup,
     _workflow_basename,
@@ -435,6 +438,161 @@ def _estimate_parent_value_tokens(
     if value is None:
         return None
     return estimate_tokens(model, deterministic_serialize(value))[0]
+
+
+def _build_cross_workflow_candidates_by_row(
+    *,
+    ctx: AnalysisContext,
+    cw_result: Any,
+    call_counts_by_node: dict[tuple[str | None, str], int],
+    trace_index: TraceExecutionIndex,
+) -> dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]]:
+    """Build row-level cross-workflow projections for trace-backed attribution."""
+    candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]] = {}
+    for edge in getattr(cw_result, "edges", ()) or ():
+        edge_candidates = _row_cross_workflow_candidates_for_edge(
+            edge=edge,
+            ctx=ctx,
+            cw_result=cw_result,
+            call_counts_by_node=call_counts_by_node,
+            trace_index=trace_index,
+        )
+        for candidate in edge_candidates:
+            for node_id in candidate.child_node_ids:
+                if call_counts_by_node.get((candidate.child_workflow, node_id), 0) <= 0:
+                    continue
+                candidates_by_row.setdefault((candidate.child_workflow, node_id), []).append(candidate)
+    return candidates_by_row
+
+
+def _row_cross_workflow_candidates_for_edge(
+    *,
+    edge: Any,
+    ctx: AnalysisContext,
+    cw_result: Any,
+    call_counts_by_node: dict[tuple[str | None, str], int],
+    trace_index: TraceExecutionIndex,
+) -> tuple[_RowCrossWorkflowCandidate, ...]:
+    """Return gated row-level candidates for one cross-workflow edge."""
+    if getattr(edge, "is_batch_alias_root", False) or getattr(edge, "parent_value_expr", None) is None:
+        return ()
+    child_workflow = str(edge.child_workflow)
+    child_ir = cw_result.irs_by_workflow.get(child_workflow)
+    if not child_ir:
+        return ()
+    child_declared = set(_items_by_name(cw_result.cache_items_by_workflow.get(child_workflow, ())))
+    parent_items_by_name = _items_by_name(cw_result.cache_items_by_workflow.get(edge.parent_workflow, ()))
+    candidates: list[_RowCrossWorkflowCandidate] = []
+    for use in _child_cache_ref_consumers(child_ir, edge.child_input_name):
+        if _cache_ref_is_declared_or_covered(use.child_cache_ref, child_declared):
+            continue
+        total_invocations = _total_observed_invocations(
+            child_workflow=child_workflow,
+            child_node_ids=use.consumer_node_ids,
+            call_counts_by_node=call_counts_by_node,
+        )
+        if total_invocations < 2:
+            continue
+        child_models = _resolved_models_for_child(
+            child_ir,
+            workflow_path=child_workflow,
+            node_ids=use.consumer_node_ids,
+            trace_index=trace_index,
+        )
+        if not child_models:
+            continue
+        strictest_model = max(child_models, key=get_min_cache_tokens)
+        threshold_floor = get_min_cache_tokens(strictest_model)
+        parent_cache_ref = _append_child_suffix(
+            edge.parent_value_expr or "", edge.child_input_name, use.child_cache_ref
+        )
+        parent_prose = _parent_prose_for_cache_ref(parent_items_by_name, parent_cache_ref)
+        token_estimate = _estimate_parent_value_tokens(
+            parent_workflow=edge.parent_workflow,
+            parent_value_expr=parent_cache_ref,
+            parent_node_id=edge.parent_node_id,
+            child_workflow=child_workflow,
+            child_input_name=edge.child_input_name,
+            child_cache_ref=use.child_cache_ref,
+            model=strictest_model,
+            ctx=ctx,
+            cw_result=cw_result,
+        )
+        if token_estimate is None or token_estimate <= 0:
+            continue
+        candidates.append(
+            _RowCrossWorkflowCandidate(
+                parent_workflow=edge.parent_workflow,
+                parent_value_expr=edge.parent_value_expr or "",
+                parent_cache_ref=parent_cache_ref,
+                parent_node_id=edge.parent_node_id,
+                child_workflow=child_workflow,
+                child_input_name=edge.child_input_name,
+                child_cache_ref=use.child_cache_ref,
+                parent_prose=parent_prose,
+                estimated_tokens_per_call=token_estimate,
+                threshold_floor=threshold_floor,
+                child_node_ids=use.consumer_node_ids,
+            )
+        )
+    return tuple(candidates)
+
+
+def _has_structural_cross_workflow_projection_candidate(cw_result: Any) -> bool:
+    """Return True when a no-trace run has rows that trace attribution could fill."""
+    for edge in getattr(cw_result, "edges", ()) or ():
+        if getattr(edge, "is_batch_alias_root", False):
+            continue
+        if getattr(edge, "parent_value_expr", None) is None:
+            continue
+        child_workflow = str(edge.child_workflow)
+        child_ir = cw_result.irs_by_workflow.get(child_workflow)
+        if not child_ir:
+            continue
+        child_declared = set(_items_by_name(cw_result.cache_items_by_workflow.get(child_workflow, ())))
+        uses = _child_cache_ref_consumers(child_ir, edge.child_input_name)
+        consumer_ids = {
+            node_id
+            for use in uses
+            if not _cache_ref_is_declared_or_covered(use.child_cache_ref, child_declared)
+            for node_id in use.consumer_node_ids
+        }
+        if len(consumer_ids) >= 2:
+            return True
+    return False
+
+
+def _resolved_models_for_child(
+    child_ir: dict[str, Any],
+    *,
+    workflow_path: str | None = None,
+    node_ids: tuple[str, ...] = (),
+    trace_index: TraceExecutionIndex | None = None,
+) -> list[str]:
+    """Resolved LLM models in child source order; template strings are skipped."""
+    models: list[str] = []
+    node_id_filter = set(node_ids)
+    for node in child_ir.get("nodes", []) or []:
+        if not isinstance(node, dict) or node.get("type") != "llm":
+            continue
+        node_id = str(node.get("id", ""))
+        if node_id_filter and node_id not in node_id_filter:
+            continue
+        model = node.get("params", {}).get("model") or node.get("model")
+        if (model is None or (isinstance(model, str) and "${" in model)) and trace_index is not None:
+            observed = trace_index.llm_call_lists_by_key.get((workflow_path, node_id), ())
+            observed_models = sorted({str(call.get("model")) for call in observed if call.get("model")})
+            if len(observed_models) == 1:
+                model = observed_models[0]
+        if model is None:
+            model = get_default_workflow_model()
+        if not model:
+            continue
+        model_str = str(model)
+        if "${" in model_str:
+            continue
+        models.append(model_str)
+    return models
 
 
 _MODEL_SWITCH_BAND = 1024
