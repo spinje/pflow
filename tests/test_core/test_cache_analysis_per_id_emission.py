@@ -51,6 +51,44 @@ def _word_count(_model: str | None, text: str | None, **_kwargs: Any) -> tuple[i
     return (len((text or "").split()), "heuristic")
 
 
+_STAGE_ATTR_MODULES: dict[str, tuple[str, ...]] = {
+    "estimate_tokens": (
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.cross_workflow",
+    ),
+    "get_min_cache_tokens": (
+        "pflow.core.prompt_cache_analysis.below_min_tokens_detector",
+        "pflow.core.prompt_cache_analysis.analyze",
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.warnings",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.fragmentation",
+        "pflow.core.prompt_cache_analysis.stages.partial_declarations",
+        "pflow.core.prompt_cache_analysis.stages.cross_workflow",
+    ),
+    "_input_rate": (
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.fragmentation",
+    ),
+    "_estimate_ref_tokens": (
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.partial_declarations",
+    ),
+    "get_default_workflow_model": (
+        "pflow.core.prompt_cache_analysis.analyze",
+        "pflow.core.prompt_cache_analysis.trace_loading",
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+    ),
+}
+
+
+def _patch_stage_attr(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
+    for module_name in _STAGE_ATTR_MODULES[name]:
+        monkeypatch.setattr(importlib.import_module(module_name), name, value, raising=False)
+
+
 def _patch_pricing(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -65,8 +103,10 @@ def _patch_pricing(
     ``missing_chunks`` makes ``_estimate_ref_tokens`` return ``None`` for those
     chunk names (drives "any shared chunk None → skip emit" path).
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     cost_module = importlib.import_module("pflow.core.prompt_cache_analysis.cost_estimation")
+    fragmentation_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.fragmentation")
+    partial_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.partial_declarations")
+    suggestions_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.suggestions")
     missing = missing_models or set()
     missing_chunk_set = missing_chunks or set()
 
@@ -78,9 +118,16 @@ def _patch_pricing(
     def fake_ref_tokens(chunk: str, **_kwargs: Any) -> int | None:
         return None if chunk in missing_chunk_set else 100
 
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda model: None if model in missing else 1.0)
+    monkeypatch.setattr(suggestions_module, "_input_rate", lambda model: None if model in missing else 1.0)
+    monkeypatch.setattr(fragmentation_module, "_input_rate", lambda model: None if model in missing else 1.0)
     monkeypatch.setattr(cost_module, "get_model_pricing", fake_pricing)
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", fake_ref_tokens)
+    monkeypatch.setattr(suggestions_module, "_estimate_ref_tokens", fake_ref_tokens)
+    monkeypatch.setattr(
+        fragmentation_module,
+        "_sum_chunk_tokens",
+        lambda chunks, *_args, **_kwargs: None if any(c in missing_chunk_set for c in chunks) else 100 * len(chunks),
+    )
+    monkeypatch.setattr(partial_module, "_estimate_ref_tokens", fake_ref_tokens)
 
 
 @pytest.fixture(autouse=True)
@@ -88,9 +135,15 @@ def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
     cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
+    fragmentation_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.fragmentation")
+    partial_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.partial_declarations")
+    row_builder_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.row_builder")
+    suggestions_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.suggestions")
+    warnings_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.warnings")
     token_estimation_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
-    monkeypatch.setattr(analyze_module, "estimate_tokens", _word_count)
     monkeypatch.setattr(cross_stage_module, "estimate_tokens", _word_count)
+    monkeypatch.setattr(row_builder_module, "estimate_tokens", _word_count)
+    monkeypatch.setattr(suggestions_module, "estimate_tokens", _word_count)
     # Mirror the patch in token_estimation.py — analyze.py-resident callers
     # see the first; token_estimation.py-resident callers (``_estimate_ref_tokens``,
     # ``_sum_resolved_chunk_tokens``) see the second. Without both, Tier 2 of
@@ -100,10 +153,14 @@ def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(token_estimation_module, "estimate_tokens", _word_count)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 10)
-    monkeypatch.setattr(
-        below_min_module, "get_min_cache_tokens", lambda model: analyze_module.get_min_cache_tokens(model)
-    )
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: None)
+    monkeypatch.setattr(fragmentation_module, "get_min_cache_tokens", lambda _model: 10, raising=False)
+    monkeypatch.setattr(partial_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(row_builder_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(suggestions_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(warnings_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(below_min_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(suggestions_module, "_input_rate", lambda _model: None)
+    monkeypatch.setattr(fragmentation_module, "_input_rate", lambda _model: None)
 
 
 def test_batch_prewarm_recommended_fires_only_when_prewarm_absent(tmp_path: Path) -> None:
@@ -937,8 +994,8 @@ def test_dynamic_before_static_treats_indirected_declared_chunk_as_static() -> N
 
 
 def test_padding_advisory_uses_dotted_path_subset(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
     workflow_ir = {
         "cache": {
             "items": [
@@ -981,9 +1038,9 @@ def test_padding_advisory_uses_dotted_path_subset(monkeypatch: pytest.MonkeyPatc
 def test_shared_context_undeclared_populates_suggested_block_with_dotted_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
         "nodes": [
             {
@@ -1050,8 +1107,8 @@ def test_shared_context_undeclared_conditional_fires_for_greenfield_smoke_value(
     Mutation contract: deleting the BELOW_THRESHOLD branch in
     ``_populate_suggested_blocks`` makes this conditional warning disappear.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 4096)
 
     analysis = analyze(
         _shared_context_smoke_workflow(),
@@ -1089,8 +1146,8 @@ def test_shared_context_undeclared_conditional_silent_when_value_clears_threshol
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Above-threshold values keep the confident sibling as the only action."""
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 4096)
 
     analysis = analyze(
         _shared_context_smoke_workflow(),
@@ -1109,8 +1166,8 @@ def test_shared_context_undeclared_conditional_silent_when_value_clears_threshol
 def test_shared_context_undeclared_conditional_silent_when_evidence_incomplete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
 
     analysis = analyze(
         _shared_context_smoke_workflow(model=None),
@@ -1267,8 +1324,8 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_memo(
     # The autouse ``deterministic_tokens`` fixture patches ``_input_rate`` to
     # always return None for determinism — override locally to exercise the
     # priced path. Mirrors the pattern at line 178 etc.
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -1333,8 +1390,8 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
     → this fails (savings drops to None because memo is empty).
     """
     # See sibling test for the rationale on overriding the autouse fixture.
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -1452,8 +1509,8 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_node_invo
     walk to, and no memo is provided).
     """
     # See sibling test for the rationale on overriding the autouse fixture.
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -1621,8 +1678,8 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_parameter
     """
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -1678,8 +1735,8 @@ def test_sub_workflow_cache_undeclared_parameters_win_over_memo(
     """Current parameters must beat stale memo for the same input root."""
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -1746,8 +1803,8 @@ def test_sub_workflow_cache_undeclared_savings_populated_via_walker_propagated_p
     """Tier 0 uses walker-propagated parameters for non-root boundaries."""
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     root_ir = {
@@ -1835,10 +1892,10 @@ def test_sub_workflow_cache_undeclared_below_threshold_warns_and_drops_savings(
     # the SOLE reason savings is None) and ``get_min_cache_tokens`` to 10
     # (we need a value larger than the fixture's tokenized size so 200 tokens
     # are below threshold).
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 1000)
     monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 1000)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
@@ -1910,8 +1967,8 @@ def test_sub_workflow_cache_undeclared_above_threshold_keeps_savings_and_no_clau
     """
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -2663,8 +2720,8 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
     the first child model; this test fails because the low-threshold first node
     admits a projection that the stricter second node could not cache.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda model: 100 if model == "strict/model" else 10)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda model: 100 if model == "strict/model" else 10)
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"concept": {"type": "string"}},
@@ -2735,8 +2792,8 @@ def test_sub_workflow_cache_undeclared_groups_multiple_inputs_per_child(
     Mutation contract: restore per-input emission and this test fails with two
     diagnostics instead of one child-scoped diagnostic.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
@@ -2824,9 +2881,9 @@ def test_sub_workflow_cache_undeclared_case_model_switch(
     sibling ``test_sub_workflow_case_uses_per_call_not_cohort`` fails because
     it engineers a case where per-call < 1024 but cohort > 1024.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 2000)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 2000)
     monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 2000)
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -2888,7 +2945,7 @@ def test_sub_workflow_cache_undeclared_case_model_switch(
 
     # Override the mocked threshold for THIS test so the per-call prefix lands
     # in the model_switch band [1024, threshold). Set threshold = 4096.
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 4096)
     monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 4096)
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -2921,13 +2978,13 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
     per_call_prefix_tokens by call count before comparing to threshold) and
     this test fails with case=actionable/model_switch instead of refactor.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     # Threshold = 4096, MODEL_SWITCH_BAND = 1024.
     # We engineer: per-call ~500 tokens (below 1024 → refactor under correct math),
     # 10 calls in trace → cohort ~5000 (above 4096 → buggy "actionable").
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 4096)
     monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 4096)
     parent_ir = {
         "inputs": {"a": {"type": "string"}},
@@ -3007,12 +3064,12 @@ def test_sub_workflow_cache_undeclared_splits_mixed_consumer_cases(
     the body text to pick one representative token count, producing nonsense
     like "~8,504 tokens per call, below the 1,024-token minimum".
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1024)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 1024)
     monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 1024)
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     parent_ir = {
         "inputs": {"concept": {"type": "object"}, "rubric": {"type": "string"}},
@@ -5639,9 +5696,9 @@ def test_template_honest_default_keeps_subpaths_separate(monkeypatch: pytest.Mon
     your prompts actually reference; consolidation is opt-in via
     ``cache.consolidate-to-root-recommended``.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
         "inputs": {"concept": {"type": "object"}},
         "nodes": [
@@ -5686,9 +5743,9 @@ def test_subpath_sort_clusters_siblings_by_root(monkeypatch: pytest.MonkeyPatch)
     drop the root-grouping dimension; this test fails because individual
     share counts scatter ``concept.angle`` away from its siblings.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kwargs: 2000)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
         "inputs": {
             "concept": {"type": "object"},
@@ -5733,12 +5790,11 @@ def test_consolidate_to_root_advisory_fires_for_brownfield_subpaths(monkeypatch:
     ``analyze()`` or revert the threshold check; this test fails because
     the advisory disappears.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     # Lock min-cache threshold deterministically.
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 100)
     # Sub-paths return 5 tokens each; the root returns 200 tokens.
-    monkeypatch.setattr(
-        analyze_module,
+    _patch_stage_attr(
+        monkeypatch,
         "_estimate_ref_tokens",
         lambda ref, **_kw: 200 if ref == "concept" else 5,
     )
@@ -5784,11 +5840,10 @@ def test_consolidate_to_root_advisory_silent_when_subpath_already_above_threshol
     guard; this test fails because the advisory fires despite the sub-path
     being self-sufficient.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 100)
     # core_idea = 200 (above threshold); title = 5; root = 300.
-    monkeypatch.setattr(
-        analyze_module,
+    _patch_stage_attr(
+        monkeypatch,
         "_estimate_ref_tokens",
         lambda ref, **_kw: {"concept.core_idea": 200, "concept.title": 5, "concept": 300}.get(ref, 1),
     )
@@ -5826,10 +5881,10 @@ def test_consolidate_to_root_advisory_silent_when_root_below_threshold(
     Mutation test: remove the ``if root_tokens < min_tokens: continue`` guard;
     this test fails because the advisory fires for a useless consolidation.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 100)
     # All sizes below threshold — consolidation wouldn't help.
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kw: 30)
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kw: 30)
 
     workflow_ir = {
         "inputs": {"concept": {"type": "object"}},
@@ -5865,10 +5920,9 @@ def test_consolidate_to_root_advisory_silent_when_root_already_declared(
     this test fires the advisory for a redundancy that the agent has
     already partly addressed.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 100)
-    monkeypatch.setattr(
-        analyze_module,
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 100)
+    _patch_stage_attr(
+        monkeypatch,
         "_estimate_ref_tokens",
         lambda ref, **_kw: 200 if ref == "concept" else 5,
     )
@@ -6128,9 +6182,8 @@ def test_fragmentation_suppresses_when_only_one_model_group_meets_threshold(
     fragmentation warning.
     """
     _patch_pricing(monkeypatch)
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(
-        analyze_module,
+    _patch_stage_attr(
+        monkeypatch,
         "get_min_cache_tokens",
         lambda model: 10_000 if model == "anthropic/claude-sonnet-4-5" else 10,
     )
@@ -6199,8 +6252,8 @@ def test_write_penalty_silent_when_declared_cache_below_threshold(monkeypatch: p
     positive savings from removing a write that never happens.
     """
     _patch_pricing(monkeypatch)
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10_000)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10_000)
     workflow_ir = {
         "inputs": {"context": {"type": "string"}},
         "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
@@ -7019,12 +7072,12 @@ def test_partial_prompt_cache_validator_round_trip_zero_diagnostics_post_edit() 
 
 
 def test_partial_prompt_cache_heterogeneous_models_per_node_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
     def fake_min(model: str) -> int:
         return 1000 if "sonnet" in model else 10
 
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", fake_min)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", fake_min)
     workflow_ir = _partial_prompt_cache_workflow()
     workflow_ir["nodes"][1]["params"]["model"] = "anthropic/claude-haiku-4-5"
     diag, _result = _partial_diag(workflow_ir, parameters={"a": "a " * 200, "b": "b " * 20})
@@ -7074,13 +7127,13 @@ def test_partial_prompt_cache_external_prompt_md_file_resolved_at_analyzer_time(
 def test_partial_prompt_cache_suppressed_when_consolidate_to_root_covers_same_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
 
     def fake_ref_tokens(ref: str, **_kwargs: Any) -> int | None:
         return 100 if ref == "concept" else 5
 
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", fake_ref_tokens)
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", fake_ref_tokens)
     workflow_ir = _partial_prompt_cache_workflow(
         prompts=(
             "Use ${concept.title} and ${concept.body}.",

@@ -120,3 +120,71 @@ Trust boundary:
 - Verified: extracted modules import cleanly; all verification commands listed above pass; `TemplateResolver` use in extracted cross-workflow and prediction stages is lazy.
 - Assumed correct: keeping the temporary cross-workflow back-edge through Phase 4 is acceptable because Phase 5 is explicitly responsible for moving those shared helpers to their final homes.
 - Unable to verify: literal `make test && make check` and the Task 159 golden harness, due the documented sandbox `uv` panics and stale golden expected outputs.
+
+## 2026-05-21 - Phase 5 in progress, handoff prepared before final verification
+
+Scope completed:
+- Extracted Phase 5 analytical stages from `analyze.py` into `stages/row_builder.py`, `stages/warnings.py`, `stages/suggestions.py`, `stages/fragmentation.py`, and `stages/partial_declarations.py`.
+- Folded the former `padding_advisor.py` responsibilities into `stages/suggestions.py` and deleted the old module.
+- Removed the Phase 4 temporary `stages/cross_workflow.py` back-edge to `analyze.py` by moving shared observed-invocation logic out of the orchestrator.
+- Moved additional cohesive helpers out of `analyze.py` to satisfy the Phase 5 size target: shadow-warning cost enrichment now lives in `stages/warnings.py`, and sub-workflow rollup helpers now live in `stages/summary.py`.
+- Retargeted private tests that patch moved helpers so they patch the modules that now own the behavior instead of relying on compatibility shims.
+
+Verification completed:
+- Import sanity passed for package-level cache-analysis exports and the new Phase 5 stage modules.
+- `ruff check src/pflow/core/prompt_cache_analysis tests/test_core/test_cache_analysis_*.py` passed.
+- Focused Phase 5 tests passed: `539 passed`.
+- Full core cache-analysis test slice passed: `756 passed`.
+- Structural search found no remaining `stages/*` imports from `analyze.py`; remaining direct private test imports from `analyze.py` are for helpers intentionally still owned by the orchestrator.
+
+Verification still needed:
+- CLI/MCP/cache-nudge cache-analysis slice after the final Phase 5 extraction edits.
+- `tests/test_core/test_sub_workflow_resolver.py` after the final Phase 5 extraction edits.
+- Sandbox-compatible near-full pytest after the final Phase 5 extraction edits.
+- Quality gates after final edits: `ruff format --check src tests`, `mypy src`, and `deptry src`.
+
+Deviations from plan:
+- Placed batch-tail helpers in `stages/row_builder.py` rather than `stages/warnings.py`. Reason: row construction uses these helpers directly for per-call evidence; keeping them in warnings would force either a row-builder-to-warnings dependency or lazy imports between stages. Owning the shared row evidence in `row_builder.py` keeps the stage graph simpler.
+- Moved `_extract_cache_ttl` to `stages/suggestions.py` rather than leaving it in `analyze.py`. Reason: fragmentation analysis needs TTL interpretation too, and no stage should import private helpers from the orchestrator after Phase 5.
+- Moved `_total_observed_invocations` to `stages/row_builder.py` to eliminate the Phase 4 temporary cross-workflow import from `analyze.py`.
+- Moved shadow-warning enrichment and sub-workflow rollup helpers even though they were not the main Cluster F extraction list. Reason: without these moves `analyze.py` stayed over the hard 1,100-line target; both moves follow existing responsibilities rather than creating artificial modules.
+- Did not use code-implementer subagents for the extraction. Reason: the remaining work was tightly coupled through one orchestrator, import graph, and overlapping test monkeypatch targets, so parallel write scopes would have conflicted rather than reducing risk.
+- Did not rerun the Task 159 golden harness. Reason: previous phase logs establish the checked-in expected outputs are stale relative to successful local execution, so it is not a reliable Phase 5 oracle.
+
+Key learnings:
+- Test monkeypatches are first-class consumers of private ownership in this area; after extraction, patching the stage module that owns a helper is more honest than adding temporary exports back to `analyze.py`.
+- Moving modules one package level deeper exposed relative-import assumptions around cost estimation; extracted stages need explicit `..cost_estimation` imports.
+- The Phase 5 size target required treating `analyze.py` as a true orchestrator boundary, not just moving the helpers named in the initial cluster list.
+
+Trust boundary:
+- Verified: listed focused checks pass; no extracted stage imports private helpers from `analyze.py`; `analyze.py` is currently under the Phase 5 1,100-line target.
+- Assumed correct: remaining direct private test imports from `analyze.py` are acceptable because `_build_parameters_by_workflow` and `_resolve_child_input_value` are still orchestrator-owned per the current plan.
+- Unable to verify before handoff: broader CLI/MCP, sub-workflow resolver, near-full pytest, mypy, deptry, and format checks after the latest Phase 5 edits.
+
+## 2026-05-21 - Phase 5 complete, awaiting human review
+
+Scope completed:
+- Finished the Phase 5 cleanup left in the handoff: removed the stale `padding_advisor` reference from the orchestrator docstring, made the remaining orchestrator-owned `TemplateResolver` use lazy, retargeted the affected test monkeypatch, and formatted the extracted stage files.
+- Preserved the Phase 5 decomposition already staged: row construction, warnings, suggestions/padding, fragmentation, and partial declaration logic now live in dedicated stage modules; `analyze.py` is a 1,100-line orchestrator and no stage imports from `analyze.py`.
+
+Verification:
+- Import sanity passed for package-level analyzer/render/summarize exports and all new Phase 5 stage modules.
+- Structural check passed: no `stages/*` module imports private helpers from `analyze.py`.
+- Cache-analysis/CLI/MCP/cache-nudge slice passed: `801 passed`.
+- Sub-workflow resolver tests passed: `15 passed`.
+- Sandbox-compatible near-full pytest passed: `7120 passed, 19 skipped`.
+- Quality gates passed: `ruff check src tests`, `ruff format --check src tests`, `mypy src`, and `deptry src`.
+
+Deviations from plan:
+- `_static_excerpt`, `_find_batch_static_tail_after_dynamic`, and batch-prefix sizing helpers live in `stages/row_builder.py` rather than `stages/warnings.py`. Reason: row construction uses them directly; placing them in warnings would create a row-builder-to-warnings dependency while warnings already depends on row_builder.
+- The remaining `TemplateResolver` use in `analyze.py` was made lazy even though those functions stayed orchestrator-owned. Reason: the task's lazy-import hygiene item targets the dependency, not only extracted stages; keeping the eager import would preserve the original import-chain cost.
+- Did not rerun the Task 159 golden harness. Reason: prior verified runs showed the checked-in expected outputs are stale in this checkout, so the harness is not a reliable Phase 5 oracle until its baselines are regenerated.
+
+Key learnings:
+- The cleanest final dependency graph required treating small shared warning helpers as row evidence helpers when row construction is also a caller.
+- Lazy imports change monkeypatch ownership: tests must patch the runtime `TemplateResolver` class directly instead of an analyzer module attribute that should no longer exist.
+
+Trust boundary:
+- Verified: all commands listed above pass in this sandbox using the `pflow-sandbox-testing` command style; `analyze.py` meets the hard Phase 5 size limit exactly at 1,100 lines.
+- Assumed correct: leaving Phase 6 documentation cleanup for the next phase is acceptable; stale package-level `CLAUDE.md` structure notes are known and explicitly scoped to Phase 6/7.
+- Unable to verify: literal `make test && make check`, because this sandbox's `uv`/subprocess behavior is documented as unreliable here.

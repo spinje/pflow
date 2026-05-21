@@ -17,6 +17,8 @@ from ..types import (
     CacheProjection,
     CostDelta,
     PerCallRow,
+    SubWorkflowRollup,
+    SubWorkflowRollupEntry,
     TraceExecutionIndex,
     TraceUnexecutedLLMRow,
     invocation_count_for,
@@ -531,3 +533,63 @@ def _maybe_append_gemini_note(rows: list[PerCallRow], notes: list[str]) -> None:
         if provider_info.name == "gemini":
             notes.append(_GEMINI_TELEMETRY_NOTE)
             return
+
+
+def _build_sub_workflow_rollup(
+    cw_result: Any,
+    root_workflow_path: str,
+    *,
+    rows: list[PerCallRow],
+    trace_index: TraceExecutionIndex,
+    ttl: str | None,
+    notes: list[str],
+) -> SubWorkflowRollup | None:
+    """Build metadata and dollar attribution for included child workflows."""
+    from ..cost_estimation import compute_projections
+
+    workflows = [path for path in getattr(cw_result, "irs_by_workflow", {}) if path != root_workflow_path]
+    if not workflows:
+        return None
+    parent_by_child: dict[str, str] = {}
+    for edge in getattr(cw_result, "edges", ()) or ():
+        child = str(getattr(edge, "child_workflow", ""))
+        parent_by_child.setdefault(child, str(getattr(edge, "parent_node_id", "")))
+    rows_by_workflow: dict[str | None, list[PerCallRow]] = {}
+    for row in rows:
+        rows_by_workflow.setdefault(row.workflow_path, []).append(row)
+    entries_list: list[SubWorkflowRollupEntry] = []
+    for path in sorted(workflows):
+        workflow_rows = rows_by_workflow.get(path, [])
+        output_tokens: Mapping[tuple[str | None, str] | str, int | None] = {
+            (row.workflow_path, row.node_path): row.output_tokens_estimated for row in workflow_rows
+        }
+        projections = compute_projections(workflow_rows, output_tokens_by_node=output_tokens, ttl=ttl)
+        entries_list.append(
+            SubWorkflowRollupEntry(
+                workflow_path=str(path),
+                called_by_node_id=parent_by_child.get(str(path), ""),
+                llm_node_count=_count_llm_nodes(getattr(cw_result, "irs_by_workflow", {}).get(path, {})),
+                actually_paid_usd=trace_index.current_cost_by_workflow.get(path),
+                no_cache_hypothetical_usd=projections.no_cache_hypothetical_usd,
+                first_run_with_cache_hypothetical_usd=projections.first_run_with_cache_hypothetical_usd,
+                rerun_within_ttl_hypothetical_usd=projections.rerun_within_ttl_hypothetical_usd,
+            )
+        )
+    truncated = _has_cross_workflow_truncation(notes)
+    return SubWorkflowRollup(
+        workflows_included=tuple(entry.workflow_path for entry in entries_list),
+        max_depth_walked=len(entries_list),
+        truncated=truncated,
+        per_workflow=tuple(entries_list),
+    )
+
+
+def _has_cross_workflow_truncation(notes: list[str]) -> bool:
+    return any(
+        "Cross-workflow walker reached max_depth" in note or "Cross-workflow walker detected cycle" in note
+        for note in notes
+    )
+
+
+def _count_llm_nodes(ir: dict[str, Any]) -> int:
+    return sum(1 for node in ir.get("nodes", []) or [] if isinstance(node, dict) and node.get("type") == "llm")

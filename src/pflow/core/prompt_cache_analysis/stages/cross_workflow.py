@@ -17,6 +17,8 @@ from ..token_estimation import estimate_tokens
 from ..trace_loading import _edge_child_paths
 from ..types import CrossWorkflowFindings, CrossWorkflowInputContribution, PerCallRow, invocation_count_for
 from ..warning_catalog import make_diagnostic
+from .row_builder import _node_inputs, _static_excerpt, _total_observed_invocations
+from .suggestions import _estimate_token_savings_usd
 
 logger = logging.getLogger(__name__)
 _PARENT_PROSE_PREVIEW_LIMIT = 40
@@ -27,14 +29,6 @@ def _template_resolver() -> Any:
 
     return TemplateResolver
 
-
-# Temporary Phase 4 imports. These helpers move to stage modules in Phase 5.
-from ..analyze import (  # noqa: E402
-    _estimate_token_savings_usd,
-    _node_inputs,
-    _static_excerpt,
-    _total_observed_invocations,
-)
 
 # ---------------------------------------------------------------------------
 # Cross-workflow walking

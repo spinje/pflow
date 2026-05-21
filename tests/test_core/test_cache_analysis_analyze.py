@@ -36,6 +36,43 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
+_STAGE_ATTR_MODULES: dict[str, tuple[str, ...]] = {
+    "estimate_tokens": (
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.cross_workflow",
+    ),
+    "get_min_cache_tokens": (
+        "pflow.core.prompt_cache_analysis.below_min_tokens_detector",
+        "pflow.core.prompt_cache_analysis.analyze",
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.warnings",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.fragmentation",
+        "pflow.core.prompt_cache_analysis.stages.partial_declarations",
+        "pflow.core.prompt_cache_analysis.stages.cross_workflow",
+    ),
+    "_input_rate": (
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.fragmentation",
+    ),
+    "_estimate_ref_tokens": (
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.partial_declarations",
+    ),
+    "get_default_workflow_model": (
+        "pflow.core.prompt_cache_analysis.analyze",
+        "pflow.core.prompt_cache_analysis.trace_loading",
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+    ),
+}
+
+
+def _patch_stage_attr(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
+    for module_name in _STAGE_ATTR_MODULES[name]:
+        monkeypatch.setattr(importlib.import_module(module_name), name, value, raising=False)
+
 
 def _write_trace_fixture(
     tmp_path: Path,
@@ -323,11 +360,11 @@ def test_below_threshold_emits_conditional_recommendation_not_paste_block(
     Mutation contract: removing the BELOW_THRESHOLD branch from
     ``_populate_suggested_blocks`` makes the conditional diagnostic disappear.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 1000)
     workflow_ir = {
         "inputs": {"topic": {"type": "string"}},
         "nodes": [
@@ -365,9 +402,9 @@ def test_below_threshold_emits_conditional_recommendation_not_paste_block(
 
 def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unknown model/token evidence stays out of paste-ready action sections."""
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "inputs": {"topic": {"type": "string"}},
         "nodes": [
@@ -401,11 +438,11 @@ def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatc
     """Only eligible readers count toward savings; the first eligible node is
     the writer that pays the cache_creation premium.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
     workflow_ir = {
         "inputs": {"topic": {"type": "string"}},
         "nodes": [
@@ -435,11 +472,11 @@ def test_suggested_block_emits_when_all_assigned_nodes_meet_threshold(monkeypatc
 
 
 def test_suggested_block_savings_multiplies_batch_consumer_invocations(monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
 
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
     workflow_ir = {
         "inputs": {"topic": {"type": "string"}},
         "nodes": [
@@ -473,12 +510,10 @@ def test_below_threshold_emits_conditional_even_when_only_one_node_below(
     Mutation contract: using the least restrictive provider minimum instead of
     the strictest one reports ``10`` here and understates the precondition.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
-    monkeypatch.setattr(
-        analyze_module,
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda ref, **_kwargs: 100)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(
+        monkeypatch,
         "get_min_cache_tokens",
         lambda model: 1000 if model == "anthropic/claude-haiku-4-5" else 10,
     )
@@ -1745,8 +1780,8 @@ def test_observed_model_replaces_ir_when_trace_consistent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
             {
@@ -1774,8 +1809,8 @@ def test_observed_model_overrides_ir_when_mismatched(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     workflow_ir = {
         "nodes": [
             {
@@ -1869,8 +1904,8 @@ def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
 def test_greenfield_effective_model_path_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     workflow_ir = {
         "nodes": [
             {
@@ -1894,8 +1929,8 @@ def test_l1_cost_projection_works_with_observed_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
             {
@@ -1922,8 +1957,8 @@ def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "gemini/gemini-2.5-flash")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: "gemini/gemini-2.5-flash")
     workflow_ir = {
         "nodes": [
             {
@@ -2261,7 +2296,7 @@ def test_clamp_logs_debug_when_cacheable_exceeds_input(
         nodes=[_llm_trace_event("judge", model="anthropic/claude-sonnet-4-5", input_tokens=100)],
     )
 
-    with caplog.at_level(logging.DEBUG, logger="pflow.core.prompt_cache_analysis.analyze"):
+    with caplog.at_level(logging.DEBUG, logger="pflow.core.prompt_cache_analysis.stages.row_builder"):
         result = analyze(
             workflow_ir,
             parameters={"context": "stable"},
@@ -2526,7 +2561,7 @@ def test_shadow_warning_unenriched_when_pricing_unavailable(tmp_path: Path) -> N
 
 def test_total_input_tokens_trace_total_style_keeps_prompt_tokens() -> None:
     """Trace event where ``input_tokens`` already includes cache portions."""
-    from pflow.core.prompt_cache_analysis.analyze import _estimate_row_tokens
+    from pflow.core.prompt_cache_analysis.stages.row_builder import _estimate_row_tokens
 
     trace_llm_call = {
         "input_tokens": 2000,
@@ -2552,7 +2587,7 @@ def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
     don't double-count. The analyzer uses the shared LiteLLM usage
     normalization rule rather than provider metadata.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _estimate_row_tokens
+    from pflow.core.prompt_cache_analysis.stages.row_builder import _estimate_row_tokens
 
     trace_llm_call = {
         "input_tokens": 2000,
@@ -2575,7 +2610,7 @@ def test_total_input_tokens_gemini_trace_does_not_double_count() -> None:
 
 def test_total_input_tokens_trace_split_style_adds_cache_portions() -> None:
     """Legacy split-style trace event: ``input_tokens`` is uncached-only."""
-    from pflow.core.prompt_cache_analysis.analyze import _estimate_row_tokens
+    from pflow.core.prompt_cache_analysis.stages.row_builder import _estimate_row_tokens
 
     trace_llm_call = {
         "input_tokens": 50,
@@ -3160,8 +3195,8 @@ def test_autoload_tolerates_root_heterogeneous_batch(tmp_path: Path, monkeypatch
 
 
 def test_autoload_includes_default_model_in_ir_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     builder = TraceFixtureBuilder()
     result, trace_path = _autoload_analysis(
         tmp_path,
@@ -3180,8 +3215,8 @@ def test_autoload_uses_trace_and_warns_when_default_model_changed(
     changed since trace was recorded): trace is consumed; Notes entry mentions
     both old and new model. Replaces the prior whole-trace rejection contract.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
     builder = TraceFixtureBuilder()
     result, trace_path = _autoload_analysis(
         tmp_path,
@@ -4148,9 +4183,9 @@ def test_effective_model_falls_back_to_workflow_default(monkeypatch: pytest.Monk
     # submodule. Reach the actual module via ``sys.modules`` for monkeypatch.
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(
-        analyze_module,
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(
+        monkeypatch,
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
@@ -4173,8 +4208,8 @@ def test_effective_model_explicit_wins_over_default(monkeypatch: pytest.MonkeyPa
     """Per-node ``model:`` always wins; default is only the fallback."""
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "should-not-be-used")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: "should-not-be-used")
     workflow_ir = {
         "nodes": [
             {
@@ -4198,8 +4233,8 @@ def test_effective_model_empty_when_no_default_resolved(monkeypatch: pytest.Monk
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
             {
@@ -4242,8 +4277,8 @@ def test_summary_message_no_model_resolved(monkeypatch: pytest.MonkeyPatch) -> N
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
@@ -4270,9 +4305,9 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
     # submodule. Reach the actual module via ``sys.modules`` for monkeypatch.
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(
-        analyze_module,
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(
+        monkeypatch,
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
@@ -4306,9 +4341,9 @@ def test_suggested_run_command_populated_for_workflow_with_inputs(
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(
-        analyze_module,
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(
+        monkeypatch,
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
@@ -4349,9 +4384,9 @@ def test_render_text_emits_suggested_line_on_unavailable_cost_branch(
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(
-        analyze_module,
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(
+        monkeypatch,
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
@@ -4382,8 +4417,8 @@ def test_heterogeneous_model_detected_end_to_end(monkeypatch: pytest.MonkeyPatch
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     workflow_ir = {
         "nodes": [
             {
@@ -4425,8 +4460,8 @@ def test_heterogeneous_model_excluded_from_pricing_aggregation(monkeypatch: pyte
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     # All-heterogeneous workflow — every row is unpriceable.
     workflow_ir = {
         "nodes": [
@@ -4459,8 +4494,8 @@ def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
@@ -4488,8 +4523,8 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     workflow_ir = {
@@ -4516,8 +4551,8 @@ def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch)
     """
     import sys
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
     from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     workflow_ir = {
@@ -5715,8 +5750,7 @@ def test_resolve_child_input_value_swallows_batch_items_resolve_exceptions(
     resolution; this test fails by raising the injected exception.
     """
     from pflow.core.prompt_cache_analysis.analyze import _resolve_child_input_value
-
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    from pflow.runtime.template_resolver import TemplateResolver
 
     parent_ir = {
         "nodes": [
@@ -5733,7 +5767,7 @@ def test_resolve_child_input_value_swallows_batch_items_resolve_exceptions(
     def boom(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("template boom")
 
-    monkeypatch.setattr(analyze_module.TemplateResolver, "resolve_template", boom)
+    monkeypatch.setattr(TemplateResolver, "resolve_template", boom)
 
     assert _resolve_child_input_value(_batch_edge(), ctx) is None
 
@@ -5919,18 +5953,18 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
     ``batch_size_estimated``; this test fails because dynamic ``batch.items:
     ${items}`` rows have no static size even when trace observed repeated calls.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
     token_estimation_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
-    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    _patch_stage_attr(monkeypatch, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
     monkeypatch.setattr(
         token_estimation_module,
         "estimate_tokens",
         lambda _model, text, **_kwargs: (len(text.split()), "test"),
     )
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(below_min_module, "get_min_cache_tokens", lambda _model: 10)
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
 
     model = "anthropic/claude-haiku-4-5"
     prefix = "Shared rubric:\n" + ("stable context sentence. " * 1600)
@@ -6058,9 +6092,9 @@ def test_batch_prefix_prewarm_action_respects_explicit_prewarm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
 
     model = "anthropic/claude-haiku-4-5"
     workflow_path = str(tmp_path / "explicit-prewarm.pflow.md")
@@ -6085,9 +6119,9 @@ def test_batch_prefix_prewarm_action_respects_explicit_opt_out(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
 
     model = "anthropic/claude-haiku-4-5"
     workflow_path = str(tmp_path / "prewarm-opt-out.pflow.md")
@@ -6112,9 +6146,9 @@ def test_batch_prefix_prewarm_action_suppresses_low_call_count(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
-    monkeypatch.setattr(analyze_module, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "estimate_tokens", lambda _model, text, **_kwargs: (len(text.split()), "test"))
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
 
     model = "anthropic/claude-haiku-4-5"
     workflow_path = str(tmp_path / "single-batch-call.pflow.md")
@@ -7525,7 +7559,7 @@ def test_configured_prewarm_projection_uses_cumulative_declared_tokens() -> None
     to ``batch_prefix_tokens`` — matching ``_strip_below_min_cache_markers``
     which counts cumulatively across system blocks then user-message blocks.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _configured_prewarm_projection_component
+    from pflow.core.prompt_cache_analysis.stages.row_builder import _configured_prewarm_projection_component
 
     base = {
         "model": "anthropic/claude-sonnet-4-5",

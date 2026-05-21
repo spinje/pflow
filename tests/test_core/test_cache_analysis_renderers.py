@@ -40,6 +40,16 @@ from pflow.core.prompt_cache_analysis.types import (
 )
 
 
+def _patch_default_model(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    for module_name in (
+        "pflow.core.prompt_cache_analysis.analyze",
+        "pflow.core.prompt_cache_analysis.trace_loading",
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+    ):
+        module = sys.modules.get(module_name) or __import__(module_name, fromlist=[""])
+        monkeypatch.setattr(module, "get_default_workflow_model", lambda: value, raising=False)
+
+
 def _make_analysis(
     *,
     rows: list[PerCallRow] | None = None,
@@ -607,8 +617,8 @@ def test_json_summary_emits_suggested_run_command() -> None:
 def test_json_summary_includes_ir_default_model_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-haiku-4-5")
     analysis = analyze(
         {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
         workflow_path="x",
@@ -621,8 +631,8 @@ def test_json_summary_includes_ir_default_model_when_set(monkeypatch: pytest.Mon
 def test_json_summary_ir_default_model_null_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: None)
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, None)
     analysis = analyze(
         {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
         workflow_path="x",
@@ -1035,7 +1045,7 @@ def test_starter_prose_for_dotted_path_renders_field_from_node() -> None:
     ``creative-direction.response`` would render as
     ``The creative-direction.response:`` instead.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _starter_prose_for_ref
+    from pflow.core.prompt_cache_analysis.stages.suggestions import _starter_prose_for_ref
 
     assert _starter_prose_for_ref("concept") == "The concept:"
     assert _starter_prose_for_ref("concept_brief") == "The concept brief:"
@@ -1955,8 +1965,8 @@ def test_header_discloses_ir_default_when_overridden_by_trace(
 ) -> None:
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-haiku-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(
         workflow_ir,
@@ -1978,8 +1988,8 @@ def test_header_does_not_disclose_when_ir_matches_observed(
 ) -> None:
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-haiku-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(
         workflow_ir,
@@ -1998,8 +2008,8 @@ def test_header_does_not_disclose_when_ir_matches_observed(
 def test_header_does_not_disclose_when_no_observed(monkeypatch: pytest.MonkeyPatch) -> None:
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-haiku-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(workflow_ir, workflow_path="x", auto_load_trace=False)
 
@@ -2021,8 +2031,8 @@ def test_trace_mode_attaches_delta_parenthetical_to_actually_paid_line(
     """
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-sonnet-4-5")
     workflow_ir = {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]}
     analysis = analyze(
         workflow_ir,
@@ -2063,8 +2073,8 @@ def test_trace_mode_parentheticals_use_consistent_baseline_phrase(
     """
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-sonnet-4-5")
     priced = analyze(
         {"nodes": [{"id": "generate", "type": "llm", "params": {"prompt": "Hello"}}]},
         workflow_path="x",
@@ -2155,8 +2165,8 @@ def test_truncated_trace_attaches_parentheticals_without_executed_suffix(
     """
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-sonnet-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-sonnet-4-5")
     workflow_ir = {
         "nodes": [
             {"id": "ran", "type": "llm", "params": {"prompt": "Hello"}},
@@ -2479,8 +2489,8 @@ def test_fragmentation_grouping_uses_effective_model_in_trace_mode(
 ) -> None:
     from pflow.core.prompt_cache_analysis.analyze import analyze
 
-    analyze_module = sys.modules["pflow.core.prompt_cache_analysis.analyze"]
-    monkeypatch.setattr(analyze_module, "get_default_workflow_model", lambda: "anthropic/claude-haiku-4-5")
+    sys.modules["pflow.core.prompt_cache_analysis.analyze"]
+    _patch_default_model(monkeypatch, "anthropic/claude-haiku-4-5")
     big_context = "shared context " * 3000
     workflow_ir = {
         "inputs": {"context": {"type": "string"}},

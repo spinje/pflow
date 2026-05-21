@@ -8,7 +8,7 @@ Spec § "Prefix-Padding Advisory":
 
 from __future__ import annotations
 
-from pflow.core.prompt_cache_analysis.padding_advisor import (
+from pflow.core.prompt_cache_analysis.stages.suggestions import (
     PaddingCandidate,
     compute_padding_advisories,
 )
