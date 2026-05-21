@@ -516,6 +516,58 @@ class TestCompleteUsageNormalization:
         assert isinstance(response.usage["cost_usd"], float)
 
     @patch("litellm.completion")
+    def test_cost_populated_via_upstream_merge_on_missing_model(
+        self, mock_completion, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end: model missing from bundled → upstream merge fires →
+        ``litellm.completion`` returns response_cost → cost_usd populates.
+
+        Verifies the call-site ordering in ``complete()``: ``ensure_model_priced``
+        MUST run before ``litellm.completion`` so LiteLLM's internal cost
+        calculator sees the model in ``litellm.model_cost`` during the call.
+        Mirrors the production flow for brand-new models like
+        ``gemini/gemini-3.5-flash`` (added to upstream after the bundled JSON
+        snapshot).
+        """
+        import litellm
+
+        from pflow.core import litellm_runtime
+
+        # Reset the latch so the helper actually attempts the fetch.
+        monkeypatch.setattr(litellm_runtime, "_upstream_attempted", False)
+        # Force the model to appear missing from the bundled map.
+        monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+        register_calls: list[str] = []
+
+        def fake_register(url: str) -> None:
+            register_calls.append(url)
+            # Simulate LiteLLM's real behavior: upstream fetch populates
+            # the model in model_cost. The mocked completion then returns
+            # a response with response_cost already computed.
+            litellm.model_cost["some/brand-new-model"] = {
+                "input_cost_per_token": 1.5e-6,
+                "output_cost_per_token": 9e-6,
+                "litellm_provider": "gemini",
+                "mode": "chat",
+            }
+
+        monkeypatch.setattr(litellm, "register_model", fake_register)
+
+        mock_completion.return_value = make_litellm_response(
+            prompt_tokens=5,
+            completion_tokens=58,
+            response_cost=0.0005295,  # what LiteLLM would compute post-merge
+        )
+
+        response = complete(model="some/brand-new-model", prompt="hi")
+
+        # 1. ensure_model_priced ran and called register_model(url) exactly once.
+        assert len(register_calls) == 1
+        # 2. cost_usd flowed through from the (post-merge) response.
+        assert response.usage["cost_usd"] == 0.0005295
+
+    @patch("litellm.completion")
     def test_thinking_tokens_zero_when_no_reasoning(self, mock_completion):
         # Non-reasoning model — no completion_tokens_details on usage.
         mock_completion.return_value = make_litellm_response(prompt_tokens=10, completion_tokens=5)

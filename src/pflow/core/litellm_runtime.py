@@ -21,10 +21,26 @@ Users who want fresh upstream pricing can opt back in by setting
 case-insensitive ``"true"``) before invoking pflow — ``setdefault`` never
 overwrites a user-provided value.
 
-Trade-off: brand-new models that LiteLLM hasn't bundled yet will show up
-as ``unpriced_model`` in cache-analysis output and as ``cost_usd=None``
-in runtime trace events. Bump the LiteLLM pin or opt into remote to pick
-those up.
+Hybrid bundled-first, upstream-on-miss
+======================================
+
+The bundled snapshot is stale for brand-new models that LiteLLM hasn't
+bundled yet (e.g., ``gemini/gemini-3.5-flash`` is in upstream but absent
+from the LiteLLM 1.83.14 wheel). ``ensure_model_priced(model)`` performs
+exactly one upstream fetch per process when a cost-map lookup misses,
+merging the upstream JSON via LiteLLM's public ``register_model(url)``
+API. Bundled pricing always wins (the helper only fetches on miss).
+Failures degrade silently to ``cost_usd=None`` — same as today's pre-fix
+behavior for unbundled models.
+
+The determinism contract is now two-tiered:
+
+- **Bundled models**: fully deterministic. Same workflow, same inputs,
+  same ``cost_usd`` regardless of who runs it or when.
+- **Unbundled models**: cost is computed from the upstream snapshot
+  observed the first time this process touches the model. Different
+  days could produce different ``cost_usd`` if upstream pricing changed
+  in between.
 
 This module is the ONLY production seam for ``import litellm`` and
 ``import litellm.exceptions``. The six lazy import sites in ``llm_client.py``,
@@ -39,10 +55,16 @@ scope (``importlib.import_module`` is the only call). Pinned by
 from __future__ import annotations
 
 import importlib
+import logging
 import os
+import threading
 from typing import Any
 
 _LOCAL_MODEL_COST_MAP_ENV = "LITELLM_LOCAL_MODEL_COST_MAP"
+
+_logger = logging.getLogger(__name__)
+_UPSTREAM_LOCK = threading.Lock()
+_upstream_attempted = False
 
 
 def configure_litellm_defaults() -> None:
@@ -80,3 +102,67 @@ def import_litellm_exceptions() -> Any:
     """
     configure_litellm_defaults()
     return importlib.import_module("litellm.exceptions")
+
+
+def ensure_model_priced(model: str) -> None:
+    """Merge upstream cost map into ``litellm.model_cost`` on first cache miss.
+
+    Runs at most once per Python process. Idempotent. Thread-safe — pflow's
+    ThreadPoolExecutor batch path runs LLM calls in parallel, so two
+    cost-map misses can race the helper at startup. The lock + double-check
+    pattern collapses the race to a single upstream fetch.
+
+    If the model is already in ``litellm.model_cost`` (i.e. the bundled JSON
+    knows it), this is a no-op — preserves the offline fast path. If the
+    fetch fails (offline, DNS, proxy, GitHub down, malformed JSON), we log
+    at debug level and leave the cost map untouched. ``cost_usd`` stays
+    ``None`` for unpriced models, matching pre-fix behavior.
+
+    Implementation note: we fetch the JSON via ``httpx`` directly rather
+    than passing the URL to ``litellm.register_model(url)`` because the
+    URL form routes through ``litellm.get_model_cost_map`` which honors
+    ``LITELLM_LOCAL_MODEL_COST_MAP=True`` (set by ``configure_litellm_defaults``)
+    and returns the bundled backup *instead of* fetching the URL. The
+    dict-form of ``register_model`` skips that gate and merges directly.
+    The fetch URL is read from ``litellm.model_cost_map_url`` (LiteLLM's
+    module-level attribute, populated from ``LITELLM_MODEL_COST_MAP_URL``)
+    so the existing offline regression test in
+    ``tests/test_cli/test_litellm_pricing_map_offline.py`` keeps working
+    without monkeypatching us.
+    """
+    global _upstream_attempted
+    if _upstream_attempted:
+        return
+    with _UPSTREAM_LOCK:
+        if _upstream_attempted:
+            return
+        litellm = import_litellm()
+        if model in litellm.model_cost:
+            return
+        try:
+            # httpx is litellm's own runtime dep — guaranteed importable
+            # whenever litellm is. Lazy-imported here to keep this module
+            # cheap when callers never hit a cost-map miss.
+            import httpx
+
+            response = httpx.get(litellm.model_cost_map_url, timeout=5)
+            response.raise_for_status()
+            upstream_map = response.json()
+            if not isinstance(upstream_map, dict) or not upstream_map:
+                raise ValueError("upstream JSON is empty or not a dict")
+            # Silence LiteLLM's "Provider List:" stderr spam during
+            # register_model. Internally it calls get_model_info() for
+            # every upstream entry; entries from providers LiteLLM doesn't
+            # recognize trigger a debug print at
+            # litellm_core_utils/get_llm_provider_logic.py:463 (gated on
+            # ``suppress_debug_info is False``). Already True in the
+            # complete() path; not necessarily True in the cache-analysis
+            # path that also calls this helper.
+            litellm.suppress_debug_info = True
+            # Pass the dict directly to bypass LiteLLM's
+            # LITELLM_LOCAL_MODEL_COST_MAP gate (which would short-circuit
+            # a URL-form call to the bundled backup).
+            litellm.register_model(upstream_map)
+        except Exception as exc:
+            _logger.debug("Upstream cost map fetch failed: %s", exc)
+        _upstream_attempted = True

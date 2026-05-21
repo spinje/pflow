@@ -1468,6 +1468,7 @@ source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "click" },
+    { name = "httpx" },
     { name = "jsonschema" },
     { name = "litellm" },
     { name = "mcp", extra = ["cli"] },
@@ -1496,6 +1497,7 @@ dev = [
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.82" },
     { name = "click" },
+    { name = "httpx" },
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "litellm", specifier = "==1.83.14" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.17.0" },

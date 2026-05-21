@@ -334,7 +334,7 @@ def complete(
     # exception base directly because litellm's exception classes inherit
     # from it (NOT from ``litellm.exceptions.OpenAIError`` — that is a
     # separate sibling class). See module docstring.
-    from pflow.core.litellm_runtime import import_litellm
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
 
     litellm = import_litellm()
     import openai
@@ -346,6 +346,13 @@ def complete(
     # redundant logs just produce noise. CRITICAL lets truly fatal
     # messages through while suppressing the redundant ERROR tracebacks.
     logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
+
+    # Merge upstream cost map for models missing from the bundled JSON
+    # (e.g., releases shipped after the LiteLLM pin). Idempotent + cheap
+    # after the first call. LiteLLM computes response_cost inside
+    # completion() by inspecting model_cost, so the merge must precede the
+    # call for cost_usd to populate naturally.
+    ensure_model_priced(model)
 
     try:
         raw_response = litellm.completion(**kwargs)

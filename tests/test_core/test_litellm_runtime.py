@@ -6,6 +6,8 @@ Covers:
 - ``configure_litellm_defaults`` respects a user-provided value (no overwrite).
 - ``import_litellm`` and ``import_litellm_exceptions`` set the env var before
   returning the module.
+- ``ensure_model_priced`` merges upstream cost map on first cache miss,
+  is idempotent + thread-safe, and degrades silently on fetch failure.
 - Importing the helper module itself does not pull ``litellm`` into
   ``sys.modules`` (lazy-import contract).
 - **Meta-test**: no production module under ``src/pflow/`` directly imports
@@ -20,7 +22,9 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+import threading
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -85,6 +89,185 @@ def test_import_litellm_exceptions_returns_exceptions_module(monkeypatch: pytest
     assert exc_mod.__name__ == "litellm.exceptions"
     # Sanity: a known exception class exists
     assert hasattr(exc_mod, "AuthenticationError")
+
+
+# ---------------------------------------------------------------------------
+# ensure_model_priced — hybrid bundled-first, upstream-on-miss cost map
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def reset_upstream_attempted(monkeypatch: pytest.MonkeyPatch):
+    """Reset the module-level ``_upstream_attempted`` flag between tests.
+
+    The flag latches True after the first fetch attempt per process. Tests
+    that exercise the fetch path must reset it explicitly via monkeypatch
+    so the helper actually runs (instead of short-circuiting on the latch).
+    """
+    from pflow.core import litellm_runtime
+
+    monkeypatch.setattr(litellm_runtime, "_upstream_attempted", False)
+    return litellm_runtime
+
+
+def test_ensure_model_priced_no_op_when_model_in_bundled(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bundled-model lookup must not trigger an upstream fetch."""
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    # gemini/gemini-2.5-flash is in the bundled JSON (verified in scratchpad
+    # session; if LiteLLM ever removes it from the bundle, swap to another
+    # known-bundled model).
+    assert "gemini/gemini-2.5-flash" in litellm.model_cost, (
+        "Pick a different known-bundled model; this one is no longer bundled."
+    )
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    ensure_model_priced("gemini/gemini-2.5-flash")
+
+    assert mock_register.call_count == 0
+
+
+def test_ensure_model_priced_fetches_when_model_missing(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing model triggers exactly one ``httpx.get`` + one ``register_model(dict)``.
+
+    Verifies the dict-form is used (NOT the URL form). The URL form would
+    short-circuit through ``litellm.get_model_cost_map`` and return the
+    bundled backup unchanged because ``LITELLM_LOCAL_MODEL_COST_MAP=True``
+    is set by pflow.
+    """
+    import httpx
+
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    fake_upstream = {
+        "some/brand-new-model": {
+            "input_cost_per_token": 1.5e-6,
+            "output_cost_per_token": 9e-6,
+            "litellm_provider": "gemini",
+            "mode": "chat",
+        },
+    }
+
+    httpx_calls: list[str] = []
+
+    def fake_get(url, *args, **kwargs):
+        httpx_calls.append(url)
+        return MagicMock(
+            raise_for_status=lambda: None,
+            json=lambda: fake_upstream,
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    ensure_model_priced("some/brand-new-model")
+
+    # 1. httpx.get was called with litellm.model_cost_map_url so env-var
+    #    overrides (LITELLM_MODEL_COST_MAP_URL) still apply.
+    assert httpx_calls == [litellm.model_cost_map_url]
+    # 2. register_model was called with the dict (not the URL).
+    assert mock_register.call_count == 1
+    assert mock_register.call_args[0][0] == fake_upstream
+
+
+def test_ensure_model_priced_idempotent_across_calls(reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Second call with a missing model is a no-op (latch via ``_upstream_attempted``)."""
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    ensure_model_priced("some/brand-new-model")
+    ensure_model_priced("another/brand-new-model")
+    ensure_model_priced("some/brand-new-model")
+
+    # Exactly one fetch despite three calls.
+    assert mock_register.call_count == 1
+
+
+def test_ensure_model_priced_silent_on_fetch_failure(
+    reset_upstream_attempted,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed fetch must not raise; debug log fires; latch still sets."""
+    from pflow.core import litellm_runtime
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    def failing_register(url):
+        raise RuntimeError("simulated network outage")
+
+    monkeypatch.setattr(litellm, "register_model", failing_register)
+
+    caplog.set_level("DEBUG", logger="pflow.core.litellm_runtime")
+
+    # Must not raise.
+    ensure_model_priced("some/brand-new-model")
+
+    # Latch is set even on failure — we don't retry indefinitely.
+    assert litellm_runtime._upstream_attempted is True
+    # Debug log captures the failure for --verbose visibility.
+    assert any("Upstream cost map fetch failed" in record.message for record in caplog.records), (
+        f"Expected debug log; got records: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_ensure_model_priced_thread_safe(reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent calls collapse to exactly one ``register_model`` invocation.
+
+    A slow ``register_model`` (50ms) holds the helper's internal lock long
+    enough for other threads to enter ``ensure_model_priced`` and contend.
+    When the first thread releases the lock (with ``_upstream_attempted=True``
+    set), the remaining threads acquire one-at-a-time, see the latch, and
+    return without calling ``register_model``. Verifies the lock + double-
+    check pattern, not just the latch.
+    """
+    import time
+
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    call_count = 0
+    call_lock = threading.Lock()
+
+    def slow_register(url):
+        nonlocal call_count
+        # 50ms is enough wall-clock for 9 other threads to enqueue on the
+        # helper's _UPSTREAM_LOCK before we increment and return. Per
+        # tests/CLAUDE.md pitfall #15, kept under 0.1s.
+        time.sleep(0.05)
+        with call_lock:
+            call_count += 1
+
+    monkeypatch.setattr(litellm, "register_model", slow_register)
+
+    threads = [threading.Thread(target=ensure_model_priced, args=("some/brand-new-model",)) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert call_count == 1
 
 
 @pytest.mark.e2e
