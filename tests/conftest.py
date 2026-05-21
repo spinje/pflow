@@ -7,7 +7,42 @@ from pathlib import Path
 
 import pytest
 
+# Set BEFORE any test module imports litellm. Some test files do
+# ``import litellm.exceptions`` at module top (test collection time —
+# before conftest fixtures run), which would otherwise trigger LiteLLM's
+# import-time httpx.get call to GitHub. Matches what
+# ``pflow.core.litellm_runtime.configure_litellm_defaults`` sets in
+# production paths. Uses ``setdefault`` so a developer running the suite
+# with the var explicitly set (e.g. to ``False`` to test live-fetch
+# behavior) isn't overridden.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 from tests.shared.llm_mock import create_mock_llm_client
+
+
+@pytest.fixture(autouse=True, scope="function")
+def _block_upstream_cost_map_fetch(monkeypatch):
+    """Block the upstream LiteLLM model_cost fetch in tests by default.
+
+    ``pflow.core.litellm_runtime.ensure_model_priced`` performs an HTTPS GET
+    to GitHub's raw URL on the first cost-map miss per process (see PR #424).
+    Without this fixture, any test that calls ``complete()`` or
+    ``get_model_pricing()`` with a non-bundled model name (e.g.
+    ``some/exotic-model`` in ``test_cost_none_when_response_cost_missing``)
+    would silently fire that network call. Worse: pflow latches the attempt
+    after the first call, so the SECOND test in the same worker that hits
+    a non-bundled model sees no network — making outcomes order-dependent.
+
+    The fix is to pre-set ``_upstream_attempted = True`` so the helper's
+    first-line latch short-circuits before any network code runs. Tests
+    that explicitly exercise the merge path (e.g. the 5 tests in
+    ``test_litellm_runtime.py::test_ensure_model_priced_*``) opt back in
+    via the local ``reset_upstream_attempted`` fixture, which monkeypatches
+    the flag back to ``False`` for that test only.
+    """
+    from pflow.core import litellm_runtime
+
+    monkeypatch.setattr(litellm_runtime, "_upstream_attempted", True)
 
 
 @pytest.fixture(autouse=True, scope="function")

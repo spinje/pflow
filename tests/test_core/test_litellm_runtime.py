@@ -103,11 +103,35 @@ def reset_upstream_attempted(monkeypatch: pytest.MonkeyPatch):
     The flag latches True after the first fetch attempt per process. Tests
     that exercise the fetch path must reset it explicitly via monkeypatch
     so the helper actually runs (instead of short-circuiting on the latch).
+    Layers on top of ``tests/conftest.py::_block_upstream_cost_map_fetch``
+    which pre-sets the flag to True for all tests — opting back in here
+    means the helper actually enters its fetch branch.
     """
     from pflow.core import litellm_runtime
 
     monkeypatch.setattr(litellm_runtime, "_upstream_attempted", False)
     return litellm_runtime
+
+
+def _stub_httpx_get(monkeypatch: pytest.MonkeyPatch, upstream_map: dict) -> list[str]:
+    """Stub ``httpx.get`` to return ``upstream_map`` as JSON.
+
+    Returns a list that records every URL ``httpx.get`` was called with,
+    so tests can assert call count + URL without re-deriving the mock.
+    """
+    import httpx
+
+    urls_called: list[str] = []
+
+    def fake_get(url, *args, **kwargs):
+        urls_called.append(url)
+        return MagicMock(
+            raise_for_status=lambda: None,
+            json=lambda: upstream_map,
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    return urls_called
 
 
 def test_ensure_model_priced_no_op_when_model_in_bundled(
@@ -142,8 +166,6 @@ def test_ensure_model_priced_fetches_when_model_missing(
     bundled backup unchanged because ``LITELLM_LOCAL_MODEL_COST_MAP=True``
     is set by pflow.
     """
-    import httpx
-
     from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
 
     litellm = import_litellm()
@@ -157,17 +179,7 @@ def test_ensure_model_priced_fetches_when_model_missing(
             "mode": "chat",
         },
     }
-
-    httpx_calls: list[str] = []
-
-    def fake_get(url, *args, **kwargs):
-        httpx_calls.append(url)
-        return MagicMock(
-            raise_for_status=lambda: None,
-            json=lambda: fake_upstream,
-        )
-
-    monkeypatch.setattr(httpx, "get", fake_get)
+    urls_called = _stub_httpx_get(monkeypatch, fake_upstream)
 
     mock_register = MagicMock()
     monkeypatch.setattr(litellm, "register_model", mock_register)
@@ -176,7 +188,7 @@ def test_ensure_model_priced_fetches_when_model_missing(
 
     # 1. httpx.get was called with litellm.model_cost_map_url so env-var
     #    overrides (LITELLM_MODEL_COST_MAP_URL) still apply.
-    assert httpx_calls == [litellm.model_cost_map_url]
+    assert urls_called == [litellm.model_cost_map_url]
     # 2. register_model was called with the dict (not the URL).
     assert mock_register.call_count == 1
     assert mock_register.call_args[0][0] == fake_upstream
@@ -188,6 +200,9 @@ def test_ensure_model_priced_idempotent_across_calls(reset_upstream_attempted, m
 
     litellm = import_litellm()
     monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+    # Stub with a non-empty dict so the empty-dict guard in the helper
+    # doesn't trip and skip register_model.
+    urls_called = _stub_httpx_get(monkeypatch, {"placeholder/model": {"mode": "chat"}})
 
     mock_register = MagicMock()
     monkeypatch.setattr(litellm, "register_model", mock_register)
@@ -196,7 +211,9 @@ def test_ensure_model_priced_idempotent_across_calls(reset_upstream_attempted, m
     ensure_model_priced("another/brand-new-model")
     ensure_model_priced("some/brand-new-model")
 
-    # Exactly one fetch despite three calls.
+    # Exactly one fetch + one register despite three calls. The latch
+    # prevents both the HTTP call and the register from repeating.
+    assert len(urls_called) == 1
     assert mock_register.call_count == 1
 
 
@@ -205,17 +222,30 @@ def test_ensure_model_priced_silent_on_fetch_failure(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A failed fetch must not raise; debug log fires; latch still sets."""
+    """A failed upstream fetch (e.g. offline, DNS, GitHub down) must not raise.
+
+    Injects the failure at ``httpx.get`` — the actual network boundary —
+    rather than at ``register_model``. This exercises the same code path
+    a user would hit on a real network outage. The latch must still set
+    (one attempt per process; no retry storms), the debug log must fire
+    for ``--verbose`` visibility, and ``register_model`` must NOT be called
+    (we never got the upstream data, so there's nothing to register).
+    """
+    import httpx
+
     from pflow.core import litellm_runtime
     from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
 
     litellm = import_litellm()
     monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
 
-    def failing_register(url):
-        raise RuntimeError("simulated network outage")
+    def failing_get(url, *args, **kwargs):
+        raise httpx.ConnectError("simulated network outage")
 
-    monkeypatch.setattr(litellm, "register_model", failing_register)
+    monkeypatch.setattr(httpx, "get", failing_get)
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
 
     caplog.set_level("DEBUG", logger="pflow.core.litellm_runtime")
 
@@ -228,6 +258,8 @@ def test_ensure_model_priced_silent_on_fetch_failure(
     assert any("Upstream cost map fetch failed" in record.message for record in caplog.records), (
         f"Expected debug log; got records: {[r.message for r in caplog.records]}"
     )
+    # No upstream data ever made it to register_model.
+    assert mock_register.call_count == 0
 
 
 def test_ensure_model_priced_thread_safe(reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -239,6 +271,9 @@ def test_ensure_model_priced_thread_safe(reset_upstream_attempted, monkeypatch: 
     set), the remaining threads acquire one-at-a-time, see the latch, and
     return without calling ``register_model``. Verifies the lock + double-
     check pattern, not just the latch.
+
+    ``httpx.get`` is stubbed too so we don't fire real HTTP from the
+    one thread that wins the race.
     """
     import time
 
@@ -246,11 +281,13 @@ def test_ensure_model_priced_thread_safe(reset_upstream_attempted, monkeypatch: 
 
     litellm = import_litellm()
     monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+    # Non-empty stub to bypass the helper's empty-dict guard.
+    _stub_httpx_get(monkeypatch, {"placeholder/model": {"mode": "chat"}})
 
     call_count = 0
     call_lock = threading.Lock()
 
-    def slow_register(url):
+    def slow_register(upstream_map):
         nonlocal call_count
         # 50ms is enough wall-clock for 9 other threads to enqueue on the
         # helper's _UPSTREAM_LOCK before we increment and return. Per
