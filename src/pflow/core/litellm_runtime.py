@@ -118,6 +118,15 @@ def ensure_model_priced(model: str) -> None:
     at debug level and leave the cost map untouched. ``cost_usd`` stays
     ``None`` for unpriced models, matching pre-fix behavior.
 
+    **Bundled-first determinism preservation**: the upstream map is filtered
+    to only keys NOT already in ``litellm.model_cost`` before passing to
+    ``register_model``. Without this filter, ``register_model`` would
+    overwrite bundled-model entries via its ``model_cost.setdefault(key, {}).update(value)``
+    call path — meaning a single first-miss fetch in any process could
+    shift the *bundled* model's price if upstream had revised it. Filtering
+    preserves the contract: bundled prices stay deterministic across runs;
+    only previously-unpriced models pick up upstream values.
+
     Implementation note: we fetch the JSON via ``httpx`` directly rather
     than passing the URL to ``litellm.register_model(url)`` because the
     URL form routes through ``litellm.get_model_cost_map`` which honors
@@ -150,6 +159,20 @@ def ensure_model_priced(model: str) -> None:
             upstream_map = response.json()
             if not isinstance(upstream_map, dict) or not upstream_map:
                 raise ValueError("upstream JSON is empty or not a dict")
+            # Filter to entries NOT already in bundled model_cost.
+            # litellm.register_model merges via
+            # model_cost.setdefault(key, {}).update(value), which OVERWRITES
+            # existing keys. Without this filter, an upstream price revision
+            # for a bundled model would silently shift the bundled price for
+            # the remaining process lifetime — breaking the "bundled prices
+            # are fully deterministic" half of the contract documented above.
+            new_entries = {k: v for k, v in upstream_map.items() if k not in litellm.model_cost}
+            if not new_entries:
+                # All upstream models are already bundled — nothing to register.
+                # The asked-for ``model`` is still missing (we checked above),
+                # but upstream doesn't have it either; cost stays None.
+                _upstream_attempted = True
+                return
             # Silence LiteLLM's "Provider List:" stderr spam during
             # register_model. Internally it calls get_model_info() for
             # every upstream entry; entries from providers LiteLLM doesn't
@@ -159,10 +182,10 @@ def ensure_model_priced(model: str) -> None:
             # complete() path; not necessarily True in the cache-analysis
             # path that also calls this helper.
             litellm.suppress_debug_info = True
-            # Pass the dict directly to bypass LiteLLM's
+            # Pass the filtered dict directly to bypass LiteLLM's
             # LITELLM_LOCAL_MODEL_COST_MAP gate (which would short-circuit
             # a URL-form call to the bundled backup).
-            litellm.register_model(upstream_map)
+            litellm.register_model(new_entries)
         except Exception as exc:
             _logger.debug("Upstream cost map fetch failed: %s", exc)
         _upstream_attempted = True

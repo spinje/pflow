@@ -217,6 +217,113 @@ def test_ensure_model_priced_idempotent_across_calls(reset_upstream_attempted, m
     assert mock_register.call_count == 1
 
 
+def test_ensure_model_priced_preserves_bundled_prices_during_merge(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: bundled prices MUST survive an upstream merge.
+
+    ``litellm.register_model`` internally does
+    ``model_cost.setdefault(key, {}).update(value)`` per entry — which
+    overwrites any existing key's fields with upstream values. Without
+    explicit filtering, a single first-miss fetch could shift the
+    *bundled* price of every model upstream happened to revise.
+
+    This test asserts that when upstream ships a different price for a
+    model already in ``litellm.model_cost``, the bundled price stays put
+    AND ``register_model`` is called only with the new-key subset. Pins
+    the "bundled-first determinism" half of the documented contract.
+    """
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    # Simulated bundled snapshot: one priced model with deterministic cost.
+    bundled_price = 1.0e-7
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "bundled/model": {
+                "input_cost_per_token": bundled_price,
+                "output_cost_per_token": 5.0e-7,
+                "litellm_provider": "openai",
+                "mode": "chat",
+            },
+        },
+        raising=False,
+    )
+
+    # Upstream ships a DIFFERENT price for the bundled key + a new key.
+    upstream = {
+        "bundled/model": {
+            "input_cost_per_token": 9.99e-6,  # very different — would obviously corrupt determinism
+            "output_cost_per_token": 9.99e-6,
+            "litellm_provider": "openai",
+            "mode": "chat",
+        },
+        "new-only/model": {
+            "input_cost_per_token": 2.0e-6,
+            "output_cost_per_token": 3.0e-6,
+            "litellm_provider": "openai",
+            "mode": "chat",
+        },
+    }
+    _stub_httpx_get(monkeypatch, upstream)
+
+    register_calls: list[dict] = []
+
+    def recording_register(upstream_map: dict) -> None:
+        register_calls.append(upstream_map)
+        # Simulate register_model's mutation contract on the FILTERED map
+        # so the post-call model_cost reflects what production would see.
+        for k, v in upstream_map.items():
+            litellm.model_cost.setdefault(k, {}).update(v)
+
+    monkeypatch.setattr(litellm, "register_model", recording_register)
+
+    ensure_model_priced("new-only/model")
+
+    # 1. Bundled price is UNTOUCHED — the upstream revision did not leak in.
+    assert litellm.model_cost["bundled/model"]["input_cost_per_token"] == bundled_price, (
+        "Upstream price leaked into bundled key — register_model received "
+        "an unfiltered map, violating the bundled-first determinism contract."
+    )
+    # 2. register_model received ONLY the new-key subset.
+    assert len(register_calls) == 1
+    assert register_calls[0] == {"new-only/model": upstream["new-only/model"]}
+
+
+def test_ensure_model_priced_skips_register_when_no_new_models(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When upstream contains only already-bundled keys, register_model is skipped.
+
+    Avoids a no-op call that would still spam stderr per LiteLLM entry.
+    The latch still sets so we don't re-fetch.
+    """
+    from pflow.core import litellm_runtime
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {"bundled/model": {"input_cost_per_token": 1.0e-7}},
+        raising=False,
+    )
+    # Upstream has the same key (or any subset of bundled) — nothing new.
+    _stub_httpx_get(monkeypatch, {"bundled/model": {"input_cost_per_token": 9.99e-6}})
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    ensure_model_priced("never-going-to-be-found/model")
+
+    # register_model was not called at all.
+    assert mock_register.call_count == 0
+    # Latch is set — no retry on subsequent calls.
+    assert litellm_runtime._upstream_attempted is True
+
+
 def test_ensure_model_priced_silent_on_fetch_failure(
     reset_upstream_attempted,
     monkeypatch: pytest.MonkeyPatch,
