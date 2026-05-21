@@ -14,7 +14,7 @@ from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import normalize_model_name
 
-from .cross_workflow import walk_cross_workflow
+from .sub_workflow_walker import walk_cross_workflow
 from .types import PerCallRow, TraceExecutionIndex, TraceListEntry
 from .warning_catalog import CACHE_WARNING_CATALOG, make_diagnostic
 

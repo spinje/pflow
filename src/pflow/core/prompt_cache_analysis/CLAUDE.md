@@ -46,7 +46,7 @@ src/pflow/core/prompt_cache_analysis/
 ├── types.py                     # public dataclasses, projection helpers, row contract helpers
 ├── trace_loading.py             # trace I/O, autoload/listing, trace indexing, trace aggregation
 ├── context.py                   # AnalysisContext input bundle
-├── cross_workflow.py            # sub-workflow walker data primitive, not an analytical stage
+├── sub_workflow_walker.py       # sub-workflow walker data primitive
 ├── token_estimation.py          # trace -> memo -> estimator -> heuristic token hierarchy
 ├── cost_estimation.py           # row-level cost projection and actually-paid aggregation
 ├── below_min_tokens_detector.py # shared below-threshold detector
@@ -72,12 +72,6 @@ src/pflow/core/prompt_cache_analysis/
         ├── predict.py           # cache-key prediction with lazy runtime imports
         └── diagnose.py          # trace discrepancy diagnostics
 ```
-
-There are two `cross_workflow.py` files by design:
-
-- package root `cross_workflow.py` walks sub-workflows and returns typed edge
-  data;
-- `stages/cross_workflow.py` turns those edges into cache-analysis findings.
 
 ## Public API
 
@@ -106,7 +100,7 @@ Public report dataclasses live in `types.py`. Do not import dataclasses from
 as orchestration:
 
 1. Build `AnalysisContext` and resolve trace scope through `trace_loading.py`.
-2. Walk sub-workflows through the root `cross_workflow.py` data primitive.
+2. Walk sub-workflows through the root `sub_workflow_walker.py` data primitive.
 3. Predict memo cache keys through `stages.discrepancy.predict`.
 4. Build per-call rows through `stages.row_builder`.
 5. Emit stage findings: warnings, suggested blocks/padding, fragmentation,
@@ -251,7 +245,7 @@ new ID just to vary wording when an existing ID describes the same condition.
 | Change model/system fragmentation findings | `stages/fragmentation.py` |
 | Change incomplete `prompt_cache:` declaration detection | `stages/partial_declarations.py` |
 | Change analytical cross-workflow findings | `stages/cross_workflow.py` |
-| Change sub-workflow walking semantics | root `cross_workflow.py` |
+| Change sub-workflow walking semantics | root `sub_workflow_walker.py` |
 | Change trace autoload, trace listing, trace aggregation, or trace execution indexing | `trace_loading.py` |
 | Change discrepancy prediction | `stages/discrepancy/predict.py` |
 | Change discrepancy diagnosis | `stages/discrepancy/diagnose.py` |

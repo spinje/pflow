@@ -638,7 +638,7 @@ def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
     """Defends trace-driven current-cost rollup: workflow nodes are not LLM rows,
     but their ``sub_workflow_events`` still represent real paid calls.
     """
-    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.sub_workflow_walker as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"
@@ -2046,7 +2046,7 @@ def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
     mappings; the child prompt/cache tokenizer must use child parameters, not
     the root parameter dict.
     """
-    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.sub_workflow_walker as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"
@@ -2103,7 +2103,7 @@ def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization_but_is
     analyzer keeps the useful memo-backed projection while incrementing the
     uncheckable memo counter so the trust boundary is visible.
     """
-    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.sub_workflow_walker as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
     from pflow.runtime.cache import MemoizationCache
 
@@ -2170,7 +2170,7 @@ def test_child_workflow_unresolved_input_remains_unavailable(
     coerced to cacheable token evidence. Input tokens still fall back to
     estimator-partial because ``data_source`` is a separate metric.
     """
-    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.sub_workflow_walker as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"
@@ -5645,7 +5645,7 @@ class _NodeMemoStub:
 
 
 def _batch_edge(*, parent_input_value: Any = "${item.concept_brief}") -> Any:
-    from pflow.core.prompt_cache_analysis.cross_workflow import CrossWorkflowEdge
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import CrossWorkflowEdge
 
     return CrossWorkflowEdge(
         parent_workflow="/abs/parent.pflow.md",
@@ -5780,7 +5780,7 @@ def test_build_parameters_by_workflow_propagates_batch_alias_child_input() -> No
     """
     from pflow.core.markdown_parser import parse_markdown
     from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
 
     fixtures_dir = Path("tests/fixtures/cache_analysis").resolve()
     parent_path = fixtures_dir / "batch-alias-parent.pflow.md"
@@ -5816,7 +5816,7 @@ def test_build_parameters_by_workflow_uses_trace_batch_item_when_items_expr_unre
     receives no propagated ``brief`` parameter.
     """
     from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     parent_path = "/abs/parent.pflow.md"
@@ -6551,7 +6551,7 @@ def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:
     input.
     """
     from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
-    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     a_path = "/abs/a.pflow.md"
@@ -7073,8 +7073,8 @@ def test_dynamic_batches_note_single_keeps_legacy_phrasing() -> None:
     Mutation contract: drop the ``len(batches) == 1`` branch → this test
     fails (renders the multi-summary phrasing for one batch).
     """
-    from pflow.core.prompt_cache_analysis.cross_workflow import DynamicBatchInfo
     from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_dynamic_batches_note
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import DynamicBatchInfo
 
     note = _format_dynamic_batches_note((
         DynamicBatchInfo(
@@ -7100,8 +7100,8 @@ def test_dynamic_batches_note_multi_collapses_to_summary() -> None:
     return per-batch strings) → this test fails because the listing
     enumeration disappears.
     """
-    from pflow.core.prompt_cache_analysis.cross_workflow import DynamicBatchInfo
     from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_dynamic_batches_note
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import DynamicBatchInfo
 
     batches = (
         DynamicBatchInfo(
@@ -7497,7 +7497,7 @@ def test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow(
         the ``trace_root != lookup_path`` gate) → tree-wide sum is lost; the
         $0.10 child cost gets filtered out; assertion fails.
     """
-    import pflow.core.prompt_cache_analysis.cross_workflow as cross_module
+    import pflow.core.prompt_cache_analysis.sub_workflow_walker as cross_module
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
     child_path = tmp_path / "child.pflow.md"

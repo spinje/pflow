@@ -202,7 +202,7 @@ def walk_cross_workflow(
     irs_by_workflow: dict[str, dict[str, Any]] = {}
     dynamic_batches: list[DynamicBatchInfo] = []
     parent_label = root_workflow_path or "<root>"
-    cache_items_by_workflow[parent_label] = _cache_items(root_ir)
+    cache_items_by_workflow[parent_label] = _cache_items_as_tuple(root_ir)
     irs_by_workflow[parent_label] = root_ir
     _walk_one_level(
         ir=root_ir,
@@ -339,7 +339,7 @@ def _process_one_call(
     # Cycle detection — re-entry of a path already on the recursion stack.
     child_path_str = str(result.path) if result.path else None
     child_label = child_path_str or "<inline>"
-    cache_items_by_workflow[child_label] = _cache_items(result.ir)
+    cache_items_by_workflow[child_label] = _cache_items_as_tuple(result.ir)
     irs_by_workflow[child_label] = result.ir
     if child_path_str and child_path_str in seen:
         message = (
@@ -414,7 +414,7 @@ def _node_batch_alias(node: dict[str, Any]) -> str | None:
     return str(batch.get("as", "item"))
 
 
-def _cache_items(ir: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+def _cache_items_as_tuple(ir: dict[str, Any]) -> tuple[dict[str, Any], ...]:
     cache = ir.get("cache")
     if not isinstance(cache, dict):
         return ()

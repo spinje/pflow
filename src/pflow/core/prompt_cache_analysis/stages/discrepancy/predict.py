@@ -12,7 +12,7 @@ from pflow.core.exceptions import CompilationError, MarkdownParseError, SchemaVa
 from pflow.core.validation_utils import generate_dummy_parameters
 
 from ...context import _PREDICTION_SKIPPED, AnalysisContext, template_resolver
-from ...cross_workflow import DynamicBatchInfo
+from ...sub_workflow_walker import DynamicBatchInfo
 from ...trace_loading import _is_llm_node
 
 logger = logging.getLogger(__name__)

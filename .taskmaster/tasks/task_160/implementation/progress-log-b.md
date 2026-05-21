@@ -89,3 +89,39 @@ Trust boundary for Phase 2:
 - Verified: behavior harness and unit/quality gates are green after Phase 1; cost-helper public names import successfully; resolver duplicates are gone.
 - Assumed correct: stage-level module imports from `.. import cost_estimation` remain acceptable architecture because they preserve patchability and avoid reintroducing function-body lazy imports.
 - Unable to verify in Phase 1: Phase 2 string-path rename blast radius. It must use the plan's defensive exact-match strategy and preserve `stages.cross_workflow` references.
+
+## 2026-05-21 - Phase 2 Walker Rename + Cache Item Disambiguation
+
+Phase completed: Phase 2 only.
+
+Implemented:
+- G6.2: renamed the package-root walker from `src/pflow/core/prompt_cache_analysis/cross_workflow.py` to `src/pflow/core/prompt_cache_analysis/sub_workflow_walker.py`.
+- Renamed the mirrored walker test file to `tests/test_core/test_cache_analysis_sub_workflow_walker.py`.
+- Updated root-walker imports and exact dotted string references to `pflow.core.prompt_cache_analysis.sub_workflow_walker` while preserving all `pflow.core.prompt_cache_analysis.stages.cross_workflow` analytical-stage references.
+- Updated `CLAUDE.md`, `analyze.py` docstring prose, and the markdown parser comment so documentation no longer relies on the old two-`cross_workflow.py` disambiguation.
+- G6.3: renamed the walker-local `_cache_items()` helper to `_cache_items_as_tuple()`; the only remaining `_cache_items()` in the package is the list-returning suggestions-stage helper.
+
+Deviations and rationale:
+- Used `mv` rather than `git mv` because project instructions forbid staging operations unless explicitly requested. Git still records the delete/add rename shape for review; no commit or index mutation was performed.
+- Did not use code-implementer subagents for this phase. The high-risk work was one exact-path rewrite where accidental mutation of `stages.cross_workflow` strings would create silent test-patching failures; a single-writer edit plus targeted sweeps was lower risk than coordinating parallel writers.
+- The first baseline harness run omitted the Phase 0/1 `.venv/bin` PATH override and reproduced the known sandbox `uv` panic pattern (`0 passed, 87 drifted`). Reran with `PATH="$PWD/.venv/bin:$PATH"`; the corrected run matched the known baseline drift set.
+- Non-escalated `pre-commit run -a` failed on sandbox permissions for hidden `.codex`/`.agents` metadata files, and `ruff` applied import-order fixes. Reran escalated after those fixes; pre-commit passed.
+
+Verification:
+- Safety checks:
+  - `find src/pflow -name "cross_workflow.py"` returns only `src/pflow/core/prompt_cache_analysis/stages/cross_workflow.py`.
+  - `src/pflow/core/prompt_cache_analysis/sub_workflow_walker.py` exists; `src/pflow/core/prompt_cache_analysis/cross_workflow.py` is absent.
+  - Importing `pflow.core.prompt_cache_analysis.sub_workflow_walker.walk_cross_workflow` succeeds; importing old `pflow.core.prompt_cache_analysis.cross_workflow` raises `ModuleNotFoundError`.
+  - `rg` finds no root-walker references to `pflow.core.prompt_cache_analysis.cross_workflow`; protected stage references remain.
+- Renamed walker tests: `26 passed`.
+- Task 159 harness: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0 exactly.
+- Sandbox-safe non-e2e pytest after formatting: `7102 passed, 1 skipped`.
+- `uv lock --locked`: passed after escalation for uv cache access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for all-files hook access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 223 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+
+Trust boundary for Phase 3:
+- Verified: the root walker has no remaining old import path consumers in `src/` or `tests/`; the analytical stage name is unchanged and still used by tests intentionally.
+- Assumed correct: delete/add rename representation is acceptable for review because no commit was requested and the final file contents preserve behavior.
+- Unable to verify in Phase 2: whether Phase 3's cross-workflow rendering extraction should re-export anything from `rendering/__init__.py`; that depends on the actual caller surface during Phase 3.

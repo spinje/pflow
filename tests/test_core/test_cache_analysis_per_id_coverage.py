@@ -1294,7 +1294,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
 
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
-    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.sub_workflow_walker")
 
     # cache.sub-workflow-cache-undeclared: parent passes a value into a child
     # workflow that has repeated LLM consumers but no child-local ## Cache.

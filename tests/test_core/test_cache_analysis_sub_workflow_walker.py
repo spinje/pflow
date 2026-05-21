@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.prompt_cache_analysis.cross_workflow import (
+from pflow.core.prompt_cache_analysis.sub_workflow_walker import (
     CrossWorkflowEdge,
     CrossWorkflowResult,
     DynamicBatchInfo,
@@ -139,7 +139,7 @@ def test_walker_recurses_into_grandchildren() -> None:
 def test_walker_handles_cycle_at_info_level(caplog: pytest.LogCaptureFixture) -> None:
     """A.pflow.md → B.pflow.md → A.pflow.md is a cycle. Walker stops descending
     that branch but continues siblings; logs at info, doesn't raise."""
-    caplog.set_level(logging.INFO, logger="pflow.core.prompt_cache_analysis.cross_workflow")
+    caplog.set_level(logging.INFO, logger="pflow.core.prompt_cache_analysis.sub_workflow_walker")
     a_ir = {"nodes": [_workflow_node("calls_b", "./b.pflow.md", {"x": "${y}"})]}
     b_ir = {"nodes": [_workflow_node("calls_a", "./a.pflow.md", {"y": "${z}"})]}
     resolver = _StubResolver({
@@ -161,7 +161,7 @@ def test_walker_handles_cycle_at_info_level(caplog: pytest.LogCaptureFixture) ->
 
 
 def test_walker_respects_depth_limit(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO, logger="pflow.core.prompt_cache_analysis.cross_workflow")
+    caplog.set_level(logging.INFO, logger="pflow.core.prompt_cache_analysis.sub_workflow_walker")
     grandchild_ir = {"nodes": []}
     child_ir = {"nodes": [_workflow_node("gc", "./gc.pflow.md", {"v": "${x}"})]}
     root_ir = {"nodes": [_workflow_node("c", "./child.pflow.md", {"x": "${input1}"})]}

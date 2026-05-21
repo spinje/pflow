@@ -3,7 +3,7 @@
 ``analyze(workflow, parameters)`` composes:
 
 - F1.2 ``token_estimation`` (per-call tier),
-- F1.3 ``cross_workflow`` walker (Tier 2),
+- F1.3 ``sub_workflow_walker`` walker (Tier 2),
 - F1.4 ``stages.suggestions`` (sensitivity-floored advisories),
 - F2.2 ``summarize`` (one-line nudge — separately surfaced).
 
@@ -50,7 +50,6 @@ from pflow.core.workflow_id import synthesize_inline_workflow_id
 
 from . import types as _types
 from .context import AnalysisContext, _normalize_empty
-from .cross_workflow import CrossWorkflowEdge, walk_cross_workflow
 from .stages.cross_workflow import _build_cross_workflow_findings
 from .stages.discrepancy import (
     _attach_predicted_cache_keys,
@@ -78,6 +77,7 @@ from .stages.summary import (
     _trace_coverage_for_rows,
 )
 from .stages.warnings import _enrich_shadow_warnings_with_costs, _per_node_warnings
+from .sub_workflow_walker import CrossWorkflowEdge, walk_cross_workflow
 from .token_estimation import (
     build_shared_store_for_refs as _build_shared_store_for_refs,
 )

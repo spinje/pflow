@@ -341,8 +341,8 @@ def test_resolve_sub_workflow_cross_workflow_walker_sees_resolved_prompts(tmp_pa
     real-world workflow that follows the documented external-prompt-file
     pattern.
     """
-    from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
     from pflow.core.prompt_cache_analysis.stages.cross_workflow import _collect_llm_nodes_referencing_path
+    from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow
     from pflow.execution.workflow_resolver import resolve_workflow
 
     # Child workflow with external prompt that template-references shared_value.
