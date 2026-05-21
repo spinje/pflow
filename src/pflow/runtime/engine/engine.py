@@ -141,6 +141,7 @@ def _should_disable_below_min_prewarm(
     if not config.prewarm or config.batch_config is None or config.template_config is None:
         return False
     if config.prompt_cache_items:
+        # Per-call _strip_below_min_cache_markers is authoritative for combined channels.
         return False
 
     model_raw = config.template_config.template_params.get("model") or config.template_config.static_params.get("model")

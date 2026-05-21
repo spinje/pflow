@@ -3967,6 +3967,7 @@ def _per_node_warnings(
     if prewarm is True and isinstance(batch, dict):
         alias = str(batch.get("as", "item"))
         prompt = node.get("params", {}).get("prompt", "") or ""
+        # Per-call _strip_below_min_cache_markers is authoritative for combined channels.
         has_declared_cache = bool(node.get("prompt_cache"))
         if isinstance(prompt, str) and not has_declared_cache:
             node_inputs = _node_inputs(node)
