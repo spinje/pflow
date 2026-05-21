@@ -23,7 +23,9 @@ from pflow.core.prompt_cache_analysis import (
     render_json,
     render_text,
 )
+from pflow.core.prompt_cache_analysis.context import AnalysisContext
 from pflow.core.prompt_cache_analysis.cost_estimation import CostTier
+from pflow.core.prompt_cache_analysis.stages.row_builder import _build_per_call_row
 from pflow.core.prompt_cache_analysis.stages.summary import _format_workflow_run_command
 from pflow.core.prompt_cache_analysis.types import (
     AnalysisSummary,
@@ -38,6 +40,7 @@ from pflow.core.prompt_cache_analysis.types import (
     TraceUnexecutedLLMRow,
     invocation_count_for,
 )
+from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
 
 
 def _patch_default_model(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
@@ -282,7 +285,7 @@ class TestMakeAnalysisShapeParity:
         empty = _make_analysis()
         loaded = _make_analysis(
             rows=[
-                PerCallRow(
+                make_per_call_row(
                     node_path="root",
                     model="anthropic/claude-sonnet-4-5",
                     is_batch=True,
@@ -293,8 +296,20 @@ class TestMakeAnalysisShapeParity:
                     data_source="trace",
                     declared_prompt_cache=None,
                     workflow_path="/abs/x.pflow.md",
+                    cache_ready=make_cache_projection(
+                        tokens_estimated=50,
+                        input_tokens_estimated=100,
+                        data_source="memo",
+                        purpose="ready",
+                    ),
+                    cache_opportunity=make_cache_projection(
+                        tokens_estimated=50,
+                        input_tokens_estimated=100,
+                        data_source="memo",
+                        purpose="opportunity",
+                    ),
                 ),
-                PerCallRow(
+                make_per_call_row(
                     node_path="child",
                     model="anthropic/claude-sonnet-4-5",
                     is_batch=False,
@@ -305,6 +320,18 @@ class TestMakeAnalysisShapeParity:
                     data_source="trace",
                     declared_prompt_cache=None,
                     workflow_path="/abs/child.pflow.md",
+                    cache_ready=make_cache_projection(
+                        tokens_estimated=50,
+                        input_tokens_estimated=100,
+                        data_source="memo",
+                        purpose="ready",
+                    ),
+                    cache_opportunity=make_cache_projection(
+                        tokens_estimated=50,
+                        input_tokens_estimated=100,
+                        data_source="memo",
+                        purpose="opportunity",
+                    ),
                 ),
             ],
             warnings=[
@@ -378,6 +405,38 @@ class TestMakeAnalysisShapeParity:
             f"test asserting on the field to drive analyze(...) end-to-end. "
             f"See Pitfall #19 in tests/CLAUDE.md."
         )
+
+    def test_per_call_row_helper_shape_matches_production_builder(self) -> None:
+        node = {
+            "id": "summarize",
+            "type": "llm",
+            "model": "anthropic/claude-sonnet-4-5",
+            "params": {"prompt": "Summarize the input."},
+        }
+        ctx = AnalysisContext.build(workflow_ir={"nodes": [node]}, workflow_path="/abs/x.pflow.md")
+        production = _build_per_call_row(node=node, ctx=ctx, declared_chunks=[])
+        helper = make_per_call_row(
+            node_path=production.node_path,
+            model=production.model,
+            is_batch=production.is_batch,
+            batch_size_estimated=production.batch_size_estimated,
+            input_tokens_estimated=production.input_tokens_estimated,
+            cacheable_tokens_estimated=production.cacheable_tokens_estimated,
+            cache_ratio_pct=production.cache_ratio_pct,
+            data_source=production.data_source,
+            declared_prompt_cache=production.declared_prompt_cache,
+            cacheable_data_source=production.cacheable_data_source,
+            workflow_path=production.workflow_path,
+            cache_configured=production.cache_configured,
+            cache_active=production.cache_active,
+            cache_ready=production.cache_ready,
+            cache_opportunity=production.cache_opportunity,
+        )
+
+        assert helper.cache_configured.data_source == production.cache_configured.data_source
+        assert helper.cache_active.data_source == production.cache_active.data_source
+        assert helper.cache_ready.data_source == production.cache_ready.data_source
+        assert helper.cache_opportunity.data_source == production.cache_opportunity.data_source
 
     def test_documented_defaults_get_overwritten_by_production(self, tmp_path: Path) -> None:
         from pflow.core.prompt_cache_analysis.analyze import analyze
@@ -1145,16 +1204,63 @@ def _row(node_path: str, ratio: int) -> PerCallRow:
     ``analysis.warnings`` filtered by ``node_id``; tests inject Diagnostics
     via ``warnings=[diag]`` on ``_make_analysis``.
     """
-    return PerCallRow(
+    input_tokens = 10_000
+    cacheable_tokens = int(input_tokens * ratio / 100)
+    legacy_ready = make_cache_projection(
+        tokens_estimated=cacheable_tokens,
+        input_tokens_estimated=input_tokens,
+        data_source="unavailable",
+        purpose="ready",
+        action="declare_prompt_cache",
+        actionability="direct_edit",
+        confidence="unknown",
+        meets_provider_min=True,
+        provider_min_tokens=1024,
+    )
+    legacy_opportunity = make_cache_projection(
+        tokens_estimated=cacheable_tokens,
+        input_tokens_estimated=input_tokens,
+        data_source="unavailable",
+        purpose="opportunity",
+        action="declare_prompt_cache",
+        actionability="direct_edit",
+        confidence="unknown",
+        meets_provider_min=True,
+        provider_min_tokens=1024,
+    )
+    return make_per_call_row(
         node_path=node_path,
         model="anthropic/claude-sonnet-4-5",
         is_batch=False,
         batch_size_estimated=None,
-        input_tokens_estimated=10_000,
-        cacheable_tokens_estimated=int(10_000 * ratio / 100),
+        input_tokens_estimated=input_tokens,
+        cacheable_tokens_estimated=cacheable_tokens,
         cache_ratio_pct=ratio,
         data_source="memo",
         declared_prompt_cache=None,
+        cache_ready=legacy_ready,
+        cache_opportunity=legacy_opportunity,
+    )
+
+
+def _unavailable_row(
+    node_path: str,
+    *,
+    model: str = "anthropic/claude-sonnet-4-5",
+    input_tokens_estimated: int = 10_000,
+    data_source: str = "memo",
+    observed_call_count: int = 0,
+) -> PerCallRow:
+    """Build a row with no cache projections visible."""
+    return make_per_call_row(
+        node_path=node_path,
+        model=model,
+        input_tokens_estimated=input_tokens_estimated,
+        cacheable_tokens_estimated=None,
+        cache_ratio_pct=None,
+        data_source=data_source,
+        cacheable_data_source="unavailable",
+        observed_call_count=observed_call_count,
     )
 
 
@@ -1207,7 +1313,7 @@ def test_text_all_rows_flag_shows_everything() -> None:
 
 
 def test_per_call_row_renders_tokens_unmeasurable_for_opaque_prompt_with_no_data() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("generate-chorus-options", 50).__dict__,
         "input_tokens_estimated": 3,
         "cacheable_tokens_estimated": None,
@@ -1232,7 +1338,7 @@ def test_per_call_row_renders_tokens_unmeasurable_for_opaque_prompt_with_no_data
 
 
 def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("generate-chorus-options", 50).__dict__,
         "input_tokens_estimated": 3,
         "cacheable_tokens_estimated": 2,
@@ -1257,13 +1363,13 @@ def test_per_call_row_keeps_tokens_for_opaque_prompt_with_cacheable_data() -> No
 
 
 def test_text_truncated_trace_labels_executed_scope() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("ran", 90).__dict__,
         "data_source": "trace",
         "cost_usd": 0.001,
         "cost_data_source": "trace",
     })
-    skipped = PerCallRow(**{
+    skipped = make_per_call_row(**{
         **_row("skipped", 90).__dict__,
         "did_not_execute_in_trace": True,
         "data_source": "estimator",
@@ -1825,7 +1931,7 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
     in the prose → the negative assertion below fires.
     """
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="generate",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -1839,7 +1945,7 @@ def test_per_call_explainer_renders_multi_line_block_without_divide_by_calls() -
             cacheable_data_source="trace",
             observed_call_count=4,
         ),
-        PerCallRow(
+        make_per_call_row(
             node_path="rewrite",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -1888,7 +1994,7 @@ def test_cell_calls_renders_em_dash_in_static_mode_only() -> None:
     """
     from pflow.core.prompt_cache_analysis.rendering.text import _cell_calls
 
-    row_unobserved = PerCallRow(
+    row_unobserved = make_per_call_row(
         node_path="generate",
         model="anthropic/claude-sonnet-4-5",
         is_batch=False,
@@ -1928,7 +2034,7 @@ def test_static_mode_per_call_table_renders_em_dash_for_calls_column_e2e() -> No
     The positive ``—`` assertion does the load-bearing check.
     """
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="generate",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -2577,22 +2683,8 @@ def test_text_per_call_inline_marker_includes_analysis_wide_warning_id() -> None
 
 
 def test_text_hides_single_call_unavailable_rows_by_default() -> None:
-    single = PerCallRow(**{
-        **_row("evaluate-songs", 0).__dict__,
-        "data_source": "trace",
-        "cacheable_tokens_estimated": None,
-        "cache_ratio_pct": None,
-        "cacheable_data_source": "unavailable",
-        "observed_call_count": 1,
-    })
-    repeated = PerCallRow(**{
-        **_row("curate-briefs", 0).__dict__,
-        "data_source": "trace",
-        "cacheable_tokens_estimated": None,
-        "cache_ratio_pct": None,
-        "cacheable_data_source": "unavailable",
-        "observed_call_count": 4,
-    })
+    single = _unavailable_row("evaluate-songs", data_source="trace", observed_call_count=1)
+    repeated = _unavailable_row("curate-briefs", data_source="trace", observed_call_count=4)
 
     text = render_text(_make_analysis(rows=[single, repeated]))
 
@@ -2608,7 +2700,7 @@ def test_text_hides_single_call_unavailable_rows_by_default() -> None:
 
 def test_text_unavailable_row_notes_below_min_cross_workflow_candidate() -> None:
     child_workflow = "/abs/child.pflow.md"
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("review", 0).__dict__,
         "workflow_path": child_workflow,
         "data_source": "trace",
@@ -2672,7 +2764,7 @@ def test_text_unavailable_row_notes_static_mode_zero_calls(model: str) -> None:
     Mutation contract: remove the ``observed_call_count == 0`` branch from
     ``_unavailable_could_cache_note`` → the note disappears.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("write-lyrics", 0).__dict__,
         "model": model,
         "data_source": "estimator",
@@ -3296,7 +3388,7 @@ def test_text_notes_shorten_workflow_paths_in_prose() -> None:
     notes = [
         f"Cache fidelity check skipped for {child_path}.draft: a template reference couldn't be resolved at analysis time. Chunk-skip detection still applies."
     ]
-    row = PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": child_path})
+    row = dataclasses.replace(_row("draft", 30), workflow_path=child_path)
     text = render_text(_make_analysis(rows=[row], workflow_path=workflow_path, notes=notes))
 
     assert "child.pflow.md.draft" in text
@@ -3683,8 +3775,8 @@ def test_text_header_lists_models_when_two_resolved() -> None:
     models:" form — this test fails because "Models: " line is missing
     AND model names appear on the scale line.
     """
-    row_a = PerCallRow(**{**_row("a", 50).__dict__, "model": "anthropic/claude-sonnet-4-5"})
-    row_b = PerCallRow(**{**_row("b", 50).__dict__, "model": "gemini/gemini-3.1-pro-preview"})
+    row_a = dataclasses.replace(_row("a", 50), model="anthropic/claude-sonnet-4-5")
+    row_b = dataclasses.replace(_row("b", 50), model="gemini/gemini-3.1-pro-preview")
     text = render_text(_make_analysis(rows=[row_a, row_b]))
     # Positive — models break out to their own line.
     assert "  Models: anthropic/claude-sonnet-4-5, gemini/gemini-3.1-pro-preview" in text
@@ -3724,13 +3816,13 @@ def test_text_header_drops_observed_models_line_when_trace_loaded() -> None:
 
 
 def test_text_header_shows_static_batch_invocations() -> None:
-    row = PerCallRow(**{**_row("batch-review", 50).__dict__, "is_batch": True, "batch_size_estimated": 8})
+    row = dataclasses.replace(_row("batch-review", 50), is_batch=True, batch_size_estimated=8)
     text = render_text(_make_analysis(rows=[row]))
     assert "1 LLM node, ~8 invocations using anthropic/claude-sonnet-4-5" in text
 
 
 def test_text_header_shows_dynamic_batch_invocation_unknown() -> None:
-    row = PerCallRow(**{**_row("batch-review", 50).__dict__, "is_batch": True, "batch_size_estimated": None})
+    row = dataclasses.replace(_row("batch-review", 50), is_batch=True, batch_size_estimated=None)
     text = render_text(_make_analysis(rows=[row]))
     assert ("1 LLM node, invocation count unavailable (1 dynamic batch node) using anthropic/claude-sonnet-4-5") in text
 
@@ -3744,7 +3836,7 @@ def test_text_header_handles_no_model_resolved() -> None:
     ``_format_scale_line``; this test fails because the ``Models: not
     resolved`` line doesn't appear.
     """
-    row = PerCallRow(**{**_row("n1", 50).__dict__, "model": ""})
+    row = dataclasses.replace(_row("n1", 50), model="")
     text = render_text(_make_analysis(rows=[row]))
     # Primary line is bare (no inline parenthetical).
     assert "Workflow: 1 LLM node\n" in text
@@ -3764,7 +3856,7 @@ def test_per_call_row_renders_unresolved_when_model_empty() -> None:
     (drop the ``<unresolved>`` else-clause); this test fails because the
     row renders ``model=`` followed by 35 chars of whitespace instead.
     """
-    row = PerCallRow(**{**_row("n1", 50).__dict__, "model": ""})
+    row = dataclasses.replace(_row("n1", 50), model="")
     text = render_text(_make_analysis(rows=[row]))
     cells = _per_call_cells(text, "n1")
     assert cells[1] == "<unresolved>"
@@ -4198,12 +4290,12 @@ def test_per_call_confidence_footer_lists_low_confidence_nodes() -> None:
         _row("estim-row", 50),
         _row("heur-row", 50),
     ]
-    rows[0] = PerCallRow(**{**rows[0].__dict__, "data_source": "trace"})
-    rows[1] = PerCallRow(**{**rows[1].__dict__, "data_source": "memo"})
+    rows[0] = dataclasses.replace(rows[0], data_source="trace")
+    rows[1] = dataclasses.replace(rows[1], data_source="memo")
     # ``estimator``/``heuristic`` rows need declared_prompt_cache to survive
     # the Option C visibility filter — without it they're hidden.
-    rows[2] = PerCallRow(**{**rows[2].__dict__, "data_source": "estimator", "declared_prompt_cache": ["foo"]})
-    rows[3] = PerCallRow(**{**rows[3].__dict__, "data_source": "heuristic", "declared_prompt_cache": ["foo"]})
+    rows[2] = dataclasses.replace(rows[2], data_source="estimator", declared_prompt_cache=["foo"])
+    rows[3] = dataclasses.replace(rows[3], data_source="heuristic", declared_prompt_cache=["foo"])
     text = render_text(_make_analysis(rows=rows))
     # Multi-line bullet block (Fix 5+6): header + indented bullet.
     assert "Token estimate confidence:" in text
@@ -4219,7 +4311,7 @@ def test_per_call_confidence_footer_flags_batch_exemplar_projections() -> None:
     row.is_batch`` branch from ``_per_call_confidence_footer``; this test
     fails because the representative-sample caveat disappears.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("batched-review", 50).__dict__,
         "is_batch": True,
         "batch_size_estimated": 4,
@@ -4245,13 +4337,20 @@ def test_per_call_confidence_footer_uses_distinct_message_for_batch_prefix_proje
     ``"parameters"`` instead of ``"batch_prefix"``; this test fails because the
     footer routes through the exemplar branch instead and emits the wrong prose.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("score-choruses", 1000).__dict__,
         "is_batch": True,
         "batch_size_estimated": 0,
         "data_source": "trace",
         "cacheable_data_source": "batch_prefix",
         "observed_call_count": 136,
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=10_000,
+            input_tokens_estimated=10_000,
+            data_source="batch_prefix",
+            purpose="opportunity",
+            action="add_prewarm",
+        ),
     })
     text = render_text(_make_analysis(rows=[row]))
     assert "Token estimate confidence:" in text
@@ -4270,10 +4369,17 @@ def test_per_call_confidence_footer_uses_distinct_message_for_cross_workflow_pro
     future-tier path or mention only Recommended actions; this test fails
     because the row-specific routing prose disappears.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("select-chorus", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=20,
+            input_tokens_estimated=100,
+            data_source="cross_workflow_projection",
+            purpose="opportunity",
+            action="declare_child_cache",
+        ),
         "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
         "observed_call_count": 4,
     })
@@ -4301,10 +4407,17 @@ def test_per_call_confidence_footer_aggregates_duplicate_node_names() -> None:
     ``_format_node_list`` → "review, review, ..." returns.
     """
     rows = [
-        PerCallRow(**{
+        make_per_call_row(**{
             **_row("review", 20).__dict__,
             "data_source": "trace",
             "cacheable_data_source": "cross_workflow_projection",
+            "cache_opportunity": make_cache_projection(
+                tokens_estimated=20,
+                input_tokens_estimated=100,
+                data_source="cross_workflow_projection",
+                purpose="opportunity",
+                action="declare_child_cache",
+            ),
             "cross_workflow_inputs": (CrossWorkflowInputContribution("creative_direction", 20, "test/model"),),
             "observed_call_count": 4,
         })
@@ -4312,10 +4425,17 @@ def test_per_call_confidence_footer_aggregates_duplicate_node_names() -> None:
     ]
     # Add one unique-name row so the aggregate test exercises mixing.
     rows.append(
-        PerCallRow(**{
+        make_per_call_row(**{
             **_row("select-chorus", 20).__dict__,
             "data_source": "trace",
             "cacheable_data_source": "cross_workflow_projection",
+            "cache_opportunity": make_cache_projection(
+                tokens_estimated=20,
+                input_tokens_estimated=100,
+                data_source="cross_workflow_projection",
+                purpose="opportunity",
+                action="declare_child_cache",
+            ),
             "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
             "observed_call_count": 4,
         })
@@ -4337,18 +4457,32 @@ def test_per_call_confidence_footer_renders_multi_line_bullet_block() -> None:
     assertions fail.
     """
     rows = [
-        PerCallRow(**{
+        make_per_call_row(**{
             **_row("score-choruses", 1000).__dict__,
             "is_batch": True,
             "batch_size_estimated": 0,
             "data_source": "trace",
             "cacheable_data_source": "batch_prefix",
             "observed_call_count": 136,
+            "cache_opportunity": make_cache_projection(
+                tokens_estimated=10_000,
+                input_tokens_estimated=10_000,
+                data_source="batch_prefix",
+                purpose="opportunity",
+                action="add_prewarm",
+            ),
         }),
-        PerCallRow(**{
+        make_per_call_row(**{
             **_row("select-chorus", 20).__dict__,
             "data_source": "trace",
             "cacheable_data_source": "cross_workflow_projection",
+            "cache_opportunity": make_cache_projection(
+                tokens_estimated=20,
+                input_tokens_estimated=100,
+                data_source="cross_workflow_projection",
+                purpose="opportunity",
+                action="declare_child_cache",
+            ),
             "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
             "observed_call_count": 4,
         }),
@@ -4370,25 +4504,46 @@ def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> 
     Mutation contract: remove the ``cross_workflow_inputs`` note branch from
     ``_cell_notes``; this test fails because the summed row becomes opaque.
     """
-    multi = PerCallRow(**{
+    multi = make_per_call_row(**{
         **_row("review", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=40,
+            input_tokens_estimated=100,
+            data_source="cross_workflow_projection",
+            purpose="opportunity",
+            action="declare_child_cache",
+        ),
         "cross_workflow_inputs": (
             CrossWorkflowInputContribution("creative_direction", 20, "test/model"),
             CrossWorkflowInputContribution("song_architecture", 20, "test/model"),
         ),
     })
-    single = PerCallRow(**{
+    single = make_per_call_row(**{
         **_row("select", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=20,
+            input_tokens_estimated=100,
+            data_source="cross_workflow_projection",
+            purpose="opportunity",
+            action="declare_child_cache",
+        ),
         "cross_workflow_inputs": (CrossWorkflowInputContribution("concept", 20, "test/model"),),
     })
-    many = PerCallRow(**{
+    many = make_per_call_row(**{
         **_row("many", 20).__dict__,
         "data_source": "trace",
         "cacheable_data_source": "cross_workflow_projection",
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=80,
+            input_tokens_estimated=100,
+            data_source="cross_workflow_projection",
+            purpose="opportunity",
+            action="declare_child_cache",
+        ),
         "cross_workflow_inputs": (
             CrossWorkflowInputContribution("a", 20, "test/model"),
             CrossWorkflowInputContribution("b", 20, "test/model"),
@@ -4404,22 +4559,8 @@ def test_per_call_row_renders_multi_candidate_notes_when_inputs_count_gt_1() -> 
 
 def test_per_call_hides_universally_empty_cache_columns_in_static_mode() -> None:
     rows = [
-        PerCallRow(**{
-            **_row("write-lyrics", 0).__dict__,
-            "model": "",
-            "input_tokens_estimated": 3684,
-            "cacheable_tokens_estimated": None,
-            "cache_ratio_pct": None,
-            "cacheable_data_source": "unavailable",
-        }),
-        PerCallRow(**{
-            **_row("song-architecture", 0).__dict__,
-            "model": "",
-            "input_tokens_estimated": 2886,
-            "cacheable_tokens_estimated": None,
-            "cache_ratio_pct": None,
-            "cacheable_data_source": "unavailable",
-        }),
+        _unavailable_row("write-lyrics", model="", input_tokens_estimated=3684),
+        _unavailable_row("song-architecture", model="", input_tokens_estimated=2886),
     ]
 
     text = render_text(_make_analysis(rows=rows))
@@ -4434,14 +4575,14 @@ def test_per_call_hides_universally_empty_cache_columns_in_static_mode() -> None
 
 def test_per_call_keeps_all_columns_in_mixed_mode() -> None:
     rows = [
-        PerCallRow(**{
+        make_per_call_row(**{
             **_row("cached", 75).__dict__,
             "data_source": "trace",
             "declared_prompt_cache": ["prefix"],
             "cacheable_data_source": "trace",
             "observed_call_count": 2,
         }),
-        PerCallRow(**{
+        make_per_call_row(**{
             **_row("projected", 25).__dict__,
             "data_source": "trace",
             "cacheable_data_source": "memo",
@@ -4472,15 +4613,7 @@ def test_per_call_keeps_all_columns_in_mixed_mode() -> None:
 
 
 def test_per_call_dedups_repeated_notes_into_footer() -> None:
-    rows = [
-        PerCallRow(**{
-            **_row(f"n{i}", 0).__dict__,
-            "cacheable_tokens_estimated": None,
-            "cache_ratio_pct": None,
-            "cacheable_data_source": "unavailable",
-        })
-        for i in range(3)
-    ]
+    rows = [_unavailable_row(f"n{i}") for i in range(3)]
 
     text = render_text(_make_analysis(rows=rows))
 
@@ -4491,23 +4624,8 @@ def test_per_call_dedups_repeated_notes_into_footer() -> None:
 
 
 def test_per_call_dedup_handles_row_with_dedup_note_plus_inline_note() -> None:
-    rows = [
-        PerCallRow(**{
-            **_row(f"n{i}", 0).__dict__,
-            "cacheable_tokens_estimated": None,
-            "cache_ratio_pct": None,
-            "cacheable_data_source": "unavailable",
-        })
-        for i in range(6)
-    ]
-    rows.append(
-        PerCallRow(**{
-            **_row("special", 0).__dict__,
-            "cacheable_tokens_estimated": None,
-            "cache_ratio_pct": None,
-            "cacheable_data_source": "unavailable",
-        })
-    )
+    rows = [_unavailable_row(f"n{i}") for i in range(6)]
+    rows.append(_unavailable_row("special"))
     warning = Diagnostic(
         severity=Severity.WARNING,
         source="cache_analyzer",
@@ -4523,12 +4641,7 @@ def test_per_call_dedup_handles_row_with_dedup_note_plus_inline_note() -> None:
 
 
 def test_per_call_inline_renders_unique_notes() -> None:
-    row = PerCallRow(**{
-        **_row("unique", 0).__dict__,
-        "cacheable_tokens_estimated": None,
-        "cache_ratio_pct": None,
-        "cacheable_data_source": "unavailable",
-    })
+    row = _unavailable_row("unique")
 
     text = render_text(_make_analysis(rows=[row]))
 
@@ -4540,17 +4653,12 @@ def test_per_call_inline_renders_unique_notes() -> None:
 
 
 def test_per_call_explainer_adapts_to_visible_columns() -> None:
-    projected = PerCallRow(**{
+    projected = make_per_call_row(**{
         **_row("projected", 50).__dict__,
         "declared_prompt_cache": ["prefix"],
         "cacheable_data_source": "memo",
     })
-    unavailable = PerCallRow(**{
-        **_row("unavailable", 0).__dict__,
-        "cacheable_tokens_estimated": None,
-        "cache_ratio_pct": None,
-        "cacheable_data_source": "unavailable",
-    })
+    unavailable = _unavailable_row("unavailable")
 
     projected_text = render_text(_make_analysis(rows=[projected]))
     unavailable_text = render_text(_make_analysis(rows=[unavailable]))
@@ -4562,12 +4670,7 @@ def test_per_call_explainer_adapts_to_visible_columns() -> None:
 
 
 def test_per_call_explainer_returns_empty_when_no_cache_columns_visible() -> None:
-    row = PerCallRow(**{
-        **_row("unavailable", 0).__dict__,
-        "cacheable_tokens_estimated": None,
-        "cache_ratio_pct": None,
-        "cacheable_data_source": "unavailable",
-    })
+    row = _unavailable_row("unavailable")
 
     text = render_text(_make_analysis(rows=[row]))
 
@@ -4577,7 +4680,7 @@ def test_per_call_explainer_returns_empty_when_no_cache_columns_visible() -> Non
 
 
 def test_per_call_calls_column_hidden_in_static_mode() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("projected", 50).__dict__,
         "cacheable_data_source": "memo",
     })
@@ -4590,13 +4693,13 @@ def test_per_call_calls_column_hidden_in_static_mode() -> None:
 
 
 def test_per_call_all_rows_can_reexpose_hidden_columns() -> None:
-    visible_row = PerCallRow(**{
+    visible_row = make_per_call_row(**{
         **_row("visible", 30).__dict__,
         "cacheable_tokens_estimated": None,
         "cache_ratio_pct": None,
         "cacheable_data_source": "unavailable",
     })
-    hidden_row = PerCallRow(**{
+    hidden_row = make_per_call_row(**{
         **_row("hidden", 90).__dict__,
         "declared_prompt_cache": ["prefix"],
         "cacheable_data_source": "trace",
@@ -4625,7 +4728,7 @@ def test_per_call_table_divider_excludes_notes_column_width() -> None:
     the divider becomes ~50+ chars longer than the row's structured prefix.
     """
     long_observed_models = ("gemini/gemini-2.5-flash-lite", "gemini/gemini-3-flash-preview")
-    long_notes_row = PerCallRow(**{
+    long_notes_row = make_per_call_row(**{
         **_row("opaque-batch", 50).__dict__,
         "model": "",
         "observed_models": long_observed_models,
@@ -4633,7 +4736,7 @@ def test_per_call_table_divider_excludes_notes_column_width() -> None:
         "is_batch": True,
         "batch_size_estimated": 4,
     })
-    short_row = PerCallRow(**{
+    short_row = make_per_call_row(**{
         **_row("plain-row", 50).__dict__,
         "data_source": "trace",
     })
@@ -4673,7 +4776,7 @@ def test_text_pure_greenfield_hides_per_call_section_with_explanatory_note() -> 
     """
     # data_source="estimator" + declared_prompt_cache=None → fails filter.
     raw_rows = [_row("n1", 0), _row("n2", 0)]
-    rows = [PerCallRow(**{**r.__dict__, "data_source": "estimator"}) for r in raw_rows]
+    rows = [dataclasses.replace(r, data_source="estimator") for r in raw_rows]
     # The analyzer would append this note; mirror that here so the renderer
     # surfaces the agent-facing explanation.
     hidden_note = (
@@ -4708,7 +4811,7 @@ def test_text_per_call_explainer_renders_unified_block_for_post_run_greenfield()
     """
     # ``_row("n1", 50)`` defaults to data_source="memo", declared_prompt_cache=None
     # — the post-run greenfield path.
-    rows = [PerCallRow(**{**_row("n1", 50).__dict__, "cacheable_data_source": "memo"})]
+    rows = [dataclasses.replace(_row("n1", 50), cacheable_data_source="memo")]
     text = render_text(_make_analysis(rows=rows))
     assert "## Per-call cache report" in text
     assert "How to read each row:" in text
@@ -4729,7 +4832,7 @@ def test_text_per_call_explainer_renders_unified_block_for_steady_state() -> Non
     assertion on the old "Actual cache ratios" string fires.
     """
     rows = [_row("n1", 0), _row("n2", 75)]
-    rows[1] = PerCallRow(**{
+    rows[1] = make_per_call_row(**{
         **rows[1].__dict__,
         "declared_prompt_cache": ["concept", "concept_brief"],
         "cacheable_data_source": "memo",
@@ -4900,8 +5003,8 @@ def test_render_text_groups_per_call_by_workflow_path_with_called_by() -> None:
     collapses per-call rows back into a flat list.
     """
     rows = [
-        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"}),
-        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/child.pflow.md"}),
+        dataclasses.replace(_row("draft", 30), workflow_path="/abs/parent.pflow.md"),
+        dataclasses.replace(_row("review", 30), workflow_path="/abs/child.pflow.md"),
     ]
     base = _make_analysis(rows=rows, workflow_path="/abs/parent.pflow.md")
     rollup = SubWorkflowRollup(
@@ -4963,8 +5066,8 @@ def test_render_text_drill_in_emits_cwd_relative_path_when_workflow_under_cwd(
     child_path.parent.mkdir(parents=True)
 
     rows = [
-        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": str(parent_path)}),
-        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": str(child_path)}),
+        dataclasses.replace(_row("draft", 30), workflow_path=str(parent_path)),
+        dataclasses.replace(_row("review", 30), workflow_path=str(child_path)),
     ]
     base = _make_analysis(rows=rows, workflow_path=str(parent_path))
     rollup = SubWorkflowRollup(
@@ -5007,8 +5110,8 @@ def test_render_text_drill_in_filters_zero_llm_node_children() -> None:
     drifts up to include it).
     """
     rows = [
-        PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"}),
-        PerCallRow(**{**_row("review", 30).__dict__, "workflow_path": "/abs/llm-child.pflow.md"}),
+        dataclasses.replace(_row("draft", 30), workflow_path="/abs/parent.pflow.md"),
+        dataclasses.replace(_row("review", 30), workflow_path="/abs/llm-child.pflow.md"),
     ]
     base = _make_analysis(rows=rows, workflow_path="/abs/parent.pflow.md")
     rollup = SubWorkflowRollup(
@@ -5052,7 +5155,7 @@ def test_render_text_drill_in_suppressed_when_all_children_have_zero_llm_nodes()
     the section emits a header + ``cd`` line with no commands, and the
     "## Per-child analyze-cache commands" substring reappears.
     """
-    rows = [PerCallRow(**{**_row("draft", 30).__dict__, "workflow_path": "/abs/parent.pflow.md"})]
+    rows = [dataclasses.replace(_row("draft", 30), workflow_path="/abs/parent.pflow.md")]
     base = _make_analysis(rows=rows, workflow_path="/abs/parent.pflow.md")
     rollup = SubWorkflowRollup(
         workflows_included=("/abs/mcp-only-child.pflow.md",),
@@ -5079,7 +5182,7 @@ def test_render_text_drill_in_suppressed_when_all_children_have_zero_llm_nodes()
 
 
 def test_render_text_unpriced_model_includes_child_workflow_attribution() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("draft", 30).__dict__,
         "model": "ollama/local",
         "workflow_path": "/abs/child.pflow.md",
@@ -5579,7 +5682,7 @@ def test_render_json_includes_per_node_thresholds() -> None:
 
 def test_render_json_includes_cache_creation_and_read_tokens() -> None:
     """Per_call rows surface raw trace cache token splits."""
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("cached-call", 80).__dict__,
         "cache_creation_input_tokens": 1500,
         "cache_read_input_tokens": 8062,
@@ -5608,7 +5711,7 @@ def test_render_json_includes_cache_creation_and_read_tokens() -> None:
 
 def test_render_json_per_call_cache_tokens_null_on_greenfield() -> None:
     """No trace data means cache token fields are null."""
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("greenfield-call", 80).__dict__,
         "cache_creation_input_tokens": None,
         "cache_read_input_tokens": None,
@@ -5947,7 +6050,7 @@ def test_heterogeneous_renders_on_dedicated_line_single_node() -> None:
     Mutation contract: revert ``_format_heterogeneous_line`` to inline
     suffix concatenation → "Heterogeneous:" disappears from output.
     """
-    row = PerCallRow(**{**_row("generate-chorus-options", 50).__dict__, "model_is_heterogeneous": True, "model": ""})
+    row = dataclasses.replace(_row("generate-chorus-options", 50), model_is_heterogeneous=True, model="")
     analysis = _analysis_with_heterogeneous_paths([row], ("generate-chorus-options",))
     text = render_text(analysis)
     assert "  Heterogeneous: generate-chorus-options (model varies per batch item)" in text
@@ -5963,10 +6066,7 @@ def test_heterogeneous_renders_on_dedicated_line_multi_node() -> None:
     Mutation contract: re-introduce a count word (e.g., "with 3 nodes
     with") → assertion fails.
     """
-    rows = [
-        PerCallRow(**{**_row(name, 50).__dict__, "model_is_heterogeneous": True, "model": ""})
-        for name in ("a", "b", "c")
-    ]
+    rows = [dataclasses.replace(_row(name, 50), model_is_heterogeneous=True, model="") for name in ("a", "b", "c")]
     analysis = _analysis_with_heterogeneous_paths(rows, ("a", "b", "c"))
     text = render_text(analysis)
     assert "  Heterogeneous: a, b, c (model varies per batch item)" in text
@@ -5999,7 +6099,7 @@ def test_per_call_row_tokens_use_thousands_separator() -> None:
     Mutation contract: drop ',' from format spec → assertion fails.
     """
     # all_rows=True so the 80%-ratio row isn't hidden by the default filter.
-    row = PerCallRow(**{**_row("write-lyrics", 80).__dict__, "input_tokens_estimated": 266_728})
+    row = dataclasses.replace(_row("write-lyrics", 80), input_tokens_estimated=266_728)
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells(text, "write-lyrics")
     assert cells[2] == "266,728"
@@ -6014,12 +6114,22 @@ def test_below_provider_min_note_renders_for_projected_undeclared_rows() -> None
     ``_below_provider_min_note_by_row_key`` makes this note leak to trace rows,
     while removing the helper entirely makes this assertion fail.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("summarize", 0).__dict__,
         "model": "anthropic/claude-haiku-4-5",
         "cacheable_tokens_estimated": 1,
         "cacheable_data_source": "parameters",
         "declared_prompt_cache": None,
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=1,
+            input_tokens_estimated=10_000,
+            data_source="parameters",
+            purpose="opportunity",
+            action="declare_prompt_cache",
+            meets_provider_min=False,
+            provider_min_tokens=4096,
+            blocked_reason="below_provider_min",
+        ),
     })
 
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
@@ -6028,7 +6138,7 @@ def test_below_provider_min_note_renders_for_projected_undeclared_rows() -> None
 
 
 def test_below_provider_min_note_silent_when_cache_declared() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("summarize", 0).__dict__,
         "model": "anthropic/claude-haiku-4-5",
         "cacheable_tokens_estimated": 1,
@@ -6042,7 +6152,7 @@ def test_below_provider_min_note_silent_when_cache_declared() -> None:
 
 
 def test_below_provider_min_note_silent_when_tokens_above_min() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("summarize", 0).__dict__,
         "model": "anthropic/claude-haiku-4-5",
         "cacheable_tokens_estimated": 5000,
@@ -6056,7 +6166,7 @@ def test_below_provider_min_note_silent_when_tokens_above_min() -> None:
 
 
 def test_below_provider_min_note_silent_for_trace_tier() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("summarize", 0).__dict__,
         "model": "anthropic/claude-haiku-4-5",
         "cacheable_tokens_estimated": 1,
@@ -6070,10 +6180,19 @@ def test_below_provider_min_note_silent_for_trace_tier() -> None:
 
 
 def test_per_call_explainer_mentions_provider_minimum() -> None:
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("summarize", 0).__dict__,
         "cacheable_tokens_estimated": 1,
         "cacheable_data_source": "parameters",
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=1,
+            input_tokens_estimated=10_000,
+            data_source="parameters",
+            purpose="opportunity",
+            meets_provider_min=False,
+            provider_min_tokens=1024,
+            blocked_reason="below_provider_min",
+        ),
     })
 
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
@@ -6086,12 +6205,20 @@ def test_per_call_row_renders_cached_now_for_tier_1_active() -> None:
     Mutation contract: make ``_cell_cached_now`` always return em dash; this
     test fails because the trace-backed cache token count disappears.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("write-lyrics", 80).__dict__,
         "input_tokens_estimated": 266_728,
         "cacheable_tokens_estimated": 213_382,
         "declared_prompt_cache": ["prefix"],
         "cacheable_data_source": "trace",
+        "cache_ready": make_cache_projection(
+            tokens_estimated=213_382,
+            input_tokens_estimated=266_728,
+            data_source="trace",
+            purpose="ready",
+            actionability="active",
+            affects_cost_projection=True,
+        ),
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "write-lyrics")
@@ -6105,11 +6232,23 @@ def test_per_call_row_renders_could_cache_for_tier_2_potential() -> None:
     Mutation contract: make ``_cell_could_cache`` return em dash for memo
     source rows; this test fails because the projected opportunity vanishes.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("score-choruses", 80).__dict__,
         "input_tokens_estimated": 266_728,
         "cacheable_tokens_estimated": 213_382,
         "cacheable_data_source": "memo",
+        "cache_ready": make_cache_projection(
+            tokens_estimated=213_382,
+            input_tokens_estimated=266_728,
+            data_source="memo",
+            purpose="ready",
+        ),
+        "cache_opportunity": make_cache_projection(
+            tokens_estimated=213_382,
+            input_tokens_estimated=266_728,
+            data_source="memo",
+            purpose="opportunity",
+        ),
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "score-choruses")
@@ -6125,12 +6264,20 @@ def test_per_call_row_renders_em_dash_for_inactive_tier() -> None:
     inactive tier cells; this test fails because inactive tiers no longer have
     a distinct visual contract.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("rewrite-emotional", 80).__dict__,
         "input_tokens_estimated": 266_728,
         "cacheable_tokens_estimated": 63_009,
         "declared_prompt_cache": ["prefix"],
         "cacheable_data_source": "trace",
+        "cache_ready": make_cache_projection(
+            tokens_estimated=63_009,
+            input_tokens_estimated=266_728,
+            data_source="trace",
+            purpose="ready",
+            actionability="active",
+            affects_cost_projection=True,
+        ),
     })
     text = render_text(_make_analysis(rows=[row]), all_rows=True)
     cells = _per_call_cells_by_header(text, "rewrite-emotional")
@@ -6145,7 +6292,7 @@ def test_per_call_row_unmeasurable_cacheable_renders_question_mark() -> None:
     Mutation contract: return em dash for unavailable cacheable evidence; this
     test fails because honest-unmeasurable and inactive-tier become conflated.
     """
-    row = PerCallRow(**{
+    row = make_per_call_row(**{
         **_row("greenfield", 50).__dict__,
         "cacheable_tokens_estimated": None,
         "cache_ratio_pct": None,

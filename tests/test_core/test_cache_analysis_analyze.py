@@ -34,6 +34,7 @@ from pflow.core.prompt_cache_analysis.types import (
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
+from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 _STAGE_ATTR_MODULES: dict[str, tuple[str, ...]] = {
@@ -115,22 +116,60 @@ def _llm_trace_event(
 
 
 def _row(source: str) -> PerCallRow:
-    return PerCallRow(
+    return make_per_call_row(
+        data_source=source,
         node_path="X",
         model="m",
-        is_batch=False,
-        batch_size_estimated=None,
         input_tokens_estimated=100,
         cacheable_tokens_estimated=50,
         cache_ratio_pct=50,
-        data_source=source,
         declared_prompt_cache=None,
     )
 
 
+def _declared_projection_kwargs(
+    *,
+    tokens: int,
+    input_tokens: int,
+    data_source: str = "declared_chunks",
+) -> dict[str, Any]:
+    return {
+        "cache_configured": make_cache_projection(
+            tokens_estimated=tokens,
+            input_tokens_estimated=input_tokens,
+            data_source=data_source,
+            purpose="configured",
+            action="none",
+            actionability="active",
+            confidence="exact",
+            affects_cost_projection=True,
+        ),
+        "cache_active": make_cache_projection(
+            tokens_estimated=tokens,
+            input_tokens_estimated=input_tokens,
+            data_source=data_source,
+            purpose="active",
+            action="none",
+            actionability="active",
+            confidence="exact",
+            affects_cost_projection=True,
+        ),
+        "cache_ready": make_cache_projection(
+            tokens_estimated=tokens,
+            input_tokens_estimated=input_tokens,
+            data_source=data_source,
+            purpose="ready",
+            action="none",
+            actionability="active",
+            confidence="exact",
+            affects_cost_projection=True,
+        ),
+    }
+
+
 def test_summary_reports_static_batch_invocation_estimate() -> None:
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="batch-llm",
             model="anthropic/claude-sonnet-4-5",
             is_batch=True,
@@ -141,7 +180,7 @@ def test_summary_reports_static_batch_invocation_estimate() -> None:
             data_source="estimator",
             declared_prompt_cache=None,
         ),
-        PerCallRow(
+        make_per_call_row(
             node_path="single-llm",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -164,7 +203,7 @@ def test_summary_reports_static_batch_invocation_estimate() -> None:
 def test_summary_static_batch_input_and_cacheable_totals_are_per_call_with_cohort_multiplication() -> None:
     """Summary totals multiply per-call row tokens by the row invocation count."""
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="batch-llm",
             model="anthropic/claude-sonnet-4-5",
             is_batch=True,
@@ -264,7 +303,7 @@ def test_summary_non_batch_repeated_input_is_per_call(tmp_path: Path) -> None:
 
 def test_arithmetic_identity_no_cache_minus_first_run_equals_savings() -> None:
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="batch-llm",
             model="anthropic/claude-sonnet-4-5",
             is_batch=True,
@@ -276,6 +315,7 @@ def test_arithmetic_identity_no_cache_minus_first_run_equals_savings() -> None:
             declared_prompt_cache=["context"],
             output_tokens_estimated=10,
             output_data_source="trace",
+            **_declared_projection_kwargs(tokens=60, input_tokens=100, data_source="trace"),
         )
     ]
 
@@ -325,7 +365,7 @@ def test_analyze_no_run_data_note_suppressed_when_parameter_backed_cacheable_pre
 
 def test_summary_reports_unknown_invocations_when_batch_size_is_dynamic() -> None:
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="dynamic-batch-llm",
             model="anthropic/claude-sonnet-4-5",
             is_batch=True,
@@ -1007,7 +1047,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
 
 def test_truncated_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="ran",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -1019,7 +1059,7 @@ def test_truncated_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
             declared_prompt_cache=None,
             workflow_path="/abs/parent.pflow.md",
         ),
-        PerCallRow(
+        make_per_call_row(
             node_path="review",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -1032,7 +1072,7 @@ def test_truncated_trace_unexecuted_summary_rows_keep_workflow_scope() -> None:
             workflow_path="/abs/review-b.pflow.md",
             did_not_execute_in_trace=True,
         ),
-        PerCallRow(
+        make_per_call_row(
             node_path="review",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -2307,6 +2347,7 @@ def test_clamp_logs_debug_when_cacheable_exceeds_input(
 
     row = result.per_call[0]
     assert row.cacheable_tokens_estimated == row.input_tokens_estimated == 100
+    assert row.cache_ready.tokens_estimated == 100
     assert any("cacheable_tokens (200, source=parameters) exceeded input_tokens (100" in m for m in caplog.messages)
 
 
@@ -3644,7 +3685,7 @@ def test_explicit_from_trace_invalid_json_raises(tmp_path: Path) -> None:
 def test_gemini_note_appended_when_gemini_in_per_call() -> None:
     notes: list[str] = []
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="x",
             model="gemini/gemini-2.5-pro",
             is_batch=False,
@@ -3663,7 +3704,7 @@ def test_gemini_note_appended_when_gemini_in_per_call() -> None:
 def test_gemini_note_NOT_appended_for_anthropic_only_rows() -> None:
     notes: list[str] = []
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="x",
             model="anthropic/claude-sonnet-4-5",
             is_batch=False,
@@ -3694,7 +3735,7 @@ def test_gemini_note_uses_plain_english_no_internals() -> None:
     """
     notes: list[str] = []
     rows = [
-        PerCallRow(
+        make_per_call_row(
             node_path="x",
             model="gemini/gemini-2.5-pro",
             is_batch=False,
@@ -3795,7 +3836,7 @@ def _summary_row(
     output-availability cohorts.
     """
     ratio = round(100 * cacheable_tokens / input_tokens) if input_tokens else 0
-    return PerCallRow(
+    return make_per_call_row(
         node_path=node_path,
         model="claude-sonnet-4-5",
         is_batch=False,
@@ -3807,6 +3848,11 @@ def _summary_row(
         declared_prompt_cache=declared_prompt_cache,
         output_tokens_estimated=output_tokens,
         output_data_source="memo" if output_tokens is not None else "unavailable",
+        **(
+            _declared_projection_kwargs(tokens=cacheable_tokens, input_tokens=input_tokens)
+            if declared_prompt_cache
+            else {}
+        ),
     )
 
 
@@ -6504,9 +6550,10 @@ def test_real_trace_score_choruses_uses_trace_outputs_for_stable_prefix_opportun
     assert select_rows, "expected select-chorus row in lyrics-generator analysis"
     assert any(row.cacheable_data_source == "cross_workflow_projection" for row in select_rows)
     assert any(
-        row.cacheable_tokens_estimated is not None
-        and row.cacheable_tokens_estimated > 0
-        and row.cacheable_tokens_estimated <= row.input_tokens_estimated
+        row.cache_opportunity.data_source == "cross_workflow_projection"
+        and row.cache_opportunity.tokens_estimated is not None
+        and row.cache_opportunity.tokens_estimated > 0
+        and row.cache_opportunity.tokens_estimated <= row.input_tokens_estimated
         for row in select_rows
     )
     review_rhyme_rows = [
@@ -6518,9 +6565,10 @@ def test_real_trace_score_choruses_uses_trace_outputs_for_stable_prefix_opportun
     assert all(not row.did_not_execute_in_trace for row in review_rhyme_rows)
     assert any(row.observed_call_count == 4 for row in review_rhyme_rows)
     assert any(
-        row.cacheable_tokens_estimated is not None
-        and row.cacheable_tokens_estimated > 0
-        and row.cacheable_tokens_estimated <= row.input_tokens_estimated
+        row.cache_opportunity.data_source == "cross_workflow_projection"
+        and row.cache_opportunity.tokens_estimated is not None
+        and row.cache_opportunity.tokens_estimated > 0
+        and row.cache_opportunity.tokens_estimated <= row.input_tokens_estimated
         for row in review_rhyme_rows
     )
     score_actions = [

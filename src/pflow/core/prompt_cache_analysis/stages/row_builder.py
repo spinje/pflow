@@ -14,7 +14,6 @@ from pflow.core.llm_usage import normalize_litellm_usage_tokens
 from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import PromptRef, classify_prompt_refs, first_per_item_position
 
-from ..below_min_tokens_detector import is_likely_below_min_cache
 from ..context import AnalysisContext, template_resolver
 from ..token_estimation import (
     _estimate_ref_tokens,
@@ -227,16 +226,10 @@ def _build_per_call_row(
         input_tokens=input_tokens,
         cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
     )
-    cacheable_tokens, cacheable_source, cross_workflow_inputs = _apply_cross_workflow_projection(
-        workflow_path=workflow_path,
-        node_id=node_id,
-        model=model,
-        cacheable_tokens=cacheable_tokens,
-        cacheable_source=cacheable_source,
-        cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
-    )
-
-    cacheable_with_clamp, ratio = _clamp_legacy_cacheable_projection(
+    if cross_workflow_components and cacheable_source in {"unavailable", "parameters"}:
+        cacheable_source = "cross_workflow_projection"
+    cross_workflow_inputs = cross_workflow_component_inputs
+    _log_cacheable_scalar_overflow(
         cacheable_tokens=cacheable_tokens,
         cacheable_source=cacheable_source,
         input_tokens=input_tokens,
@@ -245,6 +238,8 @@ def _build_per_call_row(
         workflow_path=workflow_path,
         model=model,
     )
+    cacheable_with_clamp = None if cacheable_tokens is None else min(max(0, cacheable_tokens), input_tokens)
+    ratio = None if cacheable_with_clamp is None else _safe_pct(cacheable_with_clamp, input_tokens)
 
     # Track A (Phase A): per-node recorded cost from the trace. When trace
     # data exists for this node, the analyzer reports what the workflow
@@ -325,55 +320,16 @@ def _build_per_call_row(
     )
 
 
-def _apply_cross_workflow_projection(
-    *,
-    workflow_path: str | None,
-    node_id: str,
-    model: str,
-    cacheable_tokens: int | None,
-    cacheable_source: str,
-    cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[Any]] | None,
-) -> tuple[int | None, str, tuple[CrossWorkflowInputContribution, ...]]:
-    """Promote weak row evidence to a broader cross-workflow projection.
-
-    Returns per-call projected tokens to match ``PerCallRow.cacheable_tokens_estimated``
-    semantics — downstream cost helpers multiply by invocation count themselves.
-    """
-    if cross_workflow_candidates_by_row is None or cacheable_source not in {"unavailable", "parameters"}:
-        return cacheable_tokens, cacheable_source, ()
-    row_candidates = cross_workflow_candidates_by_row.get((workflow_path, node_id), [])
-    if not row_candidates:
-        return cacheable_tokens, cacheable_source, ()
-    projected_tokens = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
-    threshold_floor = max(
-        (candidate.threshold_floor for candidate in row_candidates), default=get_min_cache_tokens(model)
-    )
-    if projected_tokens < threshold_floor:
-        return cacheable_tokens, cacheable_source, ()
-    if projected_tokens <= (cacheable_tokens or 0):
-        return cacheable_tokens, cacheable_source, ()
+def _trace_cache_token_splits(provider_trace_llm_call: dict[str, Any] | None) -> tuple[int | None, int | None]:
+    if provider_trace_llm_call is None:
+        return None, None
     return (
-        projected_tokens,
-        "cross_workflow_projection",
-        tuple(
-            CrossWorkflowInputContribution(
-                child_input_name=candidate.child_input_name,
-                child_cache_ref=candidate.child_cache_ref,
-                parent_value_expr=candidate.parent_value_expr,
-                parent_cache_ref=candidate.parent_cache_ref,
-                parent_prose=candidate.parent_prose or None,
-                tokens_per_call=candidate.estimated_tokens_per_call,
-                model=model,
-            )
-            for candidate in sorted(
-                row_candidates,
-                key=lambda c: (c.child_cache_ref, c.parent_node_id, c.parent_workflow, c.parent_cache_ref),
-            )
-        ),
+        int(provider_trace_llm_call.get("cache_creation_input_tokens") or 0),
+        int(provider_trace_llm_call.get("cache_read_input_tokens") or 0),
     )
 
 
-def _clamp_legacy_cacheable_projection(
+def _log_cacheable_scalar_overflow(
     *,
     cacheable_tokens: int | None,
     cacheable_source: str,
@@ -382,35 +338,20 @@ def _clamp_legacy_cacheable_projection(
     node_id: str,
     workflow_path: str | None,
     model: str,
-) -> tuple[int | None, int | None]:
-    """Return the legacy bridge token+ratio pair without leaking impossible totals."""
-    if cacheable_tokens is None:
-        return None, None
-    if cacheable_tokens <= 0:
-        return 0, 0
-    if cacheable_tokens > input_tokens:
-        logger.debug(
-            "cacheable_tokens (%d, source=%s) exceeded input_tokens (%d, source=%s) "
-            "for node=%s workflow=%s model=%s; clamping. Likely tokenizer drift "
-            "between projection and prompt-resolution paths; see PerCallRow docstring.",
-            cacheable_tokens,
-            cacheable_source,
-            input_tokens,
-            input_source,
-            node_id,
-            workflow_path,
-            model,
-        )
-    clamped = min(cacheable_tokens, input_tokens)
-    return clamped, _safe_pct(clamped, input_tokens)
-
-
-def _trace_cache_token_splits(provider_trace_llm_call: dict[str, Any] | None) -> tuple[int | None, int | None]:
-    if provider_trace_llm_call is None:
-        return None, None
-    return (
-        int(provider_trace_llm_call.get("cache_creation_input_tokens") or 0),
-        int(provider_trace_llm_call.get("cache_read_input_tokens") or 0),
+) -> None:
+    if cacheable_tokens is None or cacheable_tokens <= input_tokens:
+        return
+    logger.debug(
+        "cacheable_tokens (%d, source=%s) exceeded input_tokens (%d, source=%s) "
+        "for node=%s workflow=%s model=%s; clamping. Likely tokenizer drift "
+        "between projection and prompt-resolution paths; see PerCallRow docstring.",
+        cacheable_tokens,
+        cacheable_source,
+        input_tokens,
+        input_source,
+        node_id,
+        workflow_path,
+        model,
     )
 
 
@@ -428,8 +369,8 @@ def _cross_workflow_projection_components(
     if not row_candidates:
         return (), ()
     projected_tokens = sum(candidate.estimated_tokens_per_call for candidate in row_candidates)
-    min_tokens = get_min_cache_tokens(model)
-    below_min = is_likely_below_min_cache(model, projected_tokens)
+    min_tokens = max((candidate.threshold_floor for candidate in row_candidates), default=get_min_cache_tokens(model))
+    below_min = projected_tokens < min_tokens
     component = _projection_component(
         tokens=projected_tokens,
         input_tokens=input_tokens,

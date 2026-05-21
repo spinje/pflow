@@ -24,6 +24,7 @@ These tests lock:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,7 @@ from pflow.core.prompt_cache_analysis.cost_estimation import (
     row_first_run_with_cache_cost,
 )
 from pflow.core.prompt_cache_analysis.types import PerCallRow, ProjectionExclusion
+from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 
@@ -56,7 +58,42 @@ def _row(
     is_batch: bool = False,
     batch_size: int | None = None,
 ) -> PerCallRow:
-    return PerCallRow(
+    projection_kwargs: dict[str, Any] = {}
+    if declared_prompt_cache is not None:
+        projection_kwargs = {
+            "cache_configured": make_cache_projection(
+                tokens_estimated=cacheable_tokens,
+                input_tokens_estimated=input_tokens,
+                data_source="declared_chunks",
+                purpose="configured",
+                action="none",
+                actionability="active",
+                confidence="exact",
+                affects_cost_projection=True,
+            ),
+            "cache_active": make_cache_projection(
+                tokens_estimated=cacheable_tokens,
+                input_tokens_estimated=input_tokens,
+                data_source="declared_chunks",
+                purpose="active",
+                action="none",
+                actionability="active",
+                confidence="exact",
+                affects_cost_projection=True,
+            ),
+            "cache_ready": make_cache_projection(
+                tokens_estimated=cacheable_tokens,
+                input_tokens_estimated=input_tokens,
+                data_source="declared_chunks",
+                purpose="ready",
+                action="none",
+                actionability="active",
+                confidence="exact",
+                affects_cost_projection=True,
+            ),
+        }
+
+    return make_per_call_row(
         node_path=node_path,
         model=model,
         is_batch=is_batch,
@@ -66,30 +103,28 @@ def _row(
         cache_ratio_pct=0,
         data_source="estimator",
         declared_prompt_cache=declared_prompt_cache,
+        **projection_kwargs,
     )
 
 
 def test_row_body_only_cost_excludes_chunks() -> None:
-    row = PerCallRow(**{
-        **_row(input_tokens=1_200).__dict__,
-        "chunk_tokens_estimated": 1_000,
-    })
+    row = dataclasses.replace(_row(input_tokens=1_200), chunk_tokens_estimated=1_000)
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
     assert row_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
 
 
 def test_row_first_run_with_cache_cost_matches_single_row_projection() -> None:
-    row = PerCallRow(**{
-        **_row(
+    row = dataclasses.replace(
+        _row(
             input_tokens=1_200,
             cacheable_tokens=1_000,
             declared_prompt_cache=["bundle"],
             is_batch=True,
             batch_size=3,
-        ).__dict__,
-        "chunk_tokens_estimated": 1_000,
-    })
+        ),
+        chunk_tokens_estimated=1_000,
+    )
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
     row_cost = row_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
@@ -541,14 +576,14 @@ def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> Non
     grouping would let a child workflow pay a cache READ when it should
     pay a cache WRITE.
     """
-    parent = PerCallRow(**{
-        **_row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]).__dict__,
-        "workflow_path": "parent.pflow.md",
-    })
-    child = PerCallRow(**{
-        **_row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]).__dict__,
-        "workflow_path": "child.pflow.md",
-    })
+    parent = dataclasses.replace(
+        _row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
+        workflow_path="parent.pflow.md",
+    )
+    child = dataclasses.replace(
+        _row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
+        workflow_path="child.pflow.md",
+    )
 
     scoped = compute_projections(
         [parent, child],
@@ -559,8 +594,8 @@ def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> Non
     )
     single_scope = compute_projections(
         [
-            PerCallRow(**{**parent.__dict__, "workflow_path": "parent.pflow.md"}),
-            PerCallRow(**{**child.__dict__, "workflow_path": "parent.pflow.md"}),
+            dataclasses.replace(parent, workflow_path="parent.pflow.md"),
+            dataclasses.replace(child, workflow_path="parent.pflow.md"),
         ],
         output_tokens_by_node={
             ("parent.pflow.md", "draft"): 500,
@@ -754,15 +789,15 @@ def test_did_not_execute_rows_do_not_contribute_to_projection_costs() -> None:
         cacheable_tokens=8_000,
         declared_prompt_cache=["x"],
     )
-    phantom = PerCallRow(**{
-        **_row(
+    phantom = dataclasses.replace(
+        _row(
             node_path="phantom",
             input_tokens=10_000,
             cacheable_tokens=8_000,
             declared_prompt_cache=["x"],
-        ).__dict__,
-        "did_not_execute_in_trace": True,
-    })
+        ),
+        did_not_execute_in_trace=True,
+    )
 
     with_phantom = compute_projections(
         [fired, phantom],
@@ -908,20 +943,9 @@ def _row_with_cost(
     **kwargs,  # type: ignore[no-untyped-def]
 ) -> PerCallRow:
     base = _row(**kwargs)
-    return PerCallRow(
-        node_path=base.node_path,
-        model=base.model,
-        is_batch=base.is_batch,
-        batch_size_estimated=base.batch_size_estimated,
-        input_tokens_estimated=base.input_tokens_estimated,
-        cacheable_tokens_estimated=base.cacheable_tokens_estimated,
-        cache_ratio_pct=base.cache_ratio_pct,
-        data_source=base.data_source,
-        declared_prompt_cache=base.declared_prompt_cache,
-        output_tokens_estimated=base.output_tokens_estimated,
-        output_data_source=base.output_data_source,
+    return dataclasses.replace(
+        base,
         model_is_heterogeneous=model_is_heterogeneous,
-        cacheable_data_source=base.cacheable_data_source,
         cost_usd=cost_usd,
         cost_data_source=cost_data_source,
     )

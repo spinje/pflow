@@ -2509,7 +2509,9 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
         row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "use-concept"
     )
     assert row.cacheable_data_source == "cross_workflow_projection"
-    assert row.cacheable_tokens_estimated == 60
+    assert row.cacheable_tokens_estimated is None
+    assert row.cache_opportunity.data_source == "cross_workflow_projection"
+    assert row.cache_opportunity.tokens_estimated == 60
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
             child_input_name="concept",
@@ -2600,7 +2602,9 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
 
     row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
     assert row.cacheable_data_source == "cross_workflow_projection"
-    assert row.cacheable_tokens_estimated == 50
+    assert row.cacheable_tokens_estimated is None
+    assert row.cache_opportunity.data_source == "cross_workflow_projection"
+    assert row.cache_opportunity.tokens_estimated == 50
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
             child_input_name="a", tokens_per_call=30, model="anthropic/claude-haiku-4-5", parent_value_expr="a"
@@ -2699,7 +2703,9 @@ def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
     draft = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
     review = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
     assert draft.cacheable_data_source == "cross_workflow_projection"
-    assert draft.cacheable_tokens_estimated == 60
+    assert draft.cacheable_tokens_estimated is None
+    assert draft.cache_opportunity.data_source == "cross_workflow_projection"
+    assert draft.cache_opportunity.tokens_estimated == 60
     assert review.did_not_execute_in_trace is True
     assert review.cacheable_data_source != "cross_workflow_projection"
     assert review.cross_workflow_inputs == ()
@@ -2709,12 +2715,13 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A boundary must clear the strictest provider minimum across child
-    consumers before any row claims a cross-workflow projection.
+    """A boundary must use the strictest provider minimum across child
+    consumers before marking a cross-workflow projection cacheable.
 
-    Mutation contract: change the threshold gate from ``max(child_models)`` to
+    Mutation contract: change the threshold floor from ``max(child_models)`` to
     the first child model; this test fails because the low-threshold first node
-    admits a projection that the stricter second node could not cache.
+    would mark a projection usable even though the stricter second node could
+    not cache it.
     """
     importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda model: 100 if model == "strict/model" else 10)
@@ -2776,7 +2783,10 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
 
     child_rows = [row for row in result.per_call if row.workflow_path == str(child_path)]
     assert {row.node_path for row in child_rows} == {"draft", "review"}
-    assert all(row.cacheable_data_source != "cross_workflow_projection" for row in child_rows)
+    assert all(row.cacheable_tokens_estimated is None for row in child_rows)
+    assert all(row.cache_opportunity.data_source == "cross_workflow_projection" for row in child_rows)
+    assert all(row.cache_opportunity.meets_provider_min is False for row in child_rows)
+    assert all(row.cache_opportunity.provider_min_tokens == 100 for row in child_rows)
 
 
 def test_sub_workflow_cache_undeclared_groups_multiple_inputs_per_child(
@@ -3768,8 +3778,10 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
 
     row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
     assert row.cacheable_data_source == "cross_workflow_projection"
-    assert row.cacheable_tokens_estimated is not None
-    assert row.cacheable_tokens_estimated < 2_000
+    assert row.cacheable_tokens_estimated is None
+    assert row.cache_opportunity.data_source == "cross_workflow_projection"
+    assert row.cache_opportunity.tokens_estimated is not None
+    assert row.cache_opportunity.tokens_estimated < 2_000
     assert row.cross_workflow_inputs == (
         CrossWorkflowInputContribution(
             child_input_name="concept",
@@ -3777,7 +3789,7 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
             parent_value_expr="concept",
             parent_cache_ref="concept.title",
             parent_prose="Title only:\nParent-side label to preserve across workflows.\n",
-            tokens_per_call=row.cacheable_tokens_estimated,
+            tokens_per_call=row.cache_opportunity.tokens_estimated,
             model="anthropic/claude-haiku-4-5",
         ),
     )
@@ -3790,7 +3802,7 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
             "parent_value_expr": "concept",
             "parent_cache_ref": "concept.title",
             "parent_prose": "Title only:\nParent-side label to preserve across workflows.\n",
-            "tokens_per_call": row.cacheable_tokens_estimated,
+            "tokens_per_call": row.cache_opportunity.tokens_estimated,
             "model": "anthropic/claude-haiku-4-5",
         }
     ]

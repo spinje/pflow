@@ -287,9 +287,9 @@ class PerCallRow:
       fields by ``invocation_count_for(row)`` at the use site.
     - Projection fields are capped at ``input_tokens_estimated`` row-wise.
       New code must read ``cache_configured``, ``cache_active``,
-      ``cache_ready``, or ``cache_opportunity``. The legacy ``cacheable_*``
-      fields remain only as an internal bridge while older helper tests and
-      local consumers are migrated.
+      ``cache_ready``, or ``cache_opportunity`` for projection semantics.
+      ``cacheable_*`` fields remain as row-level compatibility values for
+      renderers and JSON consumers; they do not synthesize projections.
 
     Tri-state nullability for tokens / cacheable / ratio:
 
@@ -327,21 +327,20 @@ class PerCallRow:
     # also short-circuits — defense-in-depth against future contributors who
     # forget to consult this flag.
     model_is_heterogeneous: bool = False
-    # Tier label for ``cacheable_tokens_estimated``. Independent from
-    # ``data_source`` (input) and ``output_data_source`` — the three metrics
-    # may legitimately diverge (e.g., trace fires for input but cacheable
-    # falls through to memo when ``cache_creation+cache_read == 0``).
+    # Tier label for legacy row-level cacheability evidence. Independent from
+    # ``data_source`` (input), ``output_data_source``, and the projection
+    # objects — the metrics may legitimately diverge (e.g., trace fires for
+    # input but cacheable falls through to memo when
+    # ``cache_creation+cache_read == 0``).
     # Sources: ``"trace"``, ``"memo"``, ``"parameters"``,
     # ``"batch_prefix"``, ``"cross_workflow_projection"``,
     # ``"unavailable"``. ``"parameters"`` covers workflow-input refs resolved
     # via positional ``key=value`` params; ``"batch_prefix"`` covers the
-    # batch-node per-call static-prefix projection (repeated bytes before the first
-    # ``${alias.X}`` ref). ``"cross_workflow_projection"``
-    # covers a parent-declared value flowing into a child workflow that has not
-    # declared that receiving input in its own ``## Cache``. Projection tiers
-    # fire when the agent has not declared ``prompt_cache:`` but a stable
-    # reusable prefix is detectable. Confidence is heuristic — agents see a
-    # footer flagging the projection.
+    # batch-node per-call static-prefix projection (repeated bytes before the
+    # first ``${alias.X}`` ref). ``"cross_workflow_projection"`` is a
+    # compatibility label for rows whose projection objects cover a
+    # parent-declared value flowing into a child workflow that has not declared
+    # that receiving input in its own ``## Cache``.
     cacheable_data_source: str = "unavailable"
     # Parent-side values that contributed to a ``cross_workflow_projection``
     # row. Empty for all other tiers. Text rendering uses this to add compact
@@ -401,13 +400,7 @@ class PerCallRow:
     # ``rendering.text._render_per_call``).
 
     def __post_init__(self) -> None:
-        """Bridge legacy direct test constructors to explicit projections.
-
-        Production row construction populates the projection fields directly.
-        A large helper-test surface still instantiates ``PerCallRow`` with the
-        old cacheable scalar; synthesize active/ready/opportunity projections
-        only when callers left the new fields at their defaults.
-        """
+        """Derive cached_now_tokens_estimated from available evidence."""
         if self.cached_now_tokens_estimated is None and (
             self.cache_creation_input_tokens is not None or self.cache_read_input_tokens is not None
         ):
@@ -416,73 +409,13 @@ class PerCallRow:
                 "cached_now_tokens_estimated",
                 int(self.cache_creation_input_tokens or 0) + int(self.cache_read_input_tokens or 0),
             )
-        projection_already_specific = self.cache_ready.data_source not in {
-            _PROJECTION_NOT_APPLICABLE,
-            _PROJECTION_UNAVAILABLE,
-        } or self.cache_active.data_source not in {_PROJECTION_NOT_APPLICABLE, _PROJECTION_UNAVAILABLE}
-        if self.cacheable_tokens_estimated is None or projection_already_specific:
-            if (
-                self.cacheable_data_source == "trace"
-                and self.declared_prompt_cache
-                and self.cached_now_tokens_estimated is None
-            ):
-                object.__setattr__(self, "cached_now_tokens_estimated", self.cacheable_tokens_estimated)
-            return
-        if not self.declared_prompt_cache and (
-            self.cacheable_tokens_estimated <= 0 or self.cacheable_data_source == "trace"
-        ):
-            return
-        source = "declared_chunks" if self.declared_prompt_cache else self.cacheable_data_source
-        action = "none" if self.declared_prompt_cache else "declare_prompt_cache"
-        if source == "batch_prefix":
-            action = "add_prewarm"
-        elif source == "cross_workflow_projection":
-            action = "declare_child_cache"
-        actionability = "active" if self.declared_prompt_cache else "direct_edit"
-        meets_min, provider_min, blocked = _provider_min_state(self.model, self.cacheable_tokens_estimated)
-        if self.cacheable_data_source == "trace" and self.declared_prompt_cache:
-            meets_min = True
-            blocked = ""
-        component = _projection_component(
-            tokens=self.cacheable_tokens_estimated,
-            input_tokens=self.input_tokens_estimated,
-            data_source=source,
-            action=action,
-            actionability=(actionability if self.declared_prompt_cache or not blocked else "direct_edit_blocked"),
-            confidence=_projection_source_confidence(self.cacheable_data_source),
-            meets_provider_min=meets_min,
-            provider_min_tokens=provider_min,
-            blocked_reason=blocked,
-            affects_cost_projection=bool(self.declared_prompt_cache),
-        )
         if (
-            self.cacheable_data_source == "trace"
+            self.cached_now_tokens_estimated is None
+            and self.cacheable_data_source == "trace"
             and self.declared_prompt_cache
-            and self.cached_now_tokens_estimated is None
+            and self.cacheable_tokens_estimated is not None
         ):
             object.__setattr__(self, "cached_now_tokens_estimated", self.cacheable_tokens_estimated)
-        object.__setattr__(
-            self,
-            "cache_ready",
-            aggregate_projection((component,), purpose="ready", input_tokens=self.input_tokens_estimated),
-        )
-        if self.declared_prompt_cache:
-            object.__setattr__(
-                self,
-                "cache_configured",
-                aggregate_projection((component,), purpose="configured", input_tokens=self.input_tokens_estimated),
-            )
-            object.__setattr__(
-                self,
-                "cache_active",
-                aggregate_projection((component,), purpose="active", input_tokens=self.input_tokens_estimated),
-            )
-        else:
-            object.__setattr__(
-                self,
-                "cache_opportunity",
-                aggregate_projection((component,), purpose="opportunity", input_tokens=self.input_tokens_estimated),
-            )
 
     @property
     def body_tokens_estimated(self) -> int:

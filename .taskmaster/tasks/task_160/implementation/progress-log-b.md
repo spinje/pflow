@@ -272,3 +272,41 @@ Trust boundary for next phase:
 - Verified: behavior output is stable; direct helper tests now import from the new homes; package import has no cycle; row-level cross-workflow candidates still flow through production row building.
 - Assumed correct: local imports inside `row_builder._build_per_call_rows_and_warnings()` are the smallest correct cycle boundary until a future shared helper extraction removes the existing row-builder dependencies from warning/cross-workflow stages.
 - Unable to verify in Phase 6: whether the `analyze.py <=400` target can be reached without contradicting the plan's explicit `_run_full_validation` placement or starting a new structural extraction; that should be reviewed before Phase 7 rather than folded into the PerCallRow bridge work.
+
+## 2026-05-22 - Phase 7 PerCallRow Bridge Removal
+
+Phase completed: Phase 7 only.
+
+Implemented:
+- Added `tests/shared/cache_analysis_fixtures.py` with `make_per_call_row()` and `make_cache_projection()`. The helper defaults projection fields to `not_applicable_projection()` and does not synthesize projections from `cacheable_tokens_estimated`.
+- Migrated the direct `PerCallRow(...)` test constructors and spread-clone patterns in analyzer, cost-estimation, renderer, and per-id emission tests to helper/explicit-projection shapes.
+- Removed the legacy projection-synthesis block from `PerCallRow.__post_init__`; preserved the trace cache-token split derivation and the trace+declared cached-now fallback.
+- Deleted `_apply_cross_workflow_projection` and `_clamp_legacy_cacheable_projection` from `stages/row_builder.py`.
+- Kept cross-workflow opportunities on `cache_ready`/`cache_opportunity` projection objects while leaving `cacheable_tokens_estimated` unpromoted. Below-provider-min cross-workflow opportunities remain visible as blocked projection objects and use the strictest child-model threshold for `provider_min_tokens`.
+- Added the helper/production parity guard in `tests/test_core/test_cache_analysis_renderers.py`.
+- Cleaned up schema/comment wording and renderer fixtures so cross-workflow tests describe projection-object state rather than treating the compatibility source label as the token carrier.
+
+Deviations and rationale:
+- Added `make_cache_projection()` beyond the plan to keep explicit projection fixtures small and readable. It still requires callers to state projection intent; it does not recreate the deleted bridge.
+- Did not perform the plan's per-file commit cycle. Repository instructions say never commit unless explicitly instructed, and the user asked to stop after the phase for human review.
+- Updated `tests/test_core/test_cache_analysis_per_id_emission.py` in addition to the three listed migration files because full affected tests proved those cases asserted the old cross-workflow scalar contract. Leaving them unchanged would preserve the bridge through test expectations.
+- Kept inline clamping for the public `cacheable_tokens_estimated`/`cache_ratio_pct` fields instead of switching to raw values everywhere. The plan allowed keeping fields populated identically; this preserved existing renderer/JSON compatibility while deleting the helper.
+- Test collection is `7156`, one higher than Phase 0, because Phase 7 explicitly required a new parity guard test. No existing tests were dropped or renamed.
+
+Verification:
+- Affected cache-analysis files: `575 passed`.
+- Task 159 harness: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0 exactly, and `10-live-recordings/05-gemini-lyrics-generator` passes.
+- Sandbox-safe non-e2e pytest: `7103 passed, 1 skipped`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 224 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- `uv lock --locked`: passed after escalation for uv cache access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for sandboxed hidden-file access.
+- Structural checks:
+  - `rg "def _apply_cross_workflow_projection|def _clamp_legacy_cacheable_projection|_apply_cross_workflow_projection|_clamp_legacy_cacheable_projection" src tests` returns no matches.
+  - `rg '"cross_workflow_projection"' src/pflow/core/prompt_cache_analysis/stages/row_builder.py -n` returns the source-label assignment and projection-component data source.
+  - `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest --collect-only -q` reports `7156 tests collected`.
+
+Trust boundary for next phase:
+- Verified: production cross-workflow projection objects still render in the Task 159 live lyrics baseline; the legacy scalar no longer carries cross-workflow token estimates; cached-now trace derivations still pass focused and full tests.
+- Assumed correct: retaining the inline scalar clamp is the safest public-contract preservation until a later phase intentionally removes or deprecates `cacheable_tokens_estimated`.
+- Unable to verify in Phase 7: whether the plan's approximate `types.py ~810 LOC` target is still meaningful after prior committed phases; current `types.py` is `933` LOC, but the requested bridge deletion is complete and structurally verified.

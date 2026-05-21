@@ -49,8 +49,8 @@ Version history (``JSON_FORMAT_VERSION``):
 - ``"4.1"`` — Pass C prompt-caching polish (additive, same minor):
   ``per_call[].cacheable_data_source`` gains ``"cross_workflow_projection"``
   and ``per_call[].cross_workflow_inputs`` is added for rows whose
-  ``could_cache`` value comes from parent-declared values flowing into a
-  child workflow.
+  projection objects include parent-declared values flowing into a child
+  workflow.
 - ``"4.1"`` — cross_workflow_inputs naming + data-flow surfacing (same minor,
   pre-merge shape correction): ``per_call[].cross_workflow_inputs[*]``
   renamed ``name`` → ``child_input_name`` and added ``parent_value_expr``
