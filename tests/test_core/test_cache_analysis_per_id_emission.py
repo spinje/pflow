@@ -5070,10 +5070,8 @@ def test_aggregate_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow()
     the deterministic-by-tuple version always picks the lex-smaller
     parent_workflow. The pre-fix code returned whichever was first seen.
     """
-    from pflow.core.prompt_cache_analysis.stages.cross_workflow import (
-        _aggregate_sub_workflow_cache_candidates_by_child,
-        _SubWorkflowCacheCandidate,
-    )
+    from pflow.core.prompt_cache_analysis.stages.cross_workflow import _aggregate_sub_workflow_cache_candidates_by_child
+    from pflow.core.prompt_cache_analysis.types import _SubWorkflowCacheCandidate
 
     candidate_a = _SubWorkflowCacheCandidate(
         parent_workflow="alpha-parent.pflow.md",

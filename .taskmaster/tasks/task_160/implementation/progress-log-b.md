@@ -125,3 +125,40 @@ Trust boundary for Phase 3:
 - Verified: the root walker has no remaining old import path consumers in `src/` or `tests/`; the analytical stage name is unchanged and still used by tests intentionally.
 - Assumed correct: delete/add rename representation is acceptable for review because no commit was requested and the final file contents preserve behavior.
 - Unable to verify in Phase 2: whether Phase 3's cross-workflow rendering extraction should re-export anything from `rendering/__init__.py`; that depends on the actual caller surface during Phase 3.
+
+## 2026-05-21 - Phase 3 Cross-Workflow Analysis/Rendering Split
+
+Phase completed: Phase 3 only.
+
+Implemented:
+- G3.1: added `src/pflow/core/prompt_cache_analysis/rendering/cross_workflow_edits.py` for paste-ready sub-workflow cache edit text. The single external entry point is `format_grouped_body_block`; all other helpers remain private.
+- G3.2: moved `_SubWorkflowCacheCandidate`, `_GroupedConsumerProjection`, and `_SubWorkflowCacheGroup` into `types.py`, preserving package-internal underscore names.
+- G3.3: replaced the stage-local `_cache_refs_by_consumer()` free function with `_SubWorkflowCacheGroup.cache_refs_by_consumer()`.
+- G3.4: removed the unused `cw_result` parameter from the render-side chain and the emit-side `format_grouped_body_block(...)` call.
+- Moved `_workflow_basename()` into `types.py` so both the analysis stage and render helper use one implementation.
+- Updated direct helper tests so render helper coverage imports from `rendering.cross_workflow_edits` and candidate fixtures import from `types.py`.
+
+Deviations and rationale:
+- Changed `rendering/__init__.py` to lazy-load its existing public exports. Import verification found a cycle introduced by the new normal stage import: `analyze -> stages.cross_workflow -> rendering.cross_workflow_edits -> rendering.__init__ -> summarize -> analyze`. Lazy package exports preserve the existing `from pflow.core.prompt_cache_analysis.rendering import render_text` API while allowing the stage to import the render seam without adding a function-body lazy import.
+- Did not re-export `format_grouped_body_block` from `rendering/__init__.py`. The only consumer is the analysis stage; adding it to the package-level rendering API would make an internal seam look public.
+- Did not use code-implementer subagents. The phase had one tightly coupled move across the stage/types/rendering boundary plus an import-cycle correction discovered mid-verification. A parallel writer would have increased conflict risk without isolating a genuinely mechanical, disjoint write scope.
+
+Verification:
+- Focused helper tests: `2 passed`.
+- Affected cache-analysis files: `340 passed`.
+- Task 159 harness: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0 exactly.
+- Sandbox-safe non-e2e pytest: `7102 passed, 1 skipped`.
+- `uv lock --locked`: passed after escalation for uv cache access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for sandboxed metadata-file access; `ruff-format` reformatted one changed file before the successful rerun.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 224 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- Phase 3 structural checks:
+  - `stages/cross_workflow.py`: `959` lines.
+  - `rendering/cross_workflow_edits.py`: `315` lines.
+  - `rg "Diagnostic|cw_result" rendering/cross_workflow_edits.py` returns no matches.
+  - `_SubWorkflowCacheCandidate`, `_GroupedConsumerProjection`, `_SubWorkflowCacheGroup`, and `_workflow_basename` are defined only in `types.py`.
+
+Trust boundary for Phase 4:
+- Verified: output behavior is stable against the Task 159 harness; package-level rendering imports still work; the new render helper imports without cycling; render-side edit text no longer depends on `cw_result`.
+- Assumed correct: lazy `rendering.__init__` is acceptable because direct submodule imports are already the dominant internal/test pattern, and package-level exports remain source-compatible.
+- Unable to verify in Phase 3: whether Phase 4's `AnalysisContext` parametric methods can delete all mirror resolution helpers without additional test migrations beyond the plan's two named sites.

@@ -607,6 +607,85 @@ class CrossWorkflowFindings:
 
 
 @dataclass(frozen=True)
+class _SubWorkflowCacheCandidate:
+    """One child-workflow cache declaration opportunity.
+
+    Sub-workflows do not inherit parent ``## Cache`` blocks, so a parent-side
+    declaration never satisfies the child. The actionable edit is in the
+    receiving workflow when that child has repeated LLM consumers of the
+    incoming input.
+    """
+
+    parent_workflow: str
+    parent_value_expr: str
+    parent_node_id: str
+    line_in_parent: int
+    child_workflow: str
+    child_input_name: str
+    child_count: int
+    child_node_ids: tuple[str, ...]
+    parent_cache_ref: str = ""
+    child_cache_ref: str = ""
+    parent_prose: str = ""
+    parent_prose_origins_differ: bool = False
+    body_refs_by_node: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    origin_count: int = 1
+    has_multiple_parent_origins: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.child_cache_ref:
+            object.__setattr__(self, "child_cache_ref", self.child_input_name)
+        if not self.parent_cache_ref:
+            object.__setattr__(self, "parent_cache_ref", self.parent_value_expr)
+
+
+@dataclass(frozen=True)
+class _GroupedConsumerProjection:
+    """One child LLM node's cumulative cache opportunity within a group.
+
+    ``per_call_prefix_tokens`` is the sum of input tokens this consumer receives
+    on each call. It's what the provider's cache minimum is checked against —
+    pflow emits one or more ``cache_control`` markers per call (Anthropic
+    multi-breakpoint); the terminal marker sees the full per-call prefix bytes.
+    The threshold gate must use this field (per-call prefix tokens), NOT a
+    cohort total (per_call × call_count), which mixes units and silently
+    mis-classifies low-per-call high-call-count cases. Multi-breakpoint
+    placement does not change the per-call denominator.
+
+    ``threshold`` is the provider's per-call minimum for this consumer's model.
+    ``savings_usd`` is cohort-level (already multiplied by call count) — the
+    cost projection is honest about per-workflow-run savings.
+    """
+
+    consumer_node_id: str
+    model: str
+    consumed_inputs: tuple[str, ...]
+    per_call_prefix_tokens: int
+    threshold: int
+    savings_usd: float | None
+    did_not_execute_in_trace: bool
+
+
+@dataclass(frozen=True)
+class _SubWorkflowCacheGroup:
+    """All undeclared cache inputs flowing into one child workflow."""
+
+    child_workflow: str
+    candidates: tuple[_SubWorkflowCacheCandidate, ...]
+
+    def cache_refs_by_consumer(self) -> dict[str, list[str]]:
+        refs_by_consumer: dict[str, list[str]] = {}
+        for candidate in self.candidates:
+            for node_id in candidate.child_node_ids:
+                refs_by_consumer.setdefault(node_id, []).append(candidate.child_cache_ref)
+        return refs_by_consumer
+
+
+def _workflow_basename(workflow_path: str) -> str:
+    return workflow_path.rsplit("/", 1)[-1] if "/" in workflow_path else workflow_path
+
+
+@dataclass(frozen=True)
 class SubWorkflowRollupEntry:
     """Per-child-workflow cost figures in a sub-workflow rollup.
 

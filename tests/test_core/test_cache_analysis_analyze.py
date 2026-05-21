@@ -7213,10 +7213,8 @@ def test_parent_origin_clause_surfaces_rename_and_hides_passthrough() -> None:
       - Drop the ``not expr`` guard → None/empty case returns ``"flows in from
         parent as `${None}`"`` or similar; this test fails.
     """
-    from pflow.core.prompt_cache_analysis.stages.cross_workflow import (
-        _parent_origin_clause,
-        _SubWorkflowCacheCandidate,
-    )
+    from pflow.core.prompt_cache_analysis.rendering.cross_workflow_edits import _parent_origin_clause
+    from pflow.core.prompt_cache_analysis.types import _SubWorkflowCacheCandidate
 
     def _make(parent_value_expr: str | None, child_input_name: str) -> _SubWorkflowCacheCandidate:
         return _SubWorkflowCacheCandidate(

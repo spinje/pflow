@@ -3,25 +3,34 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
-from pflow.core.llm_capabilities import anthropic_models_at_threshold, get_min_cache_tokens
+from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import classify_prompt_refs
 
 from ..context import AnalysisContext, _latest_memo_for_freshness_check, _normalize_empty, template_resolver
+from ..rendering.cross_workflow_edits import format_grouped_body_block
 from ..token_estimation import estimate_tokens
 from ..trace_loading import _edge_child_paths
-from ..types import CrossWorkflowFindings, CrossWorkflowInputContribution, PerCallRow, invocation_count_for
+from ..types import (
+    CrossWorkflowFindings,
+    CrossWorkflowInputContribution,
+    PerCallRow,
+    _GroupedConsumerProjection,
+    _SubWorkflowCacheCandidate,
+    _SubWorkflowCacheGroup,
+    _workflow_basename,
+    invocation_count_for,
+)
 from ..warning_catalog import make_diagnostic
-from .row_builder import _node_inputs, _static_excerpt, _total_observed_invocations
+from .row_builder import _node_inputs, _total_observed_invocations
 from .suggestions import _estimate_token_savings_usd
 
 logger = logging.getLogger(__name__)
-_PARENT_PROSE_PREVIEW_LIMIT = 40
 
 
 # ---------------------------------------------------------------------------
@@ -134,80 +143,12 @@ def _cross_workflow_prose_mismatches(
 
 
 @dataclass(frozen=True)
-class _SubWorkflowCacheCandidate:
-    """One child-workflow cache declaration opportunity.
-
-    Sub-workflows do not inherit parent ``## Cache`` blocks, so a parent-side
-    declaration never satisfies the child. The actionable edit is in the
-    receiving workflow when that child has repeated LLM consumers of the
-    incoming input.
-    """
-
-    parent_workflow: str
-    parent_value_expr: str
-    parent_node_id: str
-    line_in_parent: int
-    child_workflow: str
-    child_input_name: str
-    child_count: int
-    child_node_ids: tuple[str, ...]
-    parent_cache_ref: str = ""
-    child_cache_ref: str = ""
-    parent_prose: str = ""
-    parent_prose_origins_differ: bool = False
-    body_refs_by_node: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
-    origin_count: int = 1
-    has_multiple_parent_origins: bool = False
-
-    def __post_init__(self) -> None:
-        if not self.child_cache_ref:
-            object.__setattr__(self, "child_cache_ref", self.child_input_name)
-        if not self.parent_cache_ref:
-            object.__setattr__(self, "parent_cache_ref", self.parent_value_expr)
-
-
-@dataclass(frozen=True)
 class _ChildCacheRefUse:
     """Actual child prompt refs under a workflow input, grouped by cache entry."""
 
     child_cache_ref: str
     consumer_node_ids: tuple[str, ...]
     body_refs_by_node: Mapping[str, tuple[str, ...]]
-
-
-@dataclass(frozen=True)
-class _GroupedConsumerProjection:
-    """One child LLM node's cumulative cache opportunity within a group.
-
-    ``per_call_prefix_tokens`` is the sum of input tokens this consumer receives
-    on each call. It's what the provider's cache minimum is checked against —
-    pflow emits one or more ``cache_control`` markers per call (Anthropic
-    multi-breakpoint); the terminal marker sees the full per-call prefix bytes.
-    The threshold gate must use this field (per-call prefix tokens), NOT a
-    cohort total (per_call × call_count), which mixes units and silently
-    mis-classifies low-per-call high-call-count cases. Multi-breakpoint
-    placement does not change the per-call denominator.
-
-    ``threshold`` is the provider's per-call minimum for this consumer's model.
-    ``savings_usd`` is cohort-level (already multiplied by call count) — the
-    cost projection is honest about per-workflow-run savings.
-    """
-
-    consumer_node_id: str
-    model: str
-    consumed_inputs: tuple[str, ...]
-    per_call_prefix_tokens: int
-    threshold: int
-    savings_usd: float | None
-    did_not_execute_in_trace: bool
-
-
-@dataclass(frozen=True)
-class _SubWorkflowCacheGroup:
-    """All undeclared cache inputs flowing into one child workflow."""
-
-    child_workflow: str
-    candidates: tuple[_SubWorkflowCacheCandidate, ...]
 
 
 def _sub_workflow_cache_candidates_for_edge(
@@ -642,10 +583,6 @@ def _estimate_parent_value_tokens(
     return estimate_tokens(model, deterministic_serialize(value))[0]
 
 
-def _workflow_basename(workflow_path: str) -> str:
-    return workflow_path.rsplit("/", 1)[-1] if "/" in workflow_path else workflow_path
-
-
 _MODEL_SWITCH_BAND = 1024
 
 
@@ -735,14 +672,6 @@ def _tokens_per_group_ref(
     return tokens_per_ref
 
 
-def _cache_refs_by_consumer(group: _SubWorkflowCacheGroup) -> dict[str, list[str]]:
-    refs_by_consumer: dict[str, list[str]] = {}
-    for candidate in group.candidates:
-        for node_id in candidate.child_node_ids:
-            refs_by_consumer.setdefault(node_id, []).append(candidate.child_cache_ref)
-    return refs_by_consumer
-
-
 def _grouped_consumer_projections(
     group: _SubWorkflowCacheGroup,
     rows_by_node_path: dict[tuple[str | None, str], PerCallRow],
@@ -751,7 +680,7 @@ def _grouped_consumer_projections(
 ) -> tuple[tuple[_GroupedConsumerProjection, ...], float | None]:
     projections: list[_GroupedConsumerProjection] = []
     total_savings: float | None = 0.0
-    for consumer_node_id, cache_refs in sorted(_cache_refs_by_consumer(group).items()):
+    for consumer_node_id, cache_refs in sorted(group.cache_refs_by_consumer().items()):
         row = rows_by_node_path.get((group.child_workflow, consumer_node_id))
         if row is None or not row.model or row.did_not_execute_in_trace:
             continue
@@ -904,314 +833,9 @@ def _total_savings_for_case(
     return total
 
 
-def _format_grouped_body_block(
-    group: _SubWorkflowCacheGroup,
-    projections: tuple[_GroupedConsumerProjection, ...],
-    tokens_per_input: dict[str, int | None],
-    strictest_model: str,
-    strictest_threshold: int,
-    case: str,
-    cw_result: Any,
-) -> str:
-    """Render the case-specific body embedded in the diagnostic message.
-
-    All threshold comparisons use ``per_call_prefix_tokens`` — the bytes the
-    provider's cache marker sees on each call. Cohort totals (per_call × calls)
-    drive ``savings_usd`` only; they're irrelevant to whether the cache fires.
-    """
-    candidates_by_ref = {candidate.child_cache_ref: candidate for candidate in group.candidates}
-    parent_label = _workflow_basename(group.candidates[0].parent_workflow) if group.candidates else "parent workflow"
-    ref_count = len(group.candidates)
-    input_phrase = _count_phrase(ref_count, "value")
-    # Per-call prefix size of the LARGEST consumer in the group — used as the
-    # representative "what does the provider see per call" number for body text.
-    # For multi-consumer groups we still render per-consumer lines below.
-    per_call_max = max((p.per_call_prefix_tokens for p in projections), default=0)
-    lines: list[str] = []
-
-    if case == "unmeasurable":
-        return _format_unmeasurable_grouped_body(
-            group=group,
-            input_phrase=input_phrase,
-            tokens_per_input=tokens_per_input,
-            cw_result=cw_result,
-        )
-
-    if case == "refactor":
-        return _format_refactor_grouped_body(
-            group=group,
-            input_phrase=input_phrase,
-            ref_count=ref_count,
-            per_call_max=per_call_max,
-            tokens_per_input=tokens_per_input,
-            cw_result=cw_result,
-        )
-
-    threshold_clause = (
-        f"above {strictest_model}'s {strictest_threshold:,}-token cache minimum"
-        if per_call_max >= strictest_threshold
-        else f"below {strictest_model}'s {strictest_threshold:,}-token cache minimum"
-    )
-    if len(projections) > 1:
-        lines.append(
-            f"{input_phrase.capitalize()} {_flow_verb(ref_count)} in from parent {parent_label}, used by "
-            f"{_count_phrase(len(projections), 'consumer node')}."
-        )
-        _append_honest_edit_lines(
-            lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result, include_cleanup=False
-        )
-        lines.append("Prompt-body templates to remove and per-consumer cache prefix:")
-        for projection in projections:
-            lines.extend(
-                _format_per_consumer_input_lines(
-                    projection=projection,
-                    candidates_by_input=candidates_by_ref,
-                    tokens_per_input=tokens_per_input,
-                    cw_result=cw_result,
-                )
-            )
-    else:
-        lines.append(
-            f"{input_phrase.capitalize()} {_flow_verb(ref_count)} in from parent {parent_label}: "
-            f"{_format_tokens_phrase(per_call_max)} per call ({threshold_clause})."
-        )
-        _append_honest_edit_lines(lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result)
-
-    if case == "model_switch":
-        alternatives = anthropic_models_at_threshold(_MODEL_SWITCH_BAND)
-        lines.append(
-            f"→ Switch model: replace the `- model:` line in {_workflow_basename(group.child_workflow)} with one of:"
-        )
-        for model in alternatives:
-            suffix = " (recommended — pflow's default)" if model == "claude-sonnet-4-5" else ""
-            lines.append(f"    anthropic/{model}{suffix}")
-        lines.append(
-            "  These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. "
-            "Switching providers changes base inference cost — see `pflow guide prompt-caching`."
-        )
-        lines.append("→ Then: apply steps (1)(2)(3) above.")
-        lines.append(
-            f"→ Monitor: re-run analyze-cache when per-call content grows past {strictest_threshold:,} tokens "
-            "to enable caching at the current model."
-        )
-
-    return "\n".join(lines)
-
-
-def _format_unmeasurable_grouped_body(
-    *,
-    group: _SubWorkflowCacheGroup,
-    input_phrase: str,
-    tokens_per_input: dict[str, int | None],
-    cw_result: Any,
-) -> str:
-    lines = [
-        f"{input_phrase.capitalize()} flow in but no consumer node has a resolved model — "
-        "cannot compute the cache threshold."
-    ]
-    _append_honest_edit_lines(lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result)
-    lines.append(
-        "→ Set `settings.default_model` or add `- model:` to each consumer node in "
-        f"{_workflow_basename(group.child_workflow)}, then re-run analyze-cache."
-    )
-    return "\n".join(lines)
-
-
-def _format_refactor_grouped_body(
-    *,
-    group: _SubWorkflowCacheGroup,
-    input_phrase: str,
-    ref_count: int,
-    per_call_max: int,
-    tokens_per_input: dict[str, int | None],
-    cw_result: Any,
-) -> str:
-    subject = f"One value `{group.candidates[0].child_cache_ref}`" if ref_count == 1 else input_phrase.capitalize()
-    lines = [
-        f"{subject} {_format_tokens_phrase(per_call_max)} per call, "
-        "below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5)."
-    ]
-    _append_honest_edit_lines(lines, group, tokens_per_input=tokens_per_input, cw_result=cw_result)
-    lines.append("→ Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.")
-    lines.append(f"→ Verify: confirm {_format_tokens_phrase(per_call_max)} is the realistic per-call size.")
-    return "\n".join(lines)
-
-
-def _append_honest_edit_lines(
-    lines: list[str],
-    group: _SubWorkflowCacheGroup,
-    *,
-    tokens_per_input: dict[str, int | None],
-    cw_result: Any,
-    include_cleanup: bool = True,
-) -> None:
-    if _group_has_subpath_candidates(group):
-        lines.append(_subpath_honesty_sentence(group))
-    lines.extend(_format_exact_child_cache_edits(group))
-    if include_cleanup:
-        lines.append("Prompt-body templates to remove:")
-        lines.extend(
-            _format_single_consumer_input_lines(
-                candidates=group.candidates,
-                tokens_per_input=tokens_per_input,
-                cw_result=cw_result,
-            )
-        )
-
-
-def _group_has_subpath_candidates(group: _SubWorkflowCacheGroup) -> bool:
-    return any(candidate.child_cache_ref != candidate.child_input_name for candidate in group.candidates)
-
-
-def _subpath_honesty_sentence(group: _SubWorkflowCacheGroup) -> str:
-    roots = tuple(dict.fromkeys(candidate.child_input_name for candidate in group.candidates))
-    root_text = ", ".join(f"`{root}`" for root in roots)
-    return (
-        "Only these listed values are used by prompts. Do not cache full objects like "
-        f"{root_text} unless you intentionally want every field in that object sent to the model."
-    )
-
-
-def _format_exact_child_cache_edits(group: _SubWorkflowCacheGroup) -> list[str]:
-    lines = ["Edit child workflow:", "  Add or extend ## Cache:"]
-    lines.append("    ```cache")
-    lines.extend(f"    {line}" for line in _exact_child_cache_block_content(group).split("\n"))
-    lines.append("    ```")
-    lines.append("  Add prompt_cache entries:")
-    for node_id, refs in sorted(_cache_refs_by_consumer(group).items()):
-        ordered_refs = [
-            candidate.child_cache_ref for candidate in group.candidates if candidate.child_cache_ref in refs
-        ]
-        lines.append(f"    {node_id}: prompt_cache: [{', '.join(ordered_refs)}]")
-    return lines
-
-
-def _exact_child_cache_block_content(group: _SubWorkflowCacheGroup) -> str:
-    """Render the paste-ready child ``## Cache`` block content.
-
-    Each chunk emits the var line on its own; when a matching parent chunk
-    contributes prose, a 40-char single-line preview of that prose is rendered
-    immediately above the var line. Chunks are separated by blank lines to
-    mirror the parent's ``## Cache`` visual structure. The single-line preview
-    is intentional: it stays scannable for agents and (because
-    ``_static_excerpt`` collapses internal whitespace) survives the renderer's
-    line-by-line indenting without breaking the cache block layout.
-    """
-    parts: list[str] = []
-    for candidate in group.candidates:
-        chunk = ""
-        if candidate.parent_prose.strip() and not candidate.parent_prose_origins_differ:
-            chunk += _static_excerpt(candidate.parent_prose, limit=_PARENT_PROSE_PREVIEW_LIMIT)
-            chunk += "\n\n"
-        chunk += f"${{{candidate.child_cache_ref}}}"
-        parts.append(chunk)
-    return "\n\n".join(parts)
-
-
-def _threshold_relation(tokens: int, threshold: int) -> str:
-    return "above" if tokens >= threshold else "below"
-
-
-def _parent_origin_clause(candidate: _SubWorkflowCacheCandidate) -> str | None:
-    """Sub-line text naming the parent expression when it differs from the child input name.
-
-    Surfaces parent→child data flow inside the action body for renamed inputs.
-    Returns ``None`` for same-name passthroughs (no signal to add) and for
-    multi-ref/literal parent values where ``parent_value_expr`` is empty.
-    """
-    expr = candidate.parent_value_expr
-    if not expr or candidate.parent_cache_ref == candidate.child_cache_ref:
-        return None
-    return f"flows in from parent as `${{{candidate.parent_cache_ref}}}`"
-
-
-def _format_per_consumer_input_lines(
-    *,
-    projection: _GroupedConsumerProjection,
-    candidates_by_input: dict[str, _SubWorkflowCacheCandidate],
-    tokens_per_input: dict[str, int | None],
-    cw_result: Any,
-) -> list[str]:
-    """Render input bullets under one consumer-node heading in the multi-consumer case."""
-    lines = [
-        f"  Node `{projection.consumer_node_id}` "
-        f"({_format_tokens_phrase(projection.per_call_prefix_tokens)} per call — "
-        f"{_threshold_relation(projection.per_call_prefix_tokens, projection.threshold)} "
-        f"{projection.threshold:,}-token minimum):"
-    ]
-    for input_name in projection.consumed_inputs:
-        candidate = candidates_by_input[input_name]
-        refs = _per_input_var_refs(candidate, cw_result).get(projection.consumer_node_id, ())
-        lines.append(
-            f"    • `{input_name}` {_format_nullable_tokens(tokens_per_input.get(input_name))} — "
-            f"uses {_format_var_refs(refs, fallback=input_name)}"
-        )
-        origin = _parent_origin_clause(candidate)
-        if origin is not None:
-            lines.append(f"        {origin}")
-    return lines
-
-
-def _format_single_consumer_input_lines(
-    *,
-    candidates: tuple[_SubWorkflowCacheCandidate, ...],
-    tokens_per_input: dict[str, int | None],
-    cw_result: Any,
-) -> list[str]:
-    """Render input bullets when the group has a single consumer node."""
-    lines: list[str] = []
-    for candidate in candidates:
-        refs_by_node = _per_input_var_refs(candidate, cw_result)
-        refs = tuple(ref for node_refs in refs_by_node.values() for ref in node_refs)
-        consumer_text = ", ".join(f"`{node_id}`" for node_id in candidate.child_node_ids)
-        lines.append(
-            f"  • `{candidate.child_cache_ref}` "
-            f"{_format_nullable_tokens(tokens_per_input.get(candidate.child_cache_ref))} — "
-            f"node(s) {consumer_text} use {_format_var_refs(refs, fallback=candidate.child_cache_ref)}"
-        )
-        origin = _parent_origin_clause(candidate)
-        if origin is not None:
-            lines.append(f"      {origin}")
-    return lines
-
-
-def _count_phrase(count: int, singular: str) -> str:
-    if count == 1:
-        return f"1 {singular}"
-    if singular == "value":
-        words = {2: "Two", 3: "Three", 4: "Four", 5: "Five"}
-        return f"{words.get(count, str(count))} values"
-    return f"{count} {singular}s"
-
-
-def _flow_verb(count: int) -> str:
-    return "flows" if count == 1 else "flow"
-
-
-def _format_tokens_phrase(tokens: int) -> str:
-    return f"~{tokens:,} tokens"
-
-
-def _format_nullable_tokens(tokens: int | None) -> str:
-    return "unmeasurable" if tokens is None else f"~{tokens:,} tokens"
-
-
-def _format_var_refs(refs: Iterable[str], *, fallback: str) -> str:
-    unique = tuple(dict.fromkeys(refs))
-    if not unique:
-        unique = (fallback,)
-    return ", ".join(f"`${{{ref}}}`" for ref in unique)
-
-
-def _per_input_var_refs(candidate: _SubWorkflowCacheCandidate, cw_result: Any) -> dict[str, tuple[str, ...]]:
-    """Prompt `${var}` references that must be removed before caching the input."""
-    return {node_id: tuple(refs) for node_id, refs in candidate.body_refs_by_node.items()}
-
-
 def _grouped_inputs_context(
     group: _SubWorkflowCacheGroup,
     tokens_per_input: dict[str, int | None],
-    cw_result: Any,
 ) -> list[dict[str, Any]]:
     """Structured input facts for JSON consumers and per-call row notes."""
     items: list[dict[str, Any]] = []
@@ -1232,9 +856,7 @@ def _grouped_inputs_context(
             "has_multiple_parent_origins": candidate.has_multiple_parent_origins,
             "consumer_node_ids": consumer_node_ids,
             "consumer_node_ids_csv": ", ".join(f"`{node_id}`" for node_id in consumer_node_ids),
-            "template_var_refs_by_node": {
-                node_id: list(refs) for node_id, refs in _per_input_var_refs(candidate, cw_result).items()
-            },
+            "template_var_refs_by_node": {node_id: list(refs) for node_id, refs in candidate.body_refs_by_node.items()},
         })
     return items
 
@@ -1281,15 +903,14 @@ def _emit_sub_workflow_cache_findings(
                     child_workflow=split_group.child_workflow,
                     child_workflow_basename=_workflow_basename(split_group.child_workflow),
                     affected_input_count=len(split_group.candidates),
-                    inputs=_grouped_inputs_context(split_group, tokens_per_input, cw_result),
-                    body_block=_format_grouped_body_block(
+                    inputs=_grouped_inputs_context(split_group, tokens_per_input),
+                    body_block=format_grouped_body_block(
                         split_group,
                         split_projections,
                         tokens_per_input,
                         strictest_model,
                         strictest_threshold,
                         case,
-                        cw_result,
                     ),
                     case=case,
                     savings_usd=_total_savings_for_case(split_projections, case=case),
