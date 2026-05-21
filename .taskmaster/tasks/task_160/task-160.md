@@ -1,8 +1,8 @@
-# Task 160: Cache Analysis Architectural Refactor (Post-Task-159 Cleanup)
+# Task 160: Cache Analysis Architectural Refactor
 
 ## Description
 
-Pure-structure refactor of `src/pflow/core/cache_analysis/` after task 159 ships. Splits the 3,293-LOC `analyze.py` orchestrator-plus-everything file into a thin orchestrator + named stage modules + a public types module + a rendering subpackage. Zero behavior change. Goal: make the package navigable for AI agents working on individual stages without re-reading 3k lines of context.
+Pure-structure refactor of `src/pflow/core/cache_analysis/` → `src/pflow/core/prompt_cache_analysis/`. Splits the 8,570-LOC `analyze.py` into a thin orchestrator + named stage modules + a public types module + a rendering subpackage. Renames the package to disambiguate from pflow's memoization cache (the #1 documented source of agent confusion). Zero behavior change. Goal: make the package navigable for AI agents working on individual stages without loading 8,570 lines.
 
 ## Status
 
@@ -10,101 +10,158 @@ not started
 
 ## Priority
 
-high (do before any feature work touches `cache_analysis/`)
+high (do before any feature work touches the analysis package)
 
 ## Problem
 
-Task 159 shipped the cache analysis feature and got us to "feature-complete and verified." Along the way `analyze.py` accreted into a 3,293-LOC file containing nine public dataclasses + the orchestrator + six separable algorithm clusters + small helper utilities. The package overall is 7,865 LOC across 12 source files — most of those 12 files are well-shaped, but the central one is not.
+Task 159 shipped prompt caching and subsequent follow-up work (7 commits, PRs #390–#418) grew `analyze.py` from 3,293 to 8,570 LOC. The file now contains 210 module-scope functions, 27 type definitions, and 11 named clusters. The package overall is 15,943 LOC across 14 source files.
 
-Concrete frictions for an AI agent (or any reader) modifying one stage:
+Concrete frictions:
 
-1. **Single-file blast radius.** Changing one cluster (e.g. how greenfield suggested blocks are computed) means scrolling past five other clusters' code in the same file. The clusters share no state beyond the `AnalysisContext` already passed by parameter — they don't *need* to live together.
+1. **analyze.py is MUST-READ for every scenario.** Scenario analysis across 6 representative tasks (add a warning, fix a fragmentation bug, change cost projections, add a renderer section, fix a discrepancy false positive, add a projection component) shows analyze.py is MUST-READ for all 6. A developer working on fragmentation detection (350 LOC of relevant code) must load 8,570 lines.
 
-2. **Public vocabulary lives inside the orchestrator.** The 9 frozen dataclasses (`CacheAnalysis`, `AnalysisSummary`, `PerCallRow`, `RecommendedAction`, `SuggestedBlock`, `SuggestedBlockChunk`, `CrossWorkflowFindings`, `SubWorkflowRollup`, `SubWorkflowRollupEntry`) are the package's public language. They're imported by `view_helpers.py`, `render_text.py`, `render_json.py`, `summarize.py`, `cost_estimation.py`, plus external consumers via `__init__.py`. That every importer reaches into the orchestrator file forces a circular-import workaround at `view_helpers.py:84` (documented in-comment as such).
+2. **Public vocabulary trapped inside the orchestrator.** 20 public frozen dataclasses (the package's public language) are defined at the top of analyze.py. Every consumer that imports a dataclass imports the entire 8,570-LOC file. This forces a circular-import workaround in `view_helpers.py`.
 
-3. **`analyze.py` cannot pass the deletion test cleanly.** Deleting any single cluster shouldn't reveal "this was just glue" — but with everything in one file, even moving cluster boundaries is invisible. Once each cluster has its own file, the deletion test becomes meaningful.
+3. **Package name is ambiguous.** `cache_analysis` could mean "analyzing the [memoization] cache." The CLAUDE.md opens with a disambiguation section because the name doesn't self-document. The package is exclusively about LLM provider prompt caching.
 
-4. **Tests inherit the same shape.** Test imports reach into 19 distinct private symbols across ~36 sites. `test_renderers.py` has 83 calls to local fixture factories binding to public dataclass constructors. There's a partially-adopted `TraceFixtureBuilder` (3 of 12 test files use it). Test bloat isn't the primary problem here — but a test suite that mirrors a confused source structure compounds the navigation cost.
-
-5. **No CLAUDE.md.** A 7,865-LOC package with no agent-facing index. Every fresh session re-derives the package shape from grep.
+4. **Cluster F is 3,072 LOC with 13 sub-groups.** Five independent analytical concerns (row construction, warnings, suggestions, fragmentation, partial declarations) are co-located with shared utilities. A change to any one concern requires navigating past the other four.
 
 ## Solution
 
-Restructure the package so each concern owns its file, the public vocabulary has a single home, and the orchestrator is a small composition of named stages:
+Rename the package and restructure so each concern owns its file, the public vocabulary has a single home, and the orchestrator is a composition of named stages.
+
+### Target layout
 
 ```
-src/pflow/core/cache_analysis/
+src/pflow/core/prompt_cache_analysis/
 ├── __init__.py                  # public API re-exports
-├── CLAUDE.md                    # NEW — package navigation index
+├── CLAUDE.md                    # package navigation index
 │
-├── analyze.py                   # ~450 LOC — orchestrator + I/O loaders only
-├── types.py                     # NEW — 9 public dataclasses
-├── context.py                   # unchanged
-├── cross_workflow.py            # unchanged — the WALKER (data primitive, 4 consumers)
-├── token_estimation.py          # unchanged
-├── cost_estimation.py           # unchanged
-├── warning_catalog.py           # unchanged
+├── types.py                     # NEW ~1,000 LOC — 20 public dataclasses + projection helpers
+├── trace_loading.py             # NEW ~830 LOC — trace I/O + indexing + aggregation
+├── analyze.py                   # SHRUNK ~900 LOC — orchestrator + row assembly pipeline
+│
+├── context.py                   # unchanged (335 LOC)
+├── cross_workflow.py            # unchanged (447 LOC) — the WALKER (shared infrastructure)
+├── token_estimation.py          # unchanged (747 LOC)
+├── cost_estimation.py           # unchanged (667 LOC)
+├── below_min_tokens_detector.py # unchanged (201 LOC)
+├── warning_catalog.py           # unchanged (1,463 LOC)
 │
 ├── stages/                      # NEW — analytical stages (lifted from analyze.py)
-│   ├── per_call.py
-│   ├── rules.py                 # collapse 4 per-node warning visitors → 1 visit
-│   ├── suggestions.py           # absorbs chunk-level pricing helpers
-│   ├── padding.py               # absorbs padding_advisor.py + analyze.py's padding glue
-│   ├── cross_workflow.py        # the analytical stage (consumes the walker's output)
-│   ├── summary.py               # gathers scattered summary-builder helpers
-│   └── discrepancy/             # sub-package — the cluster splits cleanly
+│   ├── __init__.py
+│   ├── row_builder.py           # ~920 LOC — PerCallRow construction + projections + shared IR helpers
+│   ├── warnings.py              # ~630 LOC — per-node warning visitors
+│   ├── suggestions.py           # ~570 LOC — suggested blocks + template refs + pricing + padding
+│   ├── fragmentation.py         # ~350 LOC — model/system cache fragmentation detection
+│   ├── partial_declarations.py  # ~315 LOC — partial cache declaration detection
+│   ├── cross_workflow.py        # ~1,315 LOC — cross-workflow analytical findings
+│   ├── summary.py               # ~520 LOC — summary builder + confidence + gemini note
+│   └── discrepancy/             # sub-package — predict/diagnose split
 │       ├── __init__.py
-│       ├── predict.py
-│       └── diagnose.py
+│       ├── predict.py           # ~450 LOC — cache key prediction (lazy runtime imports)
+│       └── diagnose.py          # ~265 LOC — discrepancy diagnosis
 │
-└── rendering/                   # NEW — output projections
+└── rendering/                   # NEW — output projections (moved from top level)
     ├── __init__.py
-    ├── text.py                  # was render_text.py
-    ├── json.py                  # was render_json.py
-    ├── views.py                 # was view_helpers.py
-    └── summarize.py             # moved from top level
+    ├── text.py                  # was render_text.py (2,423 LOC)
+    ├── json.py                  # was render_json.py (377 LOC)
+    ├── views.py                 # was view_helpers.py (261 LOC)
+    ├── summarize.py             # was summarize.py (132 LOC)
+    └── traces_list.py           # was render_traces_list.py (96 LOC)
 ```
 
-Renames are minimised on purpose (paths cost mental energy). Only `padding_advisor.py` disappears (folded). Everything else moves into a subdirectory or stays put.
+### Cluster-to-file mapping
+
+Verified against the current 8,570-LOC `analyze.py` structure (see `research/architecture.md` for full dependency analysis).
+
+| Cluster | Current lines | LOC | Destination |
+|---------|---------------|-----|-------------|
+| Dataclasses + projection helpers (A) | 126–972 | ~1,000 | **types.py** |
+| Orchestrator (B) | 979–1306 | ~328 | stays in **analyze.py** |
+| Memo cache construction (C) | 1309–1346 | ~38 | **trace_loading.py** |
+| Trace loading (D) | 1347–1716 | ~370 | **trace_loading.py** |
+| Pipeline helpers (E) | 1717–2949 | ~1,233 | split: trace helpers → **trace_loading.py**, row assembly → stays in **analyze.py** |
+| Per-node analysis (F) | 2950–6022 | ~3,072 | split across 5 **stages/** files (see below) |
+| Cross-workflow walking (G) | 6023–7336 | ~1,314 | **stages/cross_workflow.py** |
+| Trace discrepancy (H) | 7337–8050 | ~714 | **stages/discrepancy/** |
+| Confidence aggregation (I) | 8051–8081 | ~31 | **stages/summary.py** |
+| Summary builder (J) | 8082–8527 | ~446 | **stages/summary.py** |
+| Gemini note (K) | 8528–8570 | ~43 | **stages/summary.py** |
+
+Cluster F sub-group mapping:
+
+| Sub-group | LOC | Destination |
+|-----------|-----|-------------|
+| F1: Row construction | ~240 | stages/row_builder.py |
+| F2: Cross-wf projection | ~140 | stages/row_builder.py |
+| F3: Provider utils | ~40 | stages/row_builder.py |
+| F4: Batch prefix/tail | ~155 | stages/row_builder.py |
+| F5: Projection builders | ~300 | stages/row_builder.py |
+| F6: Token estimation | ~195 | stages/row_builder.py |
+| F7: Warning visitors | ~560 | stages/warnings.py |
+| F8: Node utilities | ~70 | stages/row_builder.py (shared IR helpers) |
+| F9: Suggested blocks | ~295 | stages/suggestions.py |
+| F10: Template refs | ~90 | stages/suggestions.py |
+| F11: Body cleanup | ~60 | stages/suggestions.py |
+| F12: Cost/savings/fragmentation | ~540 | split: fragmentation → stages/fragmentation.py, pricing helpers → stages/suggestions.py |
+| F13: Partial declarations | ~315 | stages/partial_declarations.py |
+| padding_advisor.py (63 LOC) | ~63 | folded into stages/suggestions.py |
 
 ## Design Decisions
 
-Each decision below has a reason backed by direct verification of the source — see `research/end-state-architecture.md` for the line ranges and call graphs that justify them.
+Each decision is backed by verification against the current codebase — see `research/architecture.md` for the dependency data.
 
-1. **`analyze.py` keeps its name and stays at top level.** Renaming to `pipeline.py` would force every external import path to change for paint. The file simply contains less.
+1. **Package renamed from `cache_analysis` to `prompt_cache_analysis`.** The current name is the #1 documented source of agent confusion (CLAUDE.md opens with a disambiguation section). The package is exclusively about LLM provider prompt caching, not pflow's memoization cache. CLI command `pflow analyze-cache` stays as-is.
 
-2. **All 9 public dataclasses move to `types.py`** — even though only 5 cross module boundaries today. Once stages exist, all 9 will cross. Co-location lets `view_helpers.py` import its return type without the lazy-import workaround.
+2. **`analyze.py` keeps its name and stays at top level.** Renaming to `pipeline.py` would force every external import path to change for paint. The file simply contains less.
 
-3. **`stages/` subdirectory groups algorithmic stages.** Six stages plus a `discrepancy/` sub-package. Name choice: "stages" matches the sequential pipeline metaphor (`analyze()` chains them) and aligns with how the team already discusses the work in implementation logs. Rejected: `analyzers/` (overloads — the package itself is *the* analyzer), `passes/` (connotes independence; ours share `ctx`).
+3. **All 20 public frozen dataclasses move to `types.py`** along with the projection helpers (Cluster A — zero outbound dependencies), `invocation_count_for` (part of PerCallRow contract, called from 6 clusters), and `_safe_pct` (trivial arithmetic utility). Private dataclasses (6 total) stay with their stage files. This breaks the circular import workaround in view_helpers.py.
 
-4. **`rendering/` subdirectory groups views.** `text.py`, `json.py`, `views.py` (recommendations + alignment filter), `summarize.py`. Form-over-function objection ("`summarize.py` produces a Diagnostic, not a string") is rejected — conceptually all four consume `CacheAnalysis` and produce something user-facing. Symmetry helps navigation.
+4. **`trace_loading.py` absorbs trace I/O + trace indexing + trace aggregation.** Clusters C and D have near-zero outbound dependencies. The trace indexing helpers (`_build_trace_execution_index`, `_collect_trace_llm_call_lists`, `_aggregate_trace_llm_calls`) logically belong with trace data processing. `_edge_child_paths` (called from 4 clusters) moves here as shared trace infrastructure.
 
-5. **`stages/discrepancy/` is a sub-package, not one file.** The 527-LOC discrepancy cluster has exactly ONE call across its internal predict↔diagnose boundary, with a plain `dict[(workflow_path, node_id), str]` as the contract. Splitting into `predict.py` and `diagnose.py` produces two ~250-LOC files with one clear seam — strictly better than one mixed 527-LOC file.
+5. **`_detect_candidate_subsets` stays in the orchestrator (analyze.py), NOT in row_builder.py.** Moving it to row_builder would create the only import cycle in the entire decomposition: `row_builder → suggestions → row_builder`. It decides *which subsets* to analyze — orchestration, not construction. Keeping it in the orchestrator eliminates the cycle entirely.
 
-6. **`padding_advisor.py` (63 LOC) folds into `stages/padding.py`.** Only one production consumer. Two-files-for-one-concern is overhead.
+6. **Shared IR accessors (`_node_inputs`, `_batch_aliases`, `_cache_items`, `_cache_item_names`, `_is_batch_scoped_ref`) live in `stages/row_builder.py`.** These are pure dict accessors (~30 LOC total) called from 3-6 modules each. row_builder.py is their primary consumer. Other stages import them from there. This avoids creating a separate helpers file while maintaining a clear import direction (all edges flow toward row_builder or types, never back).
 
-7. **`cross_workflow.py` (the walker) stays at top level.** It produces shared data (typed `CrossWorkflowEdge` + `CrossWorkflowResult`) consumed by *four* downstream sites in the orchestrator, not just the cross-workflow analytical stage. It's genuinely shared infrastructure, not a stage helper.
+7. **`stages/` subdirectory groups analytical stages.** 8 stage files plus a `discrepancy/` sub-package. Each stage has 1-2 entry points called from the orchestrator. Name choice: "stages" matches the sequential pipeline metaphor.
 
-8. **The chunk-level pricing helpers move with `stages/suggestions.py`, NOT into `cost_estimation.py`.** The `_input_rate` / `_estimate_token_savings_usd` / `_savings_for_shared_ref` trio operates at chunk-level (greenfield "what would this ref save?"). `cost_estimation.py` operates at row-level (post-aggregation projections). Different abstractions; the chunk helpers belong with their consumer.
+8. **`rendering/` subdirectory groups output projections.** Five files (text, json, views, summarize, traces_list). Without grouping, the top level would have ~24 files after adding stages/. The import depth cost is one segment; the navigation benefit is real — a reader working on analysis logic can ignore rendering/ entirely.
 
-9. **No `RuleBase` / `Rule` class for the `stages/rules.py` collapse.** Four per-node warning visitors become one walk that calls four small functions in sequence. An abstract Rule API is justified at 20+ rules — not at 4. Add the abstraction the day it's earned.
+9. **`stages/discrepancy/` is a sub-package.** The 714-LOC cluster has exactly one call across its internal predict→diagnose boundary, with a plain `dict[(workflow_path, node_id), str]` as the contract. Two ~350-LOC files with one clear seam.
 
-10. **Tests update import paths surgically; no compatibility shims.** ~36 private-symbol import sites in tests. Each is updated as its target moves. Re-export shims in `analyze.py` would hide the refactor and become dead weight; the test coupling is already known and tracked.
+10. **`stages/cross_workflow.py` stays as one 1,315-LOC file.** It's a coherent concern with one entry point (`_build_cross_workflow_findings`). The formatting logic (690 LOC) is tightly coupled to the candidate data structures. Deletion test passes strongly. Split later if it grows.
 
-11. **External public API is preserved through `__init__.py`.** All four production consumers (`cli/commands/analyze_cache.py`, `execution/runner.py`, `mcp_server/services/execution_service.py`, `core/workflow/data_flow.py`) keep working unchanged. Internal sub-module imports may change for tests; nothing else.
+11. **`padding_advisor.py` (63 LOC) folds into `stages/suggestions.py`.** Only one production consumer (`_emit_padding_advisories`). Two-files-for-one-concern is overhead.
 
-12. **Three small dedups land with the move:** the duplicate `_workflow_short_name` (analyze.py:2911 + render_text.py:721), the dead-in-production `_iter_llm_events` (test-only), and the `_build_recommended_actions` compatibility shim (analyze.py:3219, just delegates to `view_helpers`).
+12. **No re-export shims.** Test imports update surgically as their targets move. Shims hide the refactor and accumulate.
+
+13. **Lazy imports in discrepancy stay lazy.** Verified: the `__init__.py` → `summarize` → `analyze` import chain does NOT eagerly import LiteLLM. The discrepancy cluster's lazy runtime imports (plan_node, compile_workflow, create_planner_shared) only fire when called. `stages/__init__.py` re-exporting from discrepancy is safe.
+
+14. **`TemplateResolver` import becomes lazy.** `analyze.py:65` eagerly imports `TemplateResolver` from `pflow.runtime`. `context.py` and `token_estimation.py` already do this lazily. Whichever stage file inherits the import should make it lazy for consistency.
+
+15. **Prompt cache feature files stay flat in `core/`.** The 5 feature files (`prompt_cache.py`, `prompt_refs.py`, `llm_capabilities.py`, `cache_overlap.py`, `cache_ttl.py`, 1,115 LOC total) have a clean one-way dependency with the analysis package. Moving them into a parent folder would add nesting for runtime consumers (nodes/llm, runtime/engine) with no benefit.
 
 ## Dependencies
 
-- **Task 159 (Prompt Caching) must be merged first.** This task is a follow-up cleanup; it would conflict catastrophically with in-flight task 159 verification work. See `progress-log.md` in task 159 for context.
+- **Task 159 must be merged first.** This task is a follow-up cleanup. ✅ Task 159 is merged.
 
 ## Requirements
 
+### Package rename
+- `from pflow.core.cache_analysis import X` continues to work OR all consumers are updated to `from pflow.core.prompt_cache_analysis import X`.
+- All 5 production consumers updated.
+- All 18 test files updated.
+
 ### Public API stability
-- All names currently re-exported from `pflow.core.cache_analysis` continue to be importable from the same path.
-- All four production consumers (`cli/commands/analyze_cache.py`, `execution/runner.py`, `mcp_server/services/execution_service.py`, `core/workflow/data_flow.py:945`) work without modification.
-- Direct sub-module import `from pflow.core.cache_analysis.warning_catalog import make_diagnostic` (used by `data_flow.py`) continues to work.
+- All names currently re-exported from the package's `__init__.py` continue to be importable from the same package path (with the new name).
+- The 5 production consumers work without modification beyond the package rename:
+  - `cli/commands/analyze_cache.py` — `analyze, render_json, render_text, list_traces_for_workflow, JSON_FORMAT_VERSION`
+  - `execution/runner.py` — `analyze, summarize_from_analysis`
+  - `mcp_server/services/execution_service.py` — `analyze, render_json`
+  - `core/workflow/data_flow.py` — `warning_catalog.make_diagnostic`
+  - `nodes/llm/llm.py` — `below_min_tokens_detector.*, warning_catalog.make_diagnostic`
+  - `runtime/engine/engine.py` — `below_min_tokens_detector.*, context.AnalysisContext, token_estimation.*, warning_catalog.make_diagnostic`
 
 ### Behavior preservation
 - `pflow analyze-cache` produces byte-identical text output for any given workflow + trace input.
@@ -113,57 +170,109 @@ Each decision below has a reason backed by direct verification of the source —
 - Every cache-related warning ID continues to fire in the same conditions.
 
 ### Structure
-- `analyze.py` final size ≤ 600 LOC (target ~450).
-- `types.py` exists and contains all 9 public dataclasses; no public dataclasses remain in `analyze.py`.
+- `analyze.py` final size ≤ 1,100 LOC (target ~900).
+- `types.py` exists and contains all 20 public frozen dataclasses; no public dataclasses remain in `analyze.py`.
 - No module imports `from .analyze import X` at function scope (the circular-import workaround is gone).
-- `stages/` directory contains exactly the algorithmic stages enumerated in Solution; no leakage.
-- `rendering/` directory contains exactly the view projections enumerated in Solution.
-- `padding_advisor.py` no longer exists; its content lives in `stages/padding.py`.
-- `_workflow_short_name` has exactly one definition (not two).
-- `_iter_llm_events` either has a non-test caller or is removed.
-- `_build_recommended_actions` compatibility shim in `analyze.py` is removed; callers import from `rendering/views.py` directly.
+- `stages/` directory contains exactly the analytical stages enumerated in Solution.
+- `rendering/` directory contains exactly the output projections enumerated in Solution.
+- `padding_advisor.py` no longer exists; its content lives in `stages/suggestions.py`.
+- No import cycles exist in the module graph (verified: all edges are one-directional after DD#5).
 
 ### Documentation
-- `src/pflow/core/cache_analysis/CLAUDE.md` exists, follows the project's CLAUDE.md conventions, and covers (at minimum): module structure, public API, the orchestrator → stages → rendering pipeline, runtime → analyzer trace contract (the trace 2.1.0 fields), where to add a new warning, why `discrepancy/` lazy-imports runtime modules.
-- `src/pflow/core/CLAUDE.md` is updated to mention the cache_analysis subpackage if it was missed during task 159.
+- `prompt_cache_analysis/CLAUDE.md` exists and covers: module structure, public API, the orchestrator → stages → rendering pipeline, runtime → analyzer trace contract, where to add a new warning.
+- `core/CLAUDE.md` updated to reference the renamed package.
+- The disambiguation section ("pflow has TWO independent cache concepts") is preserved but simplified since the name now self-documents.
 
 ### Tests
-- Test imports updated to reflect new paths (no production code is the source of churn — tests are).
+- Test imports updated to reflect new package name and new module paths.
 - `make test` passes.
 - `make check` passes (mypy, ruff).
-- No test is dropped without replacement coverage existing through the public API. The bar is "behavioural coverage preserved," not "every private-helper test preserved."
+- No test dropped without replacement coverage through the public API.
 
 ## Implementation Notes
 
-The mechanical work is described file-by-file in `research/end-state-architecture.md`. Open decisions for the implementer (phasing, walker rename) are captured in `research/migration-plan.md`. Verified non-issues (do NOT try to fix these; they're already correct) are in `research/verified-non-issues.md`.
+### Phase ordering (sequential, one PR)
 
-This task is structural only — zero behavior change is the bar. Anything that looks like a behavior bug discovered along the way is a separate ticket.
+Run `make test && make check` after each phase as a checkpoint.
 
-### Adjacent work to consider after this lands
+**Phase 1 — Package rename + types.py extraction**
+Rename `cache_analysis/` → `prompt_cache_analysis/`. Extract types.py. Update all imports (production + test). This is the prerequisite for everything else.
 
-GH **#381** (C-1 from Task 159 baseline audit) — assign catalog IDs to parser and un-IDed validator errors so analyze-cache renders consistent `[cache.X]` ID prefixes across all error sources. Currently mixed: cache-domain errors with catalog IDs render `Error: Cache Failure [cache.order-mismatch]`; parser errors and un-IDed validator emitters in `core/workflow/data_flow.py` render plain `Error: Parse Error` / `Error: Validation Error`.
+**Phase 2 — trace_loading.py extraction**
+Move trace I/O (Clusters C+D), trace indexing helpers, trace aggregation helpers, and `_edge_child_paths` to trace_loading.py.
 
-This is **NOT in scope for this task** (it's a behavior change requiring DD#29 design review). But once Task 160's stages/ split lands, the migration is mechanically simpler — every emitter in `data_flow.py` can be threaded through `make_diagnostic(warning_id, ...)` without navigating the 3,293-LOC `analyze.py`. Task 160 also surfaces `_is_cache_related_diagnostic` as the path-based bridge predicate; once C-1 lands, the hybrid filter collapses to pure catalog-membership.
+**Phase 3 — rendering/ subdirectory**
+Move 5 rendering files into rendering/. Update imports.
 
-Consider planning C-1 as a follow-up to Task 160 rather than a parallel effort.
+**Phase 4 — Self-contained stages**
+Extract stages that have near-zero outbound dependencies: summary.py (J+I+K), discrepancy/ (H), cross_workflow.py (G).
 
-GH **#394** — unify `PerCallRow.*_tokens_estimated` to a per-call invariant. After the Bug A fix (per-call `cacheable_tokens_estimated`), `input_tokens_estimated` is the remaining mixed-unit field: per-call for static-list batch trace, single-call trace, and greenfield rows; cohort for dynamic-batch trace and non-batch repeated trace rows. The asymmetry is masked today by `_divide_static_batch_trace_tokens` + `_resolved_chunk_call_count` + consumer-side gates, and forces a documented `round(row.input_tokens_estimated / affected_calls)` divide in `_batch_prewarm_recommendations`. Issue #394 captures the row-type mapping, the visible scar, and the proposed per-call invariant.
+**Phase 5 — Cluster F decomposition**
+The highest-risk phase. Extract row_builder.py, warnings.py, suggestions.py (absorbs padding_advisor.py), fragmentation.py, partial_declarations.py. Shared IR helpers go in row_builder.py.
 
-This is **NOT in scope for this task** (it's a behavior change disqualified by the zero-behavior-change bar). But Task 160's CLAUDE.md should commit to per-call as the documented contract for `PerCallRow` fields — that's the structural half of #394. Producer-side changes (normalizing `_aggregate_trace_llm_calls`, deleting `_resolved_chunk_call_count`, dropping the recommendation-site divide) then enforce the contract under the same shape Task 160 produces.
+**Phase 6 — Test cleanup + documentation**
+Update remaining test imports. Write CLAUDE.md. Update core/CLAUDE.md. Finalize `__init__.py` re-exports.
 
-Consider planning #394 as a follow-up to Task 160 rather than a parallel effort.
+### Verification approach
+
+1. Before starting: capture reference outputs for at least 3 workflows (greenfield, with-cache, with-trace). Save text and JSON outputs.
+2. After each phase: `make test && make check`.
+3. After phase 5: diff reference outputs. Text diff should be empty. JSON diff should be empty modulo `analyzed_at`.
+4. After phase 5: run `pflow run --dry-run` on a workflow with cache nudge and confirm identical Diagnostic.
+
+### Import graph (verified cycle-free)
+
+```
+types.py             ← everything (leaf, no outgoing stage imports)
+trace_loading.py     ← cross_workflow, discrepancy, orchestrator (leaf)
+row_builder.py       ← warnings, suggestions, partial_decl, cross_workflow
+suggestions.py       ← partial_decl, cross_workflow, warnings, orchestrator
+warnings.py          ← orchestrator only
+partial_decl.py      ← orchestrator only
+cross_workflow.py    ← orchestrator only
+summary.py           ← orchestrator only
+discrepancy/         ← orchestrator only
+```
+
+### Verified non-issues (do NOT try to fix these)
+
+1. **`_cache_validator_findings` is NOT duplicating data_flow.py.** It's a ~46 LOC adapter that calls `validate_data_flow()`, filters to `cache.*` IDs, and enriches with `affected_workflow`. DD#20 is honored.
+2. **Lazy imports in discrepancy are NOT a smell.** They prevent 700ms LiteLLM startup on `--dry-run`. Verified safe.
+3. **There is NO duplicate cache-key predictor.** Both `--dry-run` and the discrepancy stage call the same primitives (`plan_node`, `create_planner_shared`).
+4. **Pricing helpers should NOT merge into `cost_estimation.py`.** Different abstraction levels: chunk-level (greenfield "what would this save?") vs row-level (post-aggregation projections).
+5. **`cross_workflow.py` (the walker) is NOT shallow.** It has 4 distinct consumers. Genuinely shared infrastructure.
+6. **Prompt cache feature files are cleanly separated.** One-way dependency, no refactoring needed.
+
+### Production consumers (complete, verified list)
+
+| Consumer | Imports | Notes |
+|----------|---------|-------|
+| `cli/commands/analyze_cache.py` | `analyze`, `render_json`, `render_text`, `list_traces_for_workflow`, `render_traces_list_json`, `render_traces_list_text`, `JSON_FORMAT_VERSION` | Package-level + sub-module |
+| `execution/runner.py` | `analyze`, `summarize_from_analysis` | Package-level |
+| `mcp_server/services/execution_service.py` | `analyze`, `render_json` | Package-level |
+| `core/workflow/data_flow.py` | `warning_catalog.make_diagnostic` | Direct sub-module (2 import sites) |
+| `nodes/llm/llm.py` | `below_min_tokens_detector.*`, `warning_catalog.make_diagnostic` | Direct sub-module |
+| `runtime/engine/engine.py` | `below_min_tokens_detector.*`, `context.AnalysisContext`, `token_estimation.*`, `warning_catalog.make_diagnostic` | Direct sub-module |
+
+### Test landscape (current state)
+
+- 18 test files, 31,288 LOC total
+- 29 unique private symbols imported from analyze.py across 57 import sites in 5 test files
+- 6 unique private symbols imported from render_text.py across 15 import sites in 2 test files
+- 1 unique private symbol imported from context.py across 2 import sites in 1 test file
 
 ## Verification
 
 - All requirements above hold.
-- The `make test` and `make check` runs pass on the post-refactor branch with no behavior-related test edits.
-- A diff of `pflow analyze-cache` text output against pre-refactor reference traces is empty for at least three workflows (greenfield, with-cache, with-trace).
-- A diff of `pflow analyze-cache --json` output is empty (modulo `analyzed_at` timestamp) for the same workflows.
-- A reader who has never seen the refactored package can find "where is X computed?" for any X in the public output by reading file names + the new CLAUDE.md, in under 60 seconds.
+- `make test` and `make check` pass with no behavior-related test edits.
+- Reference output diffs are empty for text and JSON (modulo `analyzed_at`).
+- The `--dry-run` cache nudge produces an identical Diagnostic.
+- A reader who has never seen the package can find "where is X computed?" by reading file names + CLAUDE.md, in under 60 seconds.
 
 ## References
 
-- Task 159: prompt caching feature that produced the structure being refactored — `.taskmaster/tasks/task_159/task-159.md`
-- Architectural research files (this task): `research/end-state-architecture.md`, `research/migration-plan.md`, `research/verified-non-issues.md`
-- Project CLAUDE.md conventions: `src/pflow/core/CLAUDE.md` (current example), `architecture/CLAUDE.md` (index)
-- The five Explore + pflow-codebase-searcher agent reports that grounded this spec are not preserved as files; their findings are baked into the research docs.
+- Architecture review HTML: generated during the design conversation (2026-05-21)
+- Detailed dependency analysis: `research/architecture.md`
+- Task 159 (prompt caching feature): `.taskmaster/tasks/task_159/task-159.md`
+- Follow-up work that grew analyze.py: PRs #390, #392, #396, #405, #412, #416, #418
+- Design conversation braindump: `starting-context/braindump-2026-05-04-design-conversation.md` (historical — some insights still apply, specific code references are stale)
