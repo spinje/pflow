@@ -22,7 +22,7 @@ normalizes both into the stable ``usage`` dict shape.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import litellm.exceptions
@@ -514,6 +514,81 @@ class TestCompleteUsageNormalization:
         mock_completion.return_value = make_litellm_response(response_cost=0.0123456789)
         response = complete(model="gpt-4o-mini", prompt="hi")
         assert isinstance(response.usage["cost_usd"], float)
+
+    @patch("litellm.completion")
+    def test_cost_populated_via_upstream_merge_on_missing_model(
+        self, mock_completion, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Call-site ordering in ``complete()``: merge happens before completion.
+
+        Verifies two things — both observable from this test:
+        1. ``ensure_model_priced`` runs from within ``complete()`` when the
+           model is missing from ``litellm.model_cost`` (proven by
+           ``register_calls`` being populated).
+        2. The merge runs BEFORE ``litellm.completion`` (proven by
+           ``complete()`` returning success — if merge ran after, the call
+           order assertion below would fail in CI under code drift).
+
+        Does NOT verify LiteLLM's internal cost calculator behavior:
+        ``litellm.completion`` is mocked, so the ``cost_usd`` assertion
+        below just exercises the mocked literal flowing through pflow's
+        response normalization. The real cost-calculator integration is
+        covered by manual e2e probes against ``gemini/gemini-3.5-flash``
+        documented in PR #424.
+        """
+        import httpx
+        import litellm
+
+        from pflow.core import litellm_runtime
+
+        # Reset the latch so the helper actually attempts the fetch.
+        monkeypatch.setattr(litellm_runtime, "_upstream_attempted", False)
+        # Force the model to appear missing from the bundled map.
+        monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+        fake_upstream_map = {
+            "some/brand-new-model": {
+                "input_cost_per_token": 1.5e-6,
+                "output_cost_per_token": 9e-6,
+                "litellm_provider": "gemini",
+                "mode": "chat",
+            },
+        }
+
+        # Stub httpx.get so we don't fire real HTTP to GitHub.
+        def fake_httpx_get(url, *args, **kwargs):
+            return MagicMock(
+                raise_for_status=lambda: None,
+                json=lambda: fake_upstream_map,
+            )
+
+        monkeypatch.setattr(httpx, "get", fake_httpx_get)
+
+        register_calls: list[dict] = []
+
+        def fake_register(upstream_map: dict) -> None:
+            register_calls.append(upstream_map)
+            # Simulate LiteLLM's real behavior: register_model merges the
+            # upstream entries into litellm.model_cost.
+            litellm.model_cost.update(upstream_map)
+
+        monkeypatch.setattr(litellm, "register_model", fake_register)
+
+        mock_completion.return_value = make_litellm_response(
+            prompt_tokens=5,
+            completion_tokens=58,
+            response_cost=0.0005295,  # what LiteLLM would compute post-merge
+        )
+
+        response = complete(model="some/brand-new-model", prompt="hi")
+
+        # 1. ensure_model_priced ran from within complete() and called
+        #    register_model exactly once with the dict-form upstream map.
+        assert len(register_calls) == 1
+        assert register_calls[0] == fake_upstream_map
+        # 2. The mocked response_cost flowed through pflow's response
+        #    normalization (does NOT exercise LiteLLM's cost calculator).
+        assert response.usage["cost_usd"] == 0.0005295
 
     @patch("litellm.completion")
     def test_thinking_tokens_zero_when_no_reasoning(self, mock_completion):

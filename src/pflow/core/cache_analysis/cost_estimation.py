@@ -184,12 +184,16 @@ def get_model_pricing(model: str) -> ModelPricing | None:
     if not model:
         return None
     try:
-        from pflow.core.litellm_runtime import import_litellm
+        from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
 
         litellm = import_litellm()
     except ImportError:
         logger.debug("litellm import failed during pricing lookup", exc_info=True)
         return None
+
+    # Merge upstream cost map on first miss for models missing from the
+    # bundled JSON. Idempotent + cheap after the first call.
+    ensure_model_priced(model)
 
     model_cost = getattr(litellm, "model_cost", None)
     if not isinstance(model_cost, dict):
