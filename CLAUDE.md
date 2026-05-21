@@ -215,11 +215,11 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 157: Fix Dry-Run Batch Sub-Workflow Recursion
 - ✅ Task 158: Replace `llm` Library with LiteLLM
 - ✅ Task 126: Structured Output for Claude Code Node
+- ✅ Task 159: Prompt Caching
 
 ### Planned Features (in order of priority)
 
 **Next**
-- Task 159: Prompt Caching
 - Task 160: Cache Analysis Architectural Refactor
 - Task 125: Human-in-the-Loop Approval Gates
 
