@@ -1,145 +1,21 @@
 ---
-description: Analyze, plan, and execute structural refactors (file splits, subdirectory extraction, module reorganization)
+description: Plan and execute structural refactors (file splits, subdirectory extraction, module reorganization).
 ---
 
-# Structural Refactor
+# Structural Refactor — Execution Guide
 
-You are guiding a structural refactor. Your job is to find what's wrong, discuss it with the user, plan the fix, and execute it with zero behavior change.
+You are executing a structural refactor with zero behavior change. The refactoring target and desired shape should already be identified — if anything is still unclear, any ambiguity remains, or you have unverified assumptions, stop and resolve these before proceeding.
 
-This is a discussion-first command. The user may point you at a specific module or file, or they may ask you to find the most high value refactor point in the codebase, expecting you to find what needs work. Either way: assess first, discuss findings, scrope and outcome, then plan.
+## Execution priorities
 
-The core principles are this:
-
-- The goal is to have a codebase that is in the top 10% of codebases similar to this one   
-- Prioritize simplicity of the final code, not how easy it is to get there. 
-
-## Phase 0: Assess
-
-### If the user pointed at a specific target
-
-Focus your analysis there. But don't ignore adjacent issues — if you're auditing `runtime/`, note problems in `runtime/` even if they're not in the specific file the user mentioned.
-
-### If no specific target
-
-Survey the whole codebase. Use parallel subagents to audit multiple modules simultaneously. For each top-level module under `src/pflow/`:
-
-```bash
-# File sizes — god files are the most obvious symptom
-wc -l src/pflow/<module>/*.py | sort -rn
-
-# File count — overcrowded directories
-ls -1 src/pflow/<module>/*.py | wc -l
-
-# Import graph — who depends on whom
-grep -rn "from pflow.<module>" src/pflow/ --include="*.py"
-
-# Cross-module coupling — reaching into other modules' internals
-grep -rn "from pflow.<module>.*import _" src/pflow/ --include="*.py"
-
-# CLAUDE.md size — oversized docs signal oversized modules
-wc -l src/pflow/<module>/CLAUDE.md
-```
-
-### What to look for
-
-File size is just one symptom. Look deeper:
-
-**Structural smells:**
-
-- **Misplaced responsibilities**: Function lives in module A but serves module B's concern. Sign: module B imports it, it uses module B's types. It migrated to where it was first needed, not where it belongs.
-- **Boundary violations**: Importing private functions across module boundaries (`from pflow.module._internal import ...`). The module never defined a proper public API.
-- **Shotgun surgery**: One feature change touches 5+ files across multiple directories. The feature's code is scattered instead of co-located.
-- **Hidden coupling**: Two modules share implicit contracts — same magic strings, same dict shapes, assumptions about execution order — with no import relationship to explain why.
-- **Abstraction mismatch**: A class that's really a namespace (all static methods, no state). A "manager" that does everything. A module you can't describe in one sentence without "and."
-- **Missing APIs**: No `__init__.py` exports, no clear public surface. Consumers guess what to import by reading source.
-
-**AI-agent readability** — this codebase is built by agents, optimize for how agents work:
-
-- **Context window cost**: How many files must an agent load to understand one concern? If it's 5+, the concern is too scattered or the files are too entangled. Each concern should be a "context island" loadable independently.
-- **Greppability**: Can an agent find code by searching for what it does? Good: `validate_template_paths`. Bad: `process`, `handle`, `run`.
-- **Traceable data flow**: Can an agent follow data input-to-output by reading code? Or are there indirection layers (registries, dynamic dispatch, string-based routing) that require config knowledge to trace?
-- **CLAUDE.md health**: Does each directory have one? Is it the right size? A 400-line CLAUDE.md covering 19 files signals the directory needs splitting. No CLAUDE.md at all means agents fly blind.
-- **Self-describing structure**: Does `ls` on a directory communicate the architecture? File names should cluster by concern (shared prefixes like `template_*validation*.py`).
-- **Isolation of concerns**: Can an agent modify one concern without understanding others? If adding a new validation pass requires understanding the wrapper chain, the module boundaries are wrong. Each concern should be a "context island" an agent can load independently.
-
-When considering alternatives have this in mind:
-- Do I fully understand the current implementation's intentions?
-- Have I identified all dependencies?
-- Is my considered "improvement" actually better, or just different?
-
-Sometimes the solution can be hidden and you need to take a BIG step back to see it. Always ask yourself: Whats the right solution that the top 10% of codebases similar to this one    
-would implement and have we considered it yet?
-
-### Scenario analysis — measure context loading cost
-
-The most powerful assessment technique: pick 5-6 real tasks an agent would perform on this module (bug fixes, feature additions, debugging) and trace which files each task requires. For each scenario, classify every file as MUST-READ, SCAN, or NOT-NEEDED.
-
-This turns subjective "should we restructure?" into quantitative evidence:
-- **Within-file noise ratio**: Agent loads 1,300 lines but needs 140 → 9:1 waste. Extraction fixes this.
-- **Between-file scanning cost**: Agent must scan 17 filenames to find the 3 relevant ones. Subdirectories fix this.
-- **Cross-concern isolation**: No scenario should require reading files from two different concerns. If it does, the boundary is wrong.
-
-Use a subagent to run the analysis — give it the scenarios and the file list, let it trace the dependencies. You synthesize the results into a recommendation.
-
-The key insight: within-file bloat is usually worse than between-file confusion. Extractions are the 80%, subdirectories are the 20%. But they compose — doing both together avoids touching consumers twice.
-
-### Investigate cross-module issues with subagents
-
-When the initial survey reveals smells that cross module boundaries — imports reaching into other modules' internals, functions that seem misplaced, coupling patterns — launch `pflow-codebase-searcher` subagents **in parallel** to investigate. Don't burn your own context window tracing import chains across the whole codebase.
-
-Examples of targeted investigations:
-- "Who imports from `runtime/validation_utils.py` outside of `runtime/`? What do they use and why?"
-- "Trace all uses of `flatten_output_structure` — is it a validation concern or a general output utility?"
-- "Find all `mock.patch` targets referencing `template_validator` in the test suite"
-- "What does `execution/formatters/` import from `runtime/`? Map the dependency surface."
-
-Each subagent gets ONE question, returns a focused answer. You synthesize the results into a coherent picture of what's wrong and where the real boundaries should be.
-
-### Present findings to the user
-
-This is a discussion. Present what you found with concrete numbers — file sizes, import counts, specific examples of the smells you identified. Your findings might lead to:
-
-- **File splitting** (single large file → multiple focused files)
-- **Subdirectory extraction** (cohesive file group → own directory with CLAUDE.md)
-- **Responsibility migration** (function moves from module A to module B)
-- **Interface clarification** (add `__init__.py` exports, stop importing internals)
-- **Nothing** (the architecture is fine — valid outcome, say so honestly)
-
-Don't invent problems to justify a refactor. Don't inflate small issues into big projects.
-
-## Phase 1: Align
-
-Once you and the user agree on what to refactor, align on HOW before writing any code.
-
-### Understand their priorities
+Before starting, align with the user on approach:
 
 - **Minimal risk**: Touch as few files as possible, re-export for backward compat?
 - **Architectural correctness**: Get the structure right even if it means more changes?
-- **Future extensibility**: Design for the next refactor too?
 
 This changes the plan. Risk-minimizing keeps files flat. Architecture-focused creates subdirectories and updates every consumer.
 
-### Show concrete before/after
-
-Present your proposed split boundaries visually. Show the target file structure, which functions go where, and what the import graph looks like. Let the user react before you write code. Refactors are expensive to undo — 30 seconds of alignment saves hours of rework.
-
-### Surface decisions explicitly
-
-You'll encounter decision points. Flag them:
-
-- **Naming**: "This utils module contains both validation helpers and output structure traversal. Name it by what it actually contains?"
-- **Scope**: "This file is 1,200 lines but may be one cohesive concern. Split it or just move it?"
-- **Backward compat**: "4 files import from here. Re-export from the original path or update all consumers?"
-- **Dead code**: "This function is never called. Remove it during the refactor?"
-- **Subdirectories**: "These 5 files form a cohesive group. Extract to a subdirectory with its own CLAUDE.md?"
-
-Gauge importance (1-5). For low-stakes (1-2), state your recommendation and proceed. For anything higher, stop and wait.
-
-### Check your own consistency
-
-Before presenting a recommendation, review it against everything else you've said. If you recommended "do it holistically" earlier, don't recommend "defer half of it" later without acknowledging the change and explaining why. Inconsistency erodes trust.
-
-## Phase 2: Deep Read
+## Phase 1: Deep Read
 
 Once you know WHAT to refactor, understand it thoroughly before planning.
 
@@ -200,7 +76,7 @@ Build a complete table: file, line, exact patch target string. Include this in t
 
 Look in `scratchpads/` for prior work. If a spec exists, **verify key claims against the actual code** — specs may be outdated or wrong. Specifically check: symbol names actually exist, import counts match reality, line numbers are current, proposed `__init__.py` re-exports match real function names. Trust code over documentation.
 
-## Phase 3: Identify Split Boundaries
+## Phase 2: Identify Split Boundaries
 
 ### The core principle: split by concern, not by category
 
@@ -269,11 +145,11 @@ Eager imports in `__init__.py` fire whenever the *package* is imported — inclu
 
 Before maintaining backward-compat re-exports in a parent `__init__.py`, **verify they have actual consumers**: `grep -rn "from pflow.<parent> import <symbol>" src/ tests/`. Dead re-exports add import-time cost for zero benefit.
 
-## Phase 4: Write the Plan
+## Phase 3: Write the Plan
 
 Write a detailed plan to a scratchpad (`scratchpads/<refactor-name>/PLAN.md`).
 
-### 4.1 Exhaustive method-to-file mapping
+### 3.1 Exhaustive method-to-file mapping
 
 Every single function, constant, class, and module-level item must appear in exactly one target file. Use a table:
 
@@ -283,7 +159,7 @@ Every single function, constant, class, and module-level item must appear in exa
 
 This is the most important artifact. If an item is missing from the plan, it will be missing from the implementation.
 
-### 4.2 Dependency graph
+### 3.2 Dependency graph
 
 ```
 orchestrator.py
@@ -294,25 +170,25 @@ orchestrator.py
 
 Verify: no cycles, no file imports from the orchestrator (except the entry point).
 
-### 4.3 Consumer impact table
+### 3.3 Consumer impact table
 
 | File | Current import | After refactor |
 |------|---------------|----------------|
 
 Include mock.patch string targets — these are easy to miss.
 
-### 4.4 What to delete
+### 3.4 What to delete
 
 Identify dead code found during the audit. Refactoring is the right time to remove it. List each item with evidence (grep showing zero callers).
 
-### 4.5 What NOT to do
+### 3.5 What NOT to do
 
 - Don't change any logic
 - Don't add new tests (existing tests validate correctness)
 - Don't "improve" code while moving it
 - Don't add docstrings, comments, or type annotations to code you didn't write
 
-## Phase 5: Implement
+## Phase 4: Implement
 
 ### Layer large refactors
 
@@ -368,7 +244,7 @@ grep -rn "old_pattern" src/ tests/ --include="*.py"
 
 If matches remain, changes didn't apply. Don't proceed to the next phase — diagnose first.
 
-## Phase 6: Verify Completeness
+## Phase 5: Verify Completeness
 
 ### Automated checks
 
@@ -401,7 +277,6 @@ grep -rn "OldClassName" src/ tests/
 grep -rn "old_file_name\.py" architecture/ docs/ src/ tests/
 ```
 
-
 ### Terminology sweep
 
 The symbol-level grep above catches import paths and class names. But renames leave *vocabulary* behind — comments, docstrings, error messages, variable names. After renaming `planning` → `discovery`, you'll still find "repairable", "triggers repair", "planner" scattered across prose in 70+ files.
@@ -423,7 +298,7 @@ Ask for each file: "If I saw only this filename in `ls` output, would I know wha
 
 ### Migration audit
 
-Use a subagent to verify every item from the Phase 4 mapping exists in exactly one target file:
+Use a subagent to verify every item from the Phase 3 mapping exists in exactly one target file:
 - Items in ZERO files = missed migration
 - Items in MORE THAN ONE file = duplication
 - Deleted items should be in ZERO files
@@ -432,7 +307,7 @@ Use a subagent to verify every item from the Phase 4 mapping exists in exactly o
 
 Constants are easy to duplicate accidentally (defined in old location AND new location). Grep for each constant name across all new files.
 
-## Phase 7: Documentation
+## Phase 6: Documentation
 
 **Content placement principle**: Agents in subdirectories automatically see parent CLAUDE.md files. So:
 - **Subdirectory CLAUDE.md**: per-file non-obvious details, internal dependencies, known issues, key lessons — content only relevant when working on those files
