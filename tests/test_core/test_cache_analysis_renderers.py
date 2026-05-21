@@ -23,8 +23,8 @@ from pflow.core.prompt_cache_analysis import (
     render_json,
     render_text,
 )
-from pflow.core.prompt_cache_analysis.analyze import _format_workflow_run_command
 from pflow.core.prompt_cache_analysis.cost_estimation import CostTier
+from pflow.core.prompt_cache_analysis.stages.summary import _format_workflow_run_command
 from pflow.core.prompt_cache_analysis.types import (
     AnalysisSummary,
     CacheAnalysis,

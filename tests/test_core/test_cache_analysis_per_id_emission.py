@@ -87,8 +87,10 @@ def _patch_pricing(
 def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
     below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
+    cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     token_estimation_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
     monkeypatch.setattr(analyze_module, "estimate_tokens", _word_count)
+    monkeypatch.setattr(cross_stage_module, "estimate_tokens", _word_count)
     # Mirror the patch in token_estimation.py — analyze.py-resident callers
     # see the first; token_estimation.py-resident callers (``_estimate_ref_tokens``,
     # ``_sum_resolved_chunk_tokens``) see the second. Without both, Tier 2 of
@@ -97,6 +99,7 @@ def deterministic_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     # values.
     monkeypatch.setattr(token_estimation_module, "estimate_tokens", _word_count)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(
         below_min_module, "get_min_cache_tokens", lambda model: analyze_module.get_min_cache_tokens(model)
     )
@@ -1833,8 +1836,10 @@ def test_sub_workflow_cache_undeclared_below_threshold_warns_and_drops_savings(
     # (we need a value larger than the fixture's tokenized size so 200 tokens
     # are below threshold).
     analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 1000)
 
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
@@ -2820,7 +2825,9 @@ def test_sub_workflow_cache_undeclared_case_model_switch(
     it engineers a case where per-call < 1024 but cohort > 1024.
     """
     analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 2000)
+    monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 2000)
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     parent_ir = {
         "inputs": {"a": {"type": "string"}, "b": {"type": "string"}},
@@ -2882,6 +2889,7 @@ def test_sub_workflow_cache_undeclared_case_model_switch(
     # Override the mocked threshold for THIS test so the per-call prefix lands
     # in the model_switch band [1024, threshold). Set threshold = 4096.
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+    monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 4096)
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
 
@@ -2914,11 +2922,13 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
     this test fails with case=actionable/model_switch instead of refactor.
     """
     analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     # Threshold = 4096, MODEL_SWITCH_BAND = 1024.
     # We engineer: per-call ~500 tokens (below 1024 → refactor under correct math),
     # 10 calls in trace → cohort ~5000 (above 4096 → buggy "actionable").
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 4096)
+    monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 4096)
     parent_ir = {
         "inputs": {"a": {"type": "string"}},
         "nodes": [
@@ -2998,8 +3008,10 @@ def test_sub_workflow_cache_undeclared_splits_mixed_consumer_cases(
     like "~8,504 tokens per call, below the 1,024-token minimum".
     """
     analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    cross_stage_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.cross_workflow")
     cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")
     monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1024)
+    monkeypatch.setattr(cross_stage_module, "get_min_cache_tokens", lambda _model: 1024)
     monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
 
     parent_ir = {
@@ -4143,9 +4155,9 @@ def test_discrepancy_fires_for_key_mismatch_when_prediction_available(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    predict_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.discrepancy.predict")
     monkeypatch.setattr(
-        analyze_module,
+        predict_module,
         "_predict_cache_keys",
         lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): "predicted-key"}, []),
     )
@@ -4208,9 +4220,9 @@ def test_discrepancy_silent_when_prediction_skipped_sentinel_present(
     """
     from pflow.core.prompt_cache_analysis.context import _PREDICTION_SKIPPED
 
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    predict_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.discrepancy.predict")
     monkeypatch.setattr(
-        analyze_module,
+        predict_module,
         "_predict_cache_keys",
         lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): _PREDICTION_SKIPPED}, []),
     )
@@ -4388,9 +4400,9 @@ def test_discrepancy_silent_when_actual_matches_prediction(
     Flipping ``< 5`` to ``> 95`` would emit cache.discrepancy on every
     healthy run.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    predict_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.discrepancy.predict")
     monkeypatch.setattr(
-        analyze_module,
+        predict_module,
         "_predict_cache_keys",
         lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): "shared-key"}, []),
     )
@@ -4481,9 +4493,9 @@ def test_discrepancy_silently_skips_when_actual_key_missing(
     Mutation contract: revert the ``actual_key is None`` clause of the gate
     and this emits a key_mismatch with predicted_key set, actual_key=None.
     """
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    predict_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.discrepancy.predict")
     monkeypatch.setattr(
-        analyze_module,
+        predict_module,
         "_predict_cache_keys",
         lambda *_args, **_kwargs: ({("parent.pflow.md", "gen"): "predicted-key"}, []),
     )
@@ -4507,7 +4519,7 @@ def test_discrepancy_silently_skips_when_actual_key_missing(
 
 def test_attribute_root_cause_returns_chunk_skipped_for_truthy_chunks() -> None:
     """Sanity guard: ``_attribute_root_cause`` keeps the two-branch shape."""
-    from pflow.core.prompt_cache_analysis.analyze import _attribute_root_cause
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.diagnose import _attribute_root_cause
 
     root_cause, summary, suggestion, extra = _attribute_root_cause(chunks_skipped=["X"])
     assert root_cause == "chunk_skipped"
@@ -4517,7 +4529,7 @@ def test_attribute_root_cause_returns_chunk_skipped_for_truthy_chunks() -> None:
 
 
 def test_attribute_root_cause_returns_key_mismatch_for_falsy_chunks() -> None:
-    from pflow.core.prompt_cache_analysis.analyze import _attribute_root_cause
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.diagnose import _attribute_root_cause
 
     root_cause, summary, suggestion, extra = _attribute_root_cause(chunks_skipped=None)
     assert root_cause == "key_mismatch"
@@ -4549,8 +4561,8 @@ def test_predict_cache_keys_pads_partial_walker_params_no_schema_failure_note(tm
     """
     from types import SimpleNamespace
 
-    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
     from pflow.core.prompt_cache_analysis.context import _PREDICTION_SKIPPED, AnalysisContext
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _predict_cache_keys
     from pflow.runtime.cache import MemoizationCache
 
     # Sub-workflow that declares two required inputs. Walker resolves
@@ -4618,7 +4630,7 @@ def test_build_predict_scaffold_silent_on_compile_failure() -> None:
     on scaffold-failure paths (the pre-fix shape) and the negative
     assertions below fail.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _build_predict_scaffold
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _build_predict_scaffold
 
     class _Stub:
         pass
@@ -4644,7 +4656,7 @@ def test_pad_inputs_for_prediction_preserves_walker_values_and_marks_missing() -
     unconditionally overwrite, and walker values get clobbered — the
     discrepancy stage's predicted cache_keys would never match the trace.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _pad_inputs_for_prediction
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _pad_inputs_for_prediction
 
     declared = {
         "brief": {"type": "string", "required": True},
@@ -4672,7 +4684,10 @@ def test_node_references_any_detects_cache_chunk_chain() -> None:
     as tainted — its predicted cache_key carries the placeholder bytes
     and never matches the trace.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _dummied_cache_chunks, _node_references_any
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import (
+        _dummied_cache_chunks,
+        _node_references_any,
+    )
 
     workflow_ir = {
         "cache": {
@@ -4713,7 +4728,7 @@ def test_node_references_any_detects_inline_template_ref() -> None:
     ``_node_references_any`` and code-block inputs (``inputs: x: ${k}``)
     that reference dummied keys go undetected.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _node_references_any
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _node_references_any
 
     code_node = {
         "id": "build-items",
@@ -4748,7 +4763,7 @@ def test_build_predict_scaffold_injects_pflow_workflow_file() -> None:
     sub-workflows resolve against CWD, silently misresolving for any
     workflow not under the current directory.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _build_predict_scaffold
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _build_predict_scaffold
     from pflow.runtime.cache import MemoizationCache
 
     workflow_ir: dict[str, Any] = {
@@ -4998,7 +5013,7 @@ def test_aggregate_sub_workflow_cache_candidates_tie_breaks_on_parent_workflow()
     the deterministic-by-tuple version always picks the lex-smaller
     parent_workflow. The pre-fix code returned whichever was first seen.
     """
-    from pflow.core.prompt_cache_analysis.analyze import (
+    from pflow.core.prompt_cache_analysis.stages.cross_workflow import (
         _aggregate_sub_workflow_cache_candidates_by_child,
         _SubWorkflowCacheCandidate,
     )
@@ -5053,7 +5068,7 @@ def test_aggregator_groups_by_node_and_root_cause_with_affected_invocations() ->
     leak ``affected_invocations`` to other diagnostics in the same group
     when ``make_diagnostic`` shares context refs.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.diagnose import _aggregate_and_cap_discrepancies
     from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diags = [
@@ -5098,7 +5113,7 @@ def test_aggregator_caps_at_max_total_and_notes_truncation() -> None:
     count. Without the note, agents see a silently-truncated discrepancy
     list.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.diagnose import _aggregate_and_cap_discrepancies
     from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diags = [
@@ -5123,7 +5138,7 @@ def test_aggregator_does_not_mutate_shared_context_refs() -> None:
     ``dataclasses.replace`` so the merged ``affected_invocations`` doesn't
     leak to siblings (which would silently misreport invocation counts).
     """
-    from pflow.core.prompt_cache_analysis.analyze import _aggregate_and_cap_discrepancies
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.diagnose import _aggregate_and_cap_discrepancies
 
     shared_context = {"category": "cache_advisory", "root_cause": "key_mismatch"}
     from pflow.core.diagnostic import Diagnostic, Severity
@@ -5303,12 +5318,10 @@ def test_predict_cache_keys_includes_sub_workflow_nodes(
     analyzer hits in production).
     """
     from pflow.core.markdown_parser import parse_markdown
-    from pflow.core.prompt_cache_analysis.analyze import (
-        _build_parameters_by_workflow,
-        _predict_cache_keys,
-    )
+    from pflow.core.prompt_cache_analysis.analyze import _build_parameters_by_workflow
     from pflow.core.prompt_cache_analysis.context import AnalysisContext
     from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _predict_cache_keys
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
     from pflow.runtime.cache import MemoizationCache
@@ -5390,7 +5403,7 @@ def test_predict_node_cache_key_returns_none_for_unresolvable_node_output_ref() 
     output isn't in shared. The per-node skip note must name the node so
     the agent can act on it.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _predict_node_cache_key
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _predict_node_cache_key
 
     # An ``upstream`` shell node exists (so the chunk's var passes parse-time
     # cache validation) but plan_node has no shared output for it because
@@ -5449,9 +5462,9 @@ def test_predict_cache_keys_byte_identical_to_runtime(
     import sqlite3
 
     from pflow.core.markdown_parser import parse_markdown
-    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
     from pflow.core.prompt_cache_analysis.context import AnalysisContext
     from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _predict_cache_keys
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
     from pflow.runtime.cache import MemoizationCache

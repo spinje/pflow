@@ -16,12 +16,14 @@ import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.prompt_cache_analysis.analyze import (
-    _aggregate_confidence,
-    _build_summary,
-    _maybe_append_gemini_note,
     analyze,
 )
 from pflow.core.prompt_cache_analysis.context import AnalysisContext
+from pflow.core.prompt_cache_analysis.stages.summary import (
+    _aggregate_confidence,
+    _build_summary,
+    _maybe_append_gemini_note,
+)
 from pflow.core.prompt_cache_analysis.trace_loading import _build_trace_execution_index
 from pflow.core.prompt_cache_analysis.types import (
     CacheAnalysis,
@@ -753,10 +755,10 @@ def test_analyze_skips_stale_llm_memo_when_predicted_cache_key_differs(
     """Regression for Bundle 6 per-workflow contexts preserving predictions."""
     from pflow.runtime.cache import MemoizationCache
 
-    analyze_module = importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    predict_module = importlib.import_module("pflow.core.prompt_cache_analysis.stages.discrepancy.predict")
     workflow_path = str(tmp_path / "workflow.pflow.md")
     monkeypatch.setattr(
-        analyze_module,
+        predict_module,
         "_predict_cache_keys",
         lambda *_args, **_kwargs: ({(workflow_path, "draft"): "current-key"}, []),
     )
@@ -789,8 +791,8 @@ def test_analyze_skips_stale_llm_memo_when_predicted_cache_key_differs(
 
 def test_cross_workflow_memo_value_resolver_skips_stale_parent_memo(tmp_path: Path) -> None:
     """Regression for the cross-workflow value path using freshness-aware memo."""
-    from pflow.core.prompt_cache_analysis.analyze import _resolve_value_in_workflow_memo
     from pflow.core.prompt_cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.stages.cross_workflow import _resolve_value_in_workflow_memo
     from pflow.runtime.cache import MemoizationCache
 
     parent_path = str(tmp_path / "parent.pflow.md")
@@ -1323,7 +1325,7 @@ def test_filter_consults_catalog_flag_not_severity() -> None:
     (``warning.severity == Severity.ERROR``) → this test fails because
     INFO-severity IR-derived findings get dropped.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _filter_trace_dependent_warnings
+    from pflow.core.prompt_cache_analysis.stages.summary import _filter_trace_dependent_warnings
 
     flagged = Diagnostic(
         severity=Severity.INFO,
@@ -6825,7 +6827,7 @@ def test_format_fidelity_skip_note_is_single_source_of_truth() -> None:
     - Inline the helper at any emit site (bypassing the SSoT) → those notes
       drift from the rest; the integration tests for that site fail.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _format_fidelity_skip_note
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_fidelity_skip_note
 
     # Default (applicable=True): "skipped for" prefix.
     note = _format_fidelity_skip_note("x.pflow.md", "workflow failed to compile")
@@ -6856,7 +6858,7 @@ def test_skipped_workflows_note_single_renders_plain_english() -> None:
     Mutation contract: drop the ``len(paths) == 1`` branch → this test fails
     (renders the multi-summary phrasing for one workflow).
     """
-    from pflow.core.prompt_cache_analysis.analyze import _format_skipped_workflows_note
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_skipped_workflows_note
 
     note = _format_skipped_workflows_note(["song-creator.pflow.md"])
     # Plain-English framing with the workflow named.
@@ -6879,7 +6881,7 @@ def test_skipped_workflows_note_multi_collapses_to_summary() -> None:
     Mutation contract: revert _predict_one_workflow to call ``notes.append``
     directly → 3 separate lines instead of one summary; this test fails.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _format_skipped_workflows_note
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_skipped_workflows_note
 
     paths = [
         "/abs/song-creator/review-rhyme.pflow.md",
@@ -6908,7 +6910,7 @@ def test_skipped_workflows_note_multi_truncates_at_five_with_overflow_marker() -
     """L-4: more than 5 skipped workflows show ``+N more`` suffix to keep the
     note bounded.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _format_skipped_workflows_note
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_skipped_workflows_note
 
     paths = [f"/abs/wf-{i}.pflow.md" for i in range(8)]
     note = _format_skipped_workflows_note(paths)
@@ -6939,7 +6941,7 @@ def test_predict_cache_keys_memo_empty_note_uses_plain_english() -> None:
     Mutation contract: revert the new wording in ``_predict_cache_keys`` →
     the negative assertions fail.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _predict_cache_keys
 
     ctx = AnalysisContext.build(
         workflow_ir={"nodes": []},
@@ -6980,7 +6982,7 @@ def test_predict_cache_keys_aggregates_skip_notes_via_production_path() -> None:
     """
     from types import SimpleNamespace
 
-    from pflow.core.prompt_cache_analysis.analyze import _predict_cache_keys
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _predict_cache_keys
 
     # 3 sub-workflows each declaring inputs but with no params resolved.
     irs = {
@@ -7037,8 +7039,8 @@ def test_dynamic_batches_note_single_keeps_legacy_phrasing() -> None:
     Mutation contract: drop the ``len(batches) == 1`` branch → this test
     fails (renders the multi-summary phrasing for one batch).
     """
-    from pflow.core.prompt_cache_analysis.analyze import _format_dynamic_batches_note
     from pflow.core.prompt_cache_analysis.cross_workflow import DynamicBatchInfo
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_dynamic_batches_note
 
     note = _format_dynamic_batches_note((
         DynamicBatchInfo(
@@ -7064,8 +7066,8 @@ def test_dynamic_batches_note_multi_collapses_to_summary() -> None:
     return per-batch strings) → this test fails because the listing
     enumeration disappears.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _format_dynamic_batches_note
     from pflow.core.prompt_cache_analysis.cross_workflow import DynamicBatchInfo
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_dynamic_batches_note
 
     batches = (
         DynamicBatchInfo(
@@ -7100,7 +7102,7 @@ def test_dynamic_batches_note_returns_none_for_empty_input() -> None:
     the helper returns ``None`` so workflows without runtime batches don't
     pick up an empty Note line.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _format_dynamic_batches_note
+    from pflow.core.prompt_cache_analysis.stages.discrepancy.predict import _format_dynamic_batches_note
 
     assert _format_dynamic_batches_note(()) is None
 
@@ -7177,7 +7179,10 @@ def test_parent_origin_clause_surfaces_rename_and_hides_passthrough() -> None:
       - Drop the ``not expr`` guard → None/empty case returns ``"flows in from
         parent as `${None}`"`` or similar; this test fails.
     """
-    from pflow.core.prompt_cache_analysis.analyze import _parent_origin_clause, _SubWorkflowCacheCandidate
+    from pflow.core.prompt_cache_analysis.stages.cross_workflow import (
+        _parent_origin_clause,
+        _SubWorkflowCacheCandidate,
+    )
 
     def _make(parent_value_expr: str | None, child_input_name: str) -> _SubWorkflowCacheCandidate:
         return _SubWorkflowCacheCandidate(

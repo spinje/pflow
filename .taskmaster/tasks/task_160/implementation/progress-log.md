@@ -86,3 +86,37 @@ Trust boundary:
 - Verified: no old direct root renderer module import paths remain in `src` or `tests`; only valid local imports inside `rendering/` remain.
 - Assumed correct: leaving renderer-related doc/comment references such as `render_text.py` and `view_helpers.py` for Phase 6 documentation cleanup is acceptable because Phase 3's plan scope is code/test imports, not docs.
 - Unable to verify: Task 159 golden harness remains unusable as a phase oracle for the stale-expected-output reason documented in Phase 1.
+
+## 2026-05-21 - Phase 4 complete, awaiting review
+
+Scope completed:
+- Added `src/pflow/core/prompt_cache_analysis/stages/` with docstring-only `__init__.py`.
+- Extracted summary aggregation into `stages/summary.py`, including confidence aggregation, trace-coverage classification, trace-dependent warning filtering, cost deltas, run-command formatting, and the Gemini note.
+- Extracted discrepancy prediction/diagnosis into `stages/discrepancy/predict.py`, `stages/discrepancy/diagnose.py`, and a narrow subpackage `__init__.py` re-export. Runtime/planner imports remain lazy in `predict.py`.
+- Extracted cross-workflow analytical findings into `stages/cross_workflow.py`.
+- Updated private tests that directly exercised moved helpers to import the new stage modules.
+
+Verification:
+- Focused analyzer/per-ID/renderer tests passed: `532 passed`.
+- Core cache-analysis suite passed: `756 passed`.
+- CLI/MCP cache-analysis slice passed: `801 passed`.
+- `test_sub_workflow_resolver.py` passed after retargeting moved helper imports: `15 passed`.
+- Sandbox-compatible near-full pytest passed with uv-subprocess panic cases excluded: `7120 passed, 19 skipped`.
+- Quality checks passed: `ruff check src tests`, `ruff format --check src tests`, `mypy src`, and `deptry src`.
+
+Deviations from plan:
+- Kept the Phase 4 cross-workflow back-edge to `analyze.py` as a module-level temporary import, but expanded it beyond the three helpers named in the plan to include `_total_observed_invocations`. Reason: row-level cross-workflow projection infrastructure remains in `analyze.py` until Phase 5 and still shares the same candidate helpers. Duplicating those helpers would create behavior drift; importing them keeps one implementation until their final homes exist.
+- Imported `_build_cross_workflow_findings` lazily inside `analyze()` instead of at module scope. Reason: `stages/cross_workflow.py` temporarily imports helpers from `analyze.py`; a module-scope orchestrator import would create an import-time cycle before those helpers are defined.
+- Updated test monkeypatch targets for moved private helpers instead of adding compatibility shims to `analyze.py`. Reason: the task explicitly rejects shims, and tests should follow the new module ownership.
+- Did not use code-implementer subagents. Reason: Phase 4 is a single-file extraction with overlapping edits to `analyze.py` import/call boundaries; parallel workers would have conflicting write scopes and no clean integration boundary.
+- Did not rerun the Task 159 golden harness. Reason: previous phase logs establish that the committed expected outputs in this checkout are stale relative to successful local execution, making the harness an invalid oracle here. I used focused behavioral tests plus the broad sandbox-compatible pytest run instead.
+
+Key learnings:
+- `summary.py` required `..cost_estimation` lazy imports after moving one package level deeper; a straight textual move left `.cost_estimation` pointing at the wrong package.
+- Several tests intentionally monkeypatch private helper modules. Moving stage ownership means those tests must patch the stage module that now owns the behavior, especially discrepancy prediction and cross-workflow threshold helpers.
+- `stages/cross_workflow.py` cannot be fully cycle-free until Phase 5 moves shared IR helpers and pricing/suggestion helpers out of `analyze.py`; the current back-edge is explicit and temporary.
+
+Trust boundary:
+- Verified: extracted modules import cleanly; all verification commands listed above pass; `TemplateResolver` use in extracted cross-workflow and prediction stages is lazy.
+- Assumed correct: keeping the temporary cross-workflow back-edge through Phase 4 is acceptable because Phase 5 is explicitly responsible for moving those shared helpers to their final homes.
+- Unable to verify: literal `make test && make check` and the Task 159 golden harness, due the documented sandbox `uv` panics and stale golden expected outputs.
