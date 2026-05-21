@@ -4657,7 +4657,7 @@ def test_text_pure_greenfield_hides_per_call_section_with_explanatory_note() -> 
     """Option C: pure-greenfield workflows (no ``prompt_cache:`` declared AND
     no memo/trace data) hide the entire ``## Per-call cache report`` section.
 
-    Pure-greenfield rows fail ``_row_has_real_data`` — their input_tokens
+    Pure-greenfield rows fail ``row.has_real_data`` — their input_tokens
     column shows TEMPLATE size (with ``${var}`` references counted as ~5-token
     literals — NOT actual runtime size) and their cacheable column is
     unprojectable. Both columns mislead, so the section disappears entirely.

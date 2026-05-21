@@ -162,3 +162,40 @@ Trust boundary for Phase 4:
 - Verified: output behavior is stable against the Task 159 harness; package-level rendering imports still work; the new render helper imports without cycling; render-side edit text no longer depends on `cw_result`.
 - Assumed correct: lazy `rendering.__init__` is acceptable because direct submodule imports are already the dominant internal/test pattern, and package-level exports remain source-compatible.
 - Unable to verify in Phase 3: whether Phase 4's `AnalysisContext` parametric methods can delete all mirror resolution helpers without additional test migrations beyond the plan's two named sites.
+
+## 2026-05-21 - Phase 5 Orchestrator Inline-Block Extraction
+
+Phase completed: Phase 5 only. Phase 4 remains unimplemented; this ordering deviation was explicitly requested by the user after the Phase 3 commit.
+
+Implemented:
+- G1.2: extracted auto-loaded trace misalignment fallback into `_recompute_after_trace_misalignment()`.
+- G1.3: added `PerCallRow.has_real_data`; removed `rendering.views.per_call_row_has_real_data`; removed `rendering.text._row_has_real_data`; updated analyzer and text rendering to use `row.has_real_data`.
+- G1.3: extracted the per-call visibility notes block into `_append_per_call_visibility_notes()` at the same pipeline position after `_populate_suggested_blocks()` and before `_emit_padding_advisories()`.
+- G1.4: extended `_build_summary()` with `trace_workflow_relationship`, `drift_count`, `sub_workflow_rollup`, and `suggested_run_command` kwargs; removed the outer `replace(summary, ...)` enrichment block from `analyze.py`.
+- Updated stale test prose references from `_row_has_real_data` / `replace(summary, ...)` to the new ownership.
+
+Deviations and rationale:
+- Skipped Phase 4 only because the user explicitly asked to continue with Phase 5. I verified Phase 5 does not require Phase 4's parametric `AnalysisContext` methods; it touches orchestration, row visibility, and summary ownership instead of the cross-workflow resolution mirror cluster.
+- `analyze.py` is `1109` lines rather than the plan's expected `~1015`. The plan's LOC estimate assumes extraction reduces file size, but Phase 5 keeps the extracted helpers in `analyze.py` by design ("No module moves yet"). I tightened `_recompute_after_trace_misalignment()` to read data already owned by `AnalysisContext` instead of re-threading duplicate parameters; further LOC reduction would require Phase 6-style helper relocation, which is intentionally outside Phase 5.
+- The plan's named smoke test `test_per_call_hidden_when_no_run_data` no longer exists. I ran the current equivalent focused selector over hidden/greenfield/visibility tests instead.
+- Did not use code-implementer subagents. Phase 5 touched tightly coupled call ordering inside `analyze.py` plus matching renderer/type ownership changes; the only mechanical work was small enough that parallel writers would add conflict risk without saving meaningful time.
+
+Verification:
+- Focused visibility/summary selector: `33 passed, 345 deselected`.
+- Affected analyzer/renderer files: `378 passed`.
+- Task 159 harness: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0 exactly.
+- Sandbox-safe non-e2e pytest: `7102 passed, 1 skipped`.
+- `uv lock --locked`: passed after escalation for uv cache access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for sandboxed metadata-file access.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 224 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- Phase 5 structural checks:
+  - `rg "from \\.rendering.views" src/pflow/core/prompt_cache_analysis/analyze.py` returns no matches.
+  - `rg "def per_call_row_has_real_data" src/pflow/core/prompt_cache_analysis` returns no matches.
+  - `rg "def _row_has_real_data" src/pflow/core/prompt_cache_analysis/rendering/text.py` returns no matches.
+  - `rg "replace\\(summary" src/pflow/core/prompt_cache_analysis/analyze.py` returns no matches.
+
+Trust boundary for next phase:
+- Verified: Phase 5 behavior is stable against the baseline harness and full sandbox-safe tests; `row.has_real_data` is now the single row-visibility predicate used by analyzer and text rendering.
+- Assumed correct: preserving Phase 4 for later remains safe because Phase 5 did not modify the mirror resolution helpers that Phase 4 targets.
+- Unable to verify in Phase 5: whether Phase 4's test migration count is complete; it was intentionally not started in this phase.

@@ -1630,7 +1630,7 @@ def _visible_per_call_rows(
     *,
     all_rows: bool,
 ) -> tuple[list[PerCallRow], int, bool]:
-    real_data_rows = [row for row in rows if _row_has_real_data(row)]
+    real_data_rows = [row for row in rows if row.has_real_data]
     if not real_data_rows:
         return [], 0, False
     # Analytical detections (cache.dynamic-before-static, cache.padding-advisory,
@@ -2302,12 +2302,6 @@ def _per_call_confidence_footer(
     if not bullets:
         return None
     return ["Token estimate confidence:", *(f"  · {bullet}" for bullet in bullets)]
-
-
-def _row_has_real_data(row: PerCallRow) -> bool:
-    from .views import per_call_row_has_real_data
-
-    return per_call_row_has_real_data(row)
 
 
 def _strip_cache_prefix(warning_id: str) -> str:

@@ -226,47 +226,15 @@ def analyze(
     )
     per_call_rows = per_call_result.rows
     warnings = per_call_result.warnings
-    # Auto-load misalignment fallback: when the auto-loaded trace doesn't
-    # cover all root LLM nodes in the IR, fall back to greenfield. This is
-    # ORTHOGONAL to ``trace_coverage`` — a trace from a different parameter
-    # set (different conditional branches taken) classifies as "complete"
-    # under the final_status discriminator but is misaligned for THIS analysis
-    # call. Explicit ``--from-trace`` bypasses this gate (agent's choice).
     if trace_path is None and any(row.did_not_execute_in_trace for row in per_call_rows):
-        notes.append(_format_rejection_note(used_trace_path, trace_data))
-        trace_data = None
-        used_trace_path = None
-        # trace_data is None here; the function short-circuits, but pass
-        # ``lookup_path`` (not trace_root_workflow_path) so the unused seed
-        # value matches the no-trace conceptual scope.
-        trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
-        parameters_by_workflow = _build_parameters_by_workflow(
-            cw_result,
-            parameters or {},
-            lookup_path,
-            memo_cache=memo_cache,
-            trace_data=trace_data,
-            trace_outputs_by_key=trace_index.outputs_by_key,
-            base_path=base_path,
-        )
-        ctx = AnalysisContext.build(
-            workflow_ir=workflow_ir,
-            parameters=parameters or {},
-            memo_cache=memo_cache,
-            trace_data=trace_data,
-            trace_outputs_by_key=trace_index.outputs_by_key,
-            workflow_path=lookup_path,
-            base_path=base_path,
-            parameters_by_workflow=parameters_by_workflow,
-            predicted_cache_keys=predicted_cache_keys,
-            prediction_fidelity_notes=tuple(prediction_fidelity_notes),
-            stale_memo_skipped=ctx.stale_memo_skipped,
-            stale_memo_uncheckable=ctx.stale_memo_uncheckable,
-        )
-        per_call_result = _build_per_call_rows_and_warnings(
+        per_call_result, ctx, trace_index, trace_data, used_trace_path = _recompute_after_trace_misalignment(
             ctx=ctx,
             cw_result=cw_result,
-            trace_index=trace_index,
+            lookup_path=lookup_path,
+            used_trace_path=used_trace_path,
+            trace_data=trace_data,
+            notes=notes,
+            edge_child_paths=edge_child_paths,
         )
         per_call_rows = per_call_result.rows
         warnings = per_call_result.warnings
@@ -302,23 +270,7 @@ def analyze(
     )
     warnings.extend(shared_warnings)
 
-    # Option C — surface a Notes entry when the per-call section will render
-    # empty so agents understand the absence is intentional. The renderer uses
-    # the same predicate (``_row_has_real_data``) to decide visibility; we
-    # mirror it here at analyze-time so the note appears in JSON too.
-    from .rendering.views import per_call_row_has_real_data
-
-    if per_call_rows and not any(per_call_row_has_real_data(r) for r in per_call_rows):
-        notes.append(
-            "Per-call cache report hidden — workflow has no run data yet. "
-            "Run once, then re-run analyze-cache for real per-node token "
-            "estimates and cacheable projections."
-        )
-    if per_call_result.has_greenfield_cross_workflow_projection_gap:
-        notes.append(
-            "Cross-workflow projections require trace evidence to populate per-call rows. "
-            "Recommended actions still surface; run with `--from-trace <path>` for per-call attribution."
-        )
+    _append_per_call_visibility_notes(per_call_rows, per_call_result, notes)
     warnings.extend(_emit_padding_advisories(workflow_ir=workflow_ir, rows_by_node=rows_by_node))
     consolidate_root_diags = _consolidate_to_root_advisories(
         workflow_ir=workflow_ir,
@@ -407,16 +359,13 @@ def analyze(
         ir_default_model=ir_default_model,
         scope_workflow_paths=scope_workflow_paths,
         trace_index=trace_index,
-    )
-    summary = replace(
-        summary,
         trace_workflow_relationship=_derive_trace_workflow_relationship(
             trace_loaded=trace_data is not None,
             scope_mismatch=scope_mismatch,
             appears_as_child=appears_as_child,
             drift_count=drift_count,
         ),
-        trace_model_drift_count=drift_count,
+        drift_count=drift_count,
         sub_workflow_rollup=_build_sub_workflow_rollup(
             cw_result,
             lookup_path,
@@ -464,6 +413,71 @@ def _extract_declared_chunks(cache_block: Any) -> list[str]:
     if not isinstance(items, list):
         return []
     return [item.get("name", "") for item in items if isinstance(item, dict) and item.get("name")]
+
+
+def _recompute_after_trace_misalignment(
+    *,
+    ctx: AnalysisContext,
+    cw_result: Any,
+    lookup_path: str,
+    used_trace_path: str | None,
+    trace_data: dict[str, Any] | None,
+    notes: list[str],
+    edge_child_paths: dict[str, str],
+) -> tuple[_PerCallRowsResult, AnalysisContext, _types.TraceExecutionIndex, dict[str, Any] | None, str | None]:
+    """Fall back to greenfield when an auto-loaded trace does not match this IR."""
+    notes.append(_format_rejection_note(used_trace_path, trace_data))
+    trace_data = None
+    used_trace_path = None
+    trace_index = _build_trace_execution_index(trace_data, lookup_path, edge_child_paths)
+    parameters_by_workflow = _build_parameters_by_workflow(
+        cw_result,
+        dict(ctx.parameters),
+        lookup_path,
+        memo_cache=ctx.memo_cache,
+        trace_data=trace_data,
+        trace_outputs_by_key=trace_index.outputs_by_key,
+        base_path=ctx.base_path,
+    )
+    new_ctx = AnalysisContext.build(
+        workflow_ir=ctx.workflow_ir,
+        parameters=dict(ctx.parameters),
+        memo_cache=ctx.memo_cache,
+        trace_data=trace_data,
+        trace_outputs_by_key=trace_index.outputs_by_key,
+        workflow_path=lookup_path,
+        base_path=ctx.base_path,
+        parameters_by_workflow=parameters_by_workflow,
+        predicted_cache_keys=ctx.predicted_cache_keys,
+        prediction_fidelity_notes=ctx.prediction_fidelity_notes,
+        stale_memo_skipped=ctx.stale_memo_skipped,
+        stale_memo_uncheckable=ctx.stale_memo_uncheckable,
+    )
+    per_call_result = _build_per_call_rows_and_warnings(
+        ctx=new_ctx,
+        cw_result=cw_result,
+        trace_index=trace_index,
+    )
+    return per_call_result, new_ctx, trace_index, trace_data, used_trace_path
+
+
+def _append_per_call_visibility_notes(
+    per_call_rows: Sequence[_types.PerCallRow],
+    per_call_result: _PerCallRowsResult,
+    notes: list[str],
+) -> None:
+    """Append notes that explain why per-call rows may be hidden or incomplete."""
+    if per_call_rows and not any(row.has_real_data for row in per_call_rows):
+        notes.append(
+            "Per-call cache report hidden — workflow has no run data yet. "
+            "Run once, then re-run analyze-cache for real per-node token "
+            "estimates and cacheable projections."
+        )
+    if per_call_result.has_greenfield_cross_workflow_projection_gap:
+        notes.append(
+            "Cross-workflow projections require trace evidence to populate per-call rows. "
+            "Recommended actions still surface; run with `--from-trace <path>` for per-call attribution."
+        )
 
 
 def _row_model_drift(

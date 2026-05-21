@@ -489,6 +489,19 @@ class PerCallRow:
         """Resolved prompt-body tokens, excluding declared cache chunk content."""
         return self.input_tokens_estimated - self.chunk_tokens_estimated
 
+    @property
+    def has_real_data(self) -> bool:
+        """Per-row visibility: True iff this row has substantive signal to display."""
+        return (
+            self.data_source in {"trace", "memo"}
+            or bool(self.declared_prompt_cache)
+            or self.model_is_heterogeneous
+            or self.cached_now_tokens_estimated is not None
+            or self.cache_ready.data_source not in {_PROJECTION_NOT_APPLICABLE, _PROJECTION_UNAVAILABLE}
+            or self.cache_opportunity.data_source not in {_PROJECTION_NOT_APPLICABLE, _PROJECTION_UNAVAILABLE}
+            or self.cacheable_data_source != "unavailable"
+        )
+
 
 @dataclass(frozen=True)
 class ProjectionExclusion:

@@ -111,6 +111,10 @@ def _build_summary(
     ir_default_model: str | None = None,
     scope_workflow_paths: frozenset[str] | None = None,
     trace_index: TraceExecutionIndex | None = None,
+    trace_workflow_relationship: str | None = None,
+    drift_count: int = 0,
+    sub_workflow_rollup: SubWorkflowRollup | None = None,
+    suggested_run_command: str | None = None,
 ) -> AnalysisSummary:
     """Aggregate per-call rows + warning counts into the spec's summary block.
 
@@ -323,6 +327,8 @@ def _build_summary(
         sub_workflow_llm_node_count=sub_workflow_count,
         projection_exclusions=projections.absolute_exclusions,
         trace_final_status=trace_final_status,
+        trace_workflow_relationship=trace_workflow_relationship,
+        trace_model_drift_count=drift_count,
         trace_recorded_at=trace_recorded_at,
         trace_provider_llm_call_count=trace_index.provider_llm_call_count if trace_index is not None else 0,
         trace_local_memo_llm_hit_count=trace_index.local_memo_llm_hit_count if trace_index is not None else 0,
@@ -336,6 +342,8 @@ def _build_summary(
         trace_provider_cache_read_input_tokens=(
             trace_index.provider_cache_read_input_tokens if trace_index is not None else 0
         ),
+        sub_workflow_rollup=sub_workflow_rollup,
+        suggested_run_command=suggested_run_command,
         stale_memo_skipped_count=len(ctx.stale_memo_skipped) if ctx is not None else 0,
         stale_memo_uncheckable_count=len(ctx.stale_memo_uncheckable) if ctx is not None else 0,
     )

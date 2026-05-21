@@ -4337,7 +4337,7 @@ def test_suggested_run_command_populated_for_workflow_with_inputs(
     command derived from ``workflow_path`` + declared inputs.
 
     Mutation contract: removing the ``suggested_run_command=`` kwarg in
-    ``analyze.py``'s ``replace(summary, ...)`` site fails this test.
+    ``analyze.py``'s summary-enrichment kwargs path fails this test.
     """
     import sys
 
@@ -4517,7 +4517,7 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
     """Per-call section shows heterogeneous rows even on pure greenfield.
 
     Without this, heterogeneous nodes would be hidden by Option C (no memo,
-    no declared subset → would normally fail ``_row_has_real_data``). The
+    no declared subset → would normally fail ``row.has_real_data``). The
     agent would only see ``+ N nodes with model varying`` in the header
     and have no place to grep for which node varies.
     """
