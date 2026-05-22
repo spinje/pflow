@@ -1,0 +1,1 @@
+We need to decide if we want a sandbox for each individual node or a wrapper for the whole workflow execution. Previously I've thought about this in terms of isolating nodes like code and claude-code node but it might make more sense to sandbox everything? I'm not sure here, needs investigation and discussion.
