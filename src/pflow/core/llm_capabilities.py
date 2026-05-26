@@ -38,7 +38,10 @@ from pflow.core.llm_providers import detect_provider, model_name_without_provide
 # Conservative fallback when the model isn't in the table or its provider is
 # unrecognized. Per DD#32: pick a value high enough that small/incidental cache
 # blocks DON'T silently no-op without a warning. 4096 covers the highest known
-# Anthropic minimum and matches Gemini's explicit-cache requirement.
+# Anthropic minimum and Gemini's Pro-tier explicit-cache minimum (Flash tiers
+# are lower and listed explicitly below; the deprecated gemini-1.5-* models are
+# actually HIGHER at ~32k and are intentionally under-served here — see the
+# Gemini catch-all row).
 CONSERVATIVE_FLOOR: int = 4096
 
 
@@ -66,9 +69,13 @@ class ModelCapability:
     prefix (provider prefix stripped) — the bare model id must START WITH this
     pattern for the row to apply. Most-specific (longest) match wins.
 
-    ``min_cache_tokens`` is the threshold in tokens; rendered prompt-cache
-    content below this value will silently no-op at the provider, so the
-    validator emits ``cache.below-min-predicted``.
+    ``min_cache_tokens`` is the threshold in tokens. Below it the provider
+    either silently no-ops the cache (OpenAI / Anthropic auto-cache) OR
+    HARD-FAILS the request (Gemini explicit ``cachedContents`` returns
+    ``BadRequestError``); either way the validator emits
+    ``cache.below-min-predicted``. Because the runtime also gates prewarm on
+    this value, it must be >= the provider's true minimum — a value set too low
+    makes prewarm create a too-small cache and crash the call.
     """
 
     provider: str
@@ -99,33 +106,50 @@ MODEL_CAPABILITIES: tuple[ModelCapability, ...] = (
     # Per DD#32; ``prompt_cache_retention`` controls TTL but not the threshold.
     ModelCapability("openai", "", 1024, notes="OpenAI auto-cache threshold"),
     # Gemini minimums per https://ai.google.dev/gemini-api/docs/caching
-    # (verified 2026-05-26): Flash-tier caches from 1024 tokens, Pro-tier from
-    # 4096. This threshold drives two things — whether `analyze-cache`
-    # RECOMMENDS caching, and whether the runtime fires a prewarm marker — so
-    # it must reflect where caching actually helps, NOT the explicit
-    # `cachedContents` API minimum. Earlier this was a flat 4096 (DD#32), which
-    # made `analyze-cache` wrongly tell users a 1024-4096 token Flash prefix
-    # "won't cache."
+    # (verified 2026-05-26): Flash-tier 1024, Pro-tier 4096.
+    #
+    # THIS VALUE IS A CRASH BOUNDARY, not just a recommendation knob. It gates
+    # both (a) whether `analyze-cache` recommends caching and (b) whether the
+    # runtime fires a prewarm marker — and prewarm creates an EXPLICIT
+    # `cachedContents`. If the threshold sits BELOW the provider's true
+    # explicit-cache minimum, prewarm builds a too-small cache and Gemini
+    # rejects the whole request (`BadRequestError`). So each value must be
+    # >= the explicit API minimum; set it as LOW as the provider actually
+    # accepts (so caching is recommended wherever it legitimately helps) but
+    # NEVER lower. Earlier this was a flat 4096 (DD#32), which over-stated the
+    # Flash floor and made `analyze-cache` wrongly tell users a 1024-4096 token
+    # Flash prefix "won't cache."
     #
     # Empirical basis (discriminator runs, gemini-2.5-flash, ~1514-token prefix):
     #   - marker stripped (prewarm off): 18/31 calls cache-read (implicit only)
     #   - prewarm on (threshold 1024):   31/31 calls cache-read
-    # The marker is NOT rejected below 4096 and reliably improves coverage, so
-    # Flash's functional minimum is 1024.
-    #
-    # PREFIX-MATCH NOTE: lookup is longest-prefix-wins, and
-    # "gemini-2.5-flash-lite".startswith("gemini-2.5-flash") is True, so
-    # flash-lite needs its OWN row or it would inherit the flash value.
+    # The marker is accepted at/above 1024 and reliably improves coverage, so
+    # Flash's explicit minimum is 1024 (matches the published table).
     #
     # flash-lite is 2048, NOT 1024 — verified 2026-05-26 from a live API error:
     # "Cached content is too small. total_token_count=1221, min_total_token_count=2048"
-    # (gemini-2.5-flash-lite). A too-small explicit cache HARD-FAILS the request,
-    # so this floor being correct prevents crashes, not just bad recommendations.
+    # (gemini-2.5-flash-lite). The crash boundary in action: the earlier inferred
+    # 1024 broke 27/31 calls. flash-lite is NOT in the published table; 2048
+    # comes from ground truth.
+    #
+    # PREFIX-MATCH NOTE: lookup is longest-prefix-wins, and
+    # "gemini-2.5-flash-lite".startswith("gemini-2.5-flash") is True, so
+    # flash-lite needs its OWN row or it would inherit the flash 1024 and crash.
+    # The same trap is latent for the 3.5 line: a future `gemini-3.5-flash-lite`
+    # would inherit 1024 from the `gemini-3.5-flash` prefix below — add an
+    # explicit (verified) row before that model ships.
     ModelCapability("gemini", "gemini-2.5-flash-lite", 2048),
     ModelCapability("gemini", "gemini-2.5-flash", 1024),
+    # gemini-3.5-flash is documented at 1024 in the same published table as 2.5-flash.
     ModelCapability("gemini", "gemini-3.5-flash", 1024),
-    # Pro-tier (2.5 Pro, 3 Pro Preview), the undocumented gemini-3-flash-preview,
-    # and any unrecognized/future Gemini name fall through to 4096.
+    # Catch-all (4096) for Pro-tier (2.5 Pro, 3 Pro Preview) and any
+    # unrecognized/future Gemini name. Unverified models route here ON PURPOSE
+    # rather than to an optimistic 1024 — e.g. gemini-3-flash-preview (min not
+    # published). This UNDER-states the deprecated gemini-1.5-flash/-pro (whose
+    # explicit minimum is ~32k), so they would hard-fail prewarm here; that is
+    # pre-existing, and they are NOT added at 1024 precisely because the crash
+    # boundary above forbids guessing low. Do not add 1.5/2.0-flash rows without
+    # a verified minimum.
     ModelCapability("gemini", "", 4096, notes="Gemini Pro / unknown — conservative floor"),
 )
 
