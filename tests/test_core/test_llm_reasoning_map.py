@@ -60,6 +60,11 @@ class TestDetectCapabilitiesAnthropic:
         caps = _detect_capabilities("anthropic/claude-opus-4-7-20260115")
         assert caps == {"reasoning_effort_adaptive"}
 
+    def test_opus_47_unprefixed_claude_name(self):
+        # Bare claude- name (no provider prefix) still routes to adaptive,
+        # mirroring test_unprefixed_claude_name for Sonnet.
+        assert _detect_capabilities("claude-opus-4-7") == {"reasoning_effort_adaptive"}
+
     def test_sonnet_4_5_no_thinking_effort(self):
         # Sonnet has thinking/thinking_budget but NOT thinking_effort
         caps = _detect_capabilities("anthropic/claude-sonnet-4-5")
@@ -314,10 +319,11 @@ class TestOpus47AdaptiveReasoning:
         # default; omitting is the control case GH #368 confirmed is accepted).
         assert map_reasoning_options(self.MODEL, "none", None, None) == {}
 
-    def test_max_tokens_is_ignored(self):
-        # Adaptive thinking has no explicit token budget. Rather than emit the
-        # rejected budget shape, we drop it and let Opus 4.7 use its default
-        # adaptive thinking (documented in the module docstring).
+    def test_reasoning_max_tokens_is_ignored(self):
+        # The 3rd positional arg is reasoning_max_tokens. Adaptive thinking has
+        # no explicit token budget, so rather than emit the rejected budget
+        # shape we drop it and let Opus 4.7 use its default adaptive thinking
+        # (documented in the module docstring).
         assert map_reasoning_options(self.MODEL, None, 8000) == {}
 
 

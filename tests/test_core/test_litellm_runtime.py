@@ -20,6 +20,7 @@ litellm) is covered separately in ``tests/test_cli/test_lazy_imports.py``.
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import subprocess
 import threading
@@ -62,6 +63,25 @@ def test_configure_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     configure_litellm_defaults()
 
     assert os.environ.get(ENV_VAR) == "True"
+
+
+def test_configure_silences_litellm_logger() -> None:
+    # LiteLLM 1.86+ emits WARNING-level botocore/bedrock stream-preload noise at
+    # import time; configure_litellm_defaults must raise the logger to CRITICAL
+    # *before* import so those messages never reach stderr. Capture/restore the
+    # original level so this assertion doesn't leak state to other tests.
+    litellm_logger = logging.getLogger("LiteLLM")
+    original_level = litellm_logger.level
+    try:
+        litellm_logger.setLevel(logging.NOTSET)
+
+        from pflow.core.litellm_runtime import configure_litellm_defaults
+
+        configure_litellm_defaults()
+
+        assert litellm_logger.level == logging.CRITICAL
+    finally:
+        litellm_logger.setLevel(original_level)
 
 
 def test_import_litellm_sets_env_var_and_returns_module(monkeypatch: pytest.MonkeyPatch) -> None:

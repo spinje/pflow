@@ -26,7 +26,7 @@ Hybrid bundled-first, upstream-on-miss
 
 The bundled snapshot is stale for brand-new models that LiteLLM hasn't
 bundled yet (e.g., ``gemini/gemini-3.5-flash`` is in upstream but absent
-from the LiteLLM 1.83.14 wheel). ``ensure_model_priced(model)`` performs
+from the LiteLLM 1.86.1 wheel). ``ensure_model_priced(model)`` performs
 exactly one upstream fetch per process when a cost-map lookup misses,
 merging the upstream JSON via LiteLLM's public ``register_model(url)``
 API. Bundled pricing always wins (the helper only fetches on miss).
