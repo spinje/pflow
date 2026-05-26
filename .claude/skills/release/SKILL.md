@@ -174,9 +174,11 @@ After creating the release:
        echo "$line"
        exit 0
      fi
-     sleep 20
+     sleep 10
    done
    ```
+
+   The `sleep 10` interval bounds how long after CI actually finishes the exit-notification takes to fire (up to ~10s). Don't go much lower — it only trades more `gh` API calls for marginal latency.
 
    The script stays silent while CI is queued or running; one notification arrives with the final line (e.g. `completed success 24770302049 v0.12.0` or `completed failure 24770302049 v0.12.0`). **Check the `conclusion` field** — `success` means proceed, anything else means investigate via `gh run view <databaseId> --log-failed`.
 
