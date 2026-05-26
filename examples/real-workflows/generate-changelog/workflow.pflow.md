@@ -334,12 +334,38 @@ result: dict = reviews
 
 ### classify-commits
 
-Classify each commit as user-facing or internal. Runs in parallel across
-all commits. Each call receives the full commit message, PR data, and
-file paths, and outputs either a draft changelog entry or `SKIP` with
-the original message preserved for the verification file.
+Classify each commit as user-facing or internal, and capture what changed.
+Runs in parallel across all commits. Returns structured output —
+`user_facing` (the include/skip decision), `entry` (a draft changelog line,
+refined later by `render-changelogs`), and `reason` (a one-sentence audit
+trail, especially for borderline calls).
+
+The rubric lives in `./prompts/classify-commit.prompt.md`: static
+instructions and few-shot examples first, the per-item `${item.*}` context
+last. That ordering lets `prewarm: true` cache the shared rubric prefix
+across the parallel batch. Prewarm is self-gating — it fires only when the
+rendered prefix clears the chosen model's cache minimum (~1,024 tokens for
+Sonnet and Gemini Flash; the rubric clears it on both) and is a no-op
+otherwise.
 
 - type: llm
+- model: gemini/gemini-2.5-flash
+- prewarm: true
+- prompt: ./prompts/classify-commit.prompt.md
+
+```yaml output_schema
+type: object
+properties:
+  user_facing:
+    type: boolean
+  entry:
+    type: string
+  reason:
+    type: string
+required:
+  - user_facing
+  - reason
+```
 
 ```yaml batch
 items: ${gather-commit-data.result}
@@ -348,72 +374,14 @@ max_concurrent: 90
 error_handling: continue
 ```
 
-````prompt
-Analyze this change for a user-facing changelog entry.
-
-## Context
-Is PR merge: ${item.is_merge}
-Commit message: ${item.commit_message}
-Files changed: ${item.files_changed}
-PR Number: ${item.pr_number}
-PR Title: ${item.pr_title}
-PR Summary: ${item.pr_summary}
-PR Link: ${item.pr_link}
-
-## Instructions
-If this is a PR merge (is_merge=true), use the PR Title and PR Summary to understand what changed.
-If this is a direct commit, use the commit message.
-
-## CRITICAL: No guessing or inferring
-* ONLY use information explicitly provided in the commit/PR
-* If the commit message is minimal (e.g., "fix bug"), keep the changelog entry minimal
-* Do NOT invent details, add context, or guess what the change might do
-* Do NOT embellish with phrases like "for better performance" unless explicitly stated
-* If unclear whether user-facing, default to SKIP
-* ALWAYS specify WHAT component/node/feature changed (e.g., "Added timeout parameter to shell node" not just "Added timeout parameter")
-
-STRICT RULES - Output "SKIP: <original commit message>" unless this DIRECTLY affects end users:
-
-✅ INCLUDE (user-facing):
-* New CLI commands or features users can use
-* New workflow capabilities
-* Bug fixes that users would have encountered
-* Breaking changes users need to know about
-* Performance improvements users would notice
-
-❌ SKIP (not user-facing):
-* Internal refactoring or code cleanup
-* Developer tooling improvements
-* Documentation updates
-* Test improvements
-* CI/CD changes
-* Internal implementation details
-* Dependency updates
-* Task/planning files (e.g., "add task for X")
-* Files in internal paths: .claude/, .taskmaster/, .github/, tests/, examples/
-
-## Output Format
-If INCLUDE and has PR link: Write entry ending with [#N](link)
-  Example: "Added batch processing with parallel execution [#17](https://github.com/owner/repo/pull/17)"
-
-If INCLUDE but no PR: Write entry without link
-  Example: "Fixed crash when running with empty input"
-
-If SKIP: Output "SKIP: " followed by the ORIGINAL commit message (not a summary)
-  Example: "SKIP: docs: update README" (keep the exact commit message)
-  Example: "SKIP: chore: update dependencies"
-  Example: "SKIP: test: add unit tests for parser"
-  Example: "SKIP: add task for feature X" (planning, not implementation)
-
-Output ONLY the changelog line or SKIP line. Nothing else.
-````
-
 ### split-classifications
 
-Split the classification results into two lists: included entries
-(user-facing drafts) and skipped entries (internal changes). The
-included list carries the original array index so enrich-drafts can
-rejoin each draft with its source commit.
+Split the structured classification results into two lists: included entries
+(user-facing drafts) and skipped entries (internal changes). Reads the
+`user_facing` boolean from each result's structured response; the skipped
+message comes from the original commit (`item`), not from parsing the LLM
+output. The included list carries the original array index so enrich-drafts
+can rejoin each draft with its source commit.
 
 - type: code
 - inputs:
@@ -425,14 +393,18 @@ results: list
 included = []
 skipped = []
 for i, entry in enumerate(results):
-    response = entry.get('response')
-    if not response or not isinstance(response, str):
-        continue
-    if response.startswith('SKIP'):
-        raw = response.split(':', 1)[1].strip() if ':' in response else response
-        skipped.append(raw)
-    elif response.strip():
-        included.append({'index': i, 'response': response})
+    resp = entry.get('response')
+    if not isinstance(resp, dict):
+        continue  # parse failure — belongs to neither list
+    if resp.get('user_facing'):
+        line = (resp.get('entry') or '').strip()
+        if line:
+            included.append({'index': i, 'response': line})
+    else:
+        item = entry.get('item') or {}
+        msg = (item.get('commit_message') or '').strip().split('\n')[0]
+        if msg:
+            skipped.append(msg)
 
 result: dict = {'included': included, 'skipped': skipped}
 ```
@@ -688,64 +660,14 @@ more files grouped by the `get-docs-diff` chunking logic. The release
 context file and format LLMs consume the joined output.
 
 - type: llm
+- model: gemini/gemini-2.5-flash
+- prompt: ./prompts/summarize-docs-diff.prompt.md
 
 ```yaml batch
 items: ${get-docs-diff.result}
 parallel: true
 ```
 
-````prompt
-Summarize documentation changes for a release context file.
-
-## What you're given
-
-A batch of raw git diffs of documentation files changed between two
-release tags. You may receive one file or several, depending on diff
-size. Each file section has the filename, commit refs, and raw diff
-lines (lines starting with `+` were added, `-` were removed).
-
-## Raw diffs
-
-${item}
-
-## What to produce
-
-For each file, output an H3 heading with the file path, a commits line,
-and 1-5 bullet points describing what changed conceptually.
-
-## Output format
-
-### path/to/file.mdx
-
-*Commits: abc1234, def5678*
-
-- Changed X to Y
-- Added section about Z
-- Removed deprecated W
-
-### another/file.mdx
-
-*Commits: ghi9012*
-
-- Updated table with new model recommendations
-- Added usage example for batch processing:
-  ```bash
-  pflow my-workflow.pflow.md batch_size=10
-  ```
-
-## Rules
-- Focus on WHAT changed conceptually, not line-by-line diffs
-- Group related added+removed lines into single "Changed X to Y" bullets
-- Skip trivial whitespace or formatting-only changes
-- Keep bullet points concise (one line each)
-- Use commit short hashes only (first 7 chars), not full messages
-- If a file has only trivial changes, write "Minor formatting changes"
-- If code examples were added or changed, include the actual code snippet
-  in a fenced code block so reviewers can see the exact change without
-  opening the file
-- Output ONLY the markdown sections as plain text, no JSON wrapping,
-  no outer code fences, no preamble or explanation
-````
 
 ### join-docs-summary
 
@@ -802,145 +724,14 @@ standardizes terminology. The markdown format includes PR and task
 links; the Mintlify format groups entries into themes without links.
 
 - type: llm
+- model: gemini/gemini-3.5-flash
 
 ```yaml batch
 items:
   - format: markdown
-    prompt: |
-      Refine and format these changelog entries as a markdown section
-      for CHANGELOG.md.
-
-      ## Input
-      Version: ${compute-version.result.next_version}
-      Date: ${compute-version.result.date_iso}
-
-      ## Draft Entries with Context
-      Each entry is a markdown section with the draft line, commit info,
-      PR details with full URL, files changed, and matched task reviews.
-      Use PR links exactly as shown.
-      ${format-draft-entries.result.entries}
-
-      ## Documentation Changes (for parameter accuracy)
-      ${join-docs-summary.result}
-
-      ## Refinement Tasks
-      1. Merge duplicates → combine PR links
-      2. Standardize verbs: Allow→Added, Enable→Added, Update→Changed/Improved
-      3. Sort by: Removed > Changed > Added > Fixed > Improved
-      4. Use docs diff for accurate parameter names
-      5. Use task reviews for accurate feature descriptions
-
-      ## Output Format
-      ## v1.0.0 (2026-01-04)
-
-      - Removed X [#10](https://github.com/owner/repo/pull/10) ([Task 42](.taskmaster/tasks/task_42/task-review.md))
-      - Changed Y [#11](https://github.com/owner/repo/pull/11)
-      - Added Z [#12](https://github.com/owner/repo/pull/12), [#13](https://github.com/owner/repo/pull/13)
-      - Added W ([Task 104](.taskmaster/tasks/task_104/task-review.md))
-      - Fixed V
-      - Improved U [#14](https://github.com/owner/repo/pull/14)
-
-      ## Rules
-      - This is a user-facing changelog — describe what changed for users,
-        not how it was implemented. Skip internal details unless they
-        directly affect usage.
-      - Be specific — name the actual thing that changed, not a vague
-        summary. Never invent details. If an entry is too vague to
-        understand what actually changed, drop it.
-      - Use version and date exactly as provided
-      - Each entry as bullet with `- `
-      - CRITICAL: Use the FULL pr_link URL from context, not just the PR number
-      - Format: [#N](full_url) where full_url is from context.pr_link
-      - If entry has a task link (e.g. Task: [N](...)), include it after PR links
-      - If entry has a task WITHOUT a link (e.g. Task: N), do NOT add a task link
-      - Entries may have: PR + Task link, PR only, Task link only, or neither — all are valid
-      - Combine PR links when merging duplicates
-      - Start with ## - no code fences
-      - Output ONLY the markdown section
+    prompt: ./prompts/render-changelog-markdown.prompt.md
   - format: mintlify
-    prompt: |
-      Generate a Mintlify changelog <Update> component.
-
-      ## Input
-      Version: ${compute-version.result.next_version}
-      Month/Year: ${compute-version.result.date_month_year}
-      Bump Type: ${compute-version.result.bump_type}
-
-      ## Draft Entries
-      Each entry includes commit context and matched task reviews.
-      ${format-draft-entries.result.entries}
-
-      ## Documentation Changes
-      ${join-docs-summary.result}
-
-      ## Examples (match this tone, structure, and component usage)
-      ${get-style-reference.result}
-
-      ## Required Structure
-      <Update label="MONTH YEAR" description="VERSION" tags={[...]}>
-        2-4 themed ## sections, each with a 1-2 sentence intro and
-        **Highlights** bullet list.
-      </Update>
-
-      Tags must be from this set: "New releases", "Improvements",
-      "Bug fixes", "Breaking changes". Pick 1-3 that apply.
-
-      ## Mintlify Components — USE THESE
-      Study the examples above and use these components where appropriate:
-      - `<Accordion title="Breaking changes">` — REQUIRED when any entry
-        involves a removal, rename, or behavior change. List what changed
-        and why, with before/after when helpful.
-      - `<Accordion title="Example">` — for code examples that would break
-        the flow if inline. Keep the main body scannable.
-      - `<Tip>` — one per release, max. Use for the single most important
-        insight a user should know. Not a summary, a specific detail.
-      - `<Note>` — for important behavior details that aren't obvious from
-        the highlights (e.g., "runs automatically, no separate step").
-      - `<CodeGroup>` — for before/after comparisons inside accordions.
-      - Inline code blocks — show a 3-5 line usage example directly in the
-        body for each major feature. Don't just describe it, show it.
-
-      ## Tone
-      - Write like a developer explaining what shipped to another developer.
-        Not a company announcing a product.
-      - Calm, understated, no hype. If a tired engineer would roll their
-        eyes, rewrite it.
-      - Be specific — "added timeout parameter to shell node" beats
-        "improved shell node reliability." Name the actual thing.
-      - Explain the "so what" — not just what changed, but what you can
-        do now that you couldn't before.
-
-      ## STRICT: No Hallucination
-      - ONLY use information explicitly present in the draft entries,
-        commit context, PR descriptions, and task reviews above.
-      - NEVER invent features, capabilities, CLI flags, migration paths,
-        or behaviors not described in the input.
-      - Describe WHAT each feature does. Do not speculate about WHY it
-        was built or what it "enables" in the future.
-      - If a draft entry is too vague to understand what changed, DROP IT.
-        Do not fill in the gaps with plausible-sounding details.
-      - Do not claim things like "the CLI provides guidance on X" or
-        "includes automatic migration" unless the input explicitly says so.
-
-      ## Tasks
-      1. Group entries into 2-4 themes
-      2. Merge duplicates
-      3. Standardize verbs (Allow→Added, Enable→Added)
-      4. No PR links (user-facing changelog)
-      5. Add <Accordion title="Breaking changes"> when entries involve
-         removals, renames, or behavior changes — not just for major bumps
-      6. Add one inline code example per major feature section
-      7. Use at least one `<Tip>` or `<Note>` per release
-      8. Every draft entry must appear in at least one highlight — do
-         not drop entries silently
-      9. A highlight must only appear under a section heading it actually
-         relates to — do not group unrelated features to fill a theme
-
-      ## CRITICAL
-      - Output ONLY the <Update>...</Update> component
-      - First character must be <
-      - Last characters must be </Update>
-      - NO JSON, NO outer code fences, NO explanations
+    prompt: ./prompts/render-changelog-mintlify.prompt.md
 parallel: true
 ```
 
