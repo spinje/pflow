@@ -157,7 +157,7 @@ class WorkflowValidator:
         9. Node-specific static parameter semantics - Per-node-type param checks
            (e.g. claude-code structured-output schema preflight)
         10. Sub-workflow validation - Recursive validation of child workflows
-        11. Cache lint - Warn about input-less shell nodes without cache: false
+        11. Cache lint - Warn about input-less shell nodes without an explicit cache setting
 
         Args:
             workflow_ir: Workflow to validate
@@ -1397,17 +1397,22 @@ class WorkflowValidator:
 
     @staticmethod
     def _warn_inputless_shell_nodes(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
-        """Warn when shell nodes have no template inputs and no cache: false.
+        """Warn when shell nodes have no template inputs and no explicit cache setting.
 
         A shell node with no ${...} variables in its params produces the same
         cache key every run. If it reads external state (git branch, env vars,
         filesystem), cached results silently return stale values.
 
+        The fix is a decision the author must make, so the warning offers both
+        branches: 'cache: false' (re-run every time) for live-state commands,
+        or 'cache: true' (confirm static output) to silence the warning. Any
+        explicit cache setting suppresses it — the author has decided.
+
         Only warns when:
         - Node type is 'shell'
         - No template variables in any param value
         - No batch config (batch nodes get different cache keys per item)
-        - No explicit cache: false already set
+        - No explicit cache setting (true or false) already present
         """
         warnings: list[Diagnostic] = []
         for node in workflow_ir.get("nodes", []):
@@ -1437,12 +1442,11 @@ class WorkflowValidator:
                         severity=Severity.WARNING,
                         source="validator",
                         node_id=node["id"],
-                        message=(
-                            "Shell node has no template inputs — cached results will "
-                            "persist across runs. Consider '- cache: false' if this "
-                            "node reads runtime state (git, env, filesystem)."
-                        ),
-                        suggestions=["Add '- cache: false' if this node reads runtime state (git, env, filesystem)."],
+                        message=("Shell node has no template inputs — its result is cached and reused across runs."),
+                        suggestions=[
+                            "Reads runtime state (git, env, clock, filesystem)? Add '- cache: false'.",
+                            "Output is static / safe to reuse? Add '- cache: true' to confirm and silence this warning.",
+                        ],
                     )
                 )
 

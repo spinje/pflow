@@ -23,7 +23,13 @@ class TestCacheLintWarning:
         assert len(errors) == 0
         assert len(warnings) == 1
         assert warnings[0].node_id == "get-branch"
-        assert "cache: false" in warnings[0].message
+        assert "template inputs" in warnings[0].message
+        # Both resolution branches must be offered so an agent can resolve it
+        # either way (disable for live state, or confirm intentional caching)
+        # instead of being nudged into one direction.
+        suggestions_text = " ".join(warnings[0].suggestions)
+        assert "cache: false" in suggestions_text
+        assert "cache: true" in suggestions_text
         assert (warnings[0].context or {}).get("template") is None
 
     def test_shell_node_with_templates_no_warning(self):
@@ -48,7 +54,7 @@ class TestCacheLintWarning:
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         # upstream should warn (no templates), process should NOT (has template)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 1
         assert cache_warnings[0].node_id == "upstream"
 
@@ -67,7 +73,7 @@ class TestCacheLintWarning:
             ],
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 0
 
     def test_shell_node_with_cache_true_no_warning(self):
@@ -85,7 +91,7 @@ class TestCacheLintWarning:
             ],
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 0
 
     def test_non_shell_node_no_warning(self):
@@ -102,7 +108,7 @@ class TestCacheLintWarning:
             ],
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 0
 
     def test_bash_parameter_expansion_still_warns(self):
@@ -119,7 +125,7 @@ class TestCacheLintWarning:
             ],
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 1
         assert cache_warnings[0].node_id == "bash-node"
 
@@ -137,7 +143,7 @@ class TestCacheLintWarning:
             ],
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 1
 
     def test_escaped_template_still_warns(self):
@@ -154,7 +160,7 @@ class TestCacheLintWarning:
             ],
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 1
 
     def test_batch_shell_node_no_warning(self):
@@ -172,5 +178,5 @@ class TestCacheLintWarning:
             ],
         }
         _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
-        cache_warnings = [w for w in warnings if "cache: false" in w.message]
+        cache_warnings = [w for w in warnings if "template inputs" in w.message]
         assert len(cache_warnings) == 0

@@ -437,7 +437,7 @@ git branch --show-current
 ```
 ```
 
-Validation warns when a shell node has no template inputs and no `cache: false` — a sign its cached results may go stale across runs.
+Validation warns when a shell node has no template inputs and no explicit `cache:` setting — its result gets cached and reused across runs, which silently goes stale if the command reads live state (`git`, `date`, environment, files). Resolve it either way: add `- cache: false` if the command reads runtime state, or `- cache: true` to confirm the output is static and silence the warning.
 
 ## Traces and reports
 
