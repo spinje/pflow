@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.13.0 (2026-05-26)
+
+- Changed underlying LLM integration library to LiteLLM, introducing a robust, pflow-owned adapter, typed exception handling, and a centralized provider registry. Model names now require provider prefixes (e.g., `openai/gpt-4o`). [#356](https://github.com/spinje/pflow/pull/356) ([Task 158](.taskmaster/tasks/task_158/task-review.md))
+- Added provider-level prompt caching via declarative `## Cache` blocks in workflow files, supporting multi-breakpoint prompt caching for Anthropic models and dynamic TTLs for Gemini models. [#378](https://github.com/spinje/pflow/pull/378), [#391](https://github.com/spinje/pflow/pull/391), [#412](https://github.com/spinje/pflow/pull/412) ([Task 159](.taskmaster/tasks/task_159/task-review.md))
+- Added `pflow analyze-cache` CLI command to analyze workflow caching opportunities, estimate token metrics, and project cost savings from traces or parameters. [#378](https://github.com/spinje/pflow/pull/378) ([Task 159](.taskmaster/tasks/task_159/task-review.md))
+- Added cost telemetry, synthetic cache warmup (`prewarm: true` on LLM nodes), and a deterministic offline pricing map for LiteLLM models to improve cost estimation. [#384](https://github.com/spinje/pflow/pull/384), [#415](https://github.com/spinje/pflow/pull/415)
+- Added native SDK structured output via JSON Schema for `claude-code` nodes, integrating soft-failure reporting that marks workflow status as `DEGRADED`. [#399](https://github.com/spinje/pflow/pull/399) ([Task 126](.taskmaster/tasks/task_126/task-review.md))
+- Added `pflow settings llm providers` CLI command for finding and auto-discovering LLM environment variables. [#420](https://github.com/spinje/pflow/pull/420)
+- Fixed prewarm diagnostics to correctly account for declared `prompt_cache` chunks during analysis. [#417](https://github.com/spinje/pflow/pull/417)
+- Fixed `reasoning_effort` mapping for Anthropic Opus 4.7 models and bumped LiteLLM to 1.86.1. [#368](https://github.com/spinje/pflow/pull/368)
+- Fixed `cost_usd` evaluation for LLM models added to LiteLLM after the bundled snapshot. [#423](https://github.com/spinje/pflow/pull/423)
+- Fixed Claude node's output parsing by aligning 'Outputs' parse-hint with the accepted 'source' key, and clarified agent error messages by removing runtime-internal terms. [#427](https://github.com/spinje/pflow/pull/427)
+- Fixed markdown parser to preserve blank lines inside multi-line YAML block scalars. [#387](https://github.com/spinje/pflow/pull/387)
+- Fixed linting warnings for input-less shell-nodes to properly surface and offer both cache resolutions. [#425](https://github.com/spinje/pflow/pull/425)
+- Fixed path resolving for dotted output (`-o`) CLI destinations. [#400](https://github.com/spinje/pflow/pull/400)
+- Improved `pflow analyze-cache` command with advanced cost projection models, additional prompt cache warnings, and robust diagnostic outputs. [#396](https://github.com/spinje/pflow/pull/396), [#405](https://github.com/spinje/pflow/pull/405) ([Task 159](.taskmaster/tasks/task_159/task-review.md))
+- Improved CLI execution UX with walk-to-failure hints and more compact batch-processing summaries. [#400](https://github.com/spinje/pflow/pull/400)
+
 ## v0.12.0 (2026-04-22)
 
 ### Removed

@@ -5,6 +5,145 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="May 2026" description="v0.13.0" tags={["New releases", "Improvements", "Breaking changes"]}>
+  ## Declarative prompt caching and `pflow analyze-cache`
+
+  We introduced provider-level prompt caching as a declarative workflow surface. By defining a top-level `## Cache` section and declaring chunks on your LLM nodes, prompt prefixes are cached directly at the provider level (such as Anthropic and Gemini), dramatically reducing costs and latency for repetitive system instructions and context.
+
+  ```markdown
+  ## Cache
+  - ttl: 5m
+
+  ```cache [brief]
+  The project brief we are working from:
+  ${brief}
+  ```
+
+  ### extract-features
+  - type: llm
+  - prompt_cache: [brief]
+  - prompt: Extract features from ${input.text}
+  ```
+
+  To help discover caching opportunities, the new `pflow analyze-cache` command performs static and trace-driven analysis of your workflow. It estimates cacheable tokens, models per-call cost projections, and provides actionable, headline-led recommendations without executing live model calls.
+
+  ```bash
+  # Analyze cache efficiency and get optimizations from a previous execution trace
+  pflow analyze-cache my-workflow.pflow.md --from-trace
+  ```
+
+  <Tip>
+    Provider minimums apply for prompt caching (e.g., 1024 tokens for Anthropic Claude 4.5 Sonnet, 4096 tokens for Gemini pro models and 2048 for flash models). `pflow analyze-cache` automatically matches your prompt sizes against the target model's specific thresholds to prevent you from writing cache blocks that are too small to activate.
+  </Tip>
+
+  **Highlights**
+  - Added the top-level `## Cache` markdown section to parse declarative, reusable prompt chunks.
+  - Added the `prompt_cache` and `prewarm` properties to LLM nodes to control cache inclusion and gate automatic batch-prefix caching.
+  - Implemented the `pflow analyze-cache` CLI command (and matching MCP tool) with Greenfield, Steady-state, Trace-driven, and Already-optimal analysis modes.
+  - Added a 22-entry warning catalog to flag cache misalignments, prompt shadow duplicates, and missing shared references.
+  - Implemented dynamic cache TTL translation for Gemini models (`cachedContents`) alongside Anthropic native controls.
+  - Added support for multi-breakpoint prompt caching for Anthropic models.
+  - Implemented synthetic cache warmup capabilities and detailed cost telemetry in trace formats.
+  - Fixed prewarm diagnostics to correctly account for declared `prompt_cache` chunks.
+
+  ## Native structured outputs for Claude Code
+
+  We replaced Claude Code's prompt-injected and regex-extracted structured output system with native JSON Schema support using `claude_agent_sdk`'s native structured output capabilities. This ensures guaranteed schema compliance without competing system instructions or fragile string parsing.
+
+  ```markdown
+  ### audit-code
+  - type: claude-code
+  - max_turns: 5
+  - prompt: Audit the security of the root directory.
+
+  ```yaml output_schema
+  type: object
+  properties:
+    vulnerabilities:
+      type: array
+      items:
+        type: string
+  required: [vulnerabilities]
+  ```
+
+  <Note>
+    Claude Code structured output failures are now treated as "soft failures." If the session fails to comply with the schema, the raw text is preserved, a `_schema_error` is set, and the run continues in a `DEGRADED` status rather than raising a hard error that aborts your workflow.
+  </Note>
+
+  **Highlights**
+  - Upgraded the Claude Code node to use `ResultMessage.structured_output` via the native SDK, requiring a minimum of `claude-agent-sdk>=0.2.82`.
+  - Added preflight and static validation to enforce that Claude Code output schemas define a top-level `type: object`.
+  - Added a strict constraint requiring `max_turns >= 2` when an output schema is defined to allow planning and output turns.
+  - Implemented warning rehydration inside the persistent memoization cache, ensuring that cached soft-failures correctly replay as `DEGRADED` rather than passing as successful.
+  - Narrowed exception handling within Claude Code sessions to `ProcessError` to allow actionable SDK remediation messages (like installation and doctor checks) to bubble up.
+  - Aligned the Claude node's output parsing by linking the "Outputs" parse-hint with the accepted `source` key, and stripped runtime-internal vocabulary from agent error messages.
+
+  ## LiteLLM integration and offline pricing
+
+  We rebuilt our LLM execution layer, replacing the existing integration with a pflow-owned adapter backed natively by LiteLLM. This migration unifies over 100 model providers under a single, robust seam with unified exception mapping and cost tracking.
+
+  ```bash
+  # Discover environment variables required for your configured LLM models
+  pflow settings llm providers
+  ```
+
+  **Highlights**
+  - Replaced the `llm` package with a lazy-imported LiteLLM wrapper, improving overall CLI startup performance.
+  - Added a typed exception hierarchy under `LLMCallError` to provide structured discriminators (`UnknownModelError`, `MissingApiKeyError`, `LLMTransientError`) for downstream retry and fallback routing.
+  - Redesigned tracing to use a `shared["__trace_collector__"]` save/restore context, fixing a thread-boundary bug where literal prompt captures were silently omitted.
+  - Added a deterministic offline pricing map for LiteLLM models to ensure accurate cost estimation when pricing metadata is missing from local snapshots.
+  - Added automatic bare model name prefixing (e.g., `gpt-4o` normalized to `openai/gpt-4o`) to ensure correct routing.
+  - Fixed a pricing bug where `cost_usd` was left unpopulated for newer LLM models released after our bundled LiteLLM snapshot.
+  - Upgraded the default LiteLLM engine version and fixed `reasoning_effort` mapping for Anthropic Claude 3 Opus.
+
+  ## CLI usability and parser refinement
+
+  We refined our CLI output, added more helpful diagnostics to failing pipelines, and improved the core Markdown parser to handle complex YAML block structures.
+
+  **Highlights**
+  - Added support for dotted paths inside CLI output destination flags (e.g. `-o data.nested.field`).
+  - Added walk-to-failure hints to the terminal output on workflow failures to assist agents in debugging sequence halts.
+  - Implemented a more compact summary representation for large batch node executions.
+  - Fixed linting for shell nodes without template inputs to offer both available cache resolutions in the warning text.
+  - Fixed the markdown parser to preserve blank lines inside multi-line YAML block scalars, preventing layout corruption of templates and prompts.
+
+  <Accordion title="Breaking changes">
+    ### Claude Code Python-alias schemas removed
+    Legacy Python-alias type names (`str`, `int`, `list`, `dict`) are no longer supported inside Claude Code `output_schema` blocks. All schemas must use standard JSON Schema types and declare a top-level `type: object`.
+
+    <CodeGroup>
+    ```yaml Legacy Schema (Deprecated)
+    risk_level: str
+    issues: list
+    ```
+    ```yaml JSON Schema (Required)
+    type: object
+    properties:
+      risk_level:
+        type: string
+      issues:
+        type: array
+        items:
+          type: string
+    required: [risk_level, issues]
+    ```
+    </CodeGroup>
+
+    ### Claude Code Turn minimums
+    Workflows declaring a Claude Code node with an `output_schema` must set `max_turns` to `2` or greater. Workflows specifying `max_turns: 1` will fail validation.
+
+    ### AdapterResponse shape changes
+    The internal response object from LLM calls no longer carries `error` or `status` fields. Failure states now consistently raise a subclass of `LLMCallError`. Downstream steps catching custom exceptions should catch `LLMCallError` and read structured attributes (`kind`, `reason`).
+
+    ### LiteLLM package pinning and model names
+    - Simon Willison's `llm` CLI and its associated provider plugins are no longer used. Environment variables (like `OPENAI_API_KEY`) are read directly from the shell or via `pflow settings`.
+    - LLM nodes require provider-prefixed model names (e.g. `openai/gpt-4o` instead of `gpt-4o`). Bare names are auto-prefixed based on common naming conventions, but unknown bare names will pass through unchanged.
+
+    ### Caching flag behavior
+    The `--no-cache` CLI flag now only bypasses local pflow memoization reads. It does not disable LLM provider-level prompt caching.
+  </Accordion>
+</Update>
+
 <Update label="April 2026" description="v0.12.0" tags={["New releases", "Improvements", "Breaking changes"]}>
   ## Execution previews and planning
 
