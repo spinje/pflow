@@ -55,6 +55,7 @@ src/pflow/core/prompt_cache_analysis/
 │   ├── __init__.py              # render_json/render_text/summarize public re-exports
 │   ├── json.py                  # JSON projection of CacheAnalysis
 │   ├── text.py                  # text projection and section renderers
+│   ├── cross_workflow_edits.py  # paste-ready cross-workflow cache-block edit text
 │   ├── traces_list.py           # trace-list text/JSON projection
 │   ├── summarize.py             # one-line dry-run nudge Diagnostic
 │   └── views.py                 # blocking/recommended action projections
@@ -69,6 +70,7 @@ src/pflow/core/prompt_cache_analysis/
     ├── summary.py               # summary, confidence, rollups, trace-dependent filtering
     └── discrepancy/
         ├── __init__.py          # narrow discrepancy re-exports
+        ├── CLAUDE.md            # documented direct-test helper surface
         ├── predict.py           # cache-key prediction with lazy runtime imports
         └── diagnose.py          # trace discrepancy diagnostics
 ```
@@ -133,6 +135,12 @@ Rows expose four projection objects:
 - `cache_opportunity`: maximum provable unrealized per-call cache upside.
 
 Only `cache_active` feeds headline cost math.
+
+`PerCallRow.__post_init__` is deliberately small. It only derives
+`cached_now_tokens_estimated` from trace cache-token splits or, for
+trace-backed declared-cache rows, from the trace cacheable-token fallback. It
+must not synthesize projection objects from `cacheable_tokens_estimated`; tests
+that need projection state should construct `CacheProjection` values explicitly.
 
 ## Trace Loading
 
@@ -207,6 +215,8 @@ Rendering modules are read-only projections of `CacheAnalysis`:
 - `rendering/text.py`: human text report sections
 - `rendering/json.py`: JSON shape with `JSON_FORMAT_VERSION`
 - `rendering/views.py`: blocking errors and recommended actions
+- `rendering/cross_workflow_edits.py`: paste-ready body text for
+  cross-workflow cache edit diagnostics
 - `rendering/summarize.py`: dry-run nudge
 - `rendering/traces_list.py`: `--list-traces` output
 
@@ -245,6 +255,7 @@ new ID just to vary wording when an existing ID describes the same condition.
 | Change model/system fragmentation findings | `stages/fragmentation.py` |
 | Change incomplete `prompt_cache:` declaration detection | `stages/partial_declarations.py` |
 | Change analytical cross-workflow findings | `stages/cross_workflow.py` |
+| Change cross-workflow recommendation edit text | `rendering/cross_workflow_edits.py` |
 | Change sub-workflow walking semantics | root `sub_workflow_walker.py` |
 | Change trace autoload, trace listing, trace aggregation, or trace execution indexing | `trace_loading.py` |
 | Change discrepancy prediction | `stages/discrepancy/predict.py` |

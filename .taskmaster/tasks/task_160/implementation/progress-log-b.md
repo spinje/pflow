@@ -310,3 +310,36 @@ Trust boundary for next phase:
 - Verified: production cross-workflow projection objects still render in the Task 159 live lyrics baseline; the legacy scalar no longer carries cross-workflow token estimates; cached-now trace derivations still pass focused and full tests.
 - Assumed correct: retaining the inline scalar clamp is the safest public-contract preservation until a later phase intentionally removes or deprecates `cacheable_tokens_estimated`.
 - Unable to verify in Phase 7: whether the plan's approximate `types.py ~810 LOC` target is still meaningful after prior committed phases; current `types.py` is `933` LOC, but the requested bridge deletion is complete and structurally verified.
+
+## 2026-05-22 - Phase 8 Documentation Updates
+
+Phase completed: Phase 8 only.
+
+Implemented:
+- Created `src/pflow/core/prompt_cache_analysis/stages/discrepancy/CLAUDE.md` documenting the discrepancy stage files and the stable direct-test helper surface.
+- Updated `src/pflow/core/prompt_cache_analysis/CLAUDE.md` with `rendering/cross_workflow_edits.py`, the discrepancy-stage CLAUDE.md, the current `PerCallRow.__post_init__` contract, and the cross-workflow edit-text ownership row.
+- Updated `src/pflow/runtime/CLAUDE.md` to remove the stale `prompt_cache_analysis.analyze._detect_per_node_model_drift` ownership reference; model-drift ownership now correctly points to `trace_loading`.
+
+Deviations and rationale:
+- `src/pflow/core/CLAUDE.md` was inspected but not changed. It only contains a pointer to `prompt_cache_analysis/CLAUDE.md`; duplicating the package's internal structure there would add stale-reference risk without helping future agents.
+- Included the `runtime/CLAUDE.md` stale-reference fix although it was not named in the Phase 8 checklist. The CLAUDE update skill explicitly prioritizes removing verified stale guidance, and the code shows `_detect_per_node_model_drift` now lives in `trace_loading.py`.
+- No code-implementer subagents were used. The phase touched three documentation files with coupled wording and no disjoint mechanical edit slice; parallel writers would increase merge/review overhead.
+- A temporary `uv run pflow` shim produced `79 passed, 8 drifted` in the Task 159 harness because it changed the expected sandbox behavior of `04-warning-catalog/12-cache.discrepancy`. The canonical harness run without the shim is the valid oracle for this branch and returned the expected drift set.
+
+Verification:
+- Stale-reference checks:
+  - `rg '\bcache_analysis\b' --glob 'CLAUDE.md' .` returns only `tests/fixtures/cache_analysis`, a real fixture path.
+  - `rg 'two cross_workflow\.py|two `cross_workflow\.py|Two cross_workflow\.py|There are two' --glob '*.md' .` returns no matches.
+  - `rg '_template_resolver' --glob 'CLAUDE.md' --glob '*.md' .taskmaster src tests architecture docs` returns only historical task docs and template-resolver test filenames, not current CLAUDE guidance.
+  - `rg "analyze\._detect_per_node_model_drift|prompt_cache_analysis\.analyze\._detect" --glob 'CLAUDE.md' .` returns no matches.
+- Task 159 canonical harness: `80 passed, 7 drifted, 0 harness errors`; drifted case names match Phase 0.
+- Sandbox-safe non-e2e pytest: `7103 passed, 1 skipped`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 224 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/pre-commit run -a`: passed after escalation for sandboxed hidden-file access.
+- `git diff --check`: passed.
+
+Trust boundary for next phase:
+- Verified: current CLAUDE guidance reflects the Phase 1-7 package layout and no current CLAUDE file points agents to the removed duplicate resolver or old model-drift owner.
+- Assumed correct: documenting only the four named discrepancy helpers as stable test API is the right boundary; other directly tested helpers remain acknowledged but not promoted.
+- Unable to verify in Phase 8: whether historical `.taskmaster` and release-note mentions should be rewritten. They were intentionally left untouched because they describe past plans/releases rather than active operating guidance.
