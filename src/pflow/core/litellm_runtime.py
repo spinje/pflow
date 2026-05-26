@@ -73,8 +73,18 @@ def configure_litellm_defaults() -> None:
     Sets ``LITELLM_LOCAL_MODEL_COST_MAP=True`` via ``os.environ.setdefault``
     so a user-provided value is respected. Idempotent — safe to call multiple
     times and from multiple lazy-import sites.
+
+    Also raises the ``LiteLLM`` logger to CRITICAL *before* import. LiteLLM
+    1.86+ emits WARNING-level botocore/bedrock/sagemaker stream-preload
+    messages at ``import litellm`` time (providers pflow doesn't use); setting
+    the level here — at the single seam, before the module's handlers fire —
+    suppresses that import-time stderr noise. ``llm_client.complete()``
+    re-affirms CRITICAL after import for the same policy reason (LiteLLM's
+    typed exceptions are pflow's single error surface, so redundant
+    ERROR/WARNING logs are just noise).
     """
     os.environ.setdefault(_LOCAL_MODEL_COST_MAP_ENV, "True")
+    logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
 
 
 def import_litellm() -> Any:

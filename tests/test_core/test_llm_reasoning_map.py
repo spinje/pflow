@@ -44,6 +44,22 @@ class TestDetectCapabilitiesAnthropic:
         caps = _detect_capabilities("anthropic/claude-opus-4-5-20251101")
         assert "thinking_effort" in caps
 
+    def test_opus_47_uses_adaptive_reasoning_effort(self):
+        # Opus 4.7 must NOT get the legacy thinking/thinking_budget caps — that
+        # path emits thinking.type.enabled, which Opus 4.7 rejects (GH #368).
+        # It must route to the adaptive path that delegates to LiteLLM's
+        # standardized reasoning_effort.
+        caps = _detect_capabilities("anthropic/claude-opus-4-7")
+        assert caps == {"reasoning_effort_adaptive"}
+        assert "thinking_budget" not in caps
+
+    def test_opus_47_dotted_alias(self):
+        assert _detect_capabilities("anthropic/claude-opus-4.7") == {"reasoning_effort_adaptive"}
+
+    def test_opus_47_dated_variant(self):
+        caps = _detect_capabilities("anthropic/claude-opus-4-7-20260115")
+        assert caps == {"reasoning_effort_adaptive"}
+
     def test_sonnet_4_5_no_thinking_effort(self):
         # Sonnet has thinking/thinking_budget but NOT thinking_effort
         caps = _detect_capabilities("anthropic/claude-sonnet-4-5")
@@ -261,6 +277,48 @@ class TestOpus45ThinkingEffortPrecedence:
     def test_medium(self):
         result = map_reasoning_options("anthropic/claude-opus-4-5", "medium", None, None)
         assert result == {"thinking_effort": "medium"}
+
+
+class TestOpus47AdaptiveReasoning:
+    """Opus 4.7 emits LiteLLM's standardized reasoning_effort (GH #368).
+
+    Unlike every other Anthropic model it must NOT produce the
+    thinking/thinking_budget shape — Opus 4.7 rejects thinking.type.enabled and
+    requires the adaptive dialect, which LiteLLM builds from reasoning_effort.
+    """
+
+    MODEL = "anthropic/claude-opus-4-7"
+
+    def test_low(self):
+        assert map_reasoning_options(self.MODEL, "low", None, None) == {"reasoning_effort": "low"}
+
+    def test_medium(self):
+        assert map_reasoning_options(self.MODEL, "medium", None, None) == {"reasoning_effort": "medium"}
+
+    def test_high(self):
+        result = map_reasoning_options(self.MODEL, "high", None, None)
+        assert result == {"reasoning_effort": "high"}
+        # Guard against the rejected legacy shape leaking back in.
+        assert "thinking_budget" not in result
+        assert "thinking" not in result
+
+    def test_xhigh_collapses_to_high(self):
+        # Anthropic's effort vocabulary is low/medium/high.
+        assert map_reasoning_options(self.MODEL, "xhigh", None, None) == {"reasoning_effort": "high"}
+
+    def test_minimal_collapses_to_low(self):
+        assert map_reasoning_options(self.MODEL, "minimal", None, None) == {"reasoning_effort": "low"}
+
+    def test_none_omits_param(self):
+        # reasoning_effort: none -> no param (Opus 4.7 thinks adaptively by
+        # default; omitting is the control case GH #368 confirmed is accepted).
+        assert map_reasoning_options(self.MODEL, "none", None, None) == {}
+
+    def test_max_tokens_is_ignored(self):
+        # Adaptive thinking has no explicit token budget. Rather than emit the
+        # rejected budget shape, we drop it and let Opus 4.7 use its default
+        # adaptive thinking (documented in the module docstring).
+        assert map_reasoning_options(self.MODEL, None, 8000) == {}
 
 
 class TestEffortOpenAI:

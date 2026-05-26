@@ -16,6 +16,19 @@ CRITICAL: Anthropic Opus 4.5 supports `thinking_effort`, `thinking`, AND
 `thinking_budget`. `thinking_effort` MUST be checked first — getting this
 wrong silently degrades Opus 4.5 reasoning. This precedence is preserved
 from the previous `nodes/llm/llm.py::_map_effort` implementation.
+
+Anthropic Opus 4.7 is the exception to the "emit legacy shape, adapter
+translates" rule. It uses *adaptive* thinking and REJECTS the
+``thinking.type.enabled`` + ``budget_tokens`` dict every other Anthropic
+model accepts (it requires ``thinking.type.adaptive`` + ``output_config.effort``
+— see GH #368). For Opus 4.7 this map emits LiteLLM's standardized
+``{"reasoning_effort": <level>}`` and lets LiteLLM (>=1.83) build the native
+adaptive shape, because that dialect is still evolving and is safer owned by
+LiteLLM than reproduced here. Consequences: ``reasoning_effort: none`` omits
+the param (Opus 4.7 thinks adaptively by default), and ``reasoning_max_tokens``
+is intentionally ignored (adaptive thinking has no explicit token budget — the
+model falls back to its default adaptive thinking rather than the rejected
+budget shape).
 """
 
 from __future__ import annotations
@@ -57,6 +70,19 @@ def _detect_capabilities(model: str) -> set[str]:
     # thinking and thinking_budget for direct-budget callers.
     if provider is not None and provider.name == "anthropic":
         provider_model = model_name_without_provider(model, provider)
+
+        # Anthropic Opus 4.7 — adaptive thinking. It REJECTS the legacy
+        # thinking.type.enabled + budget_tokens shape every other Anthropic
+        # model accepts, requiring thinking.type.adaptive + output_config.effort
+        # instead (see GH #368). We delegate that shaping to LiteLLM's
+        # standardized ``reasoning_effort`` param (LiteLLM >=1.83 translates it
+        # to the native adaptive shape) rather than emitting the native dict
+        # here — the adaptive dialect (especially its disable form) is still
+        # evolving, so owning the translation in LiteLLM is the safer seam.
+        # Checked before the catch-all so it never falls into the budget path.
+        if "claude-opus-4-7" in provider_model or "claude-opus-4.7" in provider_model:
+            return {"reasoning_effort_adaptive"}
+
         if "claude-opus-4-5" in provider_model or "claude-opus-4.5" in provider_model:
             return {"thinking_effort", "thinking", "thinking_budget"}
 
@@ -123,6 +149,14 @@ def _map_effort(option_fields: set[str], effort: str, max_tokens: int | None) ->
     Provider detection order matters — Anthropic Opus 4.5 has thinking_effort,
     thinking, AND thinking_budget, so thinking_effort must be checked first.
     """
+    # Anthropic Opus 4.7 — adaptive thinking via LiteLLM's standardized
+    # reasoning_effort (LiteLLM builds the native thinking.type.adaptive +
+    # output_config.effort shape). Anthropic's effort vocabulary is
+    # low/medium/high, so collapse pflow's extra buckets (xhigh→high,
+    # minimal→low) the same way the Opus 4.5 thinking_effort path does.
+    if "reasoning_effort_adaptive" in option_fields:
+        mapped = {"xhigh": "high", "minimal": "low"}.get(effort, effort)
+        return {"reasoning_effort": mapped}
     # Anthropic Opus 4.5 — thinking_effort natively
     if "thinking_effort" in option_fields:
         mapped = {"xhigh": "high", "minimal": "low"}.get(effort, effort)
