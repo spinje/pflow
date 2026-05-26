@@ -2573,6 +2573,42 @@ echo step {i}
         assert "### input-name" in err.suggestion
         assert "- type: string" in err.suggestion
 
+    def test_outputs_orphan_error_hint_uses_source_not_value(self) -> None:
+        """Outputs orphan hint must use `- source:` (the only accepted key), not `- value:`.
+
+        Regression for GH #427: the parser only reads `source` (`_build_output_dict`),
+        and the schema layer corrects `value` -> `source`. The hint previously told
+        agents to use `value`, contradicting the schema and forcing a rewrite cycle.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+
+            ## Outputs
+
+            result:
+              value: ${hello.output}
+        """)
+        with pytest.raises(MarkdownParseError) as exc_info:
+            parse_markdown(content)
+        err = exc_info.value
+        assert err.suggestion is not None
+        assert "- source: ${step-name.output}" in err.suggestion
+        assert "- value:" not in err.suggestion
+
 
 # ===========================================================================
 # 16. Source line tracking for runtime error references

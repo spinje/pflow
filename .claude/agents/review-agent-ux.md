@@ -229,6 +229,7 @@ Flag any of the following appearing in user-visible output (errors, warnings, su
 - **Type-system shorthand** — `S1 vocabulary`, `PYTHON_ALIASES_AT_S1`, `TypeSpec.parse`, `IR layer`, `compiler_special_types`. Internal taxonomy; user messages should use plain language ("workflow IR", "type name", "validation step").
 - **Module-path leakage in prose** — `runtime/engine/batch_executor.py:_execute_parallel` in a prose error. Module paths are fine in stack-trace-shaped output where the agent expects them; never in actionable suggestions.
 - **Class-name dumps in messages** — `WorkflowExecutor`, `MemoizationCache`, `NamespacedSharedStore`. The agent doesn't need to know which class produced the message; they need to know what to do.
+- **Runtime execution model exposed** — the shared store (`shared[...]`, "shared store"), the `params` dict as a concept, the `prep`/`exec`/`post` lifecycle. Agents only author `.pflow.md`, so "set `shared['prompt']`" is unactionable; point at the authoring surface instead (`- prompt: ${node.output}`). See `src/pflow/core/CLAUDE.md` → "Agent-facing messages speak the authoring surface".
 - **Acronyms without expansion** — `IR`, `DAG`, `TTL`, `WAL` introduced for the first time in a user-facing message without context.
 
 Test for leakage by reading the message as a fresh agent: would a reader who has never opened pflow source understand what each token means and how to act on it? If a token requires a `grep` to interpret, it's a leak.

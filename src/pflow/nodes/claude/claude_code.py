@@ -214,7 +214,11 @@ class ClaudeCodeNode(Node):
     def _validate_prompt(self, prompt: Any) -> str:
         """Validate prompt parameter."""
         if not prompt:
-            raise ValueError("No prompt provided. Please specify a prompt in shared['prompt'] or params.")
+            raise ValueError(
+                "Claude Code node requires a 'prompt' parameter. "
+                "Use template syntax like '- prompt: ${previous_node.output}' "
+                "to wire data from other nodes."
+            )
         if not isinstance(prompt, str):
             raise TypeError(f"Prompt must be a string, got {type(prompt).__name__}")
         if len(prompt) > 10000:
