@@ -361,10 +361,10 @@ def test_inputs_with_non_template_values_still_yield_edge() -> None:
     resolver = _StubResolver({"./child.pflow.md": (child_ir, Path("/abs/c.pflow.md"))})
     result = walk_cross_workflow(root_ir, base_path=Path("/abs"), resolve_child=resolver)
     edges = result.edges
-    # Walker may or may not emit an edge for literals; the contract is "no crash".
-    # If emitted, parent_value_expr is the literal value; rename check uses tail logic.
-    if edges:
-        assert edges[0].child_input_name == "x"
+    assert len(edges) == 1
+    assert edges[0].child_input_name == "x"
+    assert edges[0].parent_value_expr is None
+    assert edges[0].parent_input_value == "literal value"
 
 
 def test_walker_records_template_items_batches_as_typed_entries() -> None:

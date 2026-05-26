@@ -6,8 +6,8 @@ from typing import Any
 
 from pflow.core.prompt_cache_analysis.types import (
     CacheProjection,
-    CacheProjectionComponent,
     PerCallRow,
+    _projection_component,
     aggregate_projection,
     not_applicable_projection,
 )
@@ -28,15 +28,11 @@ def make_cache_projection(
     affects_cost_projection: bool = False,
     diagnostic_ids: tuple[str, ...] = (),
 ) -> CacheProjection:
-    """Build a projection object explicitly instead of relying on row synthesis."""
-    component = CacheProjectionComponent(
-        tokens_estimated=tokens_estimated,
+    """Build a projection object with the same cap/ratio policy as production."""
+    component = _projection_component(
+        tokens=tokens_estimated,
+        input_tokens=input_tokens_estimated,
         data_source=data_source,
-        ratio_pct=(
-            round(tokens_estimated / input_tokens_estimated * 100)
-            if tokens_estimated is not None and input_tokens_estimated
-            else None
-        ),
         action=action,
         actionability=actionability,
         confidence=confidence,

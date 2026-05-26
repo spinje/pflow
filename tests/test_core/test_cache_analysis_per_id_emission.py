@@ -1374,6 +1374,82 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_memo(
     assert diag.context["savings_usd"] > 0.0
 
 
+def test_sub_workflow_projection_node_ref_does_not_resolve_from_root_parameter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Node-output refs must not fall back to root parameters with the same name.
+
+    The parent passes ``${creative.direction}`` to a child input, where
+    ``creative`` is a parent node id. Root analysis parameters may also contain
+    a ``creative`` key, but that parameter is not declared as a parent workflow
+    input, so cross-workflow projection must ignore it and use the parent node's
+    memo/trace output.
+    """
+    from pflow.runtime.cache import MemoizationCache
+
+    importlib.import_module("pflow.core.prompt_cache_analysis.analyze")
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
+
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.sub_workflow_walker")
+    parent_ir = {
+        "inputs": {"topic": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "child-call",
+                "type": "workflow",
+                "params": {"workflow": "./child.pflow.md", "inputs": {"concept": "${creative.direction}"}},
+            },
+        ],
+    }
+    child_ir = {
+        "nodes": [
+            {
+                "id": "draft",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Draft ${concept}"},
+            },
+            {
+                "id": "review",
+                "type": "llm",
+                "model": "gemini/gemini-2.5-flash",
+                "params": {"prompt": "Review ${concept}"},
+            },
+        ],
+    }
+    monkeypatch.setattr(
+        cross_module,
+        "resolve_sub_workflow",
+        lambda _params, _base_path: SubWorkflowResult(child_ir, None, ()),
+    )
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    cache.put(
+        cache_key="creative-key",
+        node_id="creative",
+        workflow_path="parent.pflow.md",
+        action="default",
+        output={"direction": "memo sourced value " * 200},
+    )
+
+    result = analyze(
+        parent_ir,
+        workflow_path="parent.pflow.md",
+        parameters={"creative": {"direction": "root parameter value"}},
+        auto_load_trace=False,
+        memo_cache=cache,
+    )
+
+    diag = next(d for d in result.warnings if d.id == "cache.sub-workflow-cache-undeclared")
+    assert diag.context is not None
+    assert diag.context["savings_usd"] is not None
+    # The colliding root parameter is only 3 words. The memo value is 600
+    # words, multiplied across two child consumers; this locks the resolver to
+    # parent node evidence instead of root-parameter fallback.
+    assert diag.context["savings_usd"] > 1000.0
+
+
 def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

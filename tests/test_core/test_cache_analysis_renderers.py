@@ -437,6 +437,28 @@ class TestMakeAnalysisShapeParity:
         assert helper.cache_active.data_source == production.cache_active.data_source
         assert helper.cache_ready.data_source == production.cache_ready.data_source
         assert helper.cache_opportunity.data_source == production.cache_opportunity.data_source
+        assert helper.cache_ready.tokens_estimated == production.cache_ready.tokens_estimated
+        assert helper.cache_ready.ratio_pct == production.cache_ready.ratio_pct
+        assert helper.cache_ready.components == production.cache_ready.components
+        assert helper.cache_opportunity.tokens_estimated == production.cache_opportunity.tokens_estimated
+        assert helper.cache_opportunity.ratio_pct == production.cache_opportunity.ratio_pct
+        assert helper.cache_opportunity.components == production.cache_opportunity.components
+
+    def test_make_cache_projection_applies_production_cap_and_ratio_policy(self) -> None:
+        projection = make_cache_projection(
+            tokens_estimated=150,
+            input_tokens_estimated=100,
+            data_source="candidate_chunks",
+            purpose="opportunity",
+            action="declare_prompt_cache",
+        )
+
+        assert projection.tokens_estimated == 100
+        assert projection.ratio_pct == 100
+        assert len(projection.components) == 1
+        component = projection.components[0]
+        assert component.tokens_estimated == 100
+        assert component.ratio_pct == 100
 
     def test_documented_defaults_get_overwritten_by_production(self, tmp_path: Path) -> None:
         from pflow.core.prompt_cache_analysis.analyze import analyze
@@ -5695,6 +5717,9 @@ def test_render_json_includes_cache_creation_and_read_tokens() -> None:
 
     assert row_dict["cache_creation_input_tokens"] == 1500
     assert row_dict["cache_read_input_tokens"] == 8062
+    assert "cacheable_tokens_estimated" not in row_dict
+    assert "cacheable_data_source" not in row_dict
+    assert "cache_ratio_pct" not in row_dict
 
     # Pin key adjacency so future dict refactors don't silently scatter the
     # cache-related fields. JSON 5.0 places raw trace splits before projections.
@@ -6322,7 +6347,7 @@ def test_renderer_never_emits_cd_commands() -> None:
     cache_analysis_dir = Path(__file__).resolve().parents[2] / "src" / "pflow" / "core" / "prompt_cache_analysis"
     forbidden = re.compile(r'["\']\s{0,8}cd\s+[^"\']*["\']')
     offenders: list[str] = []
-    for source_file in sorted(cache_analysis_dir.glob("*.py")):
+    for source_file in sorted(cache_analysis_dir.rglob("*.py")):
         text = source_file.read_text()
         # Strip triple-quoted docstrings/comments so historical references
         # explaining WHY we don't emit cd don't trip the check.
@@ -6331,7 +6356,7 @@ def test_renderer_never_emits_cd_commands() -> None:
         for line_no, line in enumerate(stripped.splitlines(), 1):
             code, _, _ = line.partition("#")
             if forbidden.search(code):
-                offenders.append(f"{source_file.name}:{line_no}: {line.strip()}")
+                offenders.append(f"{source_file.relative_to(cache_analysis_dir)}:{line_no}: {line.strip()}")
     assert not offenders, (
         "Renderer emits ``cd`` commands; agents cannot track cwd state across calls. "
         "Use ``_display_path_from_cwd`` for cwd-relative paths instead:\n  " + "\n  ".join(offenders)

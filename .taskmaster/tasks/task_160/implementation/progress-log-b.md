@@ -343,3 +343,62 @@ Trust boundary for next phase:
 - Verified: current CLAUDE guidance reflects the Phase 1-7 package layout and no current CLAUDE file points agents to the removed duplicate resolver or old model-drift owner.
 - Assumed correct: documenting only the four named discrepancy helpers as stable test API is the right boundary; other directly tested helpers remain acknowledged but not promoted.
 - Unable to verify in Phase 8: whether historical `.taskmaster` and release-note mentions should be rewritten. They were intentionally left untouched because they describe past plans/releases rather than active operating guidance.
+
+## 2026-05-26 - Phase 9 Final Verification and Review Fixes
+
+Phase completed: Phase 9 only.
+
+Implemented after adversarial verification:
+- Fixed `AnalysisContext.resolve_ref_value_for_projection_in_workflow()` to pass `cw_result.irs_by_workflow` into the workflow-scoped resolver. Without this, cross-workflow projection could resolve a parent node-output ref such as `${creative.direction}` from a root analysis parameter named `creative`.
+- Added a regression test proving parent node-output refs ignore colliding root parameters and use workflow-scoped memo/trace evidence.
+- Made `tests/shared/cache_analysis_fixtures.make_cache_projection()` use the same `_projection_component()` cap/ratio semantics as production.
+- Strengthened fidelity tests: projection parity now compares tokens/ratio/components, helper capping has fixed expected assertions, renderer no-`cd` scanning covers nested renderer modules, literal sub-workflow inputs assert the emitted edge shape, dry-run JSON asserts `cache.opportunities-available`, and JSON rows assert removed legacy fields stay absent.
+- Added manual verification workflows under `scratchpads/task-160-phase9/` for local execution, nested workflows, static cache analysis, and cross-workflow cache analysis.
+
+Review findings handled:
+- `review-silent-failures` and `review-feature-interactions` independently found the projection resolver bug; fixed in production and covered by regression.
+- `review-impact-completeness` found the projection test helper could emit impossible shapes; fixed by reusing production projection construction.
+- `review-test-fidelity` found several weak tests; fixed all critical/warning items that were local and concrete. The suggestion to add a separate CLI fixture asserting `cross_workflow_projection` per-call rendering was not added in this phase because existing internal tests already cover the trace-backed row projection path, manual CLI verification covered cross-workflow advisory output, and adding a new trace-backed CLI fixture would expand beyond the confirmed Phase 9 defects.
+- `review-validation-consistency`, `review-agent-ux`, and `review-concurrency-safety` reported no actionable findings.
+
+Manual pflow CLI verification:
+- Read `pflow --help`, `pflow guide core`, and relevant guide topics: `prompt-caching`, `sub-workflows`, `batch`, `shell`, `code`, `file`, and `branching`.
+- `basic-local.pflow.md --validate-only`: passed.
+- `parent-nested.pflow.md --validate-only`: passed.
+- Ran `basic-local.pflow.md` with `--output-format json`; output result was `{"upper": "PHASE9", "length": 6}` and `scratchpads/task-160-phase9/basic-output.txt` contained `PHASE9`.
+- Ran `parent-nested.pflow.md` with `--output-format json`; output result was `Title: PHASE9\nBody: REVIEW`.
+- `analyze-cache prompt-cache-static.pflow.md --no-trace-autoload --format=json`: emitted JSON v5 with one `cache.shared-context-undeclared-conditional` advisory and two per-call rows.
+- `analyze-cache cache-parent.pflow.md --no-trace-autoload --format=json`: emitted `cache.sub-workflow-cache-undeclared` with child edit target and cross-workflow notes.
+- `prompt-cache-static.pflow.md --dry-run --output-format json`: emitted `cache.opportunities-available`.
+- `analyze-cache cache-parent.pflow.md --list-traces`: correctly reported no traces found and how to create one.
+- `pflow guide scratchpads/task-160-phase9/cache-parent.pflow.md`: auto-detected LLM and sub-workflow guidance.
+
+Verification:
+- Targeted regressions and fidelity tests passed:
+  - `tests/test_core/test_cache_analysis_per_id_emission.py -k 'projection_node_ref or savings_populated_from_memo or savings_populated_from_trace'`: `3 passed`.
+  - Renderer/helper fidelity targets: passed.
+  - Literal-input walker target: passed.
+  - Dry-run cache-nudge CLI target: passed.
+- Sandbox-safe non-e2e pytest after all fixes: `7106 passed, 1 skipped`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/mypy`: passed, `Success: no issues found in 224 source files`.
+- `HOME=/private/tmp/pflow-test-home .venv/bin/deptry src`: passed, no dependency issues.
+- `uv lock --locked`: passed after escalation for uv cache access.
+- `.venv/bin/pre-commit run -a`: passed after escalation using the normal user home. The earlier sandbox-HOME pre-commit attempt failed before running hooks because the temporary pre-commit environment had no executable `pip`; this was an invocation-environment issue, not a code finding.
+- `git diff --check`: passed.
+- Task 159 raw harness remains unusable in this sandbox because Homebrew `uv` panics inside the command scripts (`0 passed, 87 drifted` observed before shim). A temporary shim that redirects `uv run pflow` to `.venv/bin/pflow` produced `79 passed, 8 drifted, 0 harness errors`; the drift set matches Phase 8's shim artifact plus documented baseline drifts.
+- Structural checks:
+  - `find src/pflow -name 'cross_workflow.py'`: only `src/pflow/core/prompt_cache_analysis/stages/cross_workflow.py`.
+  - Removed duplicate helper names remain absent: `_template_resolver`, `_resolve_value_in_workflow_`, `_trace_node_output_for`.
+  - Public package import stays cheap: importing `pflow.core.prompt_cache_analysis` leaves `litellm` absent from `sys.modules`.
+  - Public API imports from `pflow.core.prompt_cache_analysis` and `sub_workflow_walker.walk_cross_workflow` pass; old `pflow.core.prompt_cache_analysis.cross_workflow` import fails as expected.
+
+Deviations and residual gaps:
+- I fixed production and test defects found during Phase 9 instead of stopping at reporting them. Rationale: they were concrete, local, and directly contradicted the refactor's integration contract.
+- I did not reduce `analyze.py` below the original `<=350` target; it is still `539` LOC. Phase 6 already documented why `_run_full_validation` and neighboring orchestration remained there, and reducing it now would require a new structural extraction rather than a verification fix.
+- I did not force the private-import count below the plan's `<=60` target; it is `63`. The remaining imports are direct tests of stable helper surfaces or historical private contracts. Renaming or rewrapping them just to satisfy the count would hide the trust boundary rather than simplify final code.
+- I used direct `.venv/bin/python` / `.venv/bin/pflow` commands per the `pflow-sandbox-testing` guidance because `uv run` and `make test` are not reliable evidence in this sandbox.
+
+Trust boundary:
+- Verified: the confirmed cross-workflow projection bug is fixed on the production resolver path; manual pflow workflows exercise local execution, nested execution, dry-run cache nudges, static cache analysis, and cross-workflow cache analysis through the CLI.
+- Assumed correct: Phase 9 should not start a new structural LOC/private-import cleanup without human review, because those residual gaps were known from prior phases and are not isolated verification defects.
+- Unable to verify: canonical Task 159 harness without a shim in this sandbox, because the harness command path depends on Homebrew `uv` behavior that panics before pflow executes.

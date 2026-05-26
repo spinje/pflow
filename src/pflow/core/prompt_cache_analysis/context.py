@@ -300,7 +300,14 @@ class AnalysisContext:
         event wins, mirroring trace recovery semantics elsewhere in the
         analyzer.
         """
-        value = self.resolve_ref_value_in_workflow(ref, workflow_path=workflow_path)
+        irs_by_workflow = getattr(cw_result, "irs_by_workflow", None)
+        if not isinstance(irs_by_workflow, Mapping):
+            irs_by_workflow = None
+        value = self.resolve_ref_value_in_workflow(
+            ref,
+            workflow_path=workflow_path,
+            irs_by_workflow=irs_by_workflow,
+        )
         if value is not None:
             return value
 
