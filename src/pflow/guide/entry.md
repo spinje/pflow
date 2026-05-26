@@ -35,6 +35,8 @@ Guide Topics:
 
 Load tailored content: `pflow guide <topic> <topic>` (prefer combining nodes and features in one command: `pflow guide core http llm batch`)
 
+Topics are already condensed to the minimum — read each in full. Truncating backfires: you miss format rules, guess wrong, and spend more tokens rewriting than you saved.
+
 Nodes:
   http             JSON REST APIs
   llm              LLM inference (summarize, interpret, decide)
