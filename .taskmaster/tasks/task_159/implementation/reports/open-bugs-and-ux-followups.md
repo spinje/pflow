@@ -42,11 +42,16 @@ Actively-tracked related issues (left open after this PR):
 Highest-value open items, ranked by agent impact:
 
 1. Cross-consumer prompt-file index (item 12) — biggest new-coverage win.
-2. Heterogeneous-model fragmentation actionability (item 4) — biggest
+2. Cross-workflow repeated root-value discovery (item 12a) — biggest
+   missed real-workflow savings opportunity found after the follow-ups-2
+   fixes.
+3. Per-item `prompt_cache` for batch items (item 12b) — removes a
+   real split-node workaround and recovers cleaner parallel workflow shape.
+4. Heterogeneous-model fragmentation actionability (item 4) — biggest
    accuracy win for batch-with-mixed-models workflows.
-3. Provider TTL expiry / static TTL risk detection (item 1) — last big
+5. Provider TTL expiry / static TTL risk detection (item 1) — last big
    correctness gap in `--from-trace` output.
-4. Dynamic-before-static late-tail scanning (item 2) — partial fix
+6. Dynamic-before-static late-tail scanning (item 2) — partial fix
    shipped in Cache-ready-opportunity Phase 4; this item is the
    remaining late-tail discovery work.
 
@@ -588,6 +593,117 @@ semantic/context-contract bug, not a template-variable bug — the fix
 needs the cross-consumer prompt-file index described above to detect
 which workflows consume each prompt file and compare their declared
 `prompt_cache` against the prompt's prose assumptions.
+
+### 12a. Cross-workflow repeated root-value discovery
+
+The analyzer can still miss large repeated values when each individual
+child workflow sees only one local use. This is distinct from the
+prompt-file index above: the repeated content is visible only by following
+root dataflow across multiple child workflows in sequence.
+
+Real trigger from the lyrics workflow:
+
+- `concept-chooser/generate-full-concepts` consumed the complete source
+  analysis brief.
+- `enforce-diversity/assign-diversity` consumed the same source analyses
+  shortly afterward.
+- Each child workflow looked locally reasonable: `concept-chooser` had one
+  full-analysis call, and `enforce-diversity` had one huge call.
+- Root/static analysis did not recommend the cross-workflow reuse because
+  the repeated value was split across child workflow boundaries.
+
+Why it matters: this was the largest late optimization found manually after
+the analyzer-driven pass. After adding matching declared chunks to both
+children, a targeted wrapper measured:
+
+- `generate-full-concepts`: `284,865` input tokens, `284,480` cached.
+- `assign-diversity`: `287,030` input tokens, `284,480` cached.
+- Cost dropped from `$0.1183` to `$0.0156`.
+- Runtime dropped from `150.433s` to `37.469s`.
+
+Desired fix:
+
+- Add a root-value lineage pass that detects large values passed into two
+  or more child LLM workflows in sequence, even when each child has only one
+  local consumer.
+- Report candidate reuse keyed by rendered/root value lineage, not just
+  local child workflow prompt structure.
+- When direct proof requires trace data, emit a static warning with a
+  paste-ready targeted replay/analyze command rather than staying silent.
+
+Current verification:
+
+```bash
+pflow analyze-cache workflows/lyrics-generator/lyrics-generator.pflow.md --no-trace-autoload --all-rows
+pflow analyze-cache workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md --no-trace-autoload --all-rows
+pflow analyze-cache workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md --no-trace-autoload --all-rows
+```
+
+Current output shows the large rows as cache-ready/active after the manual
+fix, but the original discovery still required a human audit. Preserve this
+as a regression target by constructing a small parent workflow with two child
+workflows that each consume the same large root input once.
+
+### 12b. Per-item `prompt_cache` lists for batch LLM nodes
+
+`prompt_cache:` is statically typed as an array today. That prevents a batch
+item from selecting its own declared cache chunks:
+
+````markdown
+### generate
+
+- type: llm
+- prompt_cache: ${item.chunks}
+- prompt: ${item.prompt}
+
+```yaml batch
+items:
+  - prompt: ./focused.prompt.md
+    chunks: []
+  - prompt: ./full.prompt.md
+    chunks: [brief]
+parallel: true
+```
+````
+
+Real trigger from the lyrics workflow:
+
+- The ideal `concept-chooser` shape would keep Heart/Mind/Body/Full concept
+  generation in one parallel batch.
+- Only the Full item should receive the full source-analysis chunk.
+- Adding `prompt_cache: [brief]` to the whole batch would leak the full
+  source analysis into Heart/Mind/Body, breaking lens isolation.
+- Because `prompt_cache: ${item.chunks}` does not validate, the Full item had
+  to be split into its own LLM node.
+
+Why it matters: the split-node workaround works and produced a large cost
+drop, but it is structurally heavier and adds a sequential step. Per-item
+cache lists would recover the cleaner parallel shape without changing model
+semantics.
+
+Desired fix:
+
+- Support templated list-valued node parameters for batch items where the
+  resolved value is an array, at least for `prompt_cache`.
+- Preserve the existing chunk-order validation after template resolution.
+- If this remains unsupported by design, replace the current type error with
+  a direct message: `prompt_cache must be a static array; per-item prompt_cache
+  is not supported`.
+
+Verified repro:
+
+```bash
+pflow scratchpads/pflow-cache-repros/repro-14-dynamic-prompt-cache-list.pflow.md --validate-only
+```
+
+Current behavior on 2026-05-26:
+
+```text
+'${item.chunks}' is not of type 'array'
+  At: nodes[0].prompt_cache
+
+  → Change type from 'str' to 'array'
+```
 
 ## Run Output and General CLI UX
 
