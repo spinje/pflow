@@ -98,11 +98,35 @@ MODEL_CAPABILITIES: tuple[ModelCapability, ...] = (
     # OpenAI auto-cache fires at 1024 across all GPT/o-series families.
     # Per DD#32; ``prompt_cache_retention`` controls TTL but not the threshold.
     ModelCapability("openai", "", 1024, notes="OpenAI auto-cache threshold"),
-    # Gemini explicit ``cachedContents`` requires ~4k tokens. The implicit
-    # path fires at lower thresholds (free, automatic) but is independent of
-    # the cache_control marker pflow emits — so the threshold used by
-    # ``cache.below-min-predicted`` reflects the EXPLICIT path's requirement.
-    ModelCapability("gemini", "", 4096, notes="Gemini explicit cachedContents minimum"),
+    # Gemini minimums per https://ai.google.dev/gemini-api/docs/caching
+    # (verified 2026-05-26): Flash-tier caches from 1024 tokens, Pro-tier from
+    # 4096. This threshold drives two things — whether `analyze-cache`
+    # RECOMMENDS caching, and whether the runtime fires a prewarm marker — so
+    # it must reflect where caching actually helps, NOT the explicit
+    # `cachedContents` API minimum. Earlier this was a flat 4096 (DD#32), which
+    # made `analyze-cache` wrongly tell users a 1024-4096 token Flash prefix
+    # "won't cache."
+    #
+    # Empirical basis (discriminator runs, gemini-2.5-flash, ~1514-token prefix):
+    #   - marker stripped (prewarm off): 18/31 calls cache-read (implicit only)
+    #   - prewarm on (threshold 1024):   31/31 calls cache-read
+    # The marker is NOT rejected below 4096 and reliably improves coverage, so
+    # Flash's functional minimum is 1024.
+    #
+    # PREFIX-MATCH NOTE: lookup is longest-prefix-wins, and
+    # "gemini-2.5-flash-lite".startswith("gemini-2.5-flash") is True, so
+    # flash-lite needs its OWN row or it would inherit the flash value.
+    #
+    # flash-lite is 2048, NOT 1024 — verified 2026-05-26 from a live API error:
+    # "Cached content is too small. total_token_count=1221, min_total_token_count=2048"
+    # (gemini-2.5-flash-lite). A too-small explicit cache HARD-FAILS the request,
+    # so this floor being correct prevents crashes, not just bad recommendations.
+    ModelCapability("gemini", "gemini-2.5-flash-lite", 2048),
+    ModelCapability("gemini", "gemini-2.5-flash", 1024),
+    ModelCapability("gemini", "gemini-3.5-flash", 1024),
+    # Pro-tier (2.5 Pro, 3 Pro Preview), the undocumented gemini-3-flash-preview,
+    # and any unrecognized/future Gemini name fall through to 4096.
+    ModelCapability("gemini", "", 4096, notes="Gemini Pro / unknown — conservative floor"),
 )
 
 

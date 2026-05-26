@@ -6460,8 +6460,10 @@ def test_real_trace_score_choruses_uses_trace_outputs_for_stable_prefix_opportun
     assert row.cache_ready.tokens_estimated is not None and row.cache_ready.tokens_estimated > 500
     assert row.cache_opportunity.tokens_estimated == row.cache_ready.tokens_estimated
     assert row.cache_opportunity.action == "add_prewarm"
-    assert row.cache_opportunity.meets_provider_min is False
-    assert row.cache_opportunity.blocked_reason == "below_provider_min"
+    # ~1129-token prefix clears gemini-2.5-flash's 1024 Flash-tier minimum
+    # (corrected from the prior flat-4096 assumption — see llm_capabilities.py).
+    assert row.cache_opportunity.meets_provider_min is True
+    assert row.cache_opportunity.blocked_reason == ""
     assert row.cache_opportunity.affects_cost_projection is False
     select_rows = [row for row in result.per_call if row.node_path == "select-chorus"]
     assert select_rows, "expected select-chorus row in lyrics-generator analysis"
@@ -6491,7 +6493,10 @@ def test_real_trace_score_choruses_uses_trace_outputs_for_stable_prefix_opportun
         for warning in result.warnings
         if warning.id == "cache.batch-prewarm-recommended" and warning.node_id == "score-choruses"
     ]
-    assert not score_actions, "unmeasurable score-choruses prefix must not produce a prewarm action"
+    assert score_actions, (
+        "score-choruses prefix (~1129 tokens) clears gemini-2.5-flash's 1024-token "
+        "Flash-tier minimum, so a prewarm action should now be recommended"
+    )
 
 
 def test_build_parameters_by_workflow_does_not_mutate_root_on_cycle() -> None:

@@ -123,20 +123,60 @@ def test_openai_threshold_is_1024(model: str) -> None:
     "model",
     [
         "gemini/gemini-2.5-flash",
-        "gemini/gemini-2.5-pro",
-        "gemini/gemini-3-flash-preview",
-        "gemini/gemini-3.1-pro-preview",
+        "gemini/gemini-3.5-flash",
         "gemini-2.5-flash",
+    ],
+)
+def test_gemini_flash_cache_threshold_is_1024(model: str) -> None:
+    """Gemini Flash (non-lite) caches from 1024 tokens.
+
+    Per https://ai.google.dev/gemini-api/docs/caching, Flash-tier models cache
+    from 1024 tokens (Pro-tier from 4096). This threshold governs whether
+    ``analyze-cache`` recommends caching and whether the runtime fires a prewarm
+    marker — so it tracks where caching actually helps, not some abstract floor.
+
+    Supersedes the earlier flat-4096 assumption (DD#32). Discriminator runs on
+    gemini-2.5-flash confirmed the marker is accepted below 4096 and lifts
+    cache-read coverage from implicit-only to full with prewarm. NOTE: flash-LITE
+    is a separate 2048 floor (see test below) — do not fold it in here.
+    """
+    from pflow.core.llm_capabilities import get_min_cache_tokens
+
+    assert get_min_cache_tokens(model) == 1024
+
+
+def test_gemini_flash_lite_cache_threshold_is_2048() -> None:
+    """gemini-2.5-flash-lite requires 2048, unlike the 1024 of regular Flash.
+
+    Verified 2026-05-26 from a live API rejection: "Cached content is too small.
+    total_token_count=1221, min_total_token_count=2048". Because a too-small
+    explicit cache HARD-FAILS the request (not a graceful no-op), this floor must
+    be correct to avoid crashes — the earlier inferred 1024 broke 27/31 calls.
+    The prefix-match order means flash-lite needs its own row so it does not
+    inherit the 1024 of the gemini-2.5-flash prefix.
+    """
+    from pflow.core.llm_capabilities import get_min_cache_tokens
+
+    assert get_min_cache_tokens("gemini/gemini-2.5-flash-lite") == 2048
+    assert get_min_cache_tokens("gemini-2.5-flash-lite") == 2048
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gemini/gemini-2.5-pro",
+        "gemini/gemini-3.1-pro-preview",
+        "gemini/gemini-3-flash-preview",  # undocumented min → conservative floor
         "gemini-2.5-pro",
     ],
 )
-def test_gemini_explicit_cache_threshold_is_4096(model: str) -> None:
-    """Gemini's explicit ``cachedContents`` requires ~4k tokens (DD#32 + spec note).
+def test_gemini_pro_and_undocumented_cache_threshold_is_4096(model: str) -> None:
+    """Gemini Pro-tier (and any undocumented/future Gemini) uses the 4096 floor.
 
-    The implicit-cache mode is free at lower thresholds (1024 Flash / 2048 Pro),
-    but pflow's ``cache_control`` markers fire the EXPLICIT path; the threshold
-    used by ``cache.below-min-predicted`` must reflect when the marker won't fire,
-    which is the explicit minimum.
+    Pro-tier is documented at 4096. gemini-3-flash-preview's minimum is not
+    published, so it falls through the catch-all to the conservative 4096 rather
+    than being assumed to match the 1024 Flash-tier (avoids a wrong "caching
+    will fire" recommendation for an unverified model).
     """
     from pflow.core.llm_capabilities import get_min_cache_tokens
 
