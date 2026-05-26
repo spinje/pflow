@@ -185,7 +185,7 @@ _SECTION_SYNTAX_HINTS: dict[_SectionType, str] = {
         "Outputs must use ### heading syntax:\n\n"
         "    ### output-name\n\n"
         "    Description of the output.\n\n"
-        "    - value: ${step-name.output}"
+        "    - source: ${step-name.output}"
     ),
     _SectionType.CACHE: (
         "Cache uses section-level params + a single tagged code block:\n\n"

@@ -155,13 +155,23 @@ def mock_query_success():
         yield mock
 
 
-# Test Criteria 1: Prompt missing → ValueError with "No prompt provided"
+# Test Criteria 1: Prompt missing → ValueError pointing at the `- prompt:` param
 def test_task_missing(claude_node):
-    """Test that missing prompt raises ValueError."""
+    """Missing prompt raises ValueError in authoring vocabulary.
+
+    Regression: the error must speak the `.pflow.md` authoring surface
+    (`- prompt:` / `${...}`), not runtime internals. An agent only ever
+    writes markdown — `shared[...]` / `params` are unactionable leaks.
+    """
     shared = {"__warnings__": {}}
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
-    assert "No prompt provided" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "'prompt'" in message
+    assert "- prompt:" in message
+    # No runtime internals leak into agent-facing text.
+    assert "shared[" not in message
+    assert "shared store" not in message
 
 
 # Test Criteria 2: Prompt empty string → ValueError with "cannot be empty"

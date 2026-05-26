@@ -185,6 +185,14 @@ Do NOT do:
 file_path = shared.get("file_path") or self.params.get("file_path")  # Wrong - shared store fallback
 ```
 
+**Corollary — never name the shared store (or any runtime internal) in agent-facing errors (FORBIDDEN).** Nodes don't read the shared store, so errors must not tell agents to write to it either — point at the authoring surface (`- key:` bullets, `${node.output}`), never `shared[...]`/`params`/`prep`-`exec`-`post`.
+```python
+raise ValueError("No prompt provided. Specify it in shared['prompt'] or params.")  # Wrong - leaks internals
+raise ValueError("This node requires a 'prompt' parameter. Use template syntax like "
+                 "'- prompt: ${previous_node.output}' to wire data from other nodes.")  # Correct
+```
+Full principle: `core/CLAUDE.md` → "Agent-facing messages speak the authoring surface".
+
 ## Creating New Nodes
 
 > **Node Output Types**: Nodes should store their natural output type (strings from shell/LLM, dicts from parsed APIs). Do NOT implement JSON auto-parsing in nodes — the template system handles type coercion automatically. See `architecture/core-concepts/data-type-coercion.md`.
