@@ -256,6 +256,19 @@ class TestTranslateReasoningForAnthropic:
             _translate_reasoning_for_litellm("anthropic/claude-sonnet-4-5", {"thinking": True})
         assert "thinking=True requires thinking_budget or thinking_effort" in str(exc_info.value)
 
+    def test_opus_47_reasoning_effort_passes_through(self):
+        # Opus 4.7 uses adaptive thinking: llm_reasoning_map emits LiteLLM's
+        # standardized reasoning_effort, and the Anthropic translator must pass
+        # it through UNCHANGED (NOT convert it to the thinking.type.enabled
+        # budget shape, which Opus 4.7 rejects — GH #368). LiteLLM >=1.83 then
+        # builds the native thinking.type.adaptive + output_config.effort shape.
+        result = _translate_reasoning_for_litellm(
+            "anthropic/claude-opus-4-7",
+            {"reasoning_effort": "low"},
+        )
+        assert result == {"reasoning_effort": "low"}
+        assert "thinking" not in result
+
 
 class TestTranslateReasoningForGemini:
     """Gemini reasoning kwargs pass through unchanged."""
