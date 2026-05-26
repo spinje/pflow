@@ -99,9 +99,10 @@ Once the user confirms the version (which may differ from the suggested one), up
 version = "<confirmed-version>"
 ```
 
-**src/pflow/cli/main.py** — the hardcoded fallback version (search for the `except Exception` block near `pkg_version("pflow-cli")`):
+**src/pflow/cli/main.py** — the hardcoded fallback version in `_get_version()` (the `except Exception` block near `pkg_version("pflow-cli")`). Replace the returned literal:
 ```python
-            ver = "<confirmed-version>"
+    except Exception:
+        return "<confirmed-version>"
 ```
 
 Then update the lockfile and verify:
@@ -119,14 +120,22 @@ Read `docs/roadmap.mdx` and check if any items listed under "Now" or "Next" were
 
 ### 6. Commit
 
-Stage and commit the release artifacts together:
+Stage the release artifacts, then **STOP and show the user the full diff before committing**:
 
 ```bash
 git add pyproject.toml src/pflow/cli/main.py uv.lock CHANGELOG.md docs/changelog.mdx releases/<version>-context.md
+git diff --cached
+```
+
+**Do NOT run `git commit` until the user has reviewed the diff and explicitly approves.** Showing the diff is not the same as approval — the user must say go. The version confirmation in step 4 covers the version number only, not the committed content. Also confirm `git status --short` shows no unexpected untracked files — remove any stray artifacts before staging.
+
+Once approved:
+
+```bash
 git commit -m "<version> changelog and version bump"
 ```
 
-Show the user the diff before committing. Do NOT push yet.
+Do NOT push yet.
 
 ### 7. Push
 
