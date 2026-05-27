@@ -108,7 +108,7 @@
       "suggestions": [
         "Run once with `--report` (or pass missing upstream inputs) to verify the full prefix; then the analyzer can measure it and produce a confident recommendation.",
         "If you've confirmed the upstream refs are stable across batch items, add `- prewarm: true` to scoring.",
-        "Trade-off: `prewarm: true` serializes the first batch item, adding roughly one item's wall-clock latency per run. Measure end-to-end duration before committing on latency-sensitive workflows."
+        "Trade-off: `prewarm: true` issues a synthetic ~16-token LLM call to populate the provider's prompt cache prefix, then all batch items fan out in parallel. Overhead is one extra cache_read per run plus the latency of the synthetic call (~5-10 seconds depending on prefix size). Measure end-to-end duration before committing on latency-sensitive workflows."
       ]
     }
   ],
@@ -211,7 +211,7 @@
       "suggestions": [
         "Run once with `--report` (or pass missing upstream inputs) to verify the full prefix; then the analyzer can measure it and produce a confident recommendation.",
         "If you've confirmed the upstream refs are stable across batch items, add `- prewarm: true` to scoring.",
-        "Trade-off: `prewarm: true` serializes the first batch item, adding roughly one item's wall-clock latency per run. Measure end-to-end duration before committing on latency-sensitive workflows."
+        "Trade-off: `prewarm: true` issues a synthetic ~16-token LLM call to populate the provider's prompt cache prefix, then all batch items fan out in parallel. Overhead is one extra cache_read per run plus the latency of the synthetic call (~5-10 seconds depending on prefix size). Measure end-to-end duration before committing on latency-sensitive workflows."
       ],
       "node_id": "scoring",
       "context": {

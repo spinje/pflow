@@ -15,6 +15,40 @@
   detailed and cross-consistent), but a future agent modifying load-bearing behavior
   should re-confirm against the harness, not against this prose.
 
+## Post-rebase baseline refresh (2026-05-27)
+
+After the PR was opened, the branch was **rebased onto current `main`** (which had
+advanced 14 commits, several touching the same area — the Gemini per-model
+prompt-cache threshold fix #432/#433, the `cost_usd`/`ensure_model_priced` fix
+#423/#424, a litellm bump). The rebase applied with no conflicts; the two riskiest
+semantic merges were verified to survive (main's `llm_capabilities.py` is byte-identical
+to `origin/main`; main's `ensure_model_priced(model)` call carried into the *renamed*
+`prompt_cache_analysis/cost_estimation.py`). This changes the harness guidance below:
+
+- **Zero new drift vs. main, proven by comparison.** Running the Task 159 harness on
+  the rebased branch and on plain `origin/main` and diffing the drift sets: the
+  refactor introduces **zero new drift**, and it incidentally *fixes*
+  `01-parser-errors/01-empty-cache-block` (drifts on `main`, passes here — the
+  pre-existing incidental fix first noted in Plan A's verification). Every other drift
+  was *shared* with `main`, i.e. caused by merged feature PRs, not by this work.
+- **Stale baselines regenerated → harness now fully green.** The shared drifts were
+  stale expected-outputs vs. behavior already merged to `main`: Gemini thresholds
+  (#432/#433) → `10-live-recordings/05`; autoload IR-hash filenames →
+  `03-analyze-cache-modes/07,08,09`; prewarm wording → `04-warning-catalog/23,23b`;
+  guide text → `12-real-world-lyrics-generator/04`. Regenerated via
+  `baseline/regenerate.sh <case>`. The harness now reports **`87 passed, 0 drifted, 0
+  harness errors`** on this branch.
+
+**Gotcha for future regeneration:** `regenerate.sh` captures whatever the subprocess
+writes to stderr, and a `uv`-triggered rebuild leaks `Building pflow-cli` / `Installed
+1 package` lines into `expected-stderr.txt` — it contaminated
+`03-analyze-cache-modes/07`'s stderr on first regen, and `normalize.py` does not strip
+it. Always diff regenerated `expected-stderr.txt` for build noise and revert it (that
+file should normally be empty); regenerate with an already-built venv to avoid it.
+
+> This supersedes the "7 known drifts" guidance below, which describes the historical
+> *pre-rebase* state. On this branch, GREEN now means **0 drifted**.
+
 ## Executive Summary
 
 A 8,570-LOC `analyze.py` monolith (in `core/cache_analysis/`) was decomposed into a
@@ -87,7 +121,9 @@ cd .taskmaster/tasks/task_159/baseline
 PATH="$PWD/../../../../.venv/bin:$PATH" bash verify.sh
 ```
 
-- **GREEN = exit 1 with exactly these 7 drifted cases** (pre-existing staleness from
+- **HISTORICAL (pre-rebase) — superseded by the Post-rebase baseline refresh above;
+  the branch now runs `87 passed, 0 drifted`.** Before the rebase + baseline refresh,
+  GREEN meant exit 1 with exactly these 7 drifted cases (pre-existing staleness from
   feature PRs #390/#392/#396/#405/#412/#416/#418, *not* this refactor):
   - `03-analyze-cache-modes/07-autoload-prefers-success`
   - `03-analyze-cache-modes/08-autoload-failed-only`
