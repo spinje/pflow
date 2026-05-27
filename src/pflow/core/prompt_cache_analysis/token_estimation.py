@@ -93,8 +93,14 @@ def estimate_tokens(
             return token_count, "trace"
 
     # --- Tier 2: memo cache ---------------------------------------------------
-    if memo_cache is not None and node_id is not None:
-        token_count = _from_memo(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
+    # ``ctx`` carries the authoritative memo cache; an explicitly-passed
+    # ``memo_cache`` is honored ONLY on the ctx-less legacy/test path. Collapsing
+    # to one source here keeps the tier gate and the read consistent and removes
+    # the silent-divergence footgun: when ``ctx`` is present it always wins, so a
+    # ``memo_cache`` that differs from ``ctx.memo_cache`` can never be silently read.
+    effective_memo = ctx.memo_cache if ctx is not None else memo_cache
+    if effective_memo is not None and node_id is not None:
+        token_count = _from_memo(effective_memo, node_id, workflow_path=workflow_path, ctx=ctx)
         if token_count is not None:
             return token_count, "memo"
 
@@ -178,12 +184,15 @@ def estimate_cacheable_tokens(
     # When ``ctx`` is supplied, parameters fallback fires for workflow-input
     # refs (Track B). Without ctx, fall back to memo-only resolution for
     # backward compatibility with legacy direct callers.
+    # ``ctx`` is the authoritative source; ``memo_cache`` is honored only on the
+    # ctx-less path (see ``estimate_tokens`` for the footgun rationale).
+    effective_memo = ctx.memo_cache if ctx is not None else memo_cache
     chunks = declared_subset or candidate_subset
-    if chunks and model and (ctx is not None or memo_cache is not None):
+    if chunks and model and (ctx is not None or effective_memo is not None):
         total = _sum_resolved_chunk_tokens(
             chunks,
             model,
-            memo_cache,
+            effective_memo,
             workflow_path,
             ctx=ctx,
         )
@@ -274,8 +283,10 @@ def estimate_output_tokens(
         if token_count is not None:
             return token_count, "trace"
 
-    if memo_cache is not None and node_id is not None:
-        token_count = _output_from_memo(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
+    # ctx wins when present; memo_cache is the ctx-less fallback (see estimate_tokens).
+    effective_memo = ctx.memo_cache if ctx is not None else memo_cache
+    if effective_memo is not None and node_id is not None:
+        token_count = _output_from_memo(effective_memo, node_id, workflow_path=workflow_path, ctx=ctx)
         if token_count is not None:
             return token_count, "memo"
 
@@ -558,6 +569,8 @@ def _llm_usage_field_from_memo(
 ) -> int | None:
     """Read an integer field from the latest memoized output's ``llm_usage`` dict."""
     if ctx is not None:
+        # ctx is authoritative: read via ctx.memo_cache (freshness-checked). The
+        # ``memo_cache`` param is consulted only on the ctx-less branch below.
         try:
             latest = ctx.latest_memo_for_node(node_id, workflow_path=workflow_path)
         except Exception:
@@ -652,6 +665,8 @@ def _latest_value_for_ref(
     legacy memo-only resolution.
     """
     if ctx is not None:
+        # ctx is authoritative (parameters + freshness-checked memo via
+        # ctx.memo_cache). The ``memo_cache`` param is used only when ctx is None.
         return ctx.resolve_ref_value(ref)
 
     if memo_cache is None:
