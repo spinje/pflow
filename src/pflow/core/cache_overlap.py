@@ -8,7 +8,7 @@ sends ``X`` at 1.0x rate every call. Net cache benefit is ~zero.
 
 This module is the single source of truth for that overlap rule. The
 validator (``data_flow.py``) emits ERROR/WARNING diagnostics when overlaps
-fire at validate time; the analyzer renderer (``cache_analysis``) surfaces
+fire at validate time; the analyzer renderer (``prompt_cache_analysis``) surfaces
 the same overlaps for greenfield workflows. Sharing the implementation keeps
 both byte-identical so agents don't hit a UX loop where the analyzer
 recommends a setup the validator then rejects.
@@ -97,7 +97,7 @@ def _is_strict_prefix(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
 def _batch_aliases(node: dict[str, Any]) -> set[str]:
     """Return the batch alias name(s) for a node.
 
-    Mirrors the helper in ``cache_analysis.analyze``. Lifted here so the
+    Mirrors the helper in ``prompt_cache_analysis.analyze``. Lifted here so the
     validator can compute the same alias set without importing the analyzer
     module (analyzer → data_flow is a one-way dependency).
     """

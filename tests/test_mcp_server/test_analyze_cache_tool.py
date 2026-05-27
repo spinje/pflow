@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
+from pflow.core.prompt_cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
 from pflow.mcp_server.services.execution_service import ExecutionService
 from pflow.mcp_server.tools.execution_tools import analyze_cache as analyze_cache_tool
 
@@ -69,7 +69,7 @@ def _write_workflow(tmp_path: Path, content: str) -> Path:
 
 
 def test_service_returns_json_shape(tmp_path: Path) -> None:
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+    from pflow.core.prompt_cache_analysis import JSON_FORMAT_VERSION
 
     workflow_path = _write_workflow(tmp_path, _LLM_WORKFLOW)
     result = ExecutionService.analyze_cache(str(workflow_path))
@@ -137,7 +137,7 @@ def test_async_tool_wrapping_returns_dict(tmp_path: Path) -> None:
     sync_result = ExecutionService.analyze_cache(str(workflow_path))
     assert isinstance(result, dict)
     # Same version-gating contract on the async tool path.
-    from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+    from pflow.core.prompt_cache_analysis import JSON_FORMAT_VERSION
 
     assert result.get("format_version") == JSON_FORMAT_VERSION
     # Strip the only non-deterministic field — ``analyzed_at`` uses

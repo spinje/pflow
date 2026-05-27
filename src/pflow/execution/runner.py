@@ -456,7 +456,7 @@ class WorkflowRunner:
         try:
             from pathlib import Path
 
-            from pflow.core.cache_analysis import analyze, summarize_from_analysis
+            from pflow.core.prompt_cache_analysis import analyze, summarize_from_analysis
 
             base_path = Path(resolved.file_path).parent if resolved.file_path else None
             analysis = analyze(

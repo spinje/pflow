@@ -11,14 +11,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
-from pflow.core.cache_analysis.below_min_tokens_detector import (
-    BelowMinTokensEvidence,
-    provider_note,
-)
-from pflow.core.cache_analysis.below_min_tokens_detector import (
-    detect as detect_below_min_tokens,
-)
-from pflow.core.cache_analysis.warning_catalog import make_diagnostic
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
 from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
 from pflow.core.llm_capabilities import get_min_cache_tokens
@@ -38,6 +30,14 @@ from pflow.core.prompt_cache import (
     _resolve_chunk_value,  # noqa: F401 — meta-test identity check
     _resolve_static_prefix_for_cache,
 )
+from pflow.core.prompt_cache_analysis.below_min_tokens_detector import (
+    BelowMinTokensEvidence,
+    provider_note,
+)
+from pflow.core.prompt_cache_analysis.below_min_tokens_detector import (
+    detect as detect_below_min_tokens,
+)
+from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 from pflow.core.prompt_refs import first_per_item_position
 
 logger = logging.getLogger(__name__)
@@ -227,7 +227,7 @@ def _count_text_tokens(text: str, model: str) -> int:
     """Best-effort token count for ``text`` under ``model``.
 
     Primary: ``litellm.token_counter`` (the same primitive
-    ``cache_analysis.token_estimation`` uses). Fallback on any failure: a
+    ``prompt_cache_analysis.token_estimation`` uses). Fallback on any failure: a
     ``len(text) // 4`` heuristic — the worst-case bias is toward
     underestimating tokens for normal English, which biases the threshold
     check toward false-strip (lost savings, no error) over false-keep

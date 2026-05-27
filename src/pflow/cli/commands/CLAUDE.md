@@ -20,7 +20,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | `settings.py` | `pflow settings ...` | `pflow.core.settings` |
 | `report.py` | `pflow report` | `pflow.core.trace_report` |
 | `visualize.py` | `pflow visualize` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
-| `analyze_cache.py` | `pflow analyze-cache <workflow> [params]` | `pflow.core.cache_analysis` |
+| `analyze_cache.py` | `pflow analyze-cache <workflow> [params]` | `pflow.core.prompt_cache_analysis` |
 
 ## Cross-References Within commands/
 

@@ -24,24 +24,27 @@ These tests lock:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import pflow.core.cache_analysis.cost_estimation as cost_estimation_module
-from pflow.core.cache_analysis.analyze import PerCallRow, ProjectionExclusion, analyze
-from pflow.core.cache_analysis.cost_estimation import (
+import pflow.core.prompt_cache_analysis.cost_estimation as cost_estimation_module
+from pflow.core.prompt_cache_analysis.analyze import analyze
+from pflow.core.prompt_cache_analysis.cost_estimation import (
     ModelPricing,
-    _aggregate_with_cache_projection,
-    _pricing_from_dict,
-    _row_body_only_cost,
-    _row_first_run_with_cache_cost,
+    aggregate_with_cache_projection,
     compute_actually_paid,
     compute_projections,
     get_model_pricing,
+    pricing_from_dict,
+    row_body_only_cost,
+    row_first_run_with_cache_cost,
 )
+from pflow.core.prompt_cache_analysis.types import PerCallRow, ProjectionExclusion
+from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
 
@@ -55,7 +58,42 @@ def _row(
     is_batch: bool = False,
     batch_size: int | None = None,
 ) -> PerCallRow:
-    return PerCallRow(
+    projection_kwargs: dict[str, Any] = {}
+    if declared_prompt_cache is not None:
+        projection_kwargs = {
+            "cache_configured": make_cache_projection(
+                tokens_estimated=cacheable_tokens,
+                input_tokens_estimated=input_tokens,
+                data_source="declared_chunks",
+                purpose="configured",
+                action="none",
+                actionability="active",
+                confidence="exact",
+                affects_cost_projection=True,
+            ),
+            "cache_active": make_cache_projection(
+                tokens_estimated=cacheable_tokens,
+                input_tokens_estimated=input_tokens,
+                data_source="declared_chunks",
+                purpose="active",
+                action="none",
+                actionability="active",
+                confidence="exact",
+                affects_cost_projection=True,
+            ),
+            "cache_ready": make_cache_projection(
+                tokens_estimated=cacheable_tokens,
+                input_tokens_estimated=input_tokens,
+                data_source="declared_chunks",
+                purpose="ready",
+                action="none",
+                actionability="active",
+                confidence="exact",
+                affects_cost_projection=True,
+            ),
+        }
+
+    return make_per_call_row(
         node_path=node_path,
         model=model,
         is_batch=is_batch,
@@ -65,34 +103,32 @@ def _row(
         cache_ratio_pct=0,
         data_source="estimator",
         declared_prompt_cache=declared_prompt_cache,
+        **projection_kwargs,
     )
 
 
 def test_row_body_only_cost_excludes_chunks() -> None:
-    row = PerCallRow(**{
-        **_row(input_tokens=1_200).__dict__,
-        "chunk_tokens_estimated": 1_000,
-    })
+    row = dataclasses.replace(_row(input_tokens=1_200), chunk_tokens_estimated=1_000)
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
-    assert _row_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
+    assert row_body_only_cost(row, pricing, output_tokens=3) == pytest.approx(2.3)
 
 
 def test_row_first_run_with_cache_cost_matches_single_row_projection() -> None:
-    row = PerCallRow(**{
-        **_row(
+    row = dataclasses.replace(
+        _row(
             input_tokens=1_200,
             cacheable_tokens=1_000,
             declared_prompt_cache=["bundle"],
             is_batch=True,
             batch_size=3,
-        ).__dict__,
-        "chunk_tokens_estimated": 1_000,
-    })
+        ),
+        chunk_tokens_estimated=1_000,
+    )
     pricing = ModelPricing(input_rate=0.01, output_rate=0.10, cache_creation_rate=0.02, cache_read_rate=0.001)
 
-    row_cost = _row_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
-    projection = _aggregate_with_cache_projection([(row, pricing, 3)], ttl="5m")
+    row_cost = row_first_run_with_cache_cost(row, pricing, output_tokens=3, ttl="5m")
+    projection = aggregate_with_cache_projection([(row, pricing, 3)], ttl="5m")
 
     assert projection == pytest.approx(row_cost)
 
@@ -434,16 +470,16 @@ def test_pricing_dict_synthesises_cache_rates_when_absent() -> None:
     documented Anthropic ratios (1.25x write, 0.1x read) so an estimate
     still surfaces. Plausible-default beats refusing-to-price."""
     sparse = {"input_cost_per_token": 1e-6, "output_cost_per_token": 5e-6}
-    pricing = _pricing_from_dict(sparse)
+    pricing = pricing_from_dict(sparse)
     assert pricing is not None
     assert pricing.cache_creation_rate == pytest.approx(1.25e-6)
     assert pricing.cache_read_rate == pytest.approx(1e-7)
 
 
 def test_pricing_dict_returns_none_when_input_or_output_missing() -> None:
-    assert _pricing_from_dict({"output_cost_per_token": 1e-6}) is None
-    assert _pricing_from_dict({"input_cost_per_token": 1e-6}) is None
-    assert _pricing_from_dict({}) is None
+    assert pricing_from_dict({"output_cost_per_token": 1e-6}) is None
+    assert pricing_from_dict({"input_cost_per_token": 1e-6}) is None
+    assert pricing_from_dict({}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -540,14 +576,14 @@ def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> Non
     grouping would let a child workflow pay a cache READ when it should
     pay a cache WRITE.
     """
-    parent = PerCallRow(**{
-        **_row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]).__dict__,
-        "workflow_path": "parent.pflow.md",
-    })
-    child = PerCallRow(**{
-        **_row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]).__dict__,
-        "workflow_path": "child.pflow.md",
-    })
+    parent = dataclasses.replace(
+        _row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
+        workflow_path="parent.pflow.md",
+    )
+    child = dataclasses.replace(
+        _row(node_path="draft", input_tokens=10_000, cacheable_tokens=8_000, declared_prompt_cache=["x"]),
+        workflow_path="child.pflow.md",
+    )
 
     scoped = compute_projections(
         [parent, child],
@@ -558,8 +594,8 @@ def test_with_cache_projection_does_not_cross_pollinate_workflow_scopes() -> Non
     )
     single_scope = compute_projections(
         [
-            PerCallRow(**{**parent.__dict__, "workflow_path": "parent.pflow.md"}),
-            PerCallRow(**{**child.__dict__, "workflow_path": "parent.pflow.md"}),
+            dataclasses.replace(parent, workflow_path="parent.pflow.md"),
+            dataclasses.replace(child, workflow_path="parent.pflow.md"),
         ],
         output_tokens_by_node={
             ("parent.pflow.md", "draft"): 500,
@@ -586,7 +622,7 @@ def test_with_cache_projection_separates_cohorts_by_model() -> None:
     MUST equal the sum of solo projections (no cross-model amortization).
 
     Mutation contract: removing ``row.model`` from the cohort key in
-    ``cost_estimation.py::_aggregate_with_cache_projection`` would let the
+    ``cost_estimation.py::aggregate_with_cache_projection`` would let the
     second model's row apply at ``cache_read_rate`` instead of ``write_rate``,
     breaking the additivity.
     """
@@ -686,7 +722,7 @@ def test_first_run_savings_separates_cohorts_by_model() -> None:
 
 
 def test_cohort_arithmetic_identity_preserved_across_models() -> None:
-    """Locks the lockstep invariant: ``_aggregate_with_cache_projection`` and
+    """Locks the lockstep invariant: ``aggregate_with_cache_projection`` and
     ``_aggregate_first_run_savings`` MUST group identically.
 
     Identity (input-side only — output cancels per the savings docstring):
@@ -753,15 +789,15 @@ def test_did_not_execute_rows_do_not_contribute_to_projection_costs() -> None:
         cacheable_tokens=8_000,
         declared_prompt_cache=["x"],
     )
-    phantom = PerCallRow(**{
-        **_row(
+    phantom = dataclasses.replace(
+        _row(
             node_path="phantom",
             input_tokens=10_000,
             cacheable_tokens=8_000,
             declared_prompt_cache=["x"],
-        ).__dict__,
-        "did_not_execute_in_trace": True,
-    })
+        ),
+        did_not_execute_in_trace=True,
+    )
 
     with_phantom = compute_projections(
         [fired, phantom],
@@ -907,20 +943,9 @@ def _row_with_cost(
     **kwargs,  # type: ignore[no-untyped-def]
 ) -> PerCallRow:
     base = _row(**kwargs)
-    return PerCallRow(
-        node_path=base.node_path,
-        model=base.model,
-        is_batch=base.is_batch,
-        batch_size_estimated=base.batch_size_estimated,
-        input_tokens_estimated=base.input_tokens_estimated,
-        cacheable_tokens_estimated=base.cacheable_tokens_estimated,
-        cache_ratio_pct=base.cache_ratio_pct,
-        data_source=base.data_source,
-        declared_prompt_cache=base.declared_prompt_cache,
-        output_tokens_estimated=base.output_tokens_estimated,
-        output_data_source=base.output_data_source,
+    return dataclasses.replace(
+        base,
         model_is_heterogeneous=model_is_heterogeneous,
-        cacheable_data_source=base.cacheable_data_source,
         cost_usd=cost_usd,
         cost_data_source=cost_data_source,
     )
@@ -1094,7 +1119,7 @@ def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None
     ``(None, "unavailable")`` would force the recompute fallback to
     fabricate a fictional cost based on tokens x rate.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     trace = {
         "format_version": "2.1.0",
@@ -1121,7 +1146,7 @@ def test_cost_usd_for_node_does_not_descend_into_sub_workflow_events() -> None:
     sub_workflow_events in the parent's cost would double-count + leak
     sub-workflow cost into parent attribution.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     trace = {
         "format_version": "2.1.0",
@@ -1156,7 +1181,7 @@ def test_cost_usd_for_node_returns_trace_partial_when_some_leaves_unpriced() -> 
     Without the 4-state distinction, agents can't tell pure trace from
     mixed.
     """
-    from pflow.core.cache_analysis.context import AnalysisContext
+    from pflow.core.prompt_cache_analysis.context import AnalysisContext
 
     trace = {
         "format_version": "2.1.0",

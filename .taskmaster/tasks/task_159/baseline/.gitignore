@@ -2,3 +2,12 @@
 **/.raw-stdout
 **/.raw-stderr
 **/.raw-exit-code
+
+# Auto-regenerated trace fixtures (written by command.sh via
+# _shared/write_cache_warning_trace.py on every harness run; their committed
+# content is meaningless because the script bakes in the current worktree's
+# absolute case directory path each time).
+04-warning-catalog/09b-cache.below-min-observed/trace.json
+04-warning-catalog/09c-cache.below-min-rendered/trace.json
+04-warning-catalog/09d-cache.prewarm-disabled-below-min/trace.json
+04-warning-catalog/09e-cache.conditional-warmup-recommended/trace.json

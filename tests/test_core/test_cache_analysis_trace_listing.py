@@ -6,11 +6,11 @@ import hashlib
 import json
 from pathlib import Path
 
-from pflow.core.cache_analysis.analyze import (
+from pflow.core.prompt_cache_analysis.rendering.traces_list import render_traces_list_json, render_traces_list_text
+from pflow.core.prompt_cache_analysis.trace_loading import (
     _resolve_current_workflow_model_set,
     list_traces_for_workflow,
 )
-from pflow.core.cache_analysis.render_traces_list import render_traces_list_json, render_traces_list_text
 
 
 def _write_workflow(tmp_path: Path, *, model: str = "anthropic/claude-sonnet-4-5") -> Path:

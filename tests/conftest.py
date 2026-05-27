@@ -338,7 +338,7 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
     # interchangeable per ``tests/CLAUDE.md`` — production code uses both
     # idioms (``Path.home()`` in ``runtime/workflow_trace.py``,
     # ``runtime/cache.py``, ``cli/commands/report.py``,
-    # ``core/cache_analysis/analyze.py``; ``Path.expanduser()`` in
+    # ``core/prompt_cache_analysis/trace_loading.py``; ``Path.expanduser()`` in
     # ``mcp/manager.py``, ``nodes/mcp/node.py``,
     # ``core/workflow/skill_service.py``). Patching both closes the
     # pre-existing leak where ``WorkflowTraceCollector.save_to_file`` and

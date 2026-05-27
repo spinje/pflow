@@ -44,7 +44,7 @@ The determinism contract is now two-tiered:
 
 This module is the ONLY production seam for ``import litellm`` and
 ``import litellm.exceptions``. The six lazy import sites in ``llm_client.py``,
-``cache_analysis/cost_estimation.py``, and ``cache_analysis/token_estimation.py``
+``prompt_cache_analysis/cost_estimation.py``, and ``prompt_cache_analysis/token_estimation.py``
 all route through here.
 
 Lazy-import contract: this module must not import ``litellm`` at module

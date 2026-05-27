@@ -8,7 +8,7 @@ import click.testing
 import pytest
 
 from pflow.cli.commands.guide import guide_cmd
-from pflow.core.cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
+from pflow.core.prompt_cache_analysis.warning_catalog import CACHE_WARNING_CATALOG
 from pflow.guide import (
     GuideError,
     compose_guide,

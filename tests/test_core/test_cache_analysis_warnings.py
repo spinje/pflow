@@ -10,20 +10,20 @@ from __future__ import annotations
 
 import pytest
 
-from pflow.core.cache_analysis.warning_catalog import (
-    CACHE_OPPORTUNITIES_NUDGE_ID,
-    CACHE_WARNING_CATALOG,
-    EXPECTED_CATALOG_COUNT,
-    CacheWarningSpec,
-    format_dry_run_nudge,
-    make_diagnostic,
-)
 from pflow.core.diagnostic import (
     CACHE_ADVISORY_CATEGORY,
     CACHE_WARNING_CATEGORY,
     Diagnostic,
     Severity,
     deduplicate_diagnostics,
+)
+from pflow.core.prompt_cache_analysis.warning_catalog import (
+    CACHE_OPPORTUNITIES_NUDGE_ID,
+    CACHE_WARNING_CATALOG,
+    EXPECTED_CATALOG_COUNT,
+    CacheWarningSpec,
+    format_dry_run_nudge,
+    make_diagnostic,
 )
 
 # ---------------------------------------------------------------------------
@@ -483,7 +483,7 @@ def test_sub_workflow_cache_undeclared_headline_pluralizes_input_count() -> None
     ``resolve_headline_for`` and the singular-count assertion fails (the
     headline silently renders empty due to the KeyError-safe fallback).
     """
-    from pflow.core.cache_analysis.warning_catalog import resolve_headline_for
+    from pflow.core.prompt_cache_analysis.warning_catalog import resolve_headline_for
 
     base_inputs = [
         {
@@ -1166,7 +1166,7 @@ def test_shadow_warning_message_uses_duplication_framing() -> None:
     "Sub-path overlap can quietly inflate input tokens without firing the
     cache reliably" suggestion → these assertions fail.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.prompt-body-shadows-cache",
@@ -1196,7 +1196,7 @@ def test_duplicates_warning_message_uses_duplication_framing() -> None:
     Mutation contract: restoring "duplicates cached chunks in the prompt
     body" as the message lead → this assertion fails.
     """
-    from pflow.core.cache_analysis.warning_catalog import make_diagnostic
+    from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
     diag = make_diagnostic(
         "cache.prompt-body-duplicates-cache",
@@ -1208,7 +1208,7 @@ def test_duplicates_warning_message_uses_duplication_framing() -> None:
     assert "sends the same value twice in each call" in diag.message
     # Rate mechanism is preserved so the agent understands WHY this is an error.
     # The U+00D7 multiplication sign is the canonical ratio notation for the
-    # catalog (see the `src/pflow/core/cache_analysis/*` per-file ruff ignore
+    # catalog (see the `src/pflow/core/prompt_cache_analysis/*` per-file ruff ignore
     # in pyproject.toml); the noqa suppresses the equivalent ambiguity check
     # at the test-assertion site.
     assert "0.1×" in diag.message  # noqa: RUF001

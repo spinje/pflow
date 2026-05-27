@@ -54,6 +54,48 @@ def test_dry_run_json_output_is_valid_json(tmp_path) -> None:
     assert set(payload) == {"workflow", "plan", "summary", "diagnostics"}
 
 
+def test_dry_run_json_includes_cache_opportunity_diagnostic(tmp_path) -> None:
+    """Dry-run JSON should surface cache nudges from the CLI path."""
+    workflow_path = tmp_path / "dry-run-cache-nudge.pflow.md"
+    write_workflow_file(
+        {
+            "inputs": {"article": {"type": "string", "required": True}},
+            "nodes": [
+                {
+                    "id": "summarize",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-haiku-4-5",
+                        "prompt": "Summarize ${article}",
+                    },
+                },
+                {
+                    "id": "classify",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-haiku-4-5",
+                        "prompt": "Classify ${article}",
+                    },
+                },
+            ],
+            "edges": [],
+        },
+        workflow_path,
+    )
+
+    result = invoke_cli([
+        "--dry-run",
+        "--output-format",
+        "json",
+        str(workflow_path),
+        "article=shared stable article context",
+    ])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0
+    assert any(diagnostic.get("id") == "cache.opportunities-available" for diagnostic in payload["diagnostics"])
+
+
 def test_dry_run_exits_zero_on_success(tmp_path) -> None:
     """Successful dry-run exits 0."""
     workflow_path = tmp_path / "dry-run-success.pflow.md"

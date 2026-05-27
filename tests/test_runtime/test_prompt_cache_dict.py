@@ -158,7 +158,7 @@ def test_builder_returns_plain_dict_not_proxy() -> None:
 
 def test_builder_disables_prewarm_when_static_prefix_below_min(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation.estimate_tokens",
         lambda model, text: (10, "test"),
     )
     workflow = _make_workflow({"score": _make_prewarm_llm_config("short prefix ${item.text}")})
@@ -183,7 +183,7 @@ def test_builder_keeps_prewarm_when_static_prefix_has_unresolved_refs(
     keep or strip the marker based on real bytes.
     """
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation.estimate_tokens",
         lambda model, text: (10, "test"),
     )
     workflow = _make_workflow({"score": _make_prewarm_llm_config("prefix ${rubric}\n${item.text}")})
@@ -202,7 +202,7 @@ def test_builder_keeps_prewarm_when_static_prefix_has_unresolved_refs(
 
 def test_builder_keeps_prewarm_when_static_prefix_clears_min(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation.estimate_tokens",
         lambda model, text: (2_000, "test"),
     )
     workflow = _make_workflow({"score": _make_prewarm_llm_config("long prefix ${item.text}")})
@@ -222,7 +222,7 @@ def test_builder_keeps_prewarm_when_declared_chunks_exist(monkeypatch: pytest.Mo
     (prewarm prefix).
     """
     monkeypatch.setattr(
-        "pflow.core.cache_analysis.token_estimation.estimate_tokens",
+        "pflow.core.prompt_cache_analysis.token_estimation.estimate_tokens",
         lambda model, text: (10, "test"),
     )
     config = NodeConfig(

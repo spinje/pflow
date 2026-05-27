@@ -16,7 +16,7 @@ from pflow.core.diagnostic import (
 _CACHE_CATEGORIES: frozenset[str] = frozenset({CACHE_FAILURE_CATEGORY, CACHE_WARNING_CATEGORY, CACHE_ADVISORY_CATEGORY})
 
 # Context keys surfaced inline on cache warning/advisory diagnostics. These match
-# the catalog payload keys emitted by ``cache_analysis`` (Task 159 F1) — the
+# the catalog payload keys emitted by ``prompt_cache_analysis`` (Task 159 F1) — the
 # closed list of fields agents read to make remediation decisions.
 _CACHE_INLINE_CONTEXT_KEYS: tuple[str, ...] = (
     "savings_pct",

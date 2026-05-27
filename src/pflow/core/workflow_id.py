@@ -2,7 +2,7 @@
 
 Lives in ``core/`` because both the runtime (``execution/runner.py``,
 ``runtime/cache.py``'s scoping convention) and the analyzer
-(``core/cache_analysis/analyze.py``'s autoload) need the same canonical
+(``core/prompt_cache_analysis/analyze.py``'s autoload) need the same canonical
 identifier for inline (file-less) workflows. Putting it here keeps both
 consumers honest about the contract: the inline ID is a pure deterministic
 function of the parsed IR, no side effects, no filesystem.

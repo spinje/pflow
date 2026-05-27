@@ -578,7 +578,7 @@ class TestLLMNode:
         ``input_token_accounting``, and ``has_cache_telemetry`` (per
         ``llm_usage.NormalizedLiteLLMUsage``). Documented in
         ``guide/features/prompt-caching.md``, ``docs/how-it-works/template-variables.mdx``,
-        ``docs/reference/nodes/llm.mdx``, and ``cache_analysis/CLAUDE.md`` —
+        ``docs/reference/nodes/llm.mdx``, and ``prompt_cache_analysis/CLAUDE.md`` —
         these fields MUST flow through ``LLMNode.post()`` into
         ``shared["llm_usage"]`` so trace events surface them.
 

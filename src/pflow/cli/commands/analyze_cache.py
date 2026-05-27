@@ -1,6 +1,6 @@
 """``pflow analyze-cache <workflow> [params...]`` — Tier 2 + Tier 3 analyzer.
 
-Wraps :func:`pflow.core.cache_analysis.analyze` for human / agent consumption.
+Wraps :func:`pflow.core.prompt_cache_analysis.analyze` for human / agent consumption.
 Output modes per spec § "Output Format — Text" and "Output Format — JSON".
 
 Exit code contract (per F3.1 plan section — 9 conditions):
@@ -127,9 +127,9 @@ def analyze_cache(
     # Lazy imports — analysis pulls in LiteLLM via token_estimation, no need
     # to pay the import cost on every CLI invocation.
     from pflow.cli.param_parsing import parse_workflow_params
-    from pflow.core.cache_analysis import analyze, render_json, render_text
-    from pflow.core.cache_analysis.analyze import list_traces_for_workflow
-    from pflow.core.cache_analysis.render_traces_list import render_traces_list_json, render_traces_list_text
+    from pflow.core.prompt_cache_analysis import analyze, render_json, render_text
+    from pflow.core.prompt_cache_analysis.rendering.traces_list import render_traces_list_json, render_traces_list_text
+    from pflow.core.prompt_cache_analysis.trace_loading import list_traces_for_workflow
     from pflow.core.workflow_id import synthesize_inline_workflow_id
     from pflow.execution.workflow_resolver import resolve_workflow
 
@@ -288,7 +288,7 @@ def _emit_error(
     if json_mode:
         import json
 
-        from pflow.core.cache_analysis import JSON_FORMAT_VERSION
+        from pflow.core.prompt_cache_analysis import JSON_FORMAT_VERSION
 
         envelope: dict[str, Any] = {
             "format_version": JSON_FORMAT_VERSION,

@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.cache_analysis.warning_catalog import (
+from pflow.core.prompt_cache_analysis.warning_catalog import (
     CACHE_OPPORTUNITIES_NUDGE_ID,
     CACHE_WARNING_CATALOG,
     EXPECTED_CATALOG_COUNT,
@@ -35,6 +35,39 @@ _DISCREPANCY_BASE = {
     "actual_cache_key": None,
     "affected_workflow": "workflow.pflow.md",
 }
+
+
+_STAGE_ATTR_MODULES: dict[str, tuple[str, ...]] = {
+    "estimate_tokens": (
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.cross_workflow",
+    ),
+    "get_min_cache_tokens": (
+        "pflow.core.prompt_cache_analysis.below_min_tokens_detector",
+        "pflow.core.prompt_cache_analysis.analyze",
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.warnings",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.fragmentation",
+        "pflow.core.prompt_cache_analysis.stages.partial_declarations",
+        "pflow.core.prompt_cache_analysis.stages.cross_workflow",
+    ),
+    "_input_rate": (
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.fragmentation",
+    ),
+    "_estimate_ref_tokens": (
+        "pflow.core.prompt_cache_analysis.stages.row_builder",
+        "pflow.core.prompt_cache_analysis.stages.suggestions",
+        "pflow.core.prompt_cache_analysis.stages.partial_declarations",
+    ),
+}
+
+
+def _patch_stage_attr(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
+    for module_name in _STAGE_ATTR_MODULES[name]:
+        monkeypatch.setattr(importlib.import_module(module_name), name, value, raising=False)
 
 
 def _kwargs_for(warning_id: str) -> tuple[str | None, dict]:
@@ -447,7 +480,7 @@ def test_analyze_rehydrates_catalog_warnings_from_trace(tmp_path: Any) -> None:
     the static analyzer. Trace replay is therefore the production boundary that
     keeps those IDs observable after the run that produced them.
     """
-    from pflow.core.cache_analysis import analyze
+    from pflow.core.prompt_cache_analysis import analyze
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
     workflow_path = str(tmp_path / "trace-replay.pflow.md")
@@ -549,16 +582,15 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     - ``analyze`` → ``cache.below-min-predicted``, ``cache.prewarm-no-prefix``
     - ``summarize_from_analysis`` → ``cache.opportunities-available``
     """
-    from pflow.core.cache_analysis import analyze, summarize_from_analysis
-    from pflow.core.cache_analysis.cost_estimation import ModelPricing
+    from pflow.core.prompt_cache_analysis import analyze, summarize_from_analysis
+    from pflow.core.prompt_cache_analysis.cost_estimation import ModelPricing
     from pflow.core.workflow.data_flow import validate_data_flow
 
-    analyze_module = importlib.import_module("pflow.core.cache_analysis.analyze")
-    below_min_module = importlib.import_module("pflow.core.cache_analysis.below_min_tokens_detector")
-    token_estimation_module = importlib.import_module("pflow.core.cache_analysis.token_estimation")
-    cost_module = importlib.import_module("pflow.core.cache_analysis.cost_estimation")
-    monkeypatch.setattr(
-        analyze_module,
+    below_min_module = importlib.import_module("pflow.core.prompt_cache_analysis.below_min_tokens_detector")
+    token_estimation_module = importlib.import_module("pflow.core.prompt_cache_analysis.token_estimation")
+    cost_module = importlib.import_module("pflow.core.prompt_cache_analysis.cost_estimation")
+    _patch_stage_attr(
+        monkeypatch,
         "estimate_tokens",
         lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
     )
@@ -567,9 +599,9 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
         "estimate_tokens",
         lambda _model, text, **_kwargs: (len((text or "").split()), "heuristic"),
     )
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
     monkeypatch.setattr(below_min_module, "get_min_cache_tokens", lambda _model: 10)
-    monkeypatch.setattr(analyze_module, "_input_rate", lambda _model: 1.0)
+    _patch_stage_attr(monkeypatch, "_input_rate", lambda _model: 1.0)
     monkeypatch.setattr(
         cost_module,
         "get_model_pricing",
@@ -972,8 +1004,8 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     # locally so the threshold check fires deterministically without needing
     # real memo data (production-shape estimator math is covered by dedicated
     # unit tests; this test only locks the emission contract).
-    monkeypatch.setattr(
-        analyze_module,
+    _patch_stage_attr(
+        monkeypatch,
         "_estimate_ref_tokens",
         lambda ref, **_kw: 100 if ref == "concept" else 5,
     )
@@ -1016,7 +1048,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     # without needing memo data to be populated. Production-shape estimator
     # math is covered by dedicated unit tests; this test only locks the
     # emission contract.
-    monkeypatch.setattr(analyze_module, "_estimate_ref_tokens", lambda _ref, **_kw: 100)
+    _patch_stage_attr(monkeypatch, "_estimate_ref_tokens", lambda _ref, **_kw: 100)
     fragment_ir: dict[str, Any] = {
         "inputs": {"context": {"type": "string"}},
         "cache": {"items": [{"name": "context", "var": "context", "prose_before": "Context:\n"}]},
@@ -1201,7 +1233,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     # but current resolved values are below the provider minimum. No suggested
     # paste block is emitted; the advisory tells agents to retry with
     # representative runtime values before editing.
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 1000)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 1000)
     conditional_ir: dict[str, Any] = {
         "inputs": {"article": {"type": "string"}},
         "nodes": [
@@ -1227,7 +1259,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     )
     _round_trip(found[0])
     seen_ids.add("cache.shared-context-undeclared-conditional")
-    monkeypatch.setattr(analyze_module, "get_min_cache_tokens", lambda _model: 10)
+    _patch_stage_attr(monkeypatch, "get_min_cache_tokens", lambda _model: 10)
 
     # cache.prompt-cache-incomplete: workflow already declares ## Cache, but
     # each LLM node's prompt_cache omits a shared chunk it references.
@@ -1262,7 +1294,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
 
     from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
-    cross_module = importlib.import_module("pflow.core.cache_analysis.cross_workflow")
+    cross_module = importlib.import_module("pflow.core.prompt_cache_analysis.sub_workflow_walker")
 
     # cache.sub-workflow-cache-undeclared: parent passes a value into a child
     # workflow that has repeated LLM consumers but no child-local ## Cache.
