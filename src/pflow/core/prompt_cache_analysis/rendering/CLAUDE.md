@@ -24,33 +24,20 @@ downstream consumers (text terminal, JSON, dry-run nudge).
 
 ## Test API -- substrate formatters
 
-These private (underscore-prefixed) symbols in `text.py` are documented
-as stable test surfaces. They are pure functions over typed inputs
-(`CostDelta`, `PerCallRow`, etc.) with no observable shape via the
-public `render_text(analysis)` call alone. Tests may import them
-directly; refactors are free to rename them but must update tests
-in the same change.
+These underscore-prefixed symbols in `text.py` are stable direct-test surfaces:
+pure functions over typed inputs (`CostDelta`, `PerCallRow`, ...) with no
+observable shape through `render_text(analysis)` alone. Tests may import them
+directly; a refactor may rename them but must update the tests in the same change.
 
-- `_render_summary(analysis: CacheAnalysis) -> str` -- markdown summary
-  section. Prefer `render_text(analysis, section="summary")` from new
-  code; the underscored helper remains as the implementation. Five
-  legacy test sites have migrated to the public form.
-- `_format_delta_parenthetical(cost_delta: CostDelta, *, local_cache_reuse: bool = False) -> str`
-  -- pure formatter for `CostDelta` objects. Five direct-test sites in
-  `test_cache_analysis_renderers.py` pin exact strings.
-- `_format_cost(value: float | None, *, partial: bool, unavailable_models: tuple[str, ...]) -> str`
-  -- pure formatter for the summary cost cell. Two sites in
-  `test_cache_analysis_analyze.py` assert grammar variants (singular vs
-  plural unpriced models).
-- `_cell_calls(row: PerCallRow, *, static_mode: bool = False) -> str`
-  -- per-row cell renderer used by the per-call table. One direct-test
-  site in `test_cache_analysis_renderers.py`.
-- `_indent_message(message: str, *, prefix: str) -> list[str]` -- pure
-  indentation helper. One direct-test site.
-- `_BASELINE_LABELS: dict[str, str]` -- producer-to-label parity map.
-  Tests assert that every value emitted by `CostDelta.baseline` has a
-  label entry; deleting either side without the other breaks rendering.
+- `_render_summary` -- the `## Summary` markdown section. New code/tests should
+  use `render_text(analysis, section="summary")`; this helper is the implementation.
+- `_format_delta_parenthetical` -- formats a `CostDelta` (tests pin exact strings).
+- `_format_cost` -- the summary cost cell (singular vs plural unpriced-model grammar).
+- `_cell_calls` -- per-row cell renderer for the per-call table.
+- `_indent_message` -- pure indentation helper.
+- `_BASELINE_LABELS` -- producer→label parity map; tests assert every
+  `CostDelta.baseline` value has a label entry, so deleting one side without the
+  other breaks rendering.
 
-Other private symbols in `text.py` are implementation details. Do not
-test them directly; cover their behavior through `render_text` or one
-of the documented surfaces above.
+Other private symbols in `text.py` are implementation details -- cover them
+through `render_text` or one of the surfaces above, not directly.

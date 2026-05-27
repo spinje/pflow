@@ -176,18 +176,12 @@ workflow/model context.
 
 ## Discrepancy Stage
 
-The discrepancy predictor shares the same primitives as dry-run planning:
-
-- `runtime/engine/plan_node.py::plan_node()`
-- `execution/plan.py::create_planner_shared()`
-- `runtime.compile_workflow()`
-
-These imports stay lazy inside `stages/discrepancy/predict.py` because the
-package is imported by dry-run surfaces that must not pay runtime/LiteLLM import
-cost unless prediction actually runs.
-
-`diagnose.py` compares predicted memo config hashes with trace events and emits
-`cache.discrepancy` diagnostics. It lazy-imports `TraceTree`.
+`stages/discrepancy/` predicts memo cache keys and compares them with trace
+events. It reaches into the runtime dry-run planning substrate (`plan_node`,
+`create_planner_shared`, `compile_workflow`) and `TraceTree` — those imports stay
+lazy so `import pflow.core.prompt_cache_analysis` stays cheap (no eager LiteLLM)
+unless prediction actually runs. The prediction ↔ diagnosis seam and its
+direct-test surface are documented in `stages/discrepancy/CLAUDE.md`.
 
 ## Validation Delegation
 
@@ -212,18 +206,15 @@ The analyzer preserves domain focus at the aggregation/rendering boundary:
 
 ## Rendering
 
-Rendering modules are read-only projections of `CacheAnalysis`:
+Read-only projections of `CacheAnalysis`; `rendering/CLAUDE.md` has the per-file
+map and the documented formatter test surface. Two package-level cycle invariants
+worth not breaking:
 
-- `rendering/text.py`: human text report sections
-- `rendering/json.py`: JSON shape with `JSON_FORMAT_VERSION`
-- `rendering/views.py`: blocking errors and recommended actions
-- `rendering/cross_workflow_edits.py`: paste-ready body text for
-  cross-workflow cache edit diagnostics
-- `rendering/summarize.py`: dry-run nudge
-- `rendering/traces_list.py`: `--list-traces` output
-
-`rendering/views.py` imports `RecommendedAction` from `types.py` at module scope;
-the old circular import workaround is gone.
+- `rendering/__init__.py` re-exports lazily (via `__getattr__`). An eager
+  re-export creates an `analyze → stages.cross_workflow → rendering → summarize →
+  analyze` cycle. Keep it lazy.
+- `rendering/views.py` imports `RecommendedAction` from `types.py` at module
+  scope; that earlier circular-import workaround is gone — don't reintroduce it.
 
 ## Warning Catalog
 
