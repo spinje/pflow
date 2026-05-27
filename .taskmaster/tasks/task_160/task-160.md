@@ -1,355 +1,343 @@
-# Task 160: Prompt Cache Analysis Architectural Deepening
+# Task 160: Prompt Cache Analysis Architectural Refactor
 
 ## Description
 
-Deepen the `pflow.core.prompt_cache_analysis` package along seams that have been earned by usage but not yet collapsed: thin the orchestrator to a true sequencer, remove the legacy `PerCallRow` bridge that spans producers and consumers, separate cross-workflow analysis from its rendering, parametrize `AnalysisContext` to absorb a duplicated 188-LOC resolution chain, and align the cost API's naming with its already-public export contract. Zero behavior change.
+Turn the cache-analysis code from a single 8,570-LOC `analyze.py` monolith into a
+deep, navigable package — `pflow.core.prompt_cache_analysis` — whose modules each
+own one concern behind a small interface, whose orchestrator reads as a pipeline,
+and whose public surface is the only thing a caller needs to learn. The package
+name itself disambiguates the two cache concepts pflow has (provider prompt cache
+vs. memoization cache). **Zero behavior change**: the analyzer produces
+byte-identical text and JSON, the same `--dry-run` nudge, and the same warnings as
+before the work began.
+
+This document specifies the **end-state architecture** the refactor aimed for and
+the package now embodies. It describes what the package *is*, not the path taken to
+get there. The package's own `CLAUDE.md` is the living companion to this spec; the
+two should stay in agreement.
 
 ## Status
 
-not started
+complete — implemented and committed on branch `refactor/cache-analysis-refactor`.
 
 ## Priority
 
-high (do before any feature work touches the analysis package)
+high (do before any feature work touches the analysis package).
 
 ## Problem
 
-The package has well-named files along stage boundaries, but six concrete frictions remain — each verified by reading the code, each one a place where the implementation has diverged from the package's own stated intent.
+The analyzer began life as one file. `core/cache_analysis/analyze.py` was **8,570
+LOC**: 210 module-scope functions and 27 type definitions, organized only by
+`# ----` comment clusters (A–K). Every consumer, every test, and every reader who
+wanted to answer "how does pflow analyze caching?" had to load the whole file. The
+file mixed eight unrelated concerns — trace loading, row construction, per-node
+warnings, suggested-block synthesis, cross-workflow analysis, discrepancy
+prediction, summary aggregation, and three flavors of rendering — with no seam
+between any of them.
 
-1. **`analyze.py` is thick where its CLAUDE.md says it should be thin.** The file's CLAUDE.md says `analyze()` "should stay small and read as orchestration." Today the `analyze()` body alone is 330 LOC across 17 inline sub-steps, and the file is 1,095 LOC total. The remaining 632 LOC are helpers, every one of which has a CLAUDE-blessed home elsewhere in the package. A reader who wants to understand "how does pflow analyze caching?" must load the full file.
+Two further frictions compounded the monolith:
 
-2. **The `PerCallRow` legacy bridge is debt acknowledged in its own docstring.** `PerCallRow.__post_init__` (types.py:404) admits: *"A large helper-test surface still instantiates PerCallRow with the old cacheable scalar."* The bridge synthesizes new projection objects from the legacy `cacheable_tokens_estimated` scalar. It costs ~158 LOC across two files:
-   - `types.py:403-485` (~82 LOC) — the synthesis in `__post_init__`
-   - `stages/row_builder.py:321-366` (~46 LOC) — `_apply_cross_workflow_projection`, producing the legacy scalar
-   - `stages/row_builder.py:369-398` (~30 LOC) — `_clamp_legacy_cacheable_projection`, clamping the legacy scalar
+1. **The package name was ambiguous.** `cache_analysis` collided conceptually with
+   pflow's *memoization* cache (`runtime/cache.py`). The package is exclusively
+   about *provider prompt caching*; the name didn't say so, and readers conflated
+   the two.
 
-3. **The cross-workflow analytical stage mixes analysis with rendering, and the seam is suspiciously clean.** `stages/cross_workflow.py` is 1,344 LOC. ~270 LOC of `_format_*` helpers produce paste-ready cache-block edit text. The seam between analysis and rendering is exactly one call (`_emit_sub_workflow_cache_findings` → `format_grouped_body_block`), passing three frozen dataclasses; the render side does not import `Diagnostic` (it returns plain strings embedded via `make_diagnostic(body_block=...)`). That cleanness is the signal of a real seam.
+2. **No place to put anything.** Because everything lived in one file, new
+   cache-analysis work had nowhere natural to land. Helpers accreted; the only
+   "design decision" available was where in the 8,570 lines to paste a function.
 
-4. **`AnalysisContext` is workflow-path-locked, forcing a 188-LOC mirror cluster.** `AnalysisContext.resolve_ref_value` uses `self.workflow_path` only. Sub-workflow boundary analysis needs to resolve refs scoped to a different (parent) workflow, so `stages/cross_workflow.py:399-595` re-implements the entire parameters/memo/trace resolution chain — six functions, 188 LOC, with `workflow_path` as a parameter. Its docstring identifies the duplication explicitly: *"Cross-workflow analog to AnalysisContext._resolve_from_memo (which keys on self.workflow_path)."*
+The goal was a package where the answer to "where is X computed?" is legible from
+file names plus `CLAUDE.md` in under a minute, where the orchestrator's value comes
+from being the single entry point that hides the pipeline, and where tests cross
+the same seam as production callers.
 
-5. **The cost API contradicts itself on contract.** `cost_estimation.py:__all__` declares four helpers public: `_aggregate_no_cache_cost`, `_aggregate_with_cache_projection`, `_row_body_only_cost`, `_row_first_run_with_cache_cost`. They are exported with leading underscores. Tests import them across what looks like a "private" boundary; the export contract has been public the whole time. The naming says "internal" while `__all__` says "public" — one of them is wrong.
+## Target architecture
 
-6. **Hidden duplications and a name collision.**
-   - `_template_resolver()` is byte-identical across four files (`stages/row_builder.py:51`, `stages/warnings.py:37`, `stages/cross_workflow.py:27`, `stages/discrepancy/predict.py:21`).
-   - `_cache_items` is defined in both the package's root walker (`tuple` return) and `stages/suggestions.py` (`list` return) — same conceptual operation, two adapters with diverging return types.
-   - The walker module and the analytical stage are both named `cross_workflow.py` at different package levels; co-imports in `analyze.py:53-54` and ~50 `importlib.import_module(...)` test sites have to disambiguate by dotted path and by local-name conventions (`cross_module` vs. `cross_stage_module`).
+### Shape
 
-## Solution
-
-### Target architecture
-
-**A thin orchestrator.** `analyze.py` reduces to ~250 LOC. The `analyze()` body is the 7-step pipeline its own CLAUDE.md describes — one named function call per stage, no inline state mutation. Three current inline blocks (trace-misalignment recovery, per-call visibility notes, summary enrichment) move to named functions or push down into the stage modules they belong to. Helpers move to their natural homes: parameter resolution to the walker, row-assembly orchestration to `stages/row_builder.py`, drift detection and call counts to `trace_loading.py`, cross-workflow row-level candidates to `stages/cross_workflow.py`. Lazy-import workarounds for inverted cycles disappear with their causes.
-
-**One row contract.** `PerCallRow` is constructed only in the projection-object shape. `__post_init__` shrinks to its essential ~10 LOC `cached_now_tokens_estimated` derivation; the legacy synthesis is gone. `stages/row_builder.py` removes both producer-side bridge functions. `types.py` matches its own docstring's promise: "types here should remain lightweight and safe to import from any analyzer consumer."
-
-**Cross-workflow analysis and rendering live in separate files.** `rendering/cross_workflow_edits.py` (~270 LOC) hosts the `_format_*` helpers and their pure private utilities. The seam is one public function (`format_grouped_body_block`) and three seam dataclasses (`SubWorkflowCacheCandidate`, `SubWorkflowCacheGroup`, `GroupedConsumerProjection`), which move to `types.py` so rendering imports only from types. `_cache_refs_by_consumer` becomes a method on `SubWorkflowCacheGroup`. The vestigial `cw_result` parameter — currently threaded through seven render-side functions for nothing — is removed.
-
-**`AnalysisContext` is workflow-path-parametric.** New methods `resolve_ref_value_in_workflow(ref, workflow_path=...)` and `resolve_ref_value_for_projection_in_workflow(ref, workflow_path=...)` accept the workflow path as a parameter. The cross-workflow stage's 188 LOC of mirror code collapses to delegation; only domain-specific helpers (`_estimate_parent_value_tokens` and child-suffix walking) remain.
-
-**Cost API naming matches its export contract.** The five helpers exposed by `cost_estimation.py:__all__` lose the underscore prefix (`_pricing_from_dict` joins `__all__` first, then the rename). No new public surface; the names align with what the contract already declares. Tests stop importing across a "private" boundary that was never private.
-
-**Hidden duplications resolved.**
-- `_template_resolver()` lives once, as a module-level function in `context.py`. All four duplicate copies are removed; every consumer imports from `..context`.
-- The package's root walker file is renamed `sub_workflow_walker.py`. There is no longer a file-name collision with the analytical stage; tests stop relying on local-name conventions to keep them apart.
-- The walker-side `_cache_items` is disambiguated (renamed or inlined at its two call sites) so the package contains one `_cache_items` function with one return type.
-
-**Documented test surfaces.** `stages/discrepancy/CLAUDE.md` gains a "Test API" section listing `_predict_node_cache_key` (whose docstring already declares it as "kept for direct test callers") and the three `_format_*_note` helpers as stable test surfaces. Implicit coupling becomes explicit contract — no code change, just documentation that matches reality.
-
-**One small UX improvement.** `per_call_row_has_real_data` (currently a free function in `rendering/views.py`, imported by the orchestrator) becomes a `@property` on `PerCallRow`. Both rendering and analyzer call sites read `row.has_real_data`. The orchestrator no longer reaches into rendering.
-
-### Target layout
+`prompt_cache_analysis/` is **~16,200 LOC across 29 source files** plus three
+`CLAUDE.md` docs. The orchestrator is thin; analysis lives in `stages/`; rendering
+lives in `rendering/`; shared vocabulary lives in `types.py`; the input bundle and
+all ref/memo resolution policy live in `context.py`. LOC figures below are
+orientation, not targets — the design decision behind each file is its single
+responsibility, not its line count.
 
 ```
 src/pflow/core/prompt_cache_analysis/
-├── __init__.py                          # unchanged
-├── CLAUDE.md                            # update: drop "two cross_workflow.py by design" note;
-│                                          point references at sub_workflow_walker.py
-│
-├── analyze.py                           # SHRUNK ~1,095 → ~350 LOC (G1)
-│                                          orchestrator + 3 named extraction-points only;
-│                                          helpers moved to their natural homes
-├── types.py                             # G2 + G3.2 + G1.3:
-│                                          - PerCallRow.__post_init__ bridge body removed (~ -70 LOC)
-│                                          - PerCallRow.has_real_data @property added (~ +6 LOC)
-│                                          - Three seam dataclasses moved IN from stages
-│                                            (SubWorkflowCacheCandidate, SubWorkflowCacheGroup,
-│                                             GroupedConsumerProjection) (~ +80 LOC)
-│                                          net ~890 → ~905 LOC; content finally matches docstring
-├── context.py                           # GREW ~335 → ~420 LOC (G4 + G6.1)
-│                                          + resolve_ref_value_in_workflow (~30 LOC)
-│                                          + resolve_ref_value_for_projection_in_workflow (~30 LOC)
-│                                          + module-level template_resolver() (~4 LOC)
-│                                          + threading of workflow_path into freshness check
-├── trace_loading.py                     # GREW ~914 → ~1,020 LOC (G1.5c)
-│                                          + drift detection helpers from analyze.py
-│                                          + call-counts helper from analyze.py
-├── sub_workflow_walker.py               # RENAMED from cross_workflow.py (G6.2)
-│                                          GREW ~447 → ~590 LOC (G1.5a)
-│                                          + parameter resolution cluster from analyze.py
-│                                            (_build_parameters_by_workflow + 4 helpers)
-│                                          - walker-side _cache_items disambiguated (G6.3)
-├── cost_estimation.py                   # G5 — internal helpers renamed (no LOC change):
-│                                          aggregate_no_cache_cost,
-│                                          aggregate_with_cache_projection,
-│                                          row_body_only_cost,
-│                                          row_first_run_with_cache_cost,
-│                                          pricing_from_dict (added to __all__)
-├── token_estimation.py                  # unchanged
-├── below_min_tokens_detector.py         # unchanged
-├── warning_catalog.py                   # unchanged
-│
-├── stages/
-│   ├── __init__.py                      # unchanged
-│   ├── row_builder.py                   # G1.5b + G2.3 + G2.4 + G6.1:
-│   │                                      + _build_per_call_rows_and_warnings IN (~80 LOC)
-│   │                                      + _detect_candidate_subsets IN (~20 LOC)
-│   │                                      - _apply_cross_workflow_projection (~ -46 LOC)
-│   │                                      - _clamp_legacy_cacheable_projection (~ -30 LOC)
-│   │                                      - _template_resolver duplicate (~ -4 LOC)
-│   │                                      net ~1,138 → ~1,158 LOC
-│   ├── warnings.py                      # G6.1: -_template_resolver duplicate
-│   ├── suggestions.py                   # unchanged
-│   ├── fragmentation.py                 # unchanged
-│   ├── partial_declarations.py          # unchanged
-│   ├── cross_workflow.py                # SHRUNK ~1,344 → ~990 LOC (G3 + G4 + G1.5d + G6.1):
-│   │                                      - format helpers → rendering/cross_workflow_edits.py
-│   │                                                                              (~ -270 LOC)
-│   │                                      - mirror resolution cluster collapses to delegation
-│   │                                                                  (~ -158 LOC, from 188 LOC)
-│   │                                      + row-level candidates IN from analyze.py
-│   │                                          (_RowCrossWorkflowCandidate + 4 producers, ~ +177 LOC)
-│   │                                      - _template_resolver duplicate (~ -4 LOC)
-│   │                                      - cw_result threading vestige (~ -5 LOC)
-│   ├── summary.py                       # G1.4: _build_summary signature gains 4 kwargs
-│   │                                      (trace_workflow_relationship, drift_count,
-│   │                                       sub_workflow_rollup, suggested_run_command)
-│   └── discrepancy/
-│       ├── __init__.py                  # unchanged
-│       ├── CLAUDE.md                    # NEW (G7.1) — "Test API" section listing
-│       │                                  _predict_node_cache_key + 3 _format_*_note helpers
-│       ├── predict.py                   # G6.1: -_template_resolver duplicate
-│       └── diagnose.py                  # unchanged
-│
-└── rendering/
-    ├── __init__.py                      # may re-export from cross_workflow_edits if needed
-    ├── text.py                          # unchanged (out of scope here)
-    ├── json.py                          # unchanged
-    ├── views.py                         # G1.3: -per_call_row_has_real_data (moved to types.py)
-    ├── summarize.py                     # unchanged
-    ├── traces_list.py                   # unchanged
-    └── cross_workflow_edits.py          # NEW ~270 LOC (G3.1) — format helpers extracted
-                                           from stages/cross_workflow.py;
-                                           single public function format_grouped_body_block
+├── __init__.py                  (~160)  public API re-exports — the stable external surface
+├── analyze.py                   (~540)  thin orchestrator + orchestration-only glue
+├── types.py                     (~930)  public dataclasses, projection algebra, row contract
+├── context.py                   (~540)  AnalysisContext: input bundle + ref/memo resolution policy
+├── trace_loading.py             (~1000) trace I/O, autoload/listing, indexing, aggregation, drift
+├── sub_workflow_walker.py        (~610)  sub-workflow walker data primitive + parameter resolution
+├── token_estimation.py           (~690)  trace → memo → estimator → heuristic token hierarchy
+├── cost_estimation.py            (~670)  row-level cost projection + actually-paid aggregation
+├── below_min_tokens_detector.py   (~200)  shared below-threshold detector
+├── warning_catalog.py            (~1460) stable warning IDs, headlines, factories (source of truth)
+├── CLAUDE.md
+├── rendering/                            read-only projections of CacheAnalysis
+│   ├── __init__.py              (~40)   render_json / render_text / summarize re-exports
+│   ├── text.py                  (~2450) markdown report; render_text(analysis, *, all_rows, section)
+│   ├── json.py                  (~380)  JSON projection (JSON_FORMAT_VERSION = "5.0")
+│   ├── views.py                 (~230)  blocking-error + recommended-action projections
+│   ├── cross_workflow_edits.py   (~320)  paste-ready cross-workflow cache-block edit text
+│   ├── summarize.py             (~130)  one-line dry-run nudge Diagnostic
+│   ├── traces_list.py           (~100)  --list-traces output
+│   └── CLAUDE.md                        documented direct-test helper surface
+└── stages/                               one analytical concern per file, one entry point each
+    ├── __init__.py              (1)     intentionally docstring-only (no eager loading)
+    ├── per_call_pipeline.py     (~115)  multi-stage orchestrator: rows + warnings + cross-workflow
+    ├── row_builder.py           (~1130) PerCallRow construction primitives + shared IR helpers
+    ├── warnings.py              (~640)  per-node warning visitors + shadow-cost enrichment
+    ├── suggestions.py           (~810)  suggested ## Cache blocks, padding advisories, chunk pricing
+    ├── fragmentation.py         (~390)  model/system cache fragmentation detection
+    ├── partial_declarations.py   (~350)  incomplete prompt_cache declaration detection
+    ├── cross_workflow.py        (~970)  analytical cross-workflow findings
+    ├── summary.py               (~600)  summary, confidence, rollups, trace-dependent filtering
+    └── discrepancy/
+        ├── __init__.py          (~10)   narrow discrepancy re-exports
+        ├── predict.py           (~570)  cache-key prediction (runtime imports stay lazy)
+        ├── diagnose.py          (~185)  trace discrepancy diagnostics
+        └── CLAUDE.md                    documented direct-test helper surface
 ```
 
-### Net file count and LOC
+### The orchestrator is a thin sequencer
 
-- One new file (`rendering/cross_workflow_edits.py`).
-- One new doc (`stages/discrepancy/CLAUDE.md`).
-- One file renamed (`cross_workflow.py` → `sub_workflow_walker.py` at package root).
-- Package LOC roughly flat (~16,300 → ~16,300). The work is redistribution, not net growth or shrink. The orchestrator drops ~750 LOC; rendering gains ~270; sub_workflow_walker, trace_loading, stages/row_builder absorb the rest; types.py is roughly flat; stages/cross_workflow.py shrinks ~350.
+`analyze.py::analyze()` is the integration point and the most-leveraged function in
+the package (three production consumers, ~50 test sites). Its interface is one
+fact: *calling `analyze(workflow_ir, ...)` produces a `CacheAnalysis`.* The body
+reads as a seven-step pipeline, each step one named call into a module that owns the
+concern:
 
-### What stays unchanged
+1. Build `AnalysisContext` and resolve trace scope (`trace_loading`).
+2. Walk sub-workflows (`sub_workflow_walker`).
+3. Predict memo cache keys (`stages.discrepancy.predict`).
+4. Build per-call rows (`stages.per_call_pipeline`).
+5. Emit stage findings (warnings, suggestions, fragmentation, partial declarations,
+   cross-workflow, discrepancy).
+6. Build the summary and rollups (`stages.summary`).
+7. Return `CacheAnalysis`.
 
-- `AnalysisContext`'s existing Interface and existing methods. The parametric forms extend it; the workflow-path-locked variants remain valid for root-workflow callers.
-- `cost_estimation.py`'s structure: two entry points (`compute_projections`, `compute_actually_paid`), three typed result shapes. Only naming changes.
-- The discrepancy `predict.py` / `diagnose.py` sub-package split — an exemplar of "one clean seam."
-- `stages/fragmentation.py`'s `_detect_cache_fragmentation_by` (a 66-LOC parametric engine with two real adapters) — an exemplar of "two adapters = real seam done right."
-- The four-tier token estimation in `token_estimation.py`, the cost tiers in `cost_estimation.py`, the warning catalog, the below-min detector.
-- `rendering/text.py` at 2,423 LOC. The file is large but its eight section renderers have clean boundaries; physical decomposition is navigability work, not depth work, and not in scope here.
+What remains in `analyze.py` beyond `analyze()` is orchestration glue with a single
+call site each — trace-misalignment recovery, per-call visibility notes, and the
+`_run_full_validation` delegation to the unified `WorkflowValidator`. Helpers that
+serve a stage live with that stage; no stage module imports a private helper from
+`analyze.py`. The orchestrator's depth comes from hiding the pipeline behind one
+entry point, not from absorbing helpers.
 
-## Goal Tree
+### `types.py` is the leaf; everything imports from it, it imports from nothing
 
+`types.py` owns the analyzer's public vocabulary — `CacheAnalysis`,
+`AnalysisSummary`, `PerCallRow`, `CacheProjection`, `SuggestedBlock`,
+`RecommendedAction`, `TraceListEntry` — plus the projection algebra that operates on
+those shapes and `invocation_count_for(row)`. It is the cleanest seam in the
+package: a true leaf with no analyzer-internal dependencies, safe to import from any
+consumer. Public report dataclasses are importable only from `types.py`;
+`analyze.py.__all__` deliberately exports only `analyze`, so there is no dual-path
+type import.
+
+**One row contract.** `PerCallRow` is constructed only in the projection-object
+shape. `__post_init__` is deliberately small — it derives `cached_now_tokens_estimated`
+from trace cache-token splits (and, for trace-backed declared-cache rows, from the
+trace cacheable-token fallback) and nothing else. It does not synthesize projection
+objects from a legacy scalar. Each row exposes four projection objects
+(`cache_configured`, `cache_active`, `cache_ready`, `cache_opportunity`); only
+`cache_active` feeds headline cost math. Row visibility is a single predicate,
+`row.has_real_data`, read by both the analyzer and the renderer.
+
+### Analysis and rendering live behind a clean seam
+
+The cross-workflow stage produces *findings*; turning a finding into paste-ready
+cache-block edit text is *rendering*. These are two jobs, so they live in two files:
+`stages/cross_workflow.py` (analytical findings) and
+`rendering/cross_workflow_edits.py` (edit text). The seam is a single public
+function, `format_grouped_body_block`, exchanging plain strings — the render side
+does not import `Diagnostic`. The seam dataclasses
+(`_SubWorkflowCacheCandidate`, `_SubWorkflowCacheGroup`, `_GroupedConsumerProjection`)
+live in `types.py` so both sides import them from the leaf.
+
+`render_text(analysis, *, all_rows=False, section="all")` is the single text entry
+point. The `section="summary"` keyword lets a caller render just the `## Summary`
+block without reaching into a private helper — the public interface *is* the test
+surface for section rendering.
+
+### `AnalysisContext` owns ref and memo resolution policy
+
+`context.py` is the input bundle (workflow IR, parameters, trace, memo cache,
+predicted cache keys) and the single home for the resolution machinery every stage
+needs:
+
+- `resolve_ref_value(ref)` / `resolve_ref_value_for_projection(ref)` resolve a
+  template ref against the analyzer's root workflow.
+- `resolve_ref_value_in_workflow(ref, *, workflow_path)` /
+  `resolve_ref_value_for_projection_in_workflow(...)` are the workflow-path-parametric
+  forms. Sub-workflow boundary findings resolve refs scoped to a parent workflow
+  without any stage re-implementing the parameters/memo/trace tier chain.
+- `latest_memo_for_node(node_id, *, workflow_path)` is the one home for the memo
+  freshness check (predicted-cache-key comparison, `stale_memo_skipped` /
+  `stale_memo_uncheckable` accounting). It consumes context self-state, so it is a
+  method, not a free function.
+
+`template_resolver()` — the lazy accessor for the runtime `TemplateResolver` — is
+defined once here and imported by every stage that needs it.
+
+### Naming and structure carry the disambiguation
+
+- The package is `prompt_cache_analysis`, not `cache_analysis`; the name says it is
+  about provider prompt caching, orthogonal to memoization.
+- The sub-workflow walker is `sub_workflow_walker.py`, not a second
+  `cross_workflow.py`. `find . -name cross_workflow.py` returns exactly one path
+  (the analytical stage). The walker name describes what it does.
+- `_cache_items` names exactly one function (the suggestions-stage helper); the
+  walker-side tuple variant is `_cache_items_as_tuple`.
+
+### The stage dependency graph is a DAG
+
+The multi-stage per-call orchestrator (`_build_per_call_rows_and_warnings`) lives in
+its own module, `stages/per_call_pipeline.py`, because it *is* the seam between row
+construction, warning emission, and cross-workflow attachment. It imports
+`row_builder`, `warnings`, and `cross_workflow` at module top. `row_builder.py` is
+strictly row-primitive construction and has no function-body imports from sibling
+stages — the import-cycle workarounds that a misplaced orchestrator would force are
+gone. The cost API helpers are named to match their already-public export contract
+(`aggregate_no_cache_cost`, `aggregate_with_cache_projection`, `row_body_only_cost`,
+`row_first_run_with_cache_cost`, `pricing_from_dict`) — no symbols carry an
+underscore prefix while `__all__` declares them public.
+
+### The public interface
+
+Package-level imports are the stable external surface; the rest of the package is
+implementation:
+
+```python
+from pflow.core.prompt_cache_analysis import (
+    JSON_FORMAT_VERSION,   # "5.0"
+    CacheAnalysis,
+    TraceListEntry,
+    analyze,
+    list_traces_for_workflow,
+    render_json,
+    render_text,
+    summarize,
+    summarize_from_analysis,
+)
 ```
-deepen prompt_cache_analysis along earned-but-uncollapsed seams
-│
-├── G1. Thin the orchestrator — analyze.py reads as a 7-step pipeline
-│   ├── G1.1 analyze() body has no inline state-mutation blocks; each step is a named call
-│   ├── G1.2 Trace-misalignment recovery extracted from the body
-│   ├── G1.3 Per-call visibility notes extracted; row.has_real_data property replaces
-│   │        the orchestrator's reach into rendering/views.py
-│   ├── G1.4 Summary enrichment pushed into _build_summary kwargs
-│   ├── G1.5 Helpers relocated to natural homes
-│   │   ├── G1.5a Parameter resolution → the walker module
-│   │   ├── G1.5b Row-assembly orchestration → stages/row_builder.py
-│   │   ├── G1.5c Drift detection + call counts → trace_loading.py
-│   │   └── G1.5d Cross-workflow row-level candidates + _RowCrossWorkflowCandidate
-│   │             → stages/cross_workflow.py
-│   └── G1.6 Lazy-import cycle workarounds disappear (cycle broken at the type level)
-│
-├── G2. Remove the PerCallRow legacy bridge
-│   ├── G2.1 Test fixtures migrated off the legacy cacheable_tokens_estimated
-│   │        scalar constructor
-│   ├── G2.2 PerCallRow.__post_init__ shrinks to ~10 LOC
-│   │        (only cached_now_tokens_estimated derivation)
-│   ├── G2.3 _apply_cross_workflow_projection deleted (producer-side bridge)
-│   └── G2.4 _clamp_legacy_cacheable_projection deleted (producer-side clamping)
-│
-├── G3. Split cross-workflow analysis from its rendering
-│   ├── G3.1 rendering/cross_workflow_edits.py hosts all _format_* helpers (~270 LOC)
-│   ├── G3.2 Three seam dataclasses (SubWorkflowCacheCandidate, SubWorkflowCacheGroup,
-│   │        GroupedConsumerProjection) move to types.py
-│   ├── G3.3 _cache_refs_by_consumer becomes a method on SubWorkflowCacheGroup
-│   ├── G3.4 Vestigial cw_result parameter removed from 7 format functions
-│   └── G3.5 Render side does not import Diagnostic; the seam exchanges plain strings
-│
-├── G4. Parametrize AnalysisContext on workflow_path
-│   ├── G4.1 ctx.resolve_ref_value_in_workflow(ref, *, workflow_path) exists
-│   ├── G4.2 ctx.resolve_ref_value_for_projection_in_workflow(ref, *, workflow_path) exists
-│   ├── G4.3 The 188-LOC mirror cluster in stages/cross_workflow.py
-│   │        (_resolve_value_in_workflow_*) collapses to delegation
-│   └── G4.4 Existing workflow-path-locked methods preserved
-│
-├── G5. Align cost API naming with its export contract
-│   ├── G5.1 Four helpers already in cost_estimation.py:__all__ lose the underscore
-│   ├── G5.2 _pricing_from_dict joins __all__ and is renamed
-│   ├── G5.3 All internal callers and tests use the new names
-│   └── G5.4 Stale lazy cost_estimation imports at stage call sites hoisted to top-level
-│
-├── G6. Resolve hidden duplications and collisions
-│   ├── G6.1 _template_resolver() lives once, as a module-level function in context.py
-│   │        (4 duplicates removed)
-│   ├── G6.2 Package's root walker file renamed sub_workflow_walker.py
-│   │        (file-name collision gone; ~50 importlib string sites updated)
-│   └── G6.3 _cache_items name collision resolved
-│        (walker-side renamed or inlined at its 2 call sites)
-│
-└── G7. Document discrepancy test surfaces
-    └── G7.1 stages/discrepancy/CLAUDE.md gains a "Test API" section listing
-             _predict_node_cache_key and the three _format_*_note helpers
-             as stable test surfaces
-```
 
-**Cross-cutting (Bx) — behavior preservation.** Applies to every goal. Byte-identical text and JSON output; identical `pflow run --dry-run` cache nudge; every warning ID continues to fire under the same conditions. Verified via the Task 159 regression harness.
+External consumers (`cli/commands/analyze_cache.py`, `execution/runner.py`,
+`mcp_server/services/execution_service.py`, `runtime/engine/engine.py`,
+`nodes/llm/llm.py`, `core/workflow/data_flow.py`) import only through this surface
+or through a small, documented set of stable submodule entry points.
 
-**Goal independence.** G1–G7 are conceptually independent. Two file-level overlaps exist: G1.5d and G3 both touch `stages/cross_workflow.py`; G2 and G1.5b both touch `stages/row_builder.py`. All other goal pairs are file-disjoint.
+### Documented test surfaces
 
-## Design Decisions
+Two private symbol sets are intentionally direct-test surfaces, documented in their
+local `CLAUDE.md` rather than promoted to public:
 
-1. **No `projection_algebra.py` extraction.** The projection algebra in `types.py` (~200 LOC: `aggregate_projection`, `_best_component`, etc.) is real behavior but has one consumer path. Per the deepening criterion, "one adapter means a hypothetical seam." Extracting it would add Interface surface without adding leverage. The algebra correctly lives next to its dataclass.
+- `stages/discrepancy/CLAUDE.md` lists `_predict_node_cache_key` and the three
+  `_format_*_note` helpers as stable test surfaces.
+- `rendering/CLAUDE.md` lists the pure-formatter substrate (`_render_summary`,
+  `_format_delta_parenthetical`, `_format_cost`, `_cell_calls`, `_indent_message`,
+  `_BASELINE_LABELS`).
 
-2. **No shared `_ir_helpers.py` module.** The five IR helpers (`_node_inputs`, `_batch_aliases`, `_cache_items`, `_cache_item_names`, `_is_batch_scoped_ref`) are heterogeneous — node accessors, workflow-IR accessors, and batch predicates — and each is used heavily within its host file. Forcing them into a shared module would add a row to the "Where to add a new feature" table for no real gain.
+Documenting the implicit coupling makes it an explicit contract: refactors are free
+to rename these, but must update the tests in the same change.
 
-3. **The cost API change is a rename, not a new public API.** Because `cost_estimation.py:__all__` already exposes the four underscored helpers, the rename closes the gap between contract and convention. No new surface is added.
+## Design decisions
 
-4. **`_template_resolver()` folds into `context.py`, not a new file.** The lazy-import pattern matches what `context.py` already does internally for its own resolver calls. Adding a `_lazy.py` would grow the file count for a four-line helper.
+These are the choices the end-state deliberately makes — and the things it
+deliberately leaves alone.
 
-5. **`AnalysisContext` extends rather than replaces.** The new parametric methods supplement the existing workflow-path-locked methods rather than deprecating them. Root-workflow callers continue to use the simpler form.
+1. **No `projection_algebra.py` extraction.** The projection algebra in `types.py`
+   has one consumer path. One adapter is a hypothetical seam; extracting it would add
+   interface surface without leverage. The algebra correctly lives next to its
+   dataclasses.
 
-6. **The `PerCallRow` bridge is removed only after test fixtures migrate.** The bridge exists because tests construct rows with the legacy scalar. Production callers already use the projection-object shape. The order is: migrate tests → delete bridge → delete producer-side bridge helpers.
+2. **No shared `_ir_helpers.py` module.** The IR accessor helpers (`_node_inputs`,
+   `_batch_aliases`, `_cache_items`, `_cache_item_names`, `_is_batch_scoped_ref`) are
+   heterogeneous and each used heavily within its host stage. They live with their
+   primary consumer rather than in a catch-all module.
 
-7. **Discrepancy substrate's private test imports stay private at the code level.** `_predict_node_cache_key` exists explicitly for tests; the other discrepancy internals (`_pad_inputs_for_prediction`, `_node_references_any`, `_build_predict_scaffold`, `_dummied_cache_chunks`) are surgical branch-logic tests with no observable shape via `analyze()` alone. Documenting them as a stable test surface in CLAUDE.md is the architecturally honest move; renaming them to "public" would over-claim the contract.
+3. **`cache_overlap.py`'s duplicates of `_batch_aliases` / `_is_batch_scoped_ref`
+   stay.** They exist by design to keep the one-way `analyzer → data_flow`
+   dependency. Consolidating would create a back-import.
 
-8. **`cache_overlap.py`'s duplicates of `_batch_aliases` and `_is_batch_scoped_ref` are preserved.** They exist by design to keep the one-way analyzer → `data_flow.py` dependency. Consolidating them would create a back-import.
+4. **Discrepancy runtime imports stay lazy.** `stages/discrepancy/predict.py`
+   lazy-imports `compile_workflow`, `plan_node`, and `create_planner_shared`.
+   `prompt_cache_analysis` is imported by `--dry-run` surfaces that must not pay
+   ~700ms of LiteLLM startup unless prediction actually runs. `template_resolver()`
+   is lazy for the same reason. Package import is cheap: importing
+   `prompt_cache_analysis` leaves `litellm` absent from `sys.modules`.
 
-9. **`rendering/text.py` section-split is out of scope.** Honest framing: the file is cohesive, just large. Physical decomposition improves navigation without improving Interface leverage. Worth doing eventually, but a separate concern.
+5. **`rendering/text.py` is not section-split.** At ~2,450 LOC it is large but
+   cohesive — its section renderers have clean boundaries. Physical decomposition
+   would improve navigation without improving interface leverage; it is a separate
+   concern.
+
+6. **Private test surfaces are documented, not promoted.** Renaming a surgical
+   branch-logic test helper to "public" would over-claim the contract. The honest
+   move is a documented Test API section.
+
+7. **`analyze.py` keeps orchestration glue.** `_run_full_validation`,
+   trace-misalignment recovery, and a handful of single-call-site helpers stay in the
+   orchestrator because they are sequencing, not separable concerns. The orchestrator
+   is thin in interface (one entry point), which is the property that matters — not
+   minimal in line count.
+
+8. **The two-cache disambiguation is load-bearing documentation.** The package name
+   plus the `CLAUDE.md` disambiguation table keep "provider prompt cache" and
+   "memoization cache" distinct everywhere a reader might conflate them.
+
+## Behavior preservation (the central invariant)
+
+The entire refactor is structural. The following hold for any workflow + trace
+input, before and after:
+
+- `pflow analyze-cache` produces **byte-identical** text output.
+- `pflow analyze-cache --json` produces structurally-identical JSON
+  (`format_version` unchanged at `"5.0"`).
+- `pflow run --dry-run` produces an identical cache-nudge `Diagnostic`.
+- Every cache-related warning ID fires under the same conditions.
+- All `__all__` exports remain importable from the same package path.
+- The analyzer's dependency on the `core/` prompt-cache feature files
+  (`prompt_cache.py`, `prompt_refs.py`, `llm_capabilities.py`, `cache_overlap.py`,
+  `cache_ttl.py`) stays strictly one-way.
+
+## Verification
+
+The achieved end-state is confirmed by:
+
+- **The Task 159 regression harness** (`.taskmaster/tasks/task_159/baseline/verify.sh`)
+  reports `80 passed, 7 drifted, 0 harness errors`. The 7 drifts are pre-existing
+  baseline staleness from feature work (PRs #390/#392/#396/#405/#412/#416/#418), not
+  caused by this refactor — the same 7 drift on the pre-refactor parent commit. This
+  harness is the authoritative byte-level proof of zero behavior change.
+- `make test` and `make check` pass (mypy clean over the package's source files,
+  ruff, deptry).
+- Structural checks:
+  - `find src/pflow -name cross_workflow.py` returns one path (the analytical stage).
+  - `grep -rn "def _template_resolver" src/pflow/core/prompt_cache_analysis/` returns
+    nothing; the one resolver is `context.py::template_resolver`.
+  - `from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow`
+    succeeds; the old `...cross_workflow` walker path raises `ImportError`.
+  - `from pflow.core.prompt_cache_analysis.analyze import CacheAnalysis` raises
+    `ImportError` (types are importable only from `types.py`).
+  - Importing `pflow.core.prompt_cache_analysis` leaves `litellm` absent from
+    `sys.modules`.
+- A reader who has never seen the package can answer "where is X computed?" from file
+  names + `CLAUDE.md` in under a minute.
 
 ## Dependencies
 
 None.
 
-## Requirements
-
-Leaves below are indexed by the goal IDs in the Goal Tree.
-
-### G1 — Orchestrator
-
-- **G1.1** The body of `analyze()` reads as a 7-step pipeline: one named function call per pipeline stage, no inline state-mutation blocks.
-- **G1.2** Trace-misalignment recovery exists as a named function (e.g. `_recompute_after_trace_misalignment`) — never inline in `analyze()`.
-- **G1.3** `PerCallRow` exposes a `has_real_data` `@property`. Both the analyzer's visibility-note generation and rendering read `row.has_real_data`. `per_call_row_has_real_data` is removed from `rendering/views.py`. `analyze.py` does not import from `rendering/*`.
-- **G1.4** Summary enrichment is performed inside `_build_summary` via additional kwargs, not via an outer `replace(summary, ...)` in `analyze()`.
-- **G1.5** Each helper currently in `analyze.py` lives in its natural home: parameter resolution in the walker module; row-assembly orchestration in `stages/row_builder.py`; drift detection and call counts in `trace_loading.py`; cross-workflow row-level candidates (including `_RowCrossWorkflowCandidate`) in `stages/cross_workflow.py`.
-- **G1.6** No `from .stages.cross_workflow import ...` blocks exist inside helper bodies. The cycle is broken at the type level by relocating `_RowCrossWorkflowCandidate` and its producers to `stages/cross_workflow.py`.
-- **G1-size** `analyze.py` final size ≤ ~350 LOC.
-
-### G2 — PerCallRow bridge removal
-
-- **G2.1** All test fixtures that constructed `PerCallRow` with the legacy `cacheable_tokens_estimated` scalar are migrated to the projection-object shape.
-- **G2.2** `PerCallRow.__post_init__` contains only the `cached_now_tokens_estimated` derivation (~10 LOC). The legacy `cacheable_tokens_estimated`-driven synthesis is gone.
-- **G2.3** `_apply_cross_workflow_projection` is deleted from `stages/row_builder.py`. Production rows are constructed only via `_cross_workflow_projection_components`.
-- **G2.4** `_clamp_legacy_cacheable_projection` is deleted. Token capping lives only in `_cap_projection_tokens` (types.py).
-- **G2-prod** No production caller constructs `PerCallRow` with the legacy scalar shape.
-
-### G3 — Cross-workflow analysis/rendering split
-
-- **G3.1** `rendering/cross_workflow_edits.py` exists and hosts all `_format_*` helpers currently in `stages/cross_workflow.py` plus their pure private utilities. The module exports one public function (`format_grouped_body_block`); its sole caller is `_emit_sub_workflow_cache_findings` in the analytical stage.
-- **G3.2** The three seam dataclasses (`SubWorkflowCacheCandidate`, `SubWorkflowCacheGroup`, `GroupedConsumerProjection`) live in `types.py` with package-internal naming.
-- **G3.3** `_cache_refs_by_consumer` is a method on `SubWorkflowCacheGroup`. Both analysis and rendering call `group.cache_refs_by_consumer()`.
-- **G3.4** `cw_result` is not a parameter of any `_format_*` function.
-- **G3.5** The render module does not import `Diagnostic`. The seam exchanges plain strings.
-
-### G4 — AnalysisContext parametric extension
-
-- **G4.1** `AnalysisContext.resolve_ref_value_in_workflow(ref, *, workflow_path)` exists and resolves a ref against the parameters / memo / trace tier chain scoped to the given workflow path.
-- **G4.2** `AnalysisContext.resolve_ref_value_for_projection_in_workflow(ref, *, workflow_path)` exists with the trace-output extension scoped to the given workflow path.
-- **G4.3** The six mirror functions in `stages/cross_workflow.py` (`_resolve_value_in_workflow_memo`, `_resolve_value_in_workflow_parameters`, `_resolve_value_in_workflow_trace`, `_trace_node_output_for`, `_resolve_input_at_workflow_node_invocation`, `_resolve_child_suffix_in_value`) are gone or reduced to thin domain-specific helpers (≤ ~30 LOC of remainder, covering `_estimate_parent_value_tokens` and child-suffix walking).
-- **G4.4** Existing `AnalysisContext.resolve_ref_value(ref)` and `AnalysisContext.resolve_ref_value_for_projection(ref)` are preserved.
-- **G4-memo** `_latest_memo_for_freshness_check` accepts `workflow_path` as a parameter; mutation of `stale_memo_skipped` / `stale_memo_uncheckable` continues to key on `(workflow_path, node_id)`.
-
-### G5 — Cost API naming
-
-- **G5.1** `cost_estimation.py:__all__` lists four names without leading underscores: `aggregate_no_cache_cost`, `aggregate_with_cache_projection`, `row_body_only_cost`, `row_first_run_with_cache_cost`.
-- **G5.2** `pricing_from_dict` is in `__all__` (its prior `_pricing_from_dict` form had not been exported).
-- **G5.3** All internal callers (`suggestions.py`, `warnings.py`, `summary.py`, `stages/fragmentation.py`, `stages/partial_declarations.py`) and all tests use the new names.
-- **G5.4** Stale lazy `from ..cost_estimation import ...` imports inside stage function bodies are hoisted to top-level imports where no genuine load-cost reason exists. Comments claiming a non-existent circular import are removed.
-
-### G6 — Hidden duplications and collisions
-
-- **G6.1** `_template_resolver()` is defined once, as a module-level function in `context.py`. The four stage-file copies are removed. Each importer uses `from ..context import template_resolver`.
-- **G6.2** The package's root walker file is named `sub_workflow_walker.py`. All production imports and all `importlib.import_module(...)` test sites use the new dotted path. The CLAUDE.md disambiguation note about "two cross_workflow.py files by design" is removed.
-- **G6.3** The walker-side `_cache_items` is renamed (or inlined at its two call sites). The package contains exactly one function named `_cache_items`.
-- **G6-preserve** `core/cache_overlap.py`'s copies of `_batch_aliases` and `_is_batch_scoped_ref` are NOT consolidated — they exist by design to keep the one-way analyzer → `data_flow.py` dependency.
-
-### G7 — Test surface documentation
-
-- **G7.1** `stages/discrepancy/CLAUDE.md` exists. It contains a "Test API" section listing as stable test surfaces: `_predict_node_cache_key`, `_format_dynamic_batches_note`, `_format_fidelity_skip_note`, `_format_skipped_workflows_note`.
-
-### Bx — Behavior preservation (cross-cutting)
-
-- **Bx.1** `pflow analyze-cache` produces byte-identical text output for any given workflow + trace input.
-- **Bx.2** `pflow analyze-cache --json` produces structurally-identical JSON (`format_version` unchanged at `"5.0"`).
-- **Bx.3** `pflow run --dry-run` cache nudge produces an identical `Diagnostic`.
-- **Bx.4** Every cache-related warning ID continues to fire under the same conditions.
-- **Bx.5** All `__all__` exports from `pflow.core.prompt_cache_analysis` remain importable from the same package path.
-
-## Implementation Notes
-
-### Verified non-issues — do not "fix"
-
-- The projection algebra in `types.py` is leaf logic with one consumer path. Do not extract.
-- The five IR helpers in `suggestions.py` and `row_builder.py` are correctly placed near their primary consumers. Do not centralize.
-- `cache_overlap.py`'s `_batch_aliases` / `_is_batch_scoped_ref` duplicates exist by design.
-- The lazy imports inside `stages/discrepancy/predict.py` (compile_workflow, plan_node, create_planner_shared) are policy — they save ~700ms of LiteLLM startup on dry-run paths. Keep them lazy.
-- `rendering/text.py` at 2,423 LOC is cohesive. Section-splitting is out of scope.
-
-### Friction points
-
-- **Cycle inversion for the orchestrator thinning.** Moving `_RowCrossWorkflowCandidate` and its producers from `analyze.py` back into `stages/cross_workflow.py` removes the lazy-import workarounds, but the producers depend on `_node_inputs`, `_static_excerpt`, and `_total_observed_invocations` from `stages/row_builder.py`. Verify the import direction stays one-way after the move.
-- **`PerCallRow` bridge migration order.** Every test that constructs `PerCallRow(cacheable_tokens_estimated=...)` must be rewritten before the bridge can be deleted. Tests currently rely on `__post_init__` to synthesize projections from the legacy scalar.
-- **`_template_resolver()` lazy-import preservation.** The function body must lazy-import `pflow.runtime.template_resolver`; do not hoist that import to module-level in `context.py`. Importing at module load would eagerly load the runtime stack on any context.py import.
-- **Walker rename touches string-path sites.** Approximately 50 `importlib.import_module("pflow.core.prompt_cache_analysis.cross_workflow")` calls in `test_cache_analysis_per_id_emission.py` use a string-typed module path and need updating.
-- **AnalysisContext parametric methods must not break stale-memo accounting.** `_latest_memo_for_freshness_check` mutates per-instance accumulator sets keyed on `(workflow_path, node_id)`. The parametric form must pass the new workflow_path through to the freshness check; passing `self.workflow_path` would silently mis-attribute staleness.
-
-## Verification
-
-- `make test` and `make check` pass.
-- The Task 159 regression harness (`.taskmaster/tasks/task_159/baseline/verify.sh`) reports the same drift count as before this work (currently 80 passed, 7 drifted from pre-existing feature work).
-- `pflow analyze-cache` produces byte-identical text and JSON output for unchanged workflows + traces.
-- `pflow run --dry-run` cache nudge produces an identical `Diagnostic`.
-- `grep -rn "from pflow.core.prompt_cache_analysis.*import _" tests/ --include="*.py" | wc -l` is at least 15 lower than today's count (current: 75; the cost-helper renames eliminate ~15 sites by themselves).
-- `find src/pflow -name "cross_workflow.py"` returns one path (the analytical stage).
-- `grep -rn "def _template_resolver" src/pflow/core/prompt_cache_analysis/` returns no matches (the helper lives in context.py as `def template_resolver`).
-- `wc -l src/pflow/core/prompt_cache_analysis/analyze.py` reports at or below ~350 LOC.
-- `wc -l src/pflow/core/prompt_cache_analysis/stages/cross_workflow.py` reports at or below ~1,070 LOC (rendering surface removed).
-- The `_resolve_value_in_workflow_*` cluster in `stages/cross_workflow.py` is gone; the file's resolution-side helpers are ≤ ~30 LOC of domain-specific code.
-- `uv run python -c "from pflow.core.prompt_cache_analysis.cross_workflow import walk_cross_workflow"` raises `ImportError` (walker moved).
-- `uv run python -c "from pflow.core.prompt_cache_analysis.sub_workflow_walker import walk_cross_workflow"` succeeds.
-- A reader who has never seen the package can find "where is X computed?" by reading file names + CLAUDE.md, in under 60 seconds.
-
 ## References
 
-- `src/pflow/core/prompt_cache_analysis/CLAUDE.md` — the package's own self-description; the spec aligns the implementation with what this file already declares.
-- `.claude/skills/improve-codebase-architecture/LANGUAGE.md` — vocabulary used here (Module, Interface, Implementation, Depth, Seam, Adapter, Leverage, Locality).
-- `.taskmaster/tasks/task_160/implementation/progress-log.md` — history of the package's prior structural decomposition (the starting state for this work).
-- `.taskmaster/tasks/task_160/implementation/retrospective-and-future-improvements.md` — initial critique that surfaced eight insights; verified, revised, and extended by this spec after a full file-by-file read.
-- `.taskmaster/tasks/task_159/baseline/verify.sh` — regression harness for zero-behavior-change verification.
+- `src/pflow/core/prompt_cache_analysis/CLAUDE.md` — the package's living
+  self-description; this spec and that file should stay in agreement.
+- `src/pflow/core/prompt_cache_analysis/rendering/CLAUDE.md`,
+  `.../stages/discrepancy/CLAUDE.md` — documented direct-test surfaces.
+- `.claude/skills/improve-codebase-architecture/LANGUAGE.md` — the vocabulary used
+  here (Module, Interface, Implementation, Depth, Seam, Adapter, Leverage, Locality;
+  the deletion test; "the interface is the test surface").
+- `.taskmaster/tasks/task_159/baseline/verify.sh` — the regression harness that
+  proves zero behavior change.
