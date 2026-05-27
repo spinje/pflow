@@ -304,30 +304,12 @@ def tokenize_prompt_region(
     - Any unresolved ref after substitution returns None atomically.
     - Single-ref non-string values serialize deterministically before counting.
     """
-    if not region:
-        return 0
-    if "${" not in region:
-        return estimate_tokens(model, region)[0]
-
-    from pflow.core.prompt_cache import deterministic_serialize
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    refs = extract_unique_refs(region)
-    if not refs:
-        return estimate_tokens(model, region)[0]
-
-    shared = build_shared_store_for_refs(refs, ctx)
-    try:
-        resolved = TemplateResolver.resolve_template(region, shared)
-    except (AttributeError, KeyError, TypeError, ValueError):
-        logger.debug("tokenize_prompt_region: resolve_template raised", exc_info=True)
-        return None
-
-    if not isinstance(resolved, str):
-        resolved = deterministic_serialize(resolved)
-    if TemplateResolver.TEMPLATE_PATTERN.search(resolved):
-        return None
-    return estimate_tokens(model, resolved)[0]
+    return _tokenize_prompt_region_with_resolver(
+        region,
+        model=model,
+        ctx=ctx,
+        use_projection_resolver=False,
+    )
 
 
 def tokenize_prompt_region_for_projection(
@@ -367,34 +349,12 @@ def tokenize_prompt_region_lower_bound(
     - Resolution exceptions return ``(0, raw_refs)`` conservatively.
     - Single-ref non-string values serialize deterministically before counting.
     """
-    if not region:
-        return 0, ()
-    if "${" not in region:
-        return estimate_tokens(model, region)[0], ()
-
-    from pflow.core.prompt_cache import deterministic_serialize
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    refs = extract_unique_refs(region)
-    if not refs:
-        return estimate_tokens(model, region)[0], ()
-
-    shared = build_shared_store_for_refs(refs, ctx)
-    try:
-        resolved = TemplateResolver.resolve_template(region, shared)
-    except (AttributeError, KeyError, TypeError, ValueError):
-        logger.debug("tokenize_prompt_region_lower_bound: resolve_template raised", exc_info=True)
-        return 0, tuple(refs)
-
-    if not isinstance(resolved, str):
-        resolved = deterministic_serialize(resolved)
-
-    unresolved = tuple(match.group(1) for match in TemplateResolver.TEMPLATE_PATTERN.finditer(resolved))
-    if not unresolved:
-        return estimate_tokens(model, resolved)[0], ()
-
-    stripped = TemplateResolver.TEMPLATE_PATTERN.sub("", resolved)
-    return estimate_tokens(model, stripped)[0], unresolved
+    return _tokenize_prompt_region_lower_bound_with_resolver(
+        region,
+        model=model,
+        ctx=ctx,
+        use_projection_resolver=False,
+    )
 
 
 def tokenize_prompt_region_lower_bound_for_projection(
@@ -597,7 +557,22 @@ def _llm_usage_field_from_memo(
     ctx: AnalysisContext | None,
 ) -> int | None:
     """Read an integer field from the latest memoized output's ``llm_usage`` dict."""
-    output = _memo_output_for_freshness_check(memo_cache, node_id, workflow_path=workflow_path, ctx=ctx)
+    if ctx is not None:
+        try:
+            latest = ctx.latest_memo_for_node(node_id, workflow_path=workflow_path)
+        except Exception:
+            logger.debug("memo cache freshness-aware lookup failed for %s", node_id, exc_info=True)
+            return None
+        output = latest[0] if latest is not None else None
+    else:
+        # ctx-less fallback: no freshness check possible without ctx.
+        # Read the latest memo entry directly with the isinstance-dict guard.
+        try:
+            result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
+        except Exception:
+            logger.debug("memo_cache.get_latest_for_node raised", exc_info=True)
+            return None
+        output = result[0] if (result is not None and isinstance(result[0], dict)) else None
     if output is None:
         return None
     llm_usage = output.get("llm_usage")
@@ -607,46 +582,6 @@ def _llm_usage_field_from_memo(
     if isinstance(value, int):
         return value
     return None
-
-
-def _memo_output_for_freshness_check(
-    memo_cache: Any,
-    node_id: str,
-    *,
-    workflow_path: str | None,
-    ctx: AnalysisContext | None,
-) -> dict[str, Any] | None:
-    """Read latest memo output, skipping it when ctx proves the row stale."""
-    if ctx is not None and hasattr(memo_cache, "get_latest_for_node_with_cache_key"):
-        from .context import _PREDICTION_SKIPPED
-
-        try:
-            result = memo_cache.get_latest_for_node_with_cache_key(node_id, workflow_path=workflow_path)
-        except Exception:
-            logger.debug("memo_cache.get_latest_for_node_with_cache_key raised", exc_info=True)
-            return None
-        if result is None:
-            return None
-        output, _created_at, memo_cache_key = result
-        predicted = ctx.predicted_cache_keys.get((workflow_path, node_id))
-        if predicted is None:
-            return output if isinstance(output, dict) else None
-        if predicted == _PREDICTION_SKIPPED:
-            ctx.stale_memo_uncheckable.add((workflow_path, node_id))
-            return output if isinstance(output, dict) else None
-        if memo_cache_key != predicted:
-            ctx.stale_memo_skipped.add((workflow_path, node_id))
-            return None
-        return output if isinstance(output, dict) else None
-    try:
-        result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
-    except Exception:
-        logger.debug("memo_cache.get_latest_for_node raised", exc_info=True)
-        return None
-    if result is None:
-        return None
-    output, _created_at = result
-    return output if isinstance(output, dict) else None
 
 
 def _from_estimator(model: str, text: str) -> int:
@@ -725,7 +660,14 @@ def _latest_value_for_ref(
     from pflow.runtime.template_resolver import TemplateResolver
 
     root = TemplateResolver.extract_root_node_id(ref)
-    output = _memo_output_for_freshness_check(memo_cache, root, workflow_path=workflow_path, ctx=ctx)
+    # ctx=None branch: no freshness check possible without ctx.
+    # Read the latest memo entry directly; preserve isinstance-dict guard.
+    try:
+        result = memo_cache.get_latest_for_node(root, workflow_path=workflow_path)
+    except Exception:
+        logger.debug("memo_cache.get_latest_for_node raised", exc_info=True)
+        return None
+    output = result[0] if (result is not None and isinstance(result[0], dict)) else None
     if output is None:
         return None
     resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})

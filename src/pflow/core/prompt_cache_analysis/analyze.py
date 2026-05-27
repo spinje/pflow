@@ -56,7 +56,8 @@ from .stages.discrepancy import (
 )
 from .stages.fragmentation import _detect_model_cache_fragmentation, _detect_system_cache_fragmentation
 from .stages.partial_declarations import _emit_partial_declaration_findings
-from .stages.row_builder import _build_per_call_rows_and_warnings, _extract_declared_chunks, _PerCallRowsResult
+from .stages.per_call_pipeline import _build_per_call_rows_and_warnings, _PerCallRowsResult
+from .stages.row_builder import _extract_declared_chunks
 from .stages.suggestions import (
     _consolidate_to_root_advisories,
     _emit_padding_advisories,

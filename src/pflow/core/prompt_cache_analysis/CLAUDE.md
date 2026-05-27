@@ -52,6 +52,7 @@ src/pflow/core/prompt_cache_analysis/
 ├── below_min_tokens_detector.py # shared below-threshold detector
 ├── warning_catalog.py           # stable warning catalog and factories
 ├── rendering/
+│   ├── CLAUDE.md                # documented direct-test helper surface
 │   ├── __init__.py              # render_json/render_text/summarize public re-exports
 │   ├── json.py                  # JSON projection of CacheAnalysis
 │   ├── text.py                  # text projection and section renderers
@@ -61,7 +62,8 @@ src/pflow/core/prompt_cache_analysis/
 │   └── views.py                 # blocking/recommended action projections
 └── stages/
     ├── __init__.py              # intentionally docstring-only
-    ├── row_builder.py           # PerCallRow construction and row evidence helpers
+    ├── row_builder.py           # PerCallRow construction primitives (row + IR helpers; orchestration moved out)
+    ├── per_call_pipeline.py     # multi-stage orchestrator: rows + warnings + cross-workflow attachment
     ├── warnings.py              # per-node warning visitors and shadow-cost enrichment
     ├── suggestions.py           # suggested blocks, padding advisories, chunk pricing helpers
     ├── fragmentation.py         # model/system cache fragmentation detection
@@ -104,7 +106,7 @@ as orchestration:
 1. Build `AnalysisContext` and resolve trace scope through `trace_loading.py`.
 2. Walk sub-workflows through the root `sub_workflow_walker.py` data primitive.
 3. Predict memo cache keys through `stages.discrepancy.predict`.
-4. Build per-call rows through `stages.row_builder`.
+4. Build per-call rows through `stages.per_call_pipeline._build_per_call_rows_and_warnings`.
 5. Emit stage findings: warnings, suggested blocks/padding, fragmentation,
    partial declarations, cross-workflow findings, discrepancy diagnostics.
 6. Build summary and rollups through `stages.summary`.
@@ -250,6 +252,7 @@ new ID just to vary wording when an existing ID describes the same condition.
 | Add or change the public report shape | `types.py`, then `rendering/json.py` and renderer tests |
 | Add a cache-related warning | `warning_catalog.py`, the owning stage or `data_flow.py`, plus per-ID tests |
 | Change per-call row construction or projection components | `stages/row_builder.py` |
+| Change per-call pipeline orchestration (row + warning + cross-workflow assembly) | `stages/per_call_pipeline.py` |
 | Change per-node warning visitors | `stages/warnings.py` |
 | Change suggested `## Cache` blocks, padding advisories, chunk pricing, or template-ref grouping | `stages/suggestions.py` |
 | Change model/system fragmentation findings | `stages/fragmentation.py` |

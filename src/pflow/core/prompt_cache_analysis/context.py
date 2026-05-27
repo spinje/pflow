@@ -5,7 +5,7 @@ workflow_path, base_path)`` that was passed by-keyword to ~30 call sites in
 :mod:`analyze`. Same pattern as ``execution/plan.py::_WalkerState`` — bundle
 the invariant inputs, reduce signature noise.
 
-Three load-bearing methods consolidate the policy that was previously
+Four load-bearing methods consolidate the policy that was previously
 scattered across helpers:
 
 - :meth:`AnalysisContext.trace_event_for` — lookup the top-level trace event
@@ -18,6 +18,10 @@ scattered across helpers:
 - :meth:`AnalysisContext.resolve_ref_value` — resolve a template ref to its
   latest known value. Workflow inputs win from ``parameters`` (current
   question wins over historical memo); node outputs come from memo only.
+- :meth:`AnalysisContext.latest_memo_for_node` — read the latest memo
+  entry for a node, applying Bundle-6 cache-key freshness comparison
+  and mutating ``stale_memo_skipped`` / ``stale_memo_uncheckable``
+  accumulators when staleness or skip is detected.
 
 Layer policy: this module imports from :mod:`pflow.runtime.template_resolver`
 lazily (inside the resolver method) to keep import cost low — the analyzer
@@ -176,6 +180,71 @@ class AnalysisContext:
         if workflow_path == self.workflow_path:
             return self.parameters
         return self.parameters_by_workflow.get(workflow_path, {})
+
+    # ------------------------------------------------------------------
+    # Memo freshness lookup
+    # ------------------------------------------------------------------
+
+    def latest_memo_for_node(
+        self,
+        node_id: str,
+        *,
+        workflow_path: str | None,
+    ) -> tuple[dict[str, Any], float] | None:
+        """Return latest memo ``(output, created_at)`` for ``node_id`` or None.
+
+        Encapsulates the Bundle-6 cache-key freshness check that previously
+        lived as a free function (``_latest_memo_for_freshness_check``) and
+        as a sibling in ``token_estimation.py``. Both call sites now route
+        through this method so the freshness machinery
+        (``predicted_cache_keys`` lookup, ``stale_memo_skipped`` /
+        ``stale_memo_uncheckable`` mutation) has one home.
+
+        Returns None when:
+        - No memo cache is attached to this context.
+        - The memo cache has no entry for ``node_id`` in this ``workflow_path``.
+        - The Bundle-6 cache_key comparison detects staleness (the analyzer
+          skipped the row; ``self.stale_memo_skipped`` records the key).
+        - The stored output is not a ``dict`` (defensive guard).
+
+        Returns ``(output, created_at)`` when memo data is present and either:
+        - The Bundle-6 cache_key matches the prediction.
+        - The prediction was intentionally skipped (``_PREDICTION_SKIPPED``),
+          in which case ``self.stale_memo_uncheckable`` records the key but
+          the memo data is still surfaced (best-effort signal).
+        - The cache backend doesn't support ``get_latest_for_node_with_cache_key``
+          (legacy memo path), in which case the value is returned without
+          freshness checking.
+
+        Output is guaranteed to be a ``dict`` -- the guard is at the method
+        boundary, so callers don't need to repeat the isinstance check.
+        """
+        if self.memo_cache is None:
+            return None
+        if hasattr(self.memo_cache, "get_latest_for_node_with_cache_key"):
+            result = self.memo_cache.get_latest_for_node_with_cache_key(node_id, workflow_path=workflow_path)
+            if result is None:
+                return None
+            output, created_at, memo_cache_key = result
+            if not isinstance(output, dict):
+                return None
+            predicted = self.predicted_cache_keys.get((workflow_path, node_id))
+            if predicted is None:
+                return output, created_at
+            if predicted == _PREDICTION_SKIPPED:
+                self.stale_memo_uncheckable.add((workflow_path, node_id))
+                return output, created_at
+            if memo_cache_key != predicted:
+                self.stale_memo_skipped.add((workflow_path, node_id))
+                return None
+            return output, created_at
+        result = self.memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
+        if result is None:
+            return None
+        output, created_at = result
+        if not isinstance(output, dict):
+            return None
+        return output, created_at
 
     # ------------------------------------------------------------------
     # Template ref resolution (Track B)
@@ -383,20 +452,13 @@ class AnalysisContext:
         from pflow.runtime.template_resolver import TemplateResolver
 
         try:
-            latest = _latest_memo_for_freshness_check(
-                self.memo_cache,
-                root,
-                workflow_path=self.workflow_path,
-                ctx=self,
-            )
+            latest = self.latest_memo_for_node(root, workflow_path=self.workflow_path)
         except Exception:
             logger.debug("memo cache freshness-aware lookup failed for %s", ref, exc_info=True)
             return None
         if latest is None:
             return None
         output, _created_at = latest
-        if not isinstance(output, dict):
-            return None
         try:
             resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
         except Exception:
@@ -418,20 +480,13 @@ class AnalysisContext:
             return None
         template_resolver_cls = template_resolver()
         try:
-            latest = _latest_memo_for_freshness_check(
-                self.memo_cache,
-                root,
-                workflow_path=workflow_path,
-                ctx=self,
-            )
+            latest = self.latest_memo_for_node(root, workflow_path=workflow_path)
         except Exception:
             logger.debug("memo cache freshness-aware lookup failed for %s in %s", ref, workflow_path, exc_info=True)
             return None
         if latest is None:
             return None
         output, _created_at = latest
-        if not isinstance(output, dict):
-            return None
         try:
             resolved = template_resolver_cls.resolve_template(f"${{{ref}}}", {root: output})
         except Exception:
@@ -479,38 +534,6 @@ def _normalize_empty(value: Any) -> Any | None:
     if isinstance(value, (str, list, dict, tuple, set)) and not value:
         return None
     return value
-
-
-def _latest_memo_for_freshness_check(
-    memo_cache: Any,
-    node_id: str,
-    *,
-    workflow_path: str | None,
-    ctx: AnalysisContext,
-) -> tuple[dict[str, Any], float] | None:
-    """Return latest memo output unless Bundle 6 cache-key comparison marks it stale."""
-    if hasattr(memo_cache, "get_latest_for_node_with_cache_key"):
-        result = memo_cache.get_latest_for_node_with_cache_key(node_id, workflow_path=workflow_path)
-        if result is None:
-            return None
-        output, created_at, memo_cache_key = result
-        predicted = ctx.predicted_cache_keys.get((workflow_path, node_id))
-        if predicted is None:
-            return output, created_at
-        if predicted == _PREDICTION_SKIPPED:
-            ctx.stale_memo_uncheckable.add((workflow_path, node_id))
-            return output, created_at
-        if memo_cache_key != predicted:
-            ctx.stale_memo_skipped.add((workflow_path, node_id))
-            return None
-        return output, created_at
-    result = memo_cache.get_latest_for_node(node_id, workflow_path=workflow_path)
-    if result is None:
-        return None
-    output, created_at = result
-    if not isinstance(output, dict):
-        return None
-    return output, created_at
 
 
 __all__ = ["_PREDICTION_SKIPPED", "AnalysisContext", "template_resolver"]

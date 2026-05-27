@@ -42,7 +42,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
@@ -86,8 +86,37 @@ _EXCLUSION_REASON_LABELS: dict[str, str] = {
 }
 
 
-def render_text(analysis: CacheAnalysis, *, all_rows: bool = False) -> str:
-    """Render the analyzer result as markdown-formatted text."""
+_RenderSection = Literal["all", "summary"]
+
+
+def render_text(
+    analysis: CacheAnalysis,
+    *,
+    all_rows: bool = False,
+    section: _RenderSection = "all",
+) -> str:
+    """Render the analyzer result as markdown-formatted text.
+
+    Parameters
+    ----------
+    analysis:
+        The result of :func:`pflow.core.prompt_cache_analysis.analyze`.
+    all_rows:
+        When True, the per-call section renders every LLM row including
+        low-signal ones. Default False keeps the agent-friendly default.
+    section:
+        Which slice of the full report to render. ``"all"`` (default) emits
+        the complete report; ``"summary"`` returns just the ``## Summary``
+        section as a string (no header, no footer, no trailing newline).
+
+        Tests asserting on the summary block in isolation should use
+        ``section="summary"`` instead of reaching into ``_render_summary``.
+        The set of section names is intentionally narrow — extend only when
+        a concrete test surface needs another value.
+    """
+    if section == "summary":
+        return _render_summary(analysis)
+
     lines: list[str] = []
     lines.append(_render_header(analysis))
     lines.append(_render_summary(analysis))

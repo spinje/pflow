@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.prompt_cache_analysis import render_text
 from pflow.core.prompt_cache_analysis.analyze import (
     analyze,
 )
@@ -433,8 +434,6 @@ def test_below_threshold_emits_conditional_recommendation_not_paste_block(
     assert conditional.context["node_count"] == 2
     assert conditional.context["affected_nodes"] == ["draft", "review"]
     assert conditional.context["shared_chunks"] == ["topic"]
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     text = render_text(result)
     assert "Shared context conditional" in text
     assert "paste-ready" not in text
@@ -462,7 +461,6 @@ def test_suggested_block_suppressed_when_threshold_unknown(monkeypatch: pytest.M
     assert result.summary.actionable_opportunities == 0
     assert any("the analyzer cannot yet tell whether a cache edit would fire" in note for note in result.notes)
     from pflow.core.prompt_cache_analysis.rendering.json import render_json
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     payload = render_json(result)
     assert payload["recommended_actions"] == []
@@ -1037,8 +1035,6 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
     # cache.first-call-write-penalty would not fire here (2 nodes, not 1), so
     # we don't assert its absence; the dedicated truncated-filter test owns that.
     assert result.suggested_blocks == ()
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     text = render_text(result)
     assert "Evidence: trace truncated (1 of 2 LLM nodes executed)" in text
     assert "Trace-backed costs below cover executed nodes only." in text
@@ -1205,7 +1201,6 @@ def test_truncated_trace_filters_cost_projection_findings(tmp_path: Path) -> Non
     assert any(d.id == "cache.first-call-write-penalty" for d in complete_result.warnings)
 
     from pflow.core.prompt_cache_analysis.rendering.json import render_json
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     payload = render_json(result)
     # Cost-projection actions filtered, but IR-derived findings (if any) flow.
@@ -1308,8 +1303,6 @@ def test_complete_trace_with_conditional_dispatch_keeps_ir_findings(tmp_path: Pa
     )
 
     # Header rendering: complete + unexecuted should show "X of Y; Z not reached".
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     text = render_text(result)
     assert "Evidence: complete trace (1 of 2 LLM nodes executed; 1 not reached for these inputs)" in text
     # Suppression note must NOT appear on complete coverage.
@@ -1772,7 +1765,6 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
     assert result.summary.projection_exclusions[0].actual_cost_usd == pytest.approx(0.03)
 
     from pflow.core.prompt_cache_analysis.rendering.json import render_json
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
 
     payload = render_json(result)
     assert payload["summary"]["actual_vs_no_cache_delta"]["kind"] != "unavailable"
@@ -1935,8 +1927,6 @@ def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
     assert row.model == ""
     assert row.model_is_heterogeneous is False
     assert row.observed_models == ("gemini/a", "gemini/b")
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     assert "model varies per batch item" not in render_text(result)
 
 
@@ -2072,8 +2062,6 @@ def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
     assert rows["defaulted"].model == "openai/gpt-4o-mini"
     assert rows["heterogeneous"].model == ""
     assert rows["heterogeneous"].model_is_heterogeneous is True
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     assert "IR/settings declares: gemini/gemini-2.5-flash (overridden by trace evidence)" in render_text(result)
 
 
@@ -2474,8 +2462,6 @@ def test_shadow_warning_enriched_with_costs_when_cache_contains_body(tmp_path: P
     # bypasses the enrichment pipeline. Mutation contract: drop
     # ``context=dict(ctx)`` in ``view_helpers._build_actions`` -> the
     # cost-comparison line never reaches text output -> assertion fails.
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     rendered = render_text(result)
     assert "Removing `prompt_cache:` for `bundle` from `use-tiny-field`" in rendered
     assert "would drop per-call cost" in rendered
@@ -4301,11 +4287,9 @@ def test_summary_message_zero_llm_nodes() -> None:
     distinct; re-conflating them lets the zero-LLM message mention LLM
     nodes.
     """
-    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
-
     workflow_ir = {"nodes": [{"id": "shell", "type": "shell", "params": {"command": "echo"}}]}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
-    rendered = _render_summary(result)
+    rendered = render_text(result, section="summary")
     assert "workflow has no LLM nodes" in rendered
     assert "model resolved" not in rendered
     assert "run the workflow once" not in rendered
@@ -4324,7 +4308,6 @@ def test_summary_message_no_model_resolved(monkeypatch: pytest.MonkeyPatch) -> N
 
     sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
         "nodes": [
@@ -4333,7 +4316,7 @@ def test_summary_message_no_model_resolved(monkeypatch: pytest.MonkeyPatch) -> N
         ]
     }
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
-    rendered = _render_summary(result)
+    rendered = render_text(result, section="summary")
     assert "no model resolved" in rendered
     assert "workflow has no LLM nodes" not in rendered
 
@@ -4356,7 +4339,6 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
-    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     # Single LLM node — no shared context → no aggregate-savings → falls into
     # the third sub-branch.
@@ -4366,7 +4348,7 @@ def test_summary_message_priced_no_run_history(monkeypatch: pytest.MonkeyPatch) 
         ]
     }
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
-    rendered = _render_summary(result)
+    rendered = render_text(result, section="summary")
     # Either the priced-no-history branch fires, or (if savings detection
     # produces an aggregate figure even for one node) the greenfield run-once
     # hint fires. Both forms are correct; only the wrong "no LLM nodes" or
@@ -4435,14 +4417,13 @@ def test_render_text_emits_suggested_line_on_unavailable_cost_branch(
         "get_default_workflow_model",
         lambda: "anthropic/claude-sonnet-4-5",
     )
-    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
         "inputs": {"article": {"type": "string"}},
         "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "lonely call"}}],
     }
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
-    rendered = _render_summary(result)
+    rendered = render_text(result, section="summary")
     if "Cost data unavailable: run the workflow once" in rendered:
         # We hit branch 4. Suggested line must follow.
         assert "Suggested:  pflow run /abs/x.pflow.md article=<value>" in rendered
@@ -4541,7 +4522,6 @@ def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest
 
     sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.rendering.text import _render_summary
 
     workflow_ir = {
         "nodes": [
@@ -4550,7 +4530,7 @@ def test_heterogeneous_only_summary_renders_explicit_message(monkeypatch: pytest
         ]
     }
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=False)
-    rendered = _render_summary(result)
+    rendered = render_text(result, section="summary")
 
     assert "all LLM nodes use models that vary per batch item" in rendered
     # The wrong-cause messages must NOT fire here.
@@ -4570,8 +4550,6 @@ def test_heterogeneous_row_survives_option_c_filter(monkeypatch: pytest.MonkeyPa
 
     sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     workflow_ir = {
         "nodes": [
             {"id": "score-choruses", "type": "llm", "params": {"model": "${item.model}", "prompt": "p"}},
@@ -4598,8 +4576,6 @@ def test_heterogeneous_node_named_in_scale_line(monkeypatch: pytest.MonkeyPatch)
 
     sys.modules["pflow.core.prompt_cache_analysis.analyze"]
     _patch_stage_attr(monkeypatch, "get_default_workflow_model", lambda: None)
-    from pflow.core.prompt_cache_analysis.rendering.text import render_text
-
     workflow_ir = {
         "nodes": [
             {

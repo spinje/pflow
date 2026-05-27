@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_usage import normalize_litellm_usage_tokens
@@ -29,7 +28,6 @@ from ..token_estimation import (
 from ..token_estimation import (
     extract_unique_refs as _extract_unique_refs,
 )
-from ..trace_loading import _build_call_counts_by_node
 from ..types import (
     _BLOCK_ABSENT_BRANCH,
     _BLOCK_BELOW_PROVIDER_MIN,
@@ -39,11 +37,9 @@ from ..types import (
     CacheProjectionComponent,
     CrossWorkflowInputContribution,
     PerCallRow,
-    TraceExecutionIndex,
     _projection_component,
     _projection_source_confidence,
     _provider_min_state,
-    _RowCrossWorkflowCandidate,
     _safe_pct,
     aggregate_projection,
 )
@@ -62,15 +58,6 @@ class _PromptStaticTailFinding:
     meets_provider_min: bool | None = None
     provider_min_tokens: int | None = None
     blocked_reason: str = ""
-
-
-@dataclass(frozen=True)
-class _PerCallRowsResult:
-    rows: list[PerCallRow]
-    warnings: list[Diagnostic]
-    call_counts_by_node: dict[tuple[str | None, str], int]
-    cross_workflow_candidates_by_row: dict[tuple[str | None, str], list[_RowCrossWorkflowCandidate]]
-    has_greenfield_cross_workflow_projection_gap: bool = False
 
 
 def _total_observed_invocations(
@@ -751,94 +738,6 @@ def _build_cache_projection_components(
         aggregate_projection(active, purpose="active", input_tokens=input_tokens),
         aggregate_projection(ready, purpose="ready", input_tokens=input_tokens),
         aggregate_projection(opportunity, purpose="opportunity", input_tokens=input_tokens),
-    )
-
-
-def _build_per_call_rows_and_warnings(
-    *,
-    ctx: AnalysisContext,
-    cw_result: Any,
-    trace_index: TraceExecutionIndex,
-) -> _PerCallRowsResult:
-    """Walk every reachable workflow IR and build LLM rows."""
-    from .cross_workflow import (
-        _build_cross_workflow_candidates_by_row,
-        _has_structural_cross_workflow_projection_candidate,
-    )
-    from .warnings import _per_node_warnings
-
-    rows: list[PerCallRow] = []
-    warnings: list[Diagnostic] = []
-    call_counts_by_node = _build_call_counts_by_node(ctx, cw_result)
-    cross_workflow_candidates_by_row = _build_cross_workflow_candidates_by_row(
-        ctx=ctx,
-        cw_result=cw_result,
-        call_counts_by_node=call_counts_by_node,
-        trace_index=trace_index,
-    )
-    has_greenfield_projection_gap = (
-        ctx.trace is None
-        and bool(getattr(cw_result, "edges", ()) or ())
-        and not cross_workflow_candidates_by_row
-        and _has_structural_cross_workflow_projection_candidate(cw_result)
-    )
-    for workflow_path, workflow_ir in getattr(cw_result, "irs_by_workflow", {}).items():
-        declared_chunks = _extract_declared_chunks(workflow_ir.get("cache"))
-        candidate_subsets_by_node = _detect_candidate_subsets(workflow_ir)
-        wf_ctx = AnalysisContext.build(
-            workflow_ir=workflow_ir,
-            parameters=ctx.parameters_for_workflow(workflow_path),
-            memo_cache=ctx.memo_cache,
-            trace_data=ctx.trace_data,
-            trace_outputs_by_key=ctx.trace_outputs_by_key,
-            workflow_path=workflow_path,
-            base_path=ctx.base_path,
-            parameters_by_workflow=ctx.parameters_by_workflow,
-            predicted_cache_keys=ctx.predicted_cache_keys,
-            prediction_fidelity_notes=ctx.prediction_fidelity_notes,
-            stale_memo_skipped=ctx.stale_memo_skipped,
-            stale_memo_uncheckable=ctx.stale_memo_uncheckable,
-        )
-        nodes = workflow_ir.get("nodes", []) or []
-        nodes_by_id: dict[str, dict[str, Any]] = {
-            str(n.get("id", "")): n for n in nodes if isinstance(n, dict) and n.get("id")
-        }
-        for node in nodes:
-            if not isinstance(node, dict) or node.get("type") != "llm":
-                continue
-            node_id = str(node.get("id", "?"))
-            row = _build_per_call_row(
-                node=node,
-                ctx=wf_ctx,
-                declared_chunks=declared_chunks,
-                candidate_subset=candidate_subsets_by_node.get(node_id),
-                trace_cost=trace_index.costs_by_key.get((workflow_path, node_id)),
-                trace_llm_call=trace_index.llm_calls_by_key.get((workflow_path, node_id)),
-                trace_llm_calls=trace_index.llm_call_lists_by_key.get((workflow_path, node_id), ()),
-                provider_trace_llm_call=trace_index.provider_llm_calls_by_key.get((workflow_path, node_id)),
-                provider_trace_llm_calls=trace_index.provider_llm_call_lists_by_key.get((workflow_path, node_id), ()),
-                did_not_execute_in_trace=(
-                    trace_index.trace_loaded and (workflow_path, node_id) not in trace_index.executed_keys
-                ),
-                cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
-            )
-            rows.append(row)
-            if not row.did_not_execute_in_trace:
-                warnings.extend(
-                    _per_node_warnings(
-                        node,
-                        row,
-                        declared_chunks=declared_chunks,
-                        nodes_by_id=nodes_by_id,
-                        ctx=wf_ctx,
-                    )
-                )
-    return _PerCallRowsResult(
-        rows=rows,
-        warnings=warnings,
-        call_counts_by_node=call_counts_by_node,
-        cross_workflow_candidates_by_row=cross_workflow_candidates_by_row,
-        has_greenfield_cross_workflow_projection_gap=has_greenfield_projection_gap,
     )
 
 
