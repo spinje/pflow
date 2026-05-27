@@ -216,14 +216,14 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 158: Replace `llm` Library with LiteLLM
 - ✅ Task 126: Structured Output for Claude Code Node
 - ✅ Task 159: Prompt Caching
+- ✅ Task 160: Cache Analysis Architectural Refactor
 
 ### Planned Features (in order of priority)
 
-**Next**
-- Task 160: Cache Analysis Architectural Refactor
+**Next?**
 - Task 125: Human-in-the-Loop Approval Gates
 
-**v0.12.0**
+**v0.14.0**
 - Task 142: Explore Function-Based Code Node Syntax
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 94: Display Available LLM Models
@@ -232,7 +232,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - Task 118: Code and Shell Linting
 - Task 121: Workflow Testability
 
-**v0.13.0 - Performance:**
+**v0.15.0 - Performance:**
 
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
