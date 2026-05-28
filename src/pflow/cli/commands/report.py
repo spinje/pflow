@@ -58,6 +58,14 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
     if report_dir:
         click.echo(str(report_dir))  # stdout — pipeable for scripting
         click.echo(f"Report generated: {report_dir}", err=True)
+        summary_path = report_dir / "summary.md"
+        try:
+            summary_text = summary_path.read_text()
+        except OSError:
+            pass
+        else:
+            click.echo("", err=True)
+            click.echo(summary_text, err=True, nl=False)
     else:
         click.echo(
             "Failed to generate report. The trace may use an older format (requires 2.0.0+).",

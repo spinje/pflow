@@ -60,7 +60,7 @@ def test_format_plan_text_summary_translates_class_names() -> None:
     )
     out = format_plan_text(plan)
     # Translated tags appear; raw class names do not.
-    assert "1 LLM" in out and "1 code" in out and "1 shell" in out
+    assert "1 llm" in out and "1 code" in out and "1 shell" in out
     assert "LLMNode" not in out and "PythonCodeNode" not in out and "ShellNode" not in out
 
 
@@ -84,8 +84,8 @@ def test_format_plan_text_summary_prefers_nested_counts_when_present() -> None:
     out = format_plan_text(plan)
     assert "Summary (including nested):" in out
     assert "2 cached" in out and "3 would execute" in out
-    # Type line reflects nested breakdown (LLMNode → LLM).
-    assert "2 LLM" in out
+    # Type line reflects nested breakdown (LLMNode → llm).
+    assert "2 llm" in out
     # Per-level-only phrasing absent.
     assert "Summary:" not in out.replace("Summary (including nested):", "")
 

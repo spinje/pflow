@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from pflow.core.duration_format import format_duration
 from pflow.core.exceptions import ReportGenerationError
+from pflow.core.node_type_display import node_type_tag
 from pflow.runtime.workflow_trace import final_events_by_node
 
 logger = logging.getLogger(__name__)
@@ -682,6 +684,25 @@ def _resolve_final_status(trace: dict[str, Any]) -> str:
     return "success" if legacy == "failed" else legacy
 
 
+def _halt_node_id(trace: dict[str, Any]) -> str | None:
+    """Return the node_id of the event that ended a failed run, or None.
+
+    The trace records no explicit halt ordering. We approximate by walking
+    ``trace["nodes"]`` in recorded order and returning the last event with
+    ``success is False`` — the chronological "this is where the run stopped"
+    that matches reader intuition. Returns None when the run did not halt
+    (``final_status`` other than ``"failed"``).
+    """
+    if trace.get("final_status") != "failed":
+        return None
+    for event in reversed(trace.get("nodes", []) or []):
+        if event.get("success") is False:
+            node_id = event.get("node_id")
+            if isinstance(node_id, str):
+                return node_id
+    return None
+
+
 def _build_summary(
     trace: dict[str, Any],
     source_path: str = "N/A",
@@ -691,7 +712,10 @@ def _build_summary(
     """Build top-level summary.md content."""
     lines = [f"# Execution Report: {trace.get('workflow_name', 'workflow')}", ""]
     lines.append(f"- Status: {_resolve_final_status(trace)}")
-    lines.append(f"- Duration: {trace.get('duration_ms', 0) / 1000:.1f}s")
+    halt = _halt_node_id(trace)
+    if halt:
+        lines.append(f"- Halted at: {halt}")
+    lines.append(f"- Duration: {format_duration(trace.get('duration_ms', 0))}")
     executed = trace.get("nodes_executed", 0)
     if only_node and total_nodes:
         skipped = total_nodes - executed
@@ -730,21 +754,8 @@ def _build_summary(
     lines.append(f"- Generated: {trace.get('end_time', '')}")
     lines.append("")
 
-    # Pipeline table
-    lines.append("## Pipeline")
-    lines.append("")
-    lines.append("| # | Node | Type | Time | Cost | Status |")
-    lines.append("|---|------|------|------|------|--------|")
     all_events = trace.get("nodes", [])
-    for i, event in enumerate(all_events, 1):
-        node_id = event.get("node_id", "?")
-        node_type = event.get("node_type", "?")
-        duration = event.get("duration_ms", 0)
-        cost = _format_cost(_compute_event_cost(event))
-        status = _format_event_status(event)
-        lines.append(f"| {i} | {node_id} | {node_type} | {duration:.0f}ms | {cost} | {status} |")
-
-    lines.append("")
+    _format_pipeline_table(all_events, lines)
 
     # Error and warning sections
     _append_error_section(trace, lines)
@@ -878,7 +889,7 @@ def _format_llm_params(node_params: dict[str, Any], lines: list[str]) -> None:
 def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
     """Append metadata lines for a node event."""
     lines.append(f"- Type: {event.get('node_type', 'unknown')}")
-    lines.append(f"- Time: {event.get('duration_ms', 0):.0f}ms")
+    lines.append(f"- Time: {format_duration(event.get('duration_ms', 0))}")
     status = "success" if event.get("success") else "failed"
     if event.get("cached"):
         status += " [cached]"
@@ -902,21 +913,82 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
         lines.append(f"- Error: {error}")
 
 
+def _row_batch_item_label(node_id: str, item: dict[str, Any]) -> str:
+    """Return ``node_id[index] (model-or-label)`` for an exploded batch-item row.
+
+    Model tail uses the last path segment of ``llm_call.model`` so
+    ``anthropic/claude-sonnet-4-5`` renders as ``claude-sonnet-4-5``. Non-LLM
+    items fall back to the existing label-extraction helper.
+    """
+    idx = item.get("index", "?")
+    llm_call = item.get("llm_call") or {}
+    model = llm_call.get("model")
+    if isinstance(model, str) and model:
+        tail = model.rsplit("/", 1)[-1]
+        return f"{node_id}[{idx}] ({tail})"
+    label = _extract_item_label(item)
+    if label:
+        return f"{node_id}[{idx}] ({label})"
+    return f"{node_id}[{idx}]"
+
+
+def _row_status(event_or_item: dict[str, Any]) -> str:
+    """Lowercase status for the summary table: ``success``/``failed``/``cached``."""
+    if event_or_item.get("cached"):
+        return "cached"
+    return "success" if event_or_item.get("success") else "failed"
+
+
+def _row_tokens(event_or_item: dict[str, Any]) -> str:
+    """``<in> in / <out> out`` for LLM rows; ``—`` otherwise.
+
+    The trailing ``or 0`` guards against legacy cached entries where
+    ``input_tokens``/``output_tokens`` is explicitly ``None`` instead of absent;
+    ``f"{None:,}"`` raises ``TypeError``.
+    """
+    llm_call = event_or_item.get("llm_call")
+    if not isinstance(llm_call, dict):
+        return "—"
+    tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0)) or 0
+    tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0)) or 0
+    return f"{tokens_in:,} in / {tokens_out:,} out"
+
+
 def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> None:
-    """Append a pipeline summary table for a list of node events."""
+    """Append the pipeline summary table for a list of node events.
+
+    Batch items are exploded into per-item rows (synthetic ``is_warmup`` items
+    are filtered out per the runtime convention). Sub-workflow children stay
+    collapsed under their parent row; their detail lives in the nested
+    container ``summary.md``.
+    """
     if not events:
         return
     lines.append("## Pipeline")
     lines.append("")
-    lines.append("| # | Node | Type | Time | Cost | Status |")
-    lines.append("|---|------|------|------|------|--------|")
+    lines.append("| # | Node | Type | Status | Time | Tokens | Cost |")
+    lines.append("|---|------|------|--------|------|--------|------|")
     for i, event in enumerate(events, 1):
-        node_id = event.get("node_id", "?")
-        node_type = event.get("node_type", "?")
-        duration = event.get("duration_ms", 0)
-        cost = _format_cost(_compute_event_cost(event))
-        status = _format_event_status(event)
-        lines.append(f"| {i} | {node_id} | {node_type} | {duration:.0f}ms | {cost} | {status} |")
+        type_tag = node_type_tag(event.get("node_type", "?"))
+        batch_items = event.get("batch_items") or []
+        # Explode batch hosts into one row per item. Sub-workflow containers
+        # (which carry sub_workflow_events) keep their single aggregated row.
+        if batch_items and not event.get("sub_workflow_events"):
+            node_id = event.get("node_id", "?")
+            for item in batch_items:
+                if (item.get("llm_call") or {}).get("is_warmup"):
+                    continue
+                lines.append(
+                    f"| {i} | {_row_batch_item_label(node_id, item)} | {type_tag} | "
+                    f"{_row_status(item)} | {format_duration(item.get('duration_ms', 0))} | "
+                    f"{_row_tokens(item)} | {_format_cost(_compute_batch_item_cost(item))} |"
+                )
+        else:
+            lines.append(
+                f"| {i} | {event.get('node_id', '?')} | {type_tag} | "
+                f"{_row_status(event)} | {format_duration(event.get('duration_ms', 0))} | "
+                f"{_row_tokens(event)} | {_format_cost(_compute_event_cost(event))} |"
+            )
     lines.append("")
 
 
@@ -1225,7 +1297,7 @@ def _build_node_summary(event: dict[str, Any]) -> str:
     node_id = event.get("node_id", "unknown")
     lines = [f"# {node_id}", ""]
     lines.append(f"- Type: {event.get('node_type', '?')}")
-    lines.append(f"- Time: {event.get('duration_ms', 0):.0f}ms")
+    lines.append(f"- Time: {format_duration(event.get('duration_ms', 0))}")
     lines.append(f"- Status: {'success' if event.get('success') else 'failed'}")
     container_cost = _compute_event_cost(event)
     if container_cost is not None:
@@ -1275,14 +1347,14 @@ def _build_items_table(
         lines.append("|---|------|------|--------|")
     for item in items:
         idx = item.get("index", "?")
-        dur = item.get("duration_ms", 0)
+        dur = format_duration(item.get("duration_ms", 0))
         cost = _format_cost(_compute_batch_item_cost(item))
         status = _format_event_status(item)
         if has_labels:
             label = _item_label_or_index(item)
-            lines.append(f"| {idx} | {label} | {dur:.0f}ms | {cost} | {status} |")
+            lines.append(f"| {idx} | {label} | {dur} | {cost} | {status} |")
         else:
-            lines.append(f"| {idx} | {dur:.0f}ms | {cost} | {status} |")
+            lines.append(f"| {idx} | {dur} | {cost} | {status} |")
     lines.append("")
 
 
@@ -1295,10 +1367,7 @@ def _append_batch_stats(batch_items: list[dict[str, Any]], lines: list[str]) -> 
     durations = [item.get("duration_ms", 0) for item in batch_items]
     if durations:
         median_dur = statistics.median(durations)
-        if median_dur >= 1000:
-            lines.append(f"- Median time: {median_dur / 1000:.1f}s")
-        else:
-            lines.append(f"- Median time: {median_dur:.0f}ms")
+        lines.append(f"- Median time: {format_duration(median_dur)}")
 
     costs = [_compute_batch_item_cost(item) for item in batch_items]
     total_cost = sum(c for c in costs if c is not None)
@@ -1313,7 +1382,7 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
     node_id = parent_event.get("node_id", "?")
     label = _item_label_or_index(item)
     lines = [f"# {node_id} — {label}", ""]
-    lines.append(f"- Time: {item.get('duration_ms', 0):.0f}ms")
+    lines.append(f"- Time: {format_duration(item.get('duration_ms', 0))}")
     status = "success" if item.get("success") else "failed"
     if item.get("cached"):
         status += " [cached]"
@@ -1343,7 +1412,7 @@ def _build_batch_item_summary(item: dict[str, Any]) -> str:
     """Build summary for a batch item that contains sub-workflow events."""
     label = _item_label_or_index(item)
     lines = [f"# {label}", ""]
-    lines.append(f"- Time: {item.get('duration_ms', 0):.0f}ms")
+    lines.append(f"- Time: {format_duration(item.get('duration_ms', 0))}")
     lines.append(f"- Status: {'success' if item.get('success') else 'failed'}")
     lines.append("")
 

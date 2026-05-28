@@ -140,24 +140,38 @@ def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> No
         _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
         report = ctx.obj.get("report")
         if report:
-            try:
-                from pflow.core.trace_report import generate_report
+            _generate_and_echo_report(ctx, trace_file, report, workflow_trace)
 
-                only_node = ctx.obj.get("only_node")
-                report_dir = generate_report(
-                    trace_file,
-                    report,
-                    only_node=only_node,
-                    total_nodes=ctx.obj.get("total_nodes") if only_node else None,
-                )
-                if report_dir:
-                    _echo_trace(ctx, f"📋 Execution report: {report_dir}")
-                    if only_node:
-                        _echo_target_node_path(ctx, report_dir, workflow_trace.events, only_node)
-            except ReportGenerationError as report_err:
-                click.echo(f"Failed to generate report: {report_err}", err=True)
-            except Exception as report_err:
-                logger.error("Failed to generate report: %s", report_err, exc_info=True)
+
+def _generate_and_echo_report(ctx: click.Context, trace_file: Any, report: Any, workflow_trace: Any) -> None:
+    """Generate the report directory and echo its summary to stderr."""
+    try:
+        from pflow.core.trace_report import generate_report
+
+        only_node = ctx.obj.get("only_node")
+        report_dir = generate_report(
+            trace_file,
+            report,
+            only_node=only_node,
+            total_nodes=ctx.obj.get("total_nodes") if only_node else None,
+        )
+        if not report_dir:
+            return
+        _echo_trace(ctx, f"📋 Execution report: {report_dir}")
+        summary_path = report_dir / "summary.md"
+        try:
+            summary_text = summary_path.read_text()
+        except OSError:
+            pass
+        else:
+            _echo_trace(ctx, "")
+            _echo_trace(ctx, summary_text)
+        if only_node:
+            _echo_target_node_path(ctx, report_dir, workflow_trace.events, only_node)
+    except ReportGenerationError as report_err:
+        click.echo(f"Failed to generate report: {report_err}", err=True)
+    except Exception as report_err:
+        logger.error("Failed to generate report: %s", report_err, exc_info=True)
 
 
 def _echo_target_node_path(ctx: click.Context, report_dir: Path, events: list[dict[str, Any]], only_node: str) -> None:

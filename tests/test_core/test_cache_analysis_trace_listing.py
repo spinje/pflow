@@ -168,3 +168,71 @@ def test_current_model_set_distinguishes_heterogeneous_from_unresolvable() -> No
 
     assert has_heterogeneous is True
     assert models == frozenset({"anthropic/claude-sonnet-4-5"})
+
+
+def test_list_traces_long_duration_matches_shared_format_duration(tmp_path: Path) -> None:
+    """The traces-list duration cell must use the shared ``format_duration``
+    helper so a single trace renders the same string across surfaces.
+
+    Regression guard: a 113744ms trace previously rendered as ``113.7s`` here
+    while ``pflow report`` rendered it as ``1m54s``. Both should now read
+    ``1m54s``.
+    """
+    workflow = _write_workflow(tmp_path)
+    debug_dir = tmp_path / "debug"
+    debug_dir.mkdir()
+    trace_path = debug_dir / _trace_name(str(workflow), "20260515-120000")
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.3.0",
+            "workflow_path": str(workflow),
+            "final_status": "success",
+            "start_time": "2026-05-15T12:00:00",
+            "duration_ms": 113744,
+            "llm_summary": {
+                "total_calls": 1,
+                "total_cost_usd": 0.01,
+                "models_used": ["anthropic/claude-sonnet-4-5"],
+            },
+            "nodes": [],
+        }),
+        encoding="utf-8",
+    )
+
+    entries, note = list_traces_for_workflow(str(workflow), debug_dir=debug_dir)
+    text = render_traces_list_text(entries, workflow_path=str(workflow), disclosure_note=note)
+
+    assert "1m54s" in text
+    # The pre-fix output (which still appeared in `pflow analyze-cache --list-traces`
+    # after the report-side change) must NOT reappear.
+    assert "113.7s" not in text
+
+
+def test_list_traces_duration_unavailable_when_field_missing(tmp_path: Path) -> None:
+    """Preserves the ``duration unavailable`` shim — the shared
+    ``format_duration`` doesn't accept ``None``."""
+    workflow = _write_workflow(tmp_path)
+    debug_dir = tmp_path / "debug"
+    debug_dir.mkdir()
+    trace_path = debug_dir / _trace_name(str(workflow), "20260515-120000")
+    trace_path.write_text(
+        json.dumps({
+            "format_version": "2.3.0",
+            "workflow_path": str(workflow),
+            "final_status": "success",
+            "start_time": "2026-05-15T12:00:00",
+            # duration_ms intentionally absent
+            "llm_summary": {
+                "total_calls": 0,
+                "total_cost_usd": None,
+                "models_used": ["anthropic/claude-sonnet-4-5"],
+            },
+            "nodes": [],
+        }),
+        encoding="utf-8",
+    )
+
+    entries, note = list_traces_for_workflow(str(workflow), debug_dir=debug_dir)
+    text = render_traces_list_text(entries, workflow_path=str(workflow), disclosure_note=note)
+
+    assert "duration unavailable" in text
