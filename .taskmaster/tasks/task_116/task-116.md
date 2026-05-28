@@ -91,6 +91,31 @@ if sys.platform == "win32":
 
 ---
 
+### 6. Default Encoding for Report Files (UTF-8 vs cp1252)
+
+**Problem:** Report generation calls `Path.write_text()` / `Path.read_text()` without an explicit `encoding=` argument. Python 3.10–3.14 defer to `locale.getencoding()`, which is `cp1252` on a typical Windows install. The rendered `summary.md` contains non-ASCII characters (em-dash `—`, status glyphs in some surfaces, model names that may include UTF-8) that are not representable in cp1252.
+
+**Surfaced by:** Gemini code review on PR #438 (https://github.com/spinje/pflow/pull/438#pullrequestreview-4379598499). The bot flagged the read sites; on inspection the WRITE sites have the same problem and would fail FIRST, so fixing reads alone is incomplete.
+
+**Failure mode on Windows:**
+- Write side fails with `UnicodeEncodeError` while building the report directory — the directory never gets created, so reads never run.
+- Same applies to the trace JSON path if a workflow name contains non-ASCII.
+
+**Write sites (need `encoding="utf-8"`):**
+- `src/pflow/core/trace_report.py` — `_render_report_snapshot` (`summary.md` + `.pflow-report.json` marker)
+- `src/pflow/core/trace_report.py` — `_write_node_files` (per-node `.md` files, container `summary.md` files, batch-item files)
+- `src/pflow/runtime/workflow_trace.py` — `save_to_file` (trace JSON; verify `json.dump` write mode)
+
+**Read sites (need `encoding="utf-8"`):**
+- `src/pflow/cli/commands/report.py:64` — `(report_dir / "summary.md").read_text()` for stderr echo
+- `src/pflow/cli/commands/run.py:164` — same call site on the `--report` path
+
+**Recommended fix (when this task lands):** One sweep across all writers and readers of report-shaped files, all keyed on `encoding="utf-8"`. Avoid the half-fix (reads only) — it adds noise without changing the failure mode.
+
+**Impact today:** Zero on macOS/Linux (locale is UTF-8). Will block Windows compatibility until addressed.
+
+---
+
 ## Testing Strategy (When Implementing)
 
 1. **GitHub Actions:** Add `windows-latest` to CI matrix

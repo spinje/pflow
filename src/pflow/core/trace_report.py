@@ -53,6 +53,19 @@ def _slugify_label(label: str, max_len: int = 40) -> str:
     return slug or "unnamed"
 
 
+def _is_warmup_item(item: dict[str, Any]) -> bool:
+    """Return True if ``item`` is the synthetic batch-warmup item.
+
+    Centralises the ``llm_call.is_warmup`` check so callers don't reimplement
+    the ``(item.get("llm_call") or {}).get("is_warmup")`` pattern — which
+    raises ``AttributeError`` if ``llm_call`` is a non-dict truthy value.
+    """
+    llm_call = item.get("llm_call")
+    if not isinstance(llm_call, dict):
+        return False
+    return bool(llm_call.get("is_warmup"))
+
+
 def _extract_item_label(item: dict[str, Any]) -> str | None:
     """Extract a human-readable label from a batch item's input data.
 
@@ -910,8 +923,11 @@ def _row_batch_item_label(node_id: str, item: dict[str, Any]) -> str:
     per-node file still carries the full model id.
     """
     idx = item.get("index", "?")
-    llm_call = item.get("llm_call") or {}
-    model = llm_call.get("model")
+    llm_call = item.get("llm_call")
+    # Defensive isinstance — matches the same guard in ``_row_tokens`` below.
+    # Producer always writes a dict, but a synthetic/adversarial trace with a
+    # non-dict ``llm_call`` would otherwise raise AttributeError here.
+    model = llm_call.get("model") if isinstance(llm_call, dict) else None
     if isinstance(model, str) and model:
         tail = model.rsplit("/", 1)[-1]
         return f"{node_id}[{idx}] ({tail})"
@@ -975,7 +991,7 @@ def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> No
         if batch_items and not event.get("sub_workflow_events"):
             node_id = event.get("node_id", "?")
             for item in batch_items:
-                if (item.get("llm_call") or {}).get("is_warmup"):
+                if _is_warmup_item(item):
                     continue
                 rows.append(
                     f"| {i} | {_row_batch_item_label(node_id, item)} | {type_tag} | "
@@ -1262,7 +1278,7 @@ def _detect_batch_item_anomalies(batch_items: list[dict[str, Any]], parent_event
     for item in batch_items:
         if not item.get("success"):
             continue
-        if (item.get("llm_call") or {}).get("is_warmup"):
+        if _is_warmup_item(item):
             continue
         idx = item.get("index", "?")
         output = item.get("node_output", {})
@@ -1310,7 +1326,7 @@ def _build_node_summary(event: dict[str, Any]) -> str:
         lines.append(f"- Cost: ${container_cost:.4f}")
 
     batch_items = event.get("batch_items", [])
-    real_batch_items = [i for i in batch_items if not (i.get("llm_call") or {}).get("is_warmup")]
+    real_batch_items = [i for i in batch_items if not _is_warmup_item(i)]
     if batch_items:
         succeeded = sum(1 for i in real_batch_items if i.get("success"))
         lines.append(f"- Items: {len(real_batch_items)} ({succeeded}/{len(real_batch_items)} succeeded)")

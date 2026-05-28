@@ -2646,6 +2646,28 @@ class TestPipelineTableBatchLabel:
         assert "fetch[0] (doc-a)" in md
         assert "fetch[1] (doc-b)" in md
 
+    def test_batch_label_handles_non_dict_llm_call_defensively(self) -> None:
+        """A synthetic/adversarial trace where ``llm_call`` is not a dict
+        must not raise AttributeError. Matches the same guard already in
+        ``_row_tokens``.
+        """
+        batch_event = _make_event(
+            node_id="fetch",
+            node_type="ShellNode",
+            batch_items=[
+                # Non-dict llm_call values — defensively skipped.
+                {"index": 0, "item": "doc-a", "success": True, "duration_ms": 50, "llm_call": "not-a-dict"},
+                {"index": 1, "item": "doc-b", "success": True, "duration_ms": 50, "llm_call": 42},
+                {"index": 2, "item": "doc-c", "success": True, "duration_ms": 50, "llm_call": None},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        md = _build_summary(trace)
+        # Each row falls back to the item-label path; no AttributeError.
+        assert "fetch[0] (doc-a)" in md
+        assert "fetch[1] (doc-b)" in md
+        assert "fetch[2] (doc-c)" in md
+
 
 class TestPipelineTableSubWorkflow:
     """A ``WorkflowExecutor`` event stays as a SINGLE row in the parent table.
