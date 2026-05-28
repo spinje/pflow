@@ -39,10 +39,57 @@ def _block_upstream_cost_map_fetch(monkeypatch):
     ``test_litellm_runtime.py::test_ensure_model_priced_*``) opt back in
     via the local ``reset_upstream_attempted`` fixture, which monkeypatches
     the flag back to ``False`` for that test only.
+
+    The two validator-side flags (``_validator_upstream_attempted`` /
+    ``_validator_upstream_fetch_succeeded``) are independent from the
+    runtime flag — they back ``try_load_upstream_catalog`` (used by the
+    LLM model-id preflight in step 9). They're pre-set to a "successful
+    no-op" state so any test that exercises validate-time catalog checks
+    sees a usable catalog without hitting the network.
     """
     from pflow.core import litellm_runtime
 
     monkeypatch.setattr(litellm_runtime, "_upstream_attempted", True)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_attempted", True)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_fetch_succeeded", True)
+
+
+@pytest.fixture(autouse=True, scope="function")
+def _inject_fake_llm_api_keys(monkeypatch, request):
+    """Inject fake API keys for ALL canonical LLM providers under test.
+
+    Pairs with ``mock_llm_client`` (which patches ``complete()``). The new
+    step-9 LLM model-id preflight in ``WorkflowValidator`` runs BEFORE the
+    adapter and rejects canonical-provider models when no API key is set —
+    correct behavior in production, but tests that mock the LLM call still
+    need the key check to pass.
+
+    Skipped for tests under ``/llm/`` directories (real-API tests that need
+    actual environment-provided keys), and for any test marked
+    ``@pytest.mark.no_fake_llm_keys`` (tests that deliberately assert the
+    missing-key code path).
+
+    **Test author warning**: this fixture auto-injects keys. Any test that
+    asserts the missing-key path WITHOUT either ``monkeypatch.delenv`` ritual
+    or the ``no_fake_llm_keys`` marker will pass for the wrong reason — the
+    diagnostic won't fire because the key is present. When in doubt, use the
+    marker to disable the fixture explicitly.
+    """
+    test_path = str(request.fspath)
+    if "/llm/" in test_path or "\\llm\\" in test_path:
+        yield
+        return
+
+    if request.node.get_closest_marker("no_fake_llm_keys"):
+        yield
+        return
+
+    # Set if absent — don't override a key the test deliberately scrubs or sets.
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        if not os.environ.get(var):
+            monkeypatch.setenv(var, f"test-{var}-fake")
+
+    yield
 
 
 @pytest.fixture(autouse=True, scope="function")

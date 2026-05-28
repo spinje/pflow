@@ -17,8 +17,12 @@ from pflow.runtime.node_state import FAILURE_CATEGORY_LLM
 
 
 def _llm_workflow_ir(params: dict | None = None) -> dict:
+    # Use a bundled model so the new validate-time LLM model-id preflight
+    # passes; the runtime ``fail_complete`` simulator still raises the
+    # parameterized error for the test's actual subject (runtime error
+    # propagation to the runner diagnostics).
     node_params = {
-        "model": "anthropic/foo",
+        "model": "anthropic/claude-sonnet-4-5",
         "prompt": "Reply with a short answer.",
     }
     if params:
@@ -140,7 +144,7 @@ def test_llm_response_parse_error_context_reaches_runner_diagnostics(monkeypatch
     context = result.errors[0].context or {}
     assert context["category"] == FAILURE_CATEGORY_LLM
     assert context["error_class"] == "LLMResponseParseError"
-    assert context["model"] == "anthropic/foo"
+    assert context["model"] == "anthropic/claude-sonnet-4-5"
 
     failure = result.shared_after["__failures__"]["ask"]
     assert failure["category"] == FAILURE_CATEGORY_LLM
@@ -148,7 +152,7 @@ def test_llm_response_parse_error_context_reaches_runner_diagnostics(monkeypatch
     assert node_output["response"] == "not valid json"
     assert node_output["error_class"] == "LLMResponseParseError"
     assert node_output["_diagnostic_context"]["error_class"] == "LLMResponseParseError"
-    assert node_output["_diagnostic_context"]["model"] == "anthropic/foo"
+    assert node_output["_diagnostic_context"]["model"] == "anthropic/claude-sonnet-4-5"
 
 
 def test_real_litellm_exception_provider_message_reaches_runner_diagnostics(monkeypatch):
@@ -207,7 +211,7 @@ def test_real_litellm_exception_provider_message_reaches_runner_diagnostics(monk
     assert context["category"] == FAILURE_CATEGORY_LLM
     assert context["error_class"] == "MissingApiKeyError"
     assert context["kind"] == "missing_key"
-    assert context["model"] == "anthropic/foo"
+    assert context["model"] == "anthropic/claude-sonnet-4-5"
     # The crux: provider_message preserves the raw upstream text end-to-end.
     # The whole point of the field — agents reading JSON get the WHY.
     assert raw_provider_text in context["provider_message"]

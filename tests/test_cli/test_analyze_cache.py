@@ -378,7 +378,9 @@ def test_analyze_cache_with_workflow_having_warnings_still_exits_zero(
     )
 
 
-def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix(tmp_path: Path) -> None:
+def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """CLI integration: unresolved code-node refs make could-cache unavailable.
 
     History: ``bug-16-variant-inputs-indirection`` previously rendered a tiny
@@ -386,7 +388,19 @@ def test_analyze_cache_renders_question_mark_for_unmeasurable_prefix(tmp_path: P
     Mutation contract: route batch-prefix scans back through raw
     ``estimate_tokens(prompt[:first])``; this test fails because JSON reports a
     small integer instead of ``null`` for ``cacheable_tokens_estimated``.
+
+    Env reset: the conftest autouse ``_inject_fake_llm_api_keys`` sets fake
+    Anthropic/OpenAI/Gemini keys so step-9 LLM model-id preflight passes by
+    default. This test deliberately starts with NO API keys so the workflow's
+    omitted ``model:`` resolves to None (rather than picking up the default
+    Anthropic model) — the below-min detector then correctly returns None on
+    empty model, which is the behavior this test pins.
     """
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    from pflow.core.llm_config import clear_model_cache
+
+    clear_model_cache()
     workflow_path = _write_workflow(
         tmp_path,
         """\

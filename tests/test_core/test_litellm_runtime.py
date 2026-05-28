@@ -126,10 +126,16 @@ def reset_upstream_attempted(monkeypatch: pytest.MonkeyPatch):
     Layers on top of ``tests/conftest.py::_block_upstream_cost_map_fetch``
     which pre-sets the flag to True for all tests — opting back in here
     means the helper actually enters its fetch branch.
+
+    Also resets the validator-side latch pair so tests exercising
+    ``try_load_upstream_catalog`` start with a fresh state regardless of
+    test ordering.
     """
     from pflow.core import litellm_runtime
 
     monkeypatch.setattr(litellm_runtime, "_upstream_attempted", False)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_attempted", False)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_fetch_succeeded", False)
     return litellm_runtime
 
 
@@ -432,6 +438,291 @@ def test_ensure_model_priced_thread_safe(reset_upstream_attempted, monkeypatch: 
         t.join(timeout=5)
 
     assert call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# try_load_upstream_catalog — validator-side membership check latch
+# ---------------------------------------------------------------------------
+
+
+def test_try_load_upstream_catalog_returns_true_on_first_successful_fetch(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first call with a working network returns True and registers new entries."""
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    upstream = {"new/model": {"input_cost_per_token": 1e-6, "litellm_provider": "openai", "mode": "chat"}}
+    urls_called = _stub_httpx_get(monkeypatch, upstream)
+
+    register_calls: list[dict] = []
+
+    def recording_register(upstream_map: dict) -> None:
+        register_calls.append(upstream_map)
+
+    monkeypatch.setattr(litellm, "register_model", recording_register)
+
+    result = try_load_upstream_catalog()
+
+    assert result is True
+    assert urls_called == [litellm.model_cost_map_url]
+    assert register_calls == [upstream]
+
+
+def test_try_load_upstream_catalog_returns_true_when_no_new_entries_to_merge(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fetch succeeds but every upstream key is already bundled.
+
+    Load-bearing: the function must return True even when there are no
+    new entries to register. The catalog is still usable for membership
+    checks. ``register_model`` MUST NOT be called (no-op fetch).
+    """
+    from pflow.core import litellm_runtime
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {"bundled/model": {"input_cost_per_token": 1.0e-7, "litellm_provider": "openai", "mode": "chat"}},
+        raising=False,
+    )
+    _stub_httpx_get(monkeypatch, {"bundled/model": {"input_cost_per_token": 9e-6}})
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    result = try_load_upstream_catalog()
+
+    assert result is True
+    assert mock_register.call_count == 0
+    # Latch is set + success status recorded for subsequent calls.
+    assert litellm_runtime._validator_upstream_attempted is True
+    assert litellm_runtime._validator_upstream_fetch_succeeded is True
+
+
+def test_try_load_upstream_catalog_returns_false_on_network_failure(
+    reset_upstream_attempted,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Network failure returns False, sets failure latch, does not raise."""
+    import httpx
+
+    from pflow.core import litellm_runtime
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    def failing_get(url, *args, **kwargs):
+        raise httpx.ConnectError("simulated network outage")
+
+    monkeypatch.setattr(httpx, "get", failing_get)
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    caplog.set_level("DEBUG", logger="pflow.core.litellm_runtime")
+
+    result = try_load_upstream_catalog()
+
+    assert result is False
+    assert litellm_runtime._validator_upstream_attempted is True
+    assert litellm_runtime._validator_upstream_fetch_succeeded is False
+    assert mock_register.call_count == 0
+    assert any("Validator upstream catalog merge failed" in r.message for r in caplog.records)
+
+
+def test_try_load_upstream_catalog_idempotent_after_success(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second call after a successful fetch returns the cached True without re-fetching."""
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+    urls_called = _stub_httpx_get(monkeypatch, {"new/model": {"mode": "chat"}})
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    first = try_load_upstream_catalog()
+    second = try_load_upstream_catalog()
+    third = try_load_upstream_catalog()
+
+    assert first is True and second is True and third is True
+    assert len(urls_called) == 1
+    assert mock_register.call_count == 1
+
+
+def test_try_load_upstream_catalog_idempotent_after_failure(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Second call after a failed fetch returns the cached False — no retry hammering."""
+    import httpx
+
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    call_counter = {"n": 0}
+
+    def failing_get(url, *args, **kwargs):
+        call_counter["n"] += 1
+        raise httpx.ConnectError("simulated network outage")
+
+    monkeypatch.setattr(httpx, "get", failing_get)
+
+    first = try_load_upstream_catalog()
+    second = try_load_upstream_catalog()
+    third = try_load_upstream_catalog()
+
+    assert first is False and second is False and third is False
+    # Only ONE network attempt despite three calls.
+    assert call_counter["n"] == 1
+
+
+def test_try_load_upstream_catalog_independent_from_runtime_latch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A runtime-side fetch failure does NOT disable validator-side checks.
+
+    Models the cross-coupling bug the separate latch prevents: a long-
+    running MCP server whose first ``ensure_model_priced`` call hit a
+    transient network failure must not have its validator catalog-check
+    permanently disabled for the rest of the process.
+    """
+    from pflow.core import litellm_runtime
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    # Simulate "runtime path already attempted and failed", validator path fresh.
+    monkeypatch.setattr(litellm_runtime, "_upstream_attempted", True)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_attempted", False)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_fetch_succeeded", False)
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+    urls_called = _stub_httpx_get(monkeypatch, {"new/model": {"mode": "chat"}})
+
+    mock_register = MagicMock()
+    monkeypatch.setattr(litellm, "register_model", mock_register)
+
+    result = try_load_upstream_catalog()
+
+    assert result is True
+    assert len(urls_called) == 1  # Validator path fetched fresh, independent of runtime latch.
+
+
+def test_try_load_upstream_catalog_thread_safe(reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent calls collapse to exactly one register_model invocation."""
+    import time
+
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+    _stub_httpx_get(monkeypatch, {"placeholder/model": {"mode": "chat"}})
+
+    call_count = 0
+    call_lock = threading.Lock()
+
+    def slow_register(upstream_map):
+        nonlocal call_count
+        time.sleep(0.05)
+        with call_lock:
+            call_count += 1
+
+    monkeypatch.setattr(litellm, "register_model", slow_register)
+
+    results: list[bool] = []
+    results_lock = threading.Lock()
+
+    def runner():
+        r = try_load_upstream_catalog()
+        with results_lock:
+            results.append(r)
+
+    threads = [threading.Thread(target=runner) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert call_count == 1
+    assert all(r is True for r in results)
+
+
+def test_try_load_upstream_catalog_rejects_malformed_payload(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-entry shape validation: payloads with values that are not dicts
+    containing at least one recognized field are rejected.
+
+    Defends against silent-failure class where a malformed upstream JSON
+    (single string per key, integer values, missing fields) would still
+    register junk entries and latch the validator as "catalog merged
+    successfully" — subsequent membership checks would silently report
+    the workflow's model as known when the registered entry is garbage.
+    """
+    from pflow.core import litellm_runtime
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    # All-malformed payloads must set fetch_succeeded=False.
+    for malformed in [
+        {"gpt-4": "string-instead-of-dict"},
+        {"gpt-4": 42},
+        {"gpt-4": []},
+        {"gpt-4": {}},  # empty dict — no recognized field
+        {"gpt-4": {"random_field": "value"}},  # dict, but no recognized field
+    ]:
+        litellm_runtime._validator_upstream_attempted = False
+        litellm_runtime._validator_upstream_fetch_succeeded = False
+        _stub_httpx_get(monkeypatch, malformed)
+        mock_register = MagicMock()
+        monkeypatch.setattr(litellm, "register_model", mock_register)
+
+        result = try_load_upstream_catalog()
+        assert result is False, f"malformed payload {malformed!r} should fail"
+        assert mock_register.call_count == 0, f"register_model should not be called for {malformed!r}"
+
+
+def test_try_load_upstream_catalog_drops_malformed_entries_keeps_well_formed(
+    reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mixed payload: well-formed entries get registered, malformed dropped, success returned."""
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    payload = {
+        "good-model": {"input_cost_per_token": 1e-6, "litellm_provider": "openai", "mode": "chat"},
+        "junk-model": "string-value",  # malformed — should be dropped
+        "empty-dict": {},  # malformed — should be dropped
+    }
+    _stub_httpx_get(monkeypatch, payload)
+    register_calls: list[dict] = []
+
+    def recording_register(upstream_map: dict) -> None:
+        register_calls.append(upstream_map)
+
+    monkeypatch.setattr(litellm, "register_model", recording_register)
+
+    result = try_load_upstream_catalog()
+
+    assert result is True
+    assert len(register_calls) == 1
+    assert "good-model" in register_calls[0]
+    assert "junk-model" not in register_calls[0]
+    assert "empty-dict" not in register_calls[0]
 
 
 @pytest.mark.e2e
