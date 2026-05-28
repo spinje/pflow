@@ -607,8 +607,8 @@ class TestBuildSummary:
             ]
         )
         md = _build_summary(trace, source_path="/home/user/.pflow/debug/trace.json")
-        assert "| 1 | fetch | ShellNode | 200ms | \u2014 | ok |" in md
-        assert "| 2 | process | LLMNode | 500ms | \u2014 | **FAILED** |" in md
+        assert "| 1 | fetch | shell | success | 200ms | \u2014 | \u2014 |" in md
+        assert "| 2 | process | llm | failed | 500ms | \u2014 | \u2014 |" in md
 
 
 # --- _build_node_file() ---
@@ -1113,7 +1113,7 @@ class TestBuildNodeSummary:
         assert "# batch-process" in md
         assert "- Items: 3 (2/3 succeeded)" in md
         # Only the failed item appears in the table
-        assert "| 1 | 30ms | \u2014 | **FAILED** |" in md
+        assert "| 1 | 30ms | \u2014 | failed |" in md
         # Successful items hidden behind count
         assert "| 0 |" not in md
         assert "... and 2 more succeeded" in md
@@ -1130,8 +1130,8 @@ class TestBuildNodeSummary:
         )
         md = _build_node_summary(event)
         assert "## Pipeline" in md
-        assert "| 1 | step-1 | ShellNode | 10ms | \u2014 | ok |" in md
-        assert "| 2 | step-2 | LLMNode | 500ms | \u2014 | **FAILED** |" in md
+        assert "| 1 | step-1 | shell | success | 10ms | \u2014 | \u2014 |" in md
+        assert "| 2 | step-2 | llm | failed | 500ms | \u2014 | \u2014 |" in md
 
 
 # --- _build_batch_item_file() ---
@@ -1283,7 +1283,7 @@ class TestBuildBatchItemSummary:
         item = {"index": 3, "success": True, "duration_ms": 1500}
         md = _build_batch_item_summary(item)
         assert "# Item 3" in md
-        assert "- Time: 1500ms" in md
+        assert "- Time: 1.5s" in md
         assert "- Status: success" in md
 
     def test_with_pipeline_table(self) -> None:
@@ -1299,8 +1299,8 @@ class TestBuildBatchItemSummary:
         }
         md = _build_batch_item_summary(item)
         assert "## Pipeline" in md
-        assert "| 1 | write-lyrics | LLMNode | 800ms | \u2014 | ok |" in md
-        assert "| 2 | review | LLMNode | 600ms | \u2014 | ok |" in md
+        assert "| 1 | write-lyrics | llm | success | 800ms | \u2014 | \u2014 |" in md
+        assert "| 2 | review | llm | success | 600ms | \u2014 | \u2014 |" in md
 
 
 # --- _compute_event_cost() ---
@@ -1927,8 +1927,8 @@ class TestBuildSummaryLoopRecovery:
         # legitimately mention the node for other reasons.
         pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
         assert pipeline.count("maybe-fail") == 2, f"Pipeline section:\n{pipeline}"
-        assert "**FAILED**" in pipeline
-        assert " ok " in pipeline  # the succeeded visit's status column
+        assert "| failed |" in pipeline  # the failed visit's status column
+        assert "| success |" in pipeline  # the succeeded visit's status column
         # Errors section must NOT be present — recovered node is not an error.
         assert "## Errors" not in md
 
@@ -2244,7 +2244,10 @@ class TestCompactBatchSummary:
         event = _make_event(node_id="batch", node_type="ShellNode", batch_items=items)
         md = _build_node_summary(event)
         assert "## Items" in md
-        assert "**FAILED**" in md
+        # Items table now uses the same lowercase vocabulary as the pipeline
+        # table (success/failed/cached) so readers see one vocabulary across
+        # `## Pipeline` and `## Items` in the same report.
+        assert "| failed |" in md
         assert "| 2 |" in md
         assert "... and 4 more succeeded" in md
         # Other items not in table
@@ -2384,12 +2387,17 @@ class TestRuntimeWarningsInSummary:
         assert "  - Increase cache content above 1024 tokens." in md
 
 
-# --- Item counts in pipeline status (Issue 6) ---
+# --- Batch rendering in the pipeline table (per-item explosion) ---
 
 
-class TestItemCountsInStatus:
-    def test_batch_event_shows_item_counts(self) -> None:
-        """Pipeline table shows item counts for batch nodes."""
+class TestPipelineTableBatchExplosion:
+    """The pipeline table renders one row per batch item (no aggregated parent row).
+
+    Replaces the previous TestItemCountsInStatus which encoded the older
+    ``ok (M/N)`` parent-row semantic.
+    """
+
+    def test_batch_items_exploded_into_rows(self) -> None:
         batch_event = _make_event(
             node_id="process",
             batch_items=[
@@ -2400,30 +2408,39 @@ class TestItemCountsInStatus:
         )
         trace = _make_trace(nodes=[batch_event])
         md = _build_summary(trace)
-        assert "ok (2/3)" in md
+        assert "process[0]" in md
+        assert "process[1]" in md
+        assert "process[2]" in md
+        # No aggregated parent row with item counts.
+        assert "ok (2/3)" not in md
+        assert "| process |" not in md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
 
-    def test_all_succeeded_batch(self) -> None:
+    def test_batch_item_row_has_per_item_status(self) -> None:
         batch_event = _make_event(
             node_id="greet",
+            node_type="ShellNode",
             batch_items=[
                 {"index": 0, "success": True, "duration_ms": 50},
-                {"index": 1, "success": True, "duration_ms": 60},
+                {"index": 1, "success": False, "duration_ms": 60},
             ],
         )
         trace = _make_trace(nodes=[batch_event])
         md = _build_summary(trace)
-        assert "ok (2/2)" in md
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        # Pin full row shape — a column-order swap or status-cell swap
+        # would fail this assertion. Setting node_type=ShellNode makes the
+        # type-tag column deterministic (`shell` rather than the fallback).
+        assert "| greet[0] | shell | success |" in pipeline
+        assert "| greet[1] | shell | failed |" in pipeline
 
-    def test_non_batch_no_counts(self) -> None:
-        """Non-batch events just show ok/FAILED without counts."""
+    def test_non_batch_row_uses_lowercase_status(self) -> None:
         event = _make_event(node_id="fetch", node_type="ShellNode")
         trace = _make_trace(nodes=[event])
         md = _build_summary(trace)
-        assert "| ok |" in md
-        assert "(" not in md.split("ok")[1].split("|")[0]  # no parenthesized count
+        assert "| success |" in md
 
-    def test_sub_workflow_pipeline_table_has_counts(self) -> None:
-        """_format_pipeline_table also uses item counts."""
+    def test_pipeline_table_helper_explodes_batch_items(self) -> None:
+        """_format_pipeline_table emits one row per item, not an aggregate row."""
         from pflow.core.trace_report import _format_pipeline_table
 
         events = [
@@ -2438,7 +2455,9 @@ class TestItemCountsInStatus:
         lines: list[str] = []
         _format_pipeline_table(events, lines)
         table = "\n".join(lines)
-        assert "ok (1/2)" in table
+        assert "batch-step[0]" in table
+        assert "batch-step[1]" in table
+        assert "ok (1/2)" not in table
 
 
 class TestWarmupItemReportFiltering:
@@ -2461,8 +2480,8 @@ class TestWarmupItemReportFiltering:
             "llm_call": {"model": "anthropic/claude-sonnet-4-5", "cost_usd": 0.015, "is_warmup": True},
         }
 
-    def test_pipeline_status_excludes_warmup_from_count(self) -> None:
-        """_format_event_status: '(N/M)' counts only real items, not the warmup."""
+    def test_pipeline_table_excludes_warmup_rows(self) -> None:
+        """Pipeline table explodes batch items but skips the synthetic warmup."""
         batch_event = _make_event(
             node_id="score-batch",
             batch_items=[
@@ -2474,9 +2493,13 @@ class TestWarmupItemReportFiltering:
         )
         trace = _make_trace(nodes=[batch_event])
         md = _build_summary(trace)
-        # 3 real items, NOT 4
-        assert "ok (3/3)" in md
-        assert "ok (4/4)" not in md
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        # Real items show as rows; warmup (index -1) does not.
+        assert "score-batch[0]" in pipeline
+        assert "score-batch[1]" in pipeline
+        assert "score-batch[2]" in pipeline
+        assert "score-batch[-1]" not in pipeline
+        assert "__cache_warmup__" not in pipeline
 
     def test_anomaly_detection_skips_warmup(self) -> None:
         """_detect_batch_item_anomalies: empty node_output on warmup is expected
@@ -2507,3 +2530,281 @@ class TestWarmupItemReportFiltering:
         md = _build_node_summary(event)
         assert "Items: 3 (3/3 succeeded)" in md
         assert "Items: 4" not in md
+
+
+# --- New summary surfaces: tokens column, halt-line, batch labels, type tag ---
+
+
+class TestSummaryTokensColumn:
+    def test_llm_row_renders_tokens_in_out(self) -> None:
+        event = _make_event(
+            node_id="ask",
+            node_type="LLMNode",
+            duration_ms=200,
+            llm_call={"model": "gpt-4", "input_tokens": 49, "output_tokens": 1548, "cost_usd": 0.023},
+        )
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        assert "| Tokens |" in pipeline
+        assert "49 in / 1,548 out" in pipeline
+
+    def test_non_llm_row_renders_em_dash_for_tokens_and_cost(self) -> None:
+        event = _make_event(node_id="fetch", node_type="ShellNode", duration_ms=200)
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        # Both Tokens and Cost columns are em-dash for non-LLM rows.
+        assert "| fetch | shell | success | 200ms | — | — |" in pipeline
+
+
+class TestSummaryHaltLine:
+    def test_halt_line_present_on_failed_run(self) -> None:
+        trace = _make_trace(
+            final_status="failed",
+            nodes=[
+                _make_event(node_id="upstream", success=True),
+                _make_event(node_id="synthesize", success=False, error="timed out after 120s"),
+            ],
+            failed_node_ids=["synthesize"],
+            nodes_failed=1,
+        )
+        md = _build_summary(trace)
+        header = md.split("## Pipeline", 1)[0]
+        assert "- Halted at: synthesize" in header
+        # Pin position: halt-line must sit BETWEEN Status and Duration, so a
+        # reader scanning the header lands on it before per-run metrics.
+        status_idx = md.find("- Status:")
+        halt_idx = md.find("- Halted at:")
+        duration_idx = md.find("- Duration:")
+        assert 0 <= status_idx < halt_idx < duration_idx, (
+            f"Halt-line must appear between Status and Duration; got "
+            f"status={status_idx} halt={halt_idx} duration={duration_idx}"
+        )
+
+    def test_halt_line_absent_on_success_run(self) -> None:
+        trace = _make_trace(
+            final_status="success",
+            nodes=[_make_event(node_id="only-node", success=True)],
+        )
+        md = _build_summary(trace)
+        assert "- Halted at:" not in md
+
+    def test_halt_line_names_chronologically_last_failed_event(self) -> None:
+        """When several events failed, halt-line picks the last-recorded one
+        (chronological 'this is where the run stopped'), not the alphabetically
+        first failed_node_id."""
+        trace = _make_trace(
+            final_status="failed",
+            nodes=[
+                _make_event(node_id="zebra", success=False, error="early failure"),
+                _make_event(node_id="alpha", success=False, error="late failure"),
+            ],
+            failed_node_ids=["alpha", "zebra"],  # sorted alphabetically by the producer
+            nodes_failed=2,
+        )
+        md = _build_summary(trace)
+        assert "- Halted at: alpha" in md  # last-recorded, not alphabetically first
+
+
+class TestPipelineTableBatchLabel:
+    def test_batch_label_uses_model_tail(self) -> None:
+        batch_event = _make_event(
+            node_id="write-drafts",
+            node_type="LLMNode",
+            batch_items=[
+                {
+                    "index": 0,
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "anthropic/claude-sonnet-4-5", "input_tokens": 49, "output_tokens": 100},
+                },
+                {
+                    "index": 1,
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "openai/gpt-5.4", "input_tokens": 49, "output_tokens": 100},
+                },
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        md = _build_summary(trace)
+        assert "write-drafts[0] (claude-sonnet-4-5)" in md
+        assert "write-drafts[1] (gpt-5.4)" in md
+
+    def test_batch_label_falls_back_to_item_label_when_no_llm(self) -> None:
+        batch_event = _make_event(
+            node_id="fetch",
+            node_type="ShellNode",
+            batch_items=[
+                {"index": 0, "item": "doc-a", "success": True, "duration_ms": 50},
+                {"index": 1, "item": "doc-b", "success": True, "duration_ms": 50},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        md = _build_summary(trace)
+        assert "fetch[0] (doc-a)" in md
+        assert "fetch[1] (doc-b)" in md
+
+    def test_batch_label_handles_non_dict_llm_call_defensively(self) -> None:
+        """A synthetic/adversarial trace where ``llm_call`` is not a dict
+        must not raise AttributeError. Matches the same guard already in
+        ``_row_tokens``.
+        """
+        batch_event = _make_event(
+            node_id="fetch",
+            node_type="ShellNode",
+            batch_items=[
+                # Non-dict llm_call values — defensively skipped.
+                {"index": 0, "item": "doc-a", "success": True, "duration_ms": 50, "llm_call": "not-a-dict"},
+                {"index": 1, "item": "doc-b", "success": True, "duration_ms": 50, "llm_call": 42},
+                {"index": 2, "item": "doc-c", "success": True, "duration_ms": 50, "llm_call": None},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        md = _build_summary(trace)
+        # Each row falls back to the item-label path; no AttributeError.
+        assert "fetch[0] (doc-a)" in md
+        assert "fetch[1] (doc-b)" in md
+        assert "fetch[2] (doc-c)" in md
+
+
+class TestPipelineTableSubWorkflow:
+    """A ``WorkflowExecutor`` event stays as a SINGLE row in the parent table.
+
+    The renderer guards against exploding sub-workflow children into parent
+    rows via the ``not event.get("sub_workflow_events")`` branch in
+    ``_format_pipeline_table``. Dropping that guard would silently surface
+    every nested node in the parent's pipeline table.
+    """
+
+    def test_sub_workflow_event_stays_as_single_row(self) -> None:
+        event = _make_event(
+            node_id="run-child",
+            node_type="WorkflowExecutor",
+            duration_ms=500,
+            sub_workflow_events=[
+                _make_event(node_id="child-shell", node_type="ShellNode", duration_ms=100),
+                _make_event(node_id="child-llm", node_type="LLMNode", duration_ms=200),
+            ],
+        )
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        # Single parent row with the `workflow` type tag and em-dash Tokens
+        # (no aggregator exists for sub-workflow tokens at parent level).
+        assert "| 1 | run-child | workflow | success |" in pipeline
+        assert "| — |" in pipeline
+        # Children must NOT appear as rows in the parent table; they live in
+        # the nested container summary.md.
+        assert "child-shell" not in pipeline
+        assert "child-llm" not in pipeline
+
+
+class TestPipelineTableTypeTag:
+    def test_short_tag_replaces_class_name(self) -> None:
+        trace = _make_trace(
+            nodes=[
+                _make_event(node_id="a", node_type="ShellNode"),
+                _make_event(node_id="b", node_type="LLMNode"),
+                _make_event(node_id="c", node_type="PythonCodeNode"),
+                _make_event(node_id="d", node_type="HttpNode"),
+            ],
+        )
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        assert "| shell |" in pipeline
+        assert "| llm |" in pipeline
+        assert "| code |" in pipeline
+        assert "| http |" in pipeline
+        # Raw class names should NOT appear.
+        assert "ShellNode" not in pipeline
+        assert "LLMNode" not in pipeline
+
+
+class TestPipelineTableCachedStatus:
+    def test_cached_event_status_is_cached(self) -> None:
+        event = _make_event(
+            node_id="ask",
+            node_type="LLMNode",
+            duration_ms=10,
+            cached=True,
+            llm_call={"model": "gpt-4", "input_tokens": 49, "output_tokens": 100, "cost_usd": 0.02},
+        )
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        assert "| cached |" in pipeline
+        # Tokens still render from the source call on a cached event.
+        assert "49 in / 100 out" in pipeline
+        # Cost column shows paid-this-run ($0.0000), NOT the historical source
+        # cost ($0.02). A regression that leaked llm_call.cost_usd into the
+        # cell would surface as $0.0200 here.
+        assert "$0.0000" in pipeline
+        assert "$0.0200" not in pipeline
+
+    def test_cached_event_with_none_token_fields_does_not_crash(self) -> None:
+        """Legacy cached entries may have ``input_tokens: None`` instead of an
+        integer. The renderer must not raise ``TypeError`` from ``f"{None:,}"``.
+        """
+        event = _make_event(
+            node_id="legacy-cached",
+            node_type="LLMNode",
+            duration_ms=10,
+            cached=True,
+            llm_call={"model": "gpt-4", "input_tokens": None, "output_tokens": None},
+        )
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        # Falls back to 0 in / 0 out — the row still renders.
+        assert "0 in / 0 out" in pipeline
+
+    def test_cached_and_failed_event_renders_failed_not_cached(self) -> None:
+        """``_row_status`` must prefer ``failed`` over ``cached`` when both
+        flags are set. The rare (cached, !success) shape should not silently
+        mask the failure signal as it did in a prior revision.
+        """
+        event = _make_event(
+            node_id="impossible",
+            node_type="LLMNode",
+            duration_ms=10,
+            cached=True,
+            success=False,
+            llm_call={"model": "gpt-4", "input_tokens": 10, "output_tokens": 20},
+        )
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        assert "| failed |" in pipeline
+        assert "| cached |" not in pipeline
+
+
+class TestPipelineTableWarmupOnlyEdgeCase:
+    """Warmup-only batches must not emit a header-only `## Pipeline` section.
+
+    The row buffer in `_format_pipeline_table` defers the header until at
+    least one row survives the `is_warmup` filter. A regression that hoists
+    the header back to the top of the function would surface here.
+    """
+
+    def test_warmup_only_batch_omits_pipeline_section_entirely(self) -> None:
+        warmup_only = _make_event(
+            node_id="prewarm-only",
+            node_type="LLMNode",
+            duration_ms=100,
+            batch_items=[
+                {
+                    "index": -1,
+                    "item": "__cache_warmup__",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "claude-sonnet-4-5", "is_warmup": True},
+                }
+            ],
+        )
+        trace = _make_trace(nodes=[warmup_only])
+        md = _build_summary(trace)
+        # No header, no separator, no table at all.
+        assert "## Pipeline" not in md
+        assert "| # | Node | Type | Status | Time | Tokens | Cost |" not in md

@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import json
 
+from pflow.core.duration_format import format_duration
+
 from ..types import TraceListEntry
 from .text import _format_recorded_timestamp
 
 
 def _format_duration(duration_ms: float | None) -> str:
+    """Render a trace's recorded duration.
+
+    Delegates to the shared :func:`format_duration` helper so this surface
+    shows the same string as ``pflow report`` for the same trace
+    (e.g. a 113744ms trace renders as ``1m54s`` in both). Adds a
+    ``None`` -> ``"duration unavailable"`` shim since ``format_duration``
+    treats every numeric input as a real measurement.
+    """
     if duration_ms is None:
         return "duration unavailable"
-    if duration_ms < 1000:
-        return f"{round(duration_ms)}ms"
-    return f"{duration_ms / 1000:.1f}s"
+    return format_duration(duration_ms)
 
 
 def render_traces_list_text(

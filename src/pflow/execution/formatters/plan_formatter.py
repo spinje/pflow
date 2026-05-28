@@ -9,6 +9,7 @@ import click
 
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.duration_format import format_duration
+from pflow.core.node_type_display import node_type_tag
 
 if TYPE_CHECKING:
     from pflow.execution.result import Plan, PlanEntry
@@ -18,21 +19,6 @@ if TYPE_CHECKING:
 # Rationale: sub-second numbers on 20+ fast nodes pad the view without adding
 # signal; the summary total still reflects them.
 _TEXT_DURATION_THRESHOLD_MS = 1000.0
-
-_NODE_TYPE_TAGS: dict[str, str] = {
-    "LLMNode": "LLM",
-    "ClaudeCodeNode": "Claude",
-    "HttpNode": "HTTP",
-    "ShellNode": "shell",
-    "MCPNode": "MCP",
-    "PythonCodeNode": "code",
-    "ReadFileNode": "read-file",
-    "WriteFileNode": "write-file",
-    "CopyFileNode": "copy-file",
-    "MoveFileNode": "move-file",
-    "DeleteFileNode": "delete-file",
-    "WorkflowExecutor": "workflow",
-}
 
 
 def format_plan_json(plan: Plan) -> dict[str, Any]:
@@ -80,8 +66,7 @@ def format_plan_text(plan: Plan) -> str:
     summary_parts = [f"{cached} cached", f"{execute} would execute"]
     if type_breakdown:
         types_str = ", ".join(
-            f"{count} {_NODE_TYPE_TAGS.get(node_type, node_type)}"
-            for node_type, count in sorted(type_breakdown.items())
+            f"{count} {node_type_tag(node_type)}" for node_type, count in sorted(type_breakdown.items())
         )
         summary_parts[-1] += f" ({types_str})"
     label = "Summary (including nested)" if has_nested else "Summary"
@@ -315,7 +300,7 @@ def _is_llm_entry(entry: PlanEntry) -> bool:
 
 def _tag_from_entry(entry: PlanEntry) -> str:
     """Map node type to short display tag."""
-    tag = _NODE_TYPE_TAGS.get(entry.node_type, entry.node_type)
+    tag = node_type_tag(entry.node_type)
     if entry.cause == "cache_disabled":
         tag = f"{tag}, cache: false"
     return tag

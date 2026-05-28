@@ -135,14 +135,14 @@ Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_downstream_
 
 `_summarize` walks sub_plans and merges each child's `execute_by_type_including_nested` (or per-level `execute_by_type` as fallback) into the parent's `nested_by_type`. This is how "2 LLM, 2 code, 2 shell, 1 workflow" appears in the top-level text summary when the graph is parent (1 LLM + 1 code + 1 shell + 1 workflow) nesting child (1 LLM + 1 code + 1 shell). Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_summary_execute_by_type_aggregates_across_nested`.
 
-JSON exposes both per-level (`execute_by_type`) and nested (`execute_by_type_including_nested`) with raw class names — stable agent contract. Text renders only the nested breakdown (when present) via `_NODE_TYPE_TAGS` translation, so humans see `LLM`/`code`/`shell`/`workflow` not `LLMNode`/`PythonCodeNode`/`ShellNode`/`WorkflowExecutor`.
+JSON exposes both per-level (`execute_by_type`) and nested (`execute_by_type_including_nested`) with raw class names — stable agent contract. Text renders only the nested breakdown (when present) via the shared `node_type_tag()` map (`pflow.core.node_type_display`), so humans see `llm`/`code`/`shell`/`workflow` not `LLMNode`/`PythonCodeNode`/`ShellNode`/`WorkflowExecutor`. The same map is reused by `core/trace_report.py` for the report's pipeline-table Type column — one tag vocabulary across surfaces.
 
 ### Formatter (`formatters/plan_formatter.py`)
 
 Text-only rendering decisions, all pinned by `tests/test_execution/formatters/test_plan_formatter.py`:
 
 - **Header**: `Dry-run for {Path(plan.workflow).name}: N nodes, M sub-workflow(s)`. Base name only — the absolute path is already in the command the user ran. JSON `plan.workflow` keeps the full value.
-- **Type translation in summary**: class names → `_NODE_TYPE_TAGS` map (same one per-entry labels use).
+- **Type translation in summary**: class names → `node_type_tag()` from `pflow.core.node_type_display` (same map per-entry labels use; shared with `core/trace_report.py`).
 - **Nested-aware counts**: when `*_including_nested` fields exist on `PlanSummary`, the summary displays those numbers under the label `Summary (including nested):`. Agents cost- or time-gating must read `*_including_nested` when present — the formatter mirrors.
 - **"Nothing cached" divider**: `_has_any_cached_recursive(entries)` checks sub_plans AND `batch_items_cached > 0`. A plan whose top-level entries are all `sub_workflow` with fully-cached children (or partially-cached batch items) must NOT render "nothing cached."
 - **No redundant "No side effects performed." trailer.** The `--dry-run` flag is the contract; restating it on every plan is noise.

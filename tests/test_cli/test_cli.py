@@ -216,3 +216,76 @@ def test_auto_report_rerun_with_only_removes_downstream_pages(tmp_path: Path, mo
     assert not (report_dir / "02-second.md").exists()
     assert (report_dir / ".pflow-report.json").exists()
     assert "Nodes: 1/2 (--only 'first', 1 skipped)" in (report_dir / "summary.md").read_text()
+
+
+def test_report_command_echoes_summary_to_stderr(tmp_path: Path, monkeypatch):
+    """pflow report writes summary.md AND echoes its content to stderr."""
+    trace_file = tmp_path / "trace.json"
+    trace_file.write_text(
+        json.dumps(
+            _make_trace(
+                nodes=[
+                    {
+                        "node_id": "fetch",
+                        "node_type": "ShellNode",
+                        "duration_ms": 200.0,
+                        "success": True,
+                        "timestamp": "2026-03-23T10:00:01",
+                    }
+                ]
+            )
+        )
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = click.testing.CliRunner(mix_stderr=False)
+    report_dir = tmp_path / "report"
+    result = runner.invoke(main, ["report", str(trace_file), "-o", str(report_dir)])
+
+    assert result.exit_code == 0, f"Report failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    # stdout is just the path (pipe-safe)
+    assert result.stdout.strip() == str(report_dir)
+    # stderr carries the human-readable summary, including the new column header
+    assert "Report generated:" in result.stderr
+    assert "## Pipeline" in result.stderr
+    assert "| # | Node | Type | Status | Time | Tokens | Cost |" in result.stderr
+    assert "| 1 | fetch | shell | success |" in result.stderr
+
+
+def test_report_command_stdout_remains_just_the_path(tmp_path: Path, monkeypatch):
+    """Pipe-safety regression guard: stdout MUST stay equal to <report_dir>\\n."""
+    trace_file = tmp_path / "trace.json"
+    trace_file.write_text(json.dumps(_make_trace()))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = click.testing.CliRunner(mix_stderr=False)
+    report_dir = tmp_path / "report"
+    result = runner.invoke(main, ["report", str(trace_file), "-o", str(report_dir)])
+
+    assert result.exit_code == 0
+    # Exactly one line on stdout: the report directory.
+    assert result.stdout == f"{report_dir}\n"
+
+
+@pytest.mark.trace_files
+def test_run_report_flag_echoes_summary_to_stderr(tmp_path: Path, monkeypatch):
+    """`pflow <workflow> --report` mirrors the inline stderr echo."""
+    workflow = tmp_path / "test.pflow.md"
+    workflow.write_text(
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+    )
+    report_dir = tmp_path / "report"
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = click.testing.CliRunner(mix_stderr=False)
+    result = runner.invoke(main, [str(workflow), "--report-dir", str(report_dir)])
+
+    assert result.exit_code == 0, f"Workflow failed: stderr={result.stderr!r}"
+    # The "📋 Execution report" line is already part of stderr; the summary
+    # table now follows it.
+    assert "📋 Execution report" in result.stderr
+    assert "## Pipeline" in result.stderr
+    assert "| 1 | hello | shell | success |" in result.stderr
+    # Pipe-safety guard: stdout must NOT carry the summary even when the workflow
+    # also writes its own output (here `hi`). A regression routing _echo_trace
+    # to stdout would surface the table here.
+    assert "## Pipeline" not in result.stdout
+    assert "📋 Execution report" not in result.stdout

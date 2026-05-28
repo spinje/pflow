@@ -196,9 +196,23 @@ class TestTraceToReportFormatCompatibility:
         assert (batch_dir / "item-0-alpha.md").exists()
         assert (batch_dir / "item-1-beta.md").exists()
 
-        # Summary should reference the batch
+        # Summary should reference the batch and explode items into per-item rows
         summary_md = (report_dir / "summary.md").read_text()
         assert "processor" in summary_md
+        # New Tokens column header is always present, even when no LLM ran.
+        assert "| # | Node | Type | Status | Time | Tokens | Cost |" in summary_md
+        # Pin column order at the producer→renderer boundary. Allow only the
+        # duration cell to vary (real wall-clock time); the (label) tail
+        # comes from _extract_item_label rendering `(alpha)`/`(beta)` for
+        # string batch items. Catches drift between WorkflowTraceCollector
+        # field names and renderer expectations.
+        import re
+
+        for idx, label in ((0, "alpha"), (1, "beta")):
+            row_pattern = rf"\| 1 \| processor\[{idx}\] \({label}\) \| shell \| success \| \S+ \| — \| — \|"
+            assert re.search(row_pattern, summary_md), (
+                f"Expected exploded batch row for processor[{idx}] ({label}) with full column order; got:\n{summary_md}"
+            )
 
 
 class TestParallelBatchTraceCapture:
