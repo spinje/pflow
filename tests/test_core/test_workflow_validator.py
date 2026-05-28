@@ -440,8 +440,12 @@ Do something.
         assert len(errors) > 0
         assert any("Circular dependency" in d.message for d in errors)
 
-    def test_valid_complex_workflow(self, registry_with_nodes):
+    def test_valid_complex_workflow(self, registry_with_nodes, monkeypatch):
         """Test that a complex valid workflow passes all checks."""
+        # OPENAI_API_KEY satisfies the new step-9 LLM model-id preflight for
+        # the ``openai/gpt-4`` node below; without it the validator would
+        # correctly flag this as a missing-key error.
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -458,7 +462,7 @@ Do something.
                     "type": "llm",
                     "params": {
                         "prompt": "Analyze this response: ${fetch.response}",
-                        "model": "gpt-4",
+                        "model": "openai/gpt-4",
                     },
                 },
                 {

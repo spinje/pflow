@@ -165,7 +165,7 @@ class WorkflowValidator:
             registry: Node registry (uses default if None)
             skip_node_types: Skip node type validation (for mock nodes in tests)
             workflow_file: Path to the workflow file being validated. Used to
-                resolve relative sub-workflow file references in step 8. When
+                resolve relative sub-workflow file references in step 10. When
                 None and a relative path is encountered, a validation error
                 is produced (relative paths are also unresolvable at runtime).
 
@@ -746,13 +746,34 @@ class WorkflowValidator:
         ``--validate-only`` and ``--dry-run`` agree with normal execution.
         """
         diagnostics: list[Diagnostic] = []
+        # Each entry: (node_id, display_model, provider_name, candidate_forms)
+        # ``provider_name`` is the canonical provider detected from the user's
+        # ``model:`` string (``anthropic`` / ``openai`` / ``gemini``). It's
+        # carried into the catalog check so a bare-form catalog hit can be
+        # rejected when the entry's ``litellm_provider`` field names a
+        # DIFFERENT canonical provider — that catches typos like
+        # ``anthropic/gpt-4`` (gpt-4 is bundled as bare under openai).
+        catalog_check_list: list[tuple[str, str, str, tuple[str, ...]]] = []
+
         for node in workflow_ir.get("nodes", []):
-            if node.get("type") != "claude-code":
-                continue
             params = node.get("params", {})
             if not isinstance(params, dict):
                 continue
-            diagnostics.extend(WorkflowValidator._validate_claude_code_params(node.get("id", "unknown"), params))
+            node_id = node.get("id", "unknown")
+            node_type = node.get("type")
+            if node_type == "claude-code":
+                diagnostics.extend(WorkflowValidator._validate_claude_code_params(node_id, params))
+            elif node_type == "llm":
+                llm_diags, display_model, provider_name, forms = WorkflowValidator._validate_llm_model_id_lite(
+                    node_id, params
+                )
+                diagnostics.extend(llm_diags)
+                if forms is not None and display_model is not None and provider_name is not None:
+                    catalog_check_list.append((node_id, display_model, provider_name, forms))
+
+        if catalog_check_list:
+            diagnostics.extend(WorkflowValidator._validate_llm_model_id_catalog(catalog_check_list))
+
         return diagnostics
 
     @staticmethod
@@ -883,6 +904,334 @@ class WorkflowValidator:
                 "path": path,
             },
             see_also=["claude-code"],
+        )
+
+    # =========================================================================
+    # LLM Model-Id Static Validation (Step 9 — LLM branch)
+    # =========================================================================
+
+    @staticmethod
+    def _strip_provider_prefix_case_preserving(model: str, provider_prefix: str) -> str:
+        """Return the bare model name with the user's case preserved.
+
+        Distinct from ``llm_providers.model_name_without_provider`` which
+        lowercases the result — this validator-local helper preserves case so
+        the catalog lookup mirrors what the runtime adapter would actually
+        send to LiteLLM. Without case preservation, a user writing
+        ``Anthropic/Claude-Sonnet-4-5`` would match a lowercase catalog entry
+        at validate time but the runtime call would use mixed case and
+        potentially fail.
+
+        Matches the prefix case-insensitively (``Anthropic/`` and
+        ``anthropic/`` both strip) but returns the SUFFIX with its original
+        case. When the model doesn't carry the prefix, returns it unchanged.
+
+        Defensively normalizes ``provider_prefix`` to lowercase internally,
+        so the function is robust if a future caller passes a mixed-case
+        prefix. The current sole caller in ``_validate_llm_model_id_lite``
+        passes ``provider.provider_prefix`` from ``PROVIDERS`` (always
+        lowercase), but the function shouldn't silently mismatch if the
+        contract relaxes.
+        """
+        provider_prefix = provider_prefix.lower()
+        if model.lower().startswith(provider_prefix):
+            return model[len(provider_prefix) :]
+        return model
+
+    @staticmethod
+    def _validate_llm_model_id_lite(
+        node_id: str,
+        params: dict[str, Any],
+    ) -> tuple[list[Diagnostic], str | None, str | None, tuple[str, ...] | None]:
+        """Per-node lite check: type, template-defer, provider prefix, key.
+
+        Returns ``(diagnostics, display_model, provider_name, catalog_candidate_forms)``.
+
+        - ``diagnostics``: validate-time ERROR diagnostics (wrong type or
+          missing API key) for this node.
+        - ``display_model``: the model identifier as the user wrote it,
+          for use in subsequent diagnostic messages.
+        - ``provider_name``: the canonical provider name (``"anthropic"`` /
+          ``"openai"`` / ``"gemini"``) — carried into the catalog check so a
+          bare-form catalog hit can be rejected when the entry belongs to a
+          DIFFERENT canonical provider (closes the cross-provider FP class
+          where e.g. ``anthropic/gpt-4`` would silently pass because
+          ``gpt-4`` is bundled bare under openai).
+        - ``catalog_candidate_forms``: a tuple of strings to try against
+          ``litellm.model_cost``. The bundled catalog uses bare names for
+          most providers but prefixed names for some (e.g. gemini), so we
+          collect both forms and check each. All forms are case-preserving
+          to mirror the runtime call shape. ``None`` when this node should
+          be skipped from catalog checks.
+        """
+        from pflow.core.exceptions import MissingApiKeyError
+        from pflow.core.llm_config import _has_provider_key
+        from pflow.core.llm_providers import detect_provider, normalize_model_name
+
+        if "model" not in params:
+            return [], None, None, None  # compiler injects default; raises CompilationError if none
+
+        model = params["model"]
+        if model is None or model == "":
+            return [], None, None, None  # treat as absent — compiler handles
+
+        if not isinstance(model, str):
+            diag = Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="LLM Configuration",
+                node_id=node_id,
+                message=(f"LLM node 'model:' must be a string identifier, got {type(model).__name__} ({model!r})."),
+                suggestions=[
+                    "Set `- model: <provider>/<model-name>` (e.g. `- model: anthropic/claude-sonnet-4-5`).",
+                    "Run `pflow settings llm show` to see configured defaults.",
+                    "Remove the `- model:` line to use the workflow default.",
+                ],
+                context={
+                    "category": "llm_validation",
+                    "path": f"nodes[id={node_id}].params.model",
+                    "value": model,
+                    "value_type": type(model).__name__,
+                },
+                see_also=["llm"],
+                id="llm.model-not-string",
+            )
+            return [diag], None, None, None
+
+        if TemplateResolver.has_templates(model):
+            return [], None, None, None  # defer to runtime
+
+        provider = detect_provider(model)
+        if provider is None:
+            return [], None, None, None  # non-canonical provider, trust user
+
+        if not _has_provider_key(provider.name):
+            exc = MissingApiKeyError(
+                f"Missing API key for model '{model}'",
+                model=model,
+                kind="missing_key",
+            )
+            diag = exc.to_diagnostics()[0]
+            return [WorkflowValidator._decorate_llm_validator_diag(diag, node_id)], None, None, None
+
+        # Build candidate forms for catalog lookup. LiteLLM's bundled catalog
+        # uses bare names for most providers (e.g. ``gpt-4``,
+        # ``claude-sonnet-4-5``), so a user writing ``openai/gpt-4`` would
+        # false-positive as Unknown Model if we only checked the prefixed form.
+        # Conversely, some entries (gemini) are bundled with the prefix. We
+        # accept either form, then disambiguate with the per-entry
+        # ``litellm_provider`` field in ``_validate_llm_model_id_catalog`` so
+        # ``anthropic/gpt-4`` (wrong provider for gpt-4) doesn't silently pass.
+        # Use the case-preserving bare-strip so the lookup mirrors the
+        # runtime's case behavior (matters for users who write mixed-case
+        # model identifiers).
+        bare = WorkflowValidator._strip_provider_prefix_case_preserving(model, provider.provider_prefix)
+        # De-duplicate while preserving order so the upstream-merge benefit
+        # still applies when the user-written form differs from both
+        # normalized variants. ``dict.fromkeys`` is the canonical ordered-set
+        # idiom on Python 3.7+ (insertion-ordered dicts).
+        candidate_forms = tuple(dict.fromkeys(f for f in (model, normalize_model_name(model), bare) if f))
+        return [], model, provider.name, candidate_forms
+
+    @staticmethod
+    def _catalog_form_known_for_provider(
+        litellm_module: Any,
+        canonical_provider_names: set[str],
+        form: str,
+        expected_provider: str,
+    ) -> bool:
+        """True iff ``form`` is in the catalog AND the entry doesn't
+        explicitly name a DIFFERENT canonical provider.
+
+        Accepting when ``litellm_provider`` is missing, non-canonical, or
+        matches ``expected_provider`` keeps the lookup permissive on
+        best-effort metadata (some bundled entries lack the field; others
+        use non-canonical values like ``vertex_ai-language-models`` for the
+        bare Gemini namespace). Only an explicit canonical mismatch rejects.
+        Closes the cross-provider FP class where e.g. ``anthropic/gpt-4``
+        would silently pass because ``gpt-4`` is bundled bare under openai.
+        """
+        entry = litellm_module.model_cost.get(form)
+        if not isinstance(entry, dict):
+            # Defense in depth: treat junk catalog entries as unknown rather
+            # than best-effort accept. Both upstream-fetch paths in
+            # ``litellm_runtime`` now filter malformed entries before
+            # registration (see ``_filter_well_formed_upstream_entries``), so
+            # a non-dict entry should not be reachable via normal flow.
+            # Returning False here closes the residual silent-accept window
+            # if a future code path bypasses the filter.
+            return False
+        entry_provider = entry.get("litellm_provider")
+        if entry_provider == expected_provider:
+            return True
+        # Reject ONLY explicit canonical mismatch. Unknown / non-canonical /
+        # missing values are accepted (best-effort).
+        return not (isinstance(entry_provider, str) and entry_provider in canonical_provider_names)
+
+    @staticmethod
+    def _build_catalog_unreachable_info(deferred_node_ids: list[str]) -> Diagnostic:
+        """Build the single INFO breadcrumb emitted when upstream fetch fails.
+
+        Network failure means we couldn't authoritatively check the catalog.
+        Rather than silently passing, we tell the user verification was
+        skipped — so the agent can interpret a runtime LLM error correctly.
+        """
+        deferred_count = len(deferred_node_ids)
+        return Diagnostic(
+            severity=Severity.INFO,
+            source="validator",
+            title="LLM Configuration",
+            message=(
+                f"Could not verify {deferred_count} model identifier(s) "
+                f"against the upstream catalog (network unavailable). "
+                f"Validation passed for these; model names will be "
+                f"checked at runtime."
+            ),
+            suggestions=[
+                "Check your network connection if this is unexpected.",
+                "The runtime will surface a precise error if the model is invalid.",
+            ],
+            context={
+                "category": "llm_validation",
+                "deferred_node_ids": deferred_node_ids,
+            },
+            see_also=["llm"],
+            id="llm.catalog-unreachable",
+        )
+
+    @staticmethod
+    def _validate_llm_model_id_catalog(
+        items: list[tuple[str, str, str, tuple[str, ...]]],
+    ) -> list[Diagnostic]:
+        """Batch catalog check across all LLM nodes that passed lite check.
+
+        Each item is ``(node_id, display_model, provider_name, candidate_forms)``.
+        A node is considered "known" when at least one candidate form is present
+        in ``litellm.model_cost`` AND the entry's ``litellm_provider`` field
+        doesn't explicitly name a DIFFERENT canonical provider (see
+        ``_catalog_form_known_for_provider``).
+
+        Severity policy: catalog-miss after successful upstream merge emits
+        Severity.WARNING (not ERROR). LiteLLM's ``model_cost`` is a pricing
+        catalog, not a "this name is callable" registry — fine-tunes
+        (``openai/ft:...``), custom endpoints, and brand-new models may be
+        callable but absent from the catalog. The WARNING signals the
+        condition without blocking ``--validate-only`` or save. The original
+        bug fix is preserved by the lite check's ERROR-severity missing-key
+        diagnostic, which still fires before any upstream node executes.
+
+        One litellm import. At most one HTTP request per process (latched
+        in ``try_load_upstream_catalog``). On network failure, emit a
+        single INFO breadcrumb instead of silently passing through.
+        """
+        from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+        from pflow.core.llm_providers import PROVIDERS
+
+        litellm = import_litellm()
+        canonical_provider_names = {p.name for p in PROVIDERS}
+
+        def _any_known(forms: tuple[str, ...], expected_provider: str) -> bool:
+            return any(
+                WorkflowValidator._catalog_form_known_for_provider(
+                    litellm, canonical_provider_names, form, expected_provider
+                )
+                for form in forms
+            )
+
+        to_check = [(nid, display, prov, forms) for nid, display, prov, forms in items if not _any_known(forms, prov)]
+        if not to_check:
+            return []
+
+        merge_ok = try_load_upstream_catalog()
+
+        diagnostics: list[Diagnostic] = []
+        deferred_node_ids: list[str] = []
+        for node_id, display_model, provider_name, forms in to_check:
+            if _any_known(forms, provider_name):
+                continue
+            if merge_ok:
+                diagnostics.append(
+                    WorkflowValidator._build_unknown_model_warning(node_id, display_model, provider_name)
+                )
+            else:
+                deferred_node_ids.append(node_id)
+
+        if deferred_node_ids:
+            diagnostics.append(WorkflowValidator._build_catalog_unreachable_info(deferred_node_ids))
+
+        return diagnostics
+
+    @staticmethod
+    def _build_unknown_model_warning(node_id: str, display_model: str, provider_name: str) -> Diagnostic:
+        """Build the WARNING-severity diagnostic for catalog-miss models.
+
+        Distinct from the runtime ``UnknownModelError`` ERROR diagnostic
+        (which fires when LiteLLM itself rejects the call): this validator
+        finding is best-effort against ``litellm.model_cost``, which is a
+        pricing catalog and not authoritative for callability. The wording
+        reflects that — naming legitimate uses (fine-tunes, brand-new
+        models, custom endpoints) the WARNING does NOT mean to reject.
+        """
+        return Diagnostic(
+            severity=Severity.WARNING,
+            source="validator",
+            title="LLM Configuration",
+            node_id=node_id,
+            message=(
+                f"Model '{display_model}' is not in the LiteLLM catalog. This may be a fine-tune, "
+                f"a brand-new release, or a custom endpoint — the runtime will confirm. If this "
+                f"is a typo, the LLM call will fail at execution time."
+            ),
+            suggestions=[
+                "If this is intentional (fine-tune, custom endpoint), the warning can be ignored.",
+                f"If this is a typo, fix the '- model:' line (provider prefix '{provider_name}/').",
+                "Run 'pflow settings llm show' to see your configured defaults.",
+                "See https://docs.litellm.ai/docs/providers for supported models.",
+            ],
+            context={
+                "category": "llm_validation",
+                "path": f"nodes[id={node_id}].params.model",
+                "model": display_model,
+                "provider": provider_name,
+                "reason": "not_in_catalog",
+            },
+            see_also=["llm"],
+            id="llm.model-not-in-catalog",
+        )
+
+    @staticmethod
+    def _decorate_llm_validator_diag(diag: Diagnostic, node_id: str) -> Diagnostic:
+        """Adapt a runtime-shaped LLMCallError diagnostic for validate-time emission.
+
+        Adjusts:
+
+        - ``source``: ``"runtime"`` -> ``"validator"`` (validate-time provenance)
+        - ``node_id``: attach (runtime exceptions don't know the node yet)
+        - ``context.category``: ``"llm_failure"`` -> ``"llm_validation"`` (the
+          model hasn't been CALLED yet; the fix lives in the workflow file)
+        - ``context.path``: add for editor click-to-source navigation
+        - ``context.provider_message``: strip (always None at validate time;
+          the suggestion text references a "provider authentication error
+          above" that doesn't apply pre-call)
+
+        ``title`` and ``suggestions`` from the exception are preserved
+        unchanged — they're more specific than category-derived alternatives,
+        and the runtime suggestions remain the right next step at validate
+        time.
+        """
+        import dataclasses
+
+        from pflow.core.diagnostic import LLM_VALIDATION_CATEGORY
+
+        new_context = dict(diag.context or {})
+        new_context["category"] = LLM_VALIDATION_CATEGORY
+        new_context["path"] = f"nodes[id={node_id}].params.model"
+        new_context.pop("provider_message", None)
+        return dataclasses.replace(
+            diag,
+            source="validator",
+            node_id=node_id,
+            context=new_context,
         )
 
     # =========================================================================
