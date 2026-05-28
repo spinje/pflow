@@ -179,14 +179,9 @@ def test_model_key_absent_defers_to_compiler() -> None:
 def test_canonical_provider_missing_key_emits_missing_api_key_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """``openai/gpt-4o`` with no OPENAI_API_KEY produces the validator-decorated MissingApiKeyError.
 
-    Marker disables the autouse fake-key fixture so the missing-key check fires.
-    Also scrubs settings-side keys with ``monkeypatch.delenv`` (defensive — covers
-    keys leaked into ``os.environ`` by a prior step in the same process).
+    Marker disables the autouse fake-key fixture AND actively scrubs the four
+    canonical env vars so the missing-key check fires.
     """
-    # Scrub potential env keys from the test environment so the check fires.
-    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
-
     workflow = _llm_workflow("openai/gpt-4o")
 
     with patch("pflow.core.litellm_runtime.import_litellm") as mock_import:
@@ -413,11 +408,9 @@ def test_zero_llm_nodes_does_not_import_litellm(monkeypatch: pytest.MonkeyPatch)
 def test_sub_workflow_bad_model_surfaces_via_child_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A bad model inside a sub-workflow surfaces with ``In step 'X' sub-workflow:`` prefix.
 
-    Marker disables the autouse fake-key fixture so the missing-key check fires.
+    Marker disables the autouse fake-key fixture AND actively scrubs env keys
+    so the missing-key check fires.
     """
-    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
-
     child_path = tmp_path / "child.pflow.md"
     child_path.write_text(
         "# Child\n\n"
@@ -511,14 +504,12 @@ def test_multiple_llm_nodes_same_bad_model_emit_distinct_diagnostics(
 
 
 @pytest.mark.no_fake_llm_keys
-def test_save_path_runs_llm_model_validation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_save_path_runs_llm_model_validation(tmp_path: Path) -> None:
     """``save_workflow_with_options`` calls ``WorkflowValidator.validate`` and surfaces the same diagnostics.
 
-    Marker disables the autouse fake-key fixture so the missing-key check fires.
+    Marker disables the autouse fake-key fixture AND actively scrubs env keys
+    so the missing-key check fires.
     """
-    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
-
     from pflow.core.exceptions import WorkflowValidationError
     from pflow.core.workflow.save_service import save_workflow_with_options
 
@@ -542,6 +533,28 @@ def test_save_path_runs_llm_model_validation(monkeypatch: pytest.MonkeyPatch, tm
         d.context.get("category") == "llm_validation" and d.context.get("error_class") == "MissingApiKeyError"
         for d in diags
     ), f"Expected llm_validation MissingApiKeyError; got {[(d.message, d.context) for d in diags]}"
+
+
+@pytest.mark.no_fake_llm_keys
+def test_no_fake_llm_keys_marker_scrubs_canonical_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pins the strengthened marker behavior: env keys ARE absent under the marker.
+
+    The marker was previously a passive disable (just skipping injection).
+    A developer's actual shell with real keys could leak through and cause
+    missing-key tests to silently pass for the wrong reason. The marker now
+    actively scrubs ``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, ``GEMINI_API_KEY``,
+    ``GOOGLE_API_KEY`` — proven here by manually setting them BEFORE the
+    fixture runs.
+
+    Note: the assertion runs INSIDE the test body, after the fixture has
+    applied. The monkeypatch.setenv calls inside the body are a sanity check;
+    they don't subvert the fixture (the fixture already ran).
+    """
+    import os
+
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        # Fixture scrubbed pre-test. Inside the body, confirm absence.
+        assert var not in os.environ, f"{var} should be scrubbed by no_fake_llm_keys marker, but is set"
 
 
 # =========================================================================
@@ -638,3 +651,10 @@ def test_strip_provider_prefix_case_preserving_helper() -> None:
     )
     # Case 4: model with different prefix — return unchanged (not matching).
     assert WorkflowValidator._strip_provider_prefix_case_preserving("openai/gpt-4", "anthropic/") == "openai/gpt-4"
+    # Case 5: defensive — mixed-case PREFIX argument still strips correctly.
+    # Pins the lower-internally normalization; without it the helper would
+    # silently fail to strip if a future caller passes "Anthropic/".
+    assert (
+        WorkflowValidator._strip_provider_prefix_case_preserving("anthropic/Claude-Sonnet-4-5", "Anthropic/")
+        == "Claude-Sonnet-4-5"
+    )

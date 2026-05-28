@@ -165,7 +165,7 @@ class WorkflowValidator:
             registry: Node registry (uses default if None)
             skip_node_types: Skip node type validation (for mock nodes in tests)
             workflow_file: Path to the workflow file being validated. Used to
-                resolve relative sub-workflow file references in step 8. When
+                resolve relative sub-workflow file references in step 10. When
                 None and a relative path is encountered, a validation error
                 is produced (relative paths are also unresolvable at runtime).
 
@@ -925,7 +925,15 @@ class WorkflowValidator:
         Matches the prefix case-insensitively (``Anthropic/`` and
         ``anthropic/`` both strip) but returns the SUFFIX with its original
         case. When the model doesn't carry the prefix, returns it unchanged.
+
+        Defensively normalizes ``provider_prefix`` to lowercase internally,
+        so the function is robust if a future caller passes a mixed-case
+        prefix. The current sole caller in ``_validate_llm_model_id_lite``
+        passes ``provider.provider_prefix`` from ``PROVIDERS`` (always
+        lowercase), but the function shouldn't silently mismatch if the
+        contract relaxes.
         """
+        provider_prefix = provider_prefix.lower()
         if model.lower().startswith(provider_prefix):
             return model[len(provider_prefix) :]
         return model
@@ -1018,15 +1026,12 @@ class WorkflowValidator:
         # runtime's case behavior (matters for users who write mixed-case
         # model identifiers).
         bare = WorkflowValidator._strip_provider_prefix_case_preserving(model, provider.provider_prefix)
-        candidate_forms = (model, normalize_model_name(model), bare)
         # De-duplicate while preserving order so the upstream-merge benefit
         # still applies when the user-written form differs from both
-        # normalized variants.
-        seen: dict[str, None] = {}
-        for form in candidate_forms:
-            if form and form not in seen:
-                seen[form] = None
-        return [], model, provider.name, tuple(seen.keys())
+        # normalized variants. ``dict.fromkeys`` is the canonical ordered-set
+        # idiom on Python 3.7+ (insertion-ordered dicts).
+        candidate_forms = tuple(dict.fromkeys(f for f in (model, normalize_model_name(model), bare) if f))
+        return [], model, provider.name, candidate_forms
 
     @staticmethod
     def _catalog_form_known_for_provider(
@@ -1048,7 +1053,14 @@ class WorkflowValidator:
         """
         entry = litellm_module.model_cost.get(form)
         if not isinstance(entry, dict):
-            return form in litellm_module.model_cost  # truthy but non-dict — best-effort
+            # Defense in depth: treat junk catalog entries as unknown rather
+            # than best-effort accept. Both upstream-fetch paths in
+            # ``litellm_runtime`` now filter malformed entries before
+            # registration (see ``_filter_well_formed_upstream_entries``), so
+            # a non-dict entry should not be reachable via normal flow.
+            # Returning False here closes the residual silent-accept window
+            # if a future code path bypasses the filter.
+            return False
         entry_provider = entry.get("litellm_provider")
         if entry_provider == expected_provider:
             return True

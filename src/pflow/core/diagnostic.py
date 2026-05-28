@@ -229,12 +229,20 @@ CACHE_FAILURE_CATEGORY = "cache_failure"
 CACHE_WARNING_CATEGORY = "cache_warning"
 CACHE_ADVISORY_CATEGORY = "cache_advisory"
 
-# LLM validation category — for static-analysis ERROR-level diagnostics about
-# LLM node parameter compositions that will fail at the provider boundary.
-# Currently used by ``llm.thinking-temperature-mismatch`` (validate-time check
-# for Anthropic temperature=1.0 requirement when thinking is enabled). Distinct
-# from LLM_FAILURE_CATEGORY because no provider call has happened yet — the
-# fix is in the workflow file, not in the runtime.
+# LLM validation category — for validate-time diagnostics about LLM node
+# parameter compositions that would fail or warn at the provider boundary.
+# Producers include (non-exhaustive):
+#   - ``llm.thinking-temperature-mismatch`` — Anthropic temperature=1.0
+#     requirement when thinking is enabled (ERROR).
+#   - ``llm.model-not-string`` — wrong-type ``model:`` values (ERROR).
+#   - ``llm.model-not-in-catalog`` — model identifier not in the LiteLLM
+#     pricing catalog after upstream merge (WARNING).
+#   - ``llm.catalog-unreachable`` — INFO breadcrumb when the upstream
+#     catalog fetch fails during validation.
+#   - Validator-decorated ``MissingApiKeyError`` — canonical-provider model
+#     without a configured API key (ERROR).
+# Distinct from LLM_FAILURE_CATEGORY because no provider call has happened
+# yet — the fix is in the workflow file, not in the runtime.
 LLM_VALIDATION_CATEGORY = "llm_validation"
 
 

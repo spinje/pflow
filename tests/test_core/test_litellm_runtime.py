@@ -725,6 +725,76 @@ def test_try_load_upstream_catalog_drops_malformed_entries_keeps_well_formed(
     assert "empty-dict" not in register_calls[0]
 
 
+def test_ensure_model_priced_drops_malformed_entries(reset_upstream_attempted, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``ensure_model_priced`` MUST apply the same shape filter as the validator path.
+
+    Without this, a runtime-side fetch landing first with malformed payload
+    would register junk entries into ``litellm.model_cost``. The validator's
+    catalog-membership check then has a residual silent-accept window for
+    those junk keys (closed in defense by tightening the non-dict fallback
+    to return False, but the registration side is the primary defense).
+    """
+    from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
+
+    litellm = import_litellm()
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+
+    payload = {
+        "good-model": {"input_cost_per_token": 1e-6, "litellm_provider": "openai", "mode": "chat"},
+        "junk-string": "not-a-dict",
+        "empty-dict": {},
+        "no-recognized-fields": {"some_random_field": "value"},
+    }
+    _stub_httpx_get(monkeypatch, payload)
+
+    register_calls: list[dict] = []
+
+    def recording_register(upstream_map: dict) -> None:
+        register_calls.append(upstream_map)
+        for k, v in upstream_map.items():
+            litellm.model_cost.setdefault(k, {}).update(v)
+
+    monkeypatch.setattr(litellm, "register_model", recording_register)
+
+    ensure_model_priced("some/asked-for-model")
+
+    # register_model received ONLY the well-formed entry.
+    assert len(register_calls) == 1
+    assert "good-model" in register_calls[0]
+    assert "junk-string" not in register_calls[0]
+    assert "empty-dict" not in register_calls[0]
+    assert "no-recognized-fields" not in register_calls[0]
+    # Catalog ends up with only the well-formed key registered.
+    assert "good-model" in litellm.model_cost
+    assert "junk-string" not in litellm.model_cost
+    assert "empty-dict" not in litellm.model_cost
+
+
+def test_validator_catalog_check_rejects_non_dict_entry_defense_in_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defense-in-depth: validator's non-dict fallback returns False.
+
+    Even if a future code path bypasses ``_filter_well_formed_upstream_entries``
+    and registers junk, the validator's ``_catalog_form_known_for_provider``
+    must NOT silently accept a non-dict catalog entry. Pins the hardened
+    fallback (changed from "best-effort accept" to "reject as unknown").
+    """
+    from pflow.core.litellm_runtime import import_litellm
+    from pflow.core.workflow.validator import WorkflowValidator
+
+    litellm = import_litellm()
+    # Manually inject a junk entry (bypassing the filter) to simulate the
+    # residual silent-accept window the fallback now closes.
+    monkeypatch.setattr(litellm, "model_cost", {"openai/gpt-fake-junk": "not-a-dict"}, raising=False)
+
+    # Function-private helper still callable for direct unit test.
+    canonical = {"openai", "anthropic", "gemini"}
+    result = WorkflowValidator._catalog_form_known_for_provider(litellm, canonical, "openai/gpt-fake-junk", "openai")
+
+    assert result is False, "non-dict catalog entry must NOT pass the membership check"
+
+
 @pytest.mark.e2e
 def test_importing_helper_module_does_not_import_litellm(
     uv_exe: str,

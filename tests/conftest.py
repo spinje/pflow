@@ -54,6 +54,9 @@ def _block_upstream_cost_map_fetch(monkeypatch):
     monkeypatch.setattr(litellm_runtime, "_validator_upstream_fetch_succeeded", True)
 
 
+_FAKE_LLM_KEY_VARS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+
+
 @pytest.fixture(autouse=True, scope="function")
 def _inject_fake_llm_api_keys(monkeypatch, request):
     """Inject fake API keys for ALL canonical LLM providers under test.
@@ -65,15 +68,14 @@ def _inject_fake_llm_api_keys(monkeypatch, request):
     need the key check to pass.
 
     Skipped for tests under ``/llm/`` directories (real-API tests that need
-    actual environment-provided keys), and for any test marked
-    ``@pytest.mark.no_fake_llm_keys`` (tests that deliberately assert the
-    missing-key code path).
+    actual environment-provided keys).
 
-    **Test author warning**: this fixture auto-injects keys. Any test that
-    asserts the missing-key path WITHOUT either ``monkeypatch.delenv`` ritual
-    or the ``no_fake_llm_keys`` marker will pass for the wrong reason — the
-    diagnostic won't fire because the key is present. When in doubt, use the
-    marker to disable the fixture explicitly.
+    Tests marked ``@pytest.mark.no_fake_llm_keys`` get the OPPOSITE behavior:
+    the fixture ALSO scrubs any leaked canonical env vars (``ANTHROPIC_API_KEY``,
+    ``OPENAI_API_KEY``, ``GEMINI_API_KEY``, ``GOOGLE_API_KEY``) so tests
+    asserting the missing-key code path produce the right diagnostic without
+    needing a per-test ``monkeypatch.delenv`` loop. ``GOOGLE_API_KEY`` is
+    included because LiteLLM accepts it as a Gemini alias.
     """
     test_path = str(request.fspath)
     if "/llm/" in test_path or "\\llm\\" in test_path:
@@ -81,6 +83,13 @@ def _inject_fake_llm_api_keys(monkeypatch, request):
         return
 
     if request.node.get_closest_marker("no_fake_llm_keys"):
+        # Strengthened semantics: actively scrub. A test using this marker
+        # is asserting "no canonical key is configured" — and a developer's
+        # actual shell may leak real keys into the process env. Scrubbing
+        # here removes the trap where the test silently passes for the
+        # wrong reason because the key WAS present.
+        for var in _FAKE_LLM_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
         yield
         return
 
