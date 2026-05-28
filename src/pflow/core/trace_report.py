@@ -845,24 +845,6 @@ def _append_warning_section(events: list[dict[str, Any]], lines: list[str]) -> N
     lines.append("")
 
 
-def _format_event_status(event: dict[str, Any]) -> str:
-    """Format the status column for a trace event.
-
-    For batch/sub-workflow events, includes item counts (e.g., 'ok (4/4)').
-    Cached nodes show '[cached]' suffix.
-    """
-    base = "ok" if event.get("success") else "**FAILED**"
-    if event.get("cached"):
-        base += " [cached]"
-    batch_items = event.get("batch_items")
-    if batch_items:
-        real_items = [i for i in batch_items if not (i.get("llm_call") or {}).get("is_warmup")]
-        total = len(real_items)
-        succeeded = sum(1 for i in real_items if i.get("success"))
-        return f"{base} ({succeeded}/{total})"
-    return base
-
-
 def _format_llm_params(node_params: dict[str, Any], lines: list[str]) -> None:
     """Append user-configured LLM parameters when explicitly set.
 
@@ -919,6 +901,13 @@ def _row_batch_item_label(node_id: str, item: dict[str, Any]) -> str:
     Model tail uses the last path segment of ``llm_call.model`` so
     ``anthropic/claude-sonnet-4-5`` renders as ``claude-sonnet-4-5``. Non-LLM
     items fall back to the existing label-extraction helper.
+
+    Known limitation: for nested provider paths (e.g.
+    ``openrouter/anthropic/claude-3-sonnet``) only the last segment is shown
+    — the reader sees ``(claude-3-sonnet)`` and loses the intermediate
+    ``anthropic`` context. Today's LiteLLM convention is ``provider/model``
+    (two segments), so this fires only for OpenRouter-style routes. The
+    per-node file still carries the full model id.
     """
     idx = item.get("index", "?")
     llm_call = item.get("llm_call") or {}
@@ -933,10 +922,15 @@ def _row_batch_item_label(node_id: str, item: dict[str, Any]) -> str:
 
 
 def _row_status(event_or_item: dict[str, Any]) -> str:
-    """Lowercase status for the summary table: ``success``/``failed``/``cached``."""
-    if event_or_item.get("cached"):
-        return "cached"
-    return "success" if event_or_item.get("success") else "failed"
+    """Lowercase status for the summary table: ``success``/``failed``/``cached``.
+
+    Failure is checked BEFORE ``cached`` so the failure signal survives the
+    rare ``(cached=True, success=False)`` shape. Cache hits in normal pflow
+    flow imply success, so the cached branch wins for the common case.
+    """
+    if not event_or_item.get("success"):
+        return "failed"
+    return "cached" if event_or_item.get("cached") else "success"
 
 
 def _row_tokens(event_or_item: dict[str, Any]) -> str:
@@ -961,13 +955,18 @@ def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> No
     are filtered out per the runtime convention). Sub-workflow children stay
     collapsed under their parent row; their detail lives in the nested
     container ``summary.md``.
+
+    ``#`` semantic is "node index in the workflow", not "row index in the
+    table" — exploded batch items intentionally share their parent's number
+    so a reader scanning the column sees workflow steps, not row positions.
+
+    Rows are buffered and the header is only emitted when at least one row
+    survives the warmup-item filter. Guards against the warmup-only batch
+    edge case where every item is filtered out and only headers would print.
     """
     if not events:
         return
-    lines.append("## Pipeline")
-    lines.append("")
-    lines.append("| # | Node | Type | Status | Time | Tokens | Cost |")
-    lines.append("|---|------|------|--------|------|--------|------|")
+    rows: list[str] = []
     for i, event in enumerate(events, 1):
         type_tag = node_type_tag(event.get("node_type", "?"))
         batch_items = event.get("batch_items") or []
@@ -978,17 +977,24 @@ def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> No
             for item in batch_items:
                 if (item.get("llm_call") or {}).get("is_warmup"):
                     continue
-                lines.append(
+                rows.append(
                     f"| {i} | {_row_batch_item_label(node_id, item)} | {type_tag} | "
                     f"{_row_status(item)} | {format_duration(item.get('duration_ms', 0))} | "
                     f"{_row_tokens(item)} | {_format_cost(_compute_batch_item_cost(item))} |"
                 )
         else:
-            lines.append(
+            rows.append(
                 f"| {i} | {event.get('node_id', '?')} | {type_tag} | "
                 f"{_row_status(event)} | {format_duration(event.get('duration_ms', 0))} | "
                 f"{_row_tokens(event)} | {_format_cost(_compute_event_cost(event))} |"
             )
+    if not rows:
+        return
+    lines.append("## Pipeline")
+    lines.append("")
+    lines.append("| # | Node | Type | Status | Time | Tokens | Cost |")
+    lines.append("|---|------|------|--------|------|--------|------|")
+    lines.extend(rows)
     lines.append("")
 
 
@@ -1349,7 +1355,7 @@ def _build_items_table(
         idx = item.get("index", "?")
         dur = format_duration(item.get("duration_ms", 0))
         cost = _format_cost(_compute_batch_item_cost(item))
-        status = _format_event_status(item)
+        status = _row_status(item)
         if has_labels:
             label = _item_label_or_index(item)
             lines.append(f"| {idx} | {label} | {dur} | {cost} | {status} |")

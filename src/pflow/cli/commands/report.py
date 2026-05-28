@@ -64,8 +64,10 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
         except OSError:
             pass
         else:
+            # Trailing newline matches the parallel echo in run.py via
+            # _echo_trace — keep the two sites in sync.
             click.echo("", err=True)
-            click.echo(summary_text, err=True, nl=False)
+            click.echo(summary_text, err=True)
     else:
         click.echo(
             "Failed to generate report. The trace may use an older format (requires 2.0.0+).",

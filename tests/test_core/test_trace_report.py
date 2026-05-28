@@ -1113,7 +1113,7 @@ class TestBuildNodeSummary:
         assert "# batch-process" in md
         assert "- Items: 3 (2/3 succeeded)" in md
         # Only the failed item appears in the table
-        assert "| 1 | 30ms | \u2014 | **FAILED** |" in md
+        assert "| 1 | 30ms | \u2014 | failed |" in md
         # Successful items hidden behind count
         assert "| 0 |" not in md
         assert "... and 2 more succeeded" in md
@@ -2244,7 +2244,10 @@ class TestCompactBatchSummary:
         event = _make_event(node_id="batch", node_type="ShellNode", batch_items=items)
         md = _build_node_summary(event)
         assert "## Items" in md
-        assert "**FAILED**" in md
+        # Items table now uses the same lowercase vocabulary as the pipeline
+        # table (success/failed/cached) so readers see one vocabulary across
+        # `## Pipeline` and `## Items` in the same report.
+        assert "| failed |" in md
         assert "| 2 |" in md
         assert "... and 4 more succeeded" in md
         # Other items not in table
@@ -2734,3 +2737,52 @@ class TestPipelineTableCachedStatus:
         pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
         # Falls back to 0 in / 0 out — the row still renders.
         assert "0 in / 0 out" in pipeline
+
+    def test_cached_and_failed_event_renders_failed_not_cached(self) -> None:
+        """``_row_status`` must prefer ``failed`` over ``cached`` when both
+        flags are set. The rare (cached, !success) shape should not silently
+        mask the failure signal as it did in a prior revision.
+        """
+        event = _make_event(
+            node_id="impossible",
+            node_type="LLMNode",
+            duration_ms=10,
+            cached=True,
+            success=False,
+            llm_call={"model": "gpt-4", "input_tokens": 10, "output_tokens": 20},
+        )
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        pipeline = md.split("## Pipeline", 1)[1].split("\n## ", 1)[0]
+        assert "| failed |" in pipeline
+        assert "| cached |" not in pipeline
+
+
+class TestPipelineTableWarmupOnlyEdgeCase:
+    """Warmup-only batches must not emit a header-only `## Pipeline` section.
+
+    The row buffer in `_format_pipeline_table` defers the header until at
+    least one row survives the `is_warmup` filter. A regression that hoists
+    the header back to the top of the function would surface here.
+    """
+
+    def test_warmup_only_batch_omits_pipeline_section_entirely(self) -> None:
+        warmup_only = _make_event(
+            node_id="prewarm-only",
+            node_type="LLMNode",
+            duration_ms=100,
+            batch_items=[
+                {
+                    "index": -1,
+                    "item": "__cache_warmup__",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "claude-sonnet-4-5", "is_warmup": True},
+                }
+            ],
+        )
+        trace = _make_trace(nodes=[warmup_only])
+        md = _build_summary(trace)
+        # No header, no separator, no table at all.
+        assert "## Pipeline" not in md
+        assert "| # | Node | Type | Status | Time | Tokens | Cost |" not in md
