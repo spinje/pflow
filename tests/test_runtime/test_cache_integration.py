@@ -65,8 +65,8 @@ def _two_shell_ir(msg1: str = "hello", msg2: str = "world") -> dict[str, Any]:
     return {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "shell", "params": {"command": f"printf '%s' '{msg1}'"}},
-            {"id": "step-2", "type": "shell", "params": {"command": f"printf '%s' '{msg2}'"}},
+            {"id": "step-1", "type": "shell", "cache": True, "params": {"command": f"printf '%s' '{msg1}'"}},
+            {"id": "step-2", "type": "shell", "cache": True, "params": {"command": f"printf '%s' '{msg2}'"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
     }
@@ -88,6 +88,7 @@ def _tracking_ir(
             {
                 "id": node_id,
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo '{message}' >> {tracking_file}"},
             },
         ],
@@ -136,6 +137,7 @@ def test_cache_prevents_reexecution(tmp_path: Any) -> None:
             {
                 "id": "tracked",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo 'executed' >> {tracking_file}"},
             },
         ],
@@ -186,8 +188,8 @@ def test_template_input_change_invalidation(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "shell", "params": {"command": "printf '%s' '${input_val}'"}},
-            {"id": "step-2", "type": "shell", "params": {"command": "printf '%s' fixed"}},
+            {"id": "step-1", "type": "shell", "cache": True, "params": {"command": "printf '%s' '${input_val}'"}},
+            {"id": "step-2", "type": "shell", "cache": True, "params": {"command": "printf '%s' fixed"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
         "inputs": {"input_val": {"type": "string", "description": "Test input"}},
@@ -220,6 +222,7 @@ def test_no_cache_flag(tmp_path: Any) -> None:
             {
                 "id": "tracked",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo 'run' >> {tracking_file}"},
             },
         ],
@@ -250,9 +253,9 @@ def test_only_flag_stops_after_target(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "A", "type": "shell", "params": {"command": "printf '%s' a-val"}},
-            {"id": "B", "type": "shell", "params": {"command": "printf '%s' b-val"}},
-            {"id": "C", "type": "shell", "params": {"command": "printf '%s' c-val"}},
+            {"id": "A", "type": "shell", "cache": True, "params": {"command": "printf '%s' a-val"}},
+            {"id": "B", "type": "shell", "cache": True, "params": {"command": "printf '%s' b-val"}},
+            {"id": "C", "type": "shell", "cache": True, "params": {"command": "printf '%s' c-val"}},
         ],
         "edges": [
             {"from": "A", "to": "B"},
@@ -274,9 +277,9 @@ def test_only_with_cache(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "A", "type": "shell", "params": {"command": "printf '%s' a-val"}},
-            {"id": "B", "type": "shell", "params": {"command": "printf '%s' b-val"}},
-            {"id": "C", "type": "shell", "params": {"command": "printf '%s' c-val"}},
+            {"id": "A", "type": "shell", "cache": True, "params": {"command": "printf '%s' a-val"}},
+            {"id": "B", "type": "shell", "cache": True, "params": {"command": "printf '%s' b-val"}},
+            {"id": "C", "type": "shell", "cache": True, "params": {"command": "printf '%s' c-val"}},
         ],
         "edges": [
             {"from": "A", "to": "B"},
@@ -308,8 +311,8 @@ def test_key_value_override_cache_interaction(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "shell", "params": {"command": "printf '%s' '${input_val}'"}},
-            {"id": "step-2", "type": "shell", "params": {"command": "printf '%s' static"}},
+            {"id": "step-1", "type": "shell", "cache": True, "params": {"command": "printf '%s' '${input_val}'"}},
+            {"id": "step-2", "type": "shell", "cache": True, "params": {"command": "printf '%s' static"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
         "inputs": {"input_val": {"type": "string", "description": "Test input"}},
@@ -344,6 +347,7 @@ def test_error_node_not_cached(tmp_path: Any) -> None:
             {
                 "id": "step-err",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo 'fail' >> {tracking_file} && exit 1"},
             },
         ],
@@ -397,6 +401,7 @@ def test_cache_ttl_expiry(tmp_path: Any) -> None:
             {
                 "id": "tracked",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo 'run' >> {tracking_file}"},
             },
         ],
@@ -434,8 +439,13 @@ def test_cached_output_flows_through_template_resolution(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "producer", "type": "shell", "params": {"command": "printf '%s' 'hello world'"}},
-            {"id": "consumer", "type": "shell", "params": {"command": "printf '%s' '${producer.stdout}'"}},
+            {"id": "producer", "type": "shell", "cache": True, "params": {"command": "printf '%s' 'hello world'"}},
+            {
+                "id": "consumer",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": "printf '%s' '${producer.stdout}'"},
+            },
         ],
         "edges": [{"from": "producer", "to": "consumer"}],
     }

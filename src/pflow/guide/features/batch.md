@@ -38,6 +38,23 @@ Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Resul
 | `max_concurrent` | `10` | 1-100; use 30-50 for LLM APIs (rate limits) |
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
 
+**`parallel: false` is the default** — items run sequentially, in order. Use sequential when items must run in a specific order, when each item depends on side effects from the previous one (e.g. reading filesystem state a prior item wrote), or when you're using batch for bounded iteration. Sequential iteration over a sub-workflow is the cleanest loop-with-disk-state pattern — see `pflow guide sub-workflows` → Bounded iteration.
+
+````markdown
+### iterate
+
+Run the child once per index, in order — each iteration sees the previous one's
+filesystem changes.
+
+- type: workflow
+- workflow: ./process-one.pflow.md
+- inputs:
+    iteration: ${item}
+- batch:
+    items: [1, 2, 3, 4, 5]
+    parallel: false
+````
+
 **Text lines → JSON array:**
 ```shell
 your-command | jq -R -s 'split("\n") | map(select(. != ""))'

@@ -12,7 +12,6 @@ Removes any pre-existing marker so the test is repeatable.
 
 - type: shell
 - next: maybe-fail
-- cache: false
 
 ```shell command
 rm -f /tmp/pflow-task148-marker
@@ -25,7 +24,6 @@ Fails first time, creates marker, succeeds on retry.
 - type: shell
 - on-error: retry
 - next: end
-- cache: false
 
 ```shell command
 if [ -f /tmp/pflow-task148-marker ]; then
@@ -42,7 +40,6 @@ Loops back to maybe-fail after a brief moment.
 
 - type: shell
 - next: maybe-fail
-- cache: false
 
 ```shell command
 echo "retrying"

@@ -851,41 +851,6 @@ def test_sibling_child_parser_warnings_not_collapsed_by_dedup(tmp_path: Path):
     assert any("step-b" in m for m in messages)
 
 
-def test_child_cache_lint_warning_propagates_to_parent_validation(tmp_path: Path):
-    """Cache-lint warnings from child workflows must reach parent validate-only output.
-
-    Regression test for: _validate_sub_workflows() discarded _child_warnings from
-    recursive WorkflowValidator.validate() calls, so cache-lint warnings from children
-    never reached the parent.
-    """
-    child = tmp_path / "child.pflow.md"
-    child.write_text(
-        "# Child\n\n## Steps\n\n"
-        "### static-shell\n\n"
-        "Runs a command with no template inputs.\n\n"
-        "- type: shell\n"
-        "- command: git branch --show-current\n",  # no templates, no cache:false → lint warning
-        encoding="utf-8",
-    )
-
-    parent = tmp_path / "parent.pflow.md"
-    parent.write_text(
-        f"# Parent\n\n## Steps\n\n### child-step\n\nRun child.\n\n- type: workflow\n- workflow: {child}\n",
-        encoding="utf-8",
-    )
-
-    vresult = WorkflowRunner().validate(str(parent), {})
-
-    assert vresult.valid is True
-    warnings = vresult.warnings
-    cache_warnings = [w for w in warnings if "cache" in w.message.lower() or "template inputs" in w.message.lower()]
-    assert cache_warnings, (
-        f"Expected child cache-lint warning in parent validation, got warnings: {[w.message for w in warnings]}"
-    )
-    # Should include provenance about which sub-workflow produced it
-    assert any("child" in w.message.lower() or "child-step" in (w.node_id or "") for w in cache_warnings)
-
-
 def test_extract_runtime_warnings_preserves_structured_diagnostic():
     """Regression for post-review Fix #6: _extract_runtime_warnings used to discard
     the structured Diagnostic already built by runtime/engine/template_errors.py

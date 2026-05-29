@@ -63,6 +63,7 @@ This is where bare nodes get created and configured. The step order is load-bear
 
 ### Non-obvious behaviors
 
+- **Per-node cache default is type-based** — `NodeConfig.cache_enabled` is set from `node_data.get("cache", _default_cache_for_node_type(node_type))`. `_default_cache_for_node_type` returns `True` only for `node_type == "llm"`; every other type defaults to `False` (side-effecting or external-state, unsafe to memoize). Explicit `cache:` always wins. Single source of truth — don't recompute the default elsewhere.
 - **`only_node` is NOT a compiler parameter** — it's an engine parameter. The Runner passes it to `WorkflowEngine`.
 - **`resolved_defaults` vs `initial_params`**: After `_prepare_compilation`, `initial_params` contains ALL values (user-provided + defaults + `__template_resolution_mode__`). `resolved_defaults` contains ONLY the defaults from `prepare_inputs()` (not user-provided values). This distinction matters: when seeding the shared store, defaults must not override user values. The Runner seeds user params first, then `resolved_defaults`.
 

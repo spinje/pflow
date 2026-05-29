@@ -1097,12 +1097,7 @@ def _run_fixture(filename: str):
 
 
 def _only_template_error(result) -> str:
-    """Return the rendered text of the single template_error diagnostic.
-
-    The workflows emit cache-lint warnings alongside the template error
-    (the shell nodes have no template inputs). Filter to the error we care
-    about before rendering.
-    """
+    """Return the rendered text of the single template_error diagnostic."""
     errors = [
         d
         for d in result.diagnostics
@@ -1122,8 +1117,8 @@ def test_example_failed_node_direct_reference_renders_pasteable_fix():
     assert result.status == WorkflowStatus.FAILED
 
     rendered = _only_template_error(result)
-    # Source line 40 from the fixture — comes from the markdown parser, not inline.
-    assert "failed-node-direct-reference.pflow.md:40" in rendered, rendered
+    # Source line 38 from the fixture — comes from the markdown parser, not inline.
+    assert "failed-node-direct-reference.pflow.md:38" in rendered, rendered
     # Real failure details must surface, not "Unknown error" or "did not execute".
     assert "Exit code: 42" in rendered, rendered
     assert "executed but FAILED" in rendered, rendered
@@ -1145,7 +1140,7 @@ def test_example_typo_on_failed_node_surfaces_failure_and_corrected_fix():
     assert result.status == WorkflowStatus.FAILED
 
     rendered = _only_template_error(result)
-    assert "typo-on-failed-node.pflow.md:40" in rendered, rendered
+    assert "typo-on-failed-node.pflow.md:38" in rendered, rendered
     # Primary signal: the failure, not the typo.
     assert "executed but FAILED" in rendered, rendered
     assert "Exit code: 7" in rendered, rendered
@@ -1193,14 +1188,14 @@ def test_example_source_line_multi_output_tracks_first_output_line():
     # Only the first output should be reported as failed.
     assert "In output 'first_output':" in rendered, rendered
     assert "In output 'second_output':" not in rendered, rendered
-    # Line 39 is the failing output's ``- source:`` line in the fixture.
-    assert "source-line-multi-output.pflow.md:39" in rendered, rendered
+    # Line 37 is the failing output's ``- source:`` line in the fixture.
+    assert "source-line-multi-output.pflow.md:37" in rendered, rendered
 
 
 def test_example_source_line_heavy_offsets_tracks_correct_line():
     """A fixture with heavy blank-line padding and prose before the output
     section stresses the parser's line offset tracking. The rendered ``At:``
-    line must point at the correct absolute line (50 in this fixture), not
+    line must point at the correct absolute line (48 in this fixture), not
     the relative position within the Outputs section.
 
     Guards the parser's ``yaml_current_item_start_line`` assignment against
@@ -1210,7 +1205,7 @@ def test_example_source_line_heavy_offsets_tracks_correct_line():
     assert result.status == WorkflowStatus.FAILED
 
     rendered = _only_template_error(result)
-    assert "source-line-heavy-offsets.pflow.md:50" in rendered, rendered
+    assert "source-line-heavy-offsets.pflow.md:48" in rendered, rendered
 
 
 def test_example_coalesce_mixed_absent_failed_emits_summary_fix():

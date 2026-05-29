@@ -367,6 +367,9 @@ def _node_templates_touch(node: Mapping[str, Any], dummied_keys: frozenset[str])
     for text in _walk_strings(node):
         for match in template_resolver().TEMPLATE_PATTERN.finditer(text):
             for operand in template_resolver().split_coalesce_operands(match.group(1)):
+                # Literal operands (Optional A) reference no dummied key.
+                if template_resolver().is_literal_operand(operand):
+                    continue
                 root = template_resolver().extract_root_node_id(operand)
                 if root and root in dummied_keys:
                     return True

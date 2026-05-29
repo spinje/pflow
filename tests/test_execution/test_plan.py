@@ -32,8 +32,8 @@ def test_build_plan_fresh_workflow_marks_all_execute(tmp_path) -> None:
     """Fresh workflow plans every node as execute/no_cache_match."""
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": "printf b"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf b"}},
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -51,8 +51,8 @@ def test_build_plan_fully_cached_workflow_marks_all_cached(tmp_path) -> None:
     """After a run, the same workflow plans as fully cached."""
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": "printf b"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf b"}},
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -149,17 +149,17 @@ def test_build_plan_partial_cache_after_config_edit_marks_boundary_and_downstrea
     """Editing a middle node produces cached prefix + execute boundary + downstream."""
     old_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": "printf ${a.stdout}-b"}},
-            {"id": "c", "type": "shell", "params": {"command": "printf ${b.stdout}-c"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf ${a.stdout}-b"}},
+            {"id": "c", "type": "shell", "cache": True, "params": {"command": "printf ${b.stdout}-c"}},
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
     }
     new_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": "printf ${a.stdout}-b2"}},
-            {"id": "c", "type": "shell", "params": {"command": "printf ${b.stdout}-c"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf ${a.stdout}-b2"}},
+            {"id": "c", "type": "shell", "cache": True, "params": {"command": "printf ${b.stdout}-c"}},
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
     }
@@ -181,7 +181,7 @@ def test_build_plan_recurses_into_subworkflow(tmp_path) -> None:
     parent_path = tmp_path / "parent.pflow.md"
     write_workflow_file(
         {
-            "nodes": [{"id": "child-step", "type": "shell", "params": {"command": "printf child"}}],
+            "nodes": [{"id": "child-step", "type": "shell", "cache": True, "params": {"command": "printf child"}}],
             "edges": [],
         },
         child_path,
@@ -210,7 +210,10 @@ def test_build_plan_max_depth_guard_emits_diagnostic(tmp_path) -> None:
     depth = 12
     paths = [tmp_path / f"wf-{index}.pflow.md" for index in range(depth)]
     write_workflow_file(
-        {"nodes": [{"id": "final", "type": "shell", "params": {"command": "printf final"}}], "edges": []},
+        {
+            "nodes": [{"id": "final", "type": "shell", "cache": True, "params": {"command": "printf final"}}],
+            "edges": [],
+        },
         paths[-1],
     )
     for index in range(depth - 2, -1, -1):
@@ -272,7 +275,7 @@ def test_build_plan_circular_subworkflow_emits_error_diagnostic(tmp_path) -> Non
 def test_build_plan_visited_edges_prevents_loop_hang(tmp_path) -> None:
     """A cyclic graph should produce a finite plan."""
     ir = {
-        "nodes": [{"id": "loop", "type": "shell", "params": {"command": "printf loop"}}],
+        "nodes": [{"id": "loop", "type": "shell", "cache": True, "params": {"command": "printf loop"}}],
         "edges": [{"from": "loop", "to": "loop", "action": "error"}],
     }
     compiled, registry = _compile(ir)
@@ -305,11 +308,11 @@ def test_plan_no_cross_pollution_between_distinct_inline_workflows() -> None:
     written last, and the assertions on per-workflow stdout differ.
     """
     ir_a = {
-        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo A"}}],
+        "nodes": [{"id": "classify", "type": "shell", "cache": True, "params": {"command": "echo A"}}],
         "edges": [],
     }
     ir_b = {
-        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo B"}}],
+        "nodes": [{"id": "classify", "type": "shell", "cache": True, "params": {"command": "echo B"}}],
         "edges": [],
     }
 

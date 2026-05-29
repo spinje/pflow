@@ -82,7 +82,9 @@ def _infer_batch_item_structure(
 
     operands: list[str] = []
     for match in matches:
-        operands.extend(TemplateResolver.split_coalesce_operands(match))
+        operands.extend(
+            op for op in TemplateResolver.split_coalesce_operands(match) if not TemplateResolver.is_literal_operand(op)
+        )
 
     for operand in operands:
         source_output = node_outputs.get(operand)

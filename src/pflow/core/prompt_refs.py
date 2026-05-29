@@ -61,7 +61,13 @@ def classify_prompt_refs(
     for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
         raw_expr = match.group(1)
         operands = TemplateResolver.split_coalesce_operands(raw_expr)
-        paths = tuple(path for operand in operands for path in _dealias_operand(operand, inputs))
+        # Literal operands (Optional A) are values, not refs — skip dealiasing.
+        paths = tuple(
+            path
+            for operand in operands
+            if not TemplateResolver.is_literal_operand(operand)
+            for path in _dealias_operand(operand, inputs)
+        )
         per_item = False
         if batch_alias:
             per_item = any(_starts_with_alias(path, batch_alias) for path in paths)
@@ -102,7 +108,13 @@ def _dealias_operand(operand: str, inputs: Mapping[str, Any]) -> tuple[str, ...]
     inner = _extract_template_inner(mapped)
     if inner is None:
         return (operand,)
-    return tuple(inner_operand + chain for inner_operand in TemplateResolver.split_coalesce_operands(inner))
+    # Literal operands (Optional A) inside the aliased template are values,
+    # not refs — drop them so they don't become bogus dealiased paths.
+    return tuple(
+        inner_operand + chain
+        for inner_operand in TemplateResolver.split_coalesce_operands(inner)
+        if not TemplateResolver.is_literal_operand(inner_operand)
+    )
 
 
 def _split_head(operand: str) -> tuple[str, str, str]:

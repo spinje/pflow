@@ -302,36 +302,6 @@ class TestValidateOnlyJSONOutput:
         assert isinstance(output_data["errors"], list)
         assert len(output_data["errors"]) > 0
 
-    def test_validate_only_json_warnings_are_structured(self, tmp_path: Path) -> None:
-        """JSON warnings should be serialized as structured dicts, not Diagnostic repr strings."""
-        workflow = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "shell",
-                    "type": "shell",
-                    "params": {"command": "echo hello"},
-                }
-            ],
-            "edges": [],
-        }
-
-        workflow_path = tmp_path / "warning.pflow.md"
-        write_workflow_file(workflow, workflow_path)
-
-        result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
-
-        assert result.exit_code == 0
-        output_data = json.loads(result.output)
-
-        assert output_data["warnings"], "Expected cache lint warning in validate-only JSON"
-        warning = output_data["warnings"][0]
-        assert isinstance(warning, dict)
-        assert warning["severity"] == "warning"
-        assert warning["source"] == "validator"
-        assert warning["node_id"] == "shell"
-        assert warning["suggestions"]
-
 
 def make_claude_code_workflow(
     *,

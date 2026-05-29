@@ -849,3 +849,49 @@ class TestUnknownMcpNodeSyncHint:
         msgs_b = [d.message for d in errors_b if "Unknown node type" in d.message]
         assert msgs_a == ["Unknown node type: 'mcp-my-server-some-tool'"]
         assert msgs_b == ["Unknown node type: 'mcp-other-server-tool'"]
+
+
+class TestReservedLiteralNames:
+    """Optional A: inputs/node IDs named true/false/null are unreachable in
+    templates (${true} → literal), so the validator must reject them loudly."""
+
+    def test_input_named_true_is_rejected(self):
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+            "inputs": {"true": {"type": "string"}},
+        }
+        errors, _ = split_validator_diagnostics(workflow, skip_node_types=True)
+        assert any("reserved literal keyword" in d.message for d in errors)
+        assert any("'true'" in d.message for d in errors)
+
+    def test_node_named_false_is_rejected(self):
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "false", "type": "test", "params": {}}],
+            "edges": [],
+        }
+        errors, _ = split_validator_diagnostics(workflow, skip_node_types=True)
+        assert any("reserved literal keyword" in d.message for d in errors)
+        assert any("'false'" in d.message for d in errors)
+
+    def test_input_named_null_is_rejected(self):
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+            "inputs": {"null": {"type": "string"}},
+        }
+        errors, _ = split_validator_diagnostics(workflow, skip_node_types=True)
+        assert any("reserved literal keyword" in d.message for d in errors)
+
+    def test_ordinary_names_are_not_rejected(self):
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "is_true", "type": "test", "params": {}}],
+            "edges": [],
+            "inputs": {"truthy_value": {"type": "string"}},
+        }
+        errors, _ = split_validator_diagnostics(workflow, skip_node_types=True)
+        assert not any("reserved literal keyword" in d.message for d in errors)

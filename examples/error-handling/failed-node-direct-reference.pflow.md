@@ -13,7 +13,6 @@ Fails with exit 42.
 - type: shell
 - on-error: fallback
 - next: end
-- cache: false
 
 ```shell command
 echo "stuff to stderr" >&2; exit 42
@@ -25,7 +24,6 @@ Runs when primary fails.
 
 - type: shell
 - next: end
-- cache: false
 
 ```shell command
 echo "fallback ran"

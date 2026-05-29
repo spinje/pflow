@@ -165,6 +165,8 @@ Three patterns exist, each serving a different purpose:
 
 `_extract_all_templates()` splits `${a.field ?? b.field}` into individual operands before any pass sees them. Passes 5-8 validate each operand independently. This means both operands are validated even though at runtime the fallback may never execute — a deliberate tradeoff favoring early error detection over suppressing unreachable-path warnings.
 
+**JSON-literal operands (Optional A)**: operands can be JSON literals (`${a ?? 0}`, `${a ?? "x"}`, `${a ?? null}`, bare `${0}`). `_PERMISSIVE_PATTERN` embeds `TemplateResolver._LITERAL_PATTERN` so these don't trip the malformed-template check, and every extractor drops literal operands via `TemplateResolver.is_literal_operand` before treating them as variable references (otherwise `0` would be a bogus "no valid source" node). `_LITERAL_PATTERN` must match only what `try_parse_json` + the `??`-splitter can handle at runtime — it forbids leading-zero numbers (`007`) and `??` inside string literals; a mismatch there means a literal validates clean then silently fails to resolve. `_malformed_literal_operand_hint` emits the targeted "literal operand must be a JSON value" error when an operand looks literal-ish but fails the grammar.
+
 ### Passes 5 vs 6-7 see different template sets
 
 Pass 5 (path validation) uses `_PERMISSIVE_PATTERN` via `_extract_all_templates()` with `split_template_path()` — it sees and validates nested bracket templates like `${results[${__index__}].field}`.

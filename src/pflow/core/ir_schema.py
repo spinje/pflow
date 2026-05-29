@@ -180,7 +180,7 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                     },
                     "cache": {
                         "type": "boolean",
-                        "description": "Whether to cache this node's output across runs (default: true)",
+                        "description": "Whether to cache this node's output across runs. Default: true for `llm` nodes only; false for all other node types (which side-effect or read external state).",
                     },
                     "prompt_cache": {
                         "type": "array",

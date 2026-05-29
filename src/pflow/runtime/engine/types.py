@@ -45,7 +45,7 @@ class NodeConfig:
     batch_config: Optional[BatchConfig]  # None if not a batch node
     namespaced: bool  # Whether node outputs are namespaced
     interface_metadata: Optional[dict[str, Any]]  # Registry interface for type validation
-    cache_enabled: bool = True  # Whether to use memoization cache (per-node opt-out)
+    cache_enabled: bool = False  # Whether to use memoization cache. Default `False` because most node types side-effect or read external state; compiler sets `True` for `llm`.
     # Task 159: per-node prompt-cache subset (declaration order, frozen tuple).
     # Empty tuple = no opt-in (DD#19, byte-identical to absent).
     prompt_cache_items: tuple[str, ...] = ()

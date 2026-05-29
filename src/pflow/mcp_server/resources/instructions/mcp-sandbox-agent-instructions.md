@@ -190,11 +190,8 @@ Result: Formatted output includes both extracted data and original context
 
 **Recognize these immediately and offer alternatives:**
 
-#### ❌ No Loops or Iteration
-**User wants**: "Process each file in a directory differently based on its type"
-**Why impossible**: Workflows can't create dynamic numbers of operations
-**Alternative**: "I'll create a workflow that processes ALL files in one batch operation, applying the same logic to each"
-**→ Solution**: `batch` config enables this. See Batch Processing pattern.
+#### ✅ Loops and Bounded Iteration (Supported)
+**Loops and bounded iteration ARE supported** — via backward edges (worker/checker loop; see `pflow guide branching` → Loops) or a sub-workflow batched with `parallel: false` (see `pflow guide sub-workflows` → Bounded iteration). A sequential sub-workflow batch can read filesystem state mutated by the previous iteration — the cleanest loop-with-disk-state recipe. The hard limit is *dynamic* operation count: `batch` items must be a static list or a list produced by an upstream node — you can't create operations whose count is unknown until mid-execution.
 
 #### ✅ Conditional Branching (Supported)
 **User wants**: "If the API returns error, handle it; else process data"
@@ -633,7 +630,7 @@ Analysis results from the LLM processing step.
 
 #### Iteration is Free
 
-pflow caches node outputs automatically. When you re-execute a workflow with `workflow_execute`, unchanged nodes return instantly from cache. Only nodes whose config or inputs changed will re-execute.
+Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (shell/code/http/file/mcp/claude-code) defaults to NOT caching because it side-effects or reads external state, so iteration loops over filesystem state work correctly without annotations. When you re-execute a workflow with `workflow_execute`, unchanged `llm` nodes return instantly from cache; other nodes re-execute. Use `- cache: true` to opt a node into caching only when its output is purely a function of its declared inputs (no filesystem/clock/env/network).
 
 <!-- PART 2 START: Building Workflows -->
 <!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->

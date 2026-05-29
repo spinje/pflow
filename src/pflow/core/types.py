@@ -203,3 +203,14 @@ def _raise_unknown_type_error(raw: str, stripped: str) -> NoReturn:
         f"Unknown type '{stripped}'. Valid types: {', '.join(CANONICAL_TYPES)}",
         offending=raw,
     )
+
+
+def is_template_reserved_internal_key(root: str) -> bool:
+    """Whether a template root identifier is a reserved pflow internal key
+    that cannot be referenced from ``.pflow.md`` templates.
+
+    Catches ``__execution__``, ``__failures__``, ``__cache_hits__``,
+    ``__warnings__``, ``__memoization_cache__``, etc. Excludes ``__index__``
+    (the one template-accessible reserved key — the current batch item index).
+    """
+    return root.startswith("__") and root.endswith("__") and root != "__index__"

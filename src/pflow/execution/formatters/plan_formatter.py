@@ -299,9 +299,15 @@ def _is_llm_entry(entry: PlanEntry) -> bool:
 
 
 def _tag_from_entry(entry: PlanEntry) -> str:
-    """Map node type to short display tag."""
+    """Map node type to short display tag.
+
+    Only `llm` nodes cache by default, so `cache: false` is notable solely on an
+    LLMNode (an explicit opt-out of the default-on behavior). For every other
+    node type, cache-disabled is the silent default — tagging it would label
+    every shell/code/http node as `cache: false`, which is pure noise.
+    """
     tag = node_type_tag(entry.node_type)
-    if entry.cause == "cache_disabled":
+    if entry.cause == "cache_disabled" and entry.node_type == "LLMNode":
         tag = f"{tag}, cache: false"
     return tag
 

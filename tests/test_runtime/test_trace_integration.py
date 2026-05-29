@@ -451,6 +451,7 @@ class TestFailedBatchItemsInTrace:
                 {
                     "id": "batch-node",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "echo ok-${item}"},
                     "batch": {"items": "${data}", "as": "item"},
                 },

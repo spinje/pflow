@@ -374,3 +374,123 @@ class TestResolveTemplateThroughDictLikeProxy:
 
         store = NamespacedSharedStore({"consumer": {}}, "consumer")
         assert TemplateResolver.resolve_template("${unknown.field}", store) == "${unknown.field}"
+
+
+class TestLiteralOperands:
+    """Optional A: ?? accepts JSON literal operands, plus bare-literal templates.
+
+    Note: variable names ``true``, ``false``, ``null`` are reserved as literal
+    keywords; use other identifiers (the WorkflowValidator rejects them loudly).
+    """
+
+    def test_literal_number_fallback(self):
+        assert TemplateResolver.resolve_template("${node.x ?? 0}", {}) == 0
+
+    def test_literal_string_fallback(self):
+        assert TemplateResolver.resolve_template('${node.x ?? "default"}', {}) == "default"
+
+    def test_literal_null_fallback(self):
+        assert TemplateResolver.resolve_template("${node.x ?? null}", {}) is None
+
+    def test_literal_bool_fallback_returns_python_true(self):
+        assert TemplateResolver.resolve_template("${node.x ?? true}", {}) is True
+
+    def test_literal_negative_number(self):
+        assert TemplateResolver.resolve_template("${node.x ?? -5}", {}) == -5
+
+    def test_literal_float(self):
+        assert TemplateResolver.resolve_template("${node.x ?? 3.5}", {}) == 3.5
+
+    def test_literal_empty_array(self):
+        assert TemplateResolver.resolve_template("${node.x ?? []}", {}) == []
+
+    def test_literal_empty_object(self):
+        assert TemplateResolver.resolve_template("${node.x ?? {}}", {}) == {}
+
+    def test_literal_as_chain_terminal(self):
+        assert TemplateResolver.resolve_template('${a ?? b ?? "fallback"}', {}) == "fallback"
+
+    def test_literal_at_left_short_circuits(self):
+        # ${0 ?? a} — literal always resolves, never reaches `a`.
+        assert TemplateResolver.resolve_template("${0 ?? a}", {"a": "ignored"}) == 0
+
+    def test_present_value_wins_over_literal(self):
+        ctx = {"node": {"x": "present"}}
+        assert TemplateResolver.resolve_template("${node.x ?? 0}", ctx) == "present"
+
+    def test_present_but_falsy_left_value_wins_over_literal(self):
+        # Coalesce uses existence, NOT truthiness — a present-but-falsy left value
+        # must win over the literal fallback. A naive truthiness reimplementation
+        # would regress here (and test_present_value_wins_over_literal, using a
+        # truthy string, would not catch it).
+        assert TemplateResolver.resolve_template("${node.x ?? 5}", {"node": {"x": 0}}) == 0
+        assert TemplateResolver.resolve_template("${node.x ?? 5}", {"node": {"x": ""}}) == ""
+        assert TemplateResolver.resolve_template("${node.x ?? 5}", {"node": {"x": False}}) is False
+
+    def test_leading_zero_literal_does_not_resolve_as_a_literal(self):
+        # 007 is not valid JSON, so the grammar excludes it — the bare template
+        # is not a recognized literal and is left unchanged (the validator rejects
+        # it at parse time; this just pins the runtime non-resolution).
+        assert TemplateResolver.resolve_template("${007}", {}) == "${007}"
+
+    def test_number_fallback_preserves_int_type(self):
+        result = TemplateResolver.resolve_template("${node.x ?? 0}", {})
+        assert result == 0
+        assert isinstance(result, int) and not isinstance(result, bool)
+
+    def test_bare_literal_number(self):
+        assert TemplateResolver.resolve_template("${0}", {}) == 0
+
+    def test_bare_literal_string(self):
+        assert TemplateResolver.resolve_template('${"hello"}', {}) == "hello"
+
+    def test_bare_literal_null(self):
+        assert TemplateResolver.resolve_template("${null}", {}) is None
+
+    def test_bare_literal_true_reserved(self):
+        # Variable named `true` is unreachable — resolves to the literal.
+        assert TemplateResolver.resolve_template("${true}", {"true": "x"}) is True
+
+    def test_inline_literal_stringifies(self):
+        assert TemplateResolver.resolve_template("Hello ${0}", {}) == "Hello 0"
+
+    def test_extract_variables_skips_literal_fallback(self):
+        assert TemplateResolver.extract_variables("${node.x ?? 0}") == {"node.x"}
+
+    def test_extract_variables_skips_left_literal(self):
+        assert TemplateResolver.extract_variables("${0 ?? a}") == {"a"}
+
+    def test_extract_variables_skips_middle_literal(self):
+        assert TemplateResolver.extract_variables("${a ?? 0 ?? b}") == {"a", "b"}
+
+    def test_extract_variables_bare_literal_is_empty(self):
+        assert TemplateResolver.extract_variables("${0}") == set()
+
+    def test_disambiguation_truthy_prefix_is_variable(self):
+        # `truthy_value` must NOT be parsed as literal `true` + garbage.
+        ctx = {"truthy_value": "TV"}
+        assert TemplateResolver.resolve_template("${truthy_value ?? 0}", ctx) == "TV"
+
+    def test_disambiguation_falsey_prefix_is_variable(self):
+        ctx = {"falsey_check": "FC"}
+        assert TemplateResolver.resolve_template("${falsey_check ?? 0}", ctx) == "FC"
+
+    def test_disambiguation_null_prefix_is_variable(self):
+        ctx = {"null_node": "NN"}
+        assert TemplateResolver.resolve_template("${null_node ?? 0}", ctx) == "NN"
+
+    def test_whitespace_tolerance(self):
+        assert TemplateResolver.resolve_template("${a??0}", {}) == 0
+        assert TemplateResolver.resolve_template("${a ?? 0}", {}) == 0
+        assert TemplateResolver.resolve_template("${a  ??  0}", {}) == 0
+
+    def test_is_literal_operand_predicate(self):
+        assert TemplateResolver.is_literal_operand("0") is True
+        assert TemplateResolver.is_literal_operand('"x"') is True
+        assert TemplateResolver.is_literal_operand("true") is True
+        assert TemplateResolver.is_literal_operand("null") is True
+        assert TemplateResolver.is_literal_operand("[]") is True
+        assert TemplateResolver.is_literal_operand("-5") is True
+        assert TemplateResolver.is_literal_operand("node.field") is False
+        assert TemplateResolver.is_literal_operand("truthy_value") is False
+        assert TemplateResolver.is_literal_operand("") is False

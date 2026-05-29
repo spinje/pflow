@@ -74,7 +74,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 
 **execution_tools.py** (7 tools):
 - `workflow_execute(workflow, parameters)` — Execute with agent defaults (no repair, silent, traces saved)
-- `workflow_validate(workflow)` — Static validation without execution (10 checks including sub-workflow validation and cache lint)
+- `workflow_validate(workflow)` — Static validation without execution (10 checks including sub-workflow validation)
 - `plan_workflow(workflow, parameters)` — Build execution plan JSON without side effects
 - `workflow_save(workflow, name, force)` — Save to library (accepts raw markdown or file path)
 - `registry_run(node_type, parameters)` — Test node to discover output structure + template paths
@@ -168,7 +168,7 @@ See `utils/CLAUDE.md` for the 5-step resolution order used by `resolve_workflow(
 
 ### Validation
 
-`WorkflowValidator.validate()` runs 10 checks: structural (IR schema), stdin inputs, stdout outputs, data flow (order, cycles), template (`${variable}` resolution), node types (registry), output sources, unknown params, sub-workflow validation (recursive), and cache lint (warns about input-less shell nodes without `cache: false`). `generate_dummy_parameters()` creates `__validation_placeholder__` values so templates resolve during validation without real API keys.
+`WorkflowValidator.validate()` runs 10 checks: structural (IR schema), stdin inputs, stdout outputs, data flow (order, cycles), template (`${variable}` resolution), node types (registry), output sources, unknown params, node-specific param semantics, and sub-workflow validation (recursive). `generate_dummy_parameters()` creates `__validation_placeholder__` values so templates resolve during validation without real API keys.
 
 ## Testing
 

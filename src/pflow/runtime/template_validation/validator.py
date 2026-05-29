@@ -40,8 +40,12 @@ logger = logging.getLogger(__name__)
 # Supports array notation: ${node[0].field}, ${node.field[0].subfield}
 # Also supports nested index templates: ${node[${__index__}].field}
 # Also supports coalesce operator: ${a.field ?? b.field}
+# Also supports literal operands (Optional A): ${a ?? 0}, ${a ?? "x"}, ${0}
 _PERM_VAR = r"[a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?:[\d]+|\$\{[^}]+\})\])?)*)?"
-_PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_VAR}(?:\s*\?\?\s*{_PERM_VAR})*)\}}")
+# A coalesce operand is a literal OR a variable path. Literal sub-grammar is the
+# same one runtime resolution uses (kept in sync via TemplateResolver).
+_PERM_OPERAND = rf"(?:{TemplateResolver._LITERAL_PATTERN}|{_PERM_VAR})"
+_PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_OPERAND}(?:\s*\?\?\s*{_PERM_OPERAND})*)\}}")
 
 # Batch output definitions matching PflowBatchNode.post() structure
 BATCH_OUTPUTS: list[dict[str, str]] = [
@@ -223,7 +227,39 @@ def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]
     return diagnostics
 
 
-def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+def _malformed_literal_operand_hint(value: str) -> tuple[str, list[str]] | None:
+    """Return a targeted (message, suggestions) for a malformed literal operand.
+
+    After Optional A, ``${a ?? 0}`` and friends are valid, but ``${a ?? [1,2]}``
+    (composite array) or ``${a ?? "unterminated}`` are not. Generic "malformed
+    template syntax" misleads agents into thinking their literal is fine. This
+    detects an operand that *looks* like a literal (starts with ``" [ { -`` or a
+    digit) but doesn't fully parse, and returns the literal-specific guidance.
+    Returns None when no such operand is found (caller uses the generic message).
+    """
+    if "??" not in value:
+        return None
+
+    for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(value):
+        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            if not TemplateResolver.is_literal_operand(operand):
+                continue
+            # Check against the literal GRAMMAR (not json.loads): composite
+            # arrays/objects like [1,2] parse as JSON but are deliberately
+            # excluded from the ?? literal grammar.
+            if re.fullmatch(TemplateResolver._LITERAL_PATTERN, operand) is None:
+                return (
+                    f"Malformed literal operand in '${{{match.group(1)}}}': literal operands must be "
+                    "JSON values — numbers, \"double-quoted strings\" (no '??' inside), "
+                    "true/false/null, [], or {}.",
+                    [
+                        "For complex defaults, use a code node that emits the value, then reference it.",
+                    ],
+                )
+    return None
+
+
+def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnostic]:  # noqa: C901
     """Detect malformed template syntax by counting ${ vs valid template matches.
 
     A malformed template is one where we find ${ but it doesn't form a valid template.
@@ -261,24 +297,29 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnosti
 
                 # If mismatch (accounting for nested), we have malformed syntax
                 if len(valid_matches) + nested_count < dollar_brace_count:
+                    path = f"nodes[id={node_id}].params.{param_path}" if param_path else f"nodes[id={node_id}].params"
+                    # Discriminate: a malformed LITERAL operand (Optional A) gets a
+                    # targeted message so agents don't think their literal is fine.
+                    literal_hint = _malformed_literal_operand_hint(value)
+                    if literal_hint is not None:
+                        message, suggestions = literal_hint
+                    else:
+                        message = (
+                            f"Malformed template syntax: found {dollar_brace_count} '${{' but only "
+                            f"{len(valid_matches)} valid template(s)."
+                        )
+                        suggestions = ["Check for missing '}' or empty templates like '${}'."]
                     diagnostics.append(
                         Diagnostic(
                             severity=Severity.ERROR,
                             source="validator",
                             title="Template Error",
                             node_id=node_id,
-                            message=(
-                                f"Malformed template syntax: found {dollar_brace_count} '${{' but only "
-                                f"{len(valid_matches)} valid template(s)."
-                            ),
-                            suggestions=["Check for missing '}' or empty templates like '${}'."],
+                            message=message,
+                            suggestions=suggestions,
                             context={
                                 "category": "template_error",
-                                "path": (
-                                    f"nodes[id={node_id}].params.{param_path}"
-                                    if param_path
-                                    else f"nodes[id={node_id}].params"
-                                ),
+                                "path": path,
                                 "template": value if isinstance(value, str) else None,
                             },
                         )
@@ -325,13 +366,15 @@ def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:  # noqa: C9
             if isinstance(value, str) and "$" in value:
                 # Use permissive pattern to catch malformed templates
                 matches = _PERMISSIVE_PATTERN.findall(value)
-                # Split coalesce operands so each is validated individually
+                # Split coalesce operands so each is validated individually.
+                # Drop literal operands (Optional A) unconditionally — they are
+                # values, not variable references. Applied in BOTH branches: a
+                # bare literal like ${0} lands in the else branch and must not
+                # be treated as a variable name (false "no valid source" error).
                 split_matches: list[str] = []
                 for match in matches:
-                    if "??" in match:
-                        split_matches.extend(TemplateResolver.split_coalesce_operands(match))
-                    else:
-                        split_matches.append(match)
+                    operands = TemplateResolver.split_coalesce_operands(match) if "??" in match else [match]
+                    split_matches.extend(op for op in operands if not TemplateResolver.is_literal_operand(op))
                 templates.update(split_matches)
 
                 if matches:
@@ -397,8 +440,12 @@ def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> se
         # but a programmatic IR could) is still split into operands for
         # the unused-input check.
         if "??" in var:
-            templates.update(TemplateResolver.split_coalesce_operands(var))
-        else:
+            templates.update(
+                op
+                for op in TemplateResolver.split_coalesce_operands(var)
+                if not TemplateResolver.is_literal_operand(op)
+            )
+        elif not TemplateResolver.is_literal_operand(var):
             templates.add(var)
     return templates
 

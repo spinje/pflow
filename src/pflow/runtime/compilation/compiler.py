@@ -356,12 +356,23 @@ def _create_node_and_config(
         batch_config=batch_config,
         namespaced=enable_namespacing,
         interface_metadata=interface_metadata,
-        cache_enabled=node_data.get("cache", True),
+        cache_enabled=node_data.get("cache", _default_cache_for_node_type(node_type)),
         prompt_cache_items=_extract_prompt_cache_items(node_data),
         prewarm=_extract_prewarm(node_data),
     )
 
     return node_instance, node_config
+
+
+def _default_cache_for_node_type(node_type: str) -> bool:
+    """Whether a node defaults to memo-cache-on when no `cache:` field is set.
+
+    Only `llm` caches by default. Every other node type is either side-effecting
+    (shell, code, claude-code, file ops, mcp) or reads external state (http),
+    and silently caching their output across runs is unsafe — especially in
+    iteration loops where declared inputs may not change but external state has.
+    """
+    return node_type == "llm"
 
 
 def _extract_prompt_cache_items(node_data: dict[str, Any]) -> tuple[str, ...]:

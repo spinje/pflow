@@ -27,9 +27,33 @@ class TemplateResolver:
     # - Supports bracket notation for array indices
     _VAR_NAME_PATTERN = r"[a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?"
 
-    # Coalesce expression: one or more variable names separated by ??
-    # Matches: "a", "a ?? b", "a.field ?? b.field[0] ?? c"
-    _COALESCE_EXPR_PATTERN = rf"{_VAR_NAME_PATTERN}(?:\s*\?\?\s*{_VAR_NAME_PATTERN})*"
+    # Literal operand sub-grammar for coalesce (Optional A). Matches JSON literals:
+    # double-quoted strings (with escapes), word-bounded true/false/null,
+    # integers/floats including negatives, and the empty array/object literals.
+    # Composite [..]/{..} with content are deliberately excluded — `??` fallbacks
+    # are small values; complex literals belong in a code node. Word boundaries on
+    # the keyword alternatives prevent `truthy_value` from matching literal `true`.
+    #
+    # This grammar MUST match only what `try_parse_json` + `split_coalesce_operands`
+    # can actually handle at runtime, or a literal validates clean then silently
+    # fails to resolve:
+    #   - The number branch forbids leading zeros (`-?(?:0|[1-9]\d*)`) because JSON
+    #     rejects `007`/`01`; matching them here would pass validation but leave the
+    #     template unresolved at runtime.
+    #   - The string branch forbids the `??` sequence (`\?(?!\?)` allows a lone `?`)
+    #     because the operand splitter splits on `??` and would shred a string
+    #     containing it. A single `?` inside a string is fine.
+    _LITERAL_PATTERN = (
+        r'(?:"(?:[^"\\?]|\\.|\?(?!\?))*"|\btrue\b|\bfalse\b|\bnull\b|-?(?:0|[1-9]\d*)(?:\.\d+)?|\[\]|\{\})'
+    )
+
+    # A coalesce operand is a literal OR a variable path. Literal is tried first
+    # so keyword literals win over same-spelled identifiers (documented limitation).
+    _OPERAND_PATTERN = rf"(?:{_LITERAL_PATTERN}|{_VAR_NAME_PATTERN})"
+
+    # Coalesce expression: one or more operands separated by ??
+    # Matches: "a", "a ?? b", "a.field ?? b.field[0] ?? c", "a ?? 0", "0", '"x"'
+    _COALESCE_EXPR_PATTERN = rf"{_OPERAND_PATTERN}(?:\s*\?\?\s*{_OPERAND_PATTERN})*"
 
     # Pattern for finding templates in strings (can match multiple)
     # Must not be preceded by $ (to avoid $${var} escapes)
@@ -147,6 +171,9 @@ class TemplateResolver:
         variables: set[str] = set()
         for match in raw_matches:
             for operand in TemplateResolver.split_coalesce_operands(match):
+                # Literal operands (Optional A) are values, not dependencies.
+                if TemplateResolver.is_literal_operand(operand):
+                    continue
                 variables.add(operand)
         return variables
 
@@ -183,13 +210,51 @@ class TemplateResolver:
 
     @staticmethod
     def split_coalesce_operands(expr: str) -> list[str]:
-        """Split a coalesce expression on ?? into individual variable paths.
+        """Split a coalesce expression on ?? into individual operands.
 
-        Returns single-element list if no ?? present.
+        Operands may be variable paths or literals. Returns single-element
+        list if no ?? present.
         """
         if "??" not in expr:
             return [expr]
         return [op.strip() for op in TemplateResolver._COALESCE_SPLIT_PATTERN.split(expr)]
+
+    @staticmethod
+    def is_literal_operand(operand: str) -> bool:
+        """Whether a coalesce operand looks like a JSON literal (not a variable).
+
+        This is a COARSE first-char check: literals start with one of ``{ [ " -``
+        or a digit, OR are exactly the keywords ``true`` / ``false`` / ``null``;
+        variable identifiers always start with ``[a-zA-Z_]``. Identifiers like
+        ``truthy_value`` start with ``t`` but are not the bare keyword, so they
+        correctly resolve as variables.
+
+        It is intentionally BROADER than ``_LITERAL_PATTERN`` — e.g. it returns
+        True for ``01`` and ``[1,2]`` which the regex rejects. The regex is the
+        load-bearing gate: ``TEMPLATE_PATTERN`` / ``_PERMISSIVE_PATTERN`` (built
+        from it) decide what reaches resolution, so an operand only gets here
+        after the regex already classified the whole template as valid. This
+        predicate's job is then "given a grammar-accepted operand, is it a literal
+        or a path?" — not to re-validate literal shape. Do not assume
+        ``is_literal_operand(x)`` implies ``try_parse_json(x)`` succeeds.
+
+        Examples:
+            >>> TemplateResolver.is_literal_operand("0")
+            True
+            >>> TemplateResolver.is_literal_operand('"hello"')
+            True
+            >>> TemplateResolver.is_literal_operand("true")
+            True
+            >>> TemplateResolver.is_literal_operand("node.field")
+            False
+            >>> TemplateResolver.is_literal_operand("truthy_value")
+            False
+        """
+        if not operand:
+            return False
+        if operand[0] in '{["-0123456789':
+            return True
+        return operand in ("true", "false", "null")
 
     @staticmethod
     def is_coalesce_expression(expr: str) -> bool:
@@ -257,10 +322,28 @@ class TemplateResolver:
             - "resolved": value is the successfully resolved result
             - "path_error": root present but path invalid; value is the failing operand string
             - "unresolved": no operand's root was in context; value is None
+
+        Call only via ``resolve_template`` / ``_resolve_complex_match``. Those
+        entry points gate on the strict ``TEMPLATE_PATTERN`` grammar, so by the
+        time an operand reaches here it is already a grammar-valid literal or
+        variable path. The literal short-circuit below uses the coarse
+        ``is_literal_operand`` predicate plus ``try_parse_json`` — calling this
+        directly with an operand the grammar would reject (e.g. ``[1,2]``) can
+        resolve a literal the validator forbids.
         """
         operands = TemplateResolver.split_coalesce_operands(expr)
 
         for operand in operands:
+            # Literal operand (Optional A): a JSON value used as a fallback.
+            # Always "resolves" — short-circuits the chain.
+            if TemplateResolver.is_literal_operand(operand):
+                ok, value = try_parse_json(operand)
+                if ok:
+                    return (value, "resolved")
+                # Looked like a literal but didn't parse (e.g. unterminated
+                # string) — skip; the validator surfaces a targeted error.
+                continue
+
             root = TemplateResolver._ROOT_SPLIT_PATTERN.split(operand)[0]
 
             if root not in context:
@@ -289,8 +372,8 @@ class TemplateResolver:
             'data'
             >>> TemplateResolver.extract_simple_template_var("${user.name}")
             'user.name'
-            >>> TemplateResolver.extract_simple_template_var("Hello ${name}")
-            None
+            >>> TemplateResolver.extract_simple_template_var("Hello ${name}") is None
+            True
         """
         match = TemplateResolver.SIMPLE_TEMPLATE_PATTERN.match(value)
         return match.group(1) if match else None
@@ -598,12 +681,12 @@ class TemplateResolver:
 
         Examples:
             >>> context = {"data": {"name": "Alice"}, "count": 42, "url": "https://example.com"}
-            >>> TemplateResolver.resolve_template("${data}", context)
-            {'name': 'Alice'}  # Dict preserved
-            >>> TemplateResolver.resolve_template("${count}", context)
-            42  # Int preserved
-            >>> TemplateResolver.resolve_template("Visit ${url}", context)
-            'Visit https://example.com'  # String (complex template)
+            >>> TemplateResolver.resolve_template("${data}", context)  # dict preserved
+            {'name': 'Alice'}
+            >>> TemplateResolver.resolve_template("${count}", context)  # int preserved
+            42
+            >>> TemplateResolver.resolve_template("Visit ${url}", context)  # complex template -> string
+            'Visit https://example.com'
             >>> TemplateResolver.resolve_template("Missing: ${undefined}", context)
             'Missing: ${undefined}'
         """
@@ -622,6 +705,13 @@ class TemplateResolver:
                     )
                     return value
                 # path_error or unresolved: return template unchanged
+                return template
+            elif TemplateResolver.is_literal_operand(var_name):
+                # Bare literal template (Optional A): ${0}, ${"x"}, ${null}.
+                ok, value = try_parse_json(var_name)
+                if ok:
+                    return value
+                # Malformed literal — leave unchanged; validator surfaces it.
                 return template
             elif TemplateResolver.variable_exists(var_name, context):
                 resolved = TemplateResolver.resolve_value(var_name, context)
@@ -667,6 +757,14 @@ class TemplateResolver:
                     extra={"var_name": var_expr, "value_type": type(value).__name__},
                 )
             # path_error and unresolved: leave template as-is
+            return result
+
+        # Bare literal in an inline template (Optional A): "Hello ${0}".
+        if TemplateResolver.is_literal_operand(var_expr):
+            ok, value = try_parse_json(var_expr)
+            if ok:
+                value_str = TemplateResolver._convert_to_string(value)
+                result = result.replace(f"${{{var_expr}}}", value_str)
             return result
 
         # Non-coalesce: existing resolution logic
@@ -734,11 +832,11 @@ class TemplateResolver:
             >>> params = {"headers": {"Authorization": "Bearer ${token}"}}
             >>> TemplateResolver.resolve_nested(params, context)
             {'headers': {'Authorization': 'Bearer abc123'}}
-            >>> TemplateResolver.resolve_nested({"user": "${data}"}, context)
-            {'user': {'name': 'Alice'}}  # Type preserved
+            >>> TemplateResolver.resolve_nested({"user": "${data}"}, context)  # type preserved
+            {'user': {'name': 'Alice'}}
             >>> context = {"shell": {"stdout": '{"items": [1, 2, 3]}'}}
-            >>> TemplateResolver.resolve_nested({"data": "${shell.stdout}"}, context)
-            {'data': {'items': [1, 2, 3]}}  # JSON auto-parsed
+            >>> TemplateResolver.resolve_nested({"data": "${shell.stdout}"}, context)  # JSON auto-parsed
+            {'data': {'items': [1, 2, 3]}}
         """
         if isinstance(value, str):
             # Resolve string templates (preserves type for simple templates)

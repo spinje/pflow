@@ -125,6 +125,9 @@ def _extract_body_refs(prompt_text: str, batch_aliases: set[str]) -> list[str]:
         for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
             if operand in seen_refs:
                 continue
+            # Literal operands (Optional A) are values, not cache-chunk refs.
+            if TemplateResolver.is_literal_operand(operand):
+                continue
             if not _PFLOW_VAR_RE.match(operand):
                 continue
             if _is_batch_scoped_ref(operand, batch_aliases):

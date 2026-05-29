@@ -419,7 +419,7 @@ class TestFormatSuccessAsText:
                 Diagnostic(
                     severity=Severity.WARNING,
                     message="Shell node has no template inputs",
-                    suggestions=["Add '- cache: false' if this node reads runtime state."],
+                    suggestions=["Use '- cache: true' only if output is purely a function of declared inputs."],
                     node_id="run-shell",
                     source="validator",
                 )
@@ -432,7 +432,7 @@ class TestFormatSuccessAsText:
                 "severity": "warning",
                 "message": "Shell node has no template inputs",
                 "source": "validator",
-                "suggestions": ["Add '- cache: false' if this node reads runtime state."],
+                "suggestions": ["Use '- cache: true' only if output is purely a function of declared inputs."],
                 "node_id": "run-shell",
             }
         ]
@@ -442,7 +442,7 @@ class TestFormatSuccessAsText:
                 "severity": "warning",
                 "message": "Shell node has no template inputs",
                 "source": "validator",
-                "suggestions": ["Add '- cache: false' if this node reads runtime state."],
+                "suggestions": ["Use '- cache: true' only if output is purely a function of declared inputs."],
                 "node_id": "run-shell",
             }
         ]

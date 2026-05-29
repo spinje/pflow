@@ -202,7 +202,7 @@ class TestValidationWarnings:
             source="validator",
             node_id="get-branch",
             message="Shell node has no inputs",
-            suggestions=["Add '- cache: false' if this node reads runtime state."],
+            suggestions=["Use '- cache: true' only if output is purely a function of declared inputs."],
         )
         assert (lint_warning.context or {}).get("template") is None
 

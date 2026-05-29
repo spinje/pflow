@@ -460,6 +460,9 @@ def extract_unique_refs(prompt: str) -> list[str]:
     refs: list[str] = []
     for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
         for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            # Literal operands (Optional A) are values, not refs — no token cost.
+            if TemplateResolver.is_literal_operand(operand):
+                continue
             if operand and operand not in refs:
                 refs.append(operand)
     return refs

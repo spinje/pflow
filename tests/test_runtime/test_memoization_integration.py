@@ -60,7 +60,7 @@ def test_memo_cache_miss_then_hit(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "my-node", "type": "shell", "params": {"command": "printf '%s' hello"}},
+            {"id": "my-node", "type": "shell", "cache": True, "params": {"command": "printf '%s' hello"}},
         ],
         "edges": [],
     }
@@ -86,7 +86,7 @@ def test_memo_cache_stores_output(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "store-test", "type": "shell", "params": {"command": "printf '%s' cached-value"}},
+            {"id": "store-test", "type": "shell", "cache": True, "params": {"command": "printf '%s' cached-value"}},
         ],
         "edges": [],
     }
@@ -110,7 +110,7 @@ def test_memo_cache_restores_shared(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "restore-node", "type": "shell", "params": {"command": "printf '%s' restore-me"}},
+            {"id": "restore-node", "type": "shell", "cache": True, "params": {"command": "printf '%s' restore-me"}},
         ],
         "edges": [],
     }
@@ -134,7 +134,7 @@ def test_memo_cache_miss_on_different_input(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "diff-input", "type": "shell", "params": {"command": "printf '%s' '${input_val}'"}},
+            {"id": "diff-input", "type": "shell", "cache": True, "params": {"command": "printf '%s' '${input_val}'"}},
         ],
         "edges": [],
         "inputs": {"input_val": {"type": "string", "description": "Test input"}},
@@ -161,7 +161,7 @@ def test_no_memo_cache_in_shared(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "no-cache-node", "type": "shell", "params": {"command": "printf '%s' works"}},
+            {"id": "no-cache-node", "type": "shell", "cache": True, "params": {"command": "printf '%s' works"}},
         ],
         "edges": [],
     }
@@ -189,6 +189,7 @@ def test_memo_cache_prevents_reexecution(tmp_path: Any) -> None:
             {
                 "id": "tracked",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo 'exec' >> {tracking_file}"},
             },
         ],
@@ -211,7 +212,7 @@ def test_memo_cache_records_execution_state(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "state-node", "type": "shell", "params": {"command": "printf '%s' test"}},
+            {"id": "state-node", "type": "shell", "cache": True, "params": {"command": "printf '%s' test"}},
         ],
         "edges": [],
     }
@@ -280,6 +281,7 @@ def test_memo_cache_no_write_on_error(tmp_path: Any) -> None:
             {
                 "id": "error-node",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo 'fail' >> {tracking_file} && exit 1"},
             },
         ],
