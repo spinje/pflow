@@ -197,9 +197,9 @@ class TestMapReasoningMaxTokens:
         assert result == {"thinking": True, "thinking_budget": 8000}
 
     def test_anthropic_opus_45_thinking_budget(self):
-        # Opus 4.5 uses thinking_budget for direct budget too (the
-        # _map_direct_budget helper checks thinking_budget before
-        # thinking_effort — by design)
+        # Opus 4.5 uses the same thinking_budget shape as every other
+        # Anthropic model for direct budgets (#446 removed its thinking_effort
+        # relay, so there is no longer a separate path to dispatch).
         result = map_reasoning_options("anthropic/claude-opus-4-5", None, 8000, None)
         assert result == {"thinking": True, "thinking_budget": 8000}
 
@@ -217,15 +217,27 @@ class TestMapReasoningMaxTokens:
         assert result == {"thinking": True, "thinking_budget": 8000}
 
     def test_opus_45_max_tokens_takes_precedence_over_effort(self):
-        # Opus 4.5 is the only model with BOTH thinking_effort capability
-        # (used when only effort is provided) AND thinking_budget capability
-        # (used for direct budget). When both inputs are given, max_tokens
-        # wins per map_reasoning_options' contract — the thinking_budget
-        # shape is returned, NOT the thinking_effort shape. Easy to break
-        # by reordering the precedence dispatch in map_reasoning_options.
+        # When both reasoning_max_tokens and reasoning_effort are given, the
+        # direct budget wins per map_reasoning_options' contract — the explicit
+        # 8000 budget is returned, not an effort-derived one. Easy to break by
+        # reordering the precedence dispatch in map_reasoning_options. (The
+        # exact-equality assertion already pins that no effort shape leaks in.)
         result = map_reasoning_options("anthropic/claude-opus-4-5", "high", 8000, None)
         assert result == {"thinking": True, "thinking_budget": 8000}
-        assert "thinking_effort" not in result
+
+    def test_explicit_budget_clamped_under_max_tokens(self):
+        # #446: the explicit reasoning_max_tokens path is clamped under
+        # max_tokens too, not just the effort path. 15000 + max_tokens=4000
+        # → 4000 * 0.8 = 3200, keeping budget < max_tokens.
+        result = map_reasoning_options("anthropic/claude-sonnet-4-5", None, 15000, 4000)
+        assert result == {"thinking": True, "thinking_budget": 3200}
+
+    def test_openai_explicit_budget_not_clamped(self):
+        # OpenAI has no hard budget < max_tokens constraint, so the direct
+        # budget passes through unchanged — the deliberate asymmetry with
+        # Anthropic/Gemini that _map_direct_budget's docstring promises.
+        result = map_reasoning_options("gpt-5-mini", None, 15000, 4000)
+        assert result == {"reasoning_max_tokens": 15000}
 
 
 class TestMapReasoningEffortNone:

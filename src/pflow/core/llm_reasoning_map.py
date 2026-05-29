@@ -15,9 +15,12 @@ quirks; this map only decides "which kwargs does this model accept".
 BUDGET LAW: `reasoning_effort` / `reasoning_max_tokens` set the thinking
 *depth*; `max_tokens` is only a *ceiling*. The thinking budget is always
 derived to sit under `max_tokens` (see `_fit_budget`), so Anthropic's hard
-constraint `budget_tokens < max_tokens` holds by construction. All
-budget-style models — Anthropic (incl. Opus 4.5) and Gemini 2.5 — share one
-derivation; there is no per-model budget branch.
+constraint `budget_tokens < max_tokens` holds for any `max_tokens` above
+Anthropic's 1024-token minimum thinking budget (i.e. `max_tokens > 1024`).
+At or below 1024 no valid budget exists at all (you'd need `1024 <= budget <
+max_tokens <= 1024`), so the request is left to fail at the provider rather
+than special-cased. All budget-style models — Anthropic (incl. Opus 4.5) and
+Gemini 2.5 — share one derivation; there is no per-model budget branch.
 
 Anthropic Opus 4.7 is the exception to the "emit legacy shape, adapter
 translates" rule. It uses *adaptive* thinking and REJECTS the
@@ -139,9 +142,11 @@ def _fit_budget(desired: int, max_tokens: int | None) -> int:
     """Fit a thinking budget under `max_tokens` (the ceiling), bounded.
 
     The single budget law: depth is the `desired` value; `max_tokens`, when
-    set, only constrains it. Clamping here makes Anthropic's
-    `budget_tokens < max_tokens` hold by construction — no separate
-    validation step is needed.
+    set, only constrains it. The result stays under `max_tokens` for any
+    `max_tokens > 1024`, so no separate validation step is needed there. The
+    1024 floor (Anthropic's minimum thinking budget) wins for `max_tokens <=
+    1024`, where no valid budget exists at all and the contradictory request
+    is left to fail at the provider rather than special-cased.
     """
     if max_tokens is not None:
         desired = min(desired, int(max_tokens * SAFETY_FRACTION))

@@ -17,7 +17,6 @@ from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_providers import detect_provider
 from pflow.core.llm_reasoning_map import (
-    EFFORT_BUDGET_BASE,
     EFFORT_RATIOS,
     map_reasoning_options,
 )
@@ -45,7 +44,6 @@ logger = logging.getLogger(__name__)
 # Re-exported for backward compatibility with code that imported these names
 # from pflow.nodes.llm.llm. The canonical home is pflow.core.llm_reasoning_map.
 __all__ = [
-    "EFFORT_BUDGET_BASE",
     "EFFORT_RATIOS",
     "LLMNode",
 ]
@@ -903,7 +901,7 @@ class LLMNode(Node):
     - Params: system: str  # System prompt (optional)
     - Params: images: list[str]  # Image URLs or file paths (optional)
     - Params: output_schema: dict  # JSON Schema for structured output (optional)
-    - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params). Drives how hard the model thinks; max_tokens only caps it, never raises it.
+    - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params). Sets reasoning depth; max_tokens only caps the budget, never raises it.
     - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional). Still capped to stay under max_tokens when both are set.
     - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
     - Writes: shared["response"]: str|dict  # Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
