@@ -2944,15 +2944,25 @@ class TestEmptyOutputWarnings:
         assert "error" in warning.lower()
         assert "empty output" in warning
 
-    def test_empty_input_list_pushes_warning(self):
-        """When batch receives an empty input list, a warning about 0 items is pushed."""
+    def test_empty_input_list_pushes_info_advisory(self):
+        """Empty input list emits a non-degrading INFO advisory, not a warning.
+
+        An empty list is the normal terminal state of iteration loops (drained
+        queue) and filters that matched nothing, so it must NOT degrade the
+        workflow. The value is a ``Severity.INFO`` Diagnostic (not a plain
+        string), which ``_is_degrading_warning`` treats as advisory-only.
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+
         inner = MockInnerNode("test_node")
         shared: dict = {"data": []}
 
         _run_batch(inner, shared, error_handling="continue")
 
-        assert "test_node" in shared.get("__warnings__", {})
-        assert "0 items" in shared["__warnings__"]["test_node"]
+        advisory = shared.get("__warnings__", {}).get("test_node")
+        assert isinstance(advisory, Diagnostic)
+        assert advisory.severity is Severity.INFO
+        assert "0 items" in advisory.message
 
     def test_only_node_suppresses_empty_output_warning(self):
         """Under --only, empty output is expected and should not trigger a warning."""

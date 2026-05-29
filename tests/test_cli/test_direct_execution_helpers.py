@@ -4,8 +4,9 @@ import click
 import click.testing
 
 from pflow.cli.param_parsing import infer_type, parse_workflow_params
-from pflow.cli.workflow_output import _display_cost_summary
+from pflow.cli.workflow_output import _display_cost_summary, _display_execution_summary
 from pflow.cli.workflow_resolution import is_likely_workflow_name
+from pflow.core.diagnostic import Diagnostic, Severity
 
 
 class TestInferType:
@@ -341,3 +342,91 @@ class TestDisplayCostSummary:
         # Locked wording from F#17 deferred spec
         assert "my-custom-model (3 calls); 2 calls without recorded model" in cli_result.output
         assert "   Total LLM calls: 5" in cli_result.output
+
+
+class TestDisplayExecutionSummaryAdvisories:
+    """CLI default summary splits INFO advisories from WARNING-severity
+    diagnostics (``cli/workflow_output.py::_display_execution_summary``).
+
+    Guards the CLI half of the empty-batch advisory fix: an INFO advisory must
+    render under 'Advisories' with a clean '✓ Workflow completed' header, while
+    a real WARNING still degrades the header under 'Warnings'.
+    """
+
+    @staticmethod
+    def _formatted() -> dict:
+        """Minimal synthetic shape mirroring format_execution_success output."""
+        return {
+            "duration_ms": 100,
+            "total_cost_usd": None,
+            "status": "success",
+            "workflow": {"name": "wf", "action": "unsaved"},
+            "execution": {"steps": [], "cache_hits": 0, "nodes_executed": 1},
+        }
+
+    def test_info_advisory_renders_under_advisories_not_warnings(self) -> None:
+        formatted = self._formatted()
+        advisory = Diagnostic(
+            severity=Severity.INFO,
+            message="Batch 'consume' ran with 0 items (input list was empty).",
+            node_id="consume",
+            source="runtime",
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_execution_summary(formatted, verbose=False, warning_diagnostics=[advisory])
+
+        cli_result = click.testing.CliRunner().invoke(cmd)
+        assert cli_result.exit_code == 0, cli_result.output
+        assert "✓ Workflow completed" in cli_result.output
+        assert "with 1 warnings" not in cli_result.output
+        assert "⚠️ Warnings:" not in cli_result.output
+        assert "Advisories:" in cli_result.output
+        assert "ran with 0 items" in cli_result.output
+
+    def test_real_warning_still_degrades_under_warnings(self) -> None:
+        """Contrast: a WARNING keeps the degraded header and the Warnings section."""
+        formatted = self._formatted()
+        warning = Diagnostic(
+            severity=Severity.WARNING,
+            message="something genuinely off",
+            node_id="n",
+            source="runtime",
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_execution_summary(formatted, verbose=False, warning_diagnostics=[warning])
+
+        cli_result = click.testing.CliRunner().invoke(cmd)
+        assert "Workflow completed with 1 warnings" in cli_result.output
+        assert "⚠️ Warnings:" in cli_result.output
+        assert "Advisories:" not in cli_result.output
+
+    def test_legacy_warnings_dict_key_does_not_resurrect_old_count(self) -> None:
+        """The completion-header count derives from the partitioned
+        ``warning_diagnostics``, NOT the legacy ``formatted_result['warnings']``
+        list. A stray INFO entry in that key must not re-trigger the pre-fix
+        '⚠️ completed with N warnings' header — pins the regression against the
+        old ``len(formatted_result.get('warnings', []))`` source.
+        """
+        formatted = self._formatted()
+        advisory = Diagnostic(
+            severity=Severity.INFO,
+            message="Batch 'consume' ran with 0 items (input list was empty).",
+            node_id="consume",
+            source="runtime",
+        )
+        # Simulate the legacy data source still carrying the advisory: the
+        # pre-fix code counted this list, so a regression to that source would
+        # mis-render the header.
+        formatted["warnings"] = [advisory.to_display_dict()]
+
+        @click.command()
+        def cmd() -> None:
+            _display_execution_summary(formatted, verbose=False, warning_diagnostics=[advisory])
+
+        cli_result = click.testing.CliRunner().invoke(cmd)
+        assert "✓ Workflow completed" in cli_result.output
+        assert "with 1 warnings" not in cli_result.output

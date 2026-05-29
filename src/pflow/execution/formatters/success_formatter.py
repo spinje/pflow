@@ -7,7 +7,7 @@ ensuring CLI and MCP return identical output structures.
 import json
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.formatters.batch_errors import (
@@ -66,9 +66,15 @@ def format_execution_success(
     # Add workflow metadata (default to unsaved if not provided)
     result["workflow"] = workflow_metadata if workflow_metadata else {"action": "unsaved"}
 
-    warning_diagnostics = warnings or []
-    result["warnings"] = [warning.to_display_dict() for warning in warning_diagnostics]
-    result["diagnostics"] = [warning.to_dict() for warning in warning_diagnostics]
+    # Split by severity so INFO advisories (e.g. an empty batch) don't appear
+    # under `warnings` — an agent parsing JSON would otherwise read a clean run
+    # as warned. `diagnostics` keeps the full severity-tagged list. Mirrors the
+    # text renderer's Warnings/Advisories split (CLI/JSON parity).
+    all_diagnostics = warnings or []
+    warnings_list, advisories_list = partition_surfaced_diagnostics(all_diagnostics)
+    result["warnings"] = [d.to_display_dict() for d in warnings_list]
+    result["advisories"] = [d.to_display_dict() for d in advisories_list]
+    result["diagnostics"] = [d.to_dict() for d in all_diagnostics]
 
     # Add metrics from collector
     if metrics_collector:
@@ -235,6 +241,24 @@ def _collect_outputs(
     return result
 
 
+def partition_surfaced_diagnostics(
+    diagnostics: list[Diagnostic] | None,
+) -> tuple[list[Diagnostic], list[Diagnostic]]:
+    """Split surfaced diagnostics into ``(warnings, advisories)``.
+
+    Warnings (``WARNING``/``ERROR`` severity) drive the "completed with N
+    warnings" header. Advisories (``INFO`` severity) are non-degrading notes —
+    e.g. an empty batch (a drained iteration loop or a filter that matched
+    nothing) or a cache advisory — rendered under their own heading so a fully
+    correct run still reads "✓ Workflow completed". Single source of truth for
+    both the CLI text renderer and this MCP/success formatter.
+    """
+    diags = diagnostics or []
+    warnings = [d for d in diags if d.severity is not Severity.INFO]
+    advisories = [d for d in diags if d.severity is Severity.INFO]
+    return warnings, advisories
+
+
 def format_success_as_text(  # noqa: C901
     success_dict: dict[str, Any],
     warning_diagnostics: list[Diagnostic] | None = None,
@@ -257,7 +281,11 @@ def format_success_as_text(  # noqa: C901
     workflow_name = workflow_metadata.get("name", "workflow")
     workflow_action = workflow_metadata.get("action", "executed")
     status = success_dict.get("status", "success")
-    warning_count = len(success_dict.get("warnings", []))
+    # INFO advisories (e.g. an empty batch) must not be counted as warnings:
+    # only WARNING/ERROR diagnostics drive the "completed with N warnings"
+    # header. Advisories render in their own section below.
+    warnings_list, advisories_list = partition_surfaced_diagnostics(warning_diagnostics)
+    warning_count = len(warnings_list)
 
     # Show workflow name and action (matches CLI)
     if workflow_action == "reused":
@@ -337,12 +365,23 @@ def format_success_as_text(  # noqa: C901
         else:
             lines.append(f"💰 Cost: ${total_cost:.4f}")
 
-    # Show warnings if present (matches CLI format with proper indentation)
-    if warning_diagnostics:
+    # Show warnings and advisories in separate sections (matches CLI format).
+    # Warnings are regressions; advisories are non-degrading notes.
+    if warnings_list:
         lines.append("")
         lines.append("⚠️ Warnings:")
-        for warning in warning_diagnostics:
+        for warning in warnings_list:
             lines.append(format_diagnostic(warning))
+    # Unreachable today: the only production caller is MCP, which passes
+    # WARNING-only diagnostics (see the filter in
+    # mcp_server/services/execution_service.py). Kept for symmetry with the CLI
+    # renderer (workflow_output.py) and exercised by unit tests — a future
+    # caller passing the full diagnostics list exercises it for real.
+    if advisories_list:
+        lines.append("")
+        lines.append("\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:")
+        for advisory in advisories_list:
+            lines.append(format_diagnostic(advisory))
 
     # Show outputs if present (matches CLI "Workflow output:" section)
     result = success_dict.get("result", {})

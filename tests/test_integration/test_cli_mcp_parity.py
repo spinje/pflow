@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from pflow.execution.result import RunnerConfig
+from pflow.execution.result import RunnerConfig, WorkflowStatus
 from pflow.execution.runner import WorkflowRunner
 
 
@@ -146,6 +146,10 @@ def test_only_batch_node_runtime_empty_items_emits_compact_summary(capsys):
 
     result = WorkflowRunner().run(ir, {}, RunnerConfig(only_node="consume"))
     assert result.success, [d.message for d in result.diagnostics]
+    # An empty-input batch is a legitimate terminal state (drained loop / empty
+    # filter), so it must NOT degrade the workflow — it emits a non-degrading
+    # INFO advisory instead. Regression guard for the empty-input advisory.
+    assert result.status == WorkflowStatus.SUCCESS
 
     aggregate = result.shared_after.get("consume")
     assert isinstance(aggregate, dict)
@@ -160,3 +164,50 @@ def test_only_batch_node_runtime_empty_items_emits_compact_summary(capsys):
     assert "batch consume: ran with no items" in captured.out
     # The undefined '0/0 succeeded' wording must NOT appear.
     assert "0/0" not in captured.out
+
+
+def test_empty_input_batch_emits_non_degrading_info_advisory():
+    """End-to-end: a runtime-empty batch surfaces an INFO advisory in
+    ``result.diagnostics`` but NOT in ``result.warnings``, and the workflow
+    stays SUCCESS (cross-layer guard per tests/CLAUDE.md #20).
+
+    The advisory rides the ``__warnings__`` channel as a ``Severity.INFO``
+    Diagnostic; ``result.warnings`` is WARNING-only, so it must be absent there
+    while present in the full ``result.diagnostics`` list.
+    """
+    from pflow.core.diagnostic import Severity
+
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "produce-empty",
+                "type": "code",
+                "purpose": "Emit an empty list so the downstream batch has nothing to do.",
+                "params": {"code": "result: list = []"},
+            },
+            {
+                "id": "consume",
+                "type": "shell",
+                "purpose": "Batch over the runtime-empty upstream list.",
+                "params": {"command": "echo ${item}"},
+                "batch": {"items": "${produce-empty.result}", "parallel": False},
+            },
+        ],
+        "edges": [{"from": "produce-empty", "to": "consume", "action": "default"}],
+        "start_node": "produce-empty",
+    }
+
+    result = WorkflowRunner().run(ir, {}, RunnerConfig())
+
+    assert result.success
+    assert result.status == WorkflowStatus.SUCCESS
+    # No WARNING-severity diagnostics (the advisory is INFO).
+    assert result.warnings == []
+    # The INFO advisory IS present in the full diagnostics list.
+    advisories = [
+        d
+        for d in result.diagnostics
+        if d.severity == Severity.INFO and d.node_id == "consume" and "0 items" in d.message
+    ]
+    assert len(advisories) == 1, [(d.severity, d.message) for d in result.diagnostics]
