@@ -799,6 +799,13 @@ def _display_execution_summary(
     warning_diagnostics: list[Diagnostic] | None = None,
 ) -> None:
     """Display one-line execution summary with supplementary info."""
+    from pflow.execution.formatters.success_formatter import partition_surfaced_diagnostics
+
+    # INFO advisories (e.g. an empty batch) are not warnings: only WARNING/ERROR
+    # diagnostics drive the "completed with N warnings" header. Advisories get
+    # their own section so a fully correct run still reads "✓ Workflow completed".
+    warnings_list, advisories_list = partition_surfaced_diagnostics(warning_diagnostics)
+
     duration_ms = formatted_result.get("duration_ms")
     total_cost = formatted_result.get("total_cost_usd")
     execution = formatted_result.get("execution", {})
@@ -814,7 +821,7 @@ def _display_execution_summary(
         has_stderr_warnings = any(step.get("has_stderr") for step in steps)
         cache_hits = execution.get("cache_hits", 0)
         completed_count = execution.get("nodes_executed", 0)
-        warning_count = len(formatted_result.get("warnings", []))
+        warning_count = len(warnings_list)
         _display_workflow_completion_status(
             duration_s,
             status,
@@ -837,11 +844,16 @@ def _display_execution_summary(
 
     _display_cost_summary(total_cost, formatted_result)
 
-    if warning_diagnostics:
+    if warnings_list:
         click.echo("", err=True)
         click.echo("⚠️ Warnings:", err=True)
-        for warning in warning_diagnostics:
+        for warning in warnings_list:
             click.echo(format_diagnostic(warning), err=True)
+    if advisories_list:
+        click.echo("", err=True)
+        click.echo("\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:", err=True)
+        for advisory in advisories_list:
+            click.echo(format_diagnostic(advisory), err=True)
 
 
 def _handle_json_output(

@@ -400,6 +400,35 @@ class TestFormatSuccessAsText:
         assert "[send-alert] API error: Rate limit exceeded" in text
         assert "API error: Rate limit exceeded" in text
 
+    def test_info_advisory_does_not_count_as_warning(self):
+        """INFO advisories render under 'Advisories', not 'Warnings', and do not
+        trigger the 'completed with N warnings' header.
+
+        Guards ``partition_surfaced_diagnostics``: an empty-batch advisory (and
+        other INFO notes like cache advisories) must not make a fully-correct
+        run read as warned.
+        """
+        result_dict = {
+            "success": True,
+            "status": "success",
+            "duration_ms": 100,
+            "execution": {"nodes_executed": 1, "steps": []},
+        }
+        advisory = Diagnostic(
+            severity=Severity.INFO,
+            message="Batch 'consume' ran with 0 items (input list was empty).",
+            node_id="consume",
+            source="runtime",
+        )
+
+        text = format_success_as_text(result_dict, warning_diagnostics=[advisory])
+
+        assert "\u2713 Workflow completed in" in text  # clean \u2713 header
+        assert "with 1 warnings" not in text
+        assert "\u26a0\ufe0f Warnings:" not in text
+        assert "Advisories:" in text
+        assert "ran with 0 items" in text
+
     def test_format_execution_success_serializes_warning_diagnostics_for_json(self):
         """REGRESSION: Warning diagnostics stay structured in success JSON output.
 
@@ -446,6 +475,40 @@ class TestFormatSuccessAsText:
                 "node_id": "run-shell",
             }
         ]
+
+    def test_info_advisory_goes_to_advisories_not_warnings_in_json(self):
+        """REGRESSION: INFO advisories must not appear under ``warnings`` in the
+        success dict — JSON/MCP consumers count ``warnings``. They belong under
+        ``advisories``; ``diagnostics`` keeps the full severity-tagged list.
+
+        This is the JSON-surface half of the empty-batch advisory fix: the text
+        renderer already splits Warnings vs Advisories; the structured output
+        must match (CLI/JSON parity).
+        """
+        result = format_execution_success(
+            shared_storage={"stdout": "ok"},
+            workflow_ir={},
+            metrics_collector=None,
+            warnings=[
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message="a real warning",
+                    node_id="w",
+                    source="runtime",
+                ),
+                Diagnostic(
+                    severity=Severity.INFO,
+                    message="Batch 'b' ran with 0 items (input list was empty).",
+                    node_id="b",
+                    source="runtime",
+                ),
+            ],
+        )
+
+        assert [w["message"] for w in result["warnings"]] == ["a real warning"]
+        assert [a["message"] for a in result["advisories"]] == ["Batch 'b' ran with 0 items (input list was empty)."]
+        # Full list (both severities) stays under diagnostics.
+        assert [d["severity"] for d in result["diagnostics"]] == ["warning", "info"]
 
     def test_format_execution_success_compacts_degraded_batch_error_details_for_json(self):
         """Degraded success JSON must not expose full failed batch items."""

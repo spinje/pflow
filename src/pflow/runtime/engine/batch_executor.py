@@ -16,6 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError
 from pflow.core.json_utils import try_parse_json
 
@@ -971,7 +972,39 @@ def _push_batch_warnings(
     node_id: str,
     batch_config: BatchConfig,
 ) -> None:
-    """Push warnings for DEGRADED status when batch had issues."""
+    """Push warnings for DEGRADED status when batch had issues.
+
+    The empty-INPUT case is treated differently from the other two. An empty
+    input list is a legitimate terminal state for the iteration patterns the
+    guide teaches (a drained queue loop, a filter that matched nothing), so it
+    is emitted as a non-degrading ``Severity.INFO`` advisory — visible in
+    ``--report`` / CLI output but not flipping the workflow to DEGRADED. The
+    runtime cannot tell "empty because the work is done" from "empty because
+    upstream broke" (there is no loop construct), so it surfaces the fact
+    without asserting wrongdoing. The genuinely anomalous cases — items that
+    ran but produced empty output, or per-item errors — stay degrading.
+    """
+    # Empty input is mutually exclusive with the other two cases: no items
+    # means no per-item errors and no per-item empty output. Handle it as a
+    # standalone advisory and return.
+    if not exec_res:
+        if "__warnings__" not in shared:
+            shared["__warnings__"] = {}
+        shared["__warnings__"][node_id] = Diagnostic(
+            severity=Severity.INFO,
+            title="Empty batch",
+            message=f"Batch '{node_id}' ran with 0 items (input list was empty).",
+            suggestions=[
+                "Expected when iterating a drained queue or a filter that "
+                "matched nothing. If items were expected, check the node that "
+                "produces this batch's list.",
+            ],
+            node_id=node_id,
+            source="runtime",
+            id="batch.empty-input",
+        )
+        return
+
     empty_indices = _detect_empty_output_items(exec_res, errors)
 
     # Under --only, suppress empty-output warnings workflow-wide. The common
@@ -986,8 +1019,6 @@ def _push_batch_warnings(
         empty_indices = []
 
     warning_parts: list[str] = []
-    if not exec_res:
-        warning_parts.append("0 items to process (input list was empty)")
     if batch_config.error_handling == "continue" and errors:
         warning_parts.append(f"{len(errors)} error(s) out of {len(exec_res)} items")
     if empty_indices:
