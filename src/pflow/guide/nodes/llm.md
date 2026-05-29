@@ -8,6 +8,8 @@
 
 Use `output_schema` for structured responses (guarantees valid JSON via constrained decoding).
 
+**Prompt format**: Put multi-line prompts in a ` ```prompt ` block — real line breaks, no `\n` escapes and no quote/colon escaping hazards. Reserve inline `- prompt: "..."` for genuinely single-line prompts.
+
 **Debugging prompts**: Run with `--report` to see every LLM node's rendered prompt (templates resolved) alongside the actual response, token count, and cost. Ask the user if they want reports in the project (`--report-dir ./report/`) — useful for reviewing LLM responses together or tracking them in git.
 
 **Iterating cheaply**: Use `--only <node>` to re-run a single LLM node — downstream is skipped, and unchanged `llm` upstream is reused from cache. Saves time and tokens when tuning prompts in multi-node workflows. Note: non-`llm` upstream (shell/code/http/file/mcp) re-executes on each `--only` run since those don't cache by default, so watch for side-effecting upstream nodes re-firing.

@@ -152,6 +152,8 @@ This accumulation pattern is fundamental - each node adds to the available data 
 
 ### What Workflows CANNOT Do (Hard Limits)
 
+**Supported — don't assume otherwise:** loops, conditional branching, retries, and reusable sub-workflows all work (see `pflow guide branching` and `pflow guide sub-workflows`). The genuine limits below are about *dynamic operation counts* and *cross-run state*.
+
 **Recognize these immediately and offer alternatives:**
 
 #### ✅ Loops and Bounded Iteration (Supported)
@@ -495,8 +497,8 @@ Works with or without template variables. Handles nested objects and arrays.
 
 ```
 Need data at specific path? → ${node.result.data.items[0].name}
-Need to compute/transform?  → code node
-Need to combine/append?     → code node or templates
+Need to merge a few fields? → inline object: { a: ${x}, b: ${y} }
+Need to compute or reshape? → code node
 Need to interpret meaning?  → LLM
 ```
 
@@ -542,6 +544,15 @@ Wrong approach — shell pipeline for a single nested field.
 ```yaml
 # Direct path, no intermediate node needed:
 - amount: ${data.items[0].pricing.amount}
+```
+
+**✅ RIGHT — Compose a record inline (no `code` node to merge fields):**
+Object syntax builds a structured value from several sources at once — use it instead of a `code` node when you are only combining known fields, not computing:
+```yaml
+- record:
+    name: ${user.name}
+    email: ${profile.email}
+    score: ${metrics.result.score}
 ```
 
 **✅ RIGHT — Code node for computation (not extraction):**
@@ -799,7 +810,11 @@ Provide: trend, risk_level, recommendation
 Shapes the analysis results into a markdown report for the writer.
 
 - type: llm
-- prompt: "Format as markdown report with summary and recommendations:\n${enrich-with-analysis.results}"
+
+```prompt
+Format as markdown report with summary and recommendations:
+${enrich-with-analysis.results}
+```
 
 ### deliver
 

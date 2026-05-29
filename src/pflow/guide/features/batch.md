@@ -63,6 +63,8 @@ your-command | jq -R -s 'split("\n") | map(select(. != ""))'
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
 Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`.
 
+**Batching over results nests one layer per stage.** When a later node batches over `${first.results}`, each `${item}` IS one of those entries — so `${item.response}` is the first node's output for that row and `${item.item}` is its original input. A third stage batched over the second's results adds another layer: `${item.item.response}` reaches two stages back. To avoid deep `item.item.item` chains, correlate earlier stages directly — see **Correlating parallel arrays** below.
+
 **Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`. Note: index-based access (`results[N]`) requires `fail_fast` mode (the default). With `error_handling: continue`, use iteration (`items: ${node.results}`) instead.
 
 **Inline array pattern** (parallel independent operations):
@@ -133,11 +135,40 @@ parallel: true
 ````
 Any `${item.field}` template works in any param — not just prompt/command.
 
-**Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate (requires `fail_fast` — not supported with `error_handling: continue`):
+**Correlating parallel arrays (zip)**: when two batches ran over aligned inputs and you need each row of one alongside the matching row of the other, there are two ways — pick by how much you trust the alignment:
+
+- **Explicit zip node** — *preferred for anything non-trivial or likely to change.* A `code` node that pairs the arrays into clean records, ideally matching on a shared key (an id both rows carry) rather than on position. It is robust to reordering and `continue` mode, inspectable on its own (`--only`, `pflow report`), and survives later edits to the pipeline.
+- **Inline `${__index__}`** — *concise, for simple, fixed, fail-fast cases.* Skip the node and reach the same-position element of the other array directly: fewer nodes, but it leans on a positional alignment invariant (see caveat below).
+
+Inline form — iterate one array, reach the other by position:
+
+````markdown
+### combine
+
+Revise each draft using its own review — iterate the reviews, reach the
+same-position draft by index.
+
+- type: llm
+- batch:
+    items: ${reviews.results}
+    parallel: true
+
+```prompt
+Original draft:
+${drafts.results[${__index__}].response}
+
+Review:
+${item.response}
+
+Revise the draft, applying the review.
 ```
-${previous.results[${__index__}]}     # Access by position (fail_fast only)
-${previous.results[${item.idx}]}      # Access by item field (fail_fast only)
-```
+````
+
+`${__index__}` also indexes by an item field: `${drafts.results[${item.idx}]}`.
+
+**Alignment caveat**: zipping by position assumes both arrays are in the same order with no gaps — true only under `fail_fast` (the default). `error_handling: continue` drops failed items, which misaligns the arrays, and index access is not supported there anyway. When alignment isn't guaranteed, use the explicit zip node and match on a key.
+
+**Indexing works on a node's `.results`, not on declared inputs.** `${my_input[${__index__}]}` does not resolve — pull the per-row value from an upstream node's `.results` instead.
 
 **Using results**:
 ```markdown
