@@ -158,8 +158,9 @@ suggestion — there's no silent drop.
 To run the same sub-workflow N times *in order*, batch it with a static index
 list and `parallel: false`. Each iteration runs to completion before the next
 starts — so an iteration can read filesystem (or other external) state that the
-previous one mutated. This is the cleanest way to express a bounded loop where
-state lives on disk.
+previous one mutated. This is the cleanest way to run a **known number** of
+iterations in order. It always runs all N — it cannot stop early when the work
+runs out.
 
 **Child workflow** (`process-one.pflow.md`) — reads a queue file, takes the first
 item, writes the rest back:
@@ -219,5 +220,5 @@ Notes:
 - The sub-workflow's working directory is shared with the parent by default. There is no per-item filesystem isolation — do NOT pass `cwd: ${item.workdir}`; `cwd` is not an accepted `workflow`-node param and will be rejected as an unknown field.
 - **Cache correctness:** this works without any `cache: false` annotations because non-`llm` nodes don't cache by default — `read-queue` re-runs each iteration and sees the current file. See `pflow guide core` → cache for what gets cached and why this works without annotations.
 
-Choose this over the in-store loop (`pflow guide branching` → Loops) when iteration state passes through the filesystem or each iteration is a substantial unit of work.
+This pattern is for a fixed iteration count. To loop until a condition is met (stopping as soon as it is), see `pflow guide branching` → Loops — that section is the canonical guide to choosing between the two loop styles.
 

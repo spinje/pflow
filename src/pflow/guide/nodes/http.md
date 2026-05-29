@@ -6,6 +6,8 @@
 
 **Integrating a new API?** Research first: authentication method, main endpoints, request format, response structure, rate limits.
 
+**Caching**: HTTP nodes don't cache by default — responses can change between runs, so they re-fetch each time (safe inside polling or iteration loops). Add `cache: true` only when the endpoint is effectively immutable for your run (e.g. a static or versioned resource) and the call is expensive.
+
 ### Node Creation Pattern
 
 `````markdown

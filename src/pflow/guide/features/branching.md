@@ -203,5 +203,37 @@ falls through `${checker.result ?? 0}` to `0`, and later visits read the int
 
 **Visit guard:** each node may be visited at most 100 times per run (loop-runaway protection). Override with the `PFLOW_MAX_NODE_VISITS=200` environment variable.
 
-**Choosing the loop style:** use this in-store loop when iteration state passes through the workflow store (small counters, accumulators, decisions). Use the sub-workflow batch pattern when iteration state passes through the filesystem or each iteration is a substantial unit of work — see `pflow guide sub-workflows` → Bounded iteration for the alternative pattern when state lives on disk.
+**The worker can be any node type.** Make it a `workflow` node and the loop body becomes an entire sub-workflow that repeats until the checker's condition is met — the checker branches on one of the sub-workflow's `## Outputs`. This is how you get a heavyweight per-iteration body that still stops the moment the work is done:
+
+````markdown
+### process-chunk
+
+The loop body — a whole sub-workflow run as one node. It handles the next chunk
+of pending work and exposes a `remaining` output (a declared `## Output` of the
+child). As a loop target it declares an explicit successor.
+
+- type: workflow
+- workflow: ./process-chunk.pflow.md
+- next: check-remaining
+
+### check-remaining
+
+Loop while work is left; stop the instant it drains. There is no iteration
+count — the loop exits on the condition, which the batch pattern cannot.
+
+- type: code
+- inputs: { remaining: "${process-chunk.remaining}" }
+- next: process-chunk, end
+
+```python code
+remaining: int
+result: int = remaining
+if remaining > 0:
+    next: str = "process-chunk"
+else:
+    next: str = "end"
+```
+````
+
+**Choosing the loop style:** the deciding question is whether the number of iterations is known up front — not how heavy each iteration is. Use the sub-workflow batch pattern (`parallel: false`) for a fixed iteration count; it always runs all N. Use this backward-edge loop when iterations continue until a condition is met, since only it can stop early. Both can carry a substantial per-iteration body and read state from disk. See `pflow guide sub-workflows` → Bounded iteration.
 

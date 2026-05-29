@@ -28,7 +28,7 @@ _TOPIC_TO_NODE_TYPES: dict[str, list[str]] = {
     "claude-code": ["claude-code"],
     "code": ["code"],
     "shell": ["shell"],
-    "file": ["read-file", "write-file"],
+    "file": ["read-file", "write-file", "copy-file", "move-file", "delete-file"],
 }
 
 

@@ -4,6 +4,8 @@
 
 Node naming: `mcp-{server}-{TOOL}` (e.g., `mcp-slack-SEND_MESSAGE`, `mcp-postgres-QUERY`).
 
+**Caching**: MCP nodes don't cache by default — calls hit the live service each run, so reads see current state and writes always perform their side effect. Add `cache: true` only for an expensive, side-effect-free call whose result is stable for the run.
+
 ### Supported Service Categories
 
 MCP servers span these categories (each has unique output structure):
