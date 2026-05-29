@@ -147,6 +147,11 @@ class WorkflowValidator:
 
         Performs multiple validation checks:
         1. Structural validation - IR schema compliance
+           (once structural validation passes, a reserved-literal-name guard
+           runs before the steps below: inputs/node IDs named true/false/null
+           are rejected — they become unreachable in templates after
+           literal-operand support, e.g. ${true} resolves to the boolean
+           literal, not an input named "true".)
         2. Stdin input validation - Only one stdin: true allowed
         3. Stdout output validation - Only one stdout: true allowed
         4. Data flow validation - Execution order and dependencies

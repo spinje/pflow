@@ -110,8 +110,9 @@ The entry point has YAML frontmatter for system metadata (timestamps, execution 
 
 Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Every helper builds `Diagnostic` objects at the detection site with `context["path"]`, `similar_names`, `available_fields`, and `suggestions` populated by the producer. No string intermediates, no pattern-matching post-processing.
 
-**10-step validation pipeline**:
+**10-step validation pipeline** (plus a reserved-literal-name guard that runs after step 1 passes, before step 2):
 1. Structural (IR schema) — always runs
+   - *Reserved-literal-name guard* (`_reject_reserved_literal_names`): runs once structural validation passes, before the semantic steps below. Rejects inputs/node IDs named `true`/`false`/`null` — after literal-operand support (`${a ?? 0}`, bare `${0}`), `${true}` resolves to the boolean literal, so such a name is unreachable. Loud error rather than silent shadowing.
 2. Stdin inputs — only one `stdin: true` allowed per workflow
 3. Stdout outputs — only one `stdout: true` allowed per workflow
 4. Data flow (execution order, dependencies) — always runs

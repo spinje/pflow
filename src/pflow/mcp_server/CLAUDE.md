@@ -168,7 +168,7 @@ See `utils/CLAUDE.md` for the 5-step resolution order used by `resolve_workflow(
 
 ### Validation
 
-`WorkflowValidator.validate()` runs 10 checks: structural (IR schema), stdin inputs, stdout outputs, data flow (order, cycles), template (`${variable}` resolution), node types (registry), output sources, unknown params, node-specific param semantics, and sub-workflow validation (recursive). `generate_dummy_parameters()` creates `__validation_placeholder__` values so templates resolve during validation without real API keys.
+`WorkflowValidator.validate()` runs 10 checks: structural (IR schema), stdin inputs, stdout outputs, data flow (order, cycles), template (`${variable}` resolution), node types (registry), output sources, unknown params, node-specific param semantics, and sub-workflow validation (recursive). After the structural check passes, a reserved-literal-name guard also rejects inputs/node IDs named `true`/`false`/`null` (unreachable in templates after literal-operand support). `generate_dummy_parameters()` creates `__validation_placeholder__` values so templates resolve during validation without real API keys.
 
 ## Testing
 
