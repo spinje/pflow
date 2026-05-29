@@ -18,6 +18,7 @@ This module owns:
 
 import logging
 import re
+from collections.abc import Iterator
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -40,8 +41,12 @@ logger = logging.getLogger(__name__)
 # Supports array notation: ${node[0].field}, ${node.field[0].subfield}
 # Also supports nested index templates: ${node[${__index__}].field}
 # Also supports coalesce operator: ${a.field ?? b.field}
+# Also supports literal operands (Optional A): ${a ?? 0}, ${a ?? "x"}, ${0}
 _PERM_VAR = r"[a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?:[\d]+|\$\{[^}]+\})\])?)*)?"
-_PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_VAR}(?:\s*\?\?\s*{_PERM_VAR})*)\}}")
+# A coalesce operand is a literal OR a variable path. Literal sub-grammar is the
+# same one runtime resolution uses (kept in sync via TemplateResolver).
+_PERM_OPERAND = rf"(?:{TemplateResolver._LITERAL_PATTERN}|{_PERM_VAR})"
+_PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_OPERAND}(?:\s*\?\?\s*{_PERM_OPERAND})*)\}}")
 
 # Batch output definitions matching PflowBatchNode.post() structure
 BATCH_OUTPUTS: list[dict[str, str]] = [
@@ -125,8 +130,16 @@ def validate_workflow_templates(
         f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
     )
 
-    # Pass 5: Validate each template path
-    diagnostics.extend(validate_template_paths(all_templates, available_params, node_outputs, workflow_ir, registry))
+    # Pass 5: Validate each template path. Uses the field-checkable subset, NOT
+    # all_templates: operands of a multi-operand ?? chain are excluded because
+    # ?? falls through on a missing field at runtime (issue #441), so field-
+    # checking them would hard-error on a legitimately-optional field. Their
+    # root existence is still validated in core/workflow/data_flow.py.
+    diagnostics.extend(
+        validate_template_paths(
+            _field_checkable_templates(workflow_ir), available_params, node_outputs, workflow_ir, registry
+        )
+    )
 
     # Pass 6: Validate template types match parameter expectations
     diagnostics.extend(validate_template_types(workflow_ir, node_outputs, registry))
@@ -223,7 +236,39 @@ def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]
     return diagnostics
 
 
-def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+def _malformed_literal_operand_hint(value: str) -> tuple[str, list[str]] | None:
+    """Return a targeted (message, suggestions) for a malformed literal operand.
+
+    After Optional A, ``${a ?? 0}`` and friends are valid, but ``${a ?? [1,2]}``
+    (composite array) or ``${a ?? "unterminated}`` are not. Generic "malformed
+    template syntax" misleads agents into thinking their literal is fine. This
+    detects an operand that *looks* like a literal (starts with ``" [ { -`` or a
+    digit) but doesn't fully parse, and returns the literal-specific guidance.
+    Returns None when no such operand is found (caller uses the generic message).
+    """
+    if "??" not in value:
+        return None
+
+    for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(value):
+        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            if not TemplateResolver.is_literal_operand(operand):
+                continue
+            # Check against the literal GRAMMAR (not json.loads): composite
+            # arrays/objects like [1,2] parse as JSON but are deliberately
+            # excluded from the ?? literal grammar.
+            if re.fullmatch(TemplateResolver._LITERAL_PATTERN, operand) is None:
+                return (
+                    f"Malformed literal operand in '${{{match.group(1)}}}': literal operands must be "
+                    "JSON values — numbers, \"double-quoted strings\" (no '??' inside), "
+                    "true/false/null, [], or {}.",
+                    [
+                        "For complex defaults, use a code node that emits the value, then reference it.",
+                    ],
+                )
+    return None
+
+
+def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnostic]:  # noqa: C901
     """Detect malformed template syntax by counting ${ vs valid template matches.
 
     A malformed template is one where we find ${ but it doesn't form a valid template.
@@ -261,24 +306,29 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnosti
 
                 # If mismatch (accounting for nested), we have malformed syntax
                 if len(valid_matches) + nested_count < dollar_brace_count:
+                    path = f"nodes[id={node_id}].params.{param_path}" if param_path else f"nodes[id={node_id}].params"
+                    # Discriminate: a malformed LITERAL operand (Optional A) gets a
+                    # targeted message so agents don't think their literal is fine.
+                    literal_hint = _malformed_literal_operand_hint(value)
+                    if literal_hint is not None:
+                        message, suggestions = literal_hint
+                    else:
+                        message = (
+                            f"Malformed template syntax: found {dollar_brace_count} '${{' but only "
+                            f"{len(valid_matches)} valid template(s)."
+                        )
+                        suggestions = ["Check for missing '}' or empty templates like '${}'."]
                     diagnostics.append(
                         Diagnostic(
                             severity=Severity.ERROR,
                             source="validator",
                             title="Template Error",
                             node_id=node_id,
-                            message=(
-                                f"Malformed template syntax: found {dollar_brace_count} '${{' but only "
-                                f"{len(valid_matches)} valid template(s)."
-                            ),
-                            suggestions=["Check for missing '}' or empty templates like '${}'."],
+                            message=message,
+                            suggestions=suggestions,
                             context={
                                 "category": "template_error",
-                                "path": (
-                                    f"nodes[id={node_id}].params.{param_path}"
-                                    if param_path
-                                    else f"nodes[id={node_id}].params"
-                                ),
+                                "path": path,
                                 "template": value if isinstance(value, str) else None,
                             },
                         )
@@ -301,62 +351,72 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnosti
 # ---------------------------------------------------------------------------
 
 
-def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:  # noqa: C901
-    """Extract all template variables from workflow.
+def _operands_in_string(value: str) -> Iterator[tuple[str, bool]]:
+    """Yield ``(operand, in_coalesce)`` for each non-literal operand in one string.
 
-    Scans all node parameters for template variables.
-    Uses a more permissive pattern than TemplateResolver to catch
-    malformed templates that need syntax validation.
-
-    Args:
-        workflow_ir: The workflow IR
-
-    Returns:
-        Set of all template variable names found
+    Uses the permissive pattern (so malformed templates are still surfaced by the
+    separate malformed-syntax pass) and splits ``??`` chains. Literal operands
+    (Optional A — ``0``, ``"x"``, ``null``) are dropped: they are values, not refs.
+    ``in_coalesce`` is True for an operand of a multi-operand ``??`` chain.
     """
-    templates = set()
+    for match in _PERMISSIVE_PATTERN.findall(value):
+        if "??" in match:
+            for op in TemplateResolver.split_coalesce_operands(match):
+                if not TemplateResolver.is_literal_operand(op):
+                    yield op, True
+        elif not TemplateResolver.is_literal_operand(match):
+            yield match, False
+
+
+def _iter_template_operands(workflow_ir: dict[str, Any]) -> Iterator[tuple[str, bool]]:
+    """Yield ``(operand, in_coalesce)`` for every non-literal template operand
+    found in node params and ``batch.items``.
+
+    ``in_coalesce`` operands may be legitimately absent at runtime (``??`` falls
+    through on a missing field — issue #441), so they are NOT eligible for Pass-5
+    field validation, though they ARE references for unused-input detection. This
+    is the single source of traversal truth for both ``_extract_all_templates``
+    and ``_field_checkable_templates``.
+    """
+
+    def walk(value: Any) -> Iterator[tuple[str, bool]]:
+        if isinstance(value, str) and "$" in value:
+            yield from _operands_in_string(value)
+        elif isinstance(value, dict):
+            for val in value.values():
+                yield from walk(val)
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item)
 
     for node in workflow_ir.get("nodes", []):
-        node_id = node.get("id", "unknown")
-        params = node.get("params", {})
-
-        def extract_from_value(value: Any, node_id: str, path: str = "") -> None:
-            """Recursively extract templates from any value type."""
-            if isinstance(value, str) and "$" in value:
-                # Use permissive pattern to catch malformed templates
-                matches = _PERMISSIVE_PATTERN.findall(value)
-                # Split coalesce operands so each is validated individually
-                split_matches: list[str] = []
-                for match in matches:
-                    if "??" in match:
-                        split_matches.extend(TemplateResolver.split_coalesce_operands(match))
-                    else:
-                        split_matches.append(match)
-                templates.update(split_matches)
-
-                if matches:
-                    logger.debug(
-                        f"Found templates in node '{node_id}' at path '{path}'",
-                        extra={"node_id": node_id, "path": path, "templates": sorted(matches)},
-                    )
-            elif isinstance(value, dict):
-                for key, val in value.items():
-                    extract_from_value(val, node_id, f"{path}.{key}" if path else key)
-            elif isinstance(value, list):
-                for idx, item in enumerate(value):
-                    extract_from_value(item, node_id, f"{path}[{idx}]")
-
-        for param_key, param_value in params.items():
-            extract_from_value(param_value, node_id, param_key)
-
-        # Also extract templates from batch.items if present
+        for param_value in node.get("params", {}).values():
+            yield from walk(param_value)
         batch_config = node.get("batch")
-        if batch_config:
-            items_template = batch_config.get("items")
-            if items_template:
-                extract_from_value(items_template, node_id, "batch.items")
+        if batch_config and batch_config.get("items"):
+            yield from walk(batch_config["items"])
 
-    return templates
+
+def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:
+    """All non-literal template operands (both sides of every ``??`` chain).
+
+    Used for unused-input detection — an operand is a reference even when ``??``
+    may let it be absent at runtime. Pass 5 (path validation) instead uses the
+    field-checkable subset (see ``_field_checkable_templates``).
+    """
+    return {operand for operand, _ in _iter_template_operands(workflow_ir)}
+
+
+def _field_checkable_templates(workflow_ir: dict[str, Any]) -> set[str]:
+    """Template operands eligible for Pass-5 path/field existence validation.
+
+    Excludes operands of a multi-operand ``??`` chain: under issue #441 ``??``
+    falls through on a missing field, so a legitimately-optional field must not
+    hard-error here. Their root existence is still validated in
+    ``core/workflow/data_flow.py``; a bare ``${node.field}`` (no ``??``) stays
+    fully field-checked.
+    """
+    return {operand for operand, in_coalesce in _iter_template_operands(workflow_ir) if not in_coalesce}
 
 
 def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> set[str]:
@@ -397,8 +457,12 @@ def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> se
         # but a programmatic IR could) is still split into operands for
         # the unused-input check.
         if "??" in var:
-            templates.update(TemplateResolver.split_coalesce_operands(var))
-        else:
+            templates.update(
+                op
+                for op in TemplateResolver.split_coalesce_operands(var)
+                if not TemplateResolver.is_literal_operand(op)
+            )
+        elif not TemplateResolver.is_literal_operand(var):
             templates.add(var)
     return templates
 

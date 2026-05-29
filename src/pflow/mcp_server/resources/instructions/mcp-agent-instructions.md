@@ -188,11 +188,8 @@ Result: Formatted output includes both extracted data and original context
 
 **Recognize these immediately and offer alternatives:**
 
-#### ❌ No Loops or Iteration
-**User wants**: "Process each file in a directory differently based on its type"
-**Why impossible**: Workflows can't create dynamic numbers of operations
-**Alternative**: "I'll create a workflow that processes ALL files in one batch operation, applying the same logic to each"
-**→ Solution**: `batch` config enables this. See Batch Processing pattern.
+#### ✅ Loops and Bounded Iteration (Supported)
+**Loops and bounded iteration ARE supported** — via backward edges (worker/checker loop; see `pflow guide branching` → Loops) or a sub-workflow batched with `parallel: false` (see `pflow guide sub-workflows` → Bounded iteration). A sequential sub-workflow batch can read filesystem state mutated by the previous iteration — the cleanest loop-with-disk-state recipe. The hard limit is *dynamic* operation count: `batch` items must be a static list or a list produced by an upstream node — you can't create operations whose count is unknown until mid-execution.
 
 #### ✅ Conditional Branching (Supported)
 **User wants**: "If the API returns error, handle it; else process data"
@@ -631,12 +628,13 @@ Analysis results from the LLM processing step.
 
 #### Iteration is Free
 
-pflow caches node outputs automatically. When you edit a prompt or parameter and re-run, only the changed node and its downstream re-execute. Use this:
+Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (shell/code/http/file/mcp/claude-code) defaults to NOT caching because it side-effects or reads external state, so iteration loops over filesystem state work correctly without annotations. When you edit a prompt and re-run, changed `llm` nodes re-execute and unchanged ones return instantly. Use this:
 
-- Edit a prompt file → re-run → only affected nodes execute (~seconds, not minutes)
+- Edit a prompt file → re-run → only affected `llm` nodes re-execute (~seconds, not minutes)
 - `--dry-run` → preview plan + cost/duration estimate without running (expensive runs, checking what an edit invalidated)
-- `--only <node>` → run just that node (upstream cached, downstream skipped)
+- `--only <node>` → run just that node (downstream skipped; cached upstream — `llm`/`cache: true` — is reused, other upstream re-executes, so beware side-effecting upstream re-firing)
 - `--no-cache` → bypass pflow memo-cache reads; nodes execute again, but provider prompt caching may still apply
+- `- cache: true` on a node → opt INTO caching when output is purely a function of declared inputs (no filesystem/clock/env/network). Most shell/code/http/file/mcp nodes do NOT qualify.
 
 <!-- PART 2 START: Building Workflows -->
 <!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->

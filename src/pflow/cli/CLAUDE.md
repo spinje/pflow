@@ -154,7 +154,7 @@ Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runt
 --print, -p            # Minimal output: suppress stderr header/summary/warnings
 --no-trace             # Disable automatic workflow trace saving
 --cache/--no-cache     # Enable/disable memoization cache reads (default: --cache). Writes always happen.
---only <node>          # Execute up to and including this node, then stop. Upstream from cache.
+--only <node>          # Execute from start up to and including this node, then stop. Cached upstream (llm/cache:true) reused, uncached upstream re-executes.
 --validate-only        # Validate without executing (exit 0/1), auto-normalizes IR
 --dry-run              # Build execution plan without side effects
 --report               # Generate execution report

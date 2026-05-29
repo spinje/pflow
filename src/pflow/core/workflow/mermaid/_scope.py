@@ -124,8 +124,16 @@ class Scope:
         Two-stage: find each ``${...}`` block, then capture every ref inside
         it.
         """
+        from pflow.runtime.template_resolver import TemplateResolver
+
         refs: list[tuple[str, Optional[str]]] = []
         for block in _BRACE_BLOCK_RE.finditer(source):
-            for m in _REF_IN_BLOCK_RE.finditer(block.group(1)):
-                refs.append((m.group(1), m.group(2)))
+            # Split coalesce operands and skip JSON literals (Optional A) — a
+            # literal like ${missing ?? "x"} must not surface "x" as a data-flow
+            # ref (it would draw a spurious edge from a node coincidentally named x).
+            for operand in TemplateResolver.split_coalesce_operands(block.group(1)):
+                if TemplateResolver.is_literal_operand(operand.strip()):
+                    continue
+                for m in _REF_IN_BLOCK_RE.finditer(operand):
+                    refs.append((m.group(1), m.group(2)))
         return refs

@@ -139,5 +139,69 @@ echo "B: ${route.result}"
 
 **When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
 
-**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand whose node executed wins. Works in any node type — no merge node needed.
+**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand that resolves wins. Works in any node type — no merge node needed. Operands can also be JSON literals as a final default: `${optional_step.value ?? 0}`, `${a ?? "none"}`.
+
+`??` falls through whenever the left side **isn't there** — whether the **node didn't run** (branch not taken, or node failed) OR the **field is absent** on a node that did run. So `${ran_node.optional_field ?? "default"}` yields `"default"` when `optional_field` isn't present. A **bare** `${node.field}` with no `??` fallback still errors on a missing field, so genuine typos are caught loudly — add a fallback only where absence is expected.
+
+### Loops
+
+Loops are supported via **backward edges** — a node routes back to an earlier node, which re-executes. Use a **worker/checker** pair: the worker does the work, the checker decides (via dynamic `next`) whether to loop again or exit. A node can't reference its own previous output (the store excludes a node's self-namespace), so the counter lives across the two nodes.
+
+With literal operands (`??` accepts JSON literals), the counter seeds from a literal `0` on the first visit — no separate seed node needed:
+
+````markdown
+### worker
+
+Increment the running count. `worker` is a branch target of `checker`'s
+loop-back edge, so it needs an explicit `- next:`.
+
+- type: code
+- inputs:
+    prior: ${checker.result ?? 0}
+- next: checker
+
+```python code
+prior: int
+result: int = prior + 1
+```
+
+### checker
+
+Decide whether to loop or finish.
+
+- type: code
+- inputs: { count: "${worker.result}" }
+- next: worker, done
+
+```python code
+count: int
+result: int = count
+if count >= 3:
+    next: str = "done"
+else:
+    next: str = "worker"
+```
+
+### done
+
+Report the final count.
+
+- type: shell
+- next: end
+
+```shell command
+echo "Looped ${worker.result} times"
+```
+````
+
+Keep the counter one type end-to-end. Here it is `int` throughout, so the
+literal seed is `0` (an int); the first visit (when `checker` hasn't run yet)
+falls through `${checker.result ?? 0}` to `0`, and later visits read the int
+`checker.result`.
+
+**Behavior on revisit:** when a node is reached again via a backward edge, its in-process completion tracking is cleared and the persistent memo cache is bypassed for that node — so it re-executes with the new inputs each iteration.
+
+**Visit guard:** each node may be visited at most 100 times per run (loop-runaway protection). Override with the `PFLOW_MAX_NODE_VISITS=200` environment variable.
+
+**Choosing the loop style:** use this in-store loop when iteration state passes through the workflow store (small counters, accumulators, decisions). Use the sub-workflow batch pattern when iteration state passes through the filesystem or each iteration is a substantial unit of work — see `pflow guide sub-workflows` → Bounded iteration for the alternative pattern when state lives on disk.
 

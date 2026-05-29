@@ -67,10 +67,10 @@ Fetches the source feed. Downstream assumes `response.items` exists.
 
 ### step2-timestamp
 
-Captures run time. `cache: false` — this node reads live clock state.
+Captures run time. Shell nodes don't cache by default, so this reads the live
+clock on every run.
 
 - type: shell
-- cache: false
 
 ```shell command
 date +%Y-%m-%d
@@ -154,11 +154,8 @@ This accumulation pattern is fundamental - each node adds to the available data 
 
 **Recognize these immediately and offer alternatives:**
 
-#### ❌ No Loops or Iteration
-**User wants**: "Process each file in a directory differently based on its type"
-**Why impossible**: Workflows can't create dynamic numbers of operations
-**Alternative**: "I'll create a workflow that processes ALL files in one batch operation, applying the same logic to each"
-**→ Solution**: `batch` config enables this. See Batch Processing pattern.
+#### ✅ Loops and Bounded Iteration (Supported)
+**Loops and bounded iteration ARE supported** — via backward edges (see `pflow guide branching` → Loops) or sub-workflow batch with `parallel: false` (see `pflow guide sub-workflows` → Bounded iteration). The hard limit is *dynamic* operation count: `batch` items must be a static list or a list produced by an upstream node — you can't create operations whose count is unknown until mid-execution.
 
 #### ✅ Conditional Branching (Supported)
 **User wants**: "If the API returns error, handle it; else process data"
@@ -262,7 +259,7 @@ pflow mcp find "fetch JSON from REST API, extract specific fields, validate data
 
 ### Building the Workflow
 
-**Build incrementally** — start with the core data path (2-3 nodes), get it working, then add complexity. Caching makes re-runs fast (see Running and Iterating below).
+**Build incrementally** — start with the core data path (2-3 nodes), get it working, then add complexity. Re-runs of unchanged `llm` nodes return from cache instantly; other node types re-execute each run (see Running and Iterating below).
 
 **Development Format**
 
@@ -385,20 +382,30 @@ pflow ./workflow.pflow.md param1=value1 param2=value2
 
 Errors include fix suggestions — read them carefully and apply the recommended fix.
 
-Caching is automatic — unchanged nodes return instantly on re-run. Use this:
+Caching: only `llm` nodes cache by default (their output is purely a function of
+their declared inputs). Every other node type — shell, code, http, file ops, mcp,
+claude-code — defaults to NOT caching, because they side-effect or read external
+state. Use this:
 
-- Edit a prompt or parameter → re-run → only changed nodes re-execute
+- Edit a prompt or parameter → re-run → changed `llm` nodes re-execute, unchanged ones return instantly
 - `--dry-run` — preview plan + historical cost/duration without executing (expensive LLM runs, verifying what an edit invalidated)
-- `--only <node>` — run just that node (upstream from cache, downstream skipped)
+- `--only <node>` — run just that node, downstream skipped. Upstream is walked from the start: cached upstream (`llm`, or `cache: true` nodes) is reused, everything else **re-executes** — so a side-effecting upstream node (e.g. `shell: gh pr create`) re-fires each time. Best for tuning a node downstream of expensive cached `llm` work.
 - `--no-cache` — bypass pflow memo-cache reads; provider prompt caching may still apply
-- `cache: false` on a node — permanently opt out for nodes reading runtime state (date, git branch, env vars)
+- **`cache: true` on a node** — opt INTO caching for a node whose output is purely a function of its declared inputs (no filesystem reads, no clock, no env vars, no network state). Most shell/code/http/file/mcp nodes do NOT qualify.
+- **`cache: false` on a node** — explicit opt-out (redundant for non-`llm` nodes under the default; useful for documenting intent).
 - `pflow report` — when errors aren't enough, inspect per-node resolved inputs and outputs
+
+**What the memo cache models:** a node's cache key is computed from its node type, its static params (`- key: value`), raw template strings (the `${foo.bar}` *string*, not the resolved value), batch configuration, prompt-cache content, and resolved input values. It does NOT model filesystem state, environment variables, current time, or external API responses — anything a node reads from the world outside its declared inputs. This is why non-`llm` nodes don't cache by default: a `shell` node running `cat queue.txt` has a stable cache key even as the file changes, so caching it would silently re-serve stale output in an iteration loop. (A literal string inside a `??` fallback cannot contain the `??` sequence itself — see `pflow guide branching` → Loops for fallback patterns.)
+
+**How to diagnose stale cache:** if a node returns the same output across runs when you expect change, the cache is hitting because all of the above inputs are stable. Either (a) the input genuinely hasn't changed (cache is correct); (b) the node reads external state — under the defaults this is auto-uncached for non-`llm` nodes, so check you don't have an explicit `cache: true`; or (c) upstream produced identical output — check the upstream node via `pflow report` or `--only <node>`.
+
+For safe loops where state lives on disk, see `pflow guide sub-workflows` → Bounded iteration; for in-store loops (counters, accumulators), see `pflow guide branching` → Loops.
 
 Provider prompt caching: if many LLM calls reuse the same long context, run
 `pflow analyze-cache workflow.pflow.md`, then follow `pflow guide prompt-caching`.
 
 ```bash
-# Re-run just one node (upstream cached, downstream skipped)
+# Re-run just one node (downstream skipped; cached upstream reused, uncached upstream re-runs)
 pflow ./workflow.pflow.md --only node-name
 
 # Bypass pflow memo-cache reads; provider prompt caching may still apply

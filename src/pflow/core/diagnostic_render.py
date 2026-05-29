@@ -45,7 +45,7 @@ def format_diagnostic(
 def _format_warning_or_info_diagnostic(diagnostic: Diagnostic) -> str:
     """Render one WARNING or INFO diagnostic.
 
-    Most warnings are compact one-liners (cache_lint, api warnings, etc.). The
+    Most warnings are compact one-liners (api warnings, runtime warnings, etc.). The
     exception is a WARNING-severity template_error carrying structured
     ``unresolved_references`` — that's permissive-mode template resolution
     surfacing the same rich data the strict-mode error path shows. Rendering

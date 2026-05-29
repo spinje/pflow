@@ -197,7 +197,7 @@ The `as: "file"` creates `${file}` as the item variable. See [Batch processing](
 
 ## Coalesce operator
 
-The `??` operator returns the first resolved value, skipping variables that don't exist (e.g., from a branch that didn't execute):
+The `??` operator returns the first operand that resolves, falling through whenever the left side **isn't there** — whether the node didn't run (a branch that wasn't taken) or the referenced field is absent on a node that did run:
 
 ```markdown
 ### report
@@ -209,6 +209,15 @@ Report the result from whichever branch ran.
 ```
 
 This is particularly useful with [conditional branching](/how-it-works/conditional-branching) where only one path executes. Without coalesce, referencing a node that didn't run would be an unresolved variable error.
+
+Operands can also be JSON literals, used as a final default when nothing else resolves:
+
+```markdown
+- prompt: Retries so far: ${state.count ?? 0}
+- prompt: Label: ${item.label ?? "untitled"}
+```
+
+Literal operands accept numbers, double-quoted strings, `true`, `false`, `null`, and empty `[]`/`{}` (a literal string cannot contain the `??` sequence itself). A **bare** reference with no `??` fallback — `${node.field}` — still raises an unresolved-variable error when the field is missing, so genuine typos are caught; add a fallback only where absence is expected.
 
 ## Node metadata
 

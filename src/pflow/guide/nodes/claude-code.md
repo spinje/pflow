@@ -72,7 +72,9 @@ Downstream nodes can read structured fields directly:
 
 ### Recovering from schema soft-failures
 
-`claude-code` always returns `default`. Schema soft-failures (model didn't comply, a provider error landed alongside the output, or a templated `output_schema` reference resolved to None) do NOT route through `- on-error:` edges. Branch on `${node._schema_error}` or workflow `DEGRADED` status instead:
+`claude-code` always returns `default`. Schema soft-failures (model didn't comply, a provider error landed alongside the output, or a templated `output_schema` reference resolved to None) do NOT route through `- on-error:` edges.
+
+`${node.result}` is always present: the parsed schema value on success, raw model text (a string) on a soft-failure. With an object schema (the usual case, shown below) success yields a dict, so an `isinstance(result, str)` check cleanly detects the soft-failure — branch on `result`'s type rather than probing for the optional `_schema_error` field. `${node._schema_error}` is set ONLY on a soft-failure; read it inside the fallback branch (where it's guaranteed present). (If your schema's top-level type is itself `string`, the `isinstance` discriminator can't tell success from soft-failure — wrap the value in an object schema so the success shape is a dict.)
 
 ```markdown
 ### review
@@ -91,15 +93,30 @@ required: [summary]
 
 ### branch-on-schema
 
+Route on whether the result came back structured.
+
 - type: code
 - inputs:
-    schema_error: ${review._schema_error ?? ""}
+    review_result: ${review.result}
+- next: use-result, fallback
 
 ```python code
-schema_error: str
-if schema_error:
+review_result: Any
+# Structured output is the parsed object; a soft-failure leaves raw text (str).
+if isinstance(review_result, str):
     next: str = "fallback"
 else:
     next: str = "use-result"
+```
+
+### fallback
+
+Handle the soft-failure. `${review._schema_error}` is present on this branch.
+
+- type: shell
+- next: end
+
+```shell command
+echo "schema soft-failed: ${review._schema_error}" >&2
 ```
 ```

@@ -45,6 +45,7 @@ def test_plan_batch_sub_workflow_populates_outputs_for_downstream_resolution(tmp
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf ${value}"},
                 }
             ],
@@ -69,6 +70,7 @@ def test_plan_batch_sub_workflow_populates_outputs_for_downstream_resolution(tmp
                 {
                     "id": "post",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf '${fanout.results[0].out}-${fanout.count}'"},
                 },
             ],
@@ -105,6 +107,7 @@ def test_plan_batch_sub_workflow_detects_partial_cache_per_item(tmp_path) -> Non
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf ${value}"},
                 }
             ],
@@ -162,6 +165,7 @@ def test_plan_batch_sub_workflow_empty_items_produces_empty_sub_plan(tmp_path) -
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf ${value}"},
                 }
             ],
@@ -210,6 +214,7 @@ def test_plan_batch_sub_workflow_non_list_items_surfaces_error(tmp_path) -> None
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf ${value}"},
                 }
             ],
@@ -252,6 +257,7 @@ def test_plan_batch_sub_workflow_unresolvable_items_is_opaque(tmp_path) -> None:
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf child"},
                 }
             ],
@@ -409,6 +415,7 @@ The routing value.
 ### route
 Route based on value.
 - type: code
+- cache: true
 - inputs:
     value: ${value}
 
@@ -425,6 +432,7 @@ else:
 ### fast
 Fast branch target.
 - type: shell
+- cache: true
 - next: end
 
 ```shell command
@@ -434,6 +442,7 @@ printf 'fast-${value}'
 ### slow
 Slow branch target.
 - type: shell
+- cache: true
 - next: end
 
 ```shell command
@@ -506,6 +515,7 @@ def test_plan_batch_sub_workflow_non_dict_per_item_inputs_emits_warning(tmp_path
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf ${value}"},
                 }
             ],

@@ -857,11 +857,15 @@ def _cache_disabled_entry(
     cache: MemoizationCache,
     workflow_path: str | None,
 ) -> PlanEntry:
-    """Entry for a node with `cache: false` — always runs.
+    """Entry for a cache-disabled node — always runs.
 
-    Routes through `_execute_entry` so historical cost/duration estimates
-    from prior runs are attached. `cache: false` means "don't use the cache
-    for hit decisions"; it does NOT mean "hide history from the agent".
+    A node is cache-disabled either by the per-type default (only `llm` caches by
+    default; shell/code/http/file/mcp/claude-code do not) or by an explicit
+    `cache: false`. Either way it always runs.
+
+    Routes through `_execute_entry` so historical cost/duration estimates from
+    prior runs are attached. Cache-disabled means "don't use the cache for hit
+    decisions"; it does NOT mean "hide history from the agent".
     """
     return _execute_entry(
         config, cache, cause="cache_disabled", cache_key=planned.cache_key, workflow_path=workflow_path

@@ -147,6 +147,11 @@ class WorkflowValidator:
 
         Performs multiple validation checks:
         1. Structural validation - IR schema compliance
+           (once structural validation passes, a reserved-literal-name guard
+           runs before the steps below: inputs/node IDs named true/false/null
+           are rejected — they become unreachable in templates after
+           literal-operand support, e.g. ${true} resolves to the boolean
+           literal, not an input named "true".)
         2. Stdin input validation - Only one stdin: true allowed
         3. Stdout output validation - Only one stdout: true allowed
         4. Data flow validation - Execution order and dependencies
@@ -157,7 +162,6 @@ class WorkflowValidator:
         9. Node-specific static parameter semantics - Per-node-type param checks
            (e.g. claude-code structured-output schema preflight)
         10. Sub-workflow validation - Recursive validation of child workflows
-        11. Cache lint - Warn about input-less shell nodes without an explicit cache setting
 
         Args:
             workflow_ir: Workflow to validate
@@ -177,10 +181,15 @@ class WorkflowValidator:
         # 1. Structural validation (ALWAYS run)
         diagnostics.extend(WorkflowValidator._validate_structure(workflow_ir))
 
-        # Short-circuit: semantic validators (steps 2-11) assume a structurally-valid IR.
+        # Short-circuit: semantic validators (steps 2-10) assume a structurally-valid IR.
         # Running them on a malformed IR would produce misleading cascades (closes #237).
         if any(d.severity == Severity.ERROR for d in diagnostics):
             return diagnostics
+
+        # Reserved-literal-keyword guard: inputs/node IDs named true/false/null
+        # become unreachable in templates after Optional A (${true} resolves to
+        # the boolean literal). Reject loudly rather than fail silently.
+        diagnostics.extend(WorkflowValidator._reject_reserved_literal_names(workflow_ir))
 
         # 2. Stdin input validation (ALWAYS run - only one stdin: true allowed)
         diagnostics.extend(WorkflowValidator._validate_stdin_inputs(workflow_ir))
@@ -221,9 +230,6 @@ class WorkflowValidator:
             )
         )
 
-        # 11. Cache lint — warn about input-less shell nodes
-        diagnostics.extend(WorkflowValidator._warn_inputless_shell_nodes(workflow_ir))
-
         errors = [d for d in diagnostics if d.severity == Severity.ERROR]
         warnings = [d for d in diagnostics if d.severity == Severity.WARNING]
 
@@ -263,6 +269,49 @@ class WorkflowValidator:
                     context={"category": "validation"},
                 )
             ]
+
+    # Names that template resolution treats as JSON literals after Optional A.
+    # An input or node ID with one of these names is unreachable via ${name}.
+    _RESERVED_LITERAL_NAMES = ("true", "false", "null")
+
+    @staticmethod
+    def _reject_reserved_literal_names(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+        """Reject inputs/node IDs named after reserved literal keywords.
+
+        After Optional A, ``${true}`` / ``${false}`` / ``${null}`` resolve to the
+        boolean/null literal, so an input or node with one of those names can
+        never be referenced. This converts a silent footgun into a loud error.
+        """
+        diagnostics: list[Diagnostic] = []
+
+        def _diag(name: str, kind: str, path: str) -> Diagnostic:
+            return Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                node_id=name if kind == "Node" else None,
+                message=(
+                    f"{kind} '{name}' uses a reserved literal keyword. Templates like "
+                    f"${{{name}}} resolve to the boolean/null literal, not this {kind.lower()}."
+                ),
+                suggestions=[
+                    f"Rename to something like '{name}_value', 'is_{name}', or '{name}_flag'.",
+                ],
+                context={"category": "validation", "path": path},
+            )
+
+        inputs = workflow_ir.get("inputs", {})
+        if isinstance(inputs, dict):
+            for input_name in inputs:
+                if input_name in WorkflowValidator._RESERVED_LITERAL_NAMES:
+                    diagnostics.append(_diag(input_name, "Input", f"inputs.{input_name}"))
+
+        for node in workflow_ir.get("nodes", []):
+            node_id = node.get("id")
+            if node_id in WorkflowValidator._RESERVED_LITERAL_NAMES:
+                diagnostics.append(_diag(node_id, "Node", f"nodes[id={node_id}]"))
+
+        return diagnostics
 
     @staticmethod
     def _validate_stdin_inputs(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
@@ -547,6 +596,9 @@ class WorkflowValidator:
             # Split coalesce operands and validate each one
             operands = TemplateResolver.split_coalesce_operands(template_var)
             for operand in operands:
+                # Literal operands (Optional A) are values, not node/input refs.
+                if TemplateResolver.is_literal_operand(operand):
+                    continue
                 # Parse root identifier via the canonical extractor so operands
                 # like `${data[0].x}` yield node_id="data" (not "data[0]").
                 # Strip a leading dot only so bracket forms like `[0].x` are
@@ -1743,60 +1795,3 @@ class WorkflowValidator:
         # Cache for cross-reference input checking
         ir_cache[seen_key] = (result.ir, result.path)
         return result.ir, result.path, ref_label, [], False, result.warnings
-
-    @staticmethod
-    def _warn_inputless_shell_nodes(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
-        """Warn when shell nodes have no template inputs and no explicit cache setting.
-
-        A shell node with no ${...} variables in its params produces the same
-        cache key every run. If it reads external state (git branch, env vars,
-        filesystem), cached results silently return stale values.
-
-        The fix is a decision the author must make, so the warning offers both
-        branches: 'cache: false' (re-run every time) for live-state commands,
-        or 'cache: true' (confirm static output) to silence the warning. Any
-        explicit cache setting suppresses it — the author has decided.
-
-        Only warns when:
-        - Node type is 'shell'
-        - No template variables in any param value
-        - No batch config (batch nodes get different cache keys per item)
-        - No explicit cache setting (true or false) already present
-        """
-        warnings: list[Diagnostic] = []
-        for node in workflow_ir.get("nodes", []):
-            if node.get("type") != "shell":
-                continue
-            if "cache" in node:
-                continue
-            if node.get("batch"):
-                continue
-
-            params = node.get("params", {})
-            if not params:
-                continue  # No params at all (unusual for shell, but nothing to warn about)
-
-            # Check if any param value contains real pflow template variables.
-            # Uses extract_variables() to get the actual variable set — we need
-            # to distinguish "has pflow templates" from "has bash syntax".
-            has_pflow_templates = False
-            for value in params.values():
-                if isinstance(value, str) and TemplateResolver.extract_variables(value):
-                    has_pflow_templates = True
-                    break
-
-            if not has_pflow_templates:
-                warnings.append(
-                    Diagnostic(
-                        severity=Severity.WARNING,
-                        source="validator",
-                        node_id=node["id"],
-                        message=("Shell node has no template inputs — its result is cached and reused across runs."),
-                        suggestions=[
-                            "Reads runtime state (git, env, clock, filesystem)? Add '- cache: false'.",
-                            "Output is static / safe to reuse? Add '- cache: true' to confirm and silence this warning.",
-                        ],
-                    )
-                )
-
-        return warnings

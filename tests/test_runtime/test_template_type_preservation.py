@@ -210,11 +210,14 @@ class TestSimpleTemplateDetection:
         """Invalid variable names should NOT be detected as simple templates.
 
         The SIMPLE_TEMPLATE_PATTERN uses the same strict pattern as TEMPLATE_PATTERN,
-        so it rejects invalid variable names like numbers, special chars, etc.
+        so it rejects invalid variable names like special chars, etc.
+
+        Note: after Optional A, ``${123}`` IS a valid simple template — a bare
+        JSON literal (the integer 123), not an invalid variable name.
         """
-        # Starting with number
-        assert TemplateResolver.is_simple_template("${123}") is False
-        # Starting with hyphen
+        # Bare integer literal (Optional A) — now valid as a simple template.
+        assert TemplateResolver.is_simple_template("${123}") is True
+        # Starting with hyphen but not a number — neither literal nor variable.
         assert TemplateResolver.is_simple_template("${-invalid}") is False
         # Whitespace inside
         assert TemplateResolver.is_simple_template("${ var }") is False

@@ -153,3 +153,71 @@ child's perspective. Reading one item tells you exactly what that child
 receives. Typos in any item's `inputs:` fail at parse time with a fuzzy
 suggestion — there's no silent drop.
 
+### Pattern: Bounded iteration via batch
+
+To run the same sub-workflow N times *in order*, batch it with a static index
+list and `parallel: false`. Each iteration runs to completion before the next
+starts — so an iteration can read filesystem (or other external) state that the
+previous one mutated. This is the cleanest way to express a bounded loop where
+state lives on disk.
+
+**Child workflow** (`process-one.pflow.md`) — reads a queue file, takes the first
+item, writes the rest back:
+````markdown
+# Process One
+
+## Inputs
+
+### iteration
+
+The current iteration index.
+
+- type: integer
+
+## Steps
+
+### read-queue
+
+Read the current queue from disk.
+
+- type: shell
+
+```shell command
+cat queue.txt
+```
+
+### take-and-write
+
+Take the first item, log it, write the remainder back.
+
+- type: shell
+- inputs:
+    raw: ${read-queue.stdout}
+    iteration: ${iteration}
+
+```shell command
+printf '%s\n' "${raw}" | head -n 1 >> log.txt
+printf '%s\n' "${raw}" | tail -n +2 > queue.txt
+```
+````
+
+**Parent** — drive it five times, sequentially:
+````markdown
+### iterate
+
+- type: workflow
+- workflow: ./process-one.pflow.md
+- inputs:
+    iteration: ${item}
+- batch:
+    items: [1, 2, 3, 4, 5]
+    parallel: false
+````
+
+Notes:
+- `${item}` supplies the per-item value to any param of the sub-workflow invocation (here, the iteration index).
+- The sub-workflow's working directory is shared with the parent by default. There is no per-item filesystem isolation — do NOT pass `cwd: ${item.workdir}`; `cwd` is not an accepted `workflow`-node param and will be rejected as an unknown field.
+- **Cache correctness:** this works without any `cache: false` annotations because non-`llm` nodes don't cache by default — `read-queue` re-runs each iteration and sees the current file. See `pflow guide core` → cache for what gets cached and why this works without annotations.
+
+Choose this over the in-store loop (`pflow guide branching` → Loops) when iteration state passes through the filesystem or each iteration is a substantial unit of work.
+

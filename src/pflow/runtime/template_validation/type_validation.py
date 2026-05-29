@@ -201,6 +201,9 @@ def _build_quoted_templates(command: str) -> set[str]:
     result: set[str] = set()
     for match in _QUOTED_TEMPLATE_PATTERN.finditer(command):
         for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            # Literal operands (Optional A) need no type-coercion exemption.
+            if TemplateResolver.is_literal_operand(operand):
+                continue
             result.add(operand)
     return result
 

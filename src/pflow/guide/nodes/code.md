@@ -7,6 +7,7 @@
 - Receives native objects from upstream nodes (no serialization needed)
 - Supports multiple inputs from different nodes
 - Type-annotated Python code for clarity and validation
+- **Caching**: code nodes don't cache by default — safe inside iteration loops where they read state mutated between runs. Add `cache: true` only for a pure, expensive transform fully determined by its declared inputs.
 
 ### Node Creation Patterns
 

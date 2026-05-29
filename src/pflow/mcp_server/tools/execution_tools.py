@@ -463,9 +463,8 @@ async def analyze_cache(
     ``other_blocking_errors[]``.
 
     WARNING-severity findings: only cache-domain warnings flow into
-    ``recommended_actions[]``. Memoization-cache lint warnings and other
-    non-cache advisory findings remain in raw ``warnings[]`` but are filtered
-    out of provider prompt-cache recommendations.
+    ``recommended_actions[]``. Non-cache advisory findings remain in raw
+    ``warnings[]`` but are filtered out of provider prompt-cache recommendations.
 
     **Sub-workflow provenance**: child-workflow findings have their message
     prefixed with ``In step '<parent_step_id>' sub-workflow:`` per nesting

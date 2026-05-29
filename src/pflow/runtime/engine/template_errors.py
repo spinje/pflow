@@ -140,6 +140,11 @@ def classify_unresolved_references(
         is_coalesce = len(operands) > 1
 
         for operand in operands:
+            # Literal operands (Optional A) always resolve — never unresolved.
+            # Without this, a literal like `0` leaks into "Node '0' did not
+            # execute" errors with bogus peer suggestions.
+            if TemplateResolver.is_literal_operand(operand):
+                continue
             if operand in seen_vars:
                 continue
             seen_vars.add(operand)

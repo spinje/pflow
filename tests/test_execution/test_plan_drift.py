@@ -47,8 +47,8 @@ def test_plan_matches_execution_for_fresh_workflow(tmp_path) -> None:
     log_file = tmp_path / "exec.log"
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": f"echo a >> {log_file}; printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": f"echo b >> {log_file}; printf b"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": f"echo b >> {log_file}; printf b"}},
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -67,8 +67,8 @@ def test_plan_matches_execution_after_first_run(tmp_path) -> None:
     log_file = tmp_path / "exec.log"
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": f"echo a >> {log_file}; printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": f"echo b >> {log_file}; printf b"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": f"echo b >> {log_file}; printf b"}},
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -88,8 +88,8 @@ def test_plan_cross_node_template_resolution(tmp_path) -> None:
     """Cached upstream outputs must be visible so downstream cache keys match."""
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "printf cached-value"}},
-            {"id": "b", "type": "shell", "params": {"command": "printf ${a.stdout}"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf cached-value"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf ${a.stdout}"}},
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -107,17 +107,37 @@ def test_plan_matches_execution_after_config_edit(tmp_path) -> None:
     log_file = tmp_path / "edit.log"
     old_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": f"echo a >> {log_file}; printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": f"echo b >> {log_file}; printf '${{a.stdout}}-b'"}},
-            {"id": "c", "type": "shell", "params": {"command": f"echo c >> {log_file}; printf '${{b.stdout}}-c'"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
+            {
+                "id": "b",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": f"echo b >> {log_file}; printf '${{a.stdout}}-b'"},
+            },
+            {
+                "id": "c",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": f"echo c >> {log_file}; printf '${{b.stdout}}-c'"},
+            },
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
     }
     new_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": f"echo a >> {log_file}; printf a"}},
-            {"id": "b", "type": "shell", "params": {"command": f"echo b2 >> {log_file}; printf '${{a.stdout}}-b2'"}},
-            {"id": "c", "type": "shell", "params": {"command": f"echo c >> {log_file}; printf '${{b.stdout}}-c'"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
+            {
+                "id": "b",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": f"echo b2 >> {log_file}; printf '${{a.stdout}}-b2'"},
+            },
+            {
+                "id": "c",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": f"echo c >> {log_file}; printf '${{b.stdout}}-c'"},
+            },
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
     }
@@ -141,16 +161,19 @@ def test_plan_matches_execution_with_conditional_branch(tmp_path) -> None:
             {
                 "id": "router",
                 "type": "code",
+                "cache": True,
                 "params": {"code": 'next: str = "fast-path"\nresult: str = "routed"'},
             },
             {
                 "id": "fast-path",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo fast >> {log_file}; printf fast"},
             },
             {
                 "id": "slow-path",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo slow >> {log_file}; printf slow"},
             },
         ],
@@ -184,11 +207,13 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
                 {
                     "id": "child-a",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo child-a >> {log_file}; printf child-a"},
                 },
                 {
                     "id": "child-b",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo child-b >> {log_file}; printf '${{child-a.stdout}}-child-b'"},
                 },
             ],
@@ -200,7 +225,12 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
     write_workflow_file(
         {
             "nodes": [
-                {"id": "pre", "type": "shell", "params": {"command": f"echo pre >> {log_file}; printf pre"}},
+                {
+                    "id": "pre",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo pre >> {log_file}; printf pre"},
+                },
                 {
                     "id": "call-child",
                     "type": "workflow",
@@ -209,6 +239,7 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
                 {
                     "id": "post",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo post >> {log_file}; printf '${{call-child.out}}-post'"},
                 },
             ],
@@ -226,11 +257,13 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
                 {
                     "id": "child-a",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo child-a >> {log_file}; printf child-a"},
                 },
                 {
                     "id": "child-b",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo child-b2 >> {log_file}; printf '${{child-a.stdout}}-child-b2'"},
                 },
             ],
@@ -259,11 +292,13 @@ def test_plan_batch_items_cache_matches(tmp_path) -> None:
             {
                 "id": "source",
                 "type": "code",
+                "cache": True,
                 "params": {"code": 'result: list[str] = ["a", "b"]'},
             },
             {
                 "id": "batch",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo ${{item}} >> {log_file}; printf '${{item}}'"},
                 "batch": {"items": "${source.result}"},
             },
@@ -305,6 +340,7 @@ def test_plan_batch_sub_workflow_partial_cache_matches_execution(tmp_path) -> No
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo ${{value}} >> {log_file}; printf '${{value}}'"},
                 }
             ],
@@ -381,14 +417,15 @@ def test_plan_bfs_post_boundary_enumerates_branches(tmp_path) -> None:
     """After the first boundary, planner enumerates all non-error branches."""
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "printf a"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf a"}},
             {
                 "id": "router",
                 "type": "code",
+                "cache": True,
                 "params": {"code": 'next: str = "left"\nresult: str = "branch"'},
             },
-            {"id": "left", "type": "shell", "params": {"command": "printf left"}},
-            {"id": "right", "type": "shell", "params": {"command": "printf right"}},
+            {"id": "left", "type": "shell", "cache": True, "params": {"command": "printf left"}},
+            {"id": "right", "type": "shell", "cache": True, "params": {"command": "printf right"}},
         ],
         "edges": [
             {"from": "a", "to": "router"},
@@ -413,9 +450,10 @@ def test_plan_routing_error_on_missing_successor(tmp_path) -> None:
             {
                 "id": "router",
                 "type": "code",
+                "cache": True,
                 "params": {"code": 'next: str = "approve"\nresult: str = "ok"'},
             },
-            {"id": "approved", "type": "shell", "params": {"command": "printf approved"}},
+            {"id": "approved", "type": "shell", "cache": True, "params": {"command": "printf approved"}},
         ],
         "edges": [{"from": "router", "to": "approved", "action": "approve"}],
     }
@@ -424,9 +462,10 @@ def test_plan_routing_error_on_missing_successor(tmp_path) -> None:
             {
                 "id": "router",
                 "type": "code",
+                "cache": True,
                 "params": {"code": 'next: str = "approve"\nresult: str = "ok"'},
             },
-            {"id": "fallback", "type": "shell", "params": {"command": "printf fallback"}},
+            {"id": "fallback", "type": "shell", "cache": True, "params": {"command": "printf fallback"}},
         ],
         "edges": [{"from": "router", "to": "fallback"}],
     }
@@ -552,6 +591,7 @@ def test_plan_cost_basis_propagates_upper_bound(tmp_path) -> None:
 Pick a branch via the code node's `next` variable.
 
 - type: code
+- cache: true
 
 ```python code
 next: str = "left"
@@ -563,6 +603,7 @@ result: str = "routed"
 Left branch target.
 
 - type: shell
+- cache: true
 - next: end
 
 ```shell command
@@ -574,6 +615,7 @@ printf left
 Right branch target.
 
 - type: shell
+- cache: true
 - next: end
 
 ```shell command
@@ -687,8 +729,8 @@ def test_plan_walker_bumps_visit_counts_before_plan_node(monkeypatch, tmp_path) 
 
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "echo a"}},
-            {"id": "b", "type": "shell", "params": {"command": "echo b"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "echo a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": "echo b"}},
         ],
         "edges": [
             {"from": "a", "to": "b", "action": "go"},
@@ -732,10 +774,11 @@ def test_plan_bfs_downstream_attaches_historical_stats(tmp_path) -> None:
     """
     ir = {
         "nodes": [
-            {"id": "seed", "type": "shell", "params": {"command": "printf seed"}},
+            {"id": "seed", "type": "shell", "cache": True, "params": {"command": "printf seed"}},
             {
                 "id": "downstream",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": "printf down"},
             },
         ],
@@ -786,6 +829,7 @@ def test_plan_duration_nested_rollup(tmp_path) -> None:
                 {
                     "id": "work",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf work"},
                 },
             ],
@@ -818,6 +862,7 @@ def test_plan_duration_nested_rollup(tmp_path) -> None:
                 {
                     "id": "work",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "printf work-edited"},
                 },
             ],
@@ -921,11 +966,11 @@ def test_plan_workflow_path_scoped_lookup_no_pollution(tmp_path) -> None:
     """
     # Two workflows, both with a node named "classify" but DIFFERENT workflow_path.
     ir_a = {
-        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo a"}}],
+        "nodes": [{"id": "classify", "type": "shell", "cache": True, "params": {"command": "echo a"}}],
         "edges": [],
     }
     ir_b = {
-        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo b"}}],
+        "nodes": [{"id": "classify", "type": "shell", "cache": True, "params": {"command": "echo b"}}],
         "edges": [],
     }
     compiled_a, registry_a = _compile(ir_a)
@@ -966,7 +1011,7 @@ def test_plan_workflow_path_scoped_lookup_no_pollution(tmp_path) -> None:
     params_a = {"_pflow_workflow_file": "/fake/workflow_a.pflow.md"}
     # Edit the workflow so A's own entry is a miss — historical stats surface.
     compiled_a_edited, _ = _compile({
-        "nodes": [{"id": "classify", "type": "shell", "params": {"command": "echo a-edited"}}],
+        "nodes": [{"id": "classify", "type": "shell", "cache": True, "params": {"command": "echo a-edited"}}],
         "edges": [],
     })
     plan = build_plan(compiled_a_edited, params_a, cache, registry_a, workflow_name="workflow_a.pflow.md")
@@ -1030,6 +1075,7 @@ Computed body.
 Pick a topic.
 
 - type: shell
+- cache: true
 
 ```shell command
 printf "topic-from-%s" "${seed}"
@@ -1040,6 +1086,7 @@ printf "topic-from-%s" "${seed}"
 Make a body.
 
 - type: shell
+- cache: true
 
 ```shell command
 printf "body-from-%s" "${seed}"
@@ -1060,6 +1107,7 @@ printf "body-from-%s" "${seed}"
                 {
                     "id": "combine",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": 'printf "%s|%s" "${analyze.topic}" "${analyze.body}"'},
                 },
             ],
@@ -1137,6 +1185,7 @@ Selected topic.
 Pick a topic.
 
 - type: shell
+- cache: true
 
 ```shell command
 printf "topic-from-%s" "${seed}"
@@ -1156,6 +1205,7 @@ printf "topic-from-%s" "${seed}"
                 {
                     "id": "combine",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": 'printf "result=%s" "${analyze.topic}"'},
                 },
             ],
@@ -1217,6 +1267,7 @@ Seed text.
 Do the work.
 
 - type: shell
+- cache: true
 
 ```shell command
 printf "computed-from-%s" "${seed}"
@@ -1237,6 +1288,7 @@ printf "computed-from-%s" "${seed}"
                 {
                     "id": "use",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": 'printf "got %s" "${analyze.compute.stdout}"'},
                 },
             ],
@@ -1274,7 +1326,7 @@ def test_plan_direct_ir_null_workflow_path_historical_stats(tmp_path) -> None:
     """
     # Build an IR dict (no file path) and compile it — matches a direct-IR run.
     ir = {
-        "nodes": [{"id": "work", "type": "shell", "params": {"command": "printf result"}}],
+        "nodes": [{"id": "work", "type": "shell", "cache": True, "params": {"command": "printf result"}}],
         "edges": [],
     }
     compiled, _registry = _compile(ir)
@@ -1298,7 +1350,7 @@ def test_plan_direct_ir_null_workflow_path_historical_stats(tmp_path) -> None:
     # will also be None → _lookup_last_run_stats falls back to unscoped lookup.
     # Edit the command so plan sees a miss → _execute_entry attaches historical stats.
     ir_edited = {
-        "nodes": [{"id": "work", "type": "shell", "params": {"command": "printf result-edited"}}],
+        "nodes": [{"id": "work", "type": "shell", "cache": True, "params": {"command": "printf result-edited"}}],
         "edges": [],
     }
     compiled_edited, registry_edited = _compile(ir_edited)
@@ -1344,6 +1396,7 @@ Minimal child workflow.
 Just echoes.
 
 - type: shell
+- cache: true
 - command: printf done
 """,
         encoding="utf-8",
@@ -1390,8 +1443,8 @@ def test_plan_cached_loop_visit_two_reports_execute(tmp_path) -> None:
     """
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "echo a"}},
-            {"id": "b", "type": "shell", "params": {"command": "echo b"}},
+            {"id": "a", "type": "shell", "cache": True, "params": {"command": "echo a"}},
+            {"id": "b", "type": "shell", "cache": True, "params": {"command": "echo b"}},
         ],
         "edges": [
             {"from": "a", "to": "b", "action": "go"},
@@ -1495,6 +1548,7 @@ def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> N
                 {
                     "id": "child-work",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo child-work >> {log_file}; printf 'child-${{seed}}'"},
                 },
             ],
@@ -1509,6 +1563,7 @@ def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> N
                 {
                     "id": "upstream",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo upstream-v1 >> {log_file}; printf v1"},
                 },
                 {
@@ -1519,6 +1574,7 @@ def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> N
                 {
                     "id": "downstream",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo downstream >> {log_file}; printf end"},
                 },
             ],
@@ -1542,6 +1598,7 @@ def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> N
                 {
                     "id": "upstream",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo upstream-v2 >> {log_file}; printf v2"},
                 },
                 {
@@ -1552,6 +1609,7 @@ def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> N
                 {
                     "id": "downstream",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo downstream >> {log_file}; printf end"},
                 },
             ],
@@ -1610,11 +1668,13 @@ def test_plan_downstream_linear_subworkflow_reports_exact_cost_basis(tmp_path) -
                 {
                     "id": "child-a",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo a >> {log_file}; printf 'a-${{seed}}'"},
                 },
                 {
                     "id": "child-b",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo b >> {log_file}; printf '${{child-a.stdout}}-b'"},
                 },
             ],
@@ -1626,7 +1686,12 @@ def test_plan_downstream_linear_subworkflow_reports_exact_cost_basis(tmp_path) -
     write_workflow_file(
         {
             "nodes": [
-                {"id": "upstream", "type": "shell", "params": {"command": f"echo up >> {log_file}; printf up"}},
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo up >> {log_file}; printf up"},
+                },
                 {
                     "id": "middle",
                     "type": "workflow",
@@ -1645,7 +1710,12 @@ def test_plan_downstream_linear_subworkflow_reports_exact_cost_basis(tmp_path) -
     write_workflow_file(
         {
             "nodes": [
-                {"id": "upstream", "type": "shell", "params": {"command": f"echo up2 >> {log_file}; printf up2"}},
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo up2 >> {log_file}; printf up2"},
+                },
                 {
                     "id": "middle",
                     "type": "workflow",
@@ -1689,6 +1759,7 @@ def test_plan_downstream_subworkflow_placeholders_satisfy_required_inputs(tmp_pa
                 {
                     "id": "consume",
                     "type": "code",
+                    "cache": True,
                     "params": {
                         "inputs": {
                             "seed": "${seed}",
@@ -1707,7 +1778,12 @@ def test_plan_downstream_subworkflow_placeholders_satisfy_required_inputs(tmp_pa
     write_workflow_file(
         {
             "nodes": [
-                {"id": "upstream", "type": "shell", "params": {"command": f"echo up >> {log_file}; printf up"}},
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo up >> {log_file}; printf up"},
+                },
                 {
                     "id": "middle",
                     "type": "workflow",
@@ -1734,7 +1810,12 @@ def test_plan_downstream_subworkflow_placeholders_satisfy_required_inputs(tmp_pa
     write_workflow_file(
         {
             "nodes": [
-                {"id": "upstream", "type": "shell", "params": {"command": f"echo up2 >> {log_file}; printf up2"}},
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo up2 >> {log_file}; printf up2"},
+                },
                 {
                     "id": "middle",
                     "type": "workflow",
@@ -1784,6 +1865,7 @@ def test_plan_summary_execute_by_type_aggregates_across_nested(tmp_path) -> None
                 {
                     "id": "child-shell",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": f"echo s >> {log_file}; printf '${{seed}}'"},
                 },
             ],
@@ -1795,7 +1877,12 @@ def test_plan_summary_execute_by_type_aggregates_across_nested(tmp_path) -> None
     write_workflow_file(
         {
             "nodes": [
-                {"id": "parent-shell", "type": "shell", "params": {"command": f"echo p >> {log_file}; printf p"}},
+                {
+                    "id": "parent-shell",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo p >> {log_file}; printf p"},
+                },
                 {
                     "id": "middle",
                     "type": "workflow",
@@ -1812,7 +1899,12 @@ def test_plan_summary_execute_by_type_aggregates_across_nested(tmp_path) -> None
     write_workflow_file(
         {
             "nodes": [
-                {"id": "parent-shell", "type": "shell", "params": {"command": f"echo p2 >> {log_file}; printf p2"}},
+                {
+                    "id": "parent-shell",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo p2 >> {log_file}; printf p2"},
+                },
                 {
                     "id": "middle",
                     "type": "workflow",
@@ -1871,7 +1963,12 @@ def test_plan_downstream_bfs_detects_sub_workflow_cycle(tmp_path) -> None:
         {
             "inputs": {"seed": {"type": "string", "description": "seed"}},
             "nodes": [
-                {"id": "upstream", "type": "shell", "params": {"command": f"echo u >> {log_file}; printf '${{seed}}'"}},
+                {
+                    "id": "upstream",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": f"echo u >> {log_file}; printf '${{seed}}'"},
+                },
                 {
                     "id": "call-child",
                     "type": "workflow",
@@ -1924,11 +2021,13 @@ def test_plan_cached_end_action_terminates_cleanly(tmp_path) -> None:
             {
                 "id": "a",
                 "type": "shell",
+                "cache": True,
                 "params": {"command": f"echo a >> {log_file}; printf a"},
             },
             {
                 "id": "b",
                 "type": "code",
+                "cache": True,
                 "params": {"code": 'next: str = "end"\nresult: str = "done"'},
             },
         ],
@@ -1982,6 +2081,7 @@ Input value.
 Echoes the value.
 
 - type: shell
+- cache: true
 - command: echo a:${{value}} >> {log_file}; printf a:${{value}}
 
 ## Outputs
@@ -2018,6 +2118,7 @@ Input value.
 Echoes the value.
 
 - type: shell
+- cache: true
 - command: echo b:${{value}} >> {log_file}; printf b:${{value}}
 
 ## Outputs

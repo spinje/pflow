@@ -44,6 +44,7 @@ def test_plan_node_returns_miss_with_cache_key(tmp_path) -> None:
         batch_config=None,
         namespaced=False,
         interface_metadata=None,
+        cache_enabled=True,
     )
     shared = {"__execution__": {"node_visit_counts": {}}, "__memoization_cache__": cache}
 
@@ -64,6 +65,7 @@ def test_plan_node_returns_cached_memo(tmp_path) -> None:
         batch_config=None,
         namespaced=False,
         interface_metadata=None,
+        cache_enabled=True,
     )
     shared = {"__execution__": {"node_visit_counts": {}}, "__memoization_cache__": cache}
 
@@ -89,6 +91,7 @@ def test_plan_node_returns_cached_in_process() -> None:
         batch_config=None,
         namespaced=False,
         interface_metadata=None,
+        cache_enabled=True,
     )
     shared = {"__execution__": {"node_visit_counts": {}}}
     fresh = plan_node(node, config, shared)
@@ -142,6 +145,7 @@ def test_plan_node_does_not_mutate_shared_on_cache_hit(tmp_path) -> None:
         batch_config=None,
         namespaced=False,
         interface_metadata=None,
+        cache_enabled=True,
     )
     shared = {"__execution__": {"node_visit_counts": {}}, "__memoization_cache__": cache}
 

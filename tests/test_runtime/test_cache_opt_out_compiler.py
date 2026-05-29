@@ -45,8 +45,9 @@ class TestCacheOptOutCompilation:
         config = compiled.node_configs["analyze"]
         assert config.cache_enabled is True
 
-    def test_cache_absent_defaults_to_true(self):
-        """Node without cache setting should default to cache_enabled=True."""
+    def test_cache_absent_defaults_per_node_type(self):
+        """Cache default depends on node type. Only `llm` caches by default."""
+        # Shell defaults to cache_enabled=False (side-effecting).
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -60,5 +61,21 @@ class TestCacheOptOutCompilation:
             "edges": [],
         }
         compiled = compile_workflow(ir, Registry())
-        config = compiled.node_configs["echo"]
-        assert config.cache_enabled is True
+        assert compiled.node_configs["echo"].cache_enabled is False
+
+    def test_default_cache_for_node_type_predicate(self):
+        """The predicate that gates cache defaults — only `llm` is True."""
+        from pflow.runtime.compilation.compiler import _default_cache_for_node_type
+
+        assert _default_cache_for_node_type("llm") is True
+        assert _default_cache_for_node_type("shell") is False
+        assert _default_cache_for_node_type("code") is False
+        assert _default_cache_for_node_type("claude-code") is False
+        assert _default_cache_for_node_type("http") is False
+        assert _default_cache_for_node_type("read-file") is False
+        assert _default_cache_for_node_type("write-file") is False
+        assert _default_cache_for_node_type("copy-file") is False
+        assert _default_cache_for_node_type("move-file") is False
+        assert _default_cache_for_node_type("delete-file") is False
+        assert _default_cache_for_node_type("mcp-foo-bar") is False
+        assert _default_cache_for_node_type("workflow") is False

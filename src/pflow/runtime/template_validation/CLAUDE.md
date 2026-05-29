@@ -37,9 +37,9 @@ from pflow.runtime.template_validation.validator import (
 
 ## Cache template extraction — split-extractor contract (Task 159)
 
-Workflow-level `## Cache` chunk vars (`workflow_ir["cache"]["items"][i]["var"]`) live in `_extract_cache_templates_for_unused_check` and are kept OUT of the `all_templates` set that flows into `validate_template_paths`. Cache var resolution is owned by `core/workflow/data_flow.py::_validate_cache_block`, which emits richer "Cache chunk 'X' references..." diagnostics with similar-name suggestions and source-line metadata. If both extractors fed the same set, the user would see two errors for one mistake.
+Workflow-level `## Cache` chunk vars (`workflow_ir["cache"]["items"][i]["var"]`) live in `_extract_cache_templates_for_unused_check` and are kept OUT of the template sets that flow into the validation passes. Cache var resolution is owned by `core/workflow/data_flow.py::_validate_cache_block`, which emits richer "Cache chunk 'X' references..." diagnostics with similar-name suggestions and source-line metadata. If both extractors fed the same set, the user would see two errors for one mistake.
 
-The union of both extractors is computed inline at the call site in `validate_workflow_templates` and passed ONLY to `_validate_unused_inputs` so cache-only inputs aren't flagged as unused. Other passes (path validation, type validation, batch item, code-node) MUST continue to receive `all_templates` only.
+The union of `_extract_all_templates` + cache templates is computed inline at the call site in `validate_workflow_templates` and passed ONLY to `_validate_unused_inputs` so cache-only inputs aren't flagged as unused. Pass 5 (path validation) instead receives `_field_checkable_templates()` (excludes `??`-chain operands — see "Coalesce operands" below). Passes 6-9 re-extract from the IR themselves and do not consume either set.
 
 ## Dependency Graph (no cycles)
 
@@ -163,11 +163,15 @@ Three patterns exist, each serving a different purpose:
 
 ### Coalesce operands are pre-split before passes
 
-`_extract_all_templates()` splits `${a.field ?? b.field}` into individual operands before any pass sees them. Passes 5-8 validate each operand independently. This means both operands are validated even though at runtime the fallback may never execute — a deliberate tradeoff favoring early error detection over suppressing unreachable-path warnings.
+`_iter_template_operands()` splits `${a.field ?? b.field}` into individual operands. Two derived sets come from it: `_extract_all_templates()` (every non-literal operand — used for unused-input detection) and `_field_checkable_templates()` (operands eligible for Pass-5 path/field validation).
+
+**Multi-operand `??` chains are NOT field-checked (issue #441).** Because `??` falls through on a missing field at runtime (`resolve_coalesce` skips an operand whose node ran but whose field is absent, then tries the next), field-checking `${ran_node.optional_field ?? "x"}` would hard-error on a legitimately-optional field — a validator/runtime drift. So coalesce operands are excluded from `_field_checkable_templates`; their **root** existence is still validated in `core/workflow/data_flow.py` (`${nonexistent.x ?? "d"}` is still caught), and a **bare** `${node.field}` with no `??` stays fully field-checked (typos caught). This deliberately reverses the older "validate both operands early" tradeoff to match the runtime fall-through semantics.
+
+**JSON-literal operands (Optional A)**: operands can be JSON literals (`${a ?? 0}`, `${a ?? "x"}`, `${a ?? null}`, bare `${0}`). `_PERMISSIVE_PATTERN` embeds `TemplateResolver._LITERAL_PATTERN` so these don't trip the malformed-template check, and every extractor drops literal operands via `TemplateResolver.is_literal_operand` before treating them as variable references (otherwise `0` would be a bogus "no valid source" node). `_LITERAL_PATTERN` must match only what `try_parse_json` + the `??`-splitter can handle at runtime — it forbids leading-zero numbers (`007`) and `??` inside string literals; a mismatch there means a literal validates clean then silently fails to resolve. `_malformed_literal_operand_hint` emits the targeted "literal operand must be a JSON value" error when an operand looks literal-ish but fails the grammar.
 
 ### Passes 5 vs 6-7 see different template sets
 
-Pass 5 (path validation) uses `_PERMISSIVE_PATTERN` via `_extract_all_templates()` with `split_template_path()` — it sees and validates nested bracket templates like `${results[${__index__}].field}`.
+Pass 5 (path validation) uses `_PERMISSIVE_PATTERN` via `_field_checkable_templates()` with `split_template_path()` — it sees and validates nested bracket templates like `${results[${__index__}].field}` (but excludes `??`-chain operands, see above).
 
 Passes 6-7 (type validation) use `TemplateResolver.extract_variables()` which uses the strict `TEMPLATE_PATTERN` — nested bracket templates are invisible to it (only the inner `${__index__}` is captured). These templates silently skip type checking. This is acceptable because the inner variables (typically `__index__`) resolve to simple types (`int`) that don't cause type conflicts.
 

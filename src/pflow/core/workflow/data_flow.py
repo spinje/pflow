@@ -20,6 +20,7 @@ from pflow.core.diagnostic import (
     Severity,
 )
 from pflow.core.suggestion_utils import find_similar_items
+from pflow.core.types import is_template_reserved_internal_key
 from pflow.runtime.template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,76 @@ def _check_forward_reference(
     )
 
 
-def _validate_template_reference(
+def _reserved_internal_key_diagnostic(
+    ref: str,
+    ref_node_id: str,
+    node_id: str,
+    param_name: str,
+    *,
+    has_path: bool,
+) -> Optional[Diagnostic]:
+    """Targeted error for ``${__execution__}`` / ``${__index__.x}`` references.
+
+    Catches reserved double-underscore keys in BOTH bare (``${__cache_hits__}``)
+    and path (``${__execution__.x}``) forms. The ``__index__`` path-access error
+    only fires when ``has_path`` — bare ``${__index__}`` is the one valid
+    reserved reference (the current batch item index).
+
+    Returns None when ``ref_node_id`` is not a reserved internal key (the caller
+    then falls through to the generic "non-existent node" path).
+
+    Validator-only by design: at runtime ``TemplateResolver`` resolves against
+    ``dict(shared)``, which DOES contain ``__execution__`` — so a workflow that
+    skipped validation could observe the back door. That is intentional: all
+    production ``compile_workflow`` callers route through
+    ``_validate_data_flow_at_compile_time``, so an invalid workflow never reaches
+    runtime. One source of truth beats a duplicate runtime guard.
+    """
+    path = f"nodes[id={node_id}].params.{param_name}"
+
+    if is_template_reserved_internal_key(ref_node_id):
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Validation Error",
+            node_id=node_id,
+            message=(
+                f"Template '${{{ref_node_id}}}' in node '{node_id}' "
+                f"(parameter '{param_name}') is not available. "
+                f"Names starting and ending with double-underscore are reserved by pflow."
+            ),
+            suggestions=[
+                "Only `${__index__}` (the current batch item index) is available in templates.",
+                "To track iteration count across loop visits, maintain a counter explicitly: "
+                "a checker node returns `prior + 1`, seeded from `${checker.result ?? 0}` "
+                "on the first visit. See `pflow guide branching` -> Loops for a worked example.",
+            ],
+            context={"category": "validation", "path": path},
+        )
+
+    if ref_node_id == "__index__" and has_path:
+        path_remainder = ref[len(ref_node_id) :].lstrip(".")
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Validation Error",
+            node_id=node_id,
+            message=(
+                f"Template '${{__index__.{path_remainder}}}' in node '{node_id}' "
+                f"(parameter '{param_name}') accesses fields on `__index__`, "
+                f"which is an integer (the current batch item index)."
+            ),
+            suggestions=[
+                "Use bare `${__index__}` for the item position number.",
+                "For batch item data, use `${item}` or `${item.field}` on a batch node.",
+            ],
+            context={"category": "validation", "path": path},
+        )
+
+    return None
+
+
+def _validate_template_reference(  # noqa: C901
     ref: str,
     node_id: str,
     param_name: str,
@@ -191,6 +261,16 @@ def _validate_template_reference(
     # Extract root identifier (before first . or [)
     root = TemplateResolver.extract_root_node_id(ref)
     has_path = root != ref
+
+    # Reserved internal keys (e.g. ${__execution__} or ${__execution__.x}) get a
+    # targeted error before any other branch — both bare and path forms, so a bare
+    # ${__cache_hits__} doesn't fall through to the generic "undefined input"
+    # message. The __index__ path-access error stays inside the has_path branch
+    # (bare ${__index__} is valid). Validator-only by design — see
+    # _reserved_internal_key_diagnostic for the runtime-asymmetry note.
+    reserved = _reserved_internal_key_diagnostic(ref, root, node_id, param_name, has_path=has_path)
+    if reserved is not None:
+        return reserved
 
     if has_path:  # Node output reference like ${node1.output} or ${data[0].field}
         ref_node_id = root
@@ -435,6 +515,12 @@ def _check_param_value(
     if isinstance(value, str) and "${" in value:
         for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(value):
             for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                # Literal operands (Optional A) are values, not node/input refs.
+                # Filter BEFORE _validate_template_reference — keyword literals
+                # (null/true/false) match _PFLOW_VAR_RE and would otherwise
+                # produce false "undefined input" errors.
+                if TemplateResolver.is_literal_operand(operand):
+                    continue
                 error = _validate_template_reference(
                     operand,
                     node_id,

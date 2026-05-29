@@ -13,7 +13,6 @@ Fails.
 - type: shell
 - on-error: fallback
 - next: end
-- cache: false
 
 ```shell command
 exit 7
@@ -25,7 +24,6 @@ Succeeds.
 
 - type: shell
 - next: end
-- cache: false
 
 ```shell command
 echo "ok"

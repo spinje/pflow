@@ -147,7 +147,6 @@ Detect the most recent git tag to use as the changelog baseline.
 Falls back to `v0.0.0` if no tags exist.
 
 - type: shell
-- cache: false
 
 ```shell command
 git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'

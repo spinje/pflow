@@ -1012,3 +1012,77 @@ class TestImprovedErrorMessages:
         errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
         assert "no inputs are declared" in errors[0]
+
+
+class TestReservedInternalKeyReferences:
+    """Error 3b: ${__execution__.x} and friends get a targeted error, not the
+    misleading 'non-existent node, did you mean __index__' message."""
+
+    def _wf(self, command: str) -> dict:
+        return {
+            "nodes": [{"id": "n1", "type": "shell", "params": {"command": command}}],
+            "edges": [],
+            "inputs": {},
+        }
+
+    def test_execution_reference_emits_reserved_key_error(self):
+        diagnostics = validate_data_flow(self._wf("echo ${__execution__.node_visit_counts.x}"))
+        assert len(diagnostics) == 1
+        diag = diagnostics[0]
+        assert "reserved by pflow" in diag.message
+        assert "__execution__" in diag.message
+        # Must NOT misdirect to __index__ as a typo suggestion.
+        assert not any("Did you mean '__index__'" in (s or "") for s in (diag.suggestions or []))
+
+    def test_failures_reference_emits_reserved_key_error(self):
+        diagnostics = validate_data_flow(self._wf("echo ${__failures__.x}"))
+        assert len(diagnostics) == 1
+        assert "reserved by pflow" in diagnostics[0].message
+
+    def test_cache_hits_reference_emits_reserved_key_error(self):
+        diagnostics = validate_data_flow(self._wf("echo ${__cache_hits__.x}"))
+        assert len(diagnostics) == 1
+        assert "reserved by pflow" in diagnostics[0].message
+
+    def test_bare_reserved_key_emits_reserved_key_error(self):
+        # Bare ${__cache_hits__} (no path) must ALSO get the targeted error,
+        # not the generic "undefined input" message.
+        for cmd in ("echo ${__cache_hits__}", "echo ${__memoization_cache__}", "echo ${__execution__}"):
+            diagnostics = validate_data_flow(self._wf(cmd))
+            assert len(diagnostics) == 1, f"{cmd}: {[d.message for d in diagnostics]}"
+            assert "reserved by pflow" in diagnostics[0].message, cmd
+
+    def test_bare_index_in_batch_is_valid(self):
+        # Bare ${__index__} is the one valid reserved reference (batch item index).
+        wf = {
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "shell",
+                    "params": {"command": "echo ${__index__}"},
+                    "batch": {"items": [1, 2]},
+                }
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        assert validate_data_flow(wf) == []
+
+    def test_index_path_access_emits_integer_error(self):
+        diagnostics = validate_data_flow(self._wf("echo ${__index__.foo}"))
+        assert len(diagnostics) == 1
+        diag = diagnostics[0]
+        assert "integer" in diag.message
+        assert "reserved by pflow" not in diag.message
+
+    def test_non_underscore_typo_still_non_existent_node(self):
+        diagnostics = validate_data_flow(self._wf("echo ${not_a_node.x}"))
+        assert len(diagnostics) == 1
+        assert "non-existent node" in diagnostics[0].message
+
+    def test_single_underscore_reserved_falls_through(self):
+        # _pflow_depth uses single-underscore prefix → not caught by the
+        # double-underscore predicate; falls to existing non-existent-node path.
+        diagnostics = validate_data_flow(self._wf("echo ${_pflow_depth.x}"))
+        assert len(diagnostics) == 1
+        assert "reserved by pflow" not in diagnostics[0].message

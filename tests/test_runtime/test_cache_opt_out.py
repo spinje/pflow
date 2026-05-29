@@ -35,13 +35,14 @@ class TestPerNodeCacheOptOut:
         cache_hits = result2.shared_after.get("__cache_hits__", [])
         assert "get-branch" not in cache_hits
 
-    def test_cache_default_node_is_memoized(self):
-        """A node without cache setting should use memoization by default."""
+    def test_cache_explicit_true_node_is_memoized(self):
+        """A node with explicit cache: true should use memoization."""
         ir = {
             "nodes": [
                 {
                     "id": "echo",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "echo hello"},
                     "purpose": "Deterministic command, safe to cache",
                 }
@@ -95,38 +96,36 @@ class TestPerNodeCacheOptOut:
         the exact silent-correctness bug this feature prevents.
 
         This is testable because 'cache' is not part of the config hash:
-        a node with cache:false and the same node without it produce
+        a node with cache:false and the same node with cache:true produce
         identical cache keys. A leaked write would be a live grenade.
         """
-        # Run 1: execute with cache: false — should NOT write to cache
-        ir_uncached = {
-            "nodes": [
-                {
-                    "id": "cmd",
-                    "type": "shell",
-                    "cache": False,
-                    "params": {"command": "echo hello"},
-                    "purpose": "Node with cache disabled, must not pollute cache",
-                }
-            ],
-        }
+
+        # The two runs use IDENTICAL IR except the `cache` flag — which is NOT
+        # part of the config hash, so both produce the same cache key. This is
+        # load-bearing: if run 1 (cache:false) leaked a write, run 2 (cache:true)
+        # would read that exact key and report a hit. (Differing `purpose` or
+        # command would produce different keys and could never expose a leak.)
+        def _ir(cache: bool) -> dict:
+            return {
+                "nodes": [
+                    {
+                        "id": "cmd",
+                        "type": "shell",
+                        "cache": cache,
+                        "params": {"command": "echo hello"},
+                        "purpose": "Probe whether a cache:false node leaks a memo write",
+                    }
+                ],
+            }
+
         runner = WorkflowRunner()
-        result1 = runner.run(ir_uncached, {}, RunnerConfig())
+        # Run 1: cache: false — must NOT write to the memo cache.
+        result1 = runner.run(_ir(False), {}, RunnerConfig())
         assert result1.success
 
-        # Run 2: same node, same command, but WITHOUT cache: false.
-        # If run 1 leaked a write, this would be a cache hit.
-        ir_cached = {
-            "nodes": [
-                {
-                    "id": "cmd",
-                    "type": "shell",
-                    "params": {"command": "echo hello"},
-                    "purpose": "Node with cache disabled, must not pollute cache",
-                }
-            ],
-        }
-        result2 = runner.run(ir_cached, {}, RunnerConfig())
+        # Run 2: identical IR but cache: true. If run 1 leaked a write under the
+        # shared key, this would be a cache hit.
+        result2 = runner.run(_ir(True), {}, RunnerConfig())
         assert result2.success
 
         # Must NOT be a cache hit — run 1 must not have written
@@ -195,6 +194,7 @@ class TestPerNodeCacheOptOut:
                 {
                     "id": "process",
                     "type": "shell",
+                    "cache": True,
                     "params": {"command": "echo ${get-branch.stdout}"},
                     "purpose": "Processes branch name, normal caching",
                 },

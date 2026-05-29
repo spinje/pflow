@@ -400,7 +400,7 @@ The cache is content-addressed — same node config plus same resolved inputs pr
 
 ### Run a single node
 
-The `--only` flag runs the workflow through the named node and stops. Upstream nodes are served from cache if available, downstream nodes don't execute:
+The `--only` flag runs the workflow from the start through the named node, then stops — downstream nodes don't execute. Upstream nodes along the way are re-run unless they're cached: only `llm` nodes (and any node with `cache: true`) come from cache, so a side-effecting upstream node like `shell: git push` runs again on each `--only` invocation:
 
 ```bash
 pflow ./workflow.pflow.md --only process-data
@@ -420,9 +420,9 @@ pflow ./workflow.pflow.md --no-cache
 
 Use this when a node has external side effects (API calls, file writes) that should run again, or when memoized results seem stale. It does not disable LLM provider prompt caching declared with `## Cache` / `prompt_cache:`, OpenAI automatic prompt caching, or Gemini implicit caching.
 
-### Per-node opt-out
+### Per-node caching
 
-For nodes that read runtime state (`git branch`, `date`, environment variables), use `- cache: false` to permanently skip caching for that node. Unlike `--no-cache`, this skips both cache reads and writes:
+Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (`shell`, `code`, `http`, file ops, `mcp`, `claude-code`) defaults to NOT caching, because they side-effect or read external state (`git branch`, `date`, environment variables, files, network). So a node like `git branch --show-current` re-runs every time with no annotation needed:
 
 ```markdown
 ### get-branch
@@ -430,14 +430,13 @@ For nodes that read runtime state (`git branch`, `date`, environment variables),
 Detect the current git branch.
 
 - type: shell
-- cache: false
 
 ```shell command
 git branch --show-current
 ```
 ```
 
-Validation warns when a shell node has no template inputs and no explicit `cache:` setting — its result gets cached and reused across runs, which silently goes stale if the command reads live state (`git`, `date`, environment, files). Resolve it either way: add `- cache: false` if the command reads runtime state, or `- cache: true` to confirm the output is static and silence the warning.
+Use `- cache: true` to opt a node INTO caching when its output is purely a function of its declared inputs (no filesystem reads, no clock, no env vars, no network state). Most shell/code/http/file/mcp nodes do not qualify. `- cache: false` is the explicit opt-out — redundant for non-`llm` nodes under the default, but useful for documenting intent. Both skip cache reads and writes for that node, unlike `--no-cache` which is run-wide.
 
 ## Traces and reports
 

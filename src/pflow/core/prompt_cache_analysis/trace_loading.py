@@ -526,6 +526,9 @@ def _resolve_ir_static_model_for_node(
         batch_alias = _batch_alias_for_node(node)
         for match in TemplateResolver.TEMPLATE_PATTERN.finditer(explicit):
             for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                # Literal operands (Optional A) contribute no trace ref.
+                if TemplateResolver.is_literal_operand(operand):
+                    continue
                 root = TemplateResolver.extract_root_node_id(operand)
                 if root == batch_alias:
                     return ""
