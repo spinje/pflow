@@ -52,7 +52,6 @@ from pflow.core.exceptions import (
     UnknownModelError,
 )
 from pflow.core.llm_providers import detect_provider, normalize_model_name
-from pflow.core.llm_reasoning_map import DEFAULT_MAX_TOKENS_BASE, EFFORT_RATIOS
 from pflow.core.llm_usage import normalize_litellm_usage_tokens
 
 logger = logging.getLogger(__name__)
@@ -727,26 +726,20 @@ def _translate_reasoning_for_litellm(model: str, kwargs: dict[str, Any]) -> dict
     out: dict[str, Any] = {}
     leftover = dict(kwargs)
 
-    thinking_effort = leftover.pop("thinking_effort", None)
     thinking_flag = leftover.pop("thinking", None)
     thinking_budget = leftover.pop("thinking_budget", None)
 
-    if thinking_effort is not None:
-        # Opus 4.5 path. LiteLLM's standardized ``thinking`` param uses
-        # budget_tokens, not effort_level. Derive budget from effort using
-        # the same EFFORT_RATIOS the budget-style models use, so
-        # behavior is internally consistent across Anthropic models.
-        ratio = EFFORT_RATIOS.get(thinking_effort, 0.5)
-        budget = max(min(int(DEFAULT_MAX_TOKENS_BASE * ratio), 128000), 1024)
-        out["thinking"] = {"type": "enabled", "budget_tokens": budget}
-    elif thinking_flag is True and thinking_budget is not None:
-        # Older Anthropic path (Sonnet 4.x, Opus 4.0/4.1)
+    if thinking_flag is True and thinking_budget is not None:
+        # Budget-style Anthropic models (Sonnet 4.x, Opus 4.0/4.1/4.5). The
+        # budget was already derived and fit under max_tokens by
+        # llm_reasoning_map, so it just needs reshaping to LiteLLM's native
+        # thinking dict here.
         out["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
     elif thinking_flag is True:
         raise InvalidRequestError(
             f"Invalid reasoning options for model '{model}': thinking=True requires "
-            "thinking_budget or thinking_effort. Use reasoning_effort or "
-            "reasoning_max_tokens on the LLM node instead of raw model_options.",
+            "thinking_budget. Use reasoning_effort or reasoning_max_tokens on the "
+            "LLM node instead of raw model_options.",
             model=model,
         )
     elif thinking_flag is False:

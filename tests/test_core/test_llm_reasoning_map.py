@@ -12,8 +12,9 @@ from __future__ import annotations
 import pytest
 
 from pflow.core.llm_reasoning_map import (
-    DEFAULT_MAX_TOKENS_BASE,
+    EFFORT_BUDGET_BASE,
     EFFORT_RATIOS,
+    SAFETY_FRACTION,
     _detect_capabilities,
     map_reasoning_options,
 )
@@ -24,25 +25,23 @@ from pflow.core.llm_reasoning_map import (
 
 
 class TestDetectCapabilitiesAnthropic:
-    """Anthropic Opus 4.5 has thinking_effort precedence; older Anthropic doesn't."""
+    """Opus 4.5 collapses into the generic Anthropic budget caps (no special
+    thinking_effort relay — see #446); Opus 4.7 stays adaptive."""
 
-    def test_opus_45_has_thinking_effort(self):
-        # Order invariant: thinking_effort MUST be in the set for Opus 4.5
-        # so that map_reasoning_options dispatches to the thinking_effort
-        # branch FIRST. Getting this wrong silently degrades reasoning.
+    def test_opus_45_uses_budget_caps(self):
+        # Opus 4.5 no longer carries a `thinking_effort` capability. It uses
+        # the same thinking + thinking_budget path as every other Anthropic
+        # budget-style model; the budget is derived in llm_reasoning_map.
         caps = _detect_capabilities("anthropic/claude-opus-4-5")
-        assert "thinking_effort" in caps
-        assert "thinking" in caps
-        assert "thinking_budget" in caps
+        assert caps == {"thinking", "thinking_budget"}
 
     def test_opus_45_dotted_alias(self):
-        caps = _detect_capabilities("anthropic/claude-opus-4.5")
-        assert "thinking_effort" in caps
+        assert _detect_capabilities("anthropic/claude-opus-4.5") == {"thinking", "thinking_budget"}
 
     def test_opus_45_dated_variant(self):
         # Real Anthropic model ids include a date suffix (e.g. -20251101)
         caps = _detect_capabilities("anthropic/claude-opus-4-5-20251101")
-        assert "thinking_effort" in caps
+        assert caps == {"thinking", "thinking_budget"}
 
     def test_opus_47_uses_adaptive_reasoning_effort(self):
         # Opus 4.7 must NOT get the legacy thinking/thinking_budget caps — that
@@ -198,9 +197,9 @@ class TestMapReasoningMaxTokens:
         assert result == {"thinking": True, "thinking_budget": 8000}
 
     def test_anthropic_opus_45_thinking_budget(self):
-        # Opus 4.5 uses thinking_budget for direct budget too (the
-        # _map_direct_budget helper checks thinking_budget before
-        # thinking_effort — by design)
+        # Opus 4.5 uses the same thinking_budget shape as every other
+        # Anthropic model for direct budgets (#446 removed its thinking_effort
+        # relay, so there is no longer a separate path to dispatch).
         result = map_reasoning_options("anthropic/claude-opus-4-5", None, 8000, None)
         assert result == {"thinking": True, "thinking_budget": 8000}
 
@@ -218,15 +217,27 @@ class TestMapReasoningMaxTokens:
         assert result == {"thinking": True, "thinking_budget": 8000}
 
     def test_opus_45_max_tokens_takes_precedence_over_effort(self):
-        # Opus 4.5 is the only model with BOTH thinking_effort capability
-        # (used when only effort is provided) AND thinking_budget capability
-        # (used for direct budget). When both inputs are given, max_tokens
-        # wins per map_reasoning_options' contract — the thinking_budget
-        # shape is returned, NOT the thinking_effort shape. Easy to break
-        # by reordering the precedence dispatch in map_reasoning_options.
+        # When both reasoning_max_tokens and reasoning_effort are given, the
+        # direct budget wins per map_reasoning_options' contract — the explicit
+        # 8000 budget is returned, not an effort-derived one. Easy to break by
+        # reordering the precedence dispatch in map_reasoning_options. (The
+        # exact-equality assertion already pins that no effort shape leaks in.)
         result = map_reasoning_options("anthropic/claude-opus-4-5", "high", 8000, None)
         assert result == {"thinking": True, "thinking_budget": 8000}
-        assert "thinking_effort" not in result
+
+    def test_explicit_budget_clamped_under_max_tokens(self):
+        # #446: the explicit reasoning_max_tokens path is clamped under
+        # max_tokens too, not just the effort path. 15000 + max_tokens=4000
+        # → 4000 * 0.8 = 3200, keeping budget < max_tokens.
+        result = map_reasoning_options("anthropic/claude-sonnet-4-5", None, 15000, 4000)
+        assert result == {"thinking": True, "thinking_budget": 3200}
+
+    def test_openai_explicit_budget_not_clamped(self):
+        # OpenAI has no hard budget < max_tokens constraint, so the direct
+        # budget passes through unchanged — the deliberate asymmetry with
+        # Anthropic/Gemini that _map_direct_budget's docstring promises.
+        result = map_reasoning_options("gpt-5-mini", None, 15000, 4000)
+        assert result == {"reasoning_max_tokens": 15000}
 
 
 class TestMapReasoningEffortNone:
@@ -254,34 +265,49 @@ class TestMapReasoningEffortNone:
         assert result == {}
 
 
-class TestOpus45ThinkingEffortPrecedence:
-    """CRITICAL: Anthropic Opus 4.5 has BOTH thinking_effort and thinking_budget.
+class TestOpus45Effort:
+    """Opus 4.5 derives a thinking budget through the shared path (#446).
 
-    thinking_effort MUST be checked first or reasoning is silently degraded.
-    This is the highest-stakes test in the file.
+    It used to emit a categorical ``thinking_effort`` that never reached the
+    API. It now produces the SAME budget as every other Anthropic
+    budget-style model (see ``TestEffortOpusSonnetParity``). xhigh and
+    minimal are no longer collapsed to high/low — they get their own ratios.
     """
 
+    MODEL = "anthropic/claude-opus-4-5"
+
     def test_high(self):
-        result = map_reasoning_options("anthropic/claude-opus-4-5", "high", None, None)
-        # Must dispatch to thinking_effort branch — NOT thinking_budget branch
-        assert result == {"thinking_effort": "high"}
-        assert "thinking_budget" not in result
+        result = map_reasoning_options(self.MODEL, "high", None, None)
+        assert result == {"thinking": True, "thinking_budget": 12800}  # 0.80 * 16000
+        assert "thinking_effort" not in result
 
-    def test_xhigh_maps_to_high(self):
-        result = map_reasoning_options("anthropic/claude-opus-4-5", "xhigh", None, None)
-        assert result == {"thinking_effort": "high"}
+    def test_xhigh(self):
+        result = map_reasoning_options(self.MODEL, "xhigh", None, None)
+        assert result == {"thinking": True, "thinking_budget": 15200}  # 0.95 * 16000
 
-    def test_minimal_maps_to_low(self):
-        result = map_reasoning_options("anthropic/claude-opus-4-5", "minimal", None, None)
-        assert result == {"thinking_effort": "low"}
+    def test_minimal(self):
+        result = map_reasoning_options(self.MODEL, "minimal", None, None)
+        assert result == {"thinking": True, "thinking_budget": 1600}  # 0.10 * 16000
 
     def test_low(self):
-        result = map_reasoning_options("anthropic/claude-opus-4-5", "low", None, None)
-        assert result == {"thinking_effort": "low"}
+        result = map_reasoning_options(self.MODEL, "low", None, None)
+        assert result == {"thinking": True, "thinking_budget": 3200}  # 0.20 * 16000
 
     def test_medium(self):
-        result = map_reasoning_options("anthropic/claude-opus-4-5", "medium", None, None)
-        assert result == {"thinking_effort": "medium"}
+        result = map_reasoning_options(self.MODEL, "medium", None, None)
+        assert result == {"thinking": True, "thinking_budget": 8000}  # 0.50 * 16000
+
+
+class TestEffortOpusSonnetParity:
+    """#446 root fix: Opus 4.5 and Sonnet 4.5 now derive IDENTICAL budgets for
+    the same (effort, max_tokens). The old Sonnet-vs-Opus-4.5 split is gone."""
+
+    @pytest.mark.parametrize("effort", list(EFFORT_RATIOS))
+    @pytest.mark.parametrize("max_tokens", [None, 4000, 16000, 64000])
+    def test_opus_45_matches_sonnet(self, effort: str, max_tokens: int | None):
+        opus = map_reasoning_options("anthropic/claude-opus-4-5", effort, None, max_tokens)
+        sonnet = map_reasoning_options("anthropic/claude-sonnet-4-5", effort, None, max_tokens)
+        assert opus == sonnet
 
 
 class TestOpus47AdaptiveReasoning:
@@ -361,41 +387,66 @@ class TestEffortGemini3:
         assert result == {"thinking_level": "minimal"}
 
 
+def _expected_budget(effort: str, max_tokens: int | None) -> int:
+    """Mirror of llm_reasoning_map._fit_budget for the effort path (#446)."""
+    desired = int(EFFORT_BUDGET_BASE * EFFORT_RATIOS[effort])
+    if max_tokens is not None:
+        desired = min(desired, int(max_tokens * SAFETY_FRACTION))
+    return max(min(desired, 128000), 1024)
+
+
 class TestEffortTokenBudgetCalculation:
-    """Anthropic Sonnet (older), Gemini 2.5 — needs token budget formula."""
+    """Anthropic / Gemini 2.5 — clamp semantics (#446): effort drives depth
+    against a fixed base; max_tokens only constrains."""
 
-    def test_anthropic_high_with_max_tokens(self):
+    def test_anthropic_high_with_max_tokens_equal_to_base(self):
+        # max_tokens == base, so cap (0.8*16000) == desired (0.8*16000) == 12800.
         result = map_reasoning_options("anthropic/claude-sonnet-4-5", "high", None, 16000)
-        expected_budget = int(16000 * 0.80)
-        assert result == {"thinking": True, "thinking_budget": expected_budget}
+        assert result == {"thinking": True, "thinking_budget": 12800}
 
-    def test_anthropic_high_uses_default_when_max_tokens_none(self):
+    def test_anthropic_high_uses_fixed_base_when_max_tokens_none(self):
         result = map_reasoning_options("anthropic/claude-sonnet-4-5", "high", None, None)
-        expected_budget = int(DEFAULT_MAX_TOKENS_BASE * 0.80)
+        expected_budget = int(EFFORT_BUDGET_BASE * 0.80)  # 12800
         assert result == {"thinking": True, "thinking_budget": expected_budget}
 
-    def test_budget_clamped_minimum(self):
-        # minimal effort with small max_tokens → 200 tokens, clamped to 1024
-        result = map_reasoning_options("anthropic/claude-sonnet-4-5", "minimal", None, 2000)
+    def test_large_max_tokens_does_not_inflate_budget(self):
+        # The headline #446 fix: raising max_tokens for a longer answer must
+        # NOT inflate reasoning spend. high effort caps at the fixed base
+        # (12800), NOT max_tokens * ratio (which would be 51200).
+        result = map_reasoning_options("anthropic/claude-sonnet-4-5", "high", None, 64000)
+        assert result["thinking_budget"] == 12800
+
+    def test_small_max_tokens_clamps_below_ceiling(self):
+        # high effort wants 12800, but max_tokens=4000 caps it to 4000*0.8=3200.
+        result = map_reasoning_options("anthropic/claude-sonnet-4-5", "high", None, 4000)
+        assert result["thinking_budget"] == 3200
+        assert result["thinking_budget"] < 4000  # invariant: budget < max_tokens
+
+    def test_budget_floored_to_minimum(self):
+        # minimal effort with a tiny max_tokens floors to 1024.
+        result = map_reasoning_options("anthropic/claude-sonnet-4-5", "minimal", None, 1100)
         assert result["thinking_budget"] == 1024
 
-    def test_budget_clamped_maximum(self):
-        # xhigh with huge max_tokens → 190000, clamped to 128000
+    def test_huge_max_tokens_caps_at_fixed_base_not_128k(self):
+        # Under clamp the effort budget tops out at the fixed base (xhigh →
+        # 15200), so the 128k ceiling no longer binds via the effort path.
         result = map_reasoning_options("anthropic/claude-sonnet-4-5", "xhigh", None, 200000)
-        assert result["thinking_budget"] == 128000
+        assert result["thinking_budget"] == 15200
 
     def test_gemini_25_has_no_thinking_flag(self):
         # Gemini lacks the `thinking` capability — only thinking_budget
         result = map_reasoning_options("gemini-2.5-pro", "medium", None, 16000)
-        expected_budget = int(16000 * 0.50)
-        assert result == {"thinking_budget": expected_budget}
+        assert result == {"thinking_budget": 8000}  # 0.50 * 16000
 
-    @pytest.mark.parametrize("effort,ratio", EFFORT_RATIOS.items())
-    def test_all_effort_levels_anthropic(self, effort: str, ratio: float):
-        result = map_reasoning_options("anthropic/claude-sonnet-4-5", effort, None, 16000)
-        expected = max(min(int(16000 * ratio), 128000), 1024)
-        assert result["thinking_budget"] == expected
+    @pytest.mark.parametrize("effort", list(EFFORT_RATIOS))
+    @pytest.mark.parametrize("max_tokens", [None, 2000, 4000, 16000, 64000, 200000])
+    def test_budget_always_under_ceiling(self, effort: str, max_tokens: int | None):
+        result = map_reasoning_options("anthropic/claude-sonnet-4-5", effort, None, max_tokens)
+        assert result["thinking_budget"] == _expected_budget(effort, max_tokens)
         assert result["thinking"] is True
+        if max_tokens is not None:
+            # The invariant the whole issue is about.
+            assert result["thinking_budget"] < max_tokens
 
 
 class TestUnsupportedModel:

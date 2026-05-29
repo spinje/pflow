@@ -223,22 +223,15 @@ class TestTranslateReasoningForAnthropic:
         )
         assert result == {"thinking": {"type": "enabled", "budget_tokens": 8000}}
 
-    def test_opus_45_thinking_effort_high(self):
-        # thinking_effort gets translated to budget_tokens via EFFORT_RATIOS.
-        # high (0.80) * DEFAULT_MAX_TOKENS_BASE (16000) = 12800
+    def test_opus_45_budget_reshaped_like_other_anthropic(self):
+        # #446: Opus 4.5 no longer takes a special thinking_effort path. The
+        # map derives a thinking_budget (e.g. high → 12800) and the adapter
+        # reshapes it identically to every other budget-style Anthropic model.
         result = _translate_reasoning_for_litellm(
             "anthropic/claude-opus-4-5",
-            {"thinking_effort": "high"},
+            {"thinking": True, "thinking_budget": 12800},
         )
         assert result == {"thinking": {"type": "enabled", "budget_tokens": 12800}}
-
-    def test_opus_45_thinking_effort_low(self):
-        # low (0.20) * 16000 = 3200
-        result = _translate_reasoning_for_litellm(
-            "anthropic/claude-opus-4-5",
-            {"thinking_effort": "low"},
-        )
-        assert result == {"thinking": {"type": "enabled", "budget_tokens": 3200}}
 
     def test_thinking_false_disables(self):
         result = _translate_reasoning_for_litellm(
@@ -254,7 +247,7 @@ class TestTranslateReasoningForAnthropic:
     def test_thinking_true_without_budget_raises(self):
         with pytest.raises(InvalidRequestError) as exc_info:
             _translate_reasoning_for_litellm("anthropic/claude-sonnet-4-5", {"thinking": True})
-        assert "thinking=True requires thinking_budget or thinking_effort" in str(exc_info.value)
+        assert "thinking=True requires thinking_budget" in str(exc_info.value)
 
     def test_opus_47_reasoning_effort_passes_through(self):
         # Opus 4.7 uses adaptive thinking: llm_reasoning_map emits LiteLLM's
@@ -634,9 +627,10 @@ class TestCompleteUsageNormalization:
         response = complete(
             model="anthropic/claude-opus-4-5",
             prompt="hi",
-            reasoning_kwargs={"thinking_effort": "medium"},
+            # #446: map_reasoning_options now emits a derived budget for Opus
+            # 4.5 (medium → 0.5 * 16000 = 8000), same shape as other Anthropic.
+            reasoning_kwargs={"thinking": True, "thinking_budget": 8000},
         )
-        # 'medium' resolves to 0.5 * 16000 = 8000 budget per the EFFORT_RATIOS map
         assert response.usage["thinking_budget"] == 8000
         assert response.usage["thinking_tokens"] == 512
 
