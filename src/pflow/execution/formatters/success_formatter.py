@@ -372,6 +372,11 @@ def format_success_as_text(  # noqa: C901
         lines.append("⚠️ Warnings:")
         for warning in warnings_list:
             lines.append(format_diagnostic(warning))
+    # Unreachable today: the only production caller is MCP, which passes
+    # WARNING-only diagnostics (see the filter in
+    # mcp_server/services/execution_service.py). Kept for symmetry with the CLI
+    # renderer (workflow_output.py) and exercised by unit tests — a future
+    # caller passing the full diagnostics list exercises it for real.
     if advisories_list:
         lines.append("")
         lines.append("\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:")

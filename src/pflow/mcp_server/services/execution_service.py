@@ -74,6 +74,13 @@ def _format_success_result(
         workflow_metadata=workflow_metadata,
         trace_path=trace_path,
         status=result.status,
+        # INTENTIONAL: MCP surfaces WARNING/ERROR only, never INFO advisories
+        # (e.g. an empty-batch note). MCP agents already see an empty result via
+        # `shared_after` + `batch_metadata.count: 0`, so the advisory would be
+        # redundant noise. This asymmetry with the CLI (which DOES show an
+        # `advisories` section/key) is deliberate — do not "fix" it by passing
+        # the full diagnostics list without a decision. Mirror at the text path
+        # below (`format_success_as_text(..., warning_diagnostics=result.warnings)`).
         warnings=[
             diagnostic for diagnostic in getattr(result, "diagnostics", []) if diagnostic.severity == Severity.WARNING
         ],
@@ -259,6 +266,10 @@ class ExecutionService(BaseService):
                 success_dict = _format_success_result(result, resolved, str(workflow))
                 from pflow.execution.formatters.success_formatter import format_success_as_text
 
+                # `result.warnings` is WARNING-only by design — see the comment at
+                # the `_format_success_result` filter above. INFO advisories are
+                # intentionally not surfaced to MCP, so the formatter's
+                # "Advisories:" branch never fires on this path.
                 return format_success_as_text(success_dict, warning_diagnostics=result.warnings)
             else:
                 error_diagnostics = [d for d in result.diagnostics if d.severity == Severity.ERROR]

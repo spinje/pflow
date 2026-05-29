@@ -403,3 +403,30 @@ class TestDisplayExecutionSummaryAdvisories:
         assert "Workflow completed with 1 warnings" in cli_result.output
         assert "⚠️ Warnings:" in cli_result.output
         assert "Advisories:" not in cli_result.output
+
+    def test_legacy_warnings_dict_key_does_not_resurrect_old_count(self) -> None:
+        """The completion-header count derives from the partitioned
+        ``warning_diagnostics``, NOT the legacy ``formatted_result['warnings']``
+        list. A stray INFO entry in that key must not re-trigger the pre-fix
+        '⚠️ completed with N warnings' header — pins the regression against the
+        old ``len(formatted_result.get('warnings', []))`` source.
+        """
+        formatted = self._formatted()
+        advisory = Diagnostic(
+            severity=Severity.INFO,
+            message="Batch 'consume' ran with 0 items (input list was empty).",
+            node_id="consume",
+            source="runtime",
+        )
+        # Simulate the legacy data source still carrying the advisory: the
+        # pre-fix code counted this list, so a regression to that source would
+        # mis-render the header.
+        formatted["warnings"] = [advisory.to_display_dict()]
+
+        @click.command()
+        def cmd() -> None:
+            _display_execution_summary(formatted, verbose=False, warning_diagnostics=[advisory])
+
+        cli_result = click.testing.CliRunner().invoke(cmd)
+        assert "✓ Workflow completed" in cli_result.output
+        assert "with 1 warnings" not in cli_result.output
