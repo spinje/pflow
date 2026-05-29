@@ -18,7 +18,9 @@ The LLM node calls AI models using [LiteLLM](https://docs.litellm.ai/). Use it w
 | `model` | str | No | See below | Model identifier |
 | `system` | str | No | - | System prompt for behavior guidance |
 | `temperature` | float | No | `1.0` | Sampling temperature (0.0-2.0) |
-| `max_tokens` | int | No | - | Maximum response tokens |
+| `max_tokens` | int | No | - | Response-length ceiling. On reasoning models it caps thinking depth but never raises it — see [Reasoning depth](#reasoning-depth) |
+| `reasoning_effort` | str | No | - | `xhigh`/`high`/`medium`/`low`/`minimal`/`none` — how hard the model thinks |
+| `reasoning_max_tokens` | int | No | - | Explicit thinking-token budget (mutually exclusive with `reasoning_effort`) |
 | `images` | list | No | `[]` | Image URLs or file paths for vision models |
 | `output_schema` | dict | No | - | JSON Schema for structured output |
 | `prompt_cache` | list | No | `[]` | Names of `## Cache` chunks to include as a cached system prefix. See [Prompt caching](/how-it-works/prompt-caching) |
@@ -35,6 +37,16 @@ pflow settings set-env OPENAI_API_KEY "sk-..."
 ```
 
 See [LLM model settings](/reference/cli/settings#llm-model-settings) for the full resolution order and default models per provider.
+
+## Reasoning depth
+
+`reasoning_effort` controls how hard a reasoning model thinks. `max_tokens` controls how long the response may get. They're separate dials, and pflow keeps them that way: effort sets the thinking budget, and `max_tokens` only ever *caps* it — raising `max_tokens` to leave room for a longer answer never inflates reasoning spend.
+
+This matters because Anthropic counts thinking and answer against one `max_tokens` pool and rejects any request where the thinking budget isn't strictly smaller than `max_tokens`. pflow always derives the budget to sit under `max_tokens`, so that rejection can't happen — whether you set `reasoning_effort` or an explicit `reasoning_max_tokens`. If you set both `reasoning_max_tokens` and a smaller `max_tokens`, the budget is capped to fit (the explicit budget is a request, not a guarantee).
+
+One consequence on reasoning models: if you omit `max_tokens`, the provider may cap the *visible* answer low (LiteLLM defaults it to the thinking budget plus ~4096). Set `max_tokens` explicitly when you need a long answer from a reasoning model.
+
+The same `reasoning_effort` value maps to provider-specific knobs under the hood — Anthropic and Gemini 2.5 get a token budget, OpenAI and Gemini 3 get their native effort/level. Models without a reasoning knob ignore the parameter.
 
 ## Output
 

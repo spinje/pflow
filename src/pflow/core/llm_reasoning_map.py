@@ -12,10 +12,12 @@ native shape (``{"thinking": {"type": "enabled", "budget_tokens": N}}``) at
 the API boundary. Keeping the translation in the adapter localizes provider
 quirks; this map only decides "which kwargs does this model accept".
 
-CRITICAL: Anthropic Opus 4.5 supports `thinking_effort`, `thinking`, AND
-`thinking_budget`. `thinking_effort` MUST be checked first — getting this
-wrong silently degrades Opus 4.5 reasoning. This precedence is preserved
-from the previous `nodes/llm/llm.py::_map_effort` implementation.
+BUDGET LAW: `reasoning_effort` / `reasoning_max_tokens` set the thinking
+*depth*; `max_tokens` is only a *ceiling*. The thinking budget is always
+derived to sit under `max_tokens` (see `_fit_budget`), so Anthropic's hard
+constraint `budget_tokens < max_tokens` holds by construction. All
+budget-style models — Anthropic (incl. Opus 4.5) and Gemini 2.5 — share one
+derivation; there is no per-model budget branch.
 
 Anthropic Opus 4.7 is the exception to the "emit legacy shape, adapter
 translates" rule. It uses *adaptive* thinking and REJECTS the
@@ -37,9 +39,8 @@ from typing import Any
 
 from pflow.core.llm_providers import detect_provider, model_name_without_provider
 
-# OpenRouter-style effort-to-token-budget ratios. Moved verbatim from the
-# previous nodes/llm/llm.py:22-32. Five levels intentional (matches what
-# pflow accepts as `reasoning_effort` parameter input).
+# OpenRouter-style effort-to-token-budget ratios. Five levels intentional
+# (matches what pflow accepts as `reasoning_effort` parameter input).
 EFFORT_RATIOS: dict[str, float] = {
     "xhigh": 0.95,
     "high": 0.80,
@@ -48,9 +49,17 @@ EFFORT_RATIOS: dict[str, float] = {
     "minimal": 0.10,
 }
 
-# Default base for token budget calculation when max_tokens is not set.
-# Moved verbatim from the previous nodes/llm/llm.py:32.
-DEFAULT_MAX_TOKENS_BASE = 16000
+# Fixed base the effort ratios scale to produce the thinking budget — the
+# reasoning *depth* base. Used for every effort-derived budget, not just when
+# max_tokens is unset. `max_tokens` only constrains the result (see
+# `_fit_budget`); it never drives depth above this base.
+EFFORT_BUDGET_BASE = 16000
+
+# The thinking budget never exceeds this fraction of `max_tokens` (when set).
+# Guarantees Anthropic's `budget_tokens < max_tokens` and leaves headroom for
+# the visible answer (Anthropic counts thinking + answer against one
+# `max_tokens` pool).
+SAFETY_FRACTION = 0.8
 
 
 def _detect_capabilities(model: str) -> set[str]:
@@ -66,8 +75,8 @@ def _detect_capabilities(model: str) -> set[str]:
     """
     provider = detect_provider(model)
 
-    # Anthropic Opus 4.5 — supports thinking_effort (precedence!), plus
-    # thinking and thinking_budget for direct-budget callers.
+    # Anthropic — extended thinking via thinking + thinking_budget (Opus 4.7
+    # is the lone exception: adaptive thinking, handled first below).
     if provider is not None and provider.name == "anthropic":
         provider_model = model_name_without_provider(model, provider)
 
@@ -83,11 +92,11 @@ def _detect_capabilities(model: str) -> set[str]:
         if "claude-opus-4-7" in provider_model or "claude-opus-4.7" in provider_model:
             return {"reasoning_effort_adaptive"}
 
-        if "claude-opus-4-5" in provider_model or "claude-opus-4.5" in provider_model:
-            return {"thinking_effort", "thinking", "thinking_budget"}
-
-        # Other Anthropic models (Sonnet 4.x, Opus 4.0/4.1, older Sonnet,
-        # Haiku, etc.) — extended thinking via thinking + thinking_budget.
+        # All other Anthropic models (Opus 4.5/4.1/4.0, Sonnet 4.x, Haiku,
+        # etc.) — extended thinking via thinking + thinking_budget. Opus 4.5
+        # used to carry a `thinking_effort` capability, but that was a
+        # categorical relay that never reached the API (LiteLLM wants
+        # budget_tokens); it now derives a budget through the shared path.
         return {"thinking", "thinking_budget"}
 
     if provider is not None and provider.name == "gemini":
@@ -126,13 +135,30 @@ def _matches_openai_o_family(model_name: str) -> bool:
     return any(model_name == family or model_name.startswith(f"{family}-") for family in ("o1", "o3", "o4"))
 
 
-def _map_direct_budget(option_fields: set[str], reasoning_max_tokens: int) -> dict[str, Any]:
-    """Map reasoning_max_tokens to provider-specific token budget param.
+def _fit_budget(desired: int, max_tokens: int | None) -> int:
+    """Fit a thinking budget under `max_tokens` (the ceiling), bounded.
 
-    Logic ported verbatim from the previous `nodes/llm/llm.py::_map_direct_budget`.
+    The single budget law: depth is the `desired` value; `max_tokens`, when
+    set, only constrains it. Clamping here makes Anthropic's
+    `budget_tokens < max_tokens` hold by construction — no separate
+    validation step is needed.
+    """
+    if max_tokens is not None:
+        desired = min(desired, int(max_tokens * SAFETY_FRACTION))
+    return max(min(desired, 128000), 1024)
+
+
+def _map_direct_budget(option_fields: set[str], reasoning_max_tokens: int, max_tokens: int | None) -> dict[str, Any]:
+    """Map reasoning_max_tokens to a provider-specific token budget param.
+
+    The explicit budget is still fit under `max_tokens` for budget-style
+    models (Anthropic, Gemini 2.5), so the `budget_tokens < max_tokens`
+    invariant holds by construction — same law as the effort path. The
+    OpenAI `reasoning_max_tokens` knob (no hard ceiling constraint) passes
+    through unchanged.
     """
     if "thinking_budget" in option_fields:
-        kwargs: dict[str, Any] = {"thinking_budget": reasoning_max_tokens}
+        kwargs: dict[str, Any] = {"thinking_budget": _fit_budget(reasoning_max_tokens, max_tokens)}
         if "thinking" in option_fields:
             kwargs["thinking"] = True
         return kwargs
@@ -144,23 +170,18 @@ def _map_direct_budget(option_fields: set[str], reasoning_max_tokens: int) -> di
 def _map_effort(option_fields: set[str], effort: str, max_tokens: int | None) -> dict[str, Any]:
     """Map effort level string to provider-specific reasoning params.
 
-    Logic ported verbatim from the previous `nodes/llm/llm.py::_map_effort`.
-
-    Provider detection order matters — Anthropic Opus 4.5 has thinking_effort,
-    thinking, AND thinking_budget, so thinking_effort must be checked first.
+    Categorical-reasoning models (Opus 4.7 adaptive, OpenAI, Gemini 3) emit
+    their native effort string; budget-style models (Anthropic incl. Opus
+    4.5, Gemini 2.5) derive a token budget via the shared `_fit_budget`.
     """
     # Anthropic Opus 4.7 — adaptive thinking via LiteLLM's standardized
     # reasoning_effort (LiteLLM builds the native thinking.type.adaptive +
     # output_config.effort shape). Anthropic's effort vocabulary is
     # low/medium/high, so collapse pflow's extra buckets (xhigh→high,
-    # minimal→low) the same way the Opus 4.5 thinking_effort path does.
+    # minimal→low) onto it.
     if "reasoning_effort_adaptive" in option_fields:
         mapped = {"xhigh": "high", "minimal": "low"}.get(effort, effort)
         return {"reasoning_effort": mapped}
-    # Anthropic Opus 4.5 — thinking_effort natively
-    if "thinking_effort" in option_fields:
-        mapped = {"xhigh": "high", "minimal": "low"}.get(effort, effort)
-        return {"thinking_effort": mapped}
     # OpenAI / OpenRouter — reasoning_effort natively
     if "reasoning_effort" in option_fields:
         return {"reasoning_effort": effort}
@@ -168,11 +189,11 @@ def _map_effort(option_fields: set[str], effort: str, max_tokens: int | None) ->
     if "thinking_level" in option_fields:
         mapped = {"xhigh": "high"}.get(effort, effort)
         return {"thinking_level": mapped}
-    # Anthropic older / Gemini 2.5 — needs token budget calculation
+    # Anthropic (incl. Opus 4.5) / Gemini 2.5 — budget derived from effort
+    # depth, then fit under max_tokens (the ceiling).
     if "thinking_budget" in option_fields:
-        base = max_tokens or DEFAULT_MAX_TOKENS_BASE
         ratio = EFFORT_RATIOS.get(effort, 0.50)
-        budget = max(min(int(base * ratio), 128000), 1024)
+        budget = _fit_budget(int(EFFORT_BUDGET_BASE * ratio), max_tokens)
         kwargs: dict[str, Any] = {"thinking_budget": budget}
         if "thinking" in option_fields:
             kwargs["thinking"] = True
@@ -204,8 +225,10 @@ def map_reasoning_options(
             or ``None`` for default.
         reasoning_max_tokens: Direct token budget. Mutually exclusive with
             ``reasoning_effort`` — when both are set, this takes precedence.
-        max_tokens: The max response tokens, used as base for the budget
-            formula when only effort is given on a budget-style model.
+        max_tokens: The response-length ceiling. On budget-style models it
+            only *constrains* the thinking budget (kept under
+            ``max_tokens * SAFETY_FRACTION``); it never drives depth. See
+            ``_fit_budget``.
 
     Returns:
         Dict of kwargs to merge into the LLM call. Empty dict when no
@@ -221,7 +244,7 @@ def map_reasoning_options(
 
     # Direct token budget takes precedence over effort
     if reasoning_max_tokens is not None:
-        return _map_direct_budget(option_fields, reasoning_max_tokens)
+        return _map_direct_budget(option_fields, reasoning_max_tokens, max_tokens)
 
     effort = reasoning_effort.lower()  # type: ignore[union-attr]
 

@@ -17,7 +17,7 @@ from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_providers import detect_provider
 from pflow.core.llm_reasoning_map import (
-    DEFAULT_MAX_TOKENS_BASE,
+    EFFORT_BUDGET_BASE,
     EFFORT_RATIOS,
     map_reasoning_options,
 )
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Re-exported for backward compatibility with code that imported these names
 # from pflow.nodes.llm.llm. The canonical home is pflow.core.llm_reasoning_map.
 __all__ = [
-    "DEFAULT_MAX_TOKENS_BASE",
+    "EFFORT_BUDGET_BASE",
     "EFFORT_RATIOS",
     "LLMNode",
 ]
@@ -903,8 +903,8 @@ class LLMNode(Node):
     - Params: system: str  # System prompt (optional)
     - Params: images: list[str]  # Image URLs or file paths (optional)
     - Params: output_schema: dict  # JSON Schema for structured output (optional)
-    - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
-    - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
+    - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params). Drives how hard the model thinks; max_tokens only caps it, never raises it.
+    - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional). Still capped to stay under max_tokens when both are set.
     - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
     - Writes: shared["response"]: str|dict  # Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
     - Writes: shared["error"]: str  # Error message if LLM call or JSON parsing failed
@@ -927,7 +927,7 @@ class LLMNode(Node):
         - prewarm_disabled_reason: str|None  # Trace 2.3.0 — "below_min" when pre-flight disabled batch prewarm for this node.
     - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
-    - Params: max_tokens: int  # Max response tokens (optional)
+    - Params: max_tokens: int  # Response-length ceiling (optional). On reasoning models this is the combined thinking+answer budget and only caps thinking depth — it never increases it. Set it explicitly when you need a long visible answer from a reasoning model (otherwise the provider may cap visible output low).
     - Params: timeout: int  # Execution timeout in seconds for LLM API call (default: 120)
     - Actions: default (success), error (failure)
     """
