@@ -9,6 +9,7 @@
 - Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
 - **Warning sign**: Long chains of `sed`, `awk`, `jq`, `tr`, `grep` piped together → use `code` node instead (more readable, portable, debuggable)
 - **Don't use shell for data pass-through**: `jq '.'` before an LLM is unnecessary — pass `${node.response}` directly. Templates handle JSON natively.
+- **Caching**: shell nodes don't cache by default (their output depends on external state) — safe to use inside iteration loops. Add `cache: true` only for a pure, expensive command whose output is fully determined by its declared inputs.
 
 ### Node Creation Pattern
 

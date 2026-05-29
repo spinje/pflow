@@ -259,7 +259,7 @@ pflow mcp find "fetch JSON from REST API, extract specific fields, validate data
 
 ### Building the Workflow
 
-**Build incrementally** — start with the core data path (2-3 nodes), get it working, then add complexity. Caching makes re-runs fast (see Running and Iterating below).
+**Build incrementally** — start with the core data path (2-3 nodes), get it working, then add complexity. Re-runs of unchanged `llm` nodes return from cache instantly; other node types re-execute each run (see Running and Iterating below).
 
 **Development Format**
 
@@ -389,7 +389,7 @@ state. Use this:
 
 - Edit a prompt or parameter → re-run → changed `llm` nodes re-execute, unchanged ones return instantly
 - `--dry-run` — preview plan + historical cost/duration without executing (expensive LLM runs, verifying what an edit invalidated)
-- `--only <node>` — run just that node (upstream from cache, downstream skipped)
+- `--only <node>` — run just that node, downstream skipped. Upstream is walked from the start: cached upstream (`llm`, or `cache: true` nodes) is reused, everything else **re-executes** — so a side-effecting upstream node (e.g. `shell: gh pr create`) re-fires each time. Best for tuning a node downstream of expensive cached `llm` work.
 - `--no-cache` — bypass pflow memo-cache reads; provider prompt caching may still apply
 - **`cache: true` on a node** — opt INTO caching for a node whose output is purely a function of its declared inputs (no filesystem reads, no clock, no env vars, no network state). Most shell/code/http/file/mcp nodes do NOT qualify.
 - **`cache: false` on a node** — explicit opt-out (redundant for non-`llm` nodes under the default; useful for documenting intent).
@@ -405,7 +405,7 @@ Provider prompt caching: if many LLM calls reuse the same long context, run
 `pflow analyze-cache workflow.pflow.md`, then follow `pflow guide prompt-caching`.
 
 ```bash
-# Re-run just one node (upstream cached, downstream skipped)
+# Re-run just one node (downstream skipped; cached upstream reused, uncached upstream re-runs)
 pflow ./workflow.pflow.md --only node-name
 
 # Bypass pflow memo-cache reads; provider prompt caching may still apply

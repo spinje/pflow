@@ -22,7 +22,7 @@ Running Workflows:
 If execution succeeds, present results concisely. Do not re-run.
 
 Run Options:
-  --only <node>         Run just this node (upstream cached, downstream skipped)
+  --only <node>         Run just this node (downstream skipped; cached upstream reused, the rest re-run)
   --no-cache            Bypass pflow memo-cache reads
   --report              Generate per-node execution report
   -o, --output-key <key>  Extract specific output
@@ -48,11 +48,11 @@ Nodes:
 
 Features — when the user says X, load topic Y:
   batch            Same operation on N items
-                   → "each", "for every", "in parallel", "N at a time"
-  branching        Conditional paths, error handling
-                   → "if X then Y", "handle failures", "retry on error"
-  sub-workflows    Reusable sub-workflow composition
-                   → "reuse this", "same validation as X"
+                   → "each", "for every", "in parallel", "N at a time", "one at a time / in order"
+  branching        Conditional paths, error handling, loops
+                   → "if X then Y", "handle failures", "retry on error", "loop until X", "repeat while"
+  sub-workflows    Reusable composition, bounded iteration
+                   → "reuse this", "same validation as X", "up to N times", "iterate over a fixed count"
   prompt-caching   Provider prompt caching, ## Cache, prompt_cache:
                    → "cache prompts", "reduce LLM cost", "speed up retries"
                    Alias accepted: `pflow guide caching`
