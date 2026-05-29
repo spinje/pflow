@@ -185,6 +185,82 @@ class TestBranchConvergenceIR:
         with pytest.raises(ValueError, match=r"Unresolved variables.*stddout"):
             compile_and_run_ir(ir)
 
+    def test_missing_field_with_coalesce_fallback_resolves_default(self) -> None:
+        """A `??` literal fallback covers a missing field on a node that ran (issue #441).
+
+        ``${producer.notafield ?? "fallback"}`` — producer executed but has no
+        ``notafield`` — falls through to the literal default and the workflow
+        succeeds end-to-end. This is the natural pattern Optional A makes
+        inviting; pre-#441 it errored with an unresolved-path on the happy path.
+        Validates clean (the coalesce operand is not field-checked) AND resolves.
+        """
+        ir = {
+            "nodes": [
+                {"id": "producer", "type": "shell", "params": {"command": "echo hello"}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "inputs": {"value": '${producer.notafield ?? "fallback"}'},
+                        "code": "value: str\nresult: str = value",
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
+        }
+
+        shared = compile_and_run_ir(ir)
+
+        assert _node_ran(shared, "producer")
+        assert _node_ran(shared, "consumer")
+        assert shared["consumer"]["result"] == "fallback"
+
+    def test_missing_field_with_coalesce_node_fallback_resolves_peer(self) -> None:
+        """A `??` node fallback covers a missing field on a node that ran (issue #441)."""
+        ir = {
+            "nodes": [
+                {"id": "producer", "type": "shell", "params": {"command": "echo hello"}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        # producer.notafield is absent -> fall through to producer.stdout
+                        "inputs": {"value": "${producer.notafield ?? producer.stdout}"},
+                        "code": "value: str\nresult: str = value.strip()",
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
+        }
+
+        shared = compile_and_run_ir(ir)
+        assert shared["consumer"]["result"] == "hello"
+
+    def test_missing_field_without_fallback_still_errors(self) -> None:
+        """Regression guard: a bare missing field (no `??`) still errors (issue #441).
+
+        ``??`` fall-through is opt-in via an explicit fallback. A bare
+        ``${producer.notafield}`` with no fallback must still surface as an
+        unresolved-path error so genuine typos are caught loudly.
+        """
+        ir = {
+            "nodes": [
+                {"id": "producer", "type": "shell", "params": {"command": "echo hello"}},
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "inputs": {"value": "${producer.notafield}"},
+                        "code": "value: str\nresult: str = value",
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
+        }
+
+        with pytest.raises(ValueError, match=r"Unresolved variables.*notafield"):
+            compile_and_run_ir(ir)
+
 
 # ===========================================================================
 # TestBranchConvergenceMarkdown — Full markdown pipeline tests

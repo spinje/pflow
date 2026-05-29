@@ -313,15 +313,23 @@ class TemplateResolver:
 
         Semantics:
         - For each operand, extract root node (first segment before . or [)
-        - If root is ABSENT from context -> skip (branch didn't execute)
+        - If root is ABSENT from context -> skip (branch didn't execute), try next
         - If root is PRESENT and full path resolves -> return resolved value
-        - If root is PRESENT but path fails -> return the failing operand (typo)
+        - If root is PRESENT but the field/path is absent -> skip, try next
+
+        ``??`` falls through whenever the left side "isn't there" — whether the
+        node didn't run OR the field is missing — matching ``??`` / ``//`` /
+        ``default()`` in JS, C#, jq, and Jinja (issue #441). A bare
+        ``${node.field}`` with no fallback yields "unresolved" below, which
+        strict mode surfaces as an error, so genuine typos are still caught.
+        (Workflow ``## Outputs`` declarations use a stricter coalesce in
+        ``output_resolver._is_all_absent_coalesce`` that does NOT fall through on
+        a recovered-node failure — that surface intentionally differs.)
 
         Returns:
             Tuple of (value, status) where status is:
             - "resolved": value is the successfully resolved result
-            - "path_error": root present but path invalid; value is the failing operand string
-            - "unresolved": no operand's root was in context; value is None
+            - "unresolved": no operand resolved; value is None
 
         Call only via ``resolve_template`` / ``_resolve_complex_match``. Those
         entry points gate on the strict ``TEMPLATE_PATTERN`` grammar, so by the
@@ -349,11 +357,11 @@ class TemplateResolver:
             if root not in context:
                 continue  # Root absent — branch didn't execute, try next
 
-            # Root is present — this operand MUST resolve or it's a typo
             if TemplateResolver.variable_exists(operand, context):
                 return (TemplateResolver.resolve_value(operand, context), "resolved")
-            else:
-                return (operand, "path_error")
+            # Root present but field/path absent — treat like "not there" and
+            # try the next operand (issue #441). A bare reference with no
+            # fallback falls out of the loop as "unresolved" below.
 
         return (None, "unresolved")
 
@@ -704,7 +712,7 @@ class TemplateResolver:
                         extra={"var_name": var_name, "value_type": type(value).__name__},
                     )
                     return value
-                # path_error or unresolved: return template unchanged
+                # unresolved (no operand resolved): return template unchanged
                 return template
             elif TemplateResolver.is_literal_operand(var_name):
                 # Bare literal template (Optional A): ${0}, ${"x"}, ${null}.
@@ -756,7 +764,7 @@ class TemplateResolver:
                     f"Resolved coalesce template '${{{var_expr}}}' -> '{value_str}'",
                     extra={"var_name": var_expr, "value_type": type(value).__name__},
                 )
-            # path_error and unresolved: leave template as-is
+            # unresolved (no operand resolved): leave template as-is
             return result
 
         # Bare literal in an inline template (Optional A): "Hello ${0}".

@@ -18,6 +18,7 @@ This module owns:
 
 import logging
 import re
+from collections.abc import Iterator
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -129,8 +130,16 @@ def validate_workflow_templates(
         f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
     )
 
-    # Pass 5: Validate each template path
-    diagnostics.extend(validate_template_paths(all_templates, available_params, node_outputs, workflow_ir, registry))
+    # Pass 5: Validate each template path. Uses the field-checkable subset, NOT
+    # all_templates: operands of a multi-operand ?? chain are excluded because
+    # ?? falls through on a missing field at runtime (issue #441), so field-
+    # checking them would hard-error on a legitimately-optional field. Their
+    # root existence is still validated in core/workflow/data_flow.py.
+    diagnostics.extend(
+        validate_template_paths(
+            _field_checkable_templates(workflow_ir), available_params, node_outputs, workflow_ir, registry
+        )
+    )
 
     # Pass 6: Validate template types match parameter expectations
     diagnostics.extend(validate_template_types(workflow_ir, node_outputs, registry))
@@ -342,64 +351,72 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnosti
 # ---------------------------------------------------------------------------
 
 
-def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:  # noqa: C901
-    """Extract all template variables from workflow.
+def _operands_in_string(value: str) -> Iterator[tuple[str, bool]]:
+    """Yield ``(operand, in_coalesce)`` for each non-literal operand in one string.
 
-    Scans all node parameters for template variables.
-    Uses a more permissive pattern than TemplateResolver to catch
-    malformed templates that need syntax validation.
-
-    Args:
-        workflow_ir: The workflow IR
-
-    Returns:
-        Set of all template variable names found
+    Uses the permissive pattern (so malformed templates are still surfaced by the
+    separate malformed-syntax pass) and splits ``??`` chains. Literal operands
+    (Optional A — ``0``, ``"x"``, ``null``) are dropped: they are values, not refs.
+    ``in_coalesce`` is True for an operand of a multi-operand ``??`` chain.
     """
-    templates = set()
+    for match in _PERMISSIVE_PATTERN.findall(value):
+        if "??" in match:
+            for op in TemplateResolver.split_coalesce_operands(match):
+                if not TemplateResolver.is_literal_operand(op):
+                    yield op, True
+        elif not TemplateResolver.is_literal_operand(match):
+            yield match, False
+
+
+def _iter_template_operands(workflow_ir: dict[str, Any]) -> Iterator[tuple[str, bool]]:
+    """Yield ``(operand, in_coalesce)`` for every non-literal template operand
+    found in node params and ``batch.items``.
+
+    ``in_coalesce`` operands may be legitimately absent at runtime (``??`` falls
+    through on a missing field — issue #441), so they are NOT eligible for Pass-5
+    field validation, though they ARE references for unused-input detection. This
+    is the single source of traversal truth for both ``_extract_all_templates``
+    and ``_field_checkable_templates``.
+    """
+
+    def walk(value: Any) -> Iterator[tuple[str, bool]]:
+        if isinstance(value, str) and "$" in value:
+            yield from _operands_in_string(value)
+        elif isinstance(value, dict):
+            for val in value.values():
+                yield from walk(val)
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item)
 
     for node in workflow_ir.get("nodes", []):
-        node_id = node.get("id", "unknown")
-        params = node.get("params", {})
-
-        def extract_from_value(value: Any, node_id: str, path: str = "") -> None:
-            """Recursively extract templates from any value type."""
-            if isinstance(value, str) and "$" in value:
-                # Use permissive pattern to catch malformed templates
-                matches = _PERMISSIVE_PATTERN.findall(value)
-                # Split coalesce operands so each is validated individually.
-                # Drop literal operands (Optional A) unconditionally — they are
-                # values, not variable references. Applied in BOTH branches: a
-                # bare literal like ${0} lands in the else branch and must not
-                # be treated as a variable name (false "no valid source" error).
-                split_matches: list[str] = []
-                for match in matches:
-                    operands = TemplateResolver.split_coalesce_operands(match) if "??" in match else [match]
-                    split_matches.extend(op for op in operands if not TemplateResolver.is_literal_operand(op))
-                templates.update(split_matches)
-
-                if matches:
-                    logger.debug(
-                        f"Found templates in node '{node_id}' at path '{path}'",
-                        extra={"node_id": node_id, "path": path, "templates": sorted(matches)},
-                    )
-            elif isinstance(value, dict):
-                for key, val in value.items():
-                    extract_from_value(val, node_id, f"{path}.{key}" if path else key)
-            elif isinstance(value, list):
-                for idx, item in enumerate(value):
-                    extract_from_value(item, node_id, f"{path}[{idx}]")
-
-        for param_key, param_value in params.items():
-            extract_from_value(param_value, node_id, param_key)
-
-        # Also extract templates from batch.items if present
+        for param_value in node.get("params", {}).values():
+            yield from walk(param_value)
         batch_config = node.get("batch")
-        if batch_config:
-            items_template = batch_config.get("items")
-            if items_template:
-                extract_from_value(items_template, node_id, "batch.items")
+        if batch_config and batch_config.get("items"):
+            yield from walk(batch_config["items"])
 
-    return templates
+
+def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:
+    """All non-literal template operands (both sides of every ``??`` chain).
+
+    Used for unused-input detection — an operand is a reference even when ``??``
+    may let it be absent at runtime. Pass 5 (path validation) instead uses the
+    field-checkable subset (see ``_field_checkable_templates``).
+    """
+    return {operand for operand, _ in _iter_template_operands(workflow_ir)}
+
+
+def _field_checkable_templates(workflow_ir: dict[str, Any]) -> set[str]:
+    """Template operands eligible for Pass-5 path/field existence validation.
+
+    Excludes operands of a multi-operand ``??`` chain: under issue #441 ``??``
+    falls through on a missing field, so a legitimately-optional field must not
+    hard-error here. Their root existence is still validated in
+    ``core/workflow/data_flow.py``; a bare ``${node.field}`` (no ``??``) stays
+    fully field-checked.
+    """
+    return {operand for operand, in_coalesce in _iter_template_operands(workflow_ir) if not in_coalesce}
 
 
 def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> set[str]:

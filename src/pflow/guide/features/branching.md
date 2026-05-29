@@ -139,9 +139,9 @@ echo "B: ${route.result}"
 
 **When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
 
-**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand whose node executed wins. Works in any node type — no merge node needed. Operands can also be JSON literals as a final default: `${optional_step.value ?? 0}`, `${a ?? "none"}`.
+**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand that resolves wins. Works in any node type — no merge node needed. Operands can also be JSON literals as a final default: `${optional_step.value ?? 0}`, `${a ?? "none"}`.
 
-`??` skips an operand only when its **node didn't run** (branch not taken, or node failed). It does NOT skip when the node ran but a **field is missing** — `${ran_node.absent_field ?? "x"}` does not fall through to `"x"`; it surfaces as an unresolved-path error (so genuine typos are caught). Use a literal fallback for "this branch may not have executed," not for "this field may be absent on a node that did execute."
+`??` falls through whenever the left side **isn't there** — whether the **node didn't run** (branch not taken, or node failed) OR the **field is absent** on a node that did run. So `${ran_node.optional_field ?? "default"}` yields `"default"` when `optional_field` isn't present. A **bare** `${node.field}` with no `??` fallback still errors on a missing field, so genuine typos are caught loudly — add a fallback only where absence is expected.
 
 ### Loops
 

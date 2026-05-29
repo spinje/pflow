@@ -5,10 +5,13 @@ several upstream branches executes. Syntax: ${branch-a.output ?? branch-b.output
 
 Semantics:
 - Try each operand left to right
-- If an operand's root node is ABSENT from context (didn't execute), skip it
-- If an operand's root node is PRESENT but the nested path fails, that's a typo -> path_error
-- First operand whose root is present and path resolves wins
-- If no operand resolves, the template is returned unchanged (existing unresolved behavior)
+- If an operand's root node is ABSENT (didn't execute), skip it, try next
+- If an operand's root is PRESENT but the field/path is absent, skip it too,
+  try next (issue #441: ?? falls through whenever the left side "isn't there")
+- First operand that fully resolves wins
+- If no operand resolves, the template is returned unchanged (unresolved) — a
+  bare ${node.field} with no fallback therefore still surfaces as a strict-mode
+  error, so genuine typos are caught
 """
 
 from pflow.runtime.template_resolver import TemplateResolver
@@ -212,21 +215,21 @@ class TestResolveCoalesce:
         assert status == "resolved"
         assert value == "first"
 
-    def test_path_error_when_root_present_but_path_invalid(self):
-        """When root exists but nested path fails, return path_error (typo detection)."""
-        context = {"a": {"stdout": "hello"}}
-        # 'a' is present but 'a.typo' doesn't exist — this is a typo, not a missing branch
+    def test_missing_field_falls_through_to_next_operand(self):
+        """Root present but field absent -> skip, try next (issue #441)."""
+        context = {"a": {"stdout": "hello"}, "b": {"stdout": "world"}}
+        # 'a' ran but 'a.typo' is absent -> fall through to b.stdout
         value, status = TemplateResolver.resolve_coalesce("a.typo ?? b.stdout", context)
-        assert status == "path_error"
-        assert value == "a.typo"  # Returns the failing operand string
+        assert status == "resolved"
+        assert value == "world"
 
-    def test_path_error_on_second_operand(self):
-        """path_error can occur on the second operand if first root is absent."""
+    def test_missing_field_on_last_operand_is_unresolved(self):
+        """A missing field on the only remaining operand -> unresolved (no fallback)."""
         context = {"b": {"stdout": "hello"}}
-        # 'a' absent (skip), 'b' present but 'b.typo' fails
+        # 'a' absent (skip), 'b' ran but 'b.typo' absent (fall through) -> nothing left
         value, status = TemplateResolver.resolve_coalesce("a.stdout ?? b.typo", context)
-        assert status == "path_error"
-        assert value == "b.typo"
+        assert status == "unresolved"
+        assert value is None
 
     def test_unresolved_when_all_roots_absent(self):
         """When no operand's root is in context, return unresolved."""
@@ -269,13 +272,29 @@ class TestResolveCoalesce:
         assert status == "resolved"
         assert value == "direct-value"
 
-    def test_root_present_as_empty_dict_counts_as_present(self):
-        """Root key exists with empty dict — root IS present, but path will fail."""
-        context = {"a": {}}
-        # 'a' is present (the node ran, but produced no output), path 'a.stdout' fails
+    def test_missing_field_on_empty_dict_root_falls_through(self):
+        """Empty-dict root ran but has no field -> fall through to next (issue #441)."""
+        context = {"a": {}, "b": {"stdout": "fallback"}}
+        # 'a' ran (empty dict) but 'a.stdout' is absent -> fall through to b.stdout
         value, status = TemplateResolver.resolve_coalesce("a.stdout ?? b.stdout", context)
-        assert status == "path_error"
-        assert value == "a.stdout"
+        assert status == "resolved"
+        assert value == "fallback"
+
+    def test_missing_field_falls_through_to_literal_default(self):
+        """Root present, field absent -> fall through to a literal fallback (issue #441)."""
+        context = {"a": {}}
+        # 'a' ran but 'a.stdout' is absent -> use the literal default
+        value, status = TemplateResolver.resolve_coalesce('a.stdout ?? "default"', context)
+        assert status == "resolved"
+        assert value == "default"
+
+    def test_missing_field_in_chain_middle_skips_to_resolvable(self):
+        """A missing field mid-chain is skipped; a later resolvable operand wins."""
+        context = {"a": {}, "c": {"val": 3}}
+        # 'a.val' absent (fall through), 'b' absent (skip), 'c.val' resolves
+        value, status = TemplateResolver.resolve_coalesce("a.val ?? b.val ?? c.val", context)
+        assert status == "resolved"
+        assert value == 3
 
     def test_root_present_with_none_value(self):
         """Root key exists with None value — root IS present for simple variable."""
