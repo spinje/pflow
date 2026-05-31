@@ -107,6 +107,30 @@ def list_topics() -> list[str]:
     return topics
 
 
+def _node_topics(node: dict, available: set[str]) -> set[str]:
+    """Guide topics implied by a single node (type + top-level feature blocks)."""
+    topics: set[str] = set()
+    node_type = node.get("type", "")
+
+    topic = _NODE_TYPE_TO_TOPIC.get(node_type)
+    if topic is None and node_type.startswith("mcp-"):
+        topic = "mcp"
+    if topic is None:
+        topic = node_type
+    if topic in available:
+        topics.add(topic)
+
+    if node.get("batch") is not None:  # batch is at node top-level, not in params
+        topics.add("batch")
+    if node.get("loop") is not None:  # issue #445: loop documented in the branching guide
+        topics.add("branching")
+    # Caching: per-node opt-in. Presence (not truthiness) — ``prewarm: false`` is
+    # still engaging with the feature and should surface the guide.
+    if node.get("prompt_cache") is not None or node.get("prewarm") is not None:
+        topics.add(PROMPT_CACHING_TOPIC)
+    return topics
+
+
 def detect_topics_from_ir(ir: dict) -> list[str]:
     """Detect guide topics from a parsed workflow IR.
 
@@ -118,27 +142,7 @@ def detect_topics_from_ir(ir: dict) -> list[str]:
     available = set(list_topics())
 
     for node in ir.get("nodes") or []:
-        node_type = node.get("type", "")
-
-        # Map node type to guide topic
-        topic = _NODE_TYPE_TO_TOPIC.get(node_type)
-        if topic is None and node_type.startswith("mcp-"):
-            topic = "mcp"
-        if topic is None:
-            topic = node_type
-
-        if topic in available:
-            topics.add(topic)
-
-        # Batch detection (batch is at node top-level, not in params)
-        if node.get("batch") is not None:
-            topics.add("batch")
-
-        # Caching detection: per-node opt-in. Presence (not truthiness): an
-        # author who writes ``prewarm: false`` is engaging with the feature
-        # and should still see the guide.
-        if node.get("prompt_cache") is not None or node.get("prewarm") is not None:
-            topics.add(PROMPT_CACHING_TOPIC)
+        topics |= _node_topics(node, available)
 
     # Caching detection: top-level ``## Cache`` block.
     if ir.get("cache") is not None:
@@ -146,8 +150,7 @@ def detect_topics_from_ir(ir: dict) -> list[str]:
 
     # Branching detection via non-default edge actions
     for edge in ir.get("edges") or []:
-        action = edge.get("action", "default")
-        if action != "default":
+        if edge.get("action", "default") != "default":
             topics.add("branching")
             break
 

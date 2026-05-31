@@ -210,7 +210,8 @@ def is_template_reserved_internal_key(root: str) -> bool:
     that cannot be referenced from ``.pflow.md`` templates.
 
     Catches ``__execution__``, ``__failures__``, ``__cache_hits__``,
-    ``__warnings__``, ``__memoization_cache__``, etc. Excludes ``__index__``
-    (the one template-accessible reserved key — the current batch item index).
+    ``__warnings__``, ``__memoization_cache__``, etc. Excludes the two
+    template-accessible reserved keys: ``__index__`` (current batch item index)
+    and ``__iteration__`` (1-based loop iteration count, issue #445).
     """
-    return root.startswith("__") and root.endswith("__") and root != "__index__"
+    return root.startswith("__") and root.endswith("__") and root not in ("__index__", "__iteration__")

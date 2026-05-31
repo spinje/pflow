@@ -50,6 +50,7 @@ from .instrumentation import (
     record_trace,
     write_memo_cache,
 )
+from .loop_control import evaluate_loop_condition, loop_runtime_scope, resolve_loop_cap
 from .namespaced_store import NamespacedSharedStore
 from .plan_node import plan_node
 from .template_resolution import resolve_templates
@@ -375,37 +376,152 @@ class WorkflowEngine:
         # 2. Walk graph
         curr = workflow.start_node
         last_action = None
-        while curr:
-            node_id = getattr(curr, "node_id", None)
-            if node_id is None or node_id not in workflow.node_configs:
-                raise CompilationError(
-                    "Node in graph has no node_id or missing from node_configs",
-                    phase="execution",
-                    suggestion="This indicates a compiler bug",
-                )
+        # issue #445: per-node loop iteration counters (the loop's OWN count,
+        # distinct from the hard ``node_visit_counts`` guard) and resolved caps.
+        loop_counts: dict[str, int] = {}
+        loop_caps: dict[str, int] = {}
+        try:
+            while curr:
+                node_id = getattr(curr, "node_id", None)
+                if node_id is None or node_id not in workflow.node_configs:
+                    raise CompilationError(
+                        "Node in graph has no node_id or missing from node_configs",
+                        phase="execution",
+                        suggestion="This indicates a compiler bug",
+                    )
 
-            config = workflow.node_configs[node_id]
-            is_only_target = this_only is not None and node_id == this_only
+                config = workflow.node_configs[node_id]
+                is_only_target = this_only is not None and node_id == this_only
 
-            last_action = self._run_node_with_child_only(curr, config, shared, child_only if is_only_target else None)
+                # issue #445: expose 1-based ${__iteration__} for the loop body and
+                # raise __loop_active__ (suppresses inner memo reads) for the duration
+                # of this iteration. The scope keeps __iteration__ across re-entry
+                # (cleared by the re-entry logic / outer finally below), so
+                # clear_iteration_on_exit=False here.
+                is_loop = config.loop_config is not None
+                iteration: Optional[int] = None
+                if is_loop:
+                    loop_counts[node_id] = loop_counts.get(node_id, 0) + 1
+                    iteration = loop_counts[node_id]
 
-            # --only: stop after target node
-            # (__execution__["only_node"] was already written by _execute_node
-            # step 2 for this same node)
-            if is_only_target:
-                break
+                with loop_runtime_scope(shared, is_loop, iteration=iteration, clear_iteration_on_exit=False):
+                    last_action = self._run_node_with_child_only(
+                        curr, config, shared, child_only if is_only_target else None
+                    )
 
-            # Follow successor edge
-            nxt = curr.successors.get(last_action or "default")
-            if not nxt:
-                last_action = self._handle_no_successor(last_action, node_id, curr, shared)
-                break
-            curr = nxt
+                # --only: stop after target node
+                # (__execution__["only_node"] was already written by _execute_node
+                # step 2 for this same node)
+                if is_only_target:
+                    break
+
+                # issue #445: loop re-entry. Re-enter only on the normal-return
+                # path (never when the node errored) when the condition is truthy
+                # and under the cap — ``continue`` re-enters ``while curr:`` so
+                # enforce_loop_guard fires for visit N+1. Otherwise the loop is
+                # done (drained, capped, OR errored): clear ${__iteration__} before
+                # routing so neither a post-loop node NOR an on-error handler reads
+                # a stale value, then fall through to normal successor routing.
+                if config.loop_config is not None:
+                    if not str(last_action or "").startswith("error") and self._loop_should_reenter(
+                        config, shared, node_id, loop_counts, loop_caps
+                    ):
+                        continue
+                    shared.pop("__iteration__", None)
+
+                # Follow successor edge
+                nxt = curr.successors.get(last_action or "default")
+                if not nxt:
+                    last_action = self._handle_no_successor(last_action, node_id, curr, shared)
+                    break
+                curr = nxt
+        finally:
+            # Defensive: an error mid-loop never leaks ${__iteration__} into the
+            # surfaced shared_after. The clean-exit path already popped it above.
+            shared.pop("__iteration__", None)
 
         # 3. Populate declared outputs
         self._populate_outputs(workflow, shared, last_action)
 
         return str(last_action) if last_action else "default"
+
+    def _loop_should_reenter(
+        self,
+        config: NodeConfig,
+        shared: dict[str, Any],
+        node_id: str,
+        loop_counts: dict[str, int],
+        loop_caps: dict[str, int],
+    ) -> bool:
+        """Decide whether a ``loop:`` node re-enters after a clean run (issue #445).
+
+        Order is load-bearing: a falsy condition is a CLEAN drain (``loop_stopped:
+        "condition"``); a truthy condition that has reached the cap is a
+        non-degrading advisory (``loop_stopped: "max_iterations"`` + INFO). The cap
+        counts the loop's OWN iterations and is always ``<= MAX_NODE_VISITS``, so it
+        stops before the hard visit guard would raise.
+        """
+        loop_config = config.loop_config
+        if loop_config is None:  # caller guards; defensive for type-narrowing
+            return False
+
+        should_continue = evaluate_loop_condition(loop_config.while_template, shared, node_id)
+        if not should_continue:
+            self._mark_loop_stopped(shared, node_id, "condition")
+            return False
+
+        cap = loop_caps.get(node_id)
+        if cap is None:
+            cap = resolve_loop_cap(loop_config, shared, node_id)
+            loop_caps[node_id] = cap
+
+        if loop_counts[node_id] >= cap:
+            self._mark_loop_stopped(shared, node_id, "max_iterations")
+            self._emit_loop_cap_advisory(shared, node_id, cap)
+            return False
+
+        return True
+
+    @staticmethod
+    def _mark_loop_stopped(shared: dict[str, Any], node_id: str, reason: str) -> None:
+        """Stamp ``loop_stopped`` on the loop node's output so JSON/MCP/CLI can read why it ended."""
+        node_output = shared.get(node_id)
+        if isinstance(node_output, dict):
+            node_output["loop_stopped"] = reason
+
+    @staticmethod
+    def _emit_loop_cap_advisory(shared: dict[str, Any], node_id: str, cap: int) -> None:
+        """Emit a non-degrading INFO advisory when a loop stops because it hit its cap.
+
+        Mirrors the empty-input batch advisory (``batch_executor._push_batch_warnings``):
+        an ``INFO`` Diagnostic written to ``__warnings__`` surfaces in reports / CLI /
+        JSON without flipping the workflow to DEGRADED.
+
+        Precondition (load-bearing): this overwrites ``__warnings__[node_id]``
+        unconditionally, which is safe because it is reached only on the
+        non-error re-entry path (``_loop_should_reenter`` is called only when
+        ``last_action`` is not an error). Every other ``__warnings__[node_id]``
+        writer for this node fires on an error action, and batch (the prewarm
+        writer) is mutually exclusive with loop — so no concurrent warning for
+        the same node exists to clobber here.
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+
+        shared.setdefault("__warnings__", {})[node_id] = Diagnostic(
+            severity=Severity.INFO,
+            title="Loop reached max_iterations",
+            message=(
+                f"Loop node '{node_id}' stopped after reaching its max_iterations cap ({cap}) "
+                f"with its condition still truthy."
+            ),
+            suggestions=[
+                "Expected when capping a stop-on-condition loop. If the loop should have drained "
+                "naturally, raise max_iterations or check that the `while:` source eventually goes falsy.",
+            ],
+            node_id=node_id,
+            source="runtime",
+            id="loop.max-iterations-reached",
+        )
 
     def _populate_outputs(self, workflow: CompiledWorkflow, shared: dict[str, Any], last_action: Optional[str]) -> None:
         """Resolve declared workflow outputs into the shared store.

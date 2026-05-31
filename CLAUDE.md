@@ -218,6 +218,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 159: Prompt Caching
 - ✅ Task 160: Cache Analysis Architectural Refactor
 - ✅ Task 161: Safer Cache Defaults
+- ✅ Task 162: Loop Config — Condition-Terminated Iteration
 
 ### Planned Features (in order of priority)
 

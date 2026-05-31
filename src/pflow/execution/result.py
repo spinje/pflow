@@ -126,6 +126,10 @@ class PlanEntry:
     batch_parallel: bool = False
     batch_items_cached: int | None = None
     batch_items_total: int | None = None
+    # issue #445: for a ``loop:`` node, the resolved max_iterations upper bound.
+    # The planner plans the body once and the summary multiplies this entry's
+    # single-pass cost/duration (and its sub_plan rollup) by this factor.
+    loop_iterations: int | None = None
 
 
 @dataclass(frozen=True)

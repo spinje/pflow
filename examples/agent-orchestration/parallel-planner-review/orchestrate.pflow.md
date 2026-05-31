@@ -6,13 +6,13 @@ unblocked ones in parallel, opens a PR for each that passes review, then repeats
 cap is hit. This file is the entry point; every node's description explains its
 own role and why it is that node type.
 
-**The loop.** A backward-edge counter/checker pair: `tick` holds the cycle
-counter, `run-cycle` does the work (a whole sub-workflow per iteration), and
-`check-progress` decides loop-or-stop. The counter ping-pongs between the two
-`code` nodes because a node cannot read its own previous output — that store rule
-is why the loop needs a separate counter node. It converges because `run-cycle`'s
-`open-prs` step strips the `agent-ready` label from handled issues, shrinking the
-pool each cycle until empty (or `max_cycles` caps it).
+**The loop.** A single `loop:`-configured node: `run-cycle` does the work (a whole
+sub-workflow per iteration) and the engine re-runs it until its own
+`issues_planned` output drains to empty (`while: ${run-cycle.issues_planned}`) or
+the `max_cycles` cap is hit. It converges because `run-cycle`'s `open-prs` step
+strips the `agent-ready` label from handled issues, shrinking the pool each cycle
+until empty. A tiny `summarize` node turns the engine's `loop_stopped` marker into
+the human-readable final status.
 
 **Before running.** `gh` authenticated with push + PR rights on `origin`; the
 labels `agent-ready` and `agent-needs-human` must exist. Opt issues in by
@@ -59,63 +59,41 @@ unblocking.
 
 ## Steps
 
-### tick
-
-Hold the cycle counter. Reads the next cycle number from the checker; on the
-first visit the checker hasn't run yet, so `??` falls through to the literal
-`1`. `tick` is the routing target of `check-progress`'s loop-back edge, so it
-declares an explicit `- next:`.
-
-- type: code
-- next: run-cycle
-- inputs:
-    prior: ${check-progress.result.next_cycle ?? 1}
-
-```python code
-prior: int
-result: int = prior
-```
-
 ### run-cycle
 
-Run one full plan→implement→review→open-PRs cycle against the live repo. The
-worker of the loop — a whole sub-workflow per iteration.
+Run one full plan→implement→review→open-PRs cycle against the live repo — a whole
+sub-workflow per iteration. The `loop:` block re-runs this node while its own
+`issues_planned` output is a non-empty list (work remains) and stops when it
+drains to empty, capped at `max_cycles`. `${__iteration__}` (1-based) is available
+in the body if a step needs the cycle number.
 
 - type: workflow
 - workflow: ./run-cycle/run-cycle.pflow.md
-- next: check-progress
+- next: summarize
 - inputs:
     base_branch: ${base_branch}
     max_issues: ${max_issues}
+- loop:
+    while: ${run-cycle.issues_planned}
+    max_iterations: ${max_cycles}
 
-### check-progress
+### summarize
 
-Decide whether to run another cycle. Stops when the cycle found no unblocked
-issues (work is drained) or the cycle cap is reached; otherwise loops back to
-`tick` with an incremented counter. The checker of the loop.
+Turn the engine's `loop_stopped` marker into the human-readable final status.
+`loop_stopped` is `"condition"` when the work drained naturally, or
+`"max_iterations"` when the cycle cap stopped it (a non-degrading INFO advisory
+also fires in that case).
 
 - type: code
-- next: tick, end
 - inputs:
-    planned: ${run-cycle.issues_planned}
-    current: ${tick.result}
-    cap: ${max_cycles}
+    stopped: ${run-cycle.loop_stopped}
 
 ```python code
-planned: list
-current: int
-cap: int
-
-remaining = len(planned)
-if remaining == 0:
-    result: dict = {"next_cycle": current, "status": f"Done: no unblocked work left after {current} cycle(s)."}
-    next: str = "end"
-elif current >= cap:
-    result: dict = {"next_cycle": current, "status": f"Stopped at cycle cap ({cap}); work may remain."}
-    next: str = "end"
+stopped: str
+if stopped == "max_iterations":
+    result: str = "Stopped at the cycle cap (max_cycles); unblocked work may remain."
 else:
-    result: dict = {"next_cycle": current + 1, "status": f"Cycle {current} done; continuing."}
-    next: str = "tick"
+    result: str = "Done: no unblocked work left."
 ```
 
 ## Outputs
@@ -124,5 +102,5 @@ else:
 
 Final status: why the loop stopped.
 
-- source: ${check-progress.result.status}
+- source: ${summarize.result}
 - stdout: true

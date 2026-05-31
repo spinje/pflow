@@ -191,6 +191,49 @@ def compute_config_hash(config: dict[str, Any]) -> str:
     return hashlib.md5(config_json.encode()).hexdigest()  # noqa: S324
 
 
+def _compute_memo_cache_key(
+    config_hash: str,
+    batch_config: Optional[BatchConfig],
+    shared: dict,
+    resolved_params: Optional[dict],
+) -> Optional[str]:
+    """Compute the memo cache key for a node, or None when no usable key exists.
+
+    Batch nodes fold the resolved item list + semantic config into the key; a
+    non-resolvable / non-list items template (or a resolution error) yields None
+    (the node is then treated as a miss with no key). Non-batch nodes key on the
+    config hash plus resolved params.
+    """
+    from pflow.runtime.cache import compute_node_cache_key
+
+    if batch_config:
+        from pflow.runtime.cache import compute_batch_cache_key
+
+        from .batch_executor import resolve_batch_items
+
+        items_template = batch_config.items_template
+        if items_template is None:
+            return None
+        try:
+            resolved_items = resolve_batch_items(items_template, shared)
+            if not isinstance(resolved_items, list):
+                return None
+        except Exception:
+            logger.debug("Failed to resolve batch items for memo cache key", exc_info=True)
+            return None
+
+        semantic_config = {
+            "items_template": items_template,
+            "item_alias": batch_config.item_alias,
+            "error_handling": batch_config.error_handling,
+            "max_retries": batch_config.max_retries,
+        }
+        return compute_batch_cache_key(config_hash, semantic_config, resolved_items)
+    if resolved_params is not None:
+        return compute_node_cache_key(config_hash, resolved_params)
+    return compute_node_cache_key(config_hash)
+
+
 def memo_cache_lookup(
     node_id: str,
     node_type_name: str,
@@ -216,39 +259,20 @@ def memo_cache_lookup(
     if node_type_name == "WorkflowExecutor":
         return False, None, None
 
-    from pflow.runtime.cache import compute_node_cache_key
-
-    if batch_config:
-        from pflow.runtime.cache import compute_batch_cache_key
-
-        from .batch_executor import resolve_batch_items
-
-        items_template = batch_config.items_template
-        if items_template is None:
-            return False, None, None
-
-        try:
-            resolved_items = resolve_batch_items(items_template, shared)
-            if not isinstance(resolved_items, list):
-                return False, None, None
-        except Exception:
-            logger.debug("Failed to resolve batch items for memo cache key", exc_info=True)
-            return False, None, None
-
-        semantic_config = {
-            "items_template": items_template,
-            "item_alias": batch_config.item_alias,
-            "error_handling": batch_config.error_handling,
-            "max_retries": batch_config.max_retries,
-        }
-        cache_key = compute_batch_cache_key(config_hash, semantic_config, resolved_items)
-    elif resolved_params is not None:
-        cache_key = compute_node_cache_key(config_hash, resolved_params)
-    else:
-        cache_key = compute_node_cache_key(config_hash)
-
+    cache_key = _compute_memo_cache_key(config_hash, batch_config, shared, resolved_params)
     if not cache_key:
         return False, None, None
+
+    # Loop-staleness guard (issue #445): while a loop body is executing
+    # (``__loop_active__`` depth > 0, set by the engine around a loop node and
+    # propagated into sub-workflow children), suppress memo READS so each
+    # iteration re-executes against fresh state. This wins over an inner
+    # ``cache: true`` override. The cache_key is still RETURNED so writes
+    # (write_memo_cache) keep populating the cache — only the read (hit) is
+    # suppressed. Scoped to the loop subtree only: the flag is cleared once the
+    # loop exits, so a sibling cached node AFTER the loop reads normally.
+    if shared.get("__loop_active__", 0):
+        return False, cache_key, None
 
     # Task 159 E.1: ``get_with_age`` returns ``(action, output, created_at)``
     # so callers can compute ``cache_age_sec`` for trace 2.1.0. The age lookup

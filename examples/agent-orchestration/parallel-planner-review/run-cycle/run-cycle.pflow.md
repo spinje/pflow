@@ -154,10 +154,12 @@ required: [prs_opened, needs_human]
 
 ### issues_planned
 
-The issues the planner picked this cycle. The orchestrator checks whether this
-is empty to decide if there is more work to do — and because `open-prs` removes
-the `agent-ready` label, the pool shrinks each cycle until this is empty.
+The issues the planner picked this cycle. The orchestrator loops on this list:
+while it is non-empty there is more work, and because `open-prs` removes the
+`agent-ready` label, the pool shrinks each cycle until this drains to empty.
+Declared `array` so the orchestrator's `loop: while:` source is positively typed.
 
+- type: array
 - source: ${plan.response.issues}
 
 ### prs_opened

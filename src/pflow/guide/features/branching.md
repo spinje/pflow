@@ -145,7 +145,39 @@ echo "B: ${route.result}"
 
 ### Loops
 
-Loops are supported via **backward edges** — a node routes back to an earlier node, which re-executes. Use a **worker/checker** pair: the worker does the work, the checker decides (via dynamic `next`) whether to loop again or exit. A node can't reference its own previous output (the store excludes a node's self-namespace), so the counter lives across the two nodes.
+There are three ways to repeat work; pick by **how the iteration count is decided**:
+
+| You want | Use | Stops early? |
+|---|---|---|
+| A fixed number of iterations known up front | `batch:` (`parallel: false`) — see `pflow guide batch` | No — always runs all N |
+| Repeat a step until a condition goes falsy, capped | **`loop:`** (below) | Yes |
+| Full manual control over the backward edge | backward-edge worker/checker (under the hood, below) | Yes |
+
+#### `loop:` — condition-terminated iteration (recommended)
+
+Add a `loop:` block to any single node (sibling to `batch:`, mutually exclusive with it). The engine re-runs that node until a truthiness condition over its **own typed output** goes falsy, or an iteration cap is hit. It is a **do-while**: the body runs once, then the condition is checked.
+
+````markdown
+### run-cycle
+
+Do one unit of work; re-run while there's more.
+
+- type: workflow
+- workflow: ./run-cycle/run-cycle.pflow.md
+- inputs: { base_branch: ${base_branch} }
+- loop:
+    while: ${run-cycle.issues_planned}   # this node's own typed output
+    max_iterations: ${max_cycles}        # int OR ${template}; optional
+````
+
+- **`while:`** is a single `${...}` reference to the loop node's own output. **Truthy → re-run; falsy → stop.** Truthiness is type-aware: a list drains to empty, a number counts to 0, a boolean flips to `false`. The source must be a typed output — a raw string source (e.g. `${step.stdout}`) is **rejected at validation** because a non-empty string like `"0\n"` is truthy and would never stop the loop. Comparisons/arithmetic (`${x > 0}`) are not supported — compute a boolean in the body and reference it (`while: ${step.has_more}`).
+- **`max_iterations:`** is an integer or a `${template}` resolving to one. Optional — defaults to the visit guard (100). Reaching the cap is **not** an error: the run stays SUCCESS, a non-degrading INFO advisory is emitted, and the loop node's output carries `loop_stopped: "max_iterations"` (vs `"condition"` on a clean drain). Read `${loop-node.loop_stopped}` from a downstream node to branch on *why* it stopped.
+- **`${__iteration__}`** (1-based) is available in the loop body, mirroring batch's `${__index__}`. It is cleared on loop exit, so post-loop nodes can't read it.
+- **Re-entry is one node end-to-end** — it behaves exactly like a backward-edge revisit (in-process completion is cleared and the memo cache is bypassed each iteration, so the body re-executes against fresh state), but you author and see a single node.
+
+#### Under the hood: the backward-edge worker/checker
+
+`loop:` is sugar over pflow's lower-level mechanism: **backward edges** — a node routes back to an earlier node, which re-executes. Reach for this directly only when you need full control over the routing (e.g. a multi-node loop body with mid-loop branches). Use a **worker/checker** pair: the worker does the work, the checker decides (via dynamic `next`) whether to loop again or exit. A node can't reference its own previous output (the store excludes a node's self-namespace), so the counter lives across the two nodes.
 
 With literal operands (`??` accepts JSON literals), the counter seeds from a literal `0` on the first visit — no separate seed node needed:
 
@@ -203,7 +235,7 @@ falls through `${checker.result ?? 0}` to `0`, and later visits read the int
 
 **Visit guard:** each node may be visited at most 100 times per run (loop-runaway protection). Override with the `PFLOW_MAX_NODE_VISITS=200` environment variable.
 
-**The worker can be any node type.** Make the worker a `workflow` node and the loop body becomes an entire sub-workflow that repeats until the condition is met — the checker just branches on one of the child's declared `## Outputs` (e.g. `${worker.remaining}`) instead of a counter. That gives a heavyweight per-iteration body — a whole sub-workflow — that still exits the moment the work is done, which the fixed-count batch pattern cannot.
+**The worker can be any node type.** Make the worker a `workflow` node and the loop body becomes an entire sub-workflow that repeats until the condition is met — the checker just branches on one of the child's declared `## Outputs` (e.g. `${worker.remaining}`). That same shape is exactly what `loop:` expresses in one node: a `loop:` on a `workflow`-type node gives a heavyweight per-iteration body — a whole sub-workflow — that still exits the moment the work is done, which the fixed-count batch pattern cannot. Prefer `loop:` unless you need a multi-node loop body or mid-loop branching.
 
-**Choosing the loop style:** the deciding question is whether the number of iterations is known up front — not how heavy each iteration is. Use the sub-workflow batch pattern (`parallel: false`) for a fixed iteration count; it always runs all N. Use this backward-edge loop when iterations continue until a condition is met, since only it can stop early. Both can carry a substantial per-iteration body and read state from disk. See `pflow guide sub-workflows` → Bounded iteration.
+**Choosing the loop style:** the deciding question is whether the number of iterations is known up front — not how heavy each iteration is. Use `batch:` (`parallel: false`) for a fixed iteration count; it always runs all N. Use `loop:` when iterations continue until a condition is met, since only it can stop early. Drop to the manual backward-edge form only when the loop body spans multiple nodes or needs mid-loop branching the single-node `loop:` can't express. See `pflow guide sub-workflows` → Bounded iteration.
 

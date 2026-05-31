@@ -19,7 +19,8 @@ from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR
 from pflow.registry import Registry
-from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
+from pflow.runtime.engine import instrumentation
+from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, LoopConfig, NodeConfig, TemplateConfig
 
 from .compile_validation import _prepare_compilation
 from .mcp_resolution import _check_registry_for_mcp, _create_mcp_error_suggestion, _parse_mcp_node_type
@@ -348,6 +349,9 @@ def _create_node_and_config(
             retry_wait=_coerce_float(batch_data.get("retry_wait", 0.0), "retry_wait", 0.0),
         )
 
+    # Build loop config (None if not a loop node). batch/loop are mutually exclusive.
+    loop_config = _build_loop_config(node_data, batch_config is not None)
+
     # Build NodeConfig
     node_config = NodeConfig(
         node_id=node_id,
@@ -359,9 +363,125 @@ def _create_node_and_config(
         cache_enabled=node_data.get("cache", _default_cache_for_node_type(node_type)),
         prompt_cache_items=_extract_prompt_cache_items(node_data),
         prewarm=_extract_prewarm(node_data),
+        loop_config=loop_config,
     )
 
     return node_instance, node_config
+
+
+def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[LoopConfig]:
+    """Build a ``LoopConfig`` from the node's top-level ``loop:`` block (issue #445).
+
+    Returns None when no ``loop:`` is declared. Enforces:
+    - batch/loop mutual exclusion (both set → ``CompilationError``),
+    - a non-empty ``while:`` condition,
+    - literal ``max_iterations`` coerced to int and bounded to ``[1, MAX_NODE_VISITS]``;
+      a ``${template}`` ``max_iterations`` is deferred to runtime (resolved at loop entry).
+    """
+    loop_data = node_data.get("loop")
+    if not loop_data:
+        return None
+
+    node_id = node_data.get("id")
+    node_type = node_data.get("type")
+
+    if has_batch:
+        raise CompilationError(
+            f"Node '{node_id}' declares both `batch:` and `loop:` — they are mutually exclusive.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Use `batch:` for fixed-count fan-out, or `loop:` for stop-on-condition repetition — not both.",
+        )
+
+    if not isinstance(loop_data, dict):
+        raise CompilationError(
+            f"Node '{node_id}' `loop:` must be a mapping with a `while:` condition.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Declare `- loop:` with `while: ${node.output}` and optional `max_iterations:`.",
+        )
+
+    while_template = loop_data.get("while")
+    if not isinstance(while_template, str) or not while_template.strip():
+        raise CompilationError(
+            f"Node '{node_id}' `loop:` is missing a `while:` condition.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Add `while: ${node.output}` — a single ${...} reference to this node's typed output.",
+        )
+
+    max_iterations: Optional[int] = None
+    max_iterations_template: Optional[str] = None
+    raw_max = loop_data.get("max_iterations")
+    if isinstance(raw_max, str) and "${" in raw_max:
+        max_iterations_template = raw_max
+    elif raw_max is not None:
+        max_iterations = _validate_loop_cap(_coerce_loop_cap_int(raw_max, node_id, node_type), node_id, node_type)
+
+    return LoopConfig(
+        while_template=while_template,
+        max_iterations=max_iterations,
+        max_iterations_template=max_iterations_template,
+    )
+
+
+def _coerce_loop_cap_int(value: Any, node_id: Optional[str], node_type: Optional[str]) -> int:
+    """Coerce a literal ``max_iterations`` to int (bool/int/float/numeric-string).
+
+    Loop-specific sibling of ``_coerce_int`` so the error message speaks ``loop:``
+    rather than ``batch config``. Fails fast on non-numeric values.
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            pass
+    raise CompilationError(
+        f"Node '{node_id}' `loop: max_iterations` must be a positive integer; got {value!r}.",
+        phase="loop_config",
+        node_id=node_id,
+        node_type=node_type,
+        suggestion="Set max_iterations to a positive integer (e.g., `max_iterations: 5`) or a ${template}.",
+    )
+
+
+def _validate_loop_cap(value: int, node_id: Optional[str], node_type: Optional[str]) -> int:
+    """Bound a resolved loop cap to ``[1, MAX_NODE_VISITS]``; raise ``CompilationError`` otherwise.
+
+    Shared by the literal (compile-time) branch and — at runtime — the template
+    branch, so a ``max_iterations: ${cap}`` resolving to 0/negative/over-cap fails
+    the same way a literal would.
+    """
+    if value < 1:
+        raise CompilationError(
+            f"Node '{node_id}' `loop: max_iterations` must be >= 1; got {value}.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Set max_iterations to a positive integer (the iteration cap).",
+        )
+    if value > instrumentation.MAX_NODE_VISITS:
+        raise CompilationError(
+            f"Node '{node_id}' `loop: max_iterations` ({value}) exceeds the hard visit cap "
+            f"of {instrumentation.MAX_NODE_VISITS}.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion=(
+                f"Lower max_iterations to <= {instrumentation.MAX_NODE_VISITS}, or raise the cap via the "
+                "PFLOW_MAX_NODE_VISITS environment variable."
+            ),
+        )
+    return value
 
 
 def _default_cache_for_node_type(node_type: str) -> bool:

@@ -120,12 +120,20 @@ def _check_forward_reference(
     node_position: int,
     node_positions: dict[str, int],
     loop_forward_limits: dict[str, int],
+    loop_node_ids: set[str],
 ) -> Optional[Diagnostic]:
     """Check if a node reference is a disallowed forward reference.
 
     Returns error diagnostic if ref_node_id comes after node_id in execution order
     and is not part of a valid loop pattern. Returns None if the reference is valid.
     """
+    # Loop self-reference carve-out (issue #445): a ``loop:`` node's ``while:``
+    # condition (and any self-referencing param) legitimately reads its own
+    # just-completed output via engine re-entry — it is NOT a forward reference.
+    # Scoped to ``ref_node_id == node_id`` so a ``while:`` pointing at a DIFFERENT
+    # downstream node is still rejected.
+    if ref_node_id == node_id and node_id in loop_node_ids:
+        return None
     if ref_node_id not in node_positions:
         return None
     ref_position = node_positions[ref_node_id]
@@ -221,6 +229,24 @@ def _reserved_internal_key_diagnostic(
             context={"category": "validation", "path": path},
         )
 
+    if ref_node_id == "__iteration__" and has_path:
+        path_remainder = ref[len(ref_node_id) :].lstrip(".")
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Validation Error",
+            node_id=node_id,
+            message=(
+                f"Template '${{__iteration__.{path_remainder}}}' in node '{node_id}' "
+                f"(parameter '{param_name}') accesses fields on `__iteration__`, "
+                f"which is an integer (the 1-based loop iteration count)."
+            ),
+            suggestions=[
+                "Use bare `${__iteration__}` for the current loop iteration number.",
+            ],
+            context={"category": "validation", "path": path},
+        )
+
     return None
 
 
@@ -233,6 +259,7 @@ def _validate_template_reference(  # noqa: C901
     node_positions: dict[str, int],
     declared_inputs: set[str],
     loop_forward_limits: dict[str, int],
+    loop_node_ids: set[str],
     check_inputs: bool,
 ) -> Optional[Diagnostic]:
     """Validate a single template reference.
@@ -307,6 +334,7 @@ def _validate_template_reference(  # noqa: C901
             node_position,
             node_positions,
             loop_forward_limits,
+            loop_node_ids,
         )
 
     # Input parameter reference like ${repo_name}
@@ -417,12 +445,26 @@ def validate_data_flow(
             item_alias = batch_config.get("as", "item")
             batch_item_aliases.add(item_alias)
 
+    # Loop nodes (issue #445): node ids carrying a top-level ``loop:`` block.
+    # Used for the self-reference carve-out in ``_check_forward_reference`` and
+    # to gate ``__iteration__`` registration.
+    loop_node_ids: set[str] = {
+        node["id"] for node in workflow_ir.get("nodes", []) if node.get("loop") and node.get("id")
+    }
+
     # Combine declared inputs with batch item aliases for validation
     valid_simple_refs = declared_inputs | batch_item_aliases
 
     # __index__ is auto-injected in batch contexts (0-based batch item index)
     if has_batch_nodes:
         valid_simple_refs.add("__index__")
+
+    # __iteration__ is auto-injected in loop bodies (1-based iteration count).
+    # Registered globally (like __index__) when any loop node exists.
+    if loop_node_ids:
+        valid_simple_refs.add("__iteration__")
+
+    diagnostics.extend(_validate_loop_node_combos(workflow_ir))
 
     # Build execution order
     try:
@@ -468,6 +510,7 @@ def validate_data_flow(
             node_positions,
             valid_simple_refs,
             loop_forward_limits,
+            loop_node_ids,
             check_inputs,
             diagnostics,
         )
@@ -499,6 +542,140 @@ def validate_data_flow(
     return diagnostics
 
 
+def _validate_loop_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Reject unsupported `loop:` combinations (issue #445).
+
+    - **`loop:` + `enable_namespacing: false`** — the `while:` condition reads the
+      loop node's OWN output via `${node.field}`, which only resolves when outputs
+      are namespaced under `shared[node_id]`. With namespacing off a node writes to
+      root, so the self-reference never resolves and the loop would silently run a
+      single pass. Reject up front rather than letting it surface as a confusing
+      generic "no valid source".
+    - **`loop:` + `storage_mode: shared`** — shared storage writes the child's
+      output (and the engine's `__iteration__` / `__execution__` keys) straight to
+      the parent root, so loop re-entry would collide.
+    """
+    # Deferred import: the literal-cap check below compares against the live,
+    # env-overridable MAX_NODE_VISITS module attribute (so a test monkeypatching it
+    # affects this path too), and a function-local import avoids any module-load
+    # cycle from core -> runtime.engine.
+    from pflow.runtime.engine import instrumentation
+
+    diagnostics: list[Diagnostic] = []
+    namespacing_on = workflow_ir.get("enable_namespacing", True)
+    for node in workflow_ir.get("nodes", []):
+        loop_data = node.get("loop")
+        if not loop_data:
+            continue
+        node_id = node.get("id")
+        if not namespacing_on:
+            diagnostics.append(_make_loop_namespacing_diagnostic(node_id))
+        params = node.get("params")
+        if isinstance(params, dict) and params.get("storage_mode") == "shared":
+            diagnostics.append(_make_loop_shared_storage_diagnostic(node_id))
+        # batch + loop are mutually exclusive. The compiler enforces this fail-fast in
+        # _build_loop_config, but that only runs on the run path — duplicate it here so
+        # `pflow save` / --validate-only (which never compile) catch it too.
+        if node.get("batch"):
+            diagnostics.append(_make_loop_batch_exclusion_diagnostic(node_id))
+        # Literal max_iterations over the hard visit cap. The compiler bounds this for
+        # the run path; mirror it here so the validate path agrees (the ${template}
+        # branch is bounded at runtime in resolve_loop_cap). Schema already enforces the
+        # >= 1 lower bound and integer-ness of the literal branch. `type(...) is int`
+        # excludes bool (a bool cap is a separate schema concern, not an over-cap one).
+        if isinstance(loop_data, dict):
+            raw_max = loop_data.get("max_iterations")
+            if type(raw_max) is int and raw_max > instrumentation.MAX_NODE_VISITS:
+                diagnostics.append(_make_loop_cap_diagnostic(node_id, raw_max, instrumentation.MAX_NODE_VISITS))
+    return diagnostics
+
+
+def _make_loop_namespacing_diagnostic(node_id: Optional[str]) -> Diagnostic:
+    """Reject `loop:` when `enable_namespacing: false` (issue #445).
+
+    The `while:` self-reference (`${node.output}`) only resolves under namespacing;
+    without it the loop silently single-passes. Surface the real cause up front.
+    """
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' uses `loop:` but the workflow sets `enable_namespacing: false`. "
+            f"A loop's `while:` condition reads the node's own output (${{{node_id}.field}}), which "
+            f"only resolves when outputs are namespaced — otherwise the loop would silently run once."
+        ),
+        suggestions=[
+            "Remove `enable_namespacing: false` (namespacing is on by default), or express the "
+            "iteration with a manual backward-edge worker/checker pair instead of `loop:`.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop"},
+    )
+
+
+def _make_loop_shared_storage_diagnostic(node_id: Optional[str]) -> Diagnostic:
+    """Reject the unsupported ``loop:`` + ``storage_mode: shared`` combination (issue #445)."""
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' combines `loop:` with `storage_mode: shared`, which is not supported. "
+            f"Shared storage writes the child's output and pflow's loop bookkeeping to the parent root, "
+            f"so re-entry collides."
+        ),
+        suggestions=[
+            "Remove `storage_mode: shared` (the default `mapped` mode isolates the child's storage), "
+            "or drop the `loop:` block and express iteration in the parent.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].params.storage_mode"},
+    )
+
+
+def _make_loop_batch_exclusion_diagnostic(node_id: Optional[str]) -> Diagnostic:
+    """Reject a node declaring both `batch:` and `loop:` (issue #445).
+
+    Mirrors the compiler's fail-fast check (`_build_loop_config`) so the save /
+    `--validate-only` path — which never compiles — rejects the combination too.
+    """
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' declares both `batch:` and `loop:` — they are mutually exclusive. "
+            f"`batch:` fans out over a fixed-count list; `loop:` repeats one node until a condition."
+        ),
+        suggestions=[
+            "Keep `batch:` for fixed-count fan-out, or `loop:` for stop-on-condition repetition — not both.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop"},
+    )
+
+
+def _make_loop_cap_diagnostic(node_id: Optional[str], cap: int, max_visits: int) -> Diagnostic:
+    """Reject a literal `max_iterations` over the hard visit cap (issue #445).
+
+    Mirrors the compiler's `_validate_loop_cap` upper-bound check so the validate
+    path agrees with the run path.
+    """
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(f"Node '{node_id}' `loop: max_iterations` ({cap}) exceeds the hard visit cap of {max_visits}."),
+        suggestions=[
+            f"Lower max_iterations to <= {max_visits}, or raise the cap via the "
+            "PFLOW_MAX_NODE_VISITS environment variable.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.max_iterations"},
+    )
+
+
 def _check_param_value(
     param_name: str,
     value: Any,
@@ -508,6 +685,7 @@ def _check_param_value(
     node_positions: dict[str, int],
     valid_simple_refs: set[str],
     loop_forward_limits: dict[str, int],
+    loop_node_ids: set[str],
     check_inputs: bool,
     errors: list[Diagnostic],
 ) -> None:
@@ -530,6 +708,7 @@ def _check_param_value(
                     node_positions,
                     valid_simple_refs,
                     loop_forward_limits,
+                    loop_node_ids,
                     check_inputs,
                 )
                 if error:
@@ -548,6 +727,7 @@ def _check_param_value(
                 node_positions,
                 valid_simple_refs,
                 loop_forward_limits,
+                loop_node_ids,
                 check_inputs,
                 errors,
             )
@@ -565,6 +745,7 @@ def _check_param_value(
                 node_positions,
                 valid_simple_refs,
                 loop_forward_limits,
+                loop_node_ids,
                 check_inputs,
                 errors,
             )
@@ -578,6 +759,7 @@ def _validate_node_params(
     node_positions: dict[str, int],
     valid_simple_refs: set[str],
     loop_forward_limits: dict[str, int],
+    loop_node_ids: set[str],
     check_inputs: bool,
     errors: list[Diagnostic],
 ) -> None:
@@ -599,9 +781,48 @@ def _validate_node_params(
             node_positions,
             node_refs,
             loop_forward_limits,
+            loop_node_ids,
             check_inputs,
             errors,
         )
+
+    # Validate the loop condition source (issue #445). `loop:` is a top-level
+    # node field, so it bypasses the params walk above — thread it in explicitly
+    # so a `while: ${typo.x}` (non-existent node) or a forward reference to a
+    # different downstream node is still caught. The self-reference carve-out in
+    # `_check_forward_reference` allows `while: ${this_node.output}`.
+    loop_block = node.get("loop")
+    if isinstance(loop_block, dict):
+        while_template = loop_block.get("while")
+        if isinstance(while_template, str):
+            _check_param_value(
+                "loop.while",
+                while_template,
+                node_id,
+                node_position,
+                nodes_by_id,
+                node_positions,
+                node_refs,
+                loop_forward_limits,
+                loop_node_ids,
+                check_inputs,
+                errors,
+            )
+        max_it = loop_block.get("max_iterations")
+        if isinstance(max_it, str) and "${" in max_it:
+            _check_param_value(
+                "loop.max_iterations",
+                max_it,
+                node_id,
+                node_position,
+                nodes_by_id,
+                node_positions,
+                node_refs,
+                loop_forward_limits,
+                loop_node_ids,
+                check_inputs,
+                errors,
+            )
 
 
 # ------------------------------------------------------------------------------
