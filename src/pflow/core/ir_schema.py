@@ -140,6 +140,45 @@ BATCH_CONFIG_SCHEMA: dict[str, Any] = {
 }
 
 
+# JSON Schema for loop configuration on nodes (issue #445)
+# Enables condition-terminated repetition: re-run a node until a truthiness
+# condition over its own typed output goes falsy, capped by max_iterations.
+# `additionalProperties: false` is the ONLY thing that catches a `whlie:` typo
+# (loop is a top-level node field, so the params-only unknown-key walk skips it).
+LOOP_CONFIG_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Configuration for condition-terminated iteration of a single node",
+    "properties": {
+        "while": {
+            "type": "string",
+            "pattern": r"^\$\{.+\}$",
+            "description": (
+                "Template reference to the loop node's own typed output "
+                "(e.g., '${run-cycle.issues_planned}'). Truthy → re-run (do-while); "
+                "falsy → stop. Must be a single ${...} reference, not a comparison."
+            ),
+        },
+        "max_iterations": {
+            "oneOf": [
+                {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Hard cap on the number of iterations (>= 1).",
+                },
+                {
+                    "type": "string",
+                    "pattern": r"^\$\{.+\}$",
+                    "description": "Template reference resolving to a positive integer cap.",
+                },
+            ],
+            "description": "Iteration cap: positive integer OR ${template} resolving to one.",
+        },
+    },
+    "required": ["while"],
+    "additionalProperties": False,
+}
+
+
 # JSON Schema for workflow IR (minimal MVP version)
 FLOW_IR_SCHEMA: dict[str, Any] = {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -168,6 +207,7 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "additionalProperties": True,
                     },
                     "batch": BATCH_CONFIG_SCHEMA,
+                    "loop": LOOP_CONFIG_SCHEMA,
                     "_source_lines": {
                         "type": "object",
                         "description": "Markdown source line offsets for code block params (injected by parser)",

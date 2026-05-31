@@ -118,13 +118,22 @@ def validate_workflow_templates(
     # If no templates exist anywhere in the workflow, most template passes can
     # return early. Code-node annotation boundary checks still need to run,
     # because "input missing annotation" / "orphan annotation" are meaningful
-    # even when inputs are literals or empty.
-    if not all_templates:
+    # even when inputs are literals or empty. Loop `while:` validation must also
+    # run even with no extractable operands (an operator-only `while: ${x > 0}`
+    # yields no template operand but must still be rejected — issue #445).
+    has_loop = any(node.get("loop") for node in workflow_ir.get("nodes", []))
+    if not all_templates and not has_loop:
         diagnostics.extend(validate_code_node_input_annotations(workflow_ir, {}))
         return diagnostics
 
     # Get full output structure from nodes
     node_outputs = extract_node_outputs(workflow_ir, registry, available_params)
+
+    if not all_templates:
+        # Only loop conditions remain to check (no node-param templates).
+        diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
+        diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
+        return diagnostics
 
     logger.debug(
         f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
@@ -153,6 +162,12 @@ def validate_workflow_templates(
     # Pass 9: Validate code-node input annotations against upstream template types
     diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
 
+    # Pass 10 (issue #445): Validate loop `while:` conditions — typed-output gate
+    # (reject known-string sources like ${shell.stdout}) + operator rejection
+    # (reject ${x > 0} and arithmetic). Belt-and-suspenders with the runtime
+    # str-condition raise in the engine.
+    diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
+
     errors = [d for d in diagnostics if d.severity == Severity.ERROR]
     warnings = [d for d in diagnostics if d.severity != Severity.ERROR]
 
@@ -169,6 +184,147 @@ def validate_workflow_templates(
         logger.info("Template validation passed")
 
     return diagnostics
+
+
+# ---------------------------------------------------------------------------
+# Loop condition validation (issue #445)
+# ---------------------------------------------------------------------------
+
+# Operator / arithmetic characters that never appear in a valid pflow variable
+# path or a coalesce expression. Their presence inside a `while:` means the
+# author wrote a comparison/arithmetic expression — which the truthiness-only
+# condition model does not support. Hyphen (`-`) is intentionally EXCLUDED
+# because node IDs legitimately contain it (e.g. ${run-cycle.x}).
+_LOOP_OPERATOR_CHARS = frozenset(">=<!+*/%")
+
+# Output types that mean the condition source is a raw string — truthiness over
+# a string is the foot-gun the typed-output gate exists to prevent (e.g. shell
+# stdout "0\n" is truthy). Covers both the S1 vocabulary ("string") and the
+# Python-ish registry vocabulary ("str").
+_KNOWN_STRING_TYPES = frozenset({"string", "str"})
+
+
+def _validate_loop_conditions(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
+    """Validate `loop: while:` conditions (issue #445), one diagnostic per loop node."""
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        loop_config = node.get("loop")
+        if not isinstance(loop_config, dict):
+            continue
+        node_id = node.get("id")
+        while_template = loop_config.get("while")
+        if not isinstance(node_id, str) or not isinstance(while_template, str):
+            continue
+        diag = _loop_condition_diagnostic(node_id, while_template, workflow_ir, node_outputs)
+        if diag is not None:
+            diagnostics.append(diag)
+    return diagnostics
+
+
+def _loop_condition_diagnostic(
+    node_id: str, while_template: str, workflow_ir: dict[str, Any], node_outputs: dict[str, Any]
+) -> Optional[Diagnostic]:
+    """Return the (at most one) ERROR for a `while:` condition, or None if valid.
+
+    - **Operator rejection**: `while: ${x > 0}` / arithmetic is unsupported — the
+      condition is truthiness over a typed value, not an expression.
+    - **Typed-output gate (belt half 1)**: reject a `while:` whose source has a
+      *known string* type (e.g. `${shell.stdout}`). `any`/un-inferable types are
+      allowed so the motivating sub-workflow example isn't false-rejected. A
+      coalesce (`${a ?? b}`) is checked per non-literal operand — the runtime belt
+      raises on a string result too, so checking here keeps the validation half of
+      the belt-and-suspenders honest.
+    """
+    from pflow.runtime.template_validation.type_checker import infer_template_type
+
+    if any(ch in _LOOP_OPERATOR_CHARS for ch in while_template):
+        return _make_loop_operator_diagnostic(node_id, while_template)
+
+    var = TemplateResolver.extract_simple_template_var(while_template)
+    if var is None:
+        # Not a single ${...} reference. The schema pattern (^\$\{.+\}$) is too broad to
+        # catch a multi-reference like `${a}${b}`, so reject it HERE rather than leaving the
+        # runtime to silently single-pass on it (the runtime stops on this shape — issue #445).
+        return _make_loop_shape_diagnostic(node_id, while_template)
+
+    # NOTE: a bare node reference (`while: ${c}`, no field) needs no loop-specific
+    # check here — it is already rejected by the generic template validator ("Invalid
+    # template ${c} — this is a node ID. Use ${c.output_key}") AND data-flow. Verified
+    # via the CLI: such a workflow fails validation (exit 1), it does NOT silently loop
+    # to the cap. Adding a third loop-specific error would only be noise.
+    is_coalesce = TemplateResolver.is_coalesce_expression(var)
+    operands = TemplateResolver.split_coalesce_operands(var) if is_coalesce else [var]
+    for operand in operands:
+        if TemplateResolver.is_literal_operand(operand):
+            continue
+        inferred = infer_template_type(operand, workflow_ir, node_outputs)
+        if inferred in _KNOWN_STRING_TYPES:
+            return _make_loop_string_type_diagnostic(node_id, while_template, operand, str(inferred))
+    return None
+
+
+def _make_loop_operator_diagnostic(node_id: str, while_template: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: while:` is '{while_template}', which uses a comparison or "
+            f"arithmetic operator. The loop condition is truthiness over a typed value, not an expression."
+        ),
+        suggestions=[
+            "Use a single ${node.output} reference whose value is truthy while the loop should continue "
+            "(a non-empty list/string, a non-zero number, or true) and falsy to stop.",
+            "If you need a comparison, compute it in the loop body and reference the boolean output: "
+            "`while: ${step.should_continue}`.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
+    )
+
+
+def _make_loop_shape_diagnostic(node_id: str, while_template: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: while:` is '{while_template}', which is not a single "
+            f"${{...}} reference. The loop condition must be one reference to a typed output "
+            f"whose truthiness decides whether to continue."
+        ),
+        suggestions=[
+            "Use a single ${node.output} reference — a list (drains to empty), a number "
+            "(counts to 0), or a boolean. Combine multiple signals in the loop body and "
+            "reference the single boolean output: `while: ${step.should_continue}`.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
+    )
+
+
+def _make_loop_string_type_diagnostic(node_id: str, while_template: str, var: str, inferred: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: while:` references '{while_template}', whose type is "
+            f"'{inferred}' (a string). String truthiness is a foot-gun — a non-empty string like "
+            f"'0\\n' or 'false' is truthy, so the loop would never stop on those values."
+        ),
+        suggestions=[
+            "Reference a typed output instead: a list (drains to empty), a number (counts to 0), "
+            "or a boolean (`while: ${step.has_more}`).",
+            "If the source genuinely is a list/number, declare its output type so it isn't seen as a string.",
+        ],
+        context={
+            "category": "validation",
+            "path": f"nodes[id={node_id}].loop.while",
+            "template": while_template,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -368,9 +524,28 @@ def _operands_in_string(value: str) -> Iterator[tuple[str, bool]]:
             yield match, False
 
 
+def _node_template_value_sources(node: dict[str, Any]) -> Iterator[Any]:
+    """Yield every value on a node that may carry templates: params, ``batch.items``,
+    and the loop ``while:`` / ``max_iterations:`` sources (issue #445).
+
+    Including the loop sources means an input used ONLY in ``while:`` isn't flagged
+    "unused", and the root of ``while: ${typo.x}`` is path-validated.
+    """
+    yield from node.get("params", {}).values()
+    batch_config = node.get("batch")
+    if batch_config and batch_config.get("items"):
+        yield batch_config["items"]
+    loop_config = node.get("loop")
+    if isinstance(loop_config, dict):
+        for key in ("while", "max_iterations"):
+            value = loop_config.get(key)
+            if isinstance(value, str):
+                yield value
+
+
 def _iter_template_operands(workflow_ir: dict[str, Any]) -> Iterator[tuple[str, bool]]:
     """Yield ``(operand, in_coalesce)`` for every non-literal template operand
-    found in node params and ``batch.items``.
+    found in node params, ``batch.items``, and loop conditions.
 
     ``in_coalesce`` operands may be legitimately absent at runtime (``??`` falls
     through on a missing field — issue #441), so they are NOT eligible for Pass-5
@@ -390,11 +565,8 @@ def _iter_template_operands(workflow_ir: dict[str, Any]) -> Iterator[tuple[str, 
                 yield from walk(item)
 
     for node in workflow_ir.get("nodes", []):
-        for param_value in node.get("params", {}).values():
-            yield from walk(param_value)
-        batch_config = node.get("batch")
-        if batch_config and batch_config.get("items"):
-            yield from walk(batch_config["items"])
+        for source in _node_template_value_sources(node):
+            yield from walk(source)
 
 
 def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:
@@ -558,7 +730,43 @@ def extract_node_outputs(
                 code_annotations=code_annotations,
             )
 
+    _register_loop_node_outputs(node_outputs, workflow_ir, enable_namespacing)
     return node_outputs
+
+
+def _register_loop_node_outputs(
+    node_outputs: dict[str, Any], workflow_ir: dict[str, Any], enable_namespacing: bool
+) -> None:
+    """Register the synthetic outputs loop nodes expose (issue #445).
+
+    - ``__iteration__``: 1-based loop iteration count, available in any loop body.
+      Registered once globally (like batch's ``__index__``) so Pass 5 recognizes
+      the bare ``${__iteration__}`` reference.
+    - ``{loop}.loop_stopped``: the engine stamps "condition" | "max_iterations" onto
+      a loop node's output dict when the loop ends. Registered (namespaced) so a
+      post-loop node may reference it without a spurious "does not output" error.
+      Gated on ``enable_namespacing``: the marker is written to ``shared[node_id]``
+      (a dict the NamespacedSharedStore eagerly creates); with namespacing OFF the
+      engine cannot stamp it, so registering it would be a validate-OK /
+      runtime-empty drift. Keep the two layers in agreement.
+    """
+    loop_node_ids = [node.get("id") for node in workflow_ir.get("nodes", []) if node.get("loop")]
+    if not loop_node_ids:
+        return
+    node_outputs["__iteration__"] = {
+        "type": "int",
+        "description": "Current loop iteration count (1-based, issue #445)",
+        "is_loop_iteration": True,
+    }
+    if enable_namespacing:
+        for loop_id in loop_node_ids:
+            if isinstance(loop_id, str):
+                node_outputs[f"{loop_id}.loop_stopped"] = {
+                    "type": "string",
+                    "description": 'Why the loop stopped: "condition" (drained) or "max_iterations" (capped).',
+                    "node_id": loop_id,
+                    "is_loop_marker": True,
+                }
 
 
 def _register_workflow_node_outputs(

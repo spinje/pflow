@@ -38,14 +38,15 @@ from time import time
 from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.exceptions import CompilationError
+from pflow.core.exceptions import CompilationError, LoopConditionError
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import resolve_batch_items
 from pflow.runtime.engine.engine import build_prompt_cache_dict, is_clean_termination, parse_only_path
-from pflow.runtime.engine.instrumentation import apply_memo_hit, enforce_loop_guard
+from pflow.runtime.engine.instrumentation import MAX_NODE_VISITS, apply_memo_hit, enforce_loop_guard
+from pflow.runtime.engine.loop_control import loop_runtime_scope, resolve_loop_cap
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.template_resolution import resolve_templates
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig
@@ -239,6 +240,7 @@ def _build_plan_with_shared(
     _depth: int = 0,
     _parent_workflow_file: str | None = None,
     _force_downstream: bool = False,
+    _loop_active: int = 0,
 ) -> tuple[Plan, dict[str, Any]]:
     """Internal variant of `build_plan` that also exposes the scratch shared.
 
@@ -259,7 +261,7 @@ def _build_plan_with_shared(
 
     this_only, child_only = parse_only_path(only_node)
 
-    shared = create_planner_shared(compiled, params, cache, _parent_workflow_file)
+    shared = create_planner_shared(compiled, params, cache, _parent_workflow_file, loop_active=_loop_active)
     visited_paths = list(_visited_paths) if _visited_paths else []
     workflow_path = shared.get("_pflow_workflow_file")
 
@@ -319,21 +321,32 @@ def _build_plan_with_shared(
         enforce_loop_guard(node_id, shared)
 
         target_child_only = child_only if (this_only is not None and node_id == this_only) else None
-        entry = _plan_one_node(
-            curr,
-            config,
-            shared,
-            cache,
-            registry,
-            visited_paths=visited_paths,
-            depth=_depth,
-            child_only_node=target_child_only,
-        )
+        # issue #445: expose ${__iteration__}=1 and raise __loop_active__ while
+        # planning a loop body so its templates resolve (mirrors batch's
+        # ${__index__}=0) AND the loop node's memo read is suppressed — matching the
+        # engine, which re-executes a loop body rather than serving a cached hit.
+        # clear_iteration_on_exit=True: the planner walks the body once, so neither
+        # marker should leak to later nodes at plan time.
+        is_loop_node = config.loop_config is not None
+        with loop_runtime_scope(shared, is_loop_node, iteration=1, clear_iteration_on_exit=True):
+            entry = _plan_one_node(
+                curr,
+                config,
+                shared,
+                cache,
+                registry,
+                visited_paths=visited_paths,
+                depth=_depth,
+                child_only_node=target_child_only,
+            )
         state.entries.append(entry)
         if entry.sub_plan is not None:
             state.diagnostics.extend(entry.sub_plan.diagnostics)
         if entry.diagnostic is not None:
             state.diagnostics.append(entry.diagnostic)
+        # issue #445: a loop multiplies cost by an upper bound — never exact.
+        if config.loop_config is not None:
+            state.cost_basis = "upper_bound"
 
         curr = _advance(
             decision=_classify(entry, curr),
@@ -466,6 +479,8 @@ def create_planner_shared(
     params: dict[str, Any],
     cache: MemoizationCache,
     parent_workflow_file: str | None,
+    *,
+    loop_active: int = 0,
 ) -> dict[str, Any]:
     """Build the planner-owned scratch shared store.
 
@@ -497,6 +512,14 @@ def create_planner_shared(
     if parent_workflow_file:
         shared["_pflow_workflow_file"] = parent_workflow_file
     shared["__pflow_prompt_cache__"] = MappingProxyType(build_prompt_cache_dict(compiled, shared))
+    # issue #445: mirror the engine's _PROPAGATED_KEYS["__loop_active__"]
+    # (WorkflowExecutor._create_child_storage). When this child plan is a looped
+    # sub-workflow body, the active loop depth must cross the boundary so the
+    # child's inner cacheable nodes model as re-executing (memo READ suppressed),
+    # exactly as the engine re-executes them on each iteration. Without this the
+    # planner under-reports cost for the loop x sub-workflow x cache shape.
+    if loop_active:
+        shared["__loop_active__"] = loop_active
     return shared
 
 
@@ -730,7 +753,7 @@ def _make_downstream_entry(
     config = compiled.node_configs[node_id]
 
     if config.node_type_name == "WorkflowExecutor":
-        return _plan_sub_workflow(
+        sub_entry = _plan_sub_workflow(
             node,
             config,
             shared,
@@ -741,8 +764,11 @@ def _make_downstream_entry(
             cause="downstream",
             child_only_node=child_only_node,
         )
+        return _annotate_loop_entry(sub_entry, config, shared)
 
-    return _execute_entry(config, cache, cause="downstream", workflow_path=workflow_path)
+    return _annotate_loop_entry(
+        _execute_entry(config, cache, cause="downstream", workflow_path=workflow_path), config, shared
+    )
 
 
 def _enqueue_non_error_successors(
@@ -787,7 +813,7 @@ def _plan_one_node(
 ) -> PlanEntry:
     """Plan a single node, dispatching on WorkflowExecutor vs standard."""
     if config.node_type_name == "WorkflowExecutor":
-        return _plan_sub_workflow(
+        entry = _plan_sub_workflow(
             curr,
             config,
             shared,
@@ -797,7 +823,32 @@ def _plan_one_node(
             depth=depth,
             child_only_node=child_only_node,
         )
-    return _plan_standard_node(curr, config, shared, cache)
+    else:
+        entry = _plan_standard_node(curr, config, shared, cache)
+    return _annotate_loop_entry(entry, config, shared)
+
+
+def _annotate_loop_entry(entry: PlanEntry, config: NodeConfig, shared: dict[str, Any]) -> PlanEntry:
+    """Stamp ``loop_iterations`` on a ``loop:`` node's entry (issue #445).
+
+    The planner walks the loop body ONCE — re-entry is not an edge, so the
+    walker never repeats it — then records the resolved ``max_iterations`` upper
+    bound here. ``_summarize`` multiplies the entry's single-pass cost/duration
+    (and any sub_plan rollup) by this factor, and flips the plan to
+    ``upper_bound`` cost basis. A loop is by nature a do-while with an unknown
+    real iteration count, so the cap is the honest worst case for a cost gate.
+    """
+    if config.loop_config is None:
+        return entry
+    from dataclasses import replace
+
+    try:
+        cap = resolve_loop_cap(config.loop_config, shared, config.node_id)
+    except LoopConditionError:
+        # Unresolvable template cap at plan time → use the hard ceiling as the
+        # conservative upper bound rather than crashing the dry run.
+        cap = MAX_NODE_VISITS
+    return replace(entry, loop_iterations=cap)
 
 
 def _plan_standard_node(
@@ -1069,6 +1120,9 @@ def _plan_sub_workflow(
         _depth=depth + 1,
         _parent_workflow_file=prepared.resolved_path_str,
         _force_downstream=downstream,
+        # issue #445: forward the active loop depth so a looped sub-workflow
+        # body's inner cacheable nodes plan as re-executing (engine parity).
+        _loop_active=shared.get("__loop_active__", 0),
     )
     child_plan = _attach_sub_workflow_warnings(child_plan, prepared.resolved.warnings)
 
@@ -1477,6 +1531,7 @@ def _plan_batch_sub_workflow_items(
             _visited_paths=child_visited_paths,
             _depth=depth + 1,
             _parent_workflow_file=prepared.resolved_path_str,
+            _loop_active=shared.get("__loop_active__", 0),  # issue #445: engine parity (batch nested in a loop)
         )
         child_plans.append(child_plan)
         item_outputs.append(_extract_child_outputs(prepared.compiled_child, child_shared, per_item_inputs))
@@ -1586,6 +1641,7 @@ def _plan_heterogeneous_batch_items(
             _visited_paths=child_visited,
             _depth=depth + 1,
             _parent_workflow_file=prepared.resolved_path_str,
+            _loop_active=shared.get("__loop_active__", 0),  # issue #445: engine parity (batch nested in a loop)
         )
         child_plans.append(child_plan)
         item_outputs.append(_extract_child_outputs(prepared.compiled_child, child_shared, per_item_inputs))
@@ -2298,6 +2354,9 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
         if entry.sub_plan is None:
             continue
         child = entry.sub_plan.summary
+        # issue #445: a loop sub-workflow body runs up to max_iterations times,
+        # so its nested cost/duration rollup is multiplied by that upper bound.
+        loop_mult = entry.loop_iterations or 1
         nested_total += child.total_including_nested or child.total
         nested_cached += child.cached_including_nested or child.cached_count
         nested_execute += child.execute_including_nested or child.execute_count
@@ -2308,7 +2367,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
             child.estimated_cost_usd_including_nested
             if child.estimated_cost_usd_including_nested is not None
             else child.estimated_cost_usd
-        )
+        ) * loop_mult
         nested_nwh += (
             child.nodes_without_history_including_nested
             if child.nodes_without_history_including_nested is not None
@@ -2318,7 +2377,7 @@ def _summarize(entries: list[PlanEntry], *, cost_basis: _CostBasis = "exact") ->
             child.estimated_duration_ms_including_nested
             if child.estimated_duration_ms_including_nested is not None
             else child.estimated_duration_ms
-        )
+        ) * loop_mult
         nested_nwdh += (
             child.nodes_without_duration_history_including_nested
             if child.nodes_without_duration_history_including_nested is not None
@@ -2382,14 +2441,18 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
             if cache_boundary is None and entry.cause != "downstream":
                 cache_boundary = entry.node_id
 
+        # issue #445: a loop node's single-pass estimate is multiplied by its
+        # resolved max_iterations upper bound (1 for non-loop nodes).
+        loop_mult = entry.loop_iterations or 1
+
         if entry.last_cost_usd is not None:
-            estimated_cost_usd += entry.last_cost_usd
+            estimated_cost_usd += entry.last_cost_usd * loop_mult
 
         if entry.status == "execute" and entry.node_type in _LLM_NODE_CLASSES and entry.last_cost_usd is None:
             nodes_without_history += 1
 
         if entry.last_duration_ms is not None:
-            estimated_duration_ms += entry.last_duration_ms
+            estimated_duration_ms += entry.last_duration_ms * loop_mult
 
         if entry.status == "execute" and entry.last_duration_ms is None:
             nodes_without_duration_history += 1

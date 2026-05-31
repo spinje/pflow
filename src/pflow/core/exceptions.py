@@ -847,6 +847,36 @@ class CompilationError(PflowError):
         ]
 
 
+class LoopConditionError(PflowError):
+    """Raised at runtime when a ``loop: while:`` condition cannot be evaluated safely (issue #445).
+
+    Two cases:
+    - the resolved condition value is a ``str`` (string truthiness is a foot-gun —
+      validation rejects known-string sources, but a dynamic/un-inferable output
+      may still turn out to be a string at runtime);
+    - the resolved ``max_iterations`` template is not a usable positive integer.
+    """
+
+    def __init__(self, message: str, *, node_id: str | None = None, suggestion: str | None = None):
+        self.raw_message = message
+        self.node_id = node_id
+        self.suggestion = suggestion
+        super().__init__(message)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=self.raw_message,
+                title="Loop Condition Error",
+                suggestions=[self.suggestion] if self.suggestion else None,
+                node_id=self.node_id,
+                source="runtime",
+                context={"category": "validation", "node_id": self.node_id},
+            )
+        ]
+
+
 class MaxNodeVisitsError(RuntimeError):
     """Raised when a node exceeds the maximum allowed visits (loop guard)."""
 

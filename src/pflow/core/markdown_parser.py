@@ -101,6 +101,7 @@ _CODE_BLOCK_TAG_TO_PARAM: dict[str, str] = {
     "prompt": "prompt",
     "source": "source",
     "batch": "batch",
+    "loop": "loop",
     "stdin": "stdin",
     "headers": "headers",
     "output_schema": "output_schema",
@@ -1183,6 +1184,10 @@ def _route_code_blocks_to_node(entity: _Entity, node: dict[str, Any], params: di
                 node["batch"] = yaml.safe_load(block.content)
             else:
                 node["batch"] = block.content
+        elif block.param_name == "loop":
+            # `loop:` is a top-level node field (sibling to `batch`), not a param.
+            # Always YAML-parse — a loop block is a `while:`/`max_iterations:` mapping.
+            node["loop"] = yaml.safe_load(block.content) if block.is_yaml_config else block.content
         elif block.param_name:
             if block.is_yaml_config:
                 params[block.param_name] = yaml.safe_load(block.content)
@@ -1584,24 +1589,17 @@ def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
             ),
         )
 
-    # Extract batch (goes to top-level, not params)
-    if "batch" in all_params:
-        node["batch"] = all_params.pop("batch")
-
-    # Extract cache (goes to top-level, not params)
-    if "cache" in all_params:
-        node["cache"] = all_params.pop("cache")
-
-    # Extract prompt_cache and prewarm (Task 159 — goes to top-level, not params).
-    # These must be top-level for the per-node IR-schema check (B2.2) to see them
-    # AND for the data_flow validator's ``cache.invalid-on-non-llm`` rule (B2.3),
-    # which inspects ``node`` keys directly. If they stayed inside ``node["params"]``,
-    # validator step 8 (``_validate_unknown_params``) would silently allow them on
-    # non-LLM nodes by virtue of not iterating top-level node keys.
-    if "prompt_cache" in all_params:
-        node["prompt_cache"] = all_params.pop("prompt_cache")
-    if "prewarm" in all_params:
-        node["prewarm"] = all_params.pop("prewarm")
+    # Hoist top-level node fields out of params (they are NOT params). Each must
+    # be a top-level key so the params-only unknown-key walk never sees it and the
+    # IR-schema check + data-flow carve-outs can inspect ``node[field]`` directly:
+    #   batch / loop — fan-out vs condition-terminated iteration (siblings)
+    #   cache        — per-node memoization toggle
+    #   prompt_cache / prewarm — Task 159 LLM cache opt-ins; top-level so the
+    #     ``cache.invalid-on-non-llm`` rule and IR-schema check (B2.2/B2.3) see them
+    #     and validator step 8 doesn't silently allow them on non-LLM nodes.
+    for top_level_field in ("batch", "loop", "cache", "prompt_cache", "prewarm"):
+        if top_level_field in all_params:
+            node[top_level_field] = all_params.pop(top_level_field)
 
     # Extract routing metadata (not stored in params)
     routing: dict[str, Any] = {}

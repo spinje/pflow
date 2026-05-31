@@ -851,7 +851,7 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
     "--only",
     "only_node",
     default=None,
-    help="Run through this node then stop. Use dotted paths for sub-workflows: --only sub-wf.inner-node",
+    help="Run through this node then stop. Use dotted paths for sub-workflows: --only sub-wf.inner-node. A loop node runs one iteration, not to completion.",
 )
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def run(

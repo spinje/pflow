@@ -36,6 +36,22 @@ class BatchConfig:
 
 
 @dataclass
+class LoopConfig:
+    """Per-node loop configuration, built at compile time (issue #445).
+
+    Drives engine re-entry: after the node runs, the engine evaluates ``while_template``
+    against the node's fresh typed output. Truthy + under cap → re-run the same node
+    (do-while); falsy → advance to the successor. Mutually exclusive with batch.
+    """
+
+    while_template: str  # Condition source, raw "${node.output}" template string
+    # Iteration cap. Either a pre-validated positive int (literal branch) OR a raw
+    # "${template}" string resolved + validated at loop entry. None → MAX_NODE_VISITS.
+    max_iterations: Optional[int] = None
+    max_iterations_template: Optional[str] = None
+
+
+@dataclass
 class NodeConfig:
     """Per-node metadata extracted at compile time. Immutable after compilation."""
 
@@ -50,6 +66,7 @@ class NodeConfig:
     # Empty tuple = no opt-in (DD#19, byte-identical to absent).
     prompt_cache_items: tuple[str, ...] = ()
     prewarm: bool = False  # Task 159: per-node serialize-first-then-fan-out opt-in.
+    loop_config: Optional["LoopConfig"] = None  # issue #445: None if not a loop node.
 
 
 @dataclass

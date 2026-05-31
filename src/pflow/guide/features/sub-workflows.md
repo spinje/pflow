@@ -220,5 +220,18 @@ Notes:
 - The sub-workflow's working directory is shared with the parent by default. There is no per-item filesystem isolation — do NOT pass `cwd: ${item.workdir}`; `cwd` is not an accepted `workflow`-node param and will be rejected as an unknown field.
 - **Cache correctness:** this works without any `cache: false` annotations because non-`llm` nodes don't cache by default — `read-queue` re-runs each iteration and sees the current file. See `pflow guide core` → cache for what gets cached and why this works without annotations.
 
-This pattern is for a fixed iteration count. To loop until a condition is met (stopping as soon as it is), see `pflow guide branching` → Loops — that section is the canonical guide to choosing between the two loop styles.
+This pattern is for a fixed iteration count. To loop a sub-workflow **until a condition is met** (stopping as soon as the work drains), add a `loop:` block to the `workflow`-type node instead — the child re-runs while one of its declared `## Outputs` stays truthy, capped by `max_iterations`:
+
+````markdown
+### iterate
+
+- type: workflow
+- workflow: ./process-one.pflow.md
+- inputs: { iteration: ${__iteration__} }
+- loop:
+    while: ${iterate.remaining}   # a declared `## Output` of the child (typed list/number/bool)
+    max_iterations: 20
+````
+
+The child must declare the `while:` source as a typed `## Output` (e.g. `- type: integer`) so it isn't treated as a raw string. See `pflow guide branching` → Loops — that section is the canonical guide to choosing between `batch:` (fixed count), `loop:` (stop-on-condition), and the manual backward-edge form.
 

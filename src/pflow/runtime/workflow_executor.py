@@ -131,6 +131,10 @@ class WorkflowExecutor(BaseNode):
         "__parser_diagnostics__",
         "__memoization_cache__",
         "__trace_collector__",
+        # issue #445: loop-staleness guard. When a loop body is a sub-workflow,
+        # the child must inherit the active loop depth so its inner nodes also
+        # suppress memo reads for the duration of the iteration.
+        "__loop_active__",
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
