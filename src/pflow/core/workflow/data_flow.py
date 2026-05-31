@@ -581,11 +581,11 @@ def _validate_loop_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         # Literal max_iterations over the hard visit cap. The compiler bounds this for
         # the run path; mirror it here so the validate path agrees (the ${template}
         # branch is bounded at runtime in resolve_loop_cap). Schema already enforces the
-        # >= 1 lower bound and integer-ness of the literal branch. `type(...) is int`
-        # excludes bool (a bool cap is a separate schema concern, not an over-cap one).
+        # >= 1 lower bound and integer-ness of the literal branch. Exclude bool (a bool
+        # cap is a separate schema concern, not an over-cap one) — bool is an int subclass.
         if isinstance(loop_data, dict):
             raw_max = loop_data.get("max_iterations")
-            if type(raw_max) is int and raw_max > instrumentation.MAX_NODE_VISITS:
+            if isinstance(raw_max, int) and not isinstance(raw_max, bool) and raw_max > instrumentation.MAX_NODE_VISITS:
                 diagnostics.append(_make_loop_cap_diagnostic(node_id, raw_max, instrumentation.MAX_NODE_VISITS))
     return diagnostics
 

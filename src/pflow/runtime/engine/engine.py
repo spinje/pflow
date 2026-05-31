@@ -460,6 +460,10 @@ class WorkflowEngine:
         non-degrading advisory (``loop_stopped: "max_iterations"`` + INFO). The cap
         counts the loop's OWN iterations and is always ``<= MAX_NODE_VISITS``, so it
         stops before the hard visit guard would raise.
+
+        The cap is resolved ONCE per loop and memoized in ``loop_caps`` — a
+        ``max_iterations: ${template}`` that resolves to different values across
+        iterations uses its first-iteration value (a loop's cap is fixed by design).
         """
         loop_config = config.loop_config
         if loop_config is None:  # caller guards; defensive for type-narrowing
@@ -497,13 +501,15 @@ class WorkflowEngine:
         an ``INFO`` Diagnostic written to ``__warnings__`` surfaces in reports / CLI /
         JSON without flipping the workflow to DEGRADED.
 
-        Precondition (load-bearing): this overwrites ``__warnings__[node_id]``
-        unconditionally, which is safe because it is reached only on the
-        non-error re-entry path (``_loop_should_reenter`` is called only when
-        ``last_action`` is not an error). Every other ``__warnings__[node_id]``
-        writer for this node fires on an error action, and batch (the prewarm
-        writer) is mutually exclusive with loop — so no concurrent warning for
-        the same node exists to clobber here.
+        Overwrite precedence (deliberate): this writes ``__warnings__[node_id]``
+        unconditionally. It is reached only on the non-error re-entry path, and the
+        failure-path writers (``mark_node_failed``) plus batch's advisory writers
+        (batch is mutually exclusive with loop) never coexist with it. The one
+        non-error writer that CAN coexist is an ``llm`` loop body emitting its own
+        INFO/WARNING advisory on the same capping iteration; in that case the cap
+        advisory intentionally WINS (it explains *why the loop stopped* — the more
+        important signal). Per-iteration ``clear_node_failure`` already pops stale
+        warnings on re-entry, so only the final iteration's advisory is at stake.
         """
         from pflow.core.diagnostic import Diagnostic, Severity
 

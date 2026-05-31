@@ -242,7 +242,10 @@ def _loop_condition_diagnostic(
 
     var = TemplateResolver.extract_simple_template_var(while_template)
     if var is None:
-        return None  # Not a single ${...} reference; schema already constrains shape.
+        # Not a single ${...} reference. The schema pattern (^\$\{.+\}$) is too broad to
+        # catch a multi-reference like `${a}${b}`, so reject it HERE rather than leaving the
+        # runtime to silently single-pass on it (the runtime stops on this shape — issue #445).
+        return _make_loop_shape_diagnostic(node_id, while_template)
 
     # NOTE: a bare node reference (`while: ${c}`, no field) needs no loop-specific
     # check here — it is already rejected by the generic template validator ("Invalid
@@ -275,6 +278,26 @@ def _make_loop_operator_diagnostic(node_id: str, while_template: str) -> Diagnos
             "(a non-empty list/string, a non-zero number, or true) and falsy to stop.",
             "If you need a comparison, compute it in the loop body and reference the boolean output: "
             "`while: ${step.should_continue}`.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
+    )
+
+
+def _make_loop_shape_diagnostic(node_id: str, while_template: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: while:` is '{while_template}', which is not a single "
+            f"${{...}} reference. The loop condition must be one reference to a typed output "
+            f"whose truthiness decides whether to continue."
+        ),
+        suggestions=[
+            "Use a single ${node.output} reference — a list (drains to empty), a number "
+            "(counts to 0), or a boolean. Combine multiple signals in the loop body and "
+            "reference the single boolean output: `while: ${step.should_continue}`.",
         ],
         context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
     )

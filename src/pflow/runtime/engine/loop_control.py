@@ -71,8 +71,9 @@ def evaluate_loop_condition(while_template: str, shared: dict[str, Any], node_id
     context = dict(shared)
     var = TemplateResolver.extract_simple_template_var(while_template)
     if var is None:
-        # Not a single ${...} reference. Validation rejects this shape; if a
-        # programmatic IR reaches here, stop rather than loop on garbage.
+        # Not a single ${...} reference. The validator rejects this shape at parse time
+        # (_make_loop_shape_diagnostic), so this is the backstop for a programmatic IR that
+        # bypassed validation — stop rather than loop on garbage.
         return False
 
     if TemplateResolver.is_coalesce_expression(var):
@@ -130,13 +131,13 @@ def _coerce_runtime_cap(raw: Any, node_id: str, template: str) -> int:
     elif isinstance(raw, str):
         try:
             value = int(raw.strip())
-        except ValueError:
+        except ValueError as exc:
             raise LoopConditionError(
                 f"Node '{node_id}' loop `max_iterations` template '{template}' resolved to {raw!r}, "
                 f"which is not a positive integer.",
                 node_id=node_id,
                 suggestion="Ensure the referenced value is a positive integer (the iteration cap).",
-            ) from None
+            ) from exc
     else:
         raise LoopConditionError(
             f"Node '{node_id}' loop `max_iterations` template '{template}' resolved to "

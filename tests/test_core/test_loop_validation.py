@@ -66,6 +66,14 @@ def test_operator_while_rejected(registry) -> None:
     assert any("operator" in d.message for d in errs)
 
 
+def test_multi_reference_while_rejected(registry) -> None:
+    # `${c.stdout}${c.stderr}` passes the broad schema pattern (^\$\{.+\}$) but is not a
+    # single ${...} reference. It must be rejected HERE, not silently single-passed at
+    # runtime (the validator and runtime previously each deferred to the other — review #6).
+    errs = _errors(_shell_loop("${c.stdout}${c.stderr}"), registry)
+    assert any("single" in d.message for d in errs)
+
+
 def test_coalesce_while_with_string_operand_rejected(registry) -> None:
     # ${c.stdout ?? "x"} — c.stdout is str → string-truthiness foot-gun must be
     # caught at validation, not deferred to the runtime belt (review fix).

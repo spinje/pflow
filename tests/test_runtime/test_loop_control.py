@@ -13,6 +13,7 @@ from pflow.runtime.engine import instrumentation
 from pflow.runtime.engine.loop_control import (
     _coerce_runtime_cap,
     evaluate_loop_condition,
+    loop_runtime_scope,
     resolve_loop_cap,
 )
 from pflow.runtime.engine.types import LoopConfig
@@ -119,3 +120,45 @@ def test_runtime_cap_respects_lowered_env(monkeypatch) -> None:
     assert _coerce_runtime_cap(3, "n", "${cap}") == 3
     with pytest.raises(LoopConditionError, match="exceeding the hard visit"):
         _coerce_runtime_cap(4, "n", "${cap}")
+
+
+# --- loop_runtime_scope: the clear_iteration_on_exit asymmetry ---------------
+# Load-bearing and shared by two callers (engine passes False, planner True), so
+# it gets direct coverage rather than only the indirect integration path.
+
+
+def test_scope_keeps_iteration_when_not_clearing() -> None:
+    """Engine path: ${__iteration__} survives the scope so it persists across re-entry."""
+    shared: dict = {}
+    with loop_runtime_scope(shared, True, iteration=2, clear_iteration_on_exit=False):
+        assert shared["__iteration__"] == 2
+        assert shared["__loop_active__"] == 1
+    assert shared["__iteration__"] == 2  # kept
+    assert "__loop_active__" not in shared  # depth back to 0 → popped
+
+
+def test_scope_clears_iteration_when_requested() -> None:
+    """Planner path: ${__iteration__} must not leak to later nodes after one pass."""
+    shared: dict = {}
+    with loop_runtime_scope(shared, True, iteration=2, clear_iteration_on_exit=True):
+        assert shared["__iteration__"] == 2
+    assert "__iteration__" not in shared  # cleared
+    assert "__loop_active__" not in shared
+
+
+def test_scope_loop_active_is_a_depth_counter() -> None:
+    """Nested loops: __loop_active__ counts depth, only popped at depth 0."""
+    shared: dict = {}
+    with loop_runtime_scope(shared, True, iteration=1, clear_iteration_on_exit=False):
+        with loop_runtime_scope(shared, True, iteration=1, clear_iteration_on_exit=False):
+            assert shared["__loop_active__"] == 2
+        assert shared["__loop_active__"] == 1  # inner exit decrements, doesn't pop
+    assert "__loop_active__" not in shared
+
+
+def test_scope_is_noop_when_inactive() -> None:
+    shared: dict = {}
+    with loop_runtime_scope(shared, False, iteration=5, clear_iteration_on_exit=False):
+        assert "__iteration__" not in shared
+        assert "__loop_active__" not in shared
+    assert shared == {}

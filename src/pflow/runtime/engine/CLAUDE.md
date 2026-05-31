@@ -13,6 +13,7 @@ src/pflow/runtime/engine/
 ├── batch_executor.py        # Standalone batch execution functions
 ├── batch_item_summary.py    # Display-safe summaries for failed batch inputs
 ├── instrumentation.py       # Cache, trace, metrics, progress, loop guards
+├── loop_control.py          # `loop:` re-entry: condition eval, cap resolution, iteration scope (#445)
 ├── namespaced_store.py      # NamespacedSharedStore proxy for per-node store isolation
 ├── api_warning_detector.py  # API error classification (73 validation + 20 resource patterns)
 ├── template_errors.py       # Structured Diagnostic builder for unresolved templates
@@ -42,6 +43,10 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │  13-17. duration, metrics, record_trace, call_completion_callback
         │  17.5. if action starts with "error": mark_node_failed (archive to __failures__,
         │        + warning= when error successor exists → triggers DEGRADED, GH #246)
+        │  17.6. if config.loop_config and not error: _loop_should_reenter (loop_control)
+        │        evaluates `while:` over the node's fresh output → `continue` (re-run
+        │        the same node, byte-for-byte a backward-edge revisit) or fall through;
+        │        cap-hit stamps loop_stopped + emits an INFO advisory (issue #445)
         │
         └─ EXCEPT (error path):
            metrics, record_trace(error=e),

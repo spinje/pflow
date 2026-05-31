@@ -174,6 +174,7 @@ Do one unit of work; re-run while there's more.
 - **`max_iterations:`** is an integer or a `${template}` resolving to one. Optional — defaults to the visit guard (100). Reaching the cap is **not** an error: the run stays SUCCESS, a non-degrading INFO advisory is emitted, and the loop node's output carries `loop_stopped: "max_iterations"` (vs `"condition"` on a clean drain). Read `${loop-node.loop_stopped}` from a downstream node to branch on *why* it stopped.
 - **`${__iteration__}`** (1-based) is available in the loop body, mirroring batch's `${__index__}`. It is cleared on loop exit, so post-loop nodes can't read it.
 - **Re-entry is one node end-to-end** — it behaves exactly like a backward-edge revisit (in-process completion is cleared and the memo cache is bypassed each iteration, so the body re-executes against fresh state), but you author and see a single node.
+- **`--only <loop-node>` runs a single iteration, not the whole loop** — `--only` is for inspecting one node's output, so it stops after the first pass instead of re-entering. To watch a loop run to completion, run the workflow normally.
 
 #### Under the hood: the backward-edge worker/checker
 

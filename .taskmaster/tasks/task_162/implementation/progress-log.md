@@ -370,3 +370,57 @@ All ✓ end-to-end via the real CLI:
 Not reproducible via CLI without LLM cost history (hence the #1 plan + unit-test gap): the sub-workflow
 loop-body cost under-report. `--dry-run` cost multiplication for a code-node loop is invisible
 (3 × $0 = $0) but the `upper_bound` basis confirms the multiplier engaged.
+
+---
+
+## 13. PR-review response round (PR #453 review comment → `/evaluate-review`)
+
+A code-review comment on PR #453 raised 9 findings (1 critical, 4 warnings, 4 suggestions). Each was
+verified against HEAD (3 parallel codebase-searchers + direct reads) before acting — the review was
+written against a **pre-fix snapshot**, so its line numbers and one finding were stale. Net: the
+implementation was sound; the actionable items were polish + one genuine (narrow) silent-failure to close.
+Full suite after this round: **7369 passed, 1 skipped**; `make check` clean. Still committed-not-pushed by
+the user's call (this round is `[skip review]`).
+
+**Disputed / no-op:**
+- **#1 (sed BSD-only test bug — the only "Critical"):** ALREADY FIXED at HEAD. `tail -n +2 … > tmp && mv`
+  is in place (commit `d57a8a9a`); no `sed -i` remains. The review predated the fix.
+- **#8 (`type(x) is int`) as a *bug*:** disputed — the code was functionally correct (it deliberately
+  excludes bool, which `isinstance(x, int)` would not). Real point was a *style* inconsistency, fixed below.
+
+**Fixed this round:**
+- **#6 — multi-reference `while:` silently single-passed (the one real gap).** `while: ${a}${b}` passes the
+  broad schema pattern `^\$\{.+\}$`, and BOTH layers deferred to the other — the validator `return None`d
+  ("schema constrains shape") and the runtime `return False`d ("validation rejects this shape"); neither
+  actually rejected it, so it ran once and reported SUCCESS. **Root cause was the deferral, not the runtime
+  branch** — so the fix makes ONE layer own it: `validator._make_loop_shape_diagnostic` now rejects a
+  non-single-`${...}` `while:` at parse time, and the runtime comment is corrected to "validator rejects
+  this; backstop for programmatic IR." Regression test `test_multi_reference_while_rejected`. (Chose the
+  validation fix over the reviewer's "raise at runtime" — failing loud at validate time is simpler and
+  catches it before any execution.)
+- **#3 — `--only <loop-node>` runs one iteration, undocumented.** Behavior is correct (the `is_only_target`
+  break precedes re-entry); documented it in the `--only` help text (`run.py`) and the Loops guide
+  (`branching.md`). No behavior change.
+- **#4 — `engine/CLAUDE.md` didn't mention `loop_control.py` or loop re-entry.** Added the module to the
+  file-structure listing and a step 17.6 to the lifecycle diagram.
+- **#7 — `loop_runtime_scope` asymmetry had no direct test.** Added 4 unit tests in `test_loop_control.py`
+  pinning the `clear_iteration_on_exit` contract (engine keeps `__iteration__`, planner clears it),
+  the `__loop_active__` depth-counter (nested), and the inactive no-op.
+- **#5 — cap memoization undocumented.** One-line docstring note on `_loop_should_reenter`: the cap is
+  resolved once and memoized in `loop_caps`; a per-iteration-varying `${template}` cap uses its first value
+  (a loop's cap is fixed by design).
+- **#2 — `_emit_loop_cap_advisory` unconditional `__warnings__[node_id]` write.** Reviewer's proposed
+  `if node_id not in __warnings__` guard was **rejected** — it inverts precedence and would drop the cap
+  advisory (the more important "why it stopped" signal) in favor of a pre-existing warning. Kept
+  cap-advisory-wins; corrected the docstring to honestly note the one coexisting writer (an `llm` loop body's
+  own non-error advisory on the capping iteration) and that the cap advisory intentionally wins. No behavior change.
+- **#8 (cosmetic) — `type(raw_max) is int` → `isinstance(raw_max, int) and not isinstance(raw_max, bool)`**
+  in `data_flow.py`, matching the codebase convention (the type SSoT `TypeSpec.accepts` and the sibling
+  prewarm check in the same file). Behavior-identical.
+- **#9 (cosmetic) — `raise … from None` → `from exc`** in `_coerce_runtime_cap`'s str branch, preserving the
+  underlying `ValueError` context for debugging.
+
+**Files touched:** `runtime/template_validation/validator.py` (#6 builder + branch), `runtime/engine/loop_control.py`
+(#6 comment, #9), `runtime/engine/engine.py` (#5, #2 docstrings), `core/workflow/data_flow.py` (#8),
+`cli/commands/run.py` (#3), `guide/features/branching.md` (#3), `runtime/engine/CLAUDE.md` (#4),
+`tests/test_runtime/test_loop_control.py` (#7), `tests/test_core/test_loop_validation.py` (#6).
