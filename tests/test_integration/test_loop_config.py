@@ -554,7 +554,7 @@ Remove one line from the outer queue and report remaining count.
 - type: shell
 
 ```shell command
-sed -i '' '1d' {state} 2>/dev/null || true
+tail -n +2 {state} > {state}.tmp && mv {state}.tmp {state}
 wc -l < {state} | tr -d ' '
 ```
 """,
@@ -679,7 +679,7 @@ Remove the first queue line.
 - type: shell
 
 ```shell command
-sed -i '' '1d' {state} 2>/dev/null || true
+tail -n +2 {state} > {state}.tmp && mv {state}.tmp {state}
 ```
 """,
         encoding="utf-8",
