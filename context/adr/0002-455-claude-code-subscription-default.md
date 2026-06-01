@@ -43,8 +43,16 @@ untouched, so a sibling `llm` node still reads the real key.
 - **Scope is `ANTHROPIC_API_KEY` only.** `CLAUDE_CODE_OAUTH_TOKEN` (the subscription
   path) is deliberately left intact; Bedrock/Vertex vars are not referenced by pflow
   or the SDK and are out of scope.
-- **Auth detection is heuristic string-matching.** The common auth failure arrives as
-  a bare `Exception` carrying the CLI's error text (the SDK rewrites the result-level
-  error before re-raising) and `ProcessError.stderr` is a useless placeholder, so a
-  multi-marker OR on the message is the most robust signal available; the exact
-  markers may need tuning as CLI wording drifts.
+- **Auth detection had to work around an SDK quirk (found by real-CLI verification,
+  not the unit tests).** The SDK does *not* surface the CLI's real error text: when the
+  CLI returns an error result it forwards only the result *subtype*, so an invalid key
+  arrives as the useless bare `Exception("...returned an error result: success")` —
+  dropping both the real `result` text ("Invalid API key · Fix external API key") and
+  the structured `api_error_status` (401). `_run_claude_session` therefore captures
+  `result`/`api_error_status` off the `ResultMessage` (which the SDK *does* yield before
+  raising) and re-builds the exception, so `exec_fallback` can detect auth via a
+  multi-marker string OR *and* the structured `api_error_status=401/403`. Enrichment is
+  scoped to the bare-`Exception` injection path only — typed SDK errors
+  (`CLIConnectionError`, ...) keep their type so their dedicated branches still match.
+  The original unit tests passed by feeding the detector synthetic strings the CLI never
+  actually emits; the regression is now pinned by `test_invalid_api_key_surfaces_real_error_text_and_status`.

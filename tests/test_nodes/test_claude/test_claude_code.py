@@ -69,6 +69,7 @@ class ResultMessage:
     usage: dict | None = None
     result: str | None = None
     structured_output: Any = None
+    api_error_status: int | None = None
 
 
 class CLINotFoundError(Exception):
@@ -1675,3 +1676,87 @@ def test_exec_fallback_non_auth_error_has_no_auth_guidance(claude_node):
     msg = str(exc_info.value)
     assert "claude auth login" not in msg
     assert "disk full" in msg
+
+
+# --- Regression: the SDK mangles the real auth error (found by real-CLI verify) ---
+#
+# The real CLI reports an invalid key as a result with is_error=True,
+# api_error_status=401, result="Invalid API key · Fix external API key" — but the
+# SDK forwards only the result SUBTYPE ("success"), raising a bare Exception
+# "Claude Code returned an error result: success". The useful text + status are
+# dropped. _run_claude_session must surface them from the ResultMessage so
+# exec_fallback can recognize the auth failure. The original mock tests passed by
+# feeding _is_auth_error synthetic strings the CLI never actually emits (#455).
+
+
+def test_invalid_api_key_surfaces_real_error_text_and_status(claude_node):
+    """The real "Invalid API key" text + api_error_status are surfaced on re-raise,
+    not the SDK's useless "...error result: success"."""
+    claude_node.params = {"prompt": "do a thing", "use_api_key": True}
+
+    async def mock_response(*args, **kwargs):
+        # Mirrors the real CLI: error result carrying the real text + 401 is
+        # yielded first, then the SDK raises a bare Exception with the subtype.
+        yield ResultMessage(
+            is_error=True,
+            result="Invalid API key · Fix external API key",
+            api_error_status=401,
+        )
+        raise Exception("Claude Code returned an error result: success")  # noqa: TRY002 - mirror SDK bare raise
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep({})
+        with pytest.raises(RuntimeError) as exc_info:
+            claude_node.exec(prep_res)
+
+    assert "Invalid API key" in str(exc_info.value)
+    assert "api_error_status=401" in str(exc_info.value)
+    # The enriched exception is now recognized as auth, and exec_fallback gives the
+    # use_api_key=True remediation (the key, not subscription setup).
+    assert ClaudeCodeNode._is_auth_error(exc_info.value)
+    with pytest.raises(ValueError) as fb:
+        claude_node.exec_fallback(prep_res, exc_info.value)
+    assert "Anthropic Console" in str(fb.value)
+    assert "Remove `- use_api_key: true`" in str(fb.value)
+
+
+def test_api_error_status_detected_even_without_text(claude_node):
+    """A 401 with no usable result text is still recognized as auth via the
+    structured status alone."""
+    claude_node.params = {"prompt": "do a thing", "use_api_key": True}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(is_error=True, result=None, api_error_status=401)
+        raise Exception("Claude Code returned an error result: success")  # noqa: TRY002 - mirror SDK bare raise
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep({})
+        with pytest.raises(RuntimeError) as exc_info:
+            claude_node.exec(prep_res)
+
+    assert "api_error_status=401" in str(exc_info.value)
+    assert ClaudeCodeNode._is_auth_error(exc_info.value)
+
+
+def test_non_auth_error_result_stays_generic(claude_node):
+    """A non-auth error result (no 401, no auth text) must NOT trigger auth
+    guidance — surfaced detail is preserved but routed to the generic message."""
+    claude_node.params = {"prompt": "do a thing"}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(is_error=True, result="Tool failed: disk full", api_error_status=None)
+        raise Exception("Claude Code returned an error result: error_during_execution")  # noqa: TRY002 - mirror SDK bare raise
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep({})
+        with pytest.raises(RuntimeError) as exc_info:
+            claude_node.exec(prep_res)
+
+    assert not ClaudeCodeNode._is_auth_error(exc_info.value)
+    with pytest.raises(ValueError) as fb:
+        claude_node.exec_fallback(prep_res, exc_info.value)
+    assert "claude auth login" not in str(fb.value)
+    assert "disk full" in str(fb.value)

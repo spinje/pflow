@@ -123,6 +123,11 @@ _AUTH_ERROR_MARKERS = (
     "unauthorized",
     "credit balance",
     "oauth",
+    # Structured HTTP status surfaced by _run_claude_session from the
+    # ResultMessage (the SDK drops it from its own exception text). Specific
+    # `key=value` form, so no false positives on stray numbers.
+    "api_error_status=401",
+    "api_error_status=403",
 )
 
 
@@ -721,6 +726,7 @@ class ClaudeCodeNode(Node):
         structured_output: Any = None
         is_error_from_sdk = False
         sdk_exception_text: str | None = None
+        api_error_status: int | None = None
 
         try:
             async for message in query(prompt=prompt, options=options):
@@ -740,6 +746,10 @@ class ClaudeCodeNode(Node):
                         result_text = message.result
                     structured_output = message.structured_output
                     is_error_from_sdk = is_error_from_sdk or message.is_error
+                    # HTTP status of an API-level error (e.g. 401/403 auth). The
+                    # SDK drops this from the exception it raises, so capture it
+                    # here while the ResultMessage is in scope (#455).
+                    api_error_status = getattr(message, "api_error_status", None) or api_error_status
         except Exception as exc:
             # The SDK pairs ``ResultMessage(is_error=True)`` with a non-zero CLI
             # exit raised as ``ProcessError``. That single class of exception is
@@ -754,6 +764,11 @@ class ClaudeCodeNode(Node):
                 ProcessError is not None and isinstance(exc, ProcessError)
             ) or exc_type_name == "ProcessError"
             if not is_error_from_sdk or not is_process_error:
+                enriched = self._enrich_error_result_exception(
+                    exc, exc_type_name, is_error_from_sdk, result_text, api_error_status
+                )
+                if enriched is not None:
+                    raise enriched from exc
                 raise
             sdk_exception_text = str(exc)
             logger.warning("Claude Code SDK raised after an error ResultMessage: %s", sdk_exception_text)
@@ -962,6 +977,34 @@ class ClaudeCodeNode(Node):
 
         # Generic error — pass through the SDK error message directly
         raise ValueError(f"Claude Code execution failed after {self.max_retries} attempts: {error_msg}") from None
+
+    @staticmethod
+    def _enrich_error_result_exception(
+        exc: Exception,
+        exc_type_name: str,
+        is_error_from_sdk: bool,
+        result_text: str,
+        api_error_status: Optional[int],
+    ) -> Optional[Exception]:
+        """Recover the real error detail the SDK drops from an error-result.
+
+        When the CLI reports an error result then exits, the SDK raises a *bare*
+        Exception whose text is only the result subtype — e.g. an invalid key
+        surfaces as "...returned an error result: success" instead of "Invalid
+        API key" (#455). Rebuild the message from the real result text / HTTP
+        status captured off the ResultMessage so exec_fallback can detect auth
+        failures. Returns an enriched exception to raise, or None to re-raise the
+        original unchanged. Typed SDK errors (CLIConnectionError, ...) are left
+        alone so exec_fallback's typed branches still match.
+        """
+        if not (is_error_from_sdk and exc_type_name == "Exception"):
+            return None
+        detail = str(exc)
+        if result_text and result_text not in detail:
+            detail = f"{detail}: {result_text}"
+        if api_error_status is not None:
+            detail = f"{detail} [api_error_status={api_error_status}]"
+        return RuntimeError(detail) if detail != str(exc) else None
 
     @staticmethod
     def _is_auth_error(exc: Exception) -> bool:
