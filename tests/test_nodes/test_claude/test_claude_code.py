@@ -30,6 +30,7 @@ Tests criteria from the specification:
 """
 
 import asyncio
+import os
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -1631,6 +1632,32 @@ def test_use_api_key_invalid_value_raises(claude_node):
     assert "use_api_key must be true or false" in str(exc_info.value)
 
 
+def test_use_api_key_accepts_int_0_and_1(claude_node):
+    """Integer 0/1 is accepted (YAML coerces `- use_api_key: 1` to int, and the
+    string forms "1"/"0" are already accepted). 2+ still fails closed."""
+    v = claude_node._validate_use_api_key
+    assert v(1) is True
+    assert v(0) is False
+    for bad in (2, -1, 42):
+        with pytest.raises(TypeError):
+            v(bad)
+
+
+def test_default_does_not_mutate_os_environ(monkeypatch, claude_node):
+    """The empty-string override must NOT touch os.environ — a sibling llm node
+    in the same workflow keeps reading the real key for LiteLLM. This pins the
+    decision so a future switch to os.environ.pop fails loudly (#455 review)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-real")
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+    # The subprocess env blanks the key...
+    assert mock_options.call_args.kwargs["env"] == {"ANTHROPIC_API_KEY": ""}
+    # ...but the process environment is untouched.
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-real"
+
+
 def test_use_api_key_registered_as_bool_param():
     """use_api_key is a declared bool param — this drives the validator allow-list."""
     md = PflowMetadataExtractor().extract_metadata(ClaudeCodeNode)
@@ -1643,11 +1670,19 @@ def test_use_api_key_registered_as_bool_param():
 
 def test_is_auth_error_matches_only_auth_markers():
     """_is_auth_error matches CLI auth/billing markers, not generic failures."""
-    assert ClaudeCodeNode._is_auth_error(Exception("Invalid API key · Please run /login"))
+    assert ClaudeCodeNode._is_auth_error(Exception("Invalid API key · Fix external API key"))
     assert ClaudeCodeNode._is_auth_error(Exception("authentication_error: bad token"))
     assert ClaudeCodeNode._is_auth_error(Exception("Your credit balance is too low"))
+    # Real not-logged-in result text — pins the narrowed "run /login" marker.
+    assert ClaudeCodeNode._is_auth_error(Exception("Not logged in · Please run /login"))
     assert not ClaudeCodeNode._is_auth_error(Exception("Tool 'Bash' failed: exit 1"))
     assert not ClaudeCodeNode._is_auth_error(Exception("connection reset by peer"))
+    # "oauth" marker was dropped: an MCP OAuth error surfaced inside a claude
+    # subprocess must NOT be misclassified as a Claude billing failure (#455 review).
+    assert not ClaudeCodeNode._is_auth_error(Exception("MCP server oauth flow failed"))
+    # The bare "/login" substring was narrowed to "run /login" — an unrelated
+    # /login path in agent output must no longer false-match.
+    assert not ClaudeCodeNode._is_auth_error(Exception("POST /login returned 500"))
 
 
 def test_exec_fallback_auth_default_suggests_subscription(claude_node):

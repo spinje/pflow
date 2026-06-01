@@ -118,11 +118,12 @@ _AUTH_ERROR_MARKERS = (
     "invalid api key",
     "authentication_error",
     "authentication error",
-    "please run /login",
-    "/login",
+    # "run /login" matches the real not-logged-in result ("Not logged in · Please
+    # run /login") without the broad bare "/login" substring, which could match an
+    # unrelated /login path mentioned in agent output.
+    "run /login",
     "unauthorized",
     "credit balance",
-    "oauth",
     # Structured HTTP status surfaced by _run_claude_session from the
     # ResultMessage (the SDK drops it from its own exception text). Specific
     # `key=value` form, so no false positives on stray numbers.
@@ -444,12 +445,18 @@ class ClaudeCodeNode(Node):
         Console. A templated value may arrive as a string (node params are not
         coerced to bool at runtime) — never trust truthiness, since the string
         "false" is truthy and would silently re-enable per-token billing. Accept
-        only canonical bool literals and fail closed on anything else.
+        real bools, integer 0/1, and canonical bool-string literals; fail closed
+        on anything else.
         """
         if value is None:
             return False
         if isinstance(value, bool):
             return value
+        # Accept integer 0/1 (YAML coerces `- use_api_key: 1` to int, and "1"/"0"
+        # strings are already accepted). Safe: bool(0)/bool(1) is unambiguous —
+        # no truthiness footgun — and 2+ still falls through to fail closed.
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
         if isinstance(value, str):
             normalized = value.strip().lower()
             if normalized in ("true", "1", "yes"):
