@@ -336,6 +336,8 @@ Detects file path references in node params and batch items, reads the files, an
 
 Single source of truth for the workflow-IR `type:` vocabulary. `CANONICAL_TYPES` = the 7 valid names (`string | number | integer | boolean | array | object | any`). `TypeSpec.parse(raw)` is the only entry point — raises `TypeVocabularyError` with structured context (fuzzy suggestions, Python-alias replacements) for the diagnostic pipeline. `TypeSpec.accepts(value)` is reserved for Task 120 (strict runtime enforcement); no production callers yet. Python annotations in code blocks use Python names, not these — see the S1↔S2 bridge in `src/pflow/guide/core.md`.
 
+`outer_base_type(type_str)` strips a parameterized generic to its outer base name (`list[str]` → `list`, discarding the element type). It's the shared home for the `split("[")[0]` pattern; `is_type_compatible` (template validation) uses it so a canonical `array` source can satisfy a verbatim `list[str]` registry param (issue #460). Element types are never compared — consistent with code-node outputs, which also collapse to the bare collection type.
+
 ### param_coercion.py
 
 **Two functions for different pipeline stages** — easy to confuse:

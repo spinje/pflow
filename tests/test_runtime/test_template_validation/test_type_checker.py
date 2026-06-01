@@ -104,6 +104,51 @@ class TestTypeCompatibility:
         assert is_type_compatible("dict|list", "int|float") is False
 
 
+class TestTypeCompatibilityGenerics:
+    """Parameterized generics in is_type_compatible (issue #460).
+
+    Registry param types keep generics verbatim (``list[str]``); the producer side
+    canonicalizes to the bare collection type (``array``). Compatibility compares
+    the OUTER collection type only — element types are not checked, consistent with
+    how code-node outputs already collapse ``list[str]`` -> ``array``.
+    """
+
+    def test_canonical_array_satisfies_generic_list_param(self):
+        # The exact issue #460 case: code result (array) -> llm images (list[str]).
+        assert is_type_compatible("array", "list[str]") is True
+
+    def test_bare_list_satisfies_generic_list_param(self):
+        assert is_type_compatible("list", "list[str]") is True
+
+    def test_element_type_is_not_checked(self):
+        # list[int] satisfies list[str]; generics collapse to the outer type.
+        assert is_type_compatible("array", "list[int]") is True
+        assert is_type_compatible("list[str]", "list[dict]") is True
+
+    def test_generic_source_satisfies_canonical_target(self):
+        # Symmetric: a generic on the source side strips too.
+        assert is_type_compatible("list[str]", "array") is True
+        assert is_type_compatible("list[str]", "list") is True
+
+    def test_generic_dict_and_object_interchangeable(self):
+        assert is_type_compatible("object", "dict[str, int]") is True
+        assert is_type_compatible("dict[str, int]", "object") is True
+
+    def test_mismatched_outer_type_still_rejected(self):
+        # The fix must NOT let a genuinely-wrong outer type through.
+        assert is_type_compatible("object", "list[str]") is False
+        assert is_type_compatible("array", "dict[str, int]") is False
+
+    def test_generic_in_union_target(self):
+        assert is_type_compatible("array", "list[str]|str") is True
+        assert is_type_compatible("array", "int|list[str]") is True
+
+    def test_generic_in_union_source(self):
+        # Source union: ALL members must be compatible with the target.
+        assert is_type_compatible("list[str]|array", "list") is True
+        assert is_type_compatible("list[str]|object", "list") is False
+
+
 class TestTemplateTypeInference:
     """Tests for infer_template_type()."""
 
