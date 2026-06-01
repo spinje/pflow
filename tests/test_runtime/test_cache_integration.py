@@ -291,7 +291,11 @@ def test_only_flag_stops_after_target(tmp_path: Any) -> None:
 
 
 def test_only_with_cache(tmp_path: Any) -> None:
-    """Full run records the snapshot; --only B run restores A/C, executes only B."""
+    """Full run records the snapshot; --only B restores upstream A, executes only B.
+
+    Downstream C is NOT restored (CODEX-2): it can't be referenced by the target and
+    its stale output must not become addressable under --only.
+    """
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
     ir = {
@@ -317,10 +321,10 @@ def test_only_with_cache(tmp_path: Any) -> None:
     snapshot = _snapshot_from_shared(shared1, ["A", "B", "C"])
     shared2 = _run_workflow(ir, cache, only_node="B", snapshot_events=snapshot)
 
-    assert shared2["A"]["stdout"] == "a-val"  # restored from snapshot
-    assert shared2["B"]["stdout"] == "b-val"  # executed (memo cache hit)
-    assert shared2["C"]["stdout"] == "c-val"  # restored from snapshot, not executed
-    assert set(shared2["__execution__"]["restored_nodes"]) == {"A", "C"}
+    assert shared2["A"]["stdout"] == "a-val"  # upstream, restored from snapshot
+    assert shared2["B"]["stdout"] == "b-val"  # target, executed (memo cache hit)
+    assert "C" not in shared2, "downstream C must NOT be restored under --only B (CODEX-2)"
+    assert set(shared2["__execution__"]["restored_nodes"]) == {"A"}
 
 
 def test_key_value_override_cache_interaction(tmp_path: Any) -> None:

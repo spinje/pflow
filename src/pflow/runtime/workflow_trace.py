@@ -58,6 +58,23 @@ def format_trace_filename(workflow_path: str | None, workflow_name: str, timesta
     return f"workflow-trace-{wf_hash}-{timestamp}.json"
 
 
+def _trace_recency_key(path: Path) -> tuple[str, str]:
+    """Sort key ranking trace files newest-first (under ``reverse=True``).
+
+    The filename is ``workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json`` —
+    the ``{safe_name}`` segment sits BEFORE the timestamp, so sorting the whole
+    filename ranks the name prefix first. The SAME ``workflow_path`` can produce
+    different ``safe_name``s (a saved-library run vs the same file run directly,
+    or after a rename — see ``format_trace_filename``), so a whole-filename sort
+    could rank an older run above a newer one and let ``--only`` restore STALE
+    upstream. Sort on the trailing ``YYYYMMDD-HHMMSS[-ffffff]`` timestamp instead
+    (filename as a deterministic tiebreak for same-microsecond writes). Files
+    without a parseable timestamp sort last (oldest). PR #459 review (CODEX-1).
+    """
+    match = re.search(r"(\d{8}-\d{6}(?:-\d+)?)\.json$", path.name)
+    return (match.group(1) if match else "", path.name)
+
+
 def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple[Path, dict[str, Any]]]:
     """Yield ``(path, trace_data)`` for this workflow's reusable traces, newest-first.
 
@@ -83,7 +100,7 @@ def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple
     """
     wf_hash = hashlib.md5(workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
     pattern = f"workflow-trace-{wf_hash}-*.json"
-    for trace_file in sorted(debug_dir.glob(pattern), reverse=True):
+    for trace_file in sorted(debug_dir.glob(pattern), key=_trace_recency_key, reverse=True):
         try:
             data = json.loads(trace_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -100,25 +117,30 @@ def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple
         yield trace_file, data
 
 
-def _trace_has_degrading_warning(data: dict[str, Any]) -> bool:
-    """Whether a trace carries a genuinely degrading (non-INFO) warning.
+def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
+    """Whether a degraded trace's warnings PROVE the degradation lost no data.
 
-    The snapshot advisory should fire only on possible PARTIAL upstream data,
-    which is a WARNING/ERROR-severity signal (e.g. a batch host with
-    ``error_handling: continue`` that dropped failed items). An INFO-only
-    advisory (empty-input batch, loop-cap) marks the trace ``"degraded"`` at the
-    source-based trace level but loses no data — so it must NOT trigger the
-    advisory. Severity here mirrors the result-level ``_is_degrading_warning``
-    (non-INFO degrades); parser/validator warnings are input-quality, not runtime
-    degradation, and are excluded to match the trace's own status blacklist.
+    Returns True only when there IS a readable ``warnings`` array AND every entry
+    is provably non-degrading — INFO severity, or a parser/validator source
+    (input-quality, not runtime data loss; mirrors the trace-level status
+    blacklist and the result-level ``_is_degrading_warning`` severity rule). An
+    INFO-only advisory (empty-input batch, loop-cap) is benign → no snapshot
+    advisory; a WARNING/ERROR runtime warning (e.g. a batch host with
+    ``error_handling: continue`` that dropped failed items) is NOT benign → the
+    caller warns.
+
+    Crucially returns False when the array is missing/empty/unreadable: we cannot
+    PROVE a degraded run lost no data, so the caller keeps the (fail-safe)
+    degraded status rather than silently restoring possibly-partial upstream. A
+    degraded run with no usable warning detail (older/generated trace) must still
+    warn. PR #459 review (CODEX-3).
     """
     warnings = data.get("warnings")
-    if not isinstance(warnings, list):
+    if not isinstance(warnings, list) or not warnings:
         return False
-    return any(
+    return all(
         isinstance(warning, dict)
-        and str(warning.get("severity", "")).lower() in ("warning", "error")
-        and warning.get("source") not in ("parser", "validator")
+        and (str(warning.get("severity", "")).lower() == "info" or warning.get("source") in ("parser", "validator"))
         for warning in warnings
     )
 
@@ -135,13 +157,14 @@ def load_full_run_events(
     is ``"success"`` or ``"degraded"`` (absent → ``"success"`` for pre-2.4 and
     synthetic fixtures); ``"failed"`` runs are skipped.
 
-    The returned ``status`` is ``"degraded"`` only when the trace carries a
-    genuinely degrading (WARNING/ERROR) warning — see ``_trace_has_degrading_warning``.
-    A trace marked ``"degraded"`` solely by an INFO advisory (empty batch, loop
-    cap) loses no data and is reported as ``"success"`` here, so the caller's
-    loud "partial upstream" advisory doesn't false-fire on benign runs. The
-    ``"degraded"`` status rides through so the caller can warn before seeding
-    possibly-incomplete upstream rather than silently restoring it.
+    The returned ``status`` is ``"degraded"`` when the trace's ``final_status``
+    is ``"degraded"`` UNLESS its warnings prove the degradation was benign — see
+    ``_trace_warnings_provably_benign``. A trace marked ``"degraded"`` solely by
+    an INFO advisory (empty batch, loop cap) loses no data and is reported
+    ``"success"`` here, so the caller's loud "partial upstream" advisory doesn't
+    false-fire on benign runs. But a degraded trace with NO usable warning detail
+    (older/generated trace) stays ``"degraded"`` (fail-safe) so the caller warns
+    before seeding possibly-incomplete upstream rather than silently restoring it.
 
     Returns ``None`` when ``workflow_path`` is falsy, the debug dir is missing,
     or no usable trace exists. An empty ``nodes`` list is treated as NO match
@@ -160,7 +183,7 @@ def load_full_run_events(
         nodes = data.get("nodes")
         if not isinstance(nodes, list) or not nodes:
             continue
-        status = "degraded" if (final_status == "degraded" and _trace_has_degrading_warning(data)) else "success"
+        status = "success" if (final_status != "degraded" or _trace_warnings_provably_benign(data)) else "degraded"
         return nodes, status
     return None
 
@@ -303,22 +326,34 @@ def seed_snapshot_into_shared(
     *,
     exclude: str,
 ) -> dict[str, dict[str, Any]]:
-    """Seed every node's final output from a snapshot into ``shared``, except the target.
+    """Seed the target's UPSTREAM outputs from a snapshot into ``shared``.
 
-    Mirrors ``apply_memo_hit``'s restore shape: each node's terminal
-    ``node_output`` (last-event-per-node_id via ``final_events_by_node``) is
-    written to ``shared[node_id]`` with the engine-injected reserved keys
-    (``_SNAPSHOT_RESERVED``) filtered out. Nodes with no captured output are
-    skipped (a failed node forces the trace to ``"failed"`` → already rejected
-    by the loader, so the only no-output case here is a node that genuinely
-    produced nothing).
+    Mirrors ``apply_memo_hit``'s restore shape: each in-scope node's terminal
+    ``node_output`` is written to ``shared[node_id]`` with the engine-injected
+    reserved keys (``_SNAPSHOT_RESERVED``) filtered out. Nodes with no captured
+    output are skipped (a failed node forces the trace to ``"failed"`` → already
+    rejected by the loader, so the only no-output case here is a node that
+    genuinely produced nothing).
 
-    NEVER seeds ``exclude`` (the ``--only`` target) — the target must execute
-    fresh against the restored upstream, never read a stale copy of itself.
-    Returns the ``final_events_by_node`` map so callers can derive
-    ``restored_nodes`` without a second pass over ``events``.
+    Scope = nodes that executed BEFORE ``exclude`` (the ``--only`` target) in the
+    snapshot's execution order. pflow templates can only reference EARLIER steps,
+    so this slice provably contains every node the target can read — while
+    excluding DOWNSTREAM nodes, whose stale output would otherwise be addressable
+    via ``-o <downstream>`` / ``shared_after`` despite not having run this
+    invocation (PR #459 CODEX-2). Loop-safe: the pre-target slice yields each
+    node's value AS OF when the target first ran. If the target is absent from
+    the snapshot (it ran on a branch the snapshot didn't take, or was added
+    since), fall back to seeding every node so its references still resolve — a
+    genuinely missing one then surfaces as the normal loud unresolved-reference
+    error.
+
+    NEVER seeds ``exclude`` itself — the target must execute fresh, never read a
+    stale copy of itself. Returns the ``final_events_by_node`` map (restricted to
+    the seeded scope) so callers can derive ``restored_nodes`` without a second pass.
     """
-    final = final_events_by_node(events)
+    target_idx = next((i for i, e in enumerate(events) if e.get("node_id") == exclude), None)
+    in_scope = events if target_idx is None else events[:target_idx]
+    final = final_events_by_node(in_scope)
     for nid, ev in final.items():
         if nid == exclude:
             continue
@@ -724,8 +759,13 @@ class WorkflowTraceCollector:
         # and the ``--only`` trace (excluded as a snapshot source) would overwrite
         # the full-run snapshot — breaking every subsequent ``--only`` until the
         # next full run. ``%f`` keeps the two filenames distinct; ordering still
-        # sorts correctly (microseconds append to the timestamp) and the autoload
-        # glob keys on the hash prefix, not the timestamp.
+        # sorts correctly (``_trace_recency_key`` parses this timestamp) and the
+        # autoload glob keys on the hash prefix, not the timestamp.
+        # Caveat (PR #459 S5): ``%f`` is unique within ONE process, but two
+        # concurrent processes running the SAME workflow could in principle write
+        # the same microsecond filename and have one overwrite the other.
+        # Vanishingly unlikely under normal (sequential) agent use; a high-throughput
+        # orchestrator sharing ~/.pflow/debug should not assume per-write uniqueness.
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         filename = format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
         filepath = trace_dir / filename

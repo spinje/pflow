@@ -5,8 +5,8 @@ Status: accepted
 After the cache-defaults flip (only `llm` caches by default), `--only <node>` re-executed
 every uncached upstream node — re-firing side effects like `gh pr create` on each iteration
 (issue #443). We give `--only` **snapshot semantics**: it no longer walks the graph but seeds
-the shared store with every node's output from the **most recent full successful run** and
-executes only the target. The snapshot is sourced from the **debug trace**
+the shared store with the target's **upstream** outputs (the nodes that ran before it) from the
+**most recent full successful run** and executes only the target. The snapshot is sourced from the **debug trace**
 (`~/.pflow/debug/workflow-trace-*.json`), not the memo cache (`cache.py`).
 
 ## Considered options

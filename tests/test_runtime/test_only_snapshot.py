@@ -147,6 +147,37 @@ def test_only_does_not_refire_side_effecting_upstream(tmp_path: Path) -> None:
     assert by_id == {"fetch": "not_executed", "summarize": "completed"}
 
 
+@pytest.mark.trace_files
+def test_only_does_not_seed_downstream_nodes(tmp_path: Path) -> None:
+    """CODEX-2: --only on a MIDDLE node restores upstream but NOT downstream.
+
+    A downstream node can't be referenced by the target, and seeding its stale
+    output would make it addressable via ``shared_after`` / ``-o <downstream>``
+    even though it didn't run this invocation.
+    """
+    ir = {
+        "nodes": [
+            {"id": "first", "type": "shell", "params": {"command": "printf first-v1"}},
+            {"id": "middle", "type": "shell", "params": {"command": "printf 'mid ${first.stdout}'"}},
+            {"id": "last", "type": "shell", "params": {"command": "printf last-v1"}},
+        ],
+        "edges": [{"from": "first", "to": "middle"}, {"from": "middle", "to": "last"}],
+    }
+    wf = tmp_path / "wf.pflow.md"
+    write_workflow_file(ir, wf)
+
+    full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert full.success, [d.message for d in full.diagnostics]
+    full.trace.save_to_file()
+
+    result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="middle"))
+    assert result.success, [d.message for d in result.diagnostics]
+    assert result.shared_after["middle"]["stdout"] == "mid first-v1"  # target resolved vs restored upstream
+    assert "first" in result.shared_after  # upstream restored
+    assert "last" not in result.shared_after, "downstream 'last' must not be restored under --only middle"
+    assert result.shared_after["__execution__"]["restored_nodes"] == ["first"]
+
+
 def test_only_spy_node_upstream_exec_not_called() -> None:
     """Engine-level: a restored upstream node's exec() is never invoked under --only."""
     upstream = _SpyNode()
@@ -307,13 +338,61 @@ def test_degraded_trace_with_info_only_reports_success(tmp_path: Path) -> None:
     assert status == "success"
 
 
+def test_degraded_trace_without_warnings_stays_degraded(tmp_path: Path) -> None:
+    """Fail-safe: a degraded trace with NO usable warning detail must NOT downgrade to
+    success. We can't prove it lost no data, so the advisory still fires (PR #459 CODEX-3)."""
+    wf = "ir-hash:degraded-nowarn"
+    _write_trace(tmp_path, wf, timestamp="20260101-000000", final_status="degraded", warnings=None)
+    loaded = load_full_run_events(wf, debug_dir=tmp_path)
+    assert loaded is not None
+    _nodes, status = loaded
+    assert status == "degraded"
+
+
+def test_degraded_trace_with_empty_warnings_stays_degraded(tmp_path: Path) -> None:
+    """An empty warnings array is also un-provably-benign → fail-safe degraded (CODEX-3)."""
+    wf = "ir-hash:degraded-emptywarn"
+    _write_trace(tmp_path, wf, timestamp="20260101-000000", final_status="degraded", warnings=[])
+    loaded = load_full_run_events(wf, debug_dir=tmp_path)
+    assert loaded is not None
+    _nodes, status = loaded
+    assert status == "degraded"
+
+
+def test_loader_selects_newest_by_timestamp_not_name_prefix(tmp_path: Path) -> None:
+    """Two full runs of the SAME workflow_path with different name prefixes: the loader must
+    pick the newest by TIMESTAMP, not by reverse-sorting the whole filename (which ranks the
+    name prefix ahead of the timestamp and could restore a stale snapshot) (PR #459 CODEX-1)."""
+    wf = "ir-hash:prefix-sort"
+    # 'zzz' sorts lexically AFTER 'aaa' but is the OLDER run — a whole-filename reverse
+    # sort would wrongly select it and restore STALE upstream.
+    _write_trace(
+        tmp_path,
+        wf,
+        name="zzz",
+        timestamp="20260101-000000",
+        nodes=[{"node_id": "fetch", "node_output": {"stdout": "STALE"}}],
+    )
+    _write_trace(
+        tmp_path,
+        wf,
+        name="aaa",
+        timestamp="20260601-120000",
+        nodes=[{"node_id": "fetch", "node_output": {"stdout": "FRESH"}}],
+    )
+    loaded = load_full_run_events(wf, debug_dir=tmp_path)
+    assert loaded is not None
+    nodes, _status = loaded
+    assert nodes[0]["node_output"]["stdout"] == "FRESH"
+
+
 # ---------------------------------------------------------------------------
 # seed_snapshot_into_shared unit
 # ---------------------------------------------------------------------------
 
 
 def test_seed_filters_reserved_keys_and_excludes_target() -> None:
-    """Reserved engine keys are stripped; the target is never seeded; __metrics__ survives."""
+    """Reserved keys stripped; target never seeded; downstream (after target) not seeded."""
     events = [
         {
             "node_id": "upstream",
@@ -325,14 +404,18 @@ def test_seed_filters_reserved_keys_and_excludes_target() -> None:
             },
         },
         {"node_id": "target", "node_output": {"stdout": "should-not-seed"}},
+        {"node_id": "downstream", "node_output": {"stdout": "stale-downstream"}},
     ]
     shared: dict[str, Any] = {}
     final = seed_snapshot_into_shared(shared, events, exclude="target")
 
     assert "target" not in shared, "the --only target must never be seeded"
+    # CODEX-2: only nodes BEFORE the target are in scope — a downstream node can't be
+    # referenced by the target, and seeding it would expose stale data via -o/shared_after.
+    assert "downstream" not in shared, "downstream nodes (after the target) must not be seeded"
     assert shared["upstream"] == {"stdout": "value", "__metrics__": {"tokens": 1}}
-    # The helper returns the final-events map (keyed by node_id) for restored_nodes.
-    assert set(final) == {"upstream", "target"}
+    # Returned map (for restored_nodes) is restricted to the in-scope (pre-target) nodes.
+    assert set(final) == {"upstream"}
 
 
 def test_seed_uses_last_event_per_node() -> None:
@@ -388,6 +471,10 @@ def test_degraded_snapshot_emits_loud_advisory(tmp_path: Path) -> None:
     assert advisory is not None
     assert advisory.id == "only.snapshot-degraded"
     assert "DEGRADED" in advisory.message
+    # Stored under the synthetic dict key "__only_snapshot__" (so a target writing
+    # __warnings__[target] can't clobber it), but attributed to the TARGET node so
+    # the key never leaks as the node id downstream (PR #459 S4).
+    assert advisory.node_id == "summarize"
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +684,11 @@ def test_only_subworkflow_target_reruns_whole_child(tmp_path: Path) -> None:
     # The child ran against the RESTORED parent output.
     assert result.shared_after["sub"]["result"] == "preval"
     restored = result.shared_after["__execution__"]["restored_nodes"]
-    assert "pre" in restored and "post" in restored and "sub" not in restored
+    # CODEX-2: only the target's UPSTREAM is restored. `pre` (before `sub`) is restored;
+    # `post` (downstream of `sub`) is NOT — it couldn't be referenced by the target and
+    # its stale output must not become addressable. `sub` itself ran fresh.
+    assert "pre" in restored and "post" not in restored and "sub" not in restored
+    assert "post" not in result.shared_after, "downstream node must not be seeded under --only"
     assert "_pflow_child_only_node" not in result.shared_after
 
 
@@ -648,4 +739,9 @@ def test_real_degraded_batch_snapshot_warns_in_run_and_plan(tmp_path: Path) -> N
     result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="summarize"))
     assert result.success
     assert result.status == WorkflowStatus.DEGRADED
-    assert any(d.id == "only.snapshot-degraded" for d in result.diagnostics)
+    advisory = next(d for d in result.diagnostics if d.id == "only.snapshot-degraded")
+    # S4: surfaced through _extract_runtime_warnings, the advisory must be attributed to
+    # the TARGET node — the synthetic __warnings__ dict key "__only_snapshot__" must NOT
+    # leak as the node id (the extractor keeps the Diagnostic's explicit node_id).
+    assert advisory.node_id == "summarize"
+    assert "__only_snapshot__" not in {d.node_id for d in result.diagnostics}
