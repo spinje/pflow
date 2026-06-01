@@ -198,16 +198,130 @@ class TestUnmatchedActionWarning:
 
 
 class TestOnlyNodeWithOutputs:
-    """When --only is set, output resolution attempts to populate all declared
-    outputs but silently skips any that fail to resolve (because the source
-    node was skipped). Outputs whose source templates CAN resolve are populated
-    normally — this is critical for -o and batch sub-workflow results.
+    """Under snapshot --only (issue #443) the engine seeds every non-target node
+    from the prior full run, then runs only the target. Output resolution
+    populates declared outputs whose source resolves — the target's OWN output OR
+    a RESTORED node — and silently skips sources absent from the snapshot (branch
+    divergence) rather than raising OutputResolutionError. This is critical for
+    -o and batch sub-workflow results.
     """
 
-    def test_only_node_skips_unresolvable_output(self):
-        """--only silently skips outputs whose source depends on a skipped node."""
+    @staticmethod
+    def _snapshot(node_id: str, output: dict) -> list[dict]:
+        """One synthetic full-run trace event — enough to seed shared[node_id]."""
+        return [{"node_id": node_id, "node_output": output}]
+
+    def test_only_node_populates_resolvable_outputs(self):
+        """--only populates a declared output sourced from the target's own output."""
+        node_a = _OutputNode()
+        node_a.node_id = "first"
+        node_a.set_params({"action": "default", "output_value": "hello"})
+
+        node_b = _ActionNode()
+        node_b.node_id = "second"
+        node_b.set_params({"action": "default"})
+
+        node_a >> node_b
+
+        configs = {
+            "first": NodeConfig(
+                node_id="first",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "second": NodeConfig(
+                node_id="second",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(
+            start_node=node_a,
+            node_configs=configs,
+            # Output from the TARGET node — resolvable from its own fresh output.
+            outputs={"output": {"source": "${first.result}"}},
+        )
+
+        shared: dict = {}
+        engine = WorkflowEngine(
+            only_node="first",
+            snapshot_events=self._snapshot("second", {"action": "default"}),
+        )
+        result = engine.run(workflow, shared)
+
+        assert result == "default"
+        assert shared["__execution__"]["only_node"] == "first"
+        # Output SHOULD be populated — source resolves from the target node
+        assert shared["output"] == "hello"
+        # 'second' was restored from the snapshot, not executed this run.
+        assert shared["__execution__"]["restored_nodes"] == ["second"]
+
+    def test_only_node_populates_restored_upstream_output(self):
+        """--only resolves a declared output sourced from a RESTORED upstream node.
+
+        Snapshot semantics: the target runs against frozen upstream, so an output
+        referencing that upstream resolves from the seeded value. (Under the old
+        re-walk-and-stop behavior this resolved only because upstream re-ran —
+        and re-fired its side effects, the #443 bug.)
+        """
         node_a = _ActionNode()
         node_a.node_id = "first"
+        node_a.set_params({"action": "default"})
+
+        node_b = _ActionNode()
+        node_b.node_id = "second"  # target
+        node_b.set_params({"action": "default"})
+
+        node_a >> node_b
+
+        configs = {
+            "first": NodeConfig(
+                node_id="first",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "second": NodeConfig(
+                node_id="second",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(
+            start_node=node_a,
+            node_configs=configs,
+            outputs={"upstream": {"source": "${first.value}"}},
+        )
+
+        shared: dict = {}
+        engine = WorkflowEngine(
+            only_node="second",
+            snapshot_events=self._snapshot("first", {"value": "frozen-upstream"}),
+        )
+        result = engine.run(workflow, shared)
+
+        assert result == "default"
+        # Output resolves from the RESTORED upstream node, never re-executed.
+        assert shared["upstream"] == "frozen-upstream"
+        assert shared["__execution__"]["restored_nodes"] == ["first"]
+
+    def test_only_node_skips_unresolvable_output(self):
+        """--only silently skips a declared output whose source is absent from the snapshot."""
+        node_a = _ActionNode()
+        node_a.node_id = "first"  # target
         node_a.set_params({"action": "default"})
 
         node_b = _ActionNode()
@@ -238,117 +352,24 @@ class TestOnlyNodeWithOutputs:
         workflow = CompiledWorkflow(
             start_node=node_a,
             node_configs=configs,
-            # Declare output from second node — which won't execute with --only=first
+            # 'second' is downstream of the target AND absent from the snapshot
+            # below (branch divergence) — so its source can't resolve.
             outputs={"result": {"source": "${second.action}"}},
         )
 
         shared: dict = {}
-        engine = WorkflowEngine(only_node="first")
-        # This should NOT raise OutputResolutionError
+        engine = WorkflowEngine(
+            only_node="first",
+            # Snapshot restores an unrelated node, NOT 'second'.
+            snapshot_events=self._snapshot("other", {"x": 1}),
+        )
+        # This should NOT raise OutputResolutionError.
         result = engine.run(workflow, shared)
 
         assert result == "default"
         assert shared["__execution__"]["only_node"] == "first"
-        # "result" output should NOT be in shared (source node was skipped)
+        # "result" output should NOT be in shared (source 'second' absent from snapshot)
         assert "result" not in shared
-
-    def test_only_node_populates_resolvable_outputs(self):
-        """--only populates declared outputs whose source templates can resolve."""
-        node_a = _OutputNode()
-        node_a.node_id = "first"
-        node_a.set_params({"action": "default", "output_value": "hello"})
-
-        node_b = _ActionNode()
-        node_b.node_id = "second"
-        node_b.set_params({"action": "default"})
-
-        node_a >> node_b
-
-        configs = {
-            "first": NodeConfig(
-                node_id="first",
-                node_type_name="OutputNode",
-                template_config=None,
-                batch_config=None,
-                namespaced=True,
-                interface_metadata=None,
-            ),
-            "second": NodeConfig(
-                node_id="second",
-                node_type_name="ActionNode",
-                template_config=None,
-                batch_config=None,
-                namespaced=True,
-                interface_metadata=None,
-            ),
-        }
-
-        workflow = CompiledWorkflow(
-            start_node=node_a,
-            node_configs=configs,
-            # Output from FIRST node — resolvable even with --only=first
-            outputs={"output": {"source": "${first.result}"}},
-        )
-
-        shared: dict = {}
-        engine = WorkflowEngine(only_node="first")
-        result = engine.run(workflow, shared)
-
-        assert result == "default"
-        assert shared["__execution__"]["only_node"] == "first"
-        # Output SHOULD be populated — source resolves from the target node
-        assert "output" in shared
-        assert shared["output"] == "hello"
-
-    def test_only_node_partial_output_resolution(self):
-        """--only populates resolvable outputs, silently skips unresolvable ones."""
-        node_a = _OutputNode()
-        node_a.node_id = "first"
-        node_a.set_params({"action": "default", "output_value": "hello"})
-
-        node_b = _OutputNode()
-        node_b.node_id = "second"
-        node_b.set_params({"action": "default", "output_value": "world"})
-
-        node_a >> node_b
-
-        configs = {
-            "first": NodeConfig(
-                node_id="first",
-                node_type_name="OutputNode",
-                template_config=None,
-                batch_config=None,
-                namespaced=True,
-                interface_metadata=None,
-            ),
-            "second": NodeConfig(
-                node_id="second",
-                node_type_name="OutputNode",
-                template_config=None,
-                batch_config=None,
-                namespaced=True,
-                interface_metadata=None,
-            ),
-        }
-
-        workflow = CompiledWorkflow(
-            start_node=node_a,
-            node_configs=configs,
-            outputs={
-                "from_first": {"source": "${first.result}"},
-                "from_second": {"source": "${second.result}"},
-            },
-        )
-
-        shared: dict = {}
-        engine = WorkflowEngine(only_node="first")
-        result = engine.run(workflow, shared)
-
-        assert result == "default"
-        # Resolvable output IS populated
-        assert shared["from_first"] == "hello"
-        # Unresolvable output is silently skipped (second didn't run)
-        assert "from_second" not in shared
 
 
 class TestCustomErrorAction:
@@ -663,14 +684,14 @@ class TestRoutingFailureTraceEventSync:
         assert failure["data"]["stderr"] == "shell died"
 
     def test_only_mode_with_unmatched_action_does_not_flip_trace(self):
-        """--only terminates the walk BEFORE _handle_no_successor fires.
+        """Snapshot --only never runs successor routing, so it can't flip the trace.
 
-        Pins expected behavior: when a user runs with --only=router and the
-        router returns a custom action that has no matching edge, the engine
-        breaks at the --only check at engine.py:130 before reaching the
-        successor lookup. mark_last_event_failed is NOT called; the trace
-        event retains success=True (the node's execution genuinely succeeded
-        — the routing concern doesn't apply in --only mode).
+        Pins expected behavior: with --only=router, the engine executes ONLY the
+        target via _run_only_snapshot — it never reaches the walk's
+        _handle_no_successor. So even when the router returns a custom action with
+        no matching edge, mark_last_event_failed is NOT called; the trace event
+        retains success=True (the node's execution genuinely succeeded — the
+        routing concern doesn't apply in --only mode).
         """
         from pflow.runtime.node_state import get_node_failure
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
@@ -680,7 +701,7 @@ class TestRoutingFailureTraceEventSync:
         router.set_params({"action": "custom_route"})
 
         # A non-error successor so is_clean_termination would return False
-        # IF the --only check didn't break first.
+        # IF the snapshot path ever reached the successor lookup (it doesn't).
         downstream = _ActionNode()
         downstream.node_id = "downstream"
         router >> downstream
@@ -706,10 +727,14 @@ class TestRoutingFailureTraceEventSync:
         workflow = CompiledWorkflow(start_node=router, node_configs=configs)
         shared: dict = {}
         collector = WorkflowTraceCollector("test")
-        engine = WorkflowEngine(trace_collector=collector, only_node="router")
+        engine = WorkflowEngine(
+            trace_collector=collector,
+            only_node="router",
+            snapshot_events=[{"node_id": "downstream", "node_output": {"action": "default"}}],
+        )
         engine.run(workflow, shared)
 
-        # Runtime: no routing failure record — engine broke before the check
+        # Runtime: no routing failure record — snapshot path never routes
         assert get_node_failure(shared, "router") is None
         # Trace event preserves the successful execution result — success=True
         router_events = [e for e in collector.events if e.get("node_id") == "router"]

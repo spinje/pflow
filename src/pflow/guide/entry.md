@@ -22,7 +22,7 @@ Running Workflows:
 If execution succeeds, present results concisely. Do not re-run.
 
 Run Options:
-  --only <node>         Run just this node (downstream skipped; cached upstream reused, the rest re-run)
+  --only <node>         Re-run one node against the last full run's snapshot (upstream reused, not re-run; needs a prior run)
   --no-cache            Bypass pflow memo-cache reads
   --report              Generate per-node execution report
   -o, --output-key <key>  Extract specific output

@@ -52,6 +52,19 @@ def _is_degrading_warning(value: Any) -> bool:
 _synthesize_inline_workflow_id = synthesize_inline_workflow_id
 
 
+def _workflow_path_id(resolved: ResolvedWorkflow) -> str:
+    """Canonical workflow identifier: the resolved file path, or a synthesized
+    ``ir-hash:<md5>`` for inline runs (dict / content-string / MCP-inline).
+
+    The trace collector's ``workflow_path``, the memo-cache scoping key
+    (``_pflow_workflow_file``), and the ``--only`` snapshot loader (issue #443)
+    MUST all use this exact value — otherwise the snapshot loader won't find the
+    workflow's own most-recent full-run trace. Single source so the three sites
+    can't drift byte-for-byte.
+    """
+    return resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)
+
+
 class WorkflowRunner:
     """Stateless workflow execution pipeline.
 
@@ -126,7 +139,7 @@ class WorkflowRunner:
             # identifier. File-based runs use the resolved path; inline runs
             # synthesize a stable ``ir-hash:<md5>`` (symmetric with
             # ``MemoizationCache.workflow_path`` scoping for inline rows).
-            trace_workflow_path = resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)
+            trace_workflow_path = _workflow_path_id(resolved)
             trace_collector = WorkflowTraceCollector(
                 workflow_name=workflow_name or resolved.file_path or "unnamed",
                 workflow_path=trace_workflow_path,
@@ -183,10 +196,7 @@ class WorkflowRunner:
         # pollute each other's cost/duration history. `setdefault` preserves
         # any value a caller pre-injected (back-compat with existing MCP/CLI
         # pre-injection sites).
-        if resolved.file_path:
-            params.setdefault("_pflow_workflow_file", resolved.file_path)
-        else:
-            params.setdefault("_pflow_workflow_file", _synthesize_inline_workflow_id(resolved.ir))
+        params.setdefault("_pflow_workflow_file", _workflow_path_id(resolved))
 
         # Fill declared input names so validation doesn't flag them as missing.
         # Only needs to know WHICH inputs will be available, not their final values.
@@ -249,6 +259,10 @@ class WorkflowRunner:
             metrics_collector=metrics_collector,
             trace_collector=trace_collector,
             only_node=config.only_node,
+            # issue #443: byte-identical to the trace collector's workflow_path
+            # (resolved file path or synthesized ir-hash:<md5>) so --only's
+            # snapshot loader finds this workflow's own most-recent full-run trace.
+            workflow_path=_workflow_path_id(resolved),
         )
 
         try:

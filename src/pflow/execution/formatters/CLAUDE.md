@@ -45,7 +45,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 
 **success_formatter** auto-detects output when full runs have no declared outputs via `find_auto_output()` in `output_utils.py` (shared with CLI text path). Priority: `result > response > output > text > data > stdout`. Root first, then namespaces (last occurrence wins — most downstream node). Skips `_`/`__` prefixed keys and invalid values (None, empty strings). Last-key fallback for non-standard keys.
 
-**`--only` output routing** uses `find_only_output(shared, only_node)`, not `find_auto_output()`. Declared full-run outputs are skipped in text and JSON when `--only` is active and no `output_key` was requested. Flat targets unwrap priority keys from `shared[target]`; dotted targets return the root sub-workflow namespace (`shared[root]`). JSON `execution` dict includes `cache_hits`, `only_node`, `nodes_skipped` fields when applicable. MCP text output filters `not_executed` steps and shows `⤷ Stopped after 'X' (--only)` summary.
+**`--only` output routing** uses `find_only_output(shared, only_node)`, not `find_auto_output()`. Declared full-run outputs are skipped in text and JSON when `--only` is active and no `output_key` was requested. Flat targets unwrap priority keys from `shared[target]`; dotted targets return the root sub-workflow namespace (`shared[root]`). JSON `execution` dict includes `cache_hits`, `only_node`, `nodes_skipped` fields when applicable. MCP text output filters `not_executed` steps and shows `⤷ Ran only 'X' (--only)` summary (issue #443: snapshot semantics — only the target ran, others restored).
 
 ## Dependencies
 

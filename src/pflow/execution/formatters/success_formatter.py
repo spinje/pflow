@@ -442,17 +442,23 @@ def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
     convention of ``make -k``, ``pytest --maxfail``, ``rsync --dry-run``,
     ``apt-get --simulate``, ``kubectl --dry-run``, etc.
 
+    Wording note (issue #443): ``--only`` is snapshot semantics — only the target
+    runs; every other node's output is RESTORED from the prior full run, not
+    executed. The line therefore says "Ran only 'X'" + "N other node(s) not
+    executed", NOT "Stopped after X" / "skipped" (which implied a walk-and-stop
+    that no longer happens and would mislead an agent into thinking upstream ran).
+
     Two forms:
-    - Some downstream nodes were skipped: ``Stopped after 'X' (--only), N remaining nodes skipped``
-    - No nodes were skipped (``--only`` targeted the last node): ``Stopped after 'X' (--only)``
+    - Other nodes were restored, not run: ``Ran only 'X' (--only), N other nodes not executed``
+    - Single-node workflow (nothing else to restore): ``Ran only 'X' (--only)``
     The shorter form is the fix for the case where the rendered output
     was previously indistinguishable from a full run (sub-issue 8a in
     Task 149's code review).
     """
     if nodes_skipped > 0:
         noun = "node" if nodes_skipped == 1 else "nodes"
-        return f"  ⤷ Stopped after '{only_node}' (--only), {nodes_skipped} remaining {noun} skipped"
-    return f"  ⤷ Stopped after '{only_node}' (--only)"
+        return f"  ⤷ Ran only '{only_node}' (--only), {nodes_skipped} other {noun} not executed"
+    return f"  ⤷ Ran only '{only_node}' (--only)"
 
 
 def format_stderr_warnings(steps: list[dict[str, Any]]) -> list[str]:

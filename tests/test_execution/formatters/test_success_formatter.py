@@ -739,7 +739,7 @@ class TestOnlyNodeDisplay:
         assert "process" in text
         assert "save" not in text
         assert "notify" not in text
-        assert "⤷ Stopped after 'process' (--only), 2 remaining nodes skipped" in text
+        assert "⤷ Ran only 'process' (--only), 2 other nodes not executed" in text
 
     def test_only_node_not_set_shows_all_steps(self):
         """CORRECTNESS: Without --only, no summary line is emitted."""
@@ -758,7 +758,7 @@ class TestOnlyNodeDisplay:
     def test_only_node_single_skipped_uses_singular(self):
         """FORMAT: Singular 'node' when only 1 is skipped.
 
-        Real bug this catches: Grammar error ("1 remaining nodes skipped") makes
+        Real bug this catches: Grammar error ("1 other nodes not executed") makes
         CLI output look unprofessional to agents parsing text.
         """
         steps = [
@@ -768,8 +768,8 @@ class TestOnlyNodeDisplay:
         result_dict = self._make_result_dict(steps, only_node="fetch", nodes_skipped=1)
         text = format_success_as_text(result_dict)
 
-        assert "1 remaining node skipped" in text
-        assert "1 remaining nodes skipped" not in text
+        assert "1 other node not executed" in text
+        assert "1 other nodes not executed" not in text
 
     def test_only_node_zero_skipped_emits_short_form(self):
         """CORRECTNESS: --only mode confirmation is emitted even when no
@@ -786,8 +786,8 @@ class TestOnlyNodeDisplay:
         ``pytest --maxfail``, ``rsync --dry-run``, etc.).
 
         The original concern this test guarded against — "showing '0
-        remaining nodes skipped' is confusing" — is preserved by emitting
-        a short form (``Stopped after 'X' (--only)``) without any
+        other nodes not executed' is confusing" — is preserved by emitting
+        a short form (``Ran only 'X' (--only)``) without any
         "N remaining" suffix when no nodes were skipped.
         """
         steps = [
@@ -798,11 +798,11 @@ class TestOnlyNodeDisplay:
         text = format_success_as_text(result_dict)
 
         # The mode confirmation must be emitted (sub-issue 8a fix)
-        assert "⤷ Stopped after 'process' (--only)" in text
-        # But not the "0 remaining" noise (original test's valid concern)
-        assert "0 remaining" not in text
-        assert "remaining node skipped" not in text
-        assert "remaining nodes skipped" not in text
+        assert "⤷ Ran only 'process' (--only)" in text
+        # But not the "0 other" count noise (original test's valid concern)
+        assert "0 other" not in text
+        assert "other node not executed" not in text
+        assert "other nodes not executed" not in text
 
 
 class TestCacheStatsDisplay:
@@ -922,7 +922,7 @@ class TestAppendExecutionStepsOnlyNode:
         _append_execution_steps(lines, execution)
 
         assert any("⤷" in line for line in lines)
-        assert any("2 remaining nodes skipped" in line for line in lines)
+        assert any("2 other nodes not executed" in line for line in lines)
 
     def test_without_only_emits_no_step_lines(self):
         """REGRESSION: Without only_node, no supplementary step lines are emitted."""
@@ -959,10 +959,10 @@ class TestAppendExecutionStepsOnlyNode:
         _append_execution_steps(lines, execution)
 
         joined = "\n".join(lines)
-        assert "⤷ Stopped after 'target_c' (--only)" in joined
-        # Short form: no "N remaining" suffix when nothing was skipped
-        assert "remaining" not in joined
-        assert "0 " not in joined  # no "0 remaining" anywhere
+        assert "⤷ Ran only 'target_c' (--only)" in joined
+        # Short form: no "N other ... not executed" suffix when nothing was restored
+        assert "not executed" not in joined
+        assert "0 " not in joined  # no "0 ..." count anywhere
 
 
 class TestFormatOnlyIndicator:
@@ -979,8 +979,8 @@ class TestFormatOnlyIndicator:
         """With skipped nodes, the long form shows the count and grammar."""
         line = format_only_indicator("target_b", nodes_skipped=2)
 
-        assert "⤷ Stopped after 'target_b' (--only)" in line
-        assert "2 remaining nodes skipped" in line
+        assert "⤷ Ran only 'target_b' (--only)" in line
+        assert "2 other nodes not executed" in line
 
     def test_short_form_when_no_nodes_skipped(self):
         """SUB-ISSUE 8a: with 0 skipped nodes (target was last), the short
@@ -988,16 +988,16 @@ class TestFormatOnlyIndicator:
         skipped' noise while still announcing the --only mode."""
         line = format_only_indicator("target_c", nodes_skipped=0)
 
-        assert "⤷ Stopped after 'target_c' (--only)" in line
-        assert "remaining" not in line
+        assert "⤷ Ran only 'target_c' (--only)" in line
+        assert "not executed" not in line
         assert "0 " not in line
 
     def test_singular_grammar_for_one_skipped_node(self):
         """One skipped node uses singular 'node', not plural 'nodes'."""
         line = format_only_indicator("target_a", nodes_skipped=1)
 
-        assert "1 remaining node skipped" in line
-        assert "1 remaining nodes skipped" not in line
+        assert "1 other node not executed" in line
+        assert "1 other nodes not executed" not in line
 
     def test_node_id_with_special_characters_quoted_correctly(self):
         """Node IDs are quoted with single quotes — no escaping shenanigans."""

@@ -109,6 +109,12 @@ def build_execution_steps(
     # Cache lookup data — status is sourced from node_state.get_node_status()
     # which reads __failures__ and shared[node_id] per the Task 148 invariant.
     cache_hits = shared_storage.get("__cache_hits__", [])
+    # issue #443: nodes whose output was restored from a --only snapshot (seeded
+    # into shared[node_id], so get_node_status() reports SUCCEEDED — correct for
+    # data-flow) must NOT be reported as executed this run. Relabel them
+    # not_executed at the display layer only, so the execution summary and
+    # --report agree that just the target ran (nodes_executed == 1).
+    restored = set(shared_storage.get("__execution__", {}).get("restored_nodes", []))
     # Extract node timings from metrics
     node_timings = {}
     if metrics_summary:
@@ -124,13 +130,19 @@ def build_execution_steps(
     # Build steps array from workflow IR
     steps = []
     for node in workflow_ir["nodes"]:
-        from pflow.runtime.node_state import get_node_output, get_node_status
+        from pflow.runtime.node_state import NodeStatus, get_node_output, get_node_status
 
         node_id = node["id"]
 
         # Determine execution status from the Task 148 invariant: a node is in
         # completed_nodes xor in __failures__ xor absent.
-        status = _STATUS_MAP[get_node_status(shared_storage, node_id).value]
+        # Fail-closed against __failures__: only relabel a restored node when it
+        # is NOT failed, so the deferred name-based --only work can never hide a
+        # real failure behind the snapshot relabel.
+        canonical = get_node_status(shared_storage, node_id)
+        status = (
+            "not_executed" if (node_id in restored and canonical != NodeStatus.FAILED) else _STATUS_MAP[canonical.value]
+        )
 
         # Build step dictionary
         step = {

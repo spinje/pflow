@@ -73,7 +73,7 @@ Provides `compile_and_run()` — the standard pattern for compiling IR, seeding 
 
 #### Key Function:
 
-- `compile_and_run(ir, registry=None, initial_params=None, shared=None, *, metrics_collector=None, trace_collector=None, only_node=None) -> dict`: Compile + seed + run, returns shared store.
+- `compile_and_run(ir, registry=None, initial_params=None, shared=None, *, metrics_collector=None, trace_collector=None, only_node=None, workflow_path=None, snapshot_events=None) -> dict`: Compile + seed + run, returns shared store.
 
 #### Usage:
 
@@ -89,8 +89,15 @@ collector = WorkflowTraceCollector("test")
 shared = compile_and_run(ir, trace_collector=collector)
 assert len(collector.events) == 1
 
-# With --only flag
-shared = compile_and_run(ir, only_node="first_step")
+# With --only flag. Snapshot semantics (issue #443): a flat --only run restores
+# upstream from a trace instead of re-walking, so it needs either snapshot_events
+# (synthetic full-run events) or an on-disk trace at workflow_path — otherwise the
+# engine raises OnlySnapshotMissingError.
+shared = compile_and_run(
+    ir,
+    only_node="target_step",
+    snapshot_events=[{"node_id": "upstream", "node_output": {"stdout": "restored"}}],
+)
 ```
 
 ## Mock Architecture

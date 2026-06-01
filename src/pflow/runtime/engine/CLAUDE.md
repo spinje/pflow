@@ -79,12 +79,20 @@ Stateless executor. No per-node instance state.
 
 ### `run(workflow, shared) → str`
 
-1. Parses `--only` via `parse_only_path` into `(this_only, child_only)`. Validates first segment exists; if dotted, validates it's a `WorkflowExecutor`.
-2. Resets `node_visit_counts`
-3. Walks graph: `_execute_node` per node, follows `curr.successors.get(action or "default")`
+1. Stamps `self.trace.only_node = self.only_node` (None for a full run) so the saved trace excludes itself as a snapshot source when it's an `--only` run.
+2. `_run_inner`: parses `--only` via `parse_only_path` into `(this_only, child_only)`. **`--only` is snapshot semantics (issue #443), NOT a graph walk** — if `this_only` is set, `_validate_only_target` (rejects unknown ids AND dotted/nested targets, membership-checked first) then `_run_only_snapshot` returns early. The walk below is full-run-only.
+3. **Full-run walk**: resets `node_visit_counts`, then `_execute_node` per node, follows `curr.successors.get(action or "default")`. `_run_node_with_child_only` is passed `None` (dormant — the dotted-child plumbing is kept for the deferred nested-targeting follow-up; `_pflow_child_only_node` is never written).
 4. On unmatched action: `_handle_no_successor` checks if step 17.5 already archived the node; if so, preserves the existing failure record and only writes a routing hint to `__warnings__`. Otherwise rolls back success bookkeeping, archives as `routing_error` via `mark_node_failed`, AND calls `self.trace.mark_last_event_failed(node_id, error=...)` to flip the already-recorded trace event so trace state agrees with `__failures__` (GH #250). The trace-flip call happens only in the non-error-action branch — the error-action branch is already correct because `is_error_action=True` caused step 16 to record `success=False`.
-5. On `--only`: writes `shared["_pflow_child_only_node"] = child_only` before target sub-workflow execution (cleaned up after). Stops after target, sets `__execution__["only_node"]` to the full dotted path.
-6. On success: calls `populate_declared_outputs`. Under `--only`, resolvable declared outputs may still be populated, while unresolvable outputs from skipped downstream nodes are ignored. CLI/JSON output routing must still treat `--only` as target-scoped and must not prefer these full-run declared outputs.
+
+#### `_run_only_snapshot(workflow, shared, this_only) → str` (the `--only` path)
+
+FLAT `--only` only (dotted rejected upstream). Instead of re-walking — which re-executes and re-fires side-effecting upstream on every iteration — restore the target's UPSTREAM (nodes that ran before it) from the most recent full successful run's trace and execute ONLY the target:
+
+1. `load_snapshot_or_raise(self.workflow_path, this_only, snapshot_events=self.snapshot_events)` → `(events, source_status)`. No usable snapshot → `OnlySnapshotMissingError` (never a silent re-walk). `snapshot_events` lets callers/tests inject events directly.
+2. `seed_snapshot_into_shared(shared, events, exclude=this_only)` seeds `shared[node_id]` for every node that ran BEFORE the target in the snapshot's execution order (filtering the `apply_memo_hit` reserved keys). Templates can only reference earlier steps, so this is every node the target could read; DOWNSTREAM nodes are NOT seeded (their stale output must not be addressable). Restored nodes are recorded in `__execution__["restored_nodes"]`.
+3. If `source_status == "degraded"`, `_emit_snapshot_degraded_advisory` writes a WARNING `Diagnostic` (id `only.snapshot-degraded`) under `__warnings__["__only_snapshot__"]` → DEGRADED + loud advisory (a degraded run can carry partial upstream data; never seed it silently).
+4. `find_node_by_id(workflow.start_node, this_only)` locates the target's bare node (BFS, cycle-guarded), then `_execute_node` runs it inside `loop_runtime_scope` (a `loop:` target runs ONE iteration). `_execute_node` step 2 still writes `__execution__["only_node"]`, so output routing stays target-scoped.
+5. `_populate_outputs` resolves declared outputs against the seeded store (resolvable outputs — including from RESTORED nodes — populate; `OutputResolutionError` swallowed under `--only`). **Display caveat**: seeding makes `get_node_status` report restored nodes SUCCEEDED (data-flow-correct for templates/coalesce/`## Cache`), but `build_execution_steps` relabels them `not_executed` so `nodes_executed == 1` and the summary aligns with `--report`. The fix is at the display layer ONLY — never in `get_node_status`.
 
 ### `_execute_node(node, config, shared) → str`
 

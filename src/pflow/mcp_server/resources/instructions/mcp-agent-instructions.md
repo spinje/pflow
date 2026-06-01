@@ -632,7 +632,7 @@ Only `llm` nodes cache by default — their output is purely a function of their
 
 - Edit a prompt file → re-run → only affected `llm` nodes re-execute (~seconds, not minutes)
 - `--dry-run` → preview plan + cost/duration estimate without running (expensive runs, checking what an edit invalidated)
-- `--only <node>` → run just that node (downstream skipped; cached upstream — `llm`/`cache: true` — is reused, other upstream re-executes, so beware side-effecting upstream re-firing)
+- `--only <node>` → re-run just that node against a snapshot of the most recent full run (upstream restored, not re-executed — side-effecting upstream never re-fires; needs a prior full run; targeting a node inside a sub-workflow is not supported)
 - `--no-cache` → bypass pflow memo-cache reads; nodes execute again, but provider prompt caching may still apply
 - `- cache: true` on a node → opt INTO caching when output is purely a function of declared inputs (no filesystem/clock/env/network). Most shell/code/http/file/mcp nodes do NOT qualify.
 

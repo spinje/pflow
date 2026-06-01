@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -199,34 +198,29 @@ def _collect_candidate_traces(
     debug_dir: Path,
     workflow_path: str,
 ) -> tuple[list[tuple[Path, dict[str, Any]]], list[tuple[Path, dict[str, Any]]]]:
-    """Walk ``debug_dir`` for 2.x traces matching ``workflow_path``; bucket by run outcome.
+    """Walk ``debug_dir`` for reusable 2.x traces matching ``workflow_path``; bucket by run outcome.
 
     Returned tuple is ``(successful, failed)``, each newest-first by filename
     (which embeds the recording timestamp). Absent ``final_status`` routes to
     the successful bucket — matches the back-compat fallback at
     ``_trace_coverage_for_rows`` and preserves selection for pre-2.1.0 traces.
 
-    Extracted from ``_autoload_trace`` for C901 — the trace-walking +
-    health-filter loop is independent of the rank-aware selection policy.
+    Candidate gathering (glob-by-hash, parse, ``workflow_path`` collision guard,
+    2.x gate, and ``--only`` exclusion) is delegated to the shared
+    ``runtime.workflow_trace._iter_workflow_traces`` so this loader and the
+    ``--only`` snapshot loader cannot drift. The shared iterator deliberately
+    does NOT filter ``final_status`` — this function owns the success/failed
+    bucketing, including the failed-bucket fallback ``_autoload_trace`` relies
+    on. ``--only`` traces are excluded by the iterator: they record only their
+    target, so they'd never cover all root LLM nodes anyway.
     """
-    wf_hash = hashlib.md5(workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
-    pattern = f"workflow-trace-{wf_hash}-*.json"
+    # Lazy import: keeps the core ← runtime edge off this module's import-time
+    # graph, consistent with the other runtime/execution imports in this file.
+    from pflow.runtime.workflow_trace import _iter_workflow_traces
+
     successful: list[tuple[Path, dict[str, Any]]] = []
     failed: list[tuple[Path, dict[str, Any]]] = []
-    for trace_file in sorted(debug_dir.glob(pattern), reverse=True):
-        try:
-            data = json.loads(trace_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            logger.debug("Skipping unparseable trace %s", trace_file, exc_info=True)
-            continue
-        if not isinstance(data, dict):
-            continue
-        # Hash-collision guard: 8 hex chars = 32 bits → vanishingly unlikely
-        # for trace files, but the inner check makes it impossible.
-        if data.get("workflow_path") != workflow_path:
-            continue
-        if not str(data.get("format_version", "")).startswith("2."):
-            continue
+    for trace_file, data in _iter_workflow_traces(debug_dir, workflow_path):
         status = str(data.get("final_status") or "success")
         bucket = failed if status == "failed" else successful
         bucket.append((trace_file, data))

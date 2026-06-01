@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
+
 from tests.shared.markdown_utils import write_workflow_file
 from tests.test_cli.test_validate_only import make_claude_code_workflow
 from tests.test_cli.test_workflow_commands import invoke_cli
@@ -314,8 +316,13 @@ def test_dry_run_plus_print_is_silent_accept(tmp_path) -> None:
     assert "Dry-run for" in result.output
 
 
+@pytest.mark.trace_files
 def test_dry_run_composes_with_only_node(tmp_path) -> None:
-    """--only should stop the plan at the requested node."""
+    """--only plans only the target node, against a snapshot from a prior full run.
+
+    Snapshot --only (issue #443) restores upstream from the most recent full run's
+    trace; the dry-run planner mirrors that, so it needs a prior full run first.
+    """
     workflow_path = tmp_path / "dry-run-only.pflow.md"
     write_workflow_file(
         {
@@ -328,11 +335,37 @@ def test_dry_run_composes_with_only_node(tmp_path) -> None:
         workflow_path,
     )
 
+    # Record a full-run trace the snapshot loader can restore from.
+    full = invoke_cli([str(workflow_path)])
+    assert full.exit_code == 0
+
     result = invoke_cli(["--dry-run", "--output-format", "json", "--only", "a", str(workflow_path)])
     payload = json.loads(result.output)
 
     assert result.exit_code == 0
     assert [entry["node_id"] for entry in payload["plan"]] == ["a"]
+
+
+def test_dry_run_only_without_prior_run_errors(tmp_path) -> None:
+    """--only --dry-run with no prior full run surfaces OnlySnapshotMissingError."""
+    workflow_path = tmp_path / "dry-run-only-fresh.pflow.md"
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "a", "type": "shell", "params": {"command": "printf a"}},
+                {"id": "b", "type": "shell", "params": {"command": "printf b"}},
+            ],
+            "edges": [{"from": "a", "to": "b"}],
+        },
+        workflow_path,
+    )
+
+    result = invoke_cli(["--dry-run", "--output-format", "json", "--only", "b", str(workflow_path)])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    messages = " ".join(d.get("message", "") for d in payload.get("diagnostics", []))
+    assert "needs a prior full run" in messages
 
 
 def test_dry_run_no_network_calls(tmp_path) -> None:

@@ -45,13 +45,28 @@ def batch_shell_workflow_ir() -> dict[str, Any]:
     }
 
 
+def _seed_snapshot(ir: dict[str, Any]) -> None:
+    """Run the full workflow and persist its trace so ``--only`` can restore upstream.
+
+    Snapshot ``--only`` (issue #443) reads the most recent full-run trace from
+    ``~/.pflow/debug``. ``WorkflowRunner().run`` builds the trace but (unlike the
+    CLI) never saves it, so callers persist it explicitly. Requires the test to
+    be marked ``trace_files``.
+    """
+    full = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert full.success, f"seed run failed: {[d.message for d in full.diagnostics]}"
+    full.trace.save_to_file()
+
+
 def _run_with_only(ir: dict[str, Any], only_node: str) -> dict[str, Any]:
     """Run ``ir`` with ``--only`` targeting ``only_node`` and return ``shared_after``."""
+    _seed_snapshot(ir)
     result = WorkflowRunner().run(ir, {}, RunnerConfig(only_node=only_node))
     assert result.success, f"workflow failed: {[d.message for d in result.diagnostics]}"
     return result.shared_after
 
 
+@pytest.mark.trace_files
 def test_only_batch_node_compact_summary_end_to_end(batch_shell_workflow_ir, capsys):
     """Real batch via ``WorkflowRunner``: ``--only`` triggers the compact summary,
     full payload is suppressed, the hint line points at a resolvable ``-o`` path.
@@ -106,6 +121,7 @@ def test_dotted_output_key_json_mode_end_to_end(batch_shell_workflow_ir):
     assert outputs == {"echo-items.success_count": 2}
 
 
+@pytest.mark.trace_files
 def test_only_batch_node_runtime_empty_items_emits_compact_summary(capsys):
     """The compact summary's ``count == 0`` branch is reachable in real
     workflows — not just defensively in unit tests.
@@ -144,6 +160,8 @@ def test_only_batch_node_runtime_empty_items_emits_compact_summary(capsys):
         "start_node": "produce-empty",
     }
 
+    # Snapshot --only restores 'produce-empty' (its [] result) from a prior full run.
+    _seed_snapshot(ir)
     result = WorkflowRunner().run(ir, {}, RunnerConfig(only_node="consume"))
     assert result.success, [d.message for d in result.diagnostics]
     # An empty-input batch is a legitimate terminal state (drained loop / empty

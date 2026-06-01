@@ -34,8 +34,13 @@ def _run_workflow(
     cache: MemoizationCache,
     initial_params: dict[str, Any] | None = None,
     only_node: str | None = None,
+    snapshot_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compile and run a workflow with the given memoization cache.
+
+    ``snapshot_events`` injects the upstream snapshot for ``--only`` runs
+    (issue #443) so the engine doesn't need an on-disk trace; without it an
+    ``--only`` run raises ``OnlySnapshotMissingError``.
 
     Returns the shared store after execution.
     """
@@ -55,9 +60,14 @@ def _run_workflow(
         shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
     shared.update(workflow.resolved_defaults)
 
-    engine = WorkflowEngine(only_node=only_node)
+    engine = WorkflowEngine(only_node=only_node, snapshot_events=snapshot_events)
     engine.run(workflow, shared)
     return shared
+
+
+def _snapshot_from_shared(shared: dict[str, Any], node_ids: list[str]) -> list[dict[str, Any]]:
+    """Build synthetic full-run trace events from a prior run's shared store."""
+    return [{"node_id": nid, "node_output": shared[nid]} for nid in node_ids if nid in shared]
 
 
 def _two_shell_ir(msg1: str = "hello", msg2: str = "world") -> dict[str, Any]:
@@ -243,10 +253,11 @@ def test_no_cache_flag(tmp_path: Any) -> None:
 
 
 def test_only_flag_stops_after_target(tmp_path: Any) -> None:
-    """With --only, flow stops after target node.
+    """Snapshot --only executes ONLY the target; upstream AND downstream restored.
 
-    Build 3-node flow (A->B->C). Use only_node="B".
-    A and B should execute, C should not.
+    Build 3-node flow (A->B->C), --only B against a snapshot. A and C are restored
+    from the snapshot (NOT executed — proven by distinct restored values), only B
+    runs fresh. This is the #443 fix: side-effecting upstream never re-fires.
     """
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
@@ -263,15 +274,28 @@ def test_only_flag_stops_after_target(tmp_path: Any) -> None:
         ],
     }
 
-    shared = _run_workflow(ir, cache, only_node="B")
+    # Snapshot carries values DISTINCT from what each node's command produces, so
+    # a restored value (not the command output) proves the node didn't execute.
+    snapshot = [
+        {"node_id": "A", "node_output": {"stdout": "a-restored"}},
+        {"node_id": "C", "node_output": {"stdout": "c-restored"}},
+    ]
+    shared = _run_workflow(ir, cache, only_node="B", snapshot_events=snapshot)
 
-    assert shared["A"]["stdout"] == "a-val"
-    assert shared["B"]["stdout"] == "b-val"
-    assert "C" not in shared, "C should not have been visited"
+    assert shared["A"]["stdout"] == "a-restored", "A restored from snapshot, not re-executed"
+    assert shared["B"]["stdout"] == "b-val", "B executed fresh"
+    assert shared["C"]["stdout"] == "c-restored", "C restored from snapshot, not executed"
+    restored = shared["__execution__"]["restored_nodes"]
+    assert set(restored) == {"A", "C"}
+    assert "B" not in restored
 
 
 def test_only_with_cache(tmp_path: Any) -> None:
-    """Full run builds cache. --only B run: A and B from cache, C never reached."""
+    """Full run records the snapshot; --only B restores upstream A, executes only B.
+
+    Downstream C is NOT restored (CODEX-2): it can't be referenced by the target and
+    its stale output must not become addressable under --only.
+    """
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
     ir = {
@@ -287,18 +311,20 @@ def test_only_with_cache(tmp_path: Any) -> None:
         ],
     }
 
-    # --- Full run: populate cache for all three nodes ---
+    # --- Full run: produces the upstream state the snapshot is built from ---
     shared1 = _run_workflow(ir, cache)
     assert shared1["A"]["stdout"] == "a-val"
     assert shared1["B"]["stdout"] == "b-val"
     assert shared1["C"]["stdout"] == "c-val"
 
-    # --- --only B run: fresh shared, same cache ---
-    shared2 = _run_workflow(ir, cache, only_node="B")
+    # --- --only B run: fresh shared, snapshot built from the full run ---
+    snapshot = _snapshot_from_shared(shared1, ["A", "B", "C"])
+    shared2 = _run_workflow(ir, cache, only_node="B", snapshot_events=snapshot)
 
-    assert shared2["A"]["stdout"] == "a-val"  # restored from cache
-    assert shared2["B"]["stdout"] == "b-val"  # restored from cache
-    assert "C" not in shared2, "C should not have been visited"
+    assert shared2["A"]["stdout"] == "a-val"  # upstream, restored from snapshot
+    assert shared2["B"]["stdout"] == "b-val"  # target, executed (memo cache hit)
+    assert "C" not in shared2, "downstream C must NOT be restored under --only B (CODEX-2)"
+    assert set(shared2["__execution__"]["restored_nodes"]) == {"A"}
 
 
 def test_key_value_override_cache_interaction(tmp_path: Any) -> None:

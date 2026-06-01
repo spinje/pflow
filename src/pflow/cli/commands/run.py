@@ -909,7 +909,7 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
     "--only",
     "only_node",
     default=None,
-    help="Run through this node then stop. Use dotted paths for sub-workflows: --only sub-wf.inner-node. A loop node runs one iteration, not to completion.",
+    help="Re-run just this node against a snapshot of the most recent full run — upstream is restored, not re-executed, so side-effecting upstream does not re-fire. Requires a prior full run (errors otherwise). Targeting a node inside a sub-workflow is not supported. A loop node runs one iteration.",
 )
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def run(

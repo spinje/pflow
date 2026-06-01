@@ -44,7 +44,12 @@ from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import resolve_batch_items
-from pflow.runtime.engine.engine import build_prompt_cache_dict, is_clean_termination, parse_only_path
+from pflow.runtime.engine.engine import (
+    build_prompt_cache_dict,
+    find_node_by_id,
+    is_clean_termination,
+    parse_only_path,
+)
 from pflow.runtime.engine.instrumentation import MAX_NODE_VISITS, apply_memo_hit, enforce_loop_guard
 from pflow.runtime.engine.loop_control import loop_runtime_scope, resolve_loop_cap
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
@@ -52,6 +57,7 @@ from pflow.runtime.engine.template_resolution import resolve_templates
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.workflow_executor import WorkflowExecutor
+from pflow.runtime.workflow_trace import load_snapshot_or_raise, seed_snapshot_into_shared
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +316,7 @@ def _build_plan_with_shared(
         depth=_depth,
     )
 
-    curr = compiled.start_node
+    curr = _resolve_walk_start(compiled, shared, workflow_path, this_only, state.diagnostics)
     while curr is not None:
         node_id = getattr(curr, "node_id", None)
         if not isinstance(node_id, str) or node_id not in compiled.node_configs:
@@ -450,7 +456,14 @@ def _apply_follow(
 
 
 def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None) -> None:
-    """Hard-error when --only names a node that doesn't exist or dotted path targets a non-workflow."""
+    """Hard-error when --only names an unknown node; reject dotted (nested) targets.
+
+    Mirrors ``engine._validate_only_target`` so ``run`` and ``plan`` produce the
+    SAME error category for the same ``--only`` value. Membership is checked
+    FIRST so ``--only typo.child`` still reports "not found"; a dotted path
+    against a real node reports the "not supported" message (deferred — see
+    issue #443 plan "Deferred").
+    """
     this_only, child_only = parse_only_path(only_node)
     if this_only is None:
         return
@@ -463,15 +476,58 @@ def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None) -> 
             suggestion=f"Available nodes: {', '.join(available)}",
         )
     if child_only:
-        target_config = compiled.node_configs[this_only]
-        if target_config.node_type_name != "WorkflowExecutor":
-            raise CompilationError(
-                f"Node '{this_only}' is not a sub-workflow",
-                phase="only_node_resolution",
-                details={"node_type": target_config.node_type_name},
-                suggestion=f"Cannot use dotted path '{only_node}' — "
-                f"'{this_only}' is a {target_config.node_type_name}, not a sub-workflow.",
+        raise CompilationError(
+            f"--only '{only_node}': targeting a nested node (dotted path) is not supported under snapshot --only.",
+            phase="only_node_resolution",
+            suggestion=f"Run --only '{this_only}' to run that node alone, or run the full workflow.",
+        )
+
+
+def _resolve_walk_start(
+    compiled: CompiledWorkflow,
+    shared: dict[str, Any],
+    workflow_path: str | None,
+    this_only: str | None,
+    diagnostics: list[Diagnostic],
+) -> Any:
+    """Return the node the planner walk starts from.
+
+    Full plan → the workflow start node. Flat ``--only`` → seed upstream from the
+    snapshot (issue #443) and start AT the target so the plan is a single entry.
+    No snapshot → hard error (the loader's falsy ``workflow_path`` guard also
+    covers the degenerate inline-without-path case). Seeding makes the target's
+    templated params resolve against frozen upstream, so its cache verdict matches
+    the engine actually serving/executing it.
+
+    When the snapshot source is a DEGRADED run, append the same loud advisory the
+    engine emits (``_emit_snapshot_degraded_advisory``) to ``diagnostics`` so
+    ``--dry-run --only`` shows the partial-upstream caveat too — the ADR's "loud,
+    never silent" promise must hold on the preview surface, not just the real run.
+    """
+    if this_only is None:
+        return compiled.start_node
+    events, source_status = load_snapshot_or_raise(workflow_path, this_only)
+    seed_snapshot_into_shared(shared, events, exclude=this_only)
+    if source_status == "degraded":
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.WARNING,
+                title="Restored upstream from a degraded run",
+                message=(
+                    f"--only '{this_only}' would restore upstream from a DEGRADED full run; the restored "
+                    f"upstream data may be incomplete (e.g. a batch step that continued past failed items "
+                    f"dropped them from its results). Re-run the full workflow to refresh the snapshot."
+                ),
+                suggestions=[
+                    "Re-run the full workflow once to record a clean (success) snapshot, then retry --only.",
+                ],
+                node_id=this_only,
+                source="planner",
+                context={"category": "execution_failure"},
+                id="only.snapshot-degraded",
             )
+        )
+    return find_node_by_id(compiled.start_node, this_only)
 
 
 def create_planner_shared(
