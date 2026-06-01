@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from pflow.cli.commands.run import _suggest_key_value, _validate_workflow_flags
+from pflow.cli.commands.run import _PFLOW_FLAGS, _suggest_key_value, _validate_workflow_flags, run
 from pflow.cli.main import main
 from pflow.core.user_errors import UserFriendlyError
 from tests.shared.markdown_utils import write_workflow_file
@@ -119,6 +119,33 @@ class TestValidateWorkflowFlagsGuard:
             _validate_workflow_flags(("wf.pflow.md", "--foo", "a", "--bar", "b"))
         assert exc_info.value.title == "Unknown option '--foo'"
 
+    def test_misplaced_pflow_flag_wins_over_unknown_flag(self):
+        """When a misplaced pflow flag AND an unknown flag are both present, the
+        pflow-flag diagnosis surfaces first — it's the more confident call. The
+        unknown flag re-surfaces on the next run. Pins the precedence so a future
+        refactor can't silently flip it."""
+        with pytest.raises(UserFriendlyError) as exc_info:
+            _validate_workflow_flags(("wf.pflow.md", "--scenario", "x", "--verbose"))
+        assert exc_info.value.title == "CLI flags must come BEFORE the workflow"
+
+    def test_pflow_flags_mirrors_run_command_options(self):
+        """`_PFLOW_FLAGS` must list every run-command option (plus the group-level
+        flags that land in the workflow tuple when misplaced) so the "move it
+        before the workflow" message stays precise instead of degrading to the
+        generic "Unknown option" path.
+
+        This is primarily a consistency/documentation invariant: declared run
+        options are consumed by Click regardless of position (`allow_interspersed_args`),
+        so they rarely reach the guard — drift mostly costs the wrong suggestion in
+        the degenerate `-- <flag>` case. Limitation: `group_flags` is hardcoded, so
+        a NEWLY added group-level flag won't be auto-detected here.
+        """
+        declared = {opt for p in run.params for opt in getattr(p, "opts", []) + getattr(p, "secondary_opts", [])}
+        run_flags = {f for f in declared if f.startswith("-") and f != "--help"}
+        group_flags = {"--verbose", "-v"}
+        missing = (run_flags | group_flags) - _PFLOW_FLAGS
+        assert not missing, f"_PFLOW_FLAGS drifted from run options; missing: {missing}"
+
     @pytest.mark.parametrize(
         "workflow",
         [
@@ -128,6 +155,10 @@ class TestValidateWorkflowFlagsGuard:
             ("my-workflow", "scenario=fail-mid"),
             ("wf.pflow.md", "--help"),
             ("wf.pflow.md", "--help", "scenario=x"),
+            # Standalone --help is consumed at the group level and normally never
+            # reaches this guard; included so the whitelist is pinned even if that
+            # routing ever changes.
+            ("--help",),
         ],
     )
     def test_valid_invocations_do_not_raise(self, workflow):

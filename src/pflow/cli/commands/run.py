@@ -545,7 +545,7 @@ def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
         ),
         suggestions=[
             f"Did you mean '{_suggest_key_value(bad, workflow)}'?",
-            f"See this workflow's inputs:  pflow {target} --help",
+            f"See this workflow's inputs: pflow {target} --help",
         ],
     )
 
