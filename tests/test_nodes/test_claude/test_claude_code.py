@@ -1538,3 +1538,140 @@ def test_runtime_and_validator_agree_on_max_turns_with_schema(claude_node: Any) 
         f"max_turns parity drift: validator={validator_rejected}, runtime={runtime_rejected}"
     )
     assert validator_rejected
+
+
+# ---------------------------------------------------------------------------
+# Issue #455: use_api_key billing flag.
+# The node blanks ANTHROPIC_API_KEY for the Claude subprocess by default so an
+# ambient (or `pflow settings set-env`-injected) key cannot silently override
+# the user's Pro/Max subscription with per-token Console billing.
+# ---------------------------------------------------------------------------
+
+
+def test_use_api_key_defaults_false(claude_node):
+    """Param absent → False → subscription billing."""
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is False
+
+
+def test_default_blanks_api_key_in_options(claude_node):
+    """Default mode sets options.env = {ANTHROPIC_API_KEY: ""}.
+
+    The SDK merges options.env OVER os.environ, so the empty-string override is
+    what actually neutralizes an inherited key — omitting it would leave the
+    inherited key intact (a dict merge cannot delete a base key).
+    """
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert mock_options.call_args.kwargs["env"] == {"ANTHROPIC_API_KEY": ""}
+
+
+def test_default_scrub_only_touches_anthropic_key(claude_node):
+    """Only ANTHROPIC_API_KEY is overridden; every other var still inherits."""
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert list(mock_options.call_args.kwargs["env"].keys()) == ["ANTHROPIC_API_KEY"]
+
+
+def test_use_api_key_true_does_not_scrub(claude_node):
+    """Opt-in (True) leaves env untouched so the ambient key bills to Console."""
+    claude_node.params = {"prompt": "test prompt", "use_api_key": True}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is True
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert "env" not in mock_options.call_args.kwargs
+
+
+def test_string_false_still_scrubs(claude_node):
+    """Footgun guard: a templated string "false" must NOT enable API billing.
+
+    Node params aren't coerced to bool at runtime and the string "false" is
+    truthy in Python — a naive bool(value) would silently bill per token.
+    """
+    claude_node.params = {"prompt": "test prompt", "use_api_key": "false"}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is False
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert mock_options.call_args.kwargs["env"] == {"ANTHROPIC_API_KEY": ""}
+
+
+def test_string_true_opts_in(claude_node):
+    """Templated string "true" opts into API billing (no scrub)."""
+    claude_node.params = {"prompt": "test prompt", "use_api_key": "true"}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is True
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert "env" not in mock_options.call_args.kwargs
+
+
+def test_use_api_key_invalid_value_raises(claude_node):
+    """A non-bool, non-canonical value fails closed with a TypeError."""
+    claude_node.params = {"prompt": "test prompt", "use_api_key": "maybe"}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep({})
+    assert "use_api_key must be true or false" in str(exc_info.value)
+
+
+def test_use_api_key_registered_as_bool_param():
+    """use_api_key is a declared bool param — this drives the validator allow-list."""
+    md = PflowMetadataExtractor().extract_metadata(ClaudeCodeNode)
+    params = {p["key"]: p["type"] for p in md["params"]}
+    assert params.get("use_api_key") == "bool"
+
+
+# --- Auth-failure guidance (exec_fallback) ---
+
+
+def test_is_auth_error_matches_only_auth_markers():
+    """_is_auth_error matches CLI auth/billing markers, not generic failures."""
+    assert ClaudeCodeNode._is_auth_error(Exception("Invalid API key · Please run /login"))
+    assert ClaudeCodeNode._is_auth_error(Exception("authentication_error: bad token"))
+    assert ClaudeCodeNode._is_auth_error(Exception("Your credit balance is too low"))
+    assert not ClaudeCodeNode._is_auth_error(Exception("Tool 'Bash' failed: exit 1"))
+    assert not ClaudeCodeNode._is_auth_error(Exception("connection reset by peer"))
+
+
+def test_exec_fallback_auth_default_suggests_subscription(claude_node):
+    """Default-mode auth failure points to subscription first, API key second."""
+    with pytest.raises(ValueError) as exc_info:
+        claude_node.exec_fallback({"use_api_key": False}, Exception("authentication_error"))
+    msg = str(exc_info.value)
+    assert "claude auth login" in msg
+    assert "- use_api_key: true" in msg
+
+
+def test_exec_fallback_auth_with_api_key_suggests_fixing_key(claude_node):
+    """Opt-in auth failure points to the Console key, not subscription setup."""
+    with pytest.raises(ValueError) as exc_info:
+        claude_node.exec_fallback({"use_api_key": True}, Exception("Your credit balance is too low"))
+    msg = str(exc_info.value)
+    assert "Anthropic Console" in msg
+    assert "Remove `- use_api_key: true`" in msg
+    assert "claude auth login" not in msg
+
+
+def test_exec_fallback_non_auth_error_has_no_auth_guidance(claude_node):
+    """Non-auth failures fall through to the generic message (no auth hint)."""
+    with pytest.raises(ValueError) as exc_info:
+        claude_node.exec_fallback({"use_api_key": False}, Exception("disk full"))
+    msg = str(exc_info.value)
+    assert "claude auth login" not in msg
+    assert "disk full" in msg

@@ -69,6 +69,32 @@ class TestValidateUnknownParams:
 
         assert len(errors) == 0
 
+    def test_no_error_for_claude_code_use_api_key(self, registry: Registry) -> None:
+        """Issue #455: use_api_key is a recognized claude-code param.
+
+        Guards the docstring → metadata → validator allow-list chain end-to-end:
+        if the `- Params: use_api_key:` line is dropped from the node docstring,
+        every workflow using the param would fail validation as "unknown".
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "agent",
+                    "type": "claude-code",
+                    "params": {
+                        "prompt": "do a thing",
+                        "use_api_key": True,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        errors = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
+
+        assert errors == []
+
     def test_suggests_similar_param(self, registry: Registry) -> None:
         """Should suggest similar params when a typo is detected."""
         workflow_ir = {

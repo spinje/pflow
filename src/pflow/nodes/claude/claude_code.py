@@ -35,6 +35,7 @@ Interface:
     - excludedCommands: list  # Commands that bypass sandbox (e.g., ["docker"])
     - allowUnsandboxedCommands: bool  # Allow model to request unsandboxed execution
     - network: dict  # Network settings (allowLocalBinding, allowUnixSockets, etc.)
+- Params: use_api_key: bool  # Bill to ANTHROPIC_API_KEY (Anthropic Console) when true. Default false uses your Claude Pro/Max subscription.
 
 Note: When output_schema is provided, the result is the SDK's parsed structured_output.
 Access object values as shared["result"]["key"] in templates: ${node.result.key}
@@ -107,6 +108,23 @@ DANGEROUS_BASH_PATTERNS = [
 # Restricted directories that should not be used as working directories
 RESTRICTED_DIRECTORIES = ["/", "/etc", "/usr", "/bin", "/sbin", "/lib", "/sys", "/proc"]
 
+# Substrings (lowercased) that mark a Claude CLI authentication/billing failure.
+# The common auth failure surfaces as a bare Exception whose message carries the
+# CLI's error text, so exec_fallback matches on the message to attach
+# subscription-vs-API-key remediation (issue #455). A multi-marker OR keeps this
+# robust to CLI wording drift; bare numeric codes (401/403) are intentionally
+# excluded to avoid false positives on unrelated numbers.
+_AUTH_ERROR_MARKERS = (
+    "invalid api key",
+    "authentication_error",
+    "authentication error",
+    "please run /login",
+    "/login",
+    "unauthorized",
+    "credit balance",
+    "oauth",
+)
+
 
 class ClaudeCodeNode(Node):
     """Claude Code agentic super node for AI-assisted development tasks.
@@ -153,18 +171,22 @@ class ClaudeCodeNode(Node):
         - excludedCommands: list  # Commands that bypass sandbox (e.g., ["docker"])
         - allowUnsandboxedCommands: bool  # Allow model to request unsandboxed execution
         - network: dict  # Network settings (allowLocalBinding, allowUnixSockets, etc.)
+    - Params: use_api_key: bool  # Bill to ANTHROPIC_API_KEY (Anthropic Console) when true. Default false uses your Claude Pro/Max subscription.
 
     Authentication:
-        The Claude Code SDK supports two authentication methods:
+        By default this node uses your Claude Pro/Max subscription and blanks
+        ANTHROPIC_API_KEY for the Claude subprocess, so an ambient key (including
+        one stored via `pflow settings set-env`) never silently bills your
+        Anthropic Console. os.environ is left untouched, so a sibling llm node
+        still reads the key for LiteLLM.
 
-        1. API Key (Console billing):
-           export ANTHROPIC_API_KEY=sk-ant-...
-           Uses your Anthropic Console account for billing
-
-        2. CLI Authentication (Claude Pro/Max subscription):
+        1. Subscription (default — no per-token charges):
            claude auth login      # Interactive OAuth
-           claude setup-token     # Long-lived token (requires subscription)
-           Uses your Claude Pro/Max subscription entitlements
+           claude setup-token     # Long-lived token for non-interactive/CI
+
+        2. API key (opt in — bills your Anthropic Console per token):
+           Set `- use_api_key: true` on the node, with ANTHROPIC_API_KEY in the
+           environment (or via `pflow settings set-env ANTHROPIC_API_KEY ...`).
 
         The SDK automatically runs in headless mode using --output-format json
         and bypasses all permission prompts since workflows run autonomously.
@@ -409,6 +431,32 @@ class ClaudeCodeNode(Node):
             raise TypeError(f"resume must be a string (session ID), got {type(resume).__name__}")
         return resume
 
+    def _validate_use_api_key(self, value: Any) -> bool:
+        """Resolve the use_api_key billing flag to a strict bool.
+
+        Default False blanks ANTHROPIC_API_KEY for the Claude subprocess so it
+        uses the Pro/Max subscription; True lets the ambient key bill to Anthropic
+        Console. A templated value may arrive as a string (node params are not
+        coerced to bool at runtime) — never trust truthiness, since the string
+        "false" is truthy and would silently re-enable per-token billing. Accept
+        only canonical bool literals and fail closed on anything else.
+        """
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("true", "1", "yes"):
+                return True
+            if normalized in ("false", "0", "no"):
+                return False
+        raise TypeError(
+            f"use_api_key must be true or false, got {value!r}. Use "
+            "'- use_api_key: true' to bill ANTHROPIC_API_KEY to your Anthropic "
+            "Console, or omit it to use your Claude Pro/Max subscription."
+        )
+
     def _validate_sandbox(self, sandbox: Any) -> Optional[dict]:
         """Validate sandbox configuration parameter.
 
@@ -505,6 +553,10 @@ class ClaudeCodeNode(Node):
         # Sandbox configuration for command isolation
         sandbox = self._validate_sandbox(self.params.get("sandbox"))
 
+        # Billing/auth: default False blanks ANTHROPIC_API_KEY so Claude uses the
+        # Pro/Max subscription; True lets the ambient key bill to Anthropic Console.
+        use_api_key = self._validate_use_api_key(self.params.get("use_api_key"))
+
         logger.info(f"Prepared Claude Code execution for prompt: {prompt[:100]}...")
 
         return {
@@ -520,6 +572,7 @@ class ClaudeCodeNode(Node):
             "resume": resume,
             "timeout": timeout,
             "sandbox": sandbox,
+            "use_api_key": use_api_key,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -608,6 +661,16 @@ class ClaudeCodeNode(Node):
         # Add sandbox configuration if provided
         if prep_res.get("sandbox") is not None:
             options_kwargs["sandbox"] = prep_res["sandbox"]
+
+        # Default (use_api_key=False): blank ANTHROPIC_API_KEY for THIS subprocess
+        # only, so the Claude CLI uses the Pro/Max subscription instead of API/
+        # Console billing. The SDK merges options.env OVER the inherited os.environ
+        # (subprocess_cli.py), so we must OVERRIDE the key with an empty string —
+        # omitting it leaves the inherited (or pflow settings-injected) key intact,
+        # since a dict merge cannot delete an inherited key. os.environ is untouched,
+        # so a sibling llm node still reads the real key for LiteLLM. See issue #455.
+        if not prep_res.get("use_api_key"):
+            options_kwargs["env"] = {"ANTHROPIC_API_KEY": ""}
 
         return ClaudeAgentOptions(**options_kwargs)
 
@@ -859,8 +922,8 @@ class ClaudeCodeNode(Node):
 
         if (CLIConnectionError is not None and isinstance(exc, CLIConnectionError)) or "CLIConnectionError" in exc_type:
             raise ValueError(
-                "Failed to connect to Claude Code. Check authentication with: claude doctor\n"
-                "If not authenticated, run: claude auth login\n"
+                "Failed to connect to Claude Code. Check health with: claude doctor\n"
+                f"{self._auth_failure_guidance(bool(prep_res.get('use_api_key')))}\n"
                 f"Original error: {error_msg}"
             ) from None
 
@@ -889,8 +952,50 @@ class ClaudeCodeNode(Node):
                 f"Claude API rate limit exceeded. Please wait a moment and try again.\nOriginal error: {error_msg}"
             ) from None
 
+        # Authentication/billing failure. The common case arrives as a bare
+        # Exception whose message carries the CLI's error text (the SDK rewrites
+        # the result-level error before re-raising), so it falls through the typed
+        # branches to here. Attach subscription-vs-API-key remediation tailored to
+        # the node's billing mode. See issue #455.
+        if self._is_auth_error(exc):
+            raise ValueError(self._auth_failure_guidance(bool(prep_res.get("use_api_key")))) from None
+
         # Generic error — pass through the SDK error message directly
         raise ValueError(f"Claude Code execution failed after {self.max_retries} attempts: {error_msg}") from None
+
+    @staticmethod
+    def _is_auth_error(exc: Exception) -> bool:
+        """Heuristically detect a Claude CLI authentication/billing failure.
+
+        The common auth failure surfaces as a bare ``Exception`` whose message
+        carries the CLI's error text (the SDK rewrites the result-level error
+        before re-raising), so we match on the message string, not the exception
+        type. A multi-marker OR keeps this robust to CLI wording drift.
+        """
+        text = str(exc).lower()
+        return any(marker in text for marker in _AUTH_ERROR_MARKERS)
+
+    @staticmethod
+    def _auth_failure_guidance(use_api_key: bool) -> str:
+        """Build remediation text for an auth failure, tailored to the billing mode."""
+        if use_api_key:
+            return (
+                "Claude Code authentication failed using ANTHROPIC_API_KEY "
+                "(use_api_key: true) — the key may be invalid or out of credit.\n"
+                "  - Correct ANTHROPIC_API_KEY in your Anthropic Console, or\n"
+                "  - Remove `- use_api_key: true` to use your Claude Pro/Max "
+                "subscription instead (no per-token charges)."
+            )
+        return (
+            "Claude Code could not authenticate. This node uses your Claude "
+            "Pro/Max subscription by default and ignores ANTHROPIC_API_KEY "
+            "unless you opt in.\n"
+            "  - Recommended: run `claude auth login` (or `claude setup-token` "
+            "for non-interactive/CI) to authenticate with your subscription — no "
+            "per-token charges.\n"
+            "  - Or add `- use_api_key: true` to this node to bill "
+            "ANTHROPIC_API_KEY to your Anthropic Console (pay per token)."
+        )
 
     def _store_results(
         self,

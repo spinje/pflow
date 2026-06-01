@@ -41,6 +41,7 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 | `system_prompt` | str | No | - | Custom system instructions |
 | `resume` | str | No | - | Session ID to resume a previous conversation |
 | `sandbox` | dict | No | - | Sandbox configuration for command isolation |
+| `use_api_key` | bool | No | `false` | Bill to `ANTHROPIC_API_KEY` (Anthropic Console). Default uses your Claude Pro/Max subscription |
 
 ### Sandbox configuration
 
@@ -87,21 +88,29 @@ The node always returns `default` from `post()` — schema soft-failures and SDK
 
 ## Authentication
 
+By default the claude-code node uses your **Claude Pro/Max subscription** and blanks `ANTHROPIC_API_KEY` for the Claude subprocess — so an ambient key (including one stored with `pflow settings set-env` for the `llm` node) never silently bills your Anthropic Console per token. Set `use_api_key: true` on the node to opt into Console billing.
+
 <Tabs>
-  <Tab title="CLI authentication (recommended)">
-    Install and authenticate Claude Code CLI:
+  <Tab title="Subscription (default)">
+    Install and authenticate the Claude Code CLI:
     ```bash
     npm install -g @anthropic-ai/claude-code
-    claude auth login
+    claude auth login          # or: claude setup-token (non-interactive/CI)
     ```
-    Uses your Claude Pro/Max subscription with no additional API charges.
+    Uses your Claude Pro/Max subscription with no per-token charges. Check status any time with `claude auth status`.
   </Tab>
-  <Tab title="API key">
-    Set the `ANTHROPIC_API_KEY` environment variable:
+  <Tab title="API key (opt in)">
+    Set `use_api_key: true` on the node, with `ANTHROPIC_API_KEY` available in the environment:
+    ```yaml
+    ### agent
+    - type: claude-code
+    - prompt: Refactor this module
+    - use_api_key: true
+    ```
     ```bash
     pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
     ```
-    Bills to your Anthropic Console account. Works in CI/CD and servers.
+    Bills to your Anthropic Console account (pay per token). Useful for CI/CD or when you have no subscription.
   </Tab>
 </Tabs>
 
@@ -256,7 +265,7 @@ For read-only analysis, use `["Read", "Glob", "Grep", "LS"]`. For full capabilit
 | Error | Cause | Solution |
 |-------|-------|----------|
 | CLI not found | Claude Code not installed | `npm install -g @anthropic-ai/claude-code` |
-| Connection error | Auth issue | Run `claude auth login` or set API key |
+| Connection / auth error | Not logged in (default subscription mode) | Run `claude auth login`, or set `use_api_key: true` with `ANTHROPIC_API_KEY` for Console billing |
 | Timeout | Task too complex | Increase `timeout` or simplify prompt |
 | Rate limit | Too many requests | Wait and retry |
 

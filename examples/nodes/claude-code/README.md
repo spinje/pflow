@@ -7,7 +7,7 @@ Features:
 - Native JSON Schema structured output
 - Metadata capture (cost, duration, token usage) in `llm_usage`
 - Tool use (Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch)
-- Dual authentication: API key or Claude Pro/Max CLI
+- Subscription-first auth: Claude Pro/Max by default; opt into API-key billing with `use_api_key: true`
 
 ## Examples
 
@@ -130,8 +130,10 @@ ${node.llm_usage.session_id}                    # Resumable session ID
 
 ## Authentication
 
-- **API key**: `export ANTHROPIC_API_KEY=sk-ant-...` - billed to your Anthropic Console account.
-- **Claude Pro/Max subscription**: `claude setup-token` (or `claude auth login`) - uses subscription entitlements.
+By default this node uses your **Claude Pro/Max subscription** and blanks `ANTHROPIC_API_KEY` for the Claude subprocess, so an ambient key (including one stored via `pflow settings set-env` for the `llm` node) never silently bills your Anthropic Console per token.
+
+- **Subscription (default)**: `claude auth login` (or `claude setup-token` for non-interactive/CI) - no per-token charges. Check with `claude auth status`.
+- **API key (opt in)**: set `- use_api_key: true` on the node, with `ANTHROPIC_API_KEY` in the environment (e.g. `pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."`) - bills your Anthropic Console per token.
 
 ## Parameters
 
@@ -149,6 +151,7 @@ ${node.llm_usage.session_id}                    # Resumable session ID
 | `system_prompt`       | None                | System instructions                                         |
 | `resume`              | None                | Session ID to resume a previous conversation                |
 | `sandbox`             | None                | Sandbox configuration (see node docstring for full schema)  |
+| `use_api_key`         | `false`             | Bill to `ANTHROPIC_API_KEY` (Console); default uses subscription |
 
 ## Best practices
 
@@ -164,7 +167,7 @@ ${node.llm_usage.session_id}                    # Resumable session ID
 - **Top-level array schema rejected** - wrap arrays or primitives inside a top-level object property.
 - **High cost** - reduce `max_turns`, tighten the prompt, or restrict `allowed_tools`.
 - **Timeouts** - break complex tasks into smaller steps or raise `timeout`.
-- **Authentication failed** - run `claude doctor` or verify `ANTHROPIC_API_KEY`.
+- **Authentication failed** - by default this node uses your subscription; run `claude auth login` (check with `claude auth status`), or set `- use_api_key: true` to bill `ANTHROPIC_API_KEY` to your Anthropic Console.
 
 ## See also
 

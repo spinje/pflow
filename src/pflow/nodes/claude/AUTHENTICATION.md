@@ -2,194 +2,119 @@
 
 ## Overview
 
-The Claude Code SDK supports **two distinct authentication methods**, each with different billing implications:
+The `claude-code` node spawns the Claude CLI through the Claude Agent SDK. The CLI
+supports two authentication methods with different billing implications:
 
-1. **API Key Authentication** - Bills to your Anthropic Console account
-2. **CLI Authentication** - Uses your Claude Pro/Max subscription entitlements
+1. **Subscription (default)** — uses your Claude Pro/Max entitlements. No per-token charges.
+2. **API key (opt in)** — bills your Anthropic Console account per token.
 
-## Authentication Methods
+**By default the node uses your subscription.** It does this by blanking
+`ANTHROPIC_API_KEY` for the Claude subprocess (`options.env = {"ANTHROPIC_API_KEY": ""}`
+in `_build_claude_options`). Set `- use_api_key: true` on the node to bill to your
+Console instead.
 
-### Method 1: API Key (Recommended for Production)
+## Why the node blanks `ANTHROPIC_API_KEY` by default
 
-Use an Anthropic API key from your Console account:
+The Claude CLI prefers an `ANTHROPIC_API_KEY` over a logged-in subscription: if the
+key is present, it bills your Anthropic Console **even when you are logged into a
+Pro/Max subscription**. This is a silent cost footgun, because the key is easy to
+have in the environment without realising it:
+
+- you `export ANTHROPIC_API_KEY=...` in your shell, **or**
+- you ran `pflow settings set-env ANTHROPIC_API_KEY ...` for the `llm` node — pflow
+  injects stored settings keys into `os.environ` at startup
+  (`inject_settings_env_vars`, `src/pflow/core/llm_config.py`) so LiteLLM can find
+  them. The Claude SDK subprocess then inherits that key too.
+
+To protect subscription users, the node overrides the key with an empty string for
+**its subprocess only**. `os.environ` is left untouched, so a sibling `llm` node in
+the same workflow still reads the real key for LiteLLM.
+
+### Mechanism note (why empty string, not "omit the key")
+
+The SDK builds the subprocess environment as
+`{**os.environ, ..., **options.env, ...}` (`claude_agent_sdk` subprocess transport).
+`os.environ` is the **base** of that merge, so it always carries an ambient
+`ANTHROPIC_API_KEY`. A dict merge can only add or overwrite keys — it cannot delete
+an inherited key by leaving it out of `options.env`. The node therefore sets
+`ANTHROPIC_API_KEY` to an empty string, which **overrides** the inherited value. The
+CLI treats an empty key as "no key" and falls back to subscription auth (verified
+with `claude auth status`: an empty `ANTHROPIC_API_KEY` reports
+`subscriptionType: "max"` with no `apiKeySource`).
+
+## Using your subscription (default)
+
+Install and authenticate the CLI once:
 
 ```bash
-# macOS/Linux
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Windows PowerShell
-$env:ANTHROPIC_API_KEY="sk-ant-..."
-
-# Windows Command Prompt
-set ANTHROPIC_API_KEY=sk-ant-...
-```
-
-**Advantages:**
-- No CLI installation required
-- Works immediately after setting environment variable
-- Ideal for CI/CD, Docker, and server deployments
-- Standard API usage billing through Console
-
-**Billing:** Usage is charged to your Anthropic Console account at standard API rates.
-
-### Method 2: CLI Authentication (For Development/Personal Use)
-
-Authenticate through the Claude Code CLI:
-
-```bash
-# Install CLI first
 npm install -g @anthropic-ai/claude-code
-
-# Then authenticate (choose one):
-claude auth login      # Interactive OAuth login
-claude setup-token     # Long-lived token (requires subscription)
+claude auth login          # interactive OAuth
+# or, for non-interactive / CI:
+claude setup-token         # long-lived token (requires a subscription)
 ```
 
-**Advantages:**
-- Uses your Claude Pro/Max subscription entitlements
-- No additional API charges
-- Good for personal development
+Check your current auth without making a billed call:
 
-**Billing:** Uses your Claude Pro/Max subscription - no additional API charges.
-
-## How the Node Detects Authentication
-
-The node checks for authentication in this order:
-
-1. **Checks for `ANTHROPIC_API_KEY`** - If found, uses API key authentication
-2. **Falls back to CLI authentication** - Requires CLI to be installed and authenticated
-
-```python
-# The node automatically detects which method you're using:
-if os.getenv("ANTHROPIC_API_KEY"):
-    # Uses API key authentication
-else:
-    # Uses CLI authentication (requires CLI installed)
-```
-
-## Usage in Workflows
-
-Both authentication methods work identically in workflows:
-
-```json
-{
-  "nodes": [
-    {
-      "id": "claude",
-      "type": "claude-code",
-      "params": {
-        "prompt": "Write a function to parse JSON",
-        "cwd": "./src"
-      }
-    }
-  ]
-}
-```
-
-## Environment Variables
-
-### ANTHROPIC_API_KEY
-Your Anthropic API key for Console billing:
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-api03-...
+claude auth status
 ```
 
-### CLAUDE_CODE_PATH
-Custom path to Claude CLI executable (optional):
+No node configuration is required — subscription is the default.
+
+## Using an API key (opt in)
+
+Set `use_api_key: true` on the node and make `ANTHROPIC_API_KEY` available:
+
+```markdown
+### agent
+- type: claude-code
+- prompt: Refactor this module
+- use_api_key: true
+```
+
 ```bash
-export CLAUDE_CODE_PATH="/custom/path/to/claude"
+# either of these provides the key:
+export ANTHROPIC_API_KEY=sk-ant-...
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
 ```
 
-## Platform Support
+With `use_api_key: true` the node does not blank the key, so the CLI uses it and
+bills your Anthropic Console per token. This is the right choice for CI/CD, servers,
+or when you have no subscription.
 
-The SDK also supports alternative AI platforms through environment variables:
+`use_api_key` accepts a real boolean (`true`/`false`) or the canonical string
+literals (`"true"`/`"false"`/`"1"`/`"0"`/`"yes"`/`"no"`). Any other value raises a
+`TypeError` — the node fails closed rather than guess and risk silent per-token
+billing (e.g. the string `"false"` would otherwise be truthy).
 
-### AWS Bedrock
-```bash
-export ANTHROPIC_BEDROCK_REGION=us-east-1
-export ANTHROPIC_BEDROCK_AUTH=profile  # or 'keys'
-# Additional AWS credentials as needed
-```
+## Billing comparison
 
-### Google Vertex AI
-```bash
-export ANTHROPIC_VERTEX_REGION=us-central1
-export ANTHROPIC_VERTEX_PROJECT_ID=your-project
-# Additional Google Cloud credentials as needed
-```
-
-## Common Scenarios
-
-### CI/CD Pipeline
-Use API key authentication for automated workflows:
-```yaml
-env:
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
-
-### Docker Container
-```dockerfile
-ENV ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-```
-
-### Local Development
-Choose based on your billing preference:
-- API key if you want to bill to Console
-- CLI auth if you have Claude Pro/Max subscription
-
-### Team Development
-- Each developer can use their preferred authentication method
-- API keys can be shared (with caution) or individual
-- CLI auth is always individual
+| Mode | `use_api_key` | Billing | Best for |
+|------|---------------|---------|----------|
+| Subscription (default) | `false` | Claude Pro/Max — no per-token charge | Personal use, development |
+| API key | `true` | Anthropic Console — pay per token | CI/CD, servers, no subscription |
 
 ## Troubleshooting
 
+### "Claude Code could not authenticate" (default mode)
+You are not logged into a subscription and the key is intentionally not used.
+- Recommended: `claude auth login` (or `claude setup-token` for non-interactive/CI),
+  then `claude auth status` to confirm.
+- Or set `- use_api_key: true` to bill `ANTHROPIC_API_KEY` to your Anthropic Console.
+
+### Authentication failed while `use_api_key: true`
+The key may be invalid or out of credit.
+- Check/replace `ANTHROPIC_API_KEY` in your Anthropic Console, or
+- Remove `- use_api_key: true` to use your subscription instead.
+
 ### "Claude Code CLI not installed"
-**Solution:** Either:
-1. Set `ANTHROPIC_API_KEY` environment variable, OR
-2. Install the CLI: `npm install -g @anthropic-ai/claude-code`
+Install it: `npm install -g @anthropic-ai/claude-code`.
 
-### "Not authenticated with Claude Code"
-**Solution:** Either:
-1. Set `ANTHROPIC_API_KEY` environment variable, OR
-2. Run `claude auth login` to authenticate via CLI
+### `CLAUDE_CODE_PATH`
+Set a custom path to the Claude CLI executable if it is not on `PATH`.
 
-### "Rate limit exceeded"
-- **API Key:** Check your Console usage limits
-- **CLI Auth:** Check your subscription tier limits
+## Security best practices
 
-## Security Best Practices
-
-1. **Never commit API keys** to version control
-2. **Use environment variables** or secret management systems
-3. **Rotate API keys** regularly
-4. **Use separate keys** for development and production
-5. **Set appropriate rate limits** in Console
-
-## Billing Comparison
-
-| Method | Billing | Best For |
-|--------|---------|----------|
-| API Key | Anthropic Console (pay per token) | Production, CI/CD, team projects |
-| CLI Auth | Claude Pro/Max subscription | Personal use, development, testing |
-
-## Skip Authentication Check
-
-For testing or when you know authentication is configured:
-
-```json
-{
-  "params": {
-    "skip_auth_check": true
-  }
-}
-```
-
-## Summary
-
-The Claude Code node provides flexible authentication to suit different use cases:
-- **Production/CI/CD**: Use API keys for predictable billing
-- **Development**: Use CLI auth with your subscription
-- **Both methods** work seamlessly with the same code
-
-The node automatically detects which authentication method you're using based on environment variables, making it easy to switch between them as needed.
+1. Never commit API keys to version control.
+2. Store keys via `pflow settings set-env` or your secret manager, not in workflow files.
+3. Rotate keys regularly and use separate keys for development and production.
