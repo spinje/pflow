@@ -304,6 +304,23 @@ class TestWorkflowTraceCollector:
             assert filepath.exists()
             assert filepath.parent == debug_dir
 
+    def test_save_to_file_filename_is_subsecond_granular(self, collector, temp_home):
+        """The saved filename carries microsecond granularity (issue #443).
+
+        The --only snapshot loader excludes --only traces, so a full run followed
+        within the SAME second by an --only run would otherwise write the same
+        filename and the --only trace would overwrite the full-run snapshot.
+        Microsecond granularity (``-%f`` → 6 digits) keeps the two files distinct,
+        so different microseconds within a second never collide.
+        """
+        import re
+
+        with patch("pathlib.Path.home", return_value=temp_home):
+            filepath = collector.save_to_file()
+
+        # ...-YYYYMMDD-HHMMSS-ffffff.json
+        assert re.search(r"-\d{8}-\d{6}-\d{6}\.json$", filepath.name), filepath.name
+
     def test_save_to_file_content(self, collector, temp_home):
         """Test the content of saved trace file."""
         with patch("pathlib.Path.home", return_value=temp_home):
@@ -351,6 +368,21 @@ class TestWorkflowTraceCollector:
             assert len(trace_data["nodes"]) == 2
             assert trace_data["nodes"][0]["node_id"] == "success-node"
             assert trace_data["nodes"][1]["node_id"] == "fail-node"
+
+    def test_only_node_defaults_to_null(self, collector, temp_home):
+        """A full run writes ``only_node: null`` (2.4.0) so it's a usable snapshot source."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            filepath = collector.save_to_file()
+            trace_data = json.loads(filepath.read_text())
+            assert trace_data["only_node"] is None
+
+    def test_only_node_recorded_when_set(self, collector, temp_home):
+        """An --only run stamps the target name, excluding the trace as a snapshot source."""
+        collector.only_node = "summarize"
+        with patch("pathlib.Path.home", return_value=temp_home):
+            filepath = collector.save_to_file()
+            trace_data = json.loads(filepath.read_text())
+            assert trace_data["only_node"] == "summarize"
 
     def test_execution_id_is_valid_uuid(self, collector):
         """Test that execution_id is a valid UUID."""

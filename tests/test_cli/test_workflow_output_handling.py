@@ -479,13 +479,14 @@ class TestWorkflowOutputHandling:
         finally:
             Path(workflow_file).unlink()
 
+    @pytest.mark.trace_files
     def test_real_cli_only_node_uses_target_not_declared_outputs(self, tmp_path):
         """Real CLI regression: --only must not stream full-run declared outputs.
 
         This uses the parser, runner, engine output population, and CLI output
         formatter together. The shadowing `result` output is intentionally
-        sourced from an upstream node that did execute; old flat --only routing
-        could stream that root declared output instead of the requested target.
+        sourced from an upstream node; snapshot --only restores it but must still
+        stream the requested target, not that root declared output.
         """
         runner = click.testing.CliRunner(mix_stderr=False)
 
@@ -504,6 +505,12 @@ class TestWorkflowOutputHandling:
         }
         workflow_file = tmp_path / "only-output-contract.pflow.md"
         workflow_file.write_text(ir_to_markdown(workflow))
+
+        # Snapshot --only needs a prior full run to restore upstream from. Trace
+        # filenames are microsecond-granular (issue #443), so these rapid full +
+        # --only writes don't collide and the seed snapshot survives.
+        full = runner.invoke(main, [str(workflow_file)])
+        assert full.exit_code == 0, f"full-run stderr: {full.stderr!r}"
 
         result = runner.invoke(main, [str(workflow_file), "--only", "target"])
 
@@ -558,7 +565,7 @@ class TestWorkflowOutputHandling:
         captured = capsys.readouterr()
         assert "UPSTREAM_TARGET_OUTPUT" in captured.out
         assert "--only active" not in captured.err
-        assert "⤷ Stopped after 'upstream' (--only)" in captured.err
+        assert "⤷ Ran only 'upstream' (--only)" in captured.err
 
     def test_multi_output_warning_suppressed_under_print_flag(
         self, mock_registry_instance, mock_compile, mock_validate_ir
@@ -1805,6 +1812,11 @@ class TestOnlyBatchCompactSummary:
         Case A: the parent invoked the sub-workflow via batch. ``find_only_output``
         returns ``shared["sub-wf"]`` for any dotted target; if that namespace has
         ``batch_metadata``, compact summary fires.
+
+        NOTE (issue #443): dotted --only is REJECTED at the engine layer (deferred
+        nested-targeting). This hand-builds shared and drives only the formatter,
+        so it stays green; it documents the display routing the deferred feature
+        would reuse, not that dotted --only executes today.
         """
         from pflow.cli.workflow_output import _handle_text_output
 
@@ -1827,6 +1839,10 @@ class TestOnlyBatchCompactSummary:
         Regression-guards against a future change that "improves" detection by
         recursing into namespaces — that would silently break the contract
         documented in plan §6.
+
+        NOTE (issue #443): as with the Case A test above, dotted --only is
+        rejected at the engine layer (deferred feature); this is a display-layer
+        unit over a hand-built shared store, not end-to-end dotted execution.
         """
         from pflow.cli.workflow_output import _handle_text_output
 

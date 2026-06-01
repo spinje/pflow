@@ -32,6 +32,8 @@ def compile_and_run(
     metrics_collector: Any = None,
     trace_collector: Any = None,
     only_node: Optional[str] = None,
+    workflow_path: Optional[str] = None,
+    snapshot_events: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Compile IR, seed shared store, run engine, return shared.
 
@@ -48,7 +50,15 @@ def compile_and_run(
         shared: Pre-built shared store. Created empty if None.
         metrics_collector: Optional MetricsCollector for cost tracking.
         trace_collector: Optional WorkflowTraceCollector for debugging.
-        only_node: Stop execution after this node (--only flag).
+        only_node: Stop execution after this node (--only flag). Under snapshot
+            --only (issue #443) this restores upstream from a trace instead of
+            re-walking, so a flat ``only_node`` needs either ``snapshot_events``
+            or an on-disk trace at ``workflow_path`` — otherwise the engine
+            raises ``OnlySnapshotMissingError``.
+        workflow_path: Identifier the snapshot loader uses to find the on-disk
+            trace for ``--only`` (resolved file path or ``ir-hash:<md5>``).
+        snapshot_events: Synthetic full-run trace events to restore upstream from
+            under ``--only``, bypassing the on-disk lookup.
 
     Returns:
         The shared store dict after execution.
@@ -69,6 +79,8 @@ def compile_and_run(
         metrics_collector=metrics_collector,
         trace_collector=trace_collector,
         only_node=only_node,
+        workflow_path=workflow_path,
+        snapshot_events=snapshot_events,
     )
     engine.run(workflow, shared)
     return shared

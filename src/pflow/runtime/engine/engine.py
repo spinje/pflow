@@ -262,6 +262,39 @@ def is_clean_termination(action: Optional[str], successors: dict[str, Any]) -> b
     return action == "end" or all(k == "error" for k in successors)
 
 
+def find_node_by_id(start_node: Any, node_id: str) -> Any:
+    """BFS the compiled graph from ``start_node`` for the node whose ``.node_id`` matches.
+
+    Used by ``--only`` snapshot execution (engine + planner): the normal walk
+    reaches nodes by following ``.successors``, but ``--only`` jumps straight to
+    the target after seeding upstream from a snapshot, so it needs the target's
+    bare node object directly. Cycle-guarded via object identity. Raises
+    ``CompilationError`` when ``node_id`` is unreachable from ``start_node`` —
+    fail-loud, since callers have already validated the id against
+    ``node_configs``, so unreachability means a compiler/graph bug, not user
+    error.
+    """
+    from collections import deque
+
+    seen: set[int] = set()
+    queue: deque[Any] = deque([start_node])
+    while queue:
+        node = queue.popleft()
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if getattr(node, "node_id", None) == node_id:
+            return node
+        for successor in node.successors.values():
+            queue.append(successor)
+    raise CompilationError(
+        f"--only target '{node_id}' is not reachable from the workflow start node.",
+        phase="only_node_resolution",
+        suggestion="This indicates a compiler/graph bug — the node exists in node_configs "
+        "but isn't wired into the graph.",
+    )
+
+
 class WorkflowEngine:
     """Executes a CompiledWorkflow by walking the node graph and handling all runtime concerns."""
 
@@ -270,13 +303,31 @@ class WorkflowEngine:
         metrics_collector: Optional[Any] = None,
         trace_collector: Optional[Any] = None,
         only_node: Optional[str] = None,
+        workflow_path: Optional[str] = None,
+        snapshot_events: Optional[list[dict]] = None,
     ):
         self.metrics = metrics_collector
         self.trace = trace_collector
         self.only_node = only_node
+        # issue #443: identifier used to locate the most-recent full-run trace
+        # for ``--only`` snapshot reuse (resolved file path or ``ir-hash:<md5>``
+        # for inline runs — byte-identical to the trace collector's
+        # ``workflow_path``). ``snapshot_events`` lets callers/tests inject the
+        # upstream events directly, bypassing the on-disk lookup. Both default
+        # ``None`` — many construction sites rely on the defaults.
+        self.workflow_path = workflow_path
+        self.snapshot_events = snapshot_events
 
     def _validate_only_target(self, workflow: CompiledWorkflow, this_only: str, child_only: str | None) -> None:
-        """Validate ``--only`` target: must exist, dotted paths must target a sub-workflow."""
+        """Validate a flat ``--only`` target; reject dotted (nested) targets.
+
+        Ordering is load-bearing: the membership check runs FIRST so ``--only
+        typo.child`` still reports "not found" with the available-nodes list,
+        while ``--only realnode.child`` reports the "not supported" message.
+        Targeting a node inside a sub-workflow is deferred (see issue #443 plan
+        "Deferred" — name-based run-anywhere targeting); under snapshot ``--only``
+        it's an explicit error rather than a silent re-walk.
+        """
         if this_only not in workflow.node_configs:
             available = sorted(workflow.node_configs.keys())
             raise CompilationError(
@@ -286,15 +337,12 @@ class WorkflowEngine:
                 suggestion=f"Available nodes: {', '.join(available)}",
             )
         if child_only:
-            target_config = workflow.node_configs[this_only]
-            if target_config.node_type_name != "WorkflowExecutor":
-                raise CompilationError(
-                    f"Node '{this_only}' is not a sub-workflow",
-                    phase="only_node_resolution",
-                    details={"node_type": target_config.node_type_name},
-                    suggestion=f"Cannot use dotted path '{self.only_node}' — "
-                    f"'{this_only}' is a {target_config.node_type_name}, not a sub-workflow.",
-                )
+            raise CompilationError(
+                f"--only '{self.only_node}': targeting a nested node (dotted path) is not supported "
+                f"under snapshot --only.",
+                phase="only_node_resolution",
+                suggestion=f"Run --only '{this_only}' to run that node alone, or run the full workflow.",
+            )
 
     def _run_node_with_child_only(
         self, node: Any, config: NodeConfig, shared: dict[str, Any], child_only: str | None
@@ -352,6 +400,10 @@ class WorkflowEngine:
         new_prompt_cache = MappingProxyType(build_prompt_cache_dict(workflow, shared))
         if self.trace is not None:
             shared["__trace_collector__"] = self.trace
+            # 2.4.0: stamp the run's ``--only`` target (None for a full run) so
+            # the saved trace excludes itself as a snapshot source when it's an
+            # ``--only`` run. Only the root collector's value is persisted.
+            self.trace.only_node = self.only_node
         shared["__pflow_prompt_cache__"] = new_prompt_cache
         try:
             return self._run_inner(workflow, shared)
@@ -365,9 +417,15 @@ class WorkflowEngine:
         """Run body — split out so run() can wrap with save/restore cleanly."""
         this_only, child_only = parse_only_path(self.only_node)
 
-        # 0. Validate --only target
+        # 0. --only: snapshot semantics (issue #443). Do NOT re-walk the graph —
+        # that re-executes and re-fires side-effecting upstream nodes (e.g.
+        # `gh pr create`) on every iteration. Instead restore upstream from the
+        # most recent full run's trace and execute ONLY the target.
+        # _validate_only_target rejects unknown ids and dotted (nested) targets
+        # first; a missing snapshot is a hard error, never a silent re-walk.
         if this_only:
             self._validate_only_target(workflow, this_only, child_only)
+            return self._run_only_snapshot(workflow, shared, this_only)
 
         # 1. Reset visit counts
         if "__execution__" in shared and "node_visit_counts" in shared["__execution__"]:
@@ -391,7 +449,6 @@ class WorkflowEngine:
                     )
 
                 config = workflow.node_configs[node_id]
-                is_only_target = this_only is not None and node_id == this_only
 
                 # issue #445: expose 1-based ${__iteration__} for the loop body and
                 # raise __loop_active__ (suppresses inner memo reads) for the duration
@@ -404,16 +461,12 @@ class WorkflowEngine:
                     loop_counts[node_id] = loop_counts.get(node_id, 0) + 1
                     iteration = loop_counts[node_id]
 
+                # The walk is full-run-only now: --only is handled by
+                # _run_only_snapshot above. _run_node_with_child_only stays
+                # dormant (always passed None) so the dotted-child plumbing is
+                # ready for the deferred nested-targeting follow-up.
                 with loop_runtime_scope(shared, is_loop, iteration=iteration, clear_iteration_on_exit=False):
-                    last_action = self._run_node_with_child_only(
-                        curr, config, shared, child_only if is_only_target else None
-                    )
-
-                # --only: stop after target node
-                # (__execution__["only_node"] was already written by _execute_node
-                # step 2 for this same node)
-                if is_only_target:
-                    break
+                    last_action = self._run_node_with_child_only(curr, config, shared, None)
 
                 # issue #445: loop re-entry. Re-enter only on the normal-return
                 # path (never when the node errored) when the condition is truthy
@@ -444,6 +497,86 @@ class WorkflowEngine:
         self._populate_outputs(workflow, shared, last_action)
 
         return str(last_action) if last_action else "default"
+
+    def _run_only_snapshot(self, workflow: CompiledWorkflow, shared: dict[str, Any], this_only: str) -> str:
+        """Execute ONLY the target node against a frozen upstream snapshot (issue #443).
+
+        Snapshot semantics for FLAT ``--only`` (dotted is rejected upstream by
+        ``_validate_only_target``). Rather than re-walking from the start node —
+        which re-executes and re-fires side-effecting upstream nodes on every
+        iteration — restore every upstream node's output from the most recent
+        full successful run's trace, then execute only ``this_only``. Upstream is
+        reused, never re-run.
+
+        No usable snapshot → ``OnlySnapshotMissingError`` (never a silent
+        re-walk). A ``loop:`` target runs a single iteration. Restored nodes are
+        recorded in ``__execution__["restored_nodes"]`` so the display layer
+        reports them as ``not_executed`` rather than executed, even though
+        seeding ``shared[node_id]`` makes ``get_node_status`` SUCCEEDED (correct
+        for data-flow: templates, coalesce, and ``## Cache`` rendering SHOULD see
+        the restored values).
+        """
+        from pflow.runtime.workflow_trace import load_snapshot_or_raise, seed_snapshot_into_shared
+
+        events, source_status = load_snapshot_or_raise(
+            self.workflow_path, this_only, snapshot_events=self.snapshot_events
+        )
+        final = seed_snapshot_into_shared(shared, events, exclude=this_only)
+
+        initialize_execution_state(shared)
+        shared["__execution__"]["restored_nodes"] = [nid for nid in final if nid != this_only]
+
+        if source_status == "degraded":
+            self._emit_snapshot_degraded_advisory(shared, this_only)
+
+        target_node = find_node_by_id(workflow.start_node, this_only)
+        config = workflow.node_configs[this_only]
+        is_loop = config.loop_config is not None
+        with loop_runtime_scope(shared, is_loop, iteration=1 if is_loop else None, clear_iteration_on_exit=True):
+            last_action = self._execute_node(target_node, config, shared)
+
+        # __execution__["only_node"] was written by _execute_node step 2, so
+        # output routing (find_only_output) stays target-scoped. Resolvable
+        # declared outputs are populated; unresolvable ones are swallowed under
+        # --only by _populate_outputs.
+        self._populate_outputs(workflow, shared, last_action)
+        return str(last_action) if last_action else "default"
+
+    @staticmethod
+    def _emit_snapshot_degraded_advisory(shared: dict[str, Any], this_only: str) -> None:
+        """Surface a loud (DEGRADED-flipping) advisory when the snapshot source degraded.
+
+        A ``degraded`` full run can carry PARTIAL upstream data — e.g. a batch
+        host with ``error_handling: continue`` records ``success=True`` with
+        failed items dropped from ``results`` and degrades the trace. Restoring
+        it silently would feed the target incomplete upstream, so we never seed a
+        degraded snapshot silently: a WARNING ``Diagnostic`` written to
+        ``__warnings__`` flips workflow status to DEGRADED and surfaces in
+        CLI/JSON/report output.
+
+        Stored under a dedicated synthetic key (not ``this_only``) so a target
+        that emits its own ``__warnings__[this_only]`` entry can't overwrite it;
+        the Diagnostic carries ``node_id=this_only`` so it still attributes to
+        the node the user is iterating on (``_extract_runtime_warnings`` keeps
+        the explicit node_id rather than substituting the dict key).
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+
+        shared.setdefault("__warnings__", {})["__only_snapshot__"] = Diagnostic(
+            severity=Severity.WARNING,
+            title="Restored upstream from a degraded run",
+            message=(
+                f"--only '{this_only}' restored upstream from a DEGRADED full run; the restored "
+                f"upstream data may be incomplete (e.g. a batch step that continued past failed "
+                f"items dropped them from its results). Re-run the full workflow to refresh the snapshot."
+            ),
+            suggestions=[
+                "Re-run the full workflow once to record a clean (success) snapshot, then retry --only.",
+            ],
+            node_id=this_only,
+            source="runtime",
+            id="only.snapshot-degraded",
+        )
 
     def _loop_should_reenter(
         self,

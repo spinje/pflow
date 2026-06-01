@@ -249,6 +249,10 @@ class WorkflowRunner:
             metrics_collector=metrics_collector,
             trace_collector=trace_collector,
             only_node=config.only_node,
+            # issue #443: byte-identical to the trace collector's workflow_path
+            # (resolved file path or synthesized ir-hash:<md5>) so --only's
+            # snapshot loader finds this workflow's own most-recent full-run trace.
+            workflow_path=resolved.file_path or _synthesize_inline_workflow_id(resolved.ir),
         )
 
         try:

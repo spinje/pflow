@@ -77,7 +77,7 @@ pflow ~/workflows/analysis.pflow.md param=value
 | `-p, --print` | Minimal output: suppress header, summary, and warnings |
 | `--no-trace` | Disable workflow trace saving |
 | `--cache/--no-cache` | Enable/disable memoization cache reads (default: enabled) |
-| `--only NODE` | Run workflow through this node then stop |
+| `--only NODE` | Re-run just this node against a snapshot of the last full run (upstream restored, not re-executed; needs a prior full run) |
 | `--validate-only` | Validate workflow without running |
 | `--dry-run` | Preview which nodes would run or serve from cache, without executing |
 | `--help` | Show help message |
@@ -400,13 +400,14 @@ The cache is content-addressed — same node config plus same resolved inputs pr
 
 ### Run a single node
 
-The `--only` flag runs the workflow from the start through the named node, then stops — downstream nodes don't execute. Upstream nodes along the way are re-run unless they're cached: only `llm` nodes (and any node with `cache: true`) come from cache, so a side-effecting upstream node like `shell: git push` runs again on each `--only` invocation:
+The `--only` flag runs just the named node against a frozen snapshot of the most recent full run. Every other node's output is restored from that run — not re-executed — so a side-effecting upstream node like `shell: git push` does **not** run again. It needs a prior full run to snapshot from (otherwise it errors). Targeting a node inside a sub-workflow is not supported.
 
 ```bash
-pflow ./workflow.pflow.md --only process-data
+pflow ./workflow.pflow.md            # full run once (records the snapshot)
+pflow ./workflow.pflow.md --only process-data   # re-run just this node
 ```
 
-Without `-o`, `--only` streams the targeted node or sub-workflow result to stdout instead of the workflow's full-run outputs. Pass `-o <key>` when you need a specific named output.
+Without `-o`, `--only` streams the targeted node's result to stdout instead of the workflow's full-run outputs. Pass `-o <key>` when you need a specific named output.
 
 This is how agents iterate on a specific node without re-running the full workflow.
 

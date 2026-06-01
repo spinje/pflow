@@ -76,6 +76,7 @@ PflowError(Exception)                    <- base for all pflow errors
   |- WorkflowExistsError                 <- duplicate workflow save
   |- UnsupportedCacheTTLError            <- cache TTL not supported by provider (Task 159)
   |- ReportGenerationError               <- trace report generation failure
+  |- OnlySnapshotMissingError            <- --only has no prior full-run trace to restore upstream from (issue #443)
   |- LLMCallError                        <- LLM adapter base for ALL provider errors (raised by llm_client)
   |   |- UnknownModelError               <- model identifier not recognized (reason="unknown_name"|"missing_prefix")
   |   |- MissingApiKeyError              <- AuthenticationError or PermissionDeniedError (kind="missing_key"|"lacks_permission")
@@ -100,6 +101,7 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 | Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
 | Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[Diagnostic(...), ...]` |
 | Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
+| `--only <node>` run with no prior full-run trace to restore upstream from | `OnlySnapshotMissingError` | `only_node`, `suggestion` (defaults to "run the full workflow once, then retry --only"); raised by `runtime/workflow_trace.load_snapshot_or_raise` for BOTH the engine and the dry-run planner |
 | LLM adapter — deterministic provider error (4xx that retry won't fix) | `LLMCallError` subclass — `UnknownModelError(reason)`, `MissingApiKeyError(kind)`, `InvalidRequestError`, or `LLMResponseParseError` | structured `model`, `reason`/`kind`, `provider_message` (raw upstream text — distinct from the pflow-wrapped `Diagnostic.message`); each subclass overrides `to_diagnostics()` to produce rich Diagnostics. LLMNode catches at `_call_llm` (preventing retry burn) and lifts `_diagnostic_context` into shared. |
 | LLM adapter — transient error (timeout, rate limit, 5xx that retry may help) | `LLMTransientError` (subclass of `LLMCallError`) | carries `kind` discriminator + `provider_message`; LLMNode re-raises so the Node retry loop fires. Smart_filter / discovery callers catch the `LLMCallError` umbrella for graceful degradation. |
 | User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |

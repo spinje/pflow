@@ -601,39 +601,25 @@ class TestRealSubprocessProgressRendering:
                 f"Full leaf sequence:\n  " + "\n  ".join(leaf_lines)
             )
 
-    def test_only_with_last_node_emits_indicator(self, tmp_path, uv_exe, subprocess_env):
-        """``pflow foo --only target`` where ``target`` is the LAST node must
-        emit the ``--only`` mode confirmation on stderr.
+    def test_only_with_zero_skipped_emits_indicator(self, tmp_path, uv_exe, subprocess_env):
+        """``pflow foo --only target`` must emit the ``--only`` confirmation even
+        when NO nodes are skipped (a single-node workflow restores nothing).
 
         Sub-issue 8a from Task 149's code review: the previous gate
-        ``if only_node and nodes_skipped > 0:`` hid the indicator when
-        nothing was skipped (because the target was the last node, or
-        downstream branches were conditional and didn't run anyway).
-        Result: rendered output was byte-identical to a full run; agents
-        doing iterative debugging couldn't disambiguate.
+        ``if only_node and nodes_skipped > 0:`` hid the indicator when nothing
+        was skipped. Under snapshot --only (issue #443) the zero-skip case is a
+        single-node workflow — the snapshot restores no other node — so the
+        indicator's short form (no "remaining" suffix) must still appear.
 
-        Verified with a real subprocess to catch any CLI rendering
-        regression including any future change that re-introduces the
-        ``> 0`` gate or moves the indicator to a code path that's gated
-        by a verbosity flag.
+        Verified with a real subprocess to catch any CLI rendering regression
+        including any future change that re-introduces the ``> 0`` gate or moves
+        the indicator to a code path gated by a verbosity flag.
         """
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
-                    "id": "step_a",
-                    "type": "shell",
-                    "cache": False,
-                    "params": {"command": "echo a"},
-                },
-                {
-                    "id": "step_b",
-                    "type": "shell",
-                    "cache": False,
-                    "params": {"command": "echo b"},
-                },
-                {
-                    "id": "last_step",
+                    "id": "only_step",
                     "type": "shell",
                     "cache": False,
                     "params": {"command": "echo c"},
@@ -641,12 +627,22 @@ class TestRealSubprocessProgressRendering:
             ],
             "edges": [],
         }
-        workflow_path = tmp_path / "only_last.pflow.md"
+        workflow_path = tmp_path / "only_zero_skip.pflow.md"
         workflow_path.write_text(ir_to_markdown(workflow))
 
-        # Use --only on the LAST node so nodes_skipped == 0
+        # Snapshot --only needs a prior full run to restore upstream from.
+        seed = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", str(workflow_path)],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(seed)
+        assert seed.returncode == 0, f"seed run failed\nstderr: {seed.stderr!r}"
+
         result = subprocess.run(  # noqa: S603
-            [uv_exe, "run", "pflow", str(workflow_path), "--only", "last_step"],
+            [uv_exe, "run", "pflow", str(workflow_path), "--only", "only_step"],
             capture_output=True,
             text=True,
             shell=False,
@@ -658,13 +654,12 @@ class TestRealSubprocessProgressRendering:
 
         # The mode confirmation MUST appear on stderr — without this,
         # the run is indistinguishable from a full run.
-        assert "⤷ Stopped after 'last_step' (--only)" in result.stderr, (
-            "Sub-issue 8a regression: --only confirmation missing when target was the last node.\n"
-            f"stderr:\n{result.stderr}"
+        assert "⤷ Ran only 'only_step' (--only)" in result.stderr, (
+            f"Sub-issue 8a regression: --only confirmation missing when 0 nodes were skipped.\nstderr:\n{result.stderr}"
         )
-        # Short form: no "0 remaining" or "N remaining" since 0 nodes were skipped
-        assert "remaining" not in result.stderr, (
-            f"Short form expected (0 nodes skipped) but found 'remaining' suffix.\nstderr:\n{result.stderr}"
+        # Short form: no "N other ... not executed" suffix since 0 nodes were skipped
+        assert "not executed" not in result.stderr, (
+            f"Short form expected (0 nodes skipped) but found a count suffix.\nstderr:\n{result.stderr}"
         )
 
     def test_print_mode_with_only_emits_indicator(self, tmp_path, uv_exe, subprocess_env):
@@ -710,6 +705,17 @@ class TestRealSubprocessProgressRendering:
         workflow_path = tmp_path / "print_only.pflow.md"
         workflow_path.write_text(ir_to_markdown(workflow))
 
+        # Snapshot --only needs a prior full run to restore upstream from.
+        seed = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", str(workflow_path)],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(seed)
+        assert seed.returncode == 0, f"seed run failed\nstderr: {seed.stderr!r}"
+
         result = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", "-p", str(workflow_path), "--only", "step_b"],
             capture_output=True,
@@ -728,7 +734,7 @@ class TestRealSubprocessProgressRendering:
 
         # stderr: ONLY the --only mode confirmation, nothing else
         # (no "Executing workflow", no "Workflow completed", no progress lines)
-        assert "⤷ Stopped after 'step_b' (--only)" in result.stderr, (
+        assert "⤷ Ran only 'step_b' (--only)" in result.stderr, (
             "Sub-issue 8b regression: --only mode confirmation missing in -p mode.\n"
             "Mode flags must survive verbosity flags.\n"
             f"stderr:\n{result.stderr}"
@@ -780,7 +786,7 @@ class TestRealSubprocessProgressRendering:
         )
         assert "Executing workflow" not in result.stderr
         assert "Workflow completed" not in result.stderr
-        assert "Stopped after" not in result.stderr
+        assert "Ran only" not in result.stderr
 
     def test_progress_streams_before_downstream_nodes_complete(self, tmp_path, uv_exe, subprocess_env):
         """Step_0's completion line must be visible on stderr WHILE step_1 is still running.

@@ -20,7 +20,17 @@ output (list/number/boolean); stops when falsy (`[]`, `0`, `false`, `null`). Not
 expression language — richer conditions come from the body emitting a boolean.
 _Avoid_: predicate, guard, filter.
 
+**Snapshot** — the frozen prior-run state that `--only <step>` runs a single step against:
+every *other* step's output reused from the most recent full run, so only the target
+re-executes and upstream side effects never re-fire. Requires a prior full run.
+_Avoid_: replay, restore, checkpoint.
+
 ## Ambiguity
 
 **Batch vs Loop** — both repeat a step. Discriminator: can you write the list of runs
 before starting (Batch), or only know you're done by inspecting what just happened (Loop).
+
+**Snapshot vs Cache** — both reuse prior output. Cache reuses a step's *own* output when
+its declared inputs are unchanged (correctness-gated, per-step, can still re-run the step).
+Snapshot reuses *other* steps' outputs to isolate one step for iteration (`--only`),
+regardless of whether their inputs changed, and never runs the frozen steps at all.

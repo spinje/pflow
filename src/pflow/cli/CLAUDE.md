@@ -119,7 +119,7 @@ Precedence is explicit and load-bearing:
 
 1. `-o/--output-key` wins in text and JSON.
 2. Full runs without `-o` use workflow-declared outputs first. Text mode streams one output (`stdout: true`, single output, or first-with-warning); JSON emits all declared outputs.
-3. `--only` runs without `-o` skip workflow-declared outputs and use `find_only_output(shared, only_node)`. Flat targets unwrap common result keys from `shared[target]`; dotted targets stream the root sub-workflow namespace. This prevents full-run outputs or unrelated root `result` keys from shadowing the node the user explicitly targeted.
+3. `--only` runs without `-o` skip workflow-declared outputs and use `find_only_output(shared, only_node)`. Flat targets unwrap common result keys from `shared[target]`. This prevents full-run outputs or unrelated root `result` keys from shadowing the node the user explicitly targeted. (Dotted `--only parent.child` is rejected at the engine layer — issue #443 snapshot semantics; nested targeting is a deferred feature. The dotted branches of `find_only_output` and the compact-summary path are dormant display logic the deferred feature would reuse.)
 
 ### Output Auto-Detection (`find_auto_output`)
 
@@ -154,7 +154,7 @@ Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runt
 --print, -p            # Minimal output: suppress stderr header/summary/warnings
 --no-trace             # Disable automatic workflow trace saving
 --cache/--no-cache     # Enable/disable memoization cache reads (default: --cache). Writes always happen.
---only <node>          # Execute from start up to and including this node, then stop. Cached upstream (llm/cache:true) reused, uncached upstream re-executes.
+--only <node>          # Re-run just this node against a snapshot of the most recent full run (upstream restored, not re-executed — no re-fire). Needs a prior full run; dotted/nested targets rejected (issue #443).
 --validate-only        # Validate without executing (exit 0/1), auto-normalizes IR
 --dry-run              # Build execution plan without side effects
 --report               # Generate execution report
@@ -234,7 +234,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 
 ## Trace, Report, and Signal Handling
 
-- Traces: `~/.pflow/debug/workflow-trace-{wf_hash}-{name}-{YYYYMMDD-HHMMSS}.json` — saved automatically (disable with `--no-trace`). The `wf_hash` is an 8-char md5 of the workflow path, used by `pflow analyze-cache` autoload to find traces for a given workflow without scanning the whole directory.
+- Traces: `~/.pflow/debug/workflow-trace-{wf_hash}-{name}-{YYYYMMDD-HHMMSS-ffffff}.json` — saved automatically (disable with `--no-trace`). The `wf_hash` is an 8-char md5 of the workflow path, used by `pflow analyze-cache` autoload to find traces for a given workflow without scanning the whole directory. The microsecond suffix (`%f`) keeps a same-second full-run + `--only`-run pair from colliding (issue #443) — `--only`'s snapshot reuse depends on the full-run trace surviving.
 - Reports: `--report` generates `~/.pflow/reports/{name}/` as a replaced snapshot with `.pflow-report.json`. Explicit `--report-dir` paths are preflighted before execution and must be empty or already marked as pflow report output.
 - Ctrl+C: exit code 130, no cleanup (relies on finally blocks)
 - SIGPIPE: set to SIG_IGN (prevents subprocess SIGPIPE from killing parent process). Both set in `main.py:_setup_signals()`.

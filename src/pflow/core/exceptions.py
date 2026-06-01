@@ -877,6 +877,45 @@ class LoopConditionError(PflowError):
         ]
 
 
+class OnlySnapshotMissingError(PflowError):
+    """Raised when ``--only`` has no prior full-run trace to restore upstream from (issue #443).
+
+    ``--only <node>`` runs the target against a frozen snapshot of the most
+    recent full successful run (read from ``~/.pflow/debug/``) instead of
+    re-walking the graph — so side-effecting upstream nodes (``gh pr create``)
+    don't re-fire on every iteration. When no usable trace exists (the workflow
+    was never run fully, was run only with ``--no-trace``, or only ``--only``
+    traces exist), there is nothing to restore from. This is a HARD error rather
+    than a silent re-walk: re-walking would re-fire upstream side effects, which
+    is precisely what #443 set out to stop.
+    """
+
+    _DEFAULT_SUGGESTION = (
+        "Run the full workflow once (without --no-trace), then retry --only. "
+        "Snapshot reuse reads the most recent successful trace from ~/.pflow/debug/."
+    )
+
+    def __init__(self, only_node: str, *, suggestion: str | None = None):
+        self.only_node = only_node
+        self.suggestion = suggestion if suggestion is not None else self._DEFAULT_SUGGESTION
+        super().__init__(
+            f"--only '{only_node}' needs a prior full run to restore upstream from, "
+            f"but no usable trace was found for this workflow."
+        )
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="No snapshot for --only",
+                source="runtime",
+                suggestions=[self.suggestion] if self.suggestion else None,
+                context={"category": "execution_failure"},
+            )
+        ]
+
+
 class MaxNodeVisitsError(RuntimeError):
     """Raised when a node exceeds the maximum allowed visits (loop guard)."""
 

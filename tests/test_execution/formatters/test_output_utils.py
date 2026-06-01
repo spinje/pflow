@@ -259,6 +259,10 @@ class TestFindOnlyOutput:
         assert value == namespace
 
     def test_dotted_target_returns_root_namespace(self):
+        # NOTE (issue #443): dotted --only is REJECTED at the engine layer
+        # (deferred nested-targeting feature). This is a pure display-layer unit
+        # over a hand-built shared store; it documents the dotted output-routing
+        # the deferred feature would reuse, NOT that dotted --only works today.
         namespace = {"results": [{"result": "hello"}], "count": 1}
         shared = {"child": namespace, "result": "unrelated declared output"}
         key, value = find_only_output(shared, "child.fetch")
@@ -328,6 +332,12 @@ class TestAutoDetectionWarning:
         """GH #344 regression guard: dotted --only on a batch sub-workflow must
         emit the target's namespace, even when a parent-level declared output
         resolved to a priority-key name at root.
+
+        NOTE (issue #443): dotted --only is REJECTED at the engine layer
+        (deferred nested-targeting feature). This drives the formatter over a
+        hand-built shared store and never executes the engine, so it stays green;
+        it documents the display-layer routing the deferred feature would reuse,
+        not that dotted --only works end-to-end today.
 
         Setup mirrors the real lyrics-generator case: the parent has two
         declared outputs. The first (becomes stdout target) references a

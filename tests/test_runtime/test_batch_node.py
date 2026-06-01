@@ -2965,7 +2965,13 @@ class TestEmptyOutputWarnings:
         assert "0 items" in advisory.message
 
     def test_only_node_suppresses_empty_output_warning(self):
-        """Under --only, empty output is expected and should not trigger a warning."""
+        """Under --only, empty output is expected and should not trigger a warning.
+
+        NOTE (issue #443): the dotted ``only_node`` here is hand-set in shared and
+        never reaches engine validation (which rejects dotted --only — a deferred
+        feature). This exercises only the batch empty-output suppression that keys
+        off ``__execution__["only_node"]``, not dotted --only execution.
+        """
 
         class EmptyOutputNode:
             def __init__(self, node_id: str):

@@ -1,15 +1,16 @@
-"""Tests for dotted-path --only feature (GH #338).
+"""Tests for dotted --only paths under snapshot semantics (issue #443).
 
-``--only step-b.child-first`` targets a node inside a sub-workflow:
-the engine executes the parent up to ``step-b``, and the child workflow
-inside ``step-b`` runs only up to ``child-first``.
+Snapshot ``--only`` runs a FLAT target against a frozen prior-run snapshot.
+Targeting a node INSIDE a sub-workflow (``--only parent.child``) is DEFERRED to
+a future name-based "run-anywhere" model, so it is rejected with a clear
+"not supported" error rather than re-walking the graph.
 
 Covers:
-  1. ``parse_only_path`` pure-function unit tests
-  2. Engine validation (node not found, not a sub-workflow)
-  3. Engine + WorkflowExecutor integration (child-level targeting)
-  4. Planner integration (``build_plan`` with dotted paths)
-  5. Cleanup of ``_pflow_child_only_node`` key
+  1. ``parse_only_path`` pure-function unit tests (still splits dotted paths)
+  2. Engine validation: unknown node → "not found"; dotted target → "not supported"
+  3. Cross-entry parity: ``WorkflowRunner.run`` and ``.plan`` reject dotted
+     identically
+  4. Flat --only regression (snapshot-seeded)
 """
 
 from pathlib import Path
@@ -51,7 +52,7 @@ def _make_config(node_id: str, type_name: str = "StubNode") -> NodeConfig:
 
 
 # ---------------------------------------------------------------------------
-# 1. parse_only_path unit tests
+# 1. parse_only_path unit tests (unchanged — the parser still splits dotted)
 # ---------------------------------------------------------------------------
 
 
@@ -102,7 +103,7 @@ class TestEngineOnlyValidation:
     """Engine.run() validates --only targets before execution starts."""
 
     def test_dotted_path_nonexistent_first_segment_raises(self) -> None:
-        """Dotted path where the first segment doesn't exist in the workflow."""
+        """Membership-first ordering: an unknown first segment still says 'not found'."""
         node = _StubNode()
         node.node_id = "step-a"
 
@@ -116,8 +117,8 @@ class TestEngineOnlyValidation:
         with pytest.raises(CompilationError, match="not found"):
             engine.run(workflow, shared)
 
-    def test_dotted_path_on_non_workflow_node_raises(self) -> None:
-        """Dotted path where first segment is a shell node, not a sub-workflow."""
+    def test_dotted_path_rejected_as_not_supported(self) -> None:
+        """A dotted path on a REAL node is rejected as 'not supported' (deferred feature)."""
         node = _StubNode()
         node.node_id = "step-a"
 
@@ -128,11 +129,11 @@ class TestEngineOnlyValidation:
         shared: dict[str, Any] = {}
         engine = WorkflowEngine(only_node="step-a.child")
 
-        with pytest.raises(CompilationError, match="not a sub-workflow"):
+        with pytest.raises(CompilationError, match="not supported"):
             engine.run(workflow, shared)
 
     def test_flat_only_still_works_regression(self) -> None:
-        """Flat --only (no dots) still stops after the target node."""
+        """Flat --only (no dots) runs the target against a seeded snapshot."""
         node_a = _StubNode()
         node_a.node_id = "first"
 
@@ -149,15 +150,20 @@ class TestEngineOnlyValidation:
             },
         )
         shared: dict[str, Any] = {}
-        engine = WorkflowEngine(only_node="first")
+        engine = WorkflowEngine(
+            only_node="first",
+            # Snapshot restores 'second' (downstream); only 'first' executes.
+            snapshot_events=[{"node_id": "second", "node_output": {"stdout": "restored"}}],
+        )
         engine.run(workflow, shared)
 
         assert shared["_executed"] == ["first"]
         assert shared["__execution__"]["only_node"] == "first"
+        assert shared["__execution__"]["restored_nodes"] == ["second"]
 
 
 # ---------------------------------------------------------------------------
-# 3. Engine + WorkflowExecutor integration tests
+# 3. Cross-entry dotted rejection parity (run AND plan)
 # ---------------------------------------------------------------------------
 
 
@@ -197,241 +203,43 @@ def _write_parent_workflow(tmp_path: Path, child_path: Path) -> Path:
     return parent_path
 
 
-class TestDottedOnlyIntegration:
-    """Full integration: parent workflow with a sub-workflow, using dotted --only."""
+class TestDottedOnlyRejected:
+    """Dotted --only is rejected identically through run() and plan() (deferred feature)."""
 
-    def test_dotted_only_targets_child_node(self, tmp_path: Path) -> None:
-        """``--only step-b.child-first`` executes step-a, step-b (child runs
-        only child-first), and stops before step-c."""
+    def test_dotted_only_rejected_via_run(self, tmp_path: Path) -> None:
+        """Targeting a node inside a sub-workflow surfaces a 'not supported' error."""
         child_path = _write_child_workflow(tmp_path)
         parent_path = _write_parent_workflow(tmp_path, child_path)
 
-        runner = WorkflowRunner()
-        config = RunnerConfig(only_node="step-b.child-first")
-        result = runner.run(str(parent_path), {}, config)
-
-        shared = result.shared_after
-
-        # step-a executed
-        assert "step-a" in shared, "step-a should have executed"
-
-        # step-b executed (sub-workflow node)
-        assert "step-b" in shared, "step-b should have executed"
-
-        # Inside child: child-first executed, child-second did NOT
-        child_data = shared.get("step-b", {})
-        assert "child-first" in child_data, "child-first inside step-b should have executed"
-        assert "child-second" not in child_data, "child-second should NOT have executed (dotted --only)"
-
-        # step-c did NOT execute
-        assert "step-c" not in shared, "step-c should NOT have executed"
-
-        # The full dotted path is recorded
-        assert shared["__execution__"]["only_node"] == "step-b.child-first"
-
-    def test_dotted_only_cleans_up_child_only_key(self, tmp_path: Path) -> None:
-        """After engine stops, ``_pflow_child_only_node`` must NOT be in shared."""
-        child_path = _write_child_workflow(tmp_path)
-        parent_path = _write_parent_workflow(tmp_path, child_path)
-
-        runner = WorkflowRunner()
-        config = RunnerConfig(only_node="step-b.child-first")
-        result = runner.run(str(parent_path), {}, config)
-
-        assert "_pflow_child_only_node" not in result.shared_after
-
-    def test_dotted_only_cleans_up_key_on_child_failure(self, tmp_path: Path) -> None:
-        """``_pflow_child_only_node`` must not leak into shared_after when the child fails."""
-        broken_child = tmp_path / "broken-child.pflow.md"
-        broken_child.write_text(
-            "# Broken Child\n\nA child that fails.\n\n## Steps\n\n"
-            "### child-first\n\nFails immediately.\n\n- type: shell\n- command: exit 1\n\n"
-            "### child-second\n\nNever reached.\n\n- type: shell\n- command: echo unreachable\n"
-        )
-        parent = tmp_path / "parent.pflow.md"
-        parent.write_text(
-            "# Parent\n\nParent workflow.\n\n## Steps\n\n"
-            "### step-a\n\nFirst step.\n\n- type: shell\n- command: echo ok\n\n"
-            f"### step-b\n\nSub-workflow.\n\n- type: workflow\n- workflow: {broken_child}\n\n"
-            "### step-c\n\nLast step.\n\n- type: shell\n- command: echo done\n"
-        )
-
-        runner = WorkflowRunner()
-        result = runner.run(str(parent), {}, RunnerConfig(only_node="step-b.child-first"))
+        result = WorkflowRunner().run(str(parent_path), {}, RunnerConfig(only_node="step-b.child-first"))
 
         assert not result.success
-        assert "_pflow_child_only_node" not in result.shared_after
+        messages = " ".join(d.message for d in result.diagnostics)
+        assert "not supported" in messages
+        # No node executed — the workflow was rejected before any side effect.
+        assert "step-a" not in result.shared_after
+        assert "step-b" not in result.shared_after
 
-
-# ---------------------------------------------------------------------------
-# 4. Planner integration tests
-# ---------------------------------------------------------------------------
-
-
-class TestDottedOnlyPlanner:
-    """Planner (build_plan) respects dotted --only paths."""
-
-    def test_plan_dotted_only_limits_child_entries_cached_parent(self, tmp_path: Path) -> None:
-        """When the parent prefix is cached, ``build_plan(only_node='step-b.child-first')``
-        produces a child sub-plan that stops at child-first.
-
-        The planner threads ``child_only`` through the state-machine path
-        (FOLLOW transitions for cached nodes).  We prime the cache first
-        so step-a is cached and the walker reaches step-b via FOLLOW, not
-        BFS downstream.
-        """
+    def test_dotted_only_rejected_via_plan(self, tmp_path: Path) -> None:
+        """plan() raises the same CompilationError category for a dotted target."""
         child_path = _write_child_workflow(tmp_path)
         parent_path = _write_parent_workflow(tmp_path, child_path)
 
-        # Prime the memo cache so step-a is cached on the next plan
-        WorkflowRunner().run(str(parent_path), {}, RunnerConfig())
+        with pytest.raises(CompilationError, match="not supported"):
+            WorkflowRunner().plan(str(parent_path), {}, RunnerConfig(only_node="step-b.child-first"))
 
-        plan = WorkflowRunner().plan(str(parent_path), {}, RunnerConfig(only_node="step-b.child-first"))
-
-        # Parent plan should have entries for step-a and step-b only
-        parent_ids = [e.node_id for e in plan.entries]
-        assert "step-a" in parent_ids
-        assert "step-b" in parent_ids
-        assert "step-c" not in parent_ids
-
-        # step-b should have a sub_plan
-        step_b_entry = next(e for e in plan.entries if e.node_id == "step-b")
-        assert step_b_entry.sub_plan is not None
-
-        # Child sub-plan should only include child-first, not child-second
-        child_ids = [e.node_id for e in step_b_entry.sub_plan.entries]
-        assert "child-first" in child_ids
-        assert "child-second" not in child_ids
-
-    def test_plan_dotted_only_bfs_path_limits_child_entries(self, tmp_path: Path) -> None:
-        """When upstream is a cache miss, BFS fires — child sub-plan must still
-        respect the dotted ``--only`` constraint.
-
-        Uses ``MemoizationCache(read_enabled=False)`` so ALL nodes are misses.
-        The first miss triggers BOUNDARY → BFS reaches step-b → must thread
-        ``child_only_node`` to the child plan. Without the fix, BFS would show
-        the full child workflow (child-first AND child-second).
-        """
+    def test_dotted_only_on_shell_node_rejected_via_plan(self, tmp_path: Path) -> None:
+        """A dotted path on a non-sub-workflow node is also rejected (not supported)."""
         child_path = _write_child_workflow(tmp_path)
         parent_path = _write_parent_workflow(tmp_path, child_path)
 
-        plan = WorkflowRunner().plan(
-            str(parent_path), {}, RunnerConfig(only_node="step-b.child-first", cache_enabled=False)
-        )
-
-        step_b_entry = next((e for e in plan.entries if e.node_id == "step-b"), None)
-        assert step_b_entry is not None, "step-b should appear in plan"
-        assert step_b_entry.sub_plan is not None, "step-b should have a sub_plan"
-
-        child_ids = [e.node_id for e in step_b_entry.sub_plan.entries]
-        assert "child-first" in child_ids
-        assert "child-second" not in child_ids, (
-            "BFS downstream must thread child_only_node — child-second should be excluded"
-        )
-
-    def test_plan_dotted_only_on_shell_node_raises(self, tmp_path: Path) -> None:
-        """``build_plan(only_node='step-a.foo')`` where step-a is a shell node
-        should raise CompilationError."""
-        child_path = _write_child_workflow(tmp_path)
-        parent_path = _write_parent_workflow(tmp_path, child_path)
-
-        with pytest.raises(CompilationError, match="not a sub-workflow"):
+        with pytest.raises(CompilationError, match="not supported"):
             WorkflowRunner().plan(str(parent_path), {}, RunnerConfig(only_node="step-a.foo"))
 
+    def test_dotted_typo_first_segment_still_not_found_via_plan(self, tmp_path: Path) -> None:
+        """Membership-first ordering preserved through plan(): unknown segment → 'not found'."""
+        child_path = _write_child_workflow(tmp_path)
+        parent_path = _write_parent_workflow(tmp_path, child_path)
 
-# ---------------------------------------------------------------------------
-# 5. Dotted --only with batch sub-workflow output population (GH #342)
-# ---------------------------------------------------------------------------
-
-
-class TestDottedOnlyOutputPopulation:
-    """Dotted --only on a batch sub-workflow must populate child declared
-    outputs in batch result items.
-
-    GH #342: before the fix, ``populate_declared_outputs`` was skipped when
-    ``--only`` was active, so child declared outputs never appeared in the
-    batch results — downstream nodes referencing ``${batch-node.results}``
-    would find items without the expected output keys.
-    """
-
-    def test_batch_subworkflow_only_populates_declared_outputs(self, tmp_path: Path) -> None:
-        """``--only process-all.echo`` must produce batch results that include
-        the child's declared output ``result``."""
-        # --- child workflow: echo input text, declare "result" output ---
-        child_path = tmp_path / "child.pflow.md"
-        child_ir = {
-            "inputs": {
-                "text": {"type": "string", "description": "The text to echo"},
-            },
-            "outputs": {
-                "result": {"source": "${echo.stdout}", "description": "The echoed text"},
-            },
-            "nodes": [
-                {
-                    "id": "echo",
-                    "type": "shell",
-                    "purpose": "Echo the input text back",
-                    "params": {"command": 'echo "${text}"'},
-                },
-            ],
-        }
-        write_workflow_file(child_ir, child_path)
-
-        # --- parent workflow: batch over items calling child, plus downstream ---
-        parent_path = tmp_path / "parent.pflow.md"
-        parent_ir = {
-            "inputs": {
-                "messages": {"type": "array", "description": "List of messages to process"},
-            },
-            "nodes": [
-                {
-                    "id": "process-all",
-                    "type": "workflow",
-                    "purpose": "Process each message through child workflow",
-                    "params": {
-                        "workflow": str(child_path),
-                        "inputs": {"text": "${item}"},
-                    },
-                    "batch": {
-                        "items": "${messages}",
-                    },
-                },
-                {
-                    "id": "count",
-                    "type": "shell",
-                    "purpose": "Count processed messages from batch output",
-                    "params": {"command": 'echo "Done: ${process-all.count}"'},
-                },
-            ],
-            "edges": [{"from": "process-all", "to": "count"}],
-        }
-        write_workflow_file(parent_ir, parent_path)
-
-        # --- run with dotted --only targeting child node inside batch ---
-        config = RunnerConfig(only_node="process-all.echo")
-        result = WorkflowRunner().run(
-            str(parent_path),
-            params={"messages": ["hello", "world"]},
-            config=config,
-        )
-
-        assert result.success is True
-        shared = result.shared_after
-
-        # The batch node executed
-        assert "process-all" in shared, "batch node 'process-all' should be in shared"
-
-        # Each batch result item contains the child's declared output
-        batch_output = shared["process-all"]
-        results = batch_output["results"]
-        assert len(results) == 2
-
-        # THIS is the #342 fix verification — "result" comes from
-        # populate_declared_outputs running even under --only
-        for item in results:
-            assert "result" in item, f"Child declared output 'result' missing from batch item: {item}"
-        assert results[0]["result"] == "hello"
-        assert results[1]["result"] == "world"
-
-        # Downstream "count" should NOT have executed (--only stops at process-all)
-        assert "count" not in shared, "downstream 'count' should not execute under --only"
+        with pytest.raises(CompilationError, match="not found"):
+            WorkflowRunner().plan(str(parent_path), {}, RunnerConfig(only_node="nonexistent.child"))
