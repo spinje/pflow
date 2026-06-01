@@ -30,6 +30,7 @@ Tests criteria from the specification:
 """
 
 import asyncio
+import os
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -69,6 +70,7 @@ class ResultMessage:
     usage: dict | None = None
     result: str | None = None
     structured_output: Any = None
+    api_error_status: int | None = None
 
 
 class CLINotFoundError(Exception):
@@ -1538,3 +1540,258 @@ def test_runtime_and_validator_agree_on_max_turns_with_schema(claude_node: Any) 
         f"max_turns parity drift: validator={validator_rejected}, runtime={runtime_rejected}"
     )
     assert validator_rejected
+
+
+# ---------------------------------------------------------------------------
+# Issue #455: use_api_key billing flag.
+# The node blanks ANTHROPIC_API_KEY for the Claude subprocess by default so an
+# ambient (or `pflow settings set-env`-injected) key cannot silently override
+# the user's Pro/Max subscription with per-token Console billing.
+# ---------------------------------------------------------------------------
+
+
+def test_use_api_key_defaults_false(claude_node):
+    """Param absent → False → subscription billing."""
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is False
+
+
+def test_default_blanks_api_key_in_options(claude_node):
+    """Default mode sets options.env = {ANTHROPIC_API_KEY: ""}.
+
+    The SDK merges options.env OVER os.environ, so the empty-string override is
+    what actually neutralizes an inherited key — omitting it would leave the
+    inherited key intact (a dict merge cannot delete a base key).
+    """
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert mock_options.call_args.kwargs["env"] == {"ANTHROPIC_API_KEY": ""}
+
+
+def test_default_scrub_only_touches_anthropic_key(claude_node):
+    """Only ANTHROPIC_API_KEY is overridden; every other var still inherits."""
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert list(mock_options.call_args.kwargs["env"].keys()) == ["ANTHROPIC_API_KEY"]
+
+
+def test_use_api_key_true_does_not_scrub(claude_node):
+    """Opt-in (True) leaves env untouched so the ambient key bills to Console."""
+    claude_node.params = {"prompt": "test prompt", "use_api_key": True}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is True
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert "env" not in mock_options.call_args.kwargs
+
+
+def test_string_false_still_scrubs(claude_node):
+    """Footgun guard: a templated string "false" must NOT enable API billing.
+
+    Node params aren't coerced to bool at runtime and the string "false" is
+    truthy in Python — a naive bool(value) would silently bill per token.
+    """
+    claude_node.params = {"prompt": "test prompt", "use_api_key": "false"}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is False
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert mock_options.call_args.kwargs["env"] == {"ANTHROPIC_API_KEY": ""}
+
+
+def test_string_true_opts_in(claude_node):
+    """Templated string "true" opts into API billing (no scrub)."""
+    claude_node.params = {"prompt": "test prompt", "use_api_key": "true"}
+    prep_res = claude_node.prep({})
+    assert prep_res["use_api_key"] is True
+
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+
+    assert "env" not in mock_options.call_args.kwargs
+
+
+def test_use_api_key_invalid_value_raises(claude_node):
+    """A non-bool, non-canonical value fails closed with a TypeError."""
+    claude_node.params = {"prompt": "test prompt", "use_api_key": "maybe"}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep({})
+    assert "use_api_key must be true or false" in str(exc_info.value)
+
+
+def test_use_api_key_accepts_int_0_and_1(claude_node):
+    """Integer 0/1 is accepted (YAML coerces `- use_api_key: 1` to int, and the
+    string forms "1"/"0" are already accepted). 2+ still fails closed."""
+    v = claude_node._validate_use_api_key
+    assert v(1) is True
+    assert v(0) is False
+    for bad in (2, -1, 42):
+        with pytest.raises(TypeError):
+            v(bad)
+
+
+def test_default_does_not_mutate_os_environ(monkeypatch, claude_node):
+    """The empty-string override must NOT touch os.environ — a sibling llm node
+    in the same workflow keeps reading the real key for LiteLLM. This pins the
+    decision so a future switch to os.environ.pop fails loudly (#455 review)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-real")
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep({})
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+    # The subprocess env blanks the key...
+    assert mock_options.call_args.kwargs["env"] == {"ANTHROPIC_API_KEY": ""}
+    # ...but the process environment is untouched.
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-real"
+
+
+def test_use_api_key_registered_as_bool_param():
+    """use_api_key is a declared bool param — this drives the validator allow-list."""
+    md = PflowMetadataExtractor().extract_metadata(ClaudeCodeNode)
+    params = {p["key"]: p["type"] for p in md["params"]}
+    assert params.get("use_api_key") == "bool"
+
+
+# --- Auth-failure guidance (exec_fallback) ---
+
+
+def test_is_auth_error_matches_only_auth_markers():
+    """_is_auth_error matches CLI auth/billing markers, not generic failures."""
+    assert ClaudeCodeNode._is_auth_error(Exception("Invalid API key · Fix external API key"))
+    assert ClaudeCodeNode._is_auth_error(Exception("authentication_error: bad token"))
+    assert ClaudeCodeNode._is_auth_error(Exception("Your credit balance is too low"))
+    # Real not-logged-in result text — pins the narrowed "run /login" marker.
+    assert ClaudeCodeNode._is_auth_error(Exception("Not logged in · Please run /login"))
+    assert not ClaudeCodeNode._is_auth_error(Exception("Tool 'Bash' failed: exit 1"))
+    assert not ClaudeCodeNode._is_auth_error(Exception("connection reset by peer"))
+    # "oauth" marker was dropped: an MCP OAuth error surfaced inside a claude
+    # subprocess must NOT be misclassified as a Claude billing failure (#455 review).
+    assert not ClaudeCodeNode._is_auth_error(Exception("MCP server oauth flow failed"))
+    # The bare "/login" substring was narrowed to "run /login" — an unrelated
+    # /login path in agent output must no longer false-match.
+    assert not ClaudeCodeNode._is_auth_error(Exception("POST /login returned 500"))
+
+
+def test_exec_fallback_auth_default_suggests_subscription(claude_node):
+    """Default-mode auth failure points to subscription first, API key second."""
+    with pytest.raises(ValueError) as exc_info:
+        claude_node.exec_fallback({"use_api_key": False}, Exception("authentication_error"))
+    msg = str(exc_info.value)
+    assert "claude auth login" in msg
+    assert "- use_api_key: true" in msg
+
+
+def test_exec_fallback_auth_with_api_key_suggests_fixing_key(claude_node):
+    """Opt-in auth failure points to the Console key, not subscription setup."""
+    with pytest.raises(ValueError) as exc_info:
+        claude_node.exec_fallback({"use_api_key": True}, Exception("Your credit balance is too low"))
+    msg = str(exc_info.value)
+    assert "Anthropic Console" in msg
+    assert "Remove `- use_api_key: true`" in msg
+    assert "claude auth login" not in msg
+
+
+def test_exec_fallback_non_auth_error_has_no_auth_guidance(claude_node):
+    """Non-auth failures fall through to the generic message (no auth hint)."""
+    with pytest.raises(ValueError) as exc_info:
+        claude_node.exec_fallback({"use_api_key": False}, Exception("disk full"))
+    msg = str(exc_info.value)
+    assert "claude auth login" not in msg
+    assert "disk full" in msg
+
+
+# --- Regression: the SDK mangles the real auth error (found by real-CLI verify) ---
+#
+# The real CLI reports an invalid key as a result with is_error=True,
+# api_error_status=401, result="Invalid API key · Fix external API key" — but the
+# SDK forwards only the result SUBTYPE ("success"), raising a bare Exception
+# "Claude Code returned an error result: success". The useful text + status are
+# dropped. _run_claude_session must surface them from the ResultMessage so
+# exec_fallback can recognize the auth failure. The original mock tests passed by
+# feeding _is_auth_error synthetic strings the CLI never actually emits (#455).
+
+
+def test_invalid_api_key_surfaces_real_error_text_and_status(claude_node):
+    """The real "Invalid API key" text + api_error_status are surfaced on re-raise,
+    not the SDK's useless "...error result: success"."""
+    claude_node.params = {"prompt": "do a thing", "use_api_key": True}
+
+    async def mock_response(*args, **kwargs):
+        # Mirrors the real CLI: error result carrying the real text + 401 is
+        # yielded first, then the SDK raises a bare Exception with the subtype.
+        yield ResultMessage(
+            is_error=True,
+            result="Invalid API key · Fix external API key",
+            api_error_status=401,
+        )
+        raise Exception("Claude Code returned an error result: success")  # noqa: TRY002 - mirror SDK bare raise
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep({})
+        with pytest.raises(RuntimeError) as exc_info:
+            claude_node.exec(prep_res)
+
+    assert "Invalid API key" in str(exc_info.value)
+    assert "api_error_status=401" in str(exc_info.value)
+    # The enriched exception is now recognized as auth, and exec_fallback gives the
+    # use_api_key=True remediation (the key, not subscription setup).
+    assert ClaudeCodeNode._is_auth_error(exc_info.value)
+    with pytest.raises(ValueError) as fb:
+        claude_node.exec_fallback(prep_res, exc_info.value)
+    assert "Anthropic Console" in str(fb.value)
+    assert "Remove `- use_api_key: true`" in str(fb.value)
+
+
+def test_api_error_status_detected_even_without_text(claude_node):
+    """A 401 with no usable result text is still recognized as auth via the
+    structured status alone."""
+    claude_node.params = {"prompt": "do a thing", "use_api_key": True}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(is_error=True, result=None, api_error_status=401)
+        raise Exception("Claude Code returned an error result: success")  # noqa: TRY002 - mirror SDK bare raise
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep({})
+        with pytest.raises(RuntimeError) as exc_info:
+            claude_node.exec(prep_res)
+
+    assert "api_error_status=401" in str(exc_info.value)
+    assert ClaudeCodeNode._is_auth_error(exc_info.value)
+
+
+def test_non_auth_error_result_stays_generic(claude_node):
+    """A non-auth error result (no 401, no auth text) must NOT trigger auth
+    guidance — surfaced detail is preserved but routed to the generic message."""
+    claude_node.params = {"prompt": "do a thing"}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(is_error=True, result="Tool failed: disk full", api_error_status=None)
+        raise Exception("Claude Code returned an error result: error_during_execution")  # noqa: TRY002 - mirror SDK bare raise
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = claude_node.prep({})
+        with pytest.raises(RuntimeError) as exc_info:
+            claude_node.exec(prep_res)
+
+    assert not ClaudeCodeNode._is_auth_error(exc_info.value)
+    with pytest.raises(ValueError) as fb:
+        claude_node.exec_fallback(prep_res, exc_info.value)
+    assert "claude auth login" not in str(fb.value)
+    assert "disk full" in str(fb.value)
