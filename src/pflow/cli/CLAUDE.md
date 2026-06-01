@@ -250,7 +250,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 - **Use lazy imports** in command files and `commands/run.py` to avoid circular dependencies
 - **Don't mix output streams** — errors→stderr, results→stdout. This makes piping work.
 - **Don't mix routing and rendering** — stdout/stderr routing is TTY-agnostic; the stderr header in `_output_with_header` and the `\r` batch counter are the only TTY-sensitive writes
-- **`ignore_unknown_options=True` tradeoff** — typos like `--output-formt` silently pass through. `_validate_workflow_flags` in `commands/run.py` catches common misplaced flags.
+- **`ignore_unknown_options=True` is load-bearing, not lax** — it lets `--help` and any unknown dash token reach the `workflow` tuple instead of erroring at parse time; the per-workflow `--help` passthrough depends on it, so don't remove it. `_validate_workflow_flags` (`commands/run.py`) then rejects *every* stray leading-dash token after the workflow with a "use key=value" error (`--help` is the one whitelist; `-h` points to `--help`). This is what stops unknown flags like `--scenario x` from being silently dropped (GH #454). Note: `=`-bearing dash tokens (`--scenario=x`) skip this guard and fail later via the undeclared-input validator instead.
 
 ## Test Mapping
 

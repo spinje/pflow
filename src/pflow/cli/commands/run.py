@@ -455,41 +455,99 @@ def _preprocess_run_prefix(workflow: tuple[str, ...]) -> tuple[str, ...]:
     return workflow
 
 
-def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
-    """Validate that CLI flags are not misplaced in workflow arguments."""
-    misplaced_flags = [
-        arg
-        for arg in workflow
-        if arg
-        in (
-            "--no-trace",
-            "--verbose",
-            "-v",
-            "--output-key",
-            "-o",
-            "--output-format",
-            "--print",
-            "-p",
-            "--report",
-            "--report-dir",
-            "--validate-only",
-            "--dry-run",
-            "--cache",
-            "--no-cache",
-            "--only",
-        )
-    ]
-    if misplaced_flags:
-        from pflow.core.user_errors import UserFriendlyError
+# pflow's own flags. They configure the run; they belong BEFORE the workflow,
+# not after it. Click consumes most of these positionally (so they rarely reach
+# the workflow tuple), but group-level flags like --verbose/-v land here when
+# misplaced — and listing them keeps the "move it before" guidance precise.
+_PFLOW_FLAGS = frozenset({
+    "--no-trace",
+    "--verbose",
+    "-v",
+    "--output-key",
+    "-o",
+    "--output-format",
+    "--print",
+    "-p",
+    "--report",
+    "--report-dir",
+    "--validate-only",
+    "--dry-run",
+    "--cache",
+    "--no-cache",
+    "--only",
+})
 
+
+def _suggest_key_value(flag: str, workflow: tuple[str, ...]) -> str:
+    """Build the canonical ``key=value`` suggestion for a stray ``--flag`` token.
+
+    Pairs the flag with the token that follows it (``--scenario fail-mid`` →
+    ``scenario=fail-mid``) when that token looks like a value; otherwise falls
+    back to a ``key=<value>`` placeholder.
+    """
+    key = flag.lstrip("-")
+    idx = workflow.index(flag)
+    following = workflow[idx + 1] if idx + 1 < len(workflow) else None
+    if following is not None and not following.startswith("-") and "=" not in following:
+        return f"{key}={following}"
+    return f"{key}=<value>"
+
+
+def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
+    """Reject option-like tokens left after the workflow name.
+
+    After Click parses the run command, the only legal tokens are the workflow
+    name/path and ``key=value`` params. Any remaining leading-dash token is an
+    error — either a pflow flag placed after the workflow (move it before), or
+    an unknown option (agents reflexively type ``--flag``; redirect them to
+    ``key=value``). Silent-dropping these is the worst failure for an agent-first
+    CLI: a green run on the wrong inputs (GH #454).
+
+    ``--help`` is whitelisted — it routes to per-workflow help downstream
+    (``_handle_named_workflow``). ``=``-bearing tokens (e.g. ``--scenario=x``)
+    are left alone: those already fail loudly via the undeclared-input validator.
+    """
+    from pflow.core.user_errors import UserFriendlyError
+
+    stray = [arg for arg in workflow if arg.startswith("-") and "=" not in arg and arg != "--help"]
+    if not stray:
+        return
+
+    # The name/path the user typed, so suggestions are concrete and copy-pasteable.
+    # `<workflow>` only when the name was omitted (workflow[0] is itself a dash).
+    # Per-workflow `--help` (not `pflow describe`) is used to list inputs because
+    # it accepts BOTH file paths and saved names; `describe` only takes saved names.
+    target = workflow[0] if workflow and not workflow[0].startswith("-") else "<workflow>"
+
+    misplaced = [arg for arg in stray if arg in _PFLOW_FLAGS]
+    if misplaced:
         raise UserFriendlyError(
-            title="CLI flags must come BEFORE the workflow text",
-            explanation=f"Found misplaced flags: {', '.join(misplaced_flags)}",
-            suggestions=[
-                'pflow --verbose "analyze this data"',
-                'pflow --no-trace "run without tracing"',
-            ],
+            title="CLI flags must come BEFORE the workflow",
+            explanation=(
+                f"pflow flags configure the run and must precede the workflow. Found after it: {', '.join(misplaced)}"
+            ),
+            suggestions=[f"pflow {misplaced[0]} {target}"],
         )
+
+    bad = stray[0]
+    if bad == "-h":
+        raise UserFriendlyError(
+            title="Unknown option '-h'",
+            explanation="pflow uses '--help' to show a workflow's inputs and outputs.",
+            suggestions=[f"pflow {target} --help"],
+        )
+
+    raise UserFriendlyError(
+        title=f"Unknown option '{bad}'",
+        explanation=(
+            f"pflow passes workflow inputs as key=value, not --flags. "
+            f"'{bad}' was not recognized and would be silently ignored."
+        ),
+        suggestions=[
+            f"Did you mean '{_suggest_key_value(bad, workflow)}'?",
+            f"See this workflow's inputs: pflow {target} --help",
+        ],
+    )
 
 
 def _find_stdin_input(workflow_ir: dict[str, Any]) -> str | None:
@@ -903,8 +961,10 @@ def run(
         stdin_content, enhanced_stdin = _read_stdin_data()
         stdin_data = enhanced_stdin if enhanced_stdin else stdin_content
 
-        _validate_workflow_flags(workflow)
+        # Normalize the optional leading "run" token first so the flag guard
+        # sees the real workflow name at workflow[0] (concrete suggestions).
         workflow = _preprocess_run_prefix(workflow)
+        _validate_workflow_flags(workflow)
 
         raw_input = " ".join(workflow) if workflow else ""
         ctx.obj["workflow_text"] = raw_input
