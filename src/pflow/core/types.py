@@ -33,6 +33,16 @@ PYTHON_ALIASES_AT_S1: Final[dict[str, str]] = {
 }
 
 
+def outer_base_type(type_str: str) -> str:
+    """Strip a parameterized generic to its outer base name (``list[str]`` -> ``list``).
+
+    The element type is discarded: ``dict[str, int]`` -> ``dict``,
+    ``list[dict]`` -> ``list``. Bare names pass through unchanged. Used wherever a
+    type string must be compared against the bare type vocabulary.
+    """
+    return type_str.split("[", 1)[0].strip()
+
+
 @dataclass
 class TypeVocabularyError(ValueError):
     """Raised when an authored workflow uses an invalid S1 type name."""
@@ -136,7 +146,7 @@ class TypeSpec:
 
 def _raise_parameterized_generic_error(raw: str, stripped: str) -> NoReturn:
     """Raise the canonical error for unsupported parameterized generics."""
-    base = stripped.split("[", 1)[0].strip()
+    base = outer_base_type(stripped)
     if base in PYTHON_ALIASES_AT_S1:
         canonical = PYTHON_ALIASES_AT_S1[base]
         suggestion = (

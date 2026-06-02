@@ -7,6 +7,7 @@ ensuring that resolved values match expected parameter types.
 import re
 from typing import Any, Optional
 
+from pflow.core.types import outer_base_type
 from pflow.registry.registry import Registry
 
 # Type compatibility matrix
@@ -97,8 +98,21 @@ def is_type_compatible(source_type: str, target_type: str) -> bool:
         target_types = [t.strip() for t in target_type.split("|")]
         return any(is_type_compatible(source_type, tt) for tt in target_types)
 
-    # Check compatibility matrix
-    return target_type in TYPE_COMPATIBILITY_MATRIX.get(source_type, [])
+    # Strip parameterized generics to their outer collection type before the
+    # matrix lookup. The producer side already canonicalizes (list[str] -> array),
+    # but registry param types keep generics verbatim (list[str]); without this an
+    # array source could never satisfy a list[str] param. Element types are not
+    # compared — consistent with code-node outputs, which also collapse to the
+    # bare collection type. A future strict pass (Task 120) could add element-type
+    # checking here. (issue #460)
+    source_base = outer_base_type(source_type)
+    target_base = outer_base_type(target_type)
+    # Identity short-circuit: covers unknown-but-equal bracketed types (e.g. a
+    # user-named generic `foo[bar]` outside the canonical vocabulary). For
+    # canonical names this is redundant — every matrix entry already lists itself.
+    if source_base == target_base:
+        return True
+    return target_base in TYPE_COMPATIBILITY_MATRIX.get(source_base, [])
 
 
 def infer_template_type(  # noqa: C901

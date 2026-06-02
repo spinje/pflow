@@ -165,6 +165,41 @@ class TestSimpleTemplateJsonParsing:
         assert result["array_param"] == ["item1", "item2"]
 
 
+class TestParameterizedGenericJsonParsing:
+    """Auto-parse must fire for parameterized-generic params, not just bare ones.
+
+    Regression for issue #460 / PR #461: the validator accepts a value wired into a
+    ``list[str]`` / ``dict[str, int]`` param (it strips the generic), but the runtime
+    auto-parse gate only knew bare names — so a JSON string fed into ``images:
+    list[str]`` validated clean then stayed an un-parsed string at runtime. The fix
+    normalizes declared types to their outer base in ``build_type_cache``.
+    """
+
+    def test_json_array_string_parses_for_list_str_param(self):
+        """JSON-array string -> list for a ``list[str]`` param (the issue #460 case)."""
+        interface = {"params": [{"key": "images", "type": "list[str]"}]}
+        result = _resolve({"images": "${x}"}, {"x": '["a.png", "b.png"]'}, interface)
+
+        assert isinstance(result["images"], list)
+        assert result["images"] == ["a.png", "b.png"]
+
+    def test_json_object_string_parses_for_dict_generic_param(self):
+        """JSON-object string -> dict for a ``dict[str, int]`` param."""
+        interface = {"params": [{"key": "cfg", "type": "dict[str, int]"}]}
+        result = _resolve({"cfg": "${x}"}, {"x": '{"a": 1, "b": 2}'}, interface)
+
+        assert isinstance(result["cfg"], dict)
+        assert result["cfg"] == {"a": 1, "b": 2}
+
+    def test_union_with_generic_is_not_collapsed(self):
+        """A union containing a generic stays a union (no auto-parse) — not collapsed to list."""
+        interface = {"params": [{"key": "p", "type": "list[str]|str"}]}
+        # The runtime never auto-parses unions; the value must pass through unchanged.
+        result = _resolve({"p": "${x}"}, {"x": '["a", "b"]'}, interface)
+
+        assert result["p"] == '["a", "b"]'
+
+
 class TestComplexTemplateNoParsing:
     """Test that complex templates are NOT auto-parsed (escape hatch)."""
 

@@ -9,6 +9,7 @@ import re
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.types import outer_base_type
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.type_checker import (
@@ -32,27 +33,6 @@ _QUOTED_TEMPLATE_PATTERN = re.compile(r"'\$\{([^}]+)\}'")
 _SHELL_SAFE_TYPES = {"str", "string", "any"}
 
 
-def _extract_base_type(type_str: str) -> str:
-    """Extract base type from generic type string.
-
-    Generic types like list[dict] or dict[str, any] have a base type
-    (list, dict) that determines their shell command compatibility.
-
-    Examples:
-        list[dict] -> list
-        dict[str, any] -> dict
-        str -> str
-        list -> list
-
-    Args:
-        type_str: Type string, possibly with generic parameters
-
-    Returns:
-        Base type without generic parameters
-    """
-    return type_str.split("[")[0]
-
-
 def _is_shell_safe_type(inferred_type: str, blocked_types: set[str]) -> tuple[bool, str | None]:
     """Check if a type is safe for shell command embedding.
 
@@ -67,7 +47,7 @@ def _is_shell_safe_type(inferred_type: str, blocked_types: set[str]) -> tuple[bo
     """
     # Split union and get base type for each component
     type_parts = [t.strip() for t in inferred_type.split("|")]
-    base_types = [_extract_base_type(t) for t in type_parts]
+    base_types = [outer_base_type(t) for t in type_parts]
 
     # Tier 1: If union contains a safe base type (str, string, any), allow it
     if any(t in _SHELL_SAFE_TYPES for t in base_types):

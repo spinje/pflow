@@ -117,6 +117,76 @@ def test_valid_workflow_passes_validation_and_runs(tmp_path: Path) -> None:
     assert result.success, [diagnostic.message for diagnostic in result.diagnostics]
 
 
+def _write_images_workflow(tmp_path: Path, annotation: str) -> Path:
+    """Code node `result: <annotation>` feeding the llm `images: list[str]` param.
+
+    Exercises the node-parameter path (Pass 6) end-to-end against the real llm
+    node — distinct from the code-input path (Pass 9) covered above. The llm
+    `images` param keeps its generic verbatim (``list[str]``), while the code
+    output canonicalizes to ``array``.
+    """
+    path = tmp_path / "images.pflow.md"
+    path.write_text(
+        f"""# Issue 460
+Code node produces image paths consumed by the llm images param.
+
+## Steps
+
+### make-images
+
+Build a list of image paths.
+
+- type: code
+
+```python code
+result: {annotation} = ["a.png", "b.png"]
+```
+
+### use-images
+
+Consume the list of image paths.
+
+- type: llm
+- images: ${{make-images.result}}
+
+```prompt
+Describe these images.
+```
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize("annotation", ["list[str]", "list", "list[int]"])
+def test_issue_460_generic_code_output_satisfies_generic_param(tmp_path: Path, annotation: str) -> None:
+    """A code `result: list[...]` (or bare `list`) must satisfy the llm `images: list[str]` param.
+
+    Regression for issue #460: the producer canonicalizes ``list[str]`` -> ``array``,
+    but the registry param stays verbatim ``list[str]`` and the matrix only knew bare
+    names, so validation spuriously failed. ``list[int]`` also passes — generics
+    collapse to their outer collection type (no element check).
+    """
+    path = _write_images_workflow(tmp_path, annotation)
+    validation = WorkflowRunner().validate(str(path), params={})
+    assert validation.valid, [diagnostic.message for diagnostic in validation.errors]
+
+
+def test_issue_460_dict_output_still_rejected_by_list_param(tmp_path: Path) -> None:
+    """A code `result: dict[...]` must STILL fail the llm `images: list[str]` param.
+
+    The fix collapses generics to the outer collection type; it must not let a
+    genuinely-wrong outer type (object vs array) through.
+    """
+    path = _write_images_workflow(tmp_path, "dict[str, int]")
+    validation = WorkflowRunner().validate(str(path), params={})
+
+    assert not validation.valid
+    assert any("images" in diagnostic.message for diagnostic in validation.errors), [
+        diagnostic.message for diagnostic in validation.errors
+    ]
+
+
 def test_runtime_still_defends_when_validation_bypassed() -> None:
     """Direct compile+run still fails at runtime when validation is skipped."""
     from pflow.runtime import WorkflowEngine, compile_workflow

@@ -2,7 +2,23 @@
 
 import pytest
 
-from pflow.core.types import CANONICAL_TYPES, TypeSpec, TypeVocabularyError
+from pflow.core.types import CANONICAL_TYPES, TypeSpec, TypeVocabularyError, outer_base_type
+
+
+class TestOuterBaseType:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("list[str]", "list"),
+            ("dict[str, int]", "dict"),
+            ("list[dict[str, int]]", "list"),  # only the outermost generic matters
+            ("list", "list"),  # bare names pass through
+            ("array", "array"),
+            ("  list[str]  ", "list"),  # surrounding whitespace stripped
+        ],
+    )
+    def test_strips_outer_generic(self, raw: str, expected: str) -> None:
+        assert outer_base_type(raw) == expected
 
 
 class TestTypeSpecParse:
