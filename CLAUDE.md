@@ -224,6 +224,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 
 **Next?**
 - Task 125: Human-in-the-Loop Approval Gates
+- Task 164: Resume Workflow From a Failed Node
 
 **v0.14.0**
 - Task 142: Explore Function-Based Code Node Syntax
