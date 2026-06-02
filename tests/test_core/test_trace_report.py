@@ -558,6 +558,42 @@ class TestBuildSummary:
         assert "gpt-4" in md
         assert "claude" in md
 
+    def test_agent_calls_label_with_turns_and_cache(self) -> None:
+        """claude-code runs render 'Agent calls: N (T turns)', and `in` is the
+        true total (uncached + cache-write + cache-read) with a cache-% suffix."""
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 9,
+                "agent_calls": 9,
+                "total_num_turns": 104,
+                "total_input_tokens": 1743,
+                "total_cache_creation_tokens": 153248,
+                "total_cache_read_tokens": 1982131,
+                "total_output_tokens": 41733,
+                "models_used": ["claude-sonnet-4-5"],
+            }
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "- Agent calls: 9 (104 turns)" in md
+        # 1,743 + 153,248 + 1,982,131 = 2,137,122 in; 1,982,131 / 2,137,122 ≈ 93%
+        assert "- Tokens: 2,137,122 in / 41,733 out  ·  93% of input cached" in md
+        assert "LLM calls" not in md
+
+    def test_mixed_agent_and_llm_calls_label(self) -> None:
+        """A run with both claude-code and llm nodes surfaces both counts."""
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 5,
+                "agent_calls": 2,
+                "total_num_turns": 30,
+                "total_input_tokens": 1000,
+                "total_output_tokens": 500,
+                "models_used": ["claude-sonnet-4-5", "gpt-4"],
+            }
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "- Agent calls: 2 (30 turns) · LLM calls: 3" in md
+
     def test_empty_llm_summary_omitted(self) -> None:
         """LLM summary with zero calls should not render models/tokens lines."""
         trace = _make_trace(
@@ -585,19 +621,6 @@ class TestBuildSummary:
         assert "- LLM calls: 1" in md
         assert "Tokens" not in md
         assert "- Models: gpt-4" in md
-
-    def test_llm_summary_fallback_total_tokens(self) -> None:
-        """Old traces without input/output breakdown fall back to total_tokens."""
-        trace = _make_trace(
-            llm_summary={
-                "total_calls": 2,
-                "total_tokens": 500,
-                "models_used": ["gpt-4"],
-            }
-        )
-        md = _build_summary(trace, source_path="test")
-        assert "- Tokens: 500" in md
-        assert "in /" not in md
 
     def test_pipeline_table(self) -> None:
         trace = _make_trace(
@@ -698,7 +721,8 @@ class TestBuildNodeFile:
 
         assert "- Status: success [cached]" in md
         assert "- Source model: anthropic/claude-sonnet-4-5" in md
-        assert "- Source tokens: 1,000 in / 100 out" in md
+        # `in` is the true total: 1,000 uncached + 950 cache-read = 1,950 (49% cached).
+        assert "- Source tokens: 1,950 in / 100 out  ·  49% of input cached" in md
         assert "- Paid this run: $0.0000" in md
         assert "- Historical source cost: $0.0700" in md
         assert "- Cost: $0.0700" not in md
@@ -940,33 +964,34 @@ class TestBuildNodeFile:
 class TestCacheTelemetrySection:
     """Trace report per-call cache telemetry rendering."""
 
-    def test_renders_section_when_cache_creation_nonzero(self) -> None:
+    def test_live_cache_write_folds_into_tokens_line_no_section(self) -> None:
+        """A live (non-replay, non-declared) cache no longer emits a divorced
+        ``## Cache telemetry`` section — the tiers are part of the input total
+        on the Tokens line. cache-write only (0 read) ⇒ no cache-% suffix."""
         event = _make_event(
             llm_call={
                 "cache_creation_input_tokens": 1500,
                 "cache_read_input_tokens": 0,
-                "cache_key": "abc123",
             },
         )
         md = _build_node_file(event)
 
-        assert "## Cache telemetry" in md
-        assert "Cache write: 1,500 tokens" in md
-        assert "Cache read: 0 tokens" in md
-        assert "Cache key: abc123" in md
+        assert "## Cache telemetry" not in md
+        assert "- Tokens: 1,500 in / 0 out" in md
 
-    def test_renders_section_when_cache_read_nonzero(self) -> None:
+    def test_live_cache_read_folds_into_tokens_line_with_pct(self) -> None:
+        """A live cache-read fold: ``in`` is the total and the cache-read share
+        shows as ``% of input cached`` — no separate section."""
         event = _make_event(
             llm_call={
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 8062,
-                "cache_key": "def456",
             },
         )
         md = _build_node_file(event)
 
-        assert "## Cache telemetry" in md
-        assert "Cache read: 8,062 tokens" in md
+        assert "## Cache telemetry" not in md
+        assert "- Tokens: 8,062 in / 0 out  ·  100% of input cached" in md
 
     def test_omitted_when_no_cache_signal(self) -> None:
         """Plain LLM call without cache activity suppresses the section."""
@@ -1083,10 +1108,11 @@ class TestCacheTelemetrySection:
         assert "Cache write: 0 tokens" in md
         assert "Cache read: 0 tokens" in md
 
-    def test_renders_in_batch_item_file(self) -> None:
-        """Batch items reuse _format_resolutions; cache telemetry must
-        propagate to per-item .md files. Pins the contract against future
-        refactors that move batch-item rendering off the shared helper."""
+    def test_cache_tiers_fold_into_tokens_line_in_batch_item_file(self) -> None:
+        """Batch per-item files reuse the shared metadata helper, so a live
+        cache's tiers land on the item's Tokens line (input total), not in a
+        separate section. Pins the contract against future refactors that move
+        batch-item rendering off the shared helper."""
         from pflow.core.trace_report import _build_batch_item_file
 
         parent_event = _make_event(node_id="batch-parent", node_type="LLMNode")
@@ -1097,13 +1123,12 @@ class TestCacheTelemetrySection:
             "llm_call": {
                 "cache_creation_input_tokens": 1500,
                 "cache_read_input_tokens": 0,
-                "cache_key": "item-0",
             },
         }
         md = _build_batch_item_file(item, parent_event)
 
-        assert "## Cache telemetry" in md
-        assert "Cache write: 1,500 tokens" in md
+        assert "## Cache telemetry" not in md
+        assert "- Tokens: 1,500 in / 0 out" in md
 
     def test_thinking_tokens_renders_in_metadata_when_nonzero(self) -> None:
         event = _make_event(

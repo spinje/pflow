@@ -232,6 +232,10 @@ class _LLMSummaryAccumulator:
     total_tokens: int = 0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_cache_creation_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_num_turns: int = 0
+    agent_calls: int = 0
     priced_cost: float = 0.0
     models: set[str] = field(default_factory=set)
     unavailable_models: Counter[str] = field(default_factory=Counter)
@@ -244,6 +248,15 @@ class _LLMSummaryAccumulator:
         self.total_tokens += call.get("total_tokens", 0)
         self.total_input_tokens += call.get("input_tokens", 0)
         self.total_output_tokens += call.get("output_tokens", 0)
+        self.total_cache_creation_tokens += call.get("cache_creation_input_tokens", 0) or 0
+        self.total_cache_read_tokens += call.get("cache_read_input_tokens", 0) or 0
+        # num_turns is claude-code-only — its presence marks an AGENT call (one
+        # invocation = many internal turns), distinct from a single-shot llm call.
+        turns = call.get("num_turns")
+        if turns is not None and not is_warmup:
+            self.agent_calls += 1
+            if isinstance(turns, int) and turns > 0:
+                self.total_num_turns += turns
         cost = call.get("cost_usd")
         model = call.get("model") or ""
         is_real_model = bool(model) and model != VALIDATION_PLACEHOLDER
@@ -265,6 +278,17 @@ class _LLMSummaryAccumulator:
             "total_output_tokens": self.total_output_tokens,
             "models_used": sorted(self.models),
         }
+        # Additive within trace 2.x — omitted when zero so older readers and
+        # non-caching/non-agent runs stay unchanged. ``total_input_tokens`` is
+        # the UNCACHED slice; renderers add the two cache tiers for the true total.
+        if self.total_cache_creation_tokens:
+            result["total_cache_creation_tokens"] = self.total_cache_creation_tokens
+        if self.total_cache_read_tokens:
+            result["total_cache_read_tokens"] = self.total_cache_read_tokens
+        if self.agent_calls:
+            result["agent_calls"] = self.agent_calls
+        if self.total_num_turns:
+            result["total_num_turns"] = self.total_num_turns
         if self.unavailable_models or self.unavailable_models_unnamed_count:
             result["total_cost_usd"] = None
             result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None

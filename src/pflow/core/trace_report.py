@@ -346,6 +346,47 @@ def _format_cost(cost: float | None) -> str:
     return f"${cost:.4f}"
 
 
+def _input_token_total(llm_call: dict[str, Any]) -> tuple[int, int]:
+    """Return ``(total_input_tokens, cache_read_tokens)`` for one LLM call.
+
+    LLM input is billed in three tiers that SUM to the true input the model
+    processed: uncached (``input_tokens``) + cache-write
+    (``cache_creation_input_tokens``) + cache-read (``cache_read_input_tokens``).
+    The report headlines that total and surfaces the cache-read share as a
+    cache-hit %, rather than showing the uncached slice alone \u2014 which made
+    cache-heavy agent runs look like ``in`` << ``out`` and divorced the cache
+    numbers from the token line.
+    """
+    uncached = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0)) or 0
+    cache_write = llm_call.get("cache_creation_input_tokens", 0) or 0
+    cache_read = llm_call.get("cache_read_input_tokens", 0) or 0
+    return uncached + cache_write + cache_read, cache_read
+
+
+def _format_tokens(total_in: int, tokens_out: int, cache_read: int, *, with_cache_pct: bool) -> str:
+    """``<total_in> in / <out> out`` with an optional ``\u00b7 N% of input cached``."""
+    cell = f"{total_in:,} in / {tokens_out:,} out"
+    if with_cache_pct and cache_read > 0 and total_in > 0:
+        cell += f"  \u00b7  {round(cache_read / total_in * 100)}% of input cached"
+    return cell
+
+
+def _format_call_count_line(total_calls: int, agent_calls: int, total_turns: int) -> str:
+    """Summary line for LLM/agent invocations.
+
+    ``claude-code`` nodes are agentic \u2014 one invocation spans many internal
+    turns \u2014 so they're labelled "Agent calls" with the turn total, distinct
+    from single-shot "LLM calls". A mixed run surfaces both counts.
+    """
+    turns = f" ({total_turns:,} turns)" if total_turns else ""
+    llm_calls = total_calls - agent_calls
+    if agent_calls and llm_calls:
+        return f"- Agent calls: {agent_calls}{turns} \u00b7 LLM calls: {llm_calls}"
+    if agent_calls:
+        return f"- Agent calls: {agent_calls}{turns}"
+    return f"- LLM calls: {total_calls}"
+
+
 def _format_llm_call_metadata(
     llm_call: dict[str, Any],
     lines: list[str],
@@ -367,9 +408,9 @@ def _format_llm_call_metadata(
     turns_label = "Source turns" if cached else "Turns"
     session_label = "Source session" if cached else "Session"
     lines.append(f"- {model_label}: {llm_call.get('model', '?')}")
-    tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
-    tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
-    lines.append(f"- {tokens_label}: {tokens_in:,} in / {tokens_out:,} out")
+    total_in, cache_read = _input_token_total(llm_call)
+    tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0)) or 0
+    lines.append(f"- {tokens_label}: {_format_tokens(total_in, tokens_out, cache_read, with_cache_pct=True)}")
     thinking_tokens = llm_call.get("thinking_tokens")
     if isinstance(thinking_tokens, int) and thinking_tokens > 0:
         lines.append(f"- {thinking_label}: {thinking_tokens:,} tokens")
@@ -750,14 +791,20 @@ def _build_summary(
 
     llm = trace.get("llm_summary")
     if llm and llm.get("total_calls", 0) > 0:
-        lines.append(f"- LLM calls: {llm.get('total_calls', 0)}")
-        tokens_in = llm.get("total_input_tokens", 0)
+        lines.append(
+            _format_call_count_line(
+                llm.get("total_calls", 0),
+                llm.get("agent_calls", 0),
+                llm.get("total_num_turns", 0),
+            )
+        )
+        # `in` is the TRUE total: uncached + cache-write + cache-read (the three
+        # billing tiers). total_input_tokens alone is just the uncached slice.
+        cache_read = llm.get("total_cache_read_tokens", 0)
+        total_in = llm.get("total_input_tokens", 0) + llm.get("total_cache_creation_tokens", 0) + cache_read
         tokens_out = llm.get("total_output_tokens", 0)
-        if tokens_in or tokens_out:
-            lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
-        elif llm.get("total_tokens", 0):
-            # Fallback for traces generated before input/output breakdown was added
-            lines.append(f"- Tokens: {llm['total_tokens']:,}")
+        if total_in or tokens_out:
+            lines.append(f"- Tokens: {_format_tokens(total_in, tokens_out, cache_read, with_cache_pct=True)}")
         cost = llm.get("total_cost_usd")
         if cost is not None and cost > 0:
             lines.append(f"- Total cost: ${cost:.4f}")
@@ -971,9 +1018,10 @@ def _row_tokens(event_or_item: dict[str, Any]) -> str:
     llm_call = event_or_item.get("llm_call")
     if not isinstance(llm_call, dict):
         return "—"
-    tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0)) or 0
+    total_in, cache_read = _input_token_total(llm_call)
     tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0)) or 0
-    return f"{tokens_in:,} in / {tokens_out:,} out"
+    # Compact table cell: total in/out, no cache-% (that lives on the per-node line).
+    return _format_tokens(total_in, tokens_out, cache_read, with_cache_pct=False)
 
 
 def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> None:
@@ -1156,17 +1204,18 @@ def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
     cache_age_sec = llm_call.get("cache_age_sec")
     chunks_skipped = llm_call.get("cache_chunks_skipped") or []
     is_cached_replay = bool(llm_call.get("cache_source"))
+    # llm nodes that opted into prompt caching carry the effective system in
+    # `llm_system`; claude-code's prompt-cache tiers come from the SDK and have
+    # no `llm_system`.
+    declared_cache = bool(event.get("llm_system"))
 
-    # When llm_system is present the workflow opted into caching — render the
-    # section even with all-zero tokens so agents see "declared cache, didn't
-    # fire" instead of silent suppression.
-    has_signal = (
-        is_cached_replay
-        or (isinstance(cache_creation, int) and cache_creation > 0)
-        or (isinstance(cache_read, int) and cache_read > 0)
-        or bool(chunks_skipped)
-        or bool(event.get("llm_system"))
-    )
+    # Live prompt-cache tiers (write/read) are now folded into the "- Tokens:"
+    # line as the input total + "% of input cached". This section remains ONLY
+    # for what that line can't carry: a memo/result REPLAY (cache_key + age), or
+    # an llm node that DECLARED caching — so "declared but didn't fire" stays
+    # visible even at zero tokens. A live claude-code call (cache fired, no
+    # declaration, not a replay) no longer emits a divorced section.
+    has_signal = is_cached_replay or declared_cache or bool(chunks_skipped)
     if not has_signal:
         return
 
@@ -1178,10 +1227,13 @@ def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
         lines.append("## Cache telemetry")
     lines.append("")
 
-    if isinstance(cache_creation, int):
-        lines.append(f"- Cache write: {cache_creation:,} tokens")
-    if isinstance(cache_read, int):
-        lines.append(f"- Cache read: {cache_read:,} tokens")
+    # Token tiers only answer "did the DECLARED cache fire?" — show them for the
+    # declared/replay cases; for live claude-code they're already on the Tokens line.
+    if declared_cache or is_cached_replay:
+        if isinstance(cache_creation, int):
+            lines.append(f"- Cache write: {cache_creation:,} tokens")
+        if isinstance(cache_read, int):
+            lines.append(f"- Cache read: {cache_read:,} tokens")
     if cache_key:
         lines.append(f"- Cache key: {cache_key}")
     if is_cached_replay and isinstance(cache_age_sec, (int, float)):
