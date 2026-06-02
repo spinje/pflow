@@ -364,6 +364,8 @@ def _format_llm_call_metadata(
     model_label = "Source model" if cached else "Model"
     tokens_label = "Source tokens" if cached else "Tokens"
     thinking_label = "Source thinking" if cached else "Thinking"
+    turns_label = "Source turns" if cached else "Turns"
+    session_label = "Source session" if cached else "Session"
     lines.append(f"- {model_label}: {llm_call.get('model', '?')}")
     tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
     tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
@@ -371,6 +373,16 @@ def _format_llm_call_metadata(
     thinking_tokens = llm_call.get("thinking_tokens")
     if isinstance(thinking_tokens, int) and thinking_tokens > 0:
         lines.append(f"- {thinking_label}: {thinking_tokens:,} tokens")
+    # num_turns / session_id are claude-code-only; llm-node calls omit them and
+    # the guards skip the lines. num_turns counts the main agent's loop only —
+    # subagent turns are not included (a lens-deploying review node can show a
+    # low count despite heavy subagent work).
+    num_turns = llm_call.get("num_turns")
+    if isinstance(num_turns, int) and num_turns > 0:
+        lines.append(f"- {turns_label}: {num_turns:,}")
+    session_id = llm_call.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        lines.append(f"- {session_label}: {session_id}")
     lines.append(f"- Paid this run: {_format_cost(paid_cost)}")
 
     historical_cost = llm_call.get("cost_usd")

@@ -649,6 +649,47 @@ class TestBuildNodeFile:
         assert "- Tokens: 1,000 in / 200 out" in md
         assert "- Paid this run: $0.0420" in md
 
+    def test_llm_metadata_shows_turns_and_session(self) -> None:
+        # claude-code nodes carry num_turns (agent loop effort) and session_id.
+        event = _make_event(
+            llm_call={
+                "model": "claude-sonnet-4-5",
+                "input_tokens": 93,
+                "output_tokens": 3477,
+                "cost_usd": 0.1957,
+                "num_turns": 18,
+                "session_id": "7e81004e-5ba2-4c9f",
+            }
+        )
+        md = _build_node_file(event)
+        assert "- Turns: 18" in md
+        assert "- Session: 7e81004e-5ba2-4c9f" in md
+
+    def test_llm_metadata_omits_turns_and_session_when_absent(self) -> None:
+        # llm-node (LiteLLM) calls carry neither field — the lines must not appear.
+        event = _make_event(
+            llm_call={
+                "model": "gpt-4",
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "cost_usd": 0.042,
+            }
+        )
+        md = _build_node_file(event)
+        assert "- Turns:" not in md
+        assert "- Session:" not in md
+
+    def test_cached_llm_metadata_uses_source_turns_and_session_labels(self) -> None:
+        builder = TraceFixtureBuilder()
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07)
+        event["llm_call"]["num_turns"] = 5
+        event["llm_call"]["session_id"] = "cached-session-id"
+
+        md = _build_node_file(event)
+
+        assert "- Source turns: 5" in md
+        assert "- Source session: cached-session-id" in md
+
     def test_cached_llm_metadata_splits_paid_and_historical_cost(self) -> None:
         builder = TraceFixtureBuilder()
         event = builder.cached_llm_event_with_call("draft", cost_usd=0.07)
