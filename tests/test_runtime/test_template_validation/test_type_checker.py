@@ -148,6 +148,13 @@ class TestTypeCompatibilityGenerics:
         assert is_type_compatible("list[str]|array", "list") is True
         assert is_type_compatible("list[str]|object", "list") is False
 
+    def test_unknown_bracketed_type_does_not_become_compatible(self):
+        # An unknown generic base must not be promoted to any-compatible: it has no
+        # matrix entry, so only an identical base matches.
+        assert is_type_compatible("weirdtype[x]", "str") is False
+        assert is_type_compatible("str", "weirdtype[x]") is False
+        assert is_type_compatible("weirdtype[x]", "weirdtype[y]") is True  # equal outer base
+
 
 class TestTemplateTypeInference:
     """Tests for infer_template_type()."""

@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from pflow.core.json_utils import try_parse_json
 from pflow.core.param_coercion import coerce_param_for_node
+from pflow.core.types import outer_base_type
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .template_errors import (
@@ -26,8 +27,29 @@ from .types import TemplateConfig
 logger = logging.getLogger(__name__)
 
 
+def _runtime_base_type(type_str: str) -> str:
+    """Normalize a declared type for runtime comparison against bare type names.
+
+    The runtime type machinery (the JSON auto-parse gate in ``resolve_templates``
+    and ``validate_resolved_type``) compares against bare names — ``dict``/``list``/
+    ``object``/``array``/``str``. Strip a parameterized generic to its outer base so
+    ``list[str]`` is recognized as ``list``. Without this, a code/shell value wired
+    into a ``list[str]`` param would pass validation (the validator already strips
+    generics — see ``type_checker.is_type_compatible``) but silently fail to
+    JSON-auto-parse at runtime (issue #460 / PR #461).
+
+    Unions are left intact — they are never auto-parsed, and collapsing
+    ``list[str]|str`` to ``list`` would wrongly start parsing them.
+    """
+    return type_str if "|" in type_str else outer_base_type(type_str)
+
+
 def build_type_cache(interface_metadata: Optional[dict[str, Any]]) -> dict[str, str]:
     """Extract param_key -> expected_type from registry interface metadata.
+
+    Declared types are normalized to their outer base via ``_runtime_base_type``
+    (``list[str]`` -> ``list``) so the runtime type machinery, which only speaks
+    bare type names, stays in sync with the generic-aware validation layer.
 
     Args:
         interface_metadata: Node interface metadata from registry
@@ -49,7 +71,7 @@ def build_type_cache(interface_metadata: Optional[dict[str, Any]]) -> dict[str, 
                 key = input_spec.get("key")
                 type_str = input_spec.get("type")
                 if key and type_str:
-                    types[key] = type_str
+                    types[key] = _runtime_base_type(type_str)
 
     # Extract types from params
     params = interface_metadata.get("params", [])
@@ -59,7 +81,7 @@ def build_type_cache(interface_metadata: Optional[dict[str, Any]]) -> dict[str, 
                 key = param_spec.get("key")
                 type_str = param_spec.get("type")
                 if key and type_str:
-                    types[key] = type_str
+                    types[key] = _runtime_base_type(type_str)
 
     return types
 

@@ -329,7 +329,9 @@ class TestPerformance:
         assert len(expected_types) == 5
         assert expected_types["prompt"] == "str"
         assert expected_types["model"] == "str"
-        assert expected_types["images"] == "list[str]"
+        # Parameterized generics are normalized to their outer base so the runtime
+        # type machinery (which speaks bare names) recognizes them (issue #460).
+        assert expected_types["images"] == "list"
 
     def test_type_cache_reusable(self):
         """build_type_cache can be called once and reused across multiple resolutions."""
