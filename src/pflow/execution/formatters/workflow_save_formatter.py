@@ -133,7 +133,7 @@ def format_execution_hint(name: str, workflow_ir: dict[str, Any]) -> str:
         ...         "data": {"required": True, "type": "array"}
         ...     }
         ... })
-        'pflow analyzer count=<number> data=<array>'
+        "pflow analyzer count=<number> data='[...]'"
     """
     base_command = f"pflow {name}"
 

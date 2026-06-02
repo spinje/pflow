@@ -605,21 +605,19 @@ class MCPNode(Node):
             Parsed JSON object (dict/list/primitive) if text is valid JSON,
             otherwise returns the original text string unchanged.
 
-        Examples:
-            >>> # JSON text gets parsed into Python objects
-            >>> content.text = '{"key": "value"}'
-            >>> result = self._extract_text_content(content)
-            >>> assert isinstance(result, dict)  # Parsed as dict
+        Examples::
 
-            >>> # Plain text remains as string
-            >>> content.text = 'plain text message'
-            >>> result = self._extract_text_content(content)
-            >>> assert isinstance(result, str)  # Unchanged string
+            # JSON text gets parsed into Python objects:
+            content.text = '{"key": "value"}'
+            self._extract_text_content(content)  # -> {"key": "value"} (dict)
 
-            >>> # Pre-parsed dict from MCP SDK is preserved
-            >>> content.text = {"key": "value"}  # Already a dict
-            >>> result = self._extract_text_content(content)
-            >>> assert isinstance(result, dict)  # Preserved as dict
+            # Plain text remains a string:
+            content.text = "plain text message"
+            self._extract_text_content(content)  # -> "plain text message" (str)
+
+            # A pre-parsed dict from the MCP SDK is preserved unchanged:
+            content.text = {"key": "value"}
+            self._extract_text_content(content)  # -> {"key": "value"} (dict)
 
         Note:
             This enables nested template access like ${node.result.data.field}

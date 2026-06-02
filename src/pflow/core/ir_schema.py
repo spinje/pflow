@@ -22,18 +22,17 @@ Design Decisions:
 
 Example usage:
     >>> from pflow.core import validate_ir
-    >>>
-    >>> # Valid minimal IR
-    >>> ir = {
+
+    >>> # Valid minimal IR passes silently (no exception)
+    >>> validate_ir({
     ...     "ir_version": "0.1.0",
     ...     "nodes": [
     ...         {"id": "n1", "type": "read-file", "params": {"file_path": "input.txt"}}
     ...     ]
-    ... }
-    >>> validate_ir(ir)  # No exception raised
-    >>>
-    >>> # IR with edges and template variables
-    >>> pipeline = {
+    ... })
+
+    >>> # Template variables are valid strings and validate fine
+    >>> validate_ir({
     ...     "ir_version": "0.1.0",
     ...     "nodes": [
     ...         {"id": "read", "type": "read-file", "params": {"file_path": "${input_file}"}},
@@ -44,15 +43,14 @@ Example usage:
     ...         {"from": "read", "to": "proc"},
     ...         {"from": "proc", "to": "save"}
     ...     ]
-    ... }
-    >>> validate_ir(pipeline)  # Template variables are valid strings
-    >>>
-    >>> # Invalid IR (missing required field)
-    >>> bad_ir = {"nodes": [{"id": "n1"}]}
+    ... })
+
+    >>> # Invalid IR raises ValidationError carrying a path and message
     >>> try:
-    ...     validate_ir(bad_ir)
-    >>> except ValidationError as e:
-    ...     print(e)  # "Validation error at root: 'ir_version' is required"
+    ...     validate_ir({"ir_version": "0.1.0", "nodes": []})
+    ... except ValidationError as e:
+    ...     print(f"{e.path}: {e.message}")
+    nodes: [] should be non-empty
 
 Common Validation Errors:
 - Missing 'ir_version': Every IR must specify its version
@@ -594,23 +592,25 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
         >>> # Valid IR passes silently
         >>> validate_ir({"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test"}]})
 
-        >>> # Missing required field
+        >>> # Empty nodes array is rejected
         >>> try:
-        ...     validate_ir({"nodes": []})
+        ...     validate_ir({"ir_version": "0.1.0", "nodes": []})
         ... except ValidationError as e:
-        ...     print(e.path)    # "root"
-        ...     print(e.message) # "'ir_version' is a required property"
+        ...     print(f"{e.path}: {e.message}")
+        nodes: [] should be non-empty
 
-        >>> # Invalid node reference
+        >>> # Edge referencing a non-existent node is rejected
         >>> try:
         ...     validate_ir({
         ...         "ir_version": "0.1.0",
         ...         "nodes": [{"id": "n1", "type": "test"}],
-        ...         "edges": [{"from": "n1", "to": "n2"}]
+        ...         "edges": [{"from": "n1", "to": "n2"}],
         ...     })
         ... except ValidationError as e:
-        ...     print(e.path)    # "edges[0].to"
-        ...     print("n2" in e.message)  # True
+        ...     print(e.path)
+        ...     print("n2" in e.message)
+        edges[0].to
+        True
 
         >>> # JSON string input
         >>> validate_ir('{"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test"}]}')

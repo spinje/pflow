@@ -4,15 +4,15 @@ This module provides formatting functions for displaying workflow discovery
 results across CLI and MCP interfaces. All formatters return strings that can
 be displayed directly or incorporated into structured responses.
 
-Usage:
-    >>> from pflow.execution.formatters.discovery_formatter import format_discovery_result
-    >>> result = format_discovery_result(
-    ...     discovery_result={"workflow_name": "test", "confidence": 0.9},
-    ...     workflow={"description": "...", "ir": {...}},
-    ... )
-    >>> print(result)
-    ## test
-    ...
+Usage::
+
+    from pflow.execution.formatters.discovery_formatter import format_discovery_result
+
+    text = format_discovery_result(
+        {"workflow_name": "test", "confidence": 0.9},
+        {"description": "...", "ir": {...}},
+    )
+    print(text)  # -> "## test\n..."
 """
 
 from typing import Any

@@ -57,8 +57,8 @@ def _calculate_fingerprint(fields: tuple[tuple[str, str], ...]) -> str:
 
     Examples:
         >>> fields = (("result.name", "str"), ("result.id", "int"))
-        >>> _calculate_fingerprint(fields)
-        'a3f2d1e8b9c4...'  # MD5 hash of sorted paths
+        >>> _calculate_fingerprint(fields)  # MD5 of sorted, comma-joined paths
+        '985fb8beb6442b620e98c84797e54ad8'
     """
     # Extract paths only (ignore types)
     paths = [path for path, _ in fields]
@@ -97,15 +97,17 @@ def smart_filter_fields(
         Usage: `probe http url=... --filter-context="fraud detection"`
 
     Examples:
-        >>> fields = [("result[0].id", "int"), ("result[0].title", "str"), ...]  # 200 fields
-        >>> filtered = smart_filter_fields(fields, threshold=50)
-        >>> len(filtered)
-        12  # Reduced to relevant fields
+        With a large field set, an LLM call reduces it to the most relevant
+        fields (requires an LLM API key, so this is not run as a doctest)::
 
-        >>> small_fields = [("status", "str"), ("count", "int")]  # Only 2 fields
-        >>> filtered = smart_filter_fields(small_fields, threshold=50)
-        >>> filtered == small_fields
-        True  # No filtering applied
+            fields = [("result[0].id", "int"), ("result[0].title", "str"), ...]  # 200 fields
+            filtered = smart_filter_fields(fields, threshold=50)
+            len(filtered)  # ~12 — reduced to business-relevant fields
+
+        Field sets at or below the threshold are returned unchanged:
+        >>> small_fields = [("status", "str"), ("count", "int")]
+        >>> smart_filter_fields(small_fields, threshold=50) == small_fields
+        True
     """
     # Don't filter if below threshold
     if len(fields) <= threshold:
@@ -284,14 +286,13 @@ def _smart_filter_fields_cached_impl(
         - Typical hit rate: 40-90% depending on usage pattern
 
     Examples:
-        >>> # First call: cache miss
-        >>> fields = tuple([("result.name", "str"), ("result.id", "int")])
-        >>> smart_filter_fields_cached(fields, threshold=1)
-        (("result.name", "str"),)  # Filtered, ~2.8s
+        Identical field structures reuse the cached result instead of calling
+        the LLM again (requires an LLM API key, so this is not run as a
+        doctest)::
 
-        >>> # Second call with same structure: cache hit
-        >>> smart_filter_fields_cached(fields, threshold=1)
-        (("result.name", "str"),)  # Instant, 0ms
+            fields = tuple([("result.name", "str"), ("result.id", "int")])
+            smart_filter_fields_cached(fields, threshold=1)  # first call: cache miss, ~2.8s
+            smart_filter_fields_cached(fields, threshold=1)  # second call: cache hit, 0ms
     """
     # Calculate fingerprint for logging
     fingerprint = _calculate_fingerprint(fields_tuple)
@@ -328,9 +329,8 @@ def get_cache_stats() -> dict[str, float | int]:
 
     Examples:
         >>> from pflow.registry.smart_filter import get_cache_stats
-        >>> stats = get_cache_stats()
-        >>> print(f"Cache hit rate: {stats['hit_rate']}%")
-        Cache hit rate: 85.3%
+        >>> sorted(get_cache_stats())
+        ['hit_rate', 'hits', 'maxsize', 'misses', 'size']
     """
     info = _smart_filter_fields_cached_impl.cache_info()
 
@@ -359,8 +359,7 @@ def clear_cache() -> None:
 
     Examples:
         >>> from pflow.registry.smart_filter import clear_cache
-        >>> clear_cache()
-        # Cache is now empty, next call will be cache miss
+        >>> clear_cache()  # cache is now empty; the next call will be a cache miss
     """
     _smart_filter_fields_cached_impl.cache_clear()
     logger.info("Smart filter cache cleared")

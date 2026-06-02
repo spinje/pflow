@@ -9,10 +9,10 @@ Usage:
     >>> print(format_workflow_list(workflows))
     Saved Workflows:
     ────────────────────────────────────────
-
+    <BLANKLINE>
     my-workflow
       Test workflow
-
+    <BLANKLINE>
     Total: 1 workflow
 """
 

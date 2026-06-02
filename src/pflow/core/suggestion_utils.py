@@ -42,16 +42,16 @@ def find_similar_items(
     Examples:
         >>> # Substring matching (default)
         >>> find_similar_items("file", ["read-file", "write-file", "llm"])
-        ["read-file", "write-file"]
+        ['read-file', 'write-file']
 
-        >>> # Fuzzy matching (typo-tolerant)
+        >>> # Fuzzy matching (typo-tolerant), best match first
         >>> find_similar_items("reed", ["read", "write"], method="fuzzy")
-        ["read"]
+        ['read', 'write']
 
         >>> # Sort by length
         >>> find_similar_items("file", ["very-long-file", "file", "medium-file"],
         ...                     sort_by_length=True)
-        ["file", "medium-file", "very-long-file"]
+        ['file', 'medium-file', 'very-long-file']
     """
     if method == "fuzzy":
         import difflib

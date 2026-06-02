@@ -123,12 +123,11 @@ def get_default_llm_model() -> Optional[str]:
         This function only detects - it does NOT enforce.
         The caller (CLI) decides whether to error or proceed.
 
-    Examples:
-        >>> # Detect without enforcing
-        >>> model = get_default_llm_model()
-        >>> if model is None:
-        >>>     # Handle at caller level
-        >>>     click.echo("Error: No LLM keys")
+    Example (detect without enforcing; the caller decides how to react)::
+
+        model = get_default_llm_model()
+        if model is None:
+            click.echo("Error: No LLM keys")  # handle at the caller level
     """
     global _cached_default_model, _detection_complete
 
@@ -280,10 +279,11 @@ def get_default_workflow_model() -> Optional[str]:
     Returns:
         Model name string or None if nothing configured
 
-    Example:
-        >>> model = get_default_workflow_model()
-        >>> if model is None:
-        >>>     raise CompilationError("No model configured", ...)
+    Example::
+
+        model = get_default_workflow_model()
+        if model is None:
+            raise CompilationError("No model configured", ...)
     """
     # 1. Check pflow settings first
     try:

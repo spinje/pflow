@@ -24,7 +24,7 @@ def generate_dummy_parameters(inputs: dict[str, Any]) -> dict[str, Any]:
     Example:
         >>> inputs = {"api_key": {"type": "string"}, "repo": {"type": "string"}}
         >>> generate_dummy_parameters(inputs)
-        {"api_key": "__validation_placeholder__", "repo": "__validation_placeholder__"}
+        {'api_key': '__validation_placeholder__', 'repo': '__validation_placeholder__'}
     """
     return dict.fromkeys(inputs, VALIDATION_PLACEHOLDER)
 

@@ -39,14 +39,15 @@ class FieldService(BaseService):
         Raises:
             ValueError: If execution_id not found in cache
 
-        Example:
-            >>> result = FieldService.read_fields(
-            ...     "exec-1705234567-a1b2c3d4",
-            ...     ["result[0].title", "result[0].id"]
-            ... )
-            >>> print(result)
-            result[0].title: Fix authentication bug
-            result[0].id: 12345
+        Example::
+
+            result = FieldService.read_fields(
+                "exec-1705234567-a1b2c3d4",
+                ["result[0].title", "result[0].id"],
+            )
+            print(result)
+            # result[0].title: Fix authentication bug
+            # result[0].id: 12345
         """
         # Create fresh cache instance (stateless pattern)
         cache = ExecutionCache()

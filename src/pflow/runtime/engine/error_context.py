@@ -23,12 +23,14 @@ def extract_node_ids_from_template(template: str) -> set[str]:
         Set of node IDs (e.g., {"extract-urls"} from "${extract-urls.stdout}")
 
     Examples:
-        >>> extract_node_ids_from_template("${node.stdout}")
-        {'node'}
-        >>> extract_node_ids_from_template("${a.x} and ${b.y}")
-        {'a', 'b'}
-        >>> extract_node_ids_from_template("${data[0].name}")
-        {'data'}
+        (sorted for a stable doctest — the function returns an unordered set)
+
+        >>> sorted(extract_node_ids_from_template("${node.stdout}"))
+        ['node']
+        >>> sorted(extract_node_ids_from_template("${a.x} and ${b.y}"))
+        ['a', 'b']
+        >>> sorted(extract_node_ids_from_template("${data[0].name}"))
+        ['data']
     """
     variables = TemplateResolver.extract_variables(template)
     return {TemplateResolver.extract_root_node_id(var) for var in variables}

@@ -80,8 +80,8 @@ def is_type_compatible(source_type: str, target_type: str) -> bool:
         True
         >>> is_type_compatible("str", "int")
         False
-        >>> is_type_compatible("dict|str", "str")
-        True  # Union contains str
+        >>> is_type_compatible("dict|str", "str")  # union: every member must match
+        True
     """
     # Exact match
     if source_type == target_type:
@@ -115,10 +115,14 @@ def infer_template_type(  # noqa: C901
         Inferred type string or None if cannot infer
 
     Examples:
-        >>> infer_template_type("node.result", workflow_ir, outputs)
-        "dict"
-        >>> infer_template_type("node.result.count", workflow_ir, outputs)
-        "int"
+        >>> workflow_ir = {"nodes": [{"id": "node"}]}
+        >>> node_outputs = {
+        ...     "node.result": {"type": "dict", "structure": {"count": {"type": "int"}}}
+        ... }
+        >>> infer_template_type("node.result", workflow_ir, node_outputs)
+        'dict'
+        >>> infer_template_type("node.result.count", workflow_ir, node_outputs)
+        'int'
     """
     parts = template.split(".")
 

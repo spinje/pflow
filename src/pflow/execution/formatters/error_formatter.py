@@ -43,12 +43,13 @@ def format_execution_errors(
         - execution: Execution state with per-node status (if ir_data provided)
         - metrics: Metrics summary (if metrics_collector provided)
 
-    Example:
-        >>> result = execute_workflow(...)
-        >>> formatted = format_execution_errors(result)
-        >>> formatted["errors"][0]["status_code"]  # 422
-        >>> formatted["errors"][0]["raw_response"]  # Sanitized
-        >>> formatted["execution"]["steps"]  # Per-node execution state
+    Example::
+
+        result = execute_workflow(...)
+        formatted = format_execution_errors(result)
+        formatted["errors"][0]["status_code"]   # e.g. 422
+        formatted["errors"][0]["raw_response"]  # sanitized
+        formatted["execution"]["steps"]         # per-node execution state
     """
     # Extract checkpoint from shared store
     checkpoint = result.shared_after.get("__execution__", {})

@@ -78,19 +78,20 @@ def build_execution_steps(
         - smart_handled: True (grep/rg no-match, which/command-v not-found, etc.)
         - smart_handled_reason: Human-readable explanation of why exit 1 was OK
 
-    Example:
-        >>> steps = build_execution_steps(workflow_ir, shared_storage, metrics)
-        >>> steps[0]
-        {
+    Example::
+
+        steps = build_execution_steps(workflow_ir, shared_storage, metrics)
+
+        # A standard node:
+        steps[0] == {
             "node_id": "fetch-data",
             "status": "completed",
             "duration_ms": 150,
-            "cached": False
+            "cached": False,
         }
 
-        # Batch node example:
-        >>> steps[1]
-        {
+        # A batch node carries extra batch_* keys:
+        steps[1] == {
             "node_id": "process-items",
             "status": "completed",
             "duration_ms": 500,
@@ -99,8 +100,8 @@ def build_execution_steps(
             "batch_total": 10,
             "batch_success": 8,
             "batch_errors": 2,
-            "batch_error_details": [{"index": 1, "error": "..."}, ...],
-            "batch_errors_truncated": 0
+            "batch_error_details": [{"index": 1, "error": "..."}],
+            "batch_errors_truncated": 0,
         }
     """
     if not workflow_ir or "nodes" not in workflow_ir:

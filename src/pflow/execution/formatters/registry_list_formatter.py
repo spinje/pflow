@@ -3,13 +3,15 @@
 This module provides formatting for node registry listings across CLI and MCP interfaces.
 Returns markdown-formatted text matching CLI output.
 
-Usage:
-    >>> from pflow.execution.formatters.registry_list_formatter import format_registry_list
-    >>> nodes = {"read-file": {...}, "write-file": {...}}
-    >>> print(format_registry_list(nodes))
-    Core Packages:
-    ─────────────
-    ...
+Usage::
+
+    from pflow.execution.formatters.registry_list_formatter import format_registry_list
+
+    nodes = Registry().load()  # {name: metadata, ...}
+    print(format_registry_list(nodes))
+    # Core Packages:
+    # ─────────────
+    # ...
 """
 
 from typing import Any

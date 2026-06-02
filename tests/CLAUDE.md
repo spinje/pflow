@@ -176,7 +176,7 @@ Other markers used across the suite:
 | `make test-all` | `-n 4` | Nothing — runs everything |
 | `make test-with-skipped` | sequential | Nothing — shows skip reasons |
 
-All commands include `--doctest-modules` (doctests in `src/pflow/` run alongside tests).
+All commands include `--doctest-modules`, but `pyproject.toml` sets `testpaths = ["tests"]`, so collection only ever reaches `tests/` — **`src/pflow/` doctests are NOT collected by any `make` target**. They run only when pytest is pointed directly at a source path, e.g. `pytest --doctest-modules src/pflow/runtime/template_validation/type_checker.py`. Keep src doctests runnable anyway: if `testpaths` ever gains `src`, a stale example becomes a build failure.
 
 ## Subprocess Test Fixtures
 

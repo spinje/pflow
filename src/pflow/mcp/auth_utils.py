@@ -44,23 +44,18 @@ def expand_env_vars_nested(  # noqa: C901
         ValueError: If raise_on_missing=True and variables are missing
 
     Examples:
-        Basic usage (backward compatible):
-        >>> expand_env_vars_nested("${HOME}/path")
-        "/Users/john/path"
+        Basic usage, with a ``${VAR:-default}`` fallback for an unset variable:
+        >>> expand_env_vars_nested("${PFLOW_UNSET_XYZ:-/fallback}/path")
+        '/fallback/path'
 
-        With settings.json support:
-        >>> expand_env_vars_nested(
-        ...     {"token": "${API_KEY}"},
-        ...     include_settings=True
-        ... )
-        {"token": "value-from-settings"}
+        Recursive expansion inside nested structures:
+        >>> expand_env_vars_nested({"token": "${PFLOW_UNSET_KEY:-default-token}"})
+        {'token': 'default-token'}
 
-        With error raising:
-        >>> expand_env_vars_nested(
-        ...     "${MISSING_VAR}",
-        ...     raise_on_missing=True
-        ... )
-        ValueError: Missing environment variable(s): MISSING_VAR
+        With ``include_settings=True``, values stored via ``pflow settings
+        set-env`` are consulted in addition to ``os.environ``. With
+        ``raise_on_missing=True``, a missing variable that has no default raises
+        ``ValueError`` (see Raises above).
     """
     # Load settings.json if requested (import inside function to avoid circular deps)
     settings_env: dict[str, str] = {}
