@@ -28,6 +28,7 @@ deterministic outcomes the real agents would produce.
 
 from pathlib import Path
 
+from pflow.core.markdown_parser import parse_markdown
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 
@@ -335,11 +336,16 @@ def _run(tmp_path: Path, scenario: str, max_review_rounds: int = 3) -> list[str]
     wf = tmp_path / "harness_skeleton.pflow.md"
     wf.write_text(HARNESS_SKELETON)
     log = tmp_path / "flow.log"
-    WorkflowRunner().run(
+    result = WorkflowRunner().run(
         str(wf),
         {"scenario": scenario, "max_review_rounds": max_review_rounds, "log": str(log)},
         RunnerConfig(),
     )
+    # The run must SUCCEED for the log to be a trustworthy control-flow trace — including the
+    # hard-failure scenario, whose `next: end` abort is a *clean* termination, not a crash. Without
+    # this, a routing regression that raises after writing the early log lines would still satisfy
+    # the negative assertions (e.g. "ship" not in flow) simply because execution crashed early.
+    assert result.success, f"skeleton run failed ({scenario}): {[d.message for d in result.errors]}"
     return log.read_text().splitlines() if log.exists() else []
 
 
@@ -401,3 +407,45 @@ def test_cost_dial_skips_review_entirely(tmp_path: Path) -> None:
     assert "verify" in flow
     assert "push" in flow
     assert "ship" in flow
+
+
+# --- Structural guard on the REAL shipped .pflow.md files (not the skeleton copy above) ---
+#
+# The skeleton above is a hand-maintained mirror of the routing, so a change made to the real files
+# but NOT mirrored here would pass silently (the "synthetic fixture matching code" risk —
+# tests/CLAUDE.md #19). These tests parse the actual shipped workflows and pin their load-bearing
+# routing + output contract, so such drift fails loudly without spending a cent on agents.
+
+_HARNESS_DIR = Path(__file__).resolve().parents[2] / "examples/agent-orchestration/plan-to-code"
+
+
+def _successors(pflow_path: Path) -> dict[str, set[str]]:
+    """Map each node id to the set of its successor node ids in the real .pflow.md."""
+    ir = parse_markdown(pflow_path.read_text()).ir
+    succ: dict[str, set[str]] = {}
+    for edge in ir["edges"]:
+        succ.setdefault(edge["from"], set()).add(edge["to"])
+    return succ
+
+
+def test_real_execute_plan_routing_matches_skeleton() -> None:
+    """The shipped execute-plan.pflow.md keeps the gate/loop routing the skeleton asserts.
+
+    The ``end`` abort sentinel is not a node, so it is never a declared edge target — assert the
+    concrete successors only (the abort routes via the check-groups code body's ``next = "end"``).
+    """
+    succ = _successors(_HARNESS_DIR / "execute-plan/execute-plan.pflow.md")
+    # Segment-loop gate: loop back, advance to the review loop, or skip-to-simplify (cost dial).
+    assert succ["check-groups"] == {"group-tick", "review-tick", "simplify"}
+    # Review-loop gate: loop back for another round, or advance to simplify.
+    assert succ["check-rounds"] == {"review-tick", "simplify"}
+    # End-stage chain: verify is the last code-touching stage, then deterministic push, then ship.
+    assert succ["simplify"] == {"verify"}
+    assert succ["verify"] == {"push"}
+    assert succ["push"] == {"ship"}
+
+
+def test_real_implement_chunk_exposes_commits_made() -> None:
+    """The parent loop's hard-failure early-exit depends on implement-chunk's commits_made output."""
+    ir = parse_markdown((_HARNESS_DIR / "execute-plan/implement-chunk/implement-chunk.pflow.md").read_text()).ir
+    assert "commits_made" in ir["outputs"], list(ir["outputs"])

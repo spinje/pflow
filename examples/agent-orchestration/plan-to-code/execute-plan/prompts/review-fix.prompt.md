@@ -11,8 +11,10 @@ of eyes catches what the implementers were blind to. Read the artifacts before j
 - The implementation plan: `${plan_path}`
 - The spec, if provided: `${spec_path}` (may be empty — ignore if so)
 - The progress log — what was implemented and any prior review rounds: `${progress_log_path}`
-- The actual change: run `git diff` against the branch point and read the surrounding code
-  (callers, tests, related modules), not just the patch in isolation.
+- The actual change: run `git diff ${base_branch}...HEAD` to see the full implemented change, and
+  read the surrounding code (callers, tests, related modules), not just the patch in isolation. (The
+  work branch is fully committed, so a bare `git diff` would show nothing — always diff against the
+  base.)
 
 You are working in the repository at `${repo_dir}` on the current branch. Review the ENTIRE
 implemented change — every phase, and how they fit together.

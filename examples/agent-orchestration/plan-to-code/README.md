@@ -41,7 +41,7 @@ graph TD
         input_max_review_rounds[/"max_review_rounds (integer)"/]:::input
     end
     style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
-    resolve-repo["resolve-repo (code)<br/>Resolve the TARGET repo: use `repo_dir` if provided, else the git root of the cu"]:::code
+    resolve-repo["resolve-repo (code)<br/>Resolve the TARGET repo AND absolutize the artifact paths, so everything downstr"]:::code
     preflight["preflight (code)<br/>Fail fast on two preconditions, before any agent runs: (1) every declared review"]:::code
     subgraph execute-plan-in ["execute-plan inputs"]
         execute-plan__in_plan[/"plan (string)"/]:::input
@@ -110,7 +110,7 @@ graph TD
         execute-plan__check-rounds{"check-rounds (code)<br/>Enforce the loop condition: continue only if the agent wants another round AND w"}:::decision
         execute-plan__simplify["simplify (claude-code)<br/>One focused simplicity pass over the COMPLETE implemented + reviewed change, run"]:::code
         execute-plan__verify["verify (claude-code)<br/>Adversarial verification of the fully-implemented, reviewed, and simplified resu"]:::code
-        execute-plan__push[["push (shell)<br/>Push the work branch to origin so `ship` can open a PR."]]:::shell
+        execute-plan__push["push (code)<br/>Push the work branch to origin so `ship` can open a PR."]:::code
         execute-plan__ship["ship (claude-code)<br/>Open a PR for the work branch against the base branch."]:::code
         execute-plan__branch-setup --> execute-plan__plan-review-fix
         execute-plan__plan-review-fix --> execute-plan__breakdown
@@ -137,14 +137,17 @@ graph TD
     execute-plan__ship --> execute-plan__out_pr_url
     execute-plan__check-groups --> execute-plan__out_summary
     execute-plan__breakdown --> execute-plan__out_segments
+    resolve-repo --> execute-plan__in_plan
+    resolve-repo --> execute-plan__in_spec
+    resolve-repo --> execute-plan__in_progress_log
     resolve-repo --> execute-plan__in_repo_dir
     input_repo_dir --> resolve-repo
+    input_plan --> resolve-repo
+    input_spec --> resolve-repo
+    input_progress_log --> resolve-repo
     input_plan_lenses --> preflight
     input_review_lenses --> preflight
     input_simplify_lens --> preflight
-    input_plan --> execute-plan__in_plan
-    input_spec --> execute-plan__in_spec
-    input_progress_log --> execute-plan__in_progress_log
     input_base_branch --> execute-plan__in_base_branch
     input_work_branch --> execute-plan__in_work_branch
     input_plan_lenses --> execute-plan__in_plan_lenses

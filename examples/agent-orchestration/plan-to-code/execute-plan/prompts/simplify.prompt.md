@@ -11,8 +11,9 @@ finished whole, where complexity hides in the seams between separately-implement
 - The implementation plan: `${plan_path}`
 - The spec, if provided: `${spec_path}` (may be empty — ignore if so)
 - The progress log — what was implemented and what the correctness review found: `${progress_log_path}`
-- The actual change: run `git diff` against the base branch point and read the integrated result
-  plus the surrounding code (so you can tell new duplication from legitimate reuse).
+- The actual change: run `git diff ${base_branch}...HEAD` to see the integrated result, and read it
+  plus the surrounding code (so you can tell new duplication from legitimate reuse). (The work branch
+  is fully committed, so a bare `git diff` would show nothing — always diff against the base.)
 
 You are working in the repository at `${repo_dir}` on the current branch.
 

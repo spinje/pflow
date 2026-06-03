@@ -312,6 +312,7 @@ normal exit; `max_review_rounds` is the runaway backstop.
     spec_path: ${spec}
     progress_log_path: ${progress_log}
     available_lenses: ${review_lenses}
+    base_branch: ${base_branch}
     round: ${review-tick.result}
 - allowed_tools:
     - Bash
@@ -347,7 +348,10 @@ cap (`max_review_rounds`). The `isinstance` guard treats a schema soft-fail (str
 rev: object
 round: int
 cap: int
-keep = rev.get("continue", False) if isinstance(rev, dict) else False
+raw = rev.get("continue", False) if isinstance(rev, dict) else False
+# Coerce defensively: claude-code output_schema is a SOFT request, so a boolean field can come back
+# as the string "true"/"false" — and a bare string is truthy either way, which would loop on "false".
+keep = (raw.strip().lower() == "true") if isinstance(raw, str) else bool(raw)
 if keep and round < cap:
     result: dict = {"next_round": round + 1}
     next: str = "review-tick"
@@ -381,6 +385,7 @@ progress log.
     spec_path: ${spec}
     progress_log_path: ${progress_log}
     available_lenses: ${simplify_lens}
+    base_branch: ${base_branch}
 - allowed_tools:
     - Bash
     - Read
@@ -428,26 +433,54 @@ required: [breaks_found, summary]
 ### push
 
 Push the work branch to origin so `ship` can open a PR. Pushing is deterministic, not agentic, so
-it is a `shell` node — and crucially it runs in pflow's OWN process, not through a claude-code
-agent. That matters: a user's Claude Code permission rule on push (e.g.
-`"permissions": {"ask": ["Bash(git push:*)"]}` in `~/.claude/settings.json`) blocks an agent's
-`git push` even under `permission_mode: bypassPermissions` — bypass skips interactive prompts but
-does NOT override a settings `ask`/`deny` policy rule, and non-interactively an `ask` resolves to
-blocked. (This is exactly what blocked an earlier run's agentic ship.) Those rules govern
-claude-code agents only, never pflow shell nodes — same reason `branch-setup` is a shell node.
+it is a `code` node running in pflow's OWN process — NOT a claude-code agent. That matters: a user's
+Claude Code permission rule on push (e.g. `"permissions": {"ask": ["Bash(git push:*)"]}` in
+`~/.claude/settings.json`) blocks an agent's `git push` even under `permission_mode:
+bypassPermissions` — bypass skips interactive prompts but does NOT override a settings `ask`/`deny`
+policy rule, and non-interactively an `ask` resolves to blocked. (This is exactly what blocked an
+earlier run's agentic ship.) Those rules govern claude-code agents only, never pflow's own
+subprocess — same reason `branch-setup` is a shell node.
 
-Tolerant of a missing/unreachable remote: it never hard-stops the run. On push failure `ship` still
-runs, `gh pr create` fails cleanly, and ship reports honestly with an empty `pr_url` — preserving
-the no-remote behavior.
+It distinguishes the two failure modes deliberately. A missing `origin` remote is TOLERATED — it
+skips the push and continues, so `ship` then attempts `gh pr create`, fails cleanly, and reports
+honestly with an empty `pr_url` (the no-remote case). A real push REJECTION, however, HARD-STOPS:
+for example a non-fast-forward when this `work_branch` already exists on the remote from a prior run
+(recall `branch-setup` did `git checkout -B`, rewriting the local branch). Shipping anyway would let
+`gh pr create` open a PR against the STALE remote branch — one that does NOT contain the
+just-verified local commits — so it stops loudly rather than ship the wrong code.
 
-- type: shell
-- cwd: ${repo_dir}
+**DO NOT add an `- on-error:` edge to this node.** Like `preflight`, the hard-stop IS the raised
+exception terminating the run (no error successor → non-zero exit). An `on-error` edge would route
+to a handler and let a rejected push fall through to `ship` — the exact stale-PR bug this guards.
+
+- type: code
 - next: ship
 - inputs:
+    repo_dir: ${repo_dir}
     work_branch: ${work_branch}
 
-```shell command
-git push -u origin "${work_branch}" 2>&1 || echo "push failed (no remote configured or rejected) — ship will report honestly"
+```python code
+import subprocess
+repo_dir: str
+work_branch: str
+remote = subprocess.run(["git", "-C", repo_dir, "remote", "get-url", "origin"],
+                        capture_output=True, text=True)
+if remote.returncode != 0:
+    # No origin remote — tolerate; ship will report honestly (empty pr_url).
+    result: str = "no-remote: skipped push; ship will report honestly"
+else:
+    push = subprocess.run(["git", "-C", repo_dir, "push", "-u", "origin", work_branch],
+                          capture_output=True, text=True)
+    if push.returncode != 0:
+        raise RuntimeError(
+            f"Push of '{work_branch}' to origin was REJECTED:\n{push.stderr.strip()}\n\n"
+            "Refusing to ship: a PR opened now could reflect STALE remote commits, not the "
+            "just-verified local work. This usually means the branch already exists on the remote "
+            "from a prior run (branch-setup rewrites the local branch with `git checkout -B`). "
+            "Resolve by deleting the remote branch, choosing a fresh work_branch, or running in a "
+            "clean git worktree, then re-run."
+        )
+    result: str = "pushed"
 ```
 
 ### ship

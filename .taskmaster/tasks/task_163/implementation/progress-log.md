@@ -1215,3 +1215,55 @@ test 5/5; example-validation suite 3/3; `ruff check`/`format` clean.
   Low-risk (deterministic, like branch-setup); a future full run will exercise it for real.
 - **Commit decision** is the user's. The whole task-163 tree + this session's edits remain UNTRACKED
   on `main`; nothing staged/committed. Then v1.1 (rewire `parallel-planner-review` onto `execute-plan`).
+
+---
+
+## Entry: PR #466 review evaluation — fixes applied + deferred (2026-06-03)
+
+The harness was committed to branch `feat/plan-to-code-harness` (PR #466) and reviewed by three
+bots: `claude[bot]` (thorough), `gemini-code-assist`, `chatgpt-codex-connector`. Evaluated every
+finding against the code with subagents. Verified facts that decided verdicts: code nodes VALIDATE
+types but never COERCE (`python_code.py:861-879`); claude-code `output_schema` stores
+`structured_output` verbatim with no field-type enforcement (`claude_code.py:1165`); the precursor
+threads `base_branch` + explicit `git diff base...branch`, the new harness did not. The "less
+intelligent" codex actually found the highest-value issues. None were critical/blocking.
+
+**Fixed:**
+- **C3 — relative artifact paths (real bug).** `run-from-plan` forwarded `plan`/`spec`/`progress_log`
+  raw to agents running with `cwd: ${repo_dir}`, so a relative plan path (defaults `./PLAN.md` /
+  `./progress-log.md`) resolved against the repo, not the launch dir. Run 7 only worked because I
+  passed absolute paths. Fix: `resolve-repo` absolutizes them (relative to launch cwd) and emits a
+  dict `{repo, plan, spec, progress_log}`; preflight/execute-plan reference `result.repo` etc.
+- **C4 — reviewers had no base ref (real, vs precursor).** `review-fix`/`simplify` told the agent to
+  run a bare `git diff`, which shows NOTHING on a fully-committed work branch. Fix: thread
+  `base_branch` into both nodes; prompts now use `git diff ${base_branch}...HEAD`.
+- **C1 — rejected push could ship a stale PR.** The old `push` shell node's `|| echo` swallowed ALL
+  failures including a non-fast-forward rejection (re-run with the static `work_branch`), letting
+  `ship` open a PR against stale remote commits. Fix: `push` is now a CODE node — TOLERATES no-remote
+  (continue → ship reports honestly) but HARD-STOPS (raise, no on-error edge) on a real rejection.
+- **C2 + W1 — test fidelity.** `_run` now asserts `result.success` (a regression that crashes after
+  the early log lines no longer satisfies the negative assertions; `next: end` abort is a clean
+  success). Added two structural tests that parse the REAL `.pflow.md` and pin the successor sets of
+  `check-groups`/`check-rounds`/`simplify`/`verify`/`push` + `implement-chunk`'s `commits_made`
+  output — guards drift between the shipped files and the hand-maintained skeleton (tests/CLAUDE.md #19).
+- **C5 (partial) — commit-count prompt tightened.** `happy-check` no longer says "run git log to
+  count"; it counts only the agent's own commits this segment, excluding earlier segments' (the
+  segment-2+ overcount path). The full git-truth SHA-delta backstop stays DEFERRED (unobserved).
+- **G2 — bool coercion.** `check-rounds` now coerces a string `"true"/"false"` continue value (soft
+  schema can return a string; a bare string is truthy → would loop on "false"). The silent one.
+- **S2 — plan-edit commit.** `plan-review-fix` now commits its plan edits if the plan is tracked
+  in-repo (else the next implement fork sweeps them into a code commit).
+
+**Deferred (documented so they're not re-litigated):**
+- **G1 (`commits_made` int) — fails LOUD, not silent.** gemini claimed a silent early-exit bypass;
+  verified false — with `result: int`, a string field makes `report-commits` *error* (loud), not
+  misroute. Narrow + unobserved; left as-is.
+- **G3 (`segments` non-list)** — current code already crashes on a non-list; the suggested guard only
+  improves the message. Marginal; deferred.
+- **S3 (mermaid omits `end`)** — confirmed by-design: `end` is a termination sentinel, not a node, so
+  it is never a graph edge (`parse_markdown` emits no `end` edge). Cosmetic; won't fix.
+- **Full C5 git-truth backstop** — deferred until a dirty tree / overcount is actually observed.
+
+**Verified ($0):** recursive `--validate-only` clean; `execute-plan` standalone clean; harness tests
+7/7 (5 skeleton + 2 new structural); example-validation 3/3; `ruff check`/`format` clean; README
+regenerated (`verify → push → ship`, threads `base_branch`).

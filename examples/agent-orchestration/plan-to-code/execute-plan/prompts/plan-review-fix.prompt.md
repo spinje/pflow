@@ -47,6 +47,11 @@ Revise the plan file at `${plan_path}` directly to address each real, material f
 
 Do not implement any code. Only revise the plan document.
 
+If the plan file is tracked inside this repo (check with `git -C ${repo_dir} ls-files --error-unmatch
+${plan_path}`), commit your plan edits now in a dedicated commit — otherwise the next implementation
+fork's "commit everything" would sweep your plan edit into an unrelated code commit. If the plan
+lives outside the repo (the recommended setup), there is nothing to commit; just leave the edited file.
+
 ## Record
 
 Append a concise entry to the progress log at `${progress_log_path}`: what you hardened in the

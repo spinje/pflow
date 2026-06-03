@@ -125,20 +125,38 @@ Default is the cap; the review agent's diminishing-returns judgment normally exi
 
 ### resolve-repo
 
-Resolve the TARGET repo: use `repo_dir` if provided, else the git root of the current directory.
-Emits the absolute repo path for every downstream agent's `cwd:`. Fails clearly if neither a
-valid `repo_dir` nor a git repo at cwd is found — so the harness never silently targets the
-wrong place (the root cause of an early bug: it used to resolve pflow's own launch dir).
+Resolve the TARGET repo AND absolutize the artifact paths, so everything downstream is anchored
+correctly no matter where pflow was launched. The repo is `repo_dir` if provided, else the git root
+of the current directory; it fails clearly if neither is found — so the harness never silently
+targets the wrong place (the root cause of an early bug: it used to resolve pflow's own launch dir).
+
+It also resolves `plan`/`spec`/`progress_log` to ABSOLUTE paths (relative to the launch directory)
+before they are threaded to agents that all run with `cwd: ${repo_dir}`. Without this, a relative
+artifact path — and the defaults `./PLAN.md` / `./progress-log.md` are relative — would be resolved
+by those agents against the repo root, not the launch dir, so they would read/edit the wrong file
+(or fail to find it). The plan can live anywhere, independent of the repo, precisely because it is
+absolutized here.
 
 - type: code
 - next: preflight
 - inputs:
     repo_dir: ${repo_dir}
+    plan: ${plan}
+    spec: ${spec}
+    progress_log: ${progress_log}
 
 ```python code
 import os
 import subprocess
 repo_dir: str
+plan: str
+spec: str
+progress_log: str
+
+def _abs(p):
+    # Absolutize relative to the launch cwd; leave an empty (optional) path empty.
+    return os.path.abspath(os.path.expanduser(p)) if p.strip() else p
+
 candidate = repo_dir.strip()
 if candidate:
     root = os.path.abspath(os.path.expanduser(candidate))
@@ -157,7 +175,12 @@ else:
             "Pass repo_dir=/path/to/target-repo, or run from inside the target repo."
         )
     root = proc.stdout.strip()
-result: str = root
+result: dict = {
+    "repo": root,
+    "plan": _abs(plan),
+    "spec": _abs(spec),
+    "progress_log": _abs(progress_log),
+}
 ```
 
 ### preflight
@@ -177,7 +200,7 @@ precondition gate. (Verified by spike S2.)
 - type: code
 - next: execute-plan
 - inputs:
-    repo_dir: ${resolve-repo.result}
+    repo_dir: ${resolve-repo.result.repo}
     plan_lenses: ${plan_lenses}
     review_lenses: ${review_lenses}
     simplify_lens: ${simplify_lens}
@@ -221,10 +244,10 @@ itself — `cwd` is rejected on workflow nodes).
 - type: workflow
 - workflow: ./execute-plan/execute-plan.pflow.md
 - inputs:
-    plan: ${plan}
-    spec: ${spec}
-    progress_log: ${progress_log}
-    repo_dir: ${resolve-repo.result}
+    plan: ${resolve-repo.result.plan}
+    spec: ${resolve-repo.result.spec}
+    progress_log: ${resolve-repo.result.progress_log}
+    repo_dir: ${resolve-repo.result.repo}
     base_branch: ${base_branch}
     work_branch: ${work_branch}
     plan_lenses: ${plan_lenses}
