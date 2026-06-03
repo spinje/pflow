@@ -47,6 +47,7 @@ Session ID is available at ${node.llm_usage.session_id} for chaining sessions.
 """
 
 import asyncio
+import json
 import logging
 import os
 from typing import Any, Optional
@@ -675,6 +676,7 @@ class ClaudeCodeNode(Node):
         attempts = 0
         coerced_fields_all: list[str] = []
         retry_usages: list[dict[str, Any]] = []
+        conforming = False  # Default: non-conforming if no schema or no structured_output
 
         # Apply coercion and retry loop if output_schema is present
         if output_schema is not None:
@@ -702,8 +704,6 @@ class ClaudeCodeNode(Node):
                 logger.info(f"Schema retry attempt {attempts}/{schema_retries} for session {session_id}")
 
                 # Build corrective prompt
-                import json
-
                 schema_json = json.dumps(output_schema, indent=2)
                 corrective_prompt = (
                     "Your previous response did not produce output matching the required schema. "
@@ -757,8 +757,7 @@ class ClaudeCodeNode(Node):
         exec_res["retry_metadata"] = {
             "attempts": attempts,
             "coerced_fields": coerced_fields_all,
-            "conforming": output_schema is not None
-            and (exec_res.get("structured_output") is not None or attempts == 0),
+            "conforming": conforming,
         }
 
         # Add retry usages for cost tracking
