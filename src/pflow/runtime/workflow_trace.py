@@ -558,19 +558,26 @@ class WorkflowTraceCollector:
                 for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
                     aggregated[cache_key] = llm_usage.get(cache_key, 0)
 
-                # Sum cost and turns
-                aggregated["cost_usd"] = llm_usage.get("cost_usd", 0)
-                aggregated["num_turns"] = llm_usage.get("num_turns", 0)
+                # Sum cost (handle None for models without pricing like Ollama)
+                # If all costs are None, result is None. If any cost is numeric, sum only numeric ones.
+                main_cost = llm_usage.get("cost_usd")
+                retry_costs = [r.get("cost_usd") for r in retries if r.get("cost_usd") is not None]
+                if main_cost is not None or retry_costs:
+                    aggregated["cost_usd"] = (main_cost or 0) + sum(retry_costs)
+                else:
+                    aggregated["cost_usd"] = None
 
-                # Aggregate retry contributions
+                # Sum turns
+                aggregated["num_turns"] = llm_usage.get("num_turns", 0)
+                for retry in retries:
+                    aggregated["num_turns"] += retry.get("num_turns", 0)
+
+                # Aggregate retry contributions to tokens
                 for retry in retries:
                     aggregated["input_tokens"] += retry.get("input_tokens", 0)
                     aggregated["output_tokens"] += retry.get("output_tokens", 0)
                     for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
                         aggregated[cache_key] += retry.get(cache_key, 0)
-                    if retry.get("cost_usd") is not None:
-                        aggregated["cost_usd"] += retry["cost_usd"]
-                    aggregated["num_turns"] += retry.get("num_turns", 0)
 
                 event["llm_call"] = aggregated
             else:
