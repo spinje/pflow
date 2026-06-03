@@ -39,6 +39,8 @@ graph TD
         input_simplify_lens[/"simplify_lens (string)"/]:::input
         input_verify_recipe[/"verify_recipe (string)"/]:::input
         input_max_review_rounds[/"max_review_rounds (integer)"/]:::input
+        input_validate_command[/"validate_command (string)"/]:::input
+        input_max_fix_rounds[/"max_fix_rounds (integer)"/]:::input
     end
     style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     resolve-repo["resolve-repo (code)<br/>Resolve the TARGET repo AND absolutize the artifact paths, so everything downstr"]:::code
@@ -55,6 +57,8 @@ graph TD
         execute-plan__in_simplify_lens[/"simplify_lens (string)"/]:::input
         execute-plan__in_verify_recipe[/"verify_recipe (string)"/]:::input
         execute-plan__in_max_review_rounds[/"max_review_rounds (integer)"/]:::input
+        execute-plan__in_validate_command[/"validate_command (string)"/]:::input
+        execute-plan__in_max_fix_rounds[/"max_fix_rounds (integer)"/]:::input
     end
     style execute-plan-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     execute-plan__in_plan --> execute-plan__branch-setup
@@ -68,6 +72,8 @@ graph TD
     execute-plan__in_simplify_lens --> execute-plan__branch-setup
     execute-plan__in_verify_recipe --> execute-plan__branch-setup
     execute-plan__in_max_review_rounds --> execute-plan__branch-setup
+    execute-plan__in_validate_command --> execute-plan__branch-setup
+    execute-plan__in_max_fix_rounds --> execute-plan__branch-setup
     subgraph execute-plan ["execute-plan (workflow)<br/>Run the invocation-agnostic core."]
         execute-plan__branch-setup[["branch-setup (shell)<br/>Create (or reset) the work branch off the base branch, once, before any implemen"]]:::shell
         execute-plan__plan-review-fix["plan-review-fix (claude-code)<br/>Harden the plan before any code is written, in ONE agent: deploy plan-review len"]:::code
@@ -104,18 +110,95 @@ graph TD
         execute-plan__group-tick --> execute-plan__implement-chunk__in_delta
         execute-plan__in_progress_log --> execute-plan__implement-chunk__in_progress_log
         execute-plan__in_repo_dir --> execute-plan__implement-chunk__in_repo_dir
+        subgraph execute-plan__seg-gate-in ["seg-gate inputs"]
+            execute-plan__seg-gate__in_repo_dir[/"repo_dir (string)"/]:::input
+            execute-plan__seg-gate__in_validate_command[/"validate_command (string)"/]:::input
+            execute-plan__seg-gate__in_plan[/"plan (string)"/]:::input
+            execute-plan__seg-gate__in_progress_log[/"progress_log (string)"/]:::input
+            execute-plan__seg-gate__in_base_branch[/"base_branch (string)"/]:::input
+            execute-plan__seg-gate__in_max_fix_rounds[/"max_fix_rounds (integer)"/]:::input
+        end
+        style execute-plan__seg-gate-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        execute-plan__seg-gate__in_repo_dir --> execute-plan__seg-gate__run-validate
+        execute-plan__seg-gate__in_validate_command --> execute-plan__seg-gate__run-validate
+        execute-plan__seg-gate__in_plan --> execute-plan__seg-gate__run-validate
+        execute-plan__seg-gate__in_progress_log --> execute-plan__seg-gate__run-validate
+        execute-plan__seg-gate__in_base_branch --> execute-plan__seg-gate__run-validate
+        execute-plan__seg-gate__in_max_fix_rounds --> execute-plan__seg-gate__run-validate
+        subgraph execute-plan__seg-gate ["seg-gate (workflow)<br/>Per-segment deterministic test/quality gate (with auto-fix)."]
+            execute-plan__seg-gate__run-validate["run-validate (code)<br/>Run the project's validation command in `repo_dir` and report pass/fail BY EXIT "]:::code
+            execute-plan__seg-gate__check-validate["check-validate (code)<br/>Decide the loop on the command's REAL result: pass → done (`ok: true`); fail and"]:::code
+            execute-plan__seg-gate__fix-tests["fix-tests (claude-code)<br/>A fresh fix fork."]:::code
+            execute-plan__seg-gate__run-validate --> execute-plan__seg-gate__check-validate
+            execute-plan__seg-gate__check-validate -->|fix-tests| execute-plan__seg-gate__fix-tests
+            execute-plan__seg-gate__fix-tests --> execute-plan__seg-gate__run-validate
+        end
+        style execute-plan__seg-gate fill:#808080,fill-opacity:0.21,stroke:#999
+        subgraph execute-plan__seg-gate-out ["seg-gate outputs"]
+            execute-plan__seg-gate__out_ok(["ok"]):::output
+            execute-plan__seg-gate__out_summary(["summary"]):::output
+        end
+        style execute-plan__seg-gate-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        execute-plan__seg-gate__check-validate --> execute-plan__seg-gate__out_ok
+        execute-plan__seg-gate__check-validate --> execute-plan__seg-gate__out_summary
+        execute-plan__in_repo_dir --> execute-plan__seg-gate__in_repo_dir
+        execute-plan__in_validate_command --> execute-plan__seg-gate__in_validate_command
+        execute-plan__in_plan --> execute-plan__seg-gate__in_plan
+        execute-plan__in_progress_log --> execute-plan__seg-gate__in_progress_log
+        execute-plan__in_base_branch --> execute-plan__seg-gate__in_base_branch
+        execute-plan__in_max_fix_rounds --> execute-plan__seg-gate__in_max_fix_rounds
         execute-plan__check-groups{"check-groups (code)<br/>Decide: loop back for the next segment, or (once all segments are implemented) a"}:::decision
         execute-plan__review-tick["review-tick (code)<br/>Hold the review-round counter for the whole-codebase review-fix loop."]:::code
         execute-plan__review-round["review-round (claude-code)<br/>One whole-codebase review-fix round (a fresh agent): deploy the relevant lenses "]:::code
         execute-plan__check-rounds{"check-rounds (code)<br/>Enforce the loop condition: continue only if the agent wants another round AND w"}:::decision
         execute-plan__simplify["simplify (claude-code)<br/>One focused simplicity pass over the COMPLETE implemented + reviewed change, run"]:::code
         execute-plan__verify["verify (claude-code)<br/>Adversarial verification of the fully-implemented, reviewed, and simplified resu"]:::code
+        subgraph execute-plan__final-gate-in ["final-gate inputs"]
+            execute-plan__final-gate__in_repo_dir[/"repo_dir (string)"/]:::input
+            execute-plan__final-gate__in_validate_command[/"validate_command (string)"/]:::input
+            execute-plan__final-gate__in_plan[/"plan (string)"/]:::input
+            execute-plan__final-gate__in_progress_log[/"progress_log (string)"/]:::input
+            execute-plan__final-gate__in_base_branch[/"base_branch (string)"/]:::input
+            execute-plan__final-gate__in_max_fix_rounds[/"max_fix_rounds (integer)"/]:::input
+        end
+        style execute-plan__final-gate-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        execute-plan__final-gate__in_repo_dir --> execute-plan__final-gate__run-validate
+        execute-plan__final-gate__in_validate_command --> execute-plan__final-gate__run-validate
+        execute-plan__final-gate__in_plan --> execute-plan__final-gate__run-validate
+        execute-plan__final-gate__in_progress_log --> execute-plan__final-gate__run-validate
+        execute-plan__final-gate__in_base_branch --> execute-plan__final-gate__run-validate
+        execute-plan__final-gate__in_max_fix_rounds --> execute-plan__final-gate__run-validate
+        subgraph execute-plan__final-gate ["final-gate (workflow)<br/>Final deterministic test/quality gate (with auto-fix), over the WHOLE result."]
+            execute-plan__final-gate__run-validate["run-validate (code)<br/>Run the project's validation command in `repo_dir` and report pass/fail BY EXIT "]:::code
+            execute-plan__final-gate__check-validate["check-validate (code)<br/>Decide the loop on the command's REAL result: pass → done (`ok: true`); fail and"]:::code
+            execute-plan__final-gate__fix-tests["fix-tests (claude-code)<br/>A fresh fix fork."]:::code
+            execute-plan__final-gate__run-validate --> execute-plan__final-gate__check-validate
+            execute-plan__final-gate__check-validate -->|fix-tests| execute-plan__final-gate__fix-tests
+            execute-plan__final-gate__fix-tests --> execute-plan__final-gate__run-validate
+        end
+        style execute-plan__final-gate fill:#808080,fill-opacity:0.21,stroke:#999
+        subgraph execute-plan__final-gate-out ["final-gate outputs"]
+            execute-plan__final-gate__out_ok(["ok"]):::output
+            execute-plan__final-gate__out_summary(["summary"]):::output
+        end
+        style execute-plan__final-gate-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        execute-plan__final-gate__check-validate --> execute-plan__final-gate__out_ok
+        execute-plan__final-gate__check-validate --> execute-plan__final-gate__out_summary
+        execute-plan__in_repo_dir --> execute-plan__final-gate__in_repo_dir
+        execute-plan__in_validate_command --> execute-plan__final-gate__in_validate_command
+        execute-plan__in_plan --> execute-plan__final-gate__in_plan
+        execute-plan__in_progress_log --> execute-plan__final-gate__in_progress_log
+        execute-plan__in_base_branch --> execute-plan__final-gate__in_base_branch
+        execute-plan__in_max_fix_rounds --> execute-plan__final-gate__in_max_fix_rounds
+        execute-plan__check-final["check-final (code)<br/>Ship only if the final gate is green."]:::code
         execute-plan__push["push (code)<br/>Push the work branch to origin so `ship` can open a PR."]:::code
         execute-plan__ship["ship (claude-code)<br/>Open a PR for the work branch against the base branch."]:::code
         execute-plan__branch-setup --> execute-plan__plan-review-fix
         execute-plan__plan-review-fix --> execute-plan__breakdown
         execute-plan__breakdown --> execute-plan__group-tick
-        execute-plan__implement-chunk__out_commits_made --> execute-plan__check-groups
+        execute-plan__implement-chunk --> execute-plan__seg-gate
+        execute-plan__seg-gate__out_ok --> execute-plan__check-groups
+        execute-plan__seg-gate__out_summary --> execute-plan__check-groups
         execute-plan__check-groups -->|group-tick| execute-plan__group-tick
         execute-plan__check-groups -->|review-tick| execute-plan__review-tick
         execute-plan__check-groups -->|simplify| execute-plan__simplify
@@ -124,7 +207,9 @@ graph TD
         execute-plan__check-rounds -->|review-tick| execute-plan__review-tick
         execute-plan__check-rounds -->|simplify| execute-plan__simplify
         execute-plan__simplify --> execute-plan__verify
-        execute-plan__verify --> execute-plan__push
+        execute-plan__final-gate__out_ok --> execute-plan__check-final
+        execute-plan__final-gate__out_summary --> execute-plan__check-final
+        execute-plan__check-final -->|push| execute-plan__push
         execute-plan__push --> execute-plan__ship
     end
     style execute-plan fill:#808080,fill-opacity:0.14,stroke:#999
@@ -135,6 +220,7 @@ graph TD
     end
     style execute-plan-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     execute-plan__ship --> execute-plan__out_pr_url
+    execute-plan__check-final --> execute-plan__out_summary
     execute-plan__check-groups --> execute-plan__out_summary
     execute-plan__breakdown --> execute-plan__out_segments
     resolve-repo --> execute-plan__in_plan
@@ -155,6 +241,8 @@ graph TD
     input_simplify_lens --> execute-plan__in_simplify_lens
     input_verify_recipe --> execute-plan__in_verify_recipe
     input_max_review_rounds --> execute-plan__in_max_review_rounds
+    input_validate_command --> execute-plan__in_validate_command
+    input_max_fix_rounds --> execute-plan__in_max_fix_rounds
     subgraph workflow-outputs ["workflow outputs"]
         out_pr_url(["pr_url"]):::output
         out_summary(["summary"]):::output

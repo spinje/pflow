@@ -112,6 +112,26 @@ diminishing-returns judgment normally exits before the cap; default is the cap.
 - required: false
 - default: 3
 
+### validate_command
+
+The project's full validation command (tests + lint + types), e.g. `make test && make check`. Run
+in `repo_dir` as a deterministic gate after each segment and after verify — its exit code, not an
+agent's claim, decides whether the code is green. Empty → the gate passes trivially and the harness
+CANNOT guarantee the shipped code passes the project's own checks, so supply it for real runs.
+
+- type: string
+- required: false
+- default: ""
+
+### max_fix_rounds
+
+Hard cap on auto-fix attempts each time the validation gate is red, before the run aborts without
+shipping.
+
+- type: integer
+- required: false
+- default: 5
+
 ## Steps
 
 ### branch-setup
@@ -237,13 +257,35 @@ context-window management during implementation; review is whole-codebase, once,
 
 - type: workflow
 - workflow: ./implement-chunk/implement-chunk.pflow.md
-- next: check-groups
+- next: seg-gate
 - inputs:
     plan: ${plan}
     spec: ${spec}
     delta: ${group-tick.result.delta}
     progress_log: ${progress_log}
     repo_dir: ${repo_dir}
+
+### seg-gate
+
+Per-segment deterministic test/quality gate (with auto-fix). After each segment is implemented, run
+the project's `validate_command` over the whole repo; if it's red, a fix fork repairs it (up to
+`max_fix_rounds`), looping on the command's real exit code. This catches a regression at its SOURCE
+— the moment the segment introduces it — so the fix is localized, later segments don't build on a
+broken tree (they share the branch), and review never starts from red. A deterministic gate is NOT
+review (it runs the tests, it doesn't read code), so running it per segment doesn't reintroduce the
+per-segment-review cost. `ok: false` (couldn't go green within the cap) is a hard failure the next
+checker aborts on. When `validate_command` is empty the gate passes trivially.
+
+- type: workflow
+- workflow: ./validate-fix/validate-fix.pflow.md
+- next: check-groups
+- inputs:
+    repo_dir: ${repo_dir}
+    validate_command: ${validate_command}
+    plan: ${plan}
+    progress_log: ${progress_log}
+    base_branch: ${base_branch}
+    max_fix_rounds: ${max_fix_rounds}
 
 ### check-groups
 
@@ -256,24 +298,29 @@ segment produced no commits) so we don't run remaining dependent segments or shi
 - next: group-tick, review-tick, simplify, end
 - inputs:
     commits: ${implement-chunk.commits_made}
+    gate_ok: ${seg-gate.ok}
     is_last: ${group-tick.result.is_last}
     index: ${group-tick.result.index}
     cap: ${max_review_rounds}
 
 ```python code
 commits: int
+gate_ok: bool
 is_last: bool
 index: int
 cap: int
 if commits == 0:
     result: dict = {"next_index": index, "status": f"ABORTED: segment {index} produced no commits; nothing shipped."}
     next: str = "end"
+elif not gate_ok:
+    result: dict = {"next_index": index, "status": f"ABORTED: segment {index} left the build failing after the fix cap; nothing shipped."}
+    next: str = "end"
 elif is_last:
-    result: dict = {"next_index": index, "status": f"All {index + 1} segment(s) implemented."}
+    result: dict = {"next_index": index, "status": f"All {index + 1} segment(s) implemented and validated."}
     # max_review_rounds == 0 disables the whole-codebase review LOOP (cost dial); simplify still runs.
     next: str = "simplify" if cap == 0 else "review-tick"
 else:
-    result: dict = {"next_index": index + 1, "status": f"Segment {index} done; continuing."}
+    result: dict = {"next_index": index + 1, "status": f"Segment {index} done and validated; continuing."}
     next: str = "group-tick"
 ```
 
@@ -407,7 +454,7 @@ to a deterministic push → ship; neither changes code), preserving "the final c
 - cwd: ${repo_dir}
 - max_turns: 60
 - timeout: 1800
-- next: push
+- next: final-gate
 - inputs:
     repo_dir: ${repo_dir}
     plan_path: ${plan}
@@ -428,6 +475,49 @@ properties:
   breaks_found: { type: integer }
   summary: { type: string }
 required: [breaks_found, summary]
+```
+
+### final-gate
+
+Final deterministic test/quality gate (with auto-fix), over the WHOLE result. The review-fix loop,
+`simplify`, and `verify` all changed code AFTER the last per-segment gate, so re-run the project's
+`validate_command` and fix any regression they introduced before shipping. Same reusable gate as
+`seg-gate`; `ok: false` (couldn't go green within the cap) aborts before ship. This is the hard
+guarantee the harness was missing — "the shipped code passes the project's own tests/lint/types" is
+enforced by the graph, not left to an agent's self-report.
+
+- type: workflow
+- workflow: ./validate-fix/validate-fix.pflow.md
+- next: check-final
+- inputs:
+    repo_dir: ${repo_dir}
+    validate_command: ${validate_command}
+    plan: ${plan}
+    progress_log: ${progress_log}
+    base_branch: ${base_branch}
+    max_fix_rounds: ${max_fix_rounds}
+
+### check-final
+
+Ship only if the final gate is green. If validation still fails after the fix cap, ABORT without
+shipping — never open a PR for code that fails the project's own test/lint/type gate. Routes to
+`push` on green, `end` (abort) otherwise.
+
+- type: code
+- next: push
+- inputs:
+    ok: ${final-gate.ok}
+    final_summary: ${final-gate.summary}
+
+```python code
+ok: bool
+final_summary: str
+if ok:
+    result: dict = {"status": "Validated end-to-end; shipping."}
+    next: str = "push"
+else:
+    result: dict = {"status": f"ABORTED before ship: {final_summary}"}
+    next: str = "end"
 ```
 
 ### push
@@ -522,9 +612,9 @@ runs on the success path).
 
 ### summary
 
-Why the run ended (success, or which segment aborted).
+Why the run ended (shipped after validation, a segment that aborted, or a final-gate abort).
 
-- source: ${check-groups.result.status}
+- source: ${check-final.result.status ?? check-groups.result.status}
 
 ### segments
 

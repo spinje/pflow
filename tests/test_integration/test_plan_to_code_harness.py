@@ -10,20 +10,25 @@ This test reproduces that topology with ``code`` stand-ins for every agent (each
 returns the same shape the real node would) and asserts the orchestration behaves:
 
   branch-setup → plan-review-fix → breakdown
-    → [segment loop]  implement each segment, sequentially, early-exit on no-commits
+    → [segment loop]  implement each segment → per-segment validate gate (auto-fix),
+                      sequentially, early-exit on no-commits OR a gate that can't go green
     → [review loop]   whole-codebase review-fix, ≤ max_review_rounds, stop on diminishing returns
         (skipped entirely when max_review_rounds == 0 — the cost dial)
-    → simplify (1-lens, fix-capable) → verify → push → ship
+    → simplify (1-lens, fix-capable) → verify → final validate gate (auto-fix) → push → ship
 
 It guards the "validates ≠ runnable" failure class: a topology that compiles but
 mis-routes (e.g. cost dial that still runs one round, early-exit that ships anyway,
-review loop that ignores the cap). It is NOT a test of the agent prompts.
+review loop that ignores the cap, a red validate gate that ships anyway). It is NOT
+a test of the agent prompts.
 
 Maintenance contract: this mirrors the control flow of
-``execute-plan/execute-plan.pflow.md`` + ``implement-chunk/implement-chunk.pflow.md``.
-If you change the harness routing (loop wiring, gate conditions, stage order), update
-the stand-in workflow below to match. A ``sim`` marker on each segment drives the
-deterministic outcomes the real agents would produce.
+``execute-plan/execute-plan.pflow.md`` + ``implement-chunk/implement-chunk.pflow.md``
++ ``validate-fix/validate-fix.pflow.md``. If you change the harness routing (loop
+wiring, gate conditions, stage order), update the stand-in workflow below to match.
+A ``sim`` marker on each segment drives the deterministic outcomes the real agents
+would produce. (The validate-fix sub-workflow's INTERNAL fix loop is its own concern;
+here the gate is a single stand-in returning ``ok`` so this test targets execute-plan's
+routing, not the fix loop's plumbing.)
 """
 
 from pathlib import Path
@@ -33,9 +38,9 @@ from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 
 # A single-file stand-in that reproduces the harness's control flow. The real harness
-# splits this across execute-plan + implement-chunk sub-workflows; nesting is proven
-# separately (spike S1). Here we keep it one file so the test targets ROUTING, not
-# sub-workflow plumbing. Each agent stage is a `code` node appending to a log file and
+# splits this across execute-plan + implement-chunk + validate-fix sub-workflows; nesting
+# is proven separately (spike S1). Here we keep it one file so the test targets ROUTING,
+# not sub-workflow plumbing. Each agent stage is a `code` node appending to a log file and
 # returning the real node's output shape, driven by the `scenario` fixture.
 HARNESS_SKELETON = """\
 # Plan-to-Code Harness (control-flow skeleton)
@@ -49,8 +54,10 @@ branch can be exercised.
 ### scenario
 
 Which control-flow case to exercise: `happy` (2 segments ok, review converges),
-`fail-mid` (segment 1 has no commits -> early-exit), `cap` (review never converges ->
-hits the round cap), `skip-review` (max_review_rounds 0 -> review loop skipped).
+`fail-mid` (segment 1 has no commits -> early-exit), `seg-gate-fail` (segment 0's
+validate gate can't go green -> early-exit), `final-gate-fail` (final validate gate
+can't go green -> no ship), `cap` (review never converges -> hits the round cap),
+`skip-review` (max_review_rounds 0 -> review loop skipped).
 
 - type: string
 - required: false
@@ -153,7 +160,7 @@ result: dict = {"index": index, "sim": seg["sim"], "is_last": is_last}
 Stand-in implement fork: append a marker; `commits_made == 0` when sim is "fail".
 
 - type: code
-- next: check-groups
+- next: seg-gate
 - inputs:
     index: ${group-tick.result.index}
     sim: ${group-tick.result.sim}
@@ -169,26 +176,54 @@ with open(log, "a") as f:
 result: int = commits
 ```
 
+### seg-gate
+
+Stand-in per-segment validate gate (the real one is the validate-fix sub-workflow). It
+runs after every segment; `ok` is false only in the `seg-gate-fail` scenario (segment 0
+can't be made green within the fix cap).
+
+- type: code
+- next: check-groups
+- inputs:
+    index: ${group-tick.result.index}
+    scenario: ${scenario}
+    log: ${log}
+
+```python code
+index: int
+scenario: str
+log: str
+ok = not (scenario == "seg-gate-fail" and index == 0)
+with open(log, "a") as f:
+    f.write(f"seg-gate:seg{index}:ok{ok}\\n")
+result: dict = {"ok": ok}
+```
+
 ### check-groups
 
-Loop to next segment, advance to review (or skip to verify when cap==0), or abort on
-no-commits.
+Loop to next segment, advance to review (or skip to simplify when cap==0), or abort on
+no-commits OR a gate that couldn't go green.
 
 - type: code
 - next: group-tick, review-tick, simplify, end
 - inputs:
     commits: ${implement-chunk.result}
+    gate_ok: ${seg-gate.result.ok}
     is_last: ${group-tick.result.is_last}
     index: ${group-tick.result.index}
     cap: ${max_review_rounds}
 
 ```python code
 commits: int
+gate_ok: bool
 is_last: bool
 index: int
 cap: int
 if commits == 0:
-    result: dict = {"next_index": index, "status": f"ABORTED at segment {index}"}
+    result: dict = {"next_index": index, "status": f"ABORTED no-commits at segment {index}"}
+    next: str = "end"
+elif not gate_ok:
+    result: dict = {"next_index": index, "status": f"ABORTED gate at segment {index}"}
     next: str = "end"
 elif is_last:
     result: dict = {"next_index": index, "status": "implemented"}
@@ -236,7 +271,7 @@ result: dict = {"round": round, "continue": keep}
 
 ### check-rounds
 
-Continue review only if the round wants to AND under the cap; else advance to verify.
+Continue review only if the round wants to AND under the cap; else advance to simplify.
 
 - type: code
 - next: review-tick, simplify
@@ -278,7 +313,7 @@ result: str = "ok"
 Stand-in adversarial verify (last code-touching stage).
 
 - type: code
-- next: push
+- next: final-gate
 - inputs:
     log: ${log}
 
@@ -287,6 +322,47 @@ log: str
 with open(log, "a") as f:
     f.write("verify\\n")
 result: str = "ok"
+```
+
+### final-gate
+
+Stand-in final validate gate (the real one is the validate-fix sub-workflow), over the
+whole result after verify. `ok` is false only in the `final-gate-fail` scenario.
+
+- type: code
+- next: check-final
+- inputs:
+    scenario: ${scenario}
+    log: ${log}
+
+```python code
+scenario: str
+log: str
+ok = scenario != "final-gate-fail"
+with open(log, "a") as f:
+    f.write(f"final-gate:ok{ok}\\n")
+result: dict = {"ok": ok}
+```
+
+### check-final
+
+Ship only if the final gate is green; otherwise abort without shipping.
+
+- type: code
+- next: push
+- inputs:
+    ok: ${final-gate.result.ok}
+    log: ${log}
+
+```python code
+ok: bool
+log: str
+if ok:
+    result: dict = {"status": "shipping"}
+    next: str = "push"
+else:
+    result: dict = {"status": "ABORTED final-gate"}
+    next: str = "end"
 ```
 
 ### push
@@ -326,7 +402,7 @@ result: str = "shipped"
 
 Why the run ended.
 
-- source: ${check-groups.result.status}
+- source: ${check-final.result.status ?? check-groups.result.status}
 - stdout: true
 """
 
@@ -342,25 +418,28 @@ def _run(tmp_path: Path, scenario: str, max_review_rounds: int = 3) -> list[str]
         RunnerConfig(),
     )
     # The run must SUCCEED for the log to be a trustworthy control-flow trace — including the
-    # hard-failure scenario, whose `next: end` abort is a *clean* termination, not a crash. Without
-    # this, a routing regression that raises after writing the early log lines would still satisfy
-    # the negative assertions (e.g. "ship" not in flow) simply because execution crashed early.
+    # abort scenarios, whose `next: end` is a *clean* termination, not a crash. Without this, a
+    # routing regression that raises after writing the early log lines would still satisfy the
+    # negative assertions (e.g. "ship" not in flow) simply because execution crashed early.
     assert result.success, f"skeleton run failed ({scenario}): {[d.message for d in result.errors]}"
     return log.read_text().splitlines() if log.exists() else []
 
 
 def test_happy_path_runs_full_pipeline(tmp_path: Path) -> None:
-    """2 segments, both implement, review converges in 1 round, then verify/gate/ship."""
+    """2 segments: implement + per-segment gate each, review converges, verify, final gate, ship."""
     flow = _run(tmp_path, "happy")
     assert flow == [
         "branch-setup",
         "plan-review-fix",
         "breakdown:2segments",
         "implement:seg0:commits2",
+        "seg-gate:seg0:okTrue",
         "implement:seg1:commits2",
+        "seg-gate:seg1:okTrue",
         "review:round1",
         "simplify",
         "verify",
+        "final-gate:okTrue",
         "push",
         "ship",
     ]
@@ -375,6 +454,17 @@ def test_segments_implement_sequentially_before_any_review(tmp_path: Path) -> No
     assert len(implements) == 2
 
 
+def test_per_segment_gate_runs_after_each_segment_before_review(tmp_path: Path) -> None:
+    """The validate gate runs once per segment, and every gate precedes the review loop."""
+    flow = _run(tmp_path, "happy")
+    gates = [i for i, x in enumerate(flow) if x.startswith("seg-gate:")]
+    first_review = next(i for i, x in enumerate(flow) if x.startswith("review:"))
+    assert len(gates) == 2  # one per segment
+    assert all(i < first_review for i in gates), flow
+    # each gate immediately follows its segment's implement
+    assert flow.index("seg-gate:seg0:okTrue") == flow.index("implement:seg0:commits2") + 1
+
+
 def test_hard_failure_early_exits_and_does_not_ship(tmp_path: Path) -> None:
     """Segment 1 produces no commits -> abort; later segment + review + ship never run."""
     flow = _run(tmp_path, "fail-mid")
@@ -384,17 +474,43 @@ def test_hard_failure_early_exits_and_does_not_ship(tmp_path: Path) -> None:
     assert not any(x.startswith("review:") for x in flow)
     assert "simplify" not in flow
     assert "verify" not in flow
+    assert "final-gate:okTrue" not in flow
+    assert "push" not in flow
+    assert "ship" not in flow
+
+
+def test_segment_gate_failure_aborts_without_review_or_ship(tmp_path: Path) -> None:
+    """A segment whose validate gate can't go green aborts the run before review/ship."""
+    flow = _run(tmp_path, "seg-gate-fail")
+    assert "implement:seg0:commits2" in flow
+    assert "seg-gate:seg0:okFalse" in flow  # gate red, fix cap exhausted
+    assert "implement:seg1:commits2" not in flow  # next segment never runs
+    assert not any(x.startswith("review:") for x in flow)
+    assert "simplify" not in flow
+    assert "verify" not in flow
+    assert "push" not in flow
+    assert "ship" not in flow
+
+
+def test_final_gate_failure_does_not_ship(tmp_path: Path) -> None:
+    """If the final validate gate can't go green, the run must NOT push or ship."""
+    flow = _run(tmp_path, "final-gate-fail")
+    # everything up to and including the final gate runs...
+    assert "verify" in flow
+    assert "final-gate:okFalse" in flow
+    # ...but the deterministic gate blocks shipping a red tree.
     assert "push" not in flow
     assert "ship" not in flow
 
 
 def test_review_loop_honors_the_cap(tmp_path: Path) -> None:
-    """Review that never converges runs exactly max_review_rounds rounds, then verify."""
+    """Review that never converges runs exactly max_review_rounds rounds, then simplify/verify."""
     flow = _run(tmp_path, "cap", max_review_rounds=3)
     review_rounds = [x for x in flow if x.startswith("review:round")]
     assert review_rounds == ["review:round1", "review:round2", "review:round3"]
     assert "simplify" in flow  # simplicity pass runs after the review loop
     assert "verify" in flow  # proceeds after the cap
+    assert "final-gate:okTrue" in flow
     assert "push" in flow
     assert "ship" in flow
 
@@ -405,6 +521,7 @@ def test_cost_dial_skips_review_entirely(tmp_path: Path) -> None:
     assert not any(x.startswith("review:") for x in flow), flow
     assert "simplify" in flow  # the cost dial skips the review LOOP, not the simplicity pass
     assert "verify" in flow
+    assert "final-gate:okTrue" in flow
     assert "push" in flow
     assert "ship" in flow
 
@@ -432,17 +549,32 @@ def test_real_execute_plan_routing_matches_skeleton() -> None:
     """The shipped execute-plan.pflow.md keeps the gate/loop routing the skeleton asserts.
 
     The ``end`` abort sentinel is not a node, so it is never a declared edge target — assert the
-    concrete successors only (the abort routes via the check-groups code body's ``next = "end"``).
+    concrete successors only (aborts route via the check-* code bodies' ``next = "end"``).
     """
     succ = _successors(_HARNESS_DIR / "execute-plan/execute-plan.pflow.md")
+    # Per-segment validate gate sits between the implement worker and the loop checker.
+    assert succ["implement-chunk"] == {"seg-gate"}
+    assert succ["seg-gate"] == {"check-groups"}
     # Segment-loop gate: loop back, advance to the review loop, or skip-to-simplify (cost dial).
     assert succ["check-groups"] == {"group-tick", "review-tick", "simplify"}
     # Review-loop gate: loop back for another round, or advance to simplify.
     assert succ["check-rounds"] == {"review-tick", "simplify"}
-    # End-stage chain: verify is the last code-touching stage, then deterministic push, then ship.
+    # End-stage chain: verify (last code-touching stage) → final validate gate → ship-or-abort.
     assert succ["simplify"] == {"verify"}
-    assert succ["verify"] == {"push"}
+    assert succ["verify"] == {"final-gate"}
+    assert succ["final-gate"] == {"check-final"}
+    assert succ["check-final"] == {"push"}  # green → push; red aborts via `next = "end"`
     assert succ["push"] == {"ship"}
+
+
+def test_real_validate_fix_is_a_ground_truth_loop() -> None:
+    """The reusable validate-fix gate loops fix-tests → run-validate on the command's exit code."""
+    succ = _successors(_HARNESS_DIR / "execute-plan/validate-fix/validate-fix.pflow.md")
+    assert succ["run-validate"] == {"check-validate"}
+    assert succ["check-validate"] == {"fix-tests"}  # red → fix; green/cap route via `next = "end"`
+    assert succ["fix-tests"] == {"run-validate"}  # backward edge: re-check after every fix
+    ir = parse_markdown((_HARNESS_DIR / "execute-plan/validate-fix/validate-fix.pflow.md").read_text()).ir
+    assert "ok" in ir["outputs"], list(ir["outputs"])  # callers branch on the gate's verdict
 
 
 def test_real_implement_chunk_exposes_commits_made() -> None:

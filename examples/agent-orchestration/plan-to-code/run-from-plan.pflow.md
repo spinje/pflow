@@ -121,6 +121,26 @@ Default is the cap; the review agent's diminishing-returns judgment normally exi
 - required: false
 - default: 3
 
+### validate_command
+
+The project's full validation command (tests + lint + types), e.g. `make test && make check`. Run
+as a deterministic gate after each segment and after verify — the harness fixes failures (up to
+`max_fix_rounds`) and refuses to ship code that fails it. Empty → the gate is skipped and the
+harness cannot guarantee the shipped code is green, so supply it for real runs.
+
+- type: string
+- required: false
+- default: ""
+
+### max_fix_rounds
+
+Hard cap on auto-fix attempts each time the validation gate is red, before the run aborts without
+shipping.
+
+- type: integer
+- required: false
+- default: 5
+
 ## Steps
 
 ### resolve-repo
@@ -255,6 +275,8 @@ itself — `cwd` is rejected on workflow nodes).
     simplify_lens: ${simplify_lens}
     verify_recipe: ${verify_recipe}
     max_review_rounds: ${max_review_rounds}
+    validate_command: ${validate_command}
+    max_fix_rounds: ${max_fix_rounds}
 
 ## Outputs
 
