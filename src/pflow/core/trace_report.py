@@ -17,6 +17,7 @@ from uuid import uuid4
 from pflow.core.duration_format import format_duration
 from pflow.core.exceptions import ReportGenerationError
 from pflow.core.node_type_display import node_type_tag
+from pflow.core.trace_io import load_trace_file
 from pflow.runtime.workflow_trace import final_events_by_node
 
 logger = logging.getLogger(__name__)
@@ -629,8 +630,7 @@ def generate_report(
         return None
 
     try:
-        with open(trace_path) as f:
-            trace = json.load(f)
+        trace = load_trace_file(trace_path)
     except (json.JSONDecodeError, OSError):
         logger.exception("Failed to read trace file %s", trace_path)
         return None
@@ -1192,17 +1192,22 @@ def _format_cached_system(event: dict[str, Any], lines: list[str]) -> None:
 
     lines.append("## Cached System")
     lines.append("")
-    if isinstance(llm_system, str):
-        lines.append(llm_system)
-    else:
-        lines.append("```json")
-        lines.append(json.dumps(llm_system, indent=2, default=str))
-        lines.append("```")
+    _append_str_or_blocks(llm_system, lines)
     skipped = (event.get("llm_call") or {}).get("cache_chunks_skipped") or []
     if skipped:
         lines.append("")
         lines.append(f"> Skipped chunks (resolved as ABSENT): {', '.join(skipped)}")
     lines.append("")
+
+
+def _append_str_or_blocks(value: str | list[Any], lines: list[str]) -> None:
+    if isinstance(value, str):
+        lines.append(value)
+        return
+
+    lines.append("```json")
+    lines.append(json.dumps(value, indent=2, default=str))
+    lines.append("```")
 
 
 def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
@@ -1271,8 +1276,10 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     if "prompt" in resolutions:
         lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])
         shown.add("prompt")
-    elif event.get("llm_prompt"):
-        lines.extend(["## Prompt", "", event["llm_prompt"], ""])
+    elif llm_prompt := event.get("llm_prompt"):
+        lines.extend(["## Prompt", ""])
+        _append_str_or_blocks(llm_prompt, lines)
+        lines.append("")
 
     if "command" in resolutions:
         lines.extend(["## Command", "", f"```bash\n{resolutions['command'].get('resolved', '')}\n```", ""])

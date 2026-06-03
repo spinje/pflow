@@ -286,6 +286,11 @@ def memo_cache_lookup(
     return True, cache_key, (cached_action, cached_output, created_at)
 
 
+def is_llm_node_type(node_type_name: str) -> bool:
+    """Return whether ``node_type_name`` is pflow's built-in LLM node."""
+    return node_type_name == "LLMNode"
+
+
 def _should_write_cache_metadata(node_type_name: str) -> bool:
     """Allowlist semantics for trace 2.1.0 cache-metadata fields.
 
@@ -302,7 +307,7 @@ def _should_write_cache_metadata(node_type_name: str) -> bool:
     ``llm_usage`` would conflate two distinct cache layers and mislead
     agents reading the trace.
     """
-    return node_type_name == "LLMNode"
+    return is_llm_node_type(node_type_name)
 
 
 def _log_skipped_cache_metadata(node_type_name: str, sample_output: Any) -> None:

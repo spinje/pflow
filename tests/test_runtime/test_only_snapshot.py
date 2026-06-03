@@ -23,6 +23,7 @@ import pytest
 
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.node import BaseNode
+from pflow.core.trace_io import intern_blobs
 from pflow.execution.execution_state import build_execution_steps
 from pflow.execution.result import RunnerConfig, WorkflowStatus
 from pflow.execution.runner import WorkflowRunner
@@ -95,6 +96,29 @@ def _write_trace(
         data["warnings"] = warnings
     path = debug_dir / fname
     path.write_text(json.dumps(data))
+    return path
+
+
+def _write_interned_trace(
+    debug_dir: Path,
+    workflow_path: str,
+    *,
+    timestamp: str,
+    nodes: list[dict[str, Any]],
+    name: str = "wf",
+) -> Path:
+    """Write a synthetic interned full-run trace the loader can discover."""
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    fname = format_trace_filename(workflow_path, name, timestamp)
+    data: dict[str, Any] = {
+        "format_version": "2.5.0",
+        "workflow_path": workflow_path,
+        "final_status": "success",
+        "only_node": None,
+        "nodes": nodes,
+    }
+    path = debug_dir / fname
+    path.write_text(json.dumps(intern_blobs(data)), encoding="utf-8")
     return path
 
 
@@ -276,6 +300,28 @@ def test_only_node_trace_excluded(tmp_path: Path) -> None:
     nodes, status = loaded
     assert status == "success"
     assert nodes == [{"node_id": "fetch", "node_output": {"stdout": "full"}}]
+
+
+def test_interned_trace_resolves_before_snapshot_seeding(tmp_path: Path) -> None:
+    """Snapshot consumers seed resolved content, never raw ``$pflow_blob`` refs."""
+    wf = "ir-hash:interned-snapshot"
+    large = "snapshot-upstream-" + ("x" * 2048)
+    _write_interned_trace(
+        tmp_path,
+        wf,
+        timestamp="20260101-000000",
+        nodes=[
+            {"node_id": "fetch", "node_output": {"stdout": large}},
+            {"node_id": "summarize", "node_output": {"stdout": "summary"}},
+        ],
+    )
+
+    events, status = load_snapshot_or_raise(wf, "summarize", debug_dir=tmp_path)
+    assert status == "success"
+    shared: dict[str, Any] = {}
+    seed_snapshot_into_shared(shared, events, exclude="summarize")
+
+    assert shared["fetch"]["stdout"] == large
 
 
 def test_failed_trace_rejected(tmp_path: Path) -> None:
@@ -521,6 +567,35 @@ def test_planner_cached_verdict_matches_engine_serving_cached(tmp_path: Path) ->
     result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="b"))
     assert result.success
     assert sentinel.read_text().count("ran") == 1, "cached --only target must not re-execute"
+
+
+@pytest.mark.trace_files
+def test_planner_only_seeds_resolved_content_from_interned_trace(tmp_path: Path) -> None:
+    """Dry-run --only uses resolved snapshot content when computing target cache state."""
+    large = "interned-upstream-" + ("x" * 2048)
+    ir = {
+        "nodes": [
+            {"id": "upstream", "type": "shell", "params": {"command": f"printf {large!r}"}},
+            {
+                "id": "target",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": "printf 'got ${upstream.stdout}'"},
+            },
+        ],
+        "edges": [{"from": "upstream", "to": "target"}],
+    }
+    wf = tmp_path / "interned-dry-run-only.pflow.md"
+    write_workflow_file(ir, wf)
+
+    full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert full.success, [d.message for d in full.diagnostics]
+    full.trace.save_to_file()
+
+    plan = WorkflowRunner().plan(str(wf), {}, RunnerConfig(only_node="target"))
+
+    assert [e.node_id for e in plan.entries] == ["target"]
+    assert plan.entries[0].status == "cached"
 
 
 @pytest.mark.trace_files

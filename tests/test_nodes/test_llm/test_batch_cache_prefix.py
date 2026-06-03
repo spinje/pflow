@@ -104,6 +104,7 @@ def test_prewarm_batch_with_static_prefix_emits_user_message_blocks(mock_llm_cli
     # Block 1: dynamic suffix, no marker
     assert sent_blocks[1]["text"] == "hello world"
     assert "cache_control" not in sent_blocks[1]
+    assert shared["user_message_blocks"] == sent_blocks
 
 
 def test_prewarm_batch_without_unresolved_template_skips(mock_llm_client) -> None:

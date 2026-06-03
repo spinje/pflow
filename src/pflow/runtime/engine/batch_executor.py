@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .batch_item_summary import summarize_batch_item
+from .instrumentation import is_llm_node_type
 from .types import BatchConfig, NodeConfig
 
 logger = logging.getLogger(__name__)
@@ -363,6 +364,7 @@ def _execute_batch_item(
                 _capture_item_trace(
                     parent_shared,
                     config.node_id,
+                    config.node_type_name,
                     item_shared,
                     idx,
                     item,
@@ -377,6 +379,7 @@ def _execute_batch_item(
             _capture_item_trace(
                 parent_shared,
                 config.node_id,
+                config.node_type_name,
                 item_shared,
                 idx,
                 item,
@@ -404,6 +407,7 @@ def _execute_batch_item(
     _capture_item_trace(
         parent_shared,
         config.node_id,
+        config.node_type_name,
         item_shared,
         idx,
         item,
@@ -818,6 +822,7 @@ def _extract_error(result: Any) -> str | None:
 def _capture_item_trace(
     parent_shared: dict[str, Any],
     node_id: str,
+    node_type_name: str,
     item_shared: dict[str, Any],
     idx: int,
     item: Any,
@@ -847,27 +852,18 @@ def _capture_item_trace(
     if isinstance(node_output, dict):
         item_event["node_output"] = dict(node_output)
 
+    is_llm_event = is_llm_node_type(node_type_name)
+
     # Template resolutions — received directly, no chain traversal
     if last_resolutions:
-        item_event["template_resolutions"] = last_resolutions
+        item_event["template_resolutions"] = _template_resolutions_for_item_trace(last_resolutions, is_llm_event)
 
     # LLM data from item output
     if isinstance(node_output, dict):
-        llm_usage = node_output.get("llm_usage")
-        if isinstance(llm_usage, dict):
-            # Import here to avoid circular dependency
-            from pflow.runtime.workflow_trace import WorkflowTraceCollector
+        _promote_item_llm_data(item_event, node_output)
 
-            # Aggregate retry costs/tokens if present (schema self-healing)
-            item_event["llm_call"] = WorkflowTraceCollector.aggregate_llm_usage_with_retries(llm_usage)
-        for src_key, dst_key in [
-            ("response", "llm_response"),
-            ("prompt", "llm_prompt"),
-            ("system", "llm_system"),  # 2.2.0 — may be str OR list[dict]
-        ]:
-            value = node_output.get(src_key)
-            if isinstance(value, (str, list)):
-                item_event[dst_key] = value
+    if is_llm_event:
+        _strip_redundant_item_llm_fields(item_event)
 
     # Sub-workflow trace events (from WorkflowExecutor batch items).
     # Stored as "events" so collect_llm_calls() can recurse into them.
@@ -875,6 +871,48 @@ def _capture_item_trace(
         item_event["events"] = child_trace_events
 
     trace_list.append(item_event)  # GIL-protected for parallel
+
+
+def _template_resolutions_for_item_trace(last_resolutions: dict[str, Any], is_llm_event: bool) -> dict[str, Any]:
+    if not is_llm_event:
+        return last_resolutions
+    return {key: value for key, value in last_resolutions.items() if key not in ("prompt", "system")}
+
+
+def _promote_item_llm_data(item_event: dict[str, Any], node_output: dict[str, Any]) -> None:
+    llm_usage = node_output.get("llm_usage")
+    if isinstance(llm_usage, dict):
+        # Import here to avoid circular dependency
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+        # Aggregate retry costs/tokens if present (schema self-healing)
+        item_event["llm_call"] = WorkflowTraceCollector.aggregate_llm_usage_with_retries(llm_usage)
+    for src_key, dst_key in [
+        ("response", "llm_response"),
+        ("system", "llm_system"),  # 2.2.0 — may be str OR list[dict]
+    ]:
+        value = node_output.get(src_key)
+        if isinstance(value, (str, list)):
+            item_event[dst_key] = value
+
+    blocks = node_output.get("user_message_blocks")
+    if isinstance(blocks, list):
+        # Shares the live block list by reference; downstream trace code must
+        # keep treating it as read-only (sanitize/intern both rebuild).
+        item_event["llm_prompt"] = blocks
+        return
+
+    prompt = node_output.get("prompt")
+    if isinstance(prompt, str):
+        item_event["llm_prompt"] = prompt
+
+
+def _strip_redundant_item_llm_fields(item_event: dict[str, Any]) -> None:
+    stored_output = item_event.get("node_output")
+    if isinstance(stored_output, dict):
+        stored_output.pop("user_message_blocks", None)
+        stored_output.pop("prompt", None)
+        stored_output.pop("system", None)
 
 
 def _aggregate_batch_results(

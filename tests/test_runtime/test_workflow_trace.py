@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.trace_io import BLOB_SENTINEL, load_trace_file
 from pflow.runtime.workflow_trace import WorkflowTraceCollector, final_events_by_node
 
 pytestmark = pytest.mark.trace_files
@@ -122,6 +123,30 @@ class TestWorkflowTraceCollector:
         output_value = collector.events[0]["node_output"]["large_data"]
         assert output_value == large_string
         assert len(output_value) == 11000
+
+    def test_save_to_file_interns_large_strings_without_mutating_live_events(self, collector, temp_home):
+        """Large duplicate strings are interned only on disk; live events stay resolved."""
+        large_string = "trace-payload-" + ("x" * 2048)
+        collector.record_node_execution(
+            node_id="large-node",
+            node_type="LargeDataNode",
+            duration_ms=5.0,
+            success=True,
+            node_output={"large_data": large_string, "small": "inline"},
+        )
+
+        with patch("pathlib.Path.home", return_value=temp_home):
+            filepath = collector.save_to_file()
+
+        raw_trace = json.loads(filepath.read_text(encoding="utf-8"))
+        raw_value = raw_trace["nodes"][0]["node_output"]["large_data"]
+        assert set(raw_value) == {BLOB_SENTINEL}
+        digest = raw_value[BLOB_SENTINEL]
+        assert raw_trace["blobs"] == {digest: large_string}
+        assert list(raw_trace.keys())[-1] == "blobs"
+
+        assert collector.events[0]["node_output"]["large_data"] == large_string
+        assert load_trace_file(filepath)["nodes"][0]["node_output"]["large_data"] == large_string
 
     def test_sanitize_for_json_binary_data(self, collector):
         """Test that binary data is replaced with a placeholder."""
@@ -252,6 +277,57 @@ class TestWorkflowTraceCollector:
         event = collector.events[0]
         assert "template_resolutions" in event
         assert event["template_resolutions"] == template_resolutions
+
+    def test_llm_event_strips_redundant_prompt_and_system_copies(self, collector):
+        """LLM prompt/effective system live only in canonical llm_* fields."""
+        collector.record_node_execution(
+            node_id="llm-1",
+            node_type="LLMNode",
+            duration_ms=1.0,
+            success=True,
+            node_params={"prompt": "Prompt ${input}", "system": "Configured system", "model": "m"},
+            template_resolutions={
+                "prompt": {"template": "Prompt ${input}", "resolved": "Prompt value"},
+                "system": {"template": "Configured system", "resolved": "Effective system"},
+                "model": {"template": "m", "resolved": "m"},
+            },
+            node_output={
+                "prompt": "Prompt value",
+                "system": "Effective system",
+                "response": "ok",
+                "llm_usage": {"model": "m", "total_tokens": 3},
+            },
+        )
+
+        event = collector.events[0]
+        assert event["llm_prompt"] == "Prompt value"
+        assert event["llm_system"] == "Effective system"
+        assert event["node_params"] == {"system": "Configured system", "model": "m"}
+        assert event["template_resolutions"] == {"model": {"template": "m", "resolved": "m"}}
+        assert event["node_output"] == {"response": "ok", "llm_usage": {"model": "m", "total_tokens": 3}}
+
+    def test_non_llm_prompt_param_is_not_stripped(self, collector):
+        """Only LLM events canonicalize prompt/system; other node params are preserved."""
+        collector.record_node_execution(
+            node_id="custom-1",
+            node_type="CustomNode",
+            duration_ms=1.0,
+            success=True,
+            node_params={"prompt": "Prompt ${input}", "system": "local-system"},
+            template_resolutions={
+                "prompt": {"template": "Prompt ${input}", "resolved": "Prompt value"},
+                "system": {"template": "local-system", "resolved": "local-system"},
+            },
+            node_output={"prompt": "Prompt value", "system": "local-system"},
+        )
+
+        event = collector.events[0]
+        assert event["node_params"]["prompt"] == "Prompt ${input}"
+        assert event["node_params"]["system"] == "local-system"
+        assert event["template_resolutions"]["prompt"]["resolved"] == "Prompt value"
+        assert event["template_resolutions"]["system"]["resolved"] == "local-system"
+        assert event["node_output"]["prompt"] == "Prompt value"
+        assert event["node_output"]["system"] == "local-system"
 
     def test_filename_format(self, collector, temp_home):
         """Test that trace files are saved with correct filename format."""
