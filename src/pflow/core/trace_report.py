@@ -958,6 +958,29 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
             cached=bool(event.get("cached")),
         )
 
+    # Show retry metadata for claude-code schema retries
+    node_output = event.get("node_output", {})
+    if isinstance(node_output, dict):
+        llm_usage = node_output.get("llm_usage")
+        if isinstance(llm_usage, dict):
+            retries = llm_usage.get("retries", [])
+            if retries:
+                # Show retry count
+                retry_count = len(retries)
+                lines.append(f"- Schema retries: {retry_count}")
+
+                # Check if still soft-failed after retries
+                # Look for schema-related warnings in node output
+                warnings = node_output.get("__warnings__")
+                if warnings and isinstance(warnings, dict):
+                    # Check if this is a schema failure after retries
+                    for warning_value in warnings.values():
+                        if (
+                            isinstance(warning_value, dict)
+                            and warning_value.get("kind") == "claude_code.schema_not_satisfied_after_retries"
+                        ):
+                            lines.append(f"  - Soft-failed after {retry_count} retries")
+
     # Show user-configured LLM parameters (only when explicitly set in workflow)
     node_params = event.get("node_params", {})
     _format_llm_params(node_params, lines)

@@ -526,13 +526,15 @@ class WorkflowTraceCollector:
 
         self.events.append(event)
 
-    def _add_llm_data(
+    def _add_llm_data(  # noqa: C901
         self,
         event: dict[str, Any],
         node_id: str,
         node_output: dict[str, Any],
     ) -> None:
         """Add LLM usage and response data to the event if present.
+
+        Aggregates tokens/cost across main usage + retries for claude-code schema retry.
 
         Args:
             event: Event dictionary to update
@@ -542,7 +544,37 @@ class WorkflowTraceCollector:
         # Look for llm_usage directly in node_output
         llm_usage = node_output.get("llm_usage") if isinstance(node_output, dict) else None
         if isinstance(llm_usage, dict):
-            event["llm_call"] = llm_usage
+            # Aggregate tokens/cost across main usage + retries (if present)
+            retries = llm_usage.get("retries", [])
+            if retries:
+                # Create aggregated llm_usage with summed tokens/cost/turns
+                aggregated = dict(llm_usage)  # Shallow copy
+
+                # Sum input/output tokens
+                aggregated["input_tokens"] = llm_usage.get("input_tokens", 0)
+                aggregated["output_tokens"] = llm_usage.get("output_tokens", 0)
+
+                # Sum cache tokens
+                for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
+                    aggregated[cache_key] = llm_usage.get(cache_key, 0)
+
+                # Sum cost and turns
+                aggregated["cost_usd"] = llm_usage.get("cost_usd", 0)
+                aggregated["num_turns"] = llm_usage.get("num_turns", 0)
+
+                # Aggregate retry contributions
+                for retry in retries:
+                    aggregated["input_tokens"] += retry.get("input_tokens", 0)
+                    aggregated["output_tokens"] += retry.get("output_tokens", 0)
+                    for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
+                        aggregated[cache_key] += retry.get(cache_key, 0)
+                    if retry.get("cost_usd") is not None:
+                        aggregated["cost_usd"] += retry["cost_usd"]
+                    aggregated["num_turns"] += retry.get("num_turns", 0)
+
+                event["llm_call"] = aggregated
+            else:
+                event["llm_call"] = llm_usage
 
         # Look for prompt via the trace_hook capture first, then node_output.
         # The LLM adapter calls collector.get_trace_hook(node_id) to get a
