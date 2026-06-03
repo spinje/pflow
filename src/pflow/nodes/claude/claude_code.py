@@ -174,6 +174,7 @@ class ClaudeCodeNode(Node):
     - Params: timeout: int  # Execution timeout in seconds (default: 300; valid: 30-3600)
     - Params: system_prompt: str  # System instructions for Claude (optional)
     - Params: resume: str  # Session ID to resume a previous conversation (optional)
+    - Params: schema_retries: int  # Number of retry attempts for schema mismatches (default: 1; range: 0-5). When structured_output doesn't match the schema, the node attempts scalar coercion first, then retries by resuming the session. Set to 0 to disable both mechanisms.
     - Params: sandbox: dict  # Sandbox configuration for command isolation (optional)
         - enabled: bool  # Enable sandbox mode (default: false)
         - autoAllowBashIfSandboxed: bool  # Auto-allow bash when sandboxed (default: false)
@@ -1290,6 +1291,11 @@ class ClaudeCodeNode(Node):
                     if isinstance(runtime_value, int) and not isinstance(runtime_value, bool):
                         coercion_succeeded = True
                         break
+                    # Coerce float to int if it's an integer value (e.g., 5.0 → 5)
+                    if isinstance(runtime_value, float) and runtime_value.is_integer():
+                        coerced_value = int(runtime_value)
+                        coercion_succeeded = True
+                        break
                     if isinstance(runtime_value, str):
                         try:
                             # Accept "3" or "3.0" as integers
@@ -1326,9 +1332,10 @@ class ClaudeCodeNode(Node):
                         coercion_succeeded = True
                         break
 
-            # Apply coercion if it succeeded
+            # Apply coercion if it succeeded and value/type changed
+            # Note: 5 != 5.0 is False (numerically equal), so also check type
             if coercion_succeeded:
-                if coerced_value != runtime_value:
+                if coerced_value != runtime_value or type(coerced_value) is not type(runtime_value):
                     coerced[field_name] = coerced_value
                     coerced_fields.append(field_name)
             else:
@@ -1429,6 +1436,7 @@ class ClaudeCodeNode(Node):
         # Extract retry metadata for soft-fail signaling
         retry_metadata = exec_res.get("retry_metadata", {})
         retry_attempts = retry_metadata.get("attempts", 0)
+        conforming = retry_metadata.get("conforming", True)  # Default True when no schema or no retries
 
         self._store_schema_result(
             shared,
@@ -1438,6 +1446,7 @@ class ClaudeCodeNode(Node):
             is_error_from_sdk=is_error_from_sdk,
             warning_context=warning_context,
             retry_attempts=retry_attempts,
+            conforming=conforming,
         )
 
     def _store_schema_result(
@@ -1450,6 +1459,7 @@ class ClaudeCodeNode(Node):
         is_error_from_sdk: bool,
         warning_context: dict[str, Any],
         retry_attempts: int = 0,
+        conforming: bool = True,
     ) -> None:
         """Place result + soft-fail signals on the schema path.
 
@@ -1465,7 +1475,29 @@ class ClaudeCodeNode(Node):
 
         Args:
             retry_attempts: Number of schema retry attempts made (0 = no retries)
+            conforming: Whether structured output conforms to schema (Shape B detection)
         """
+        # Shape B silent failure: structured_output present but non-conforming after retries
+        if structured_output is not None and not conforming and retry_attempts > 0:
+            # This is a Shape B failure — the agent returned a dict but with uncoercible
+            # scalar types. We attempted retries but they didn't fix it. Fall through to
+            # raw text + warning rather than storing the non-conforming dict.
+            shared["result"] = result_text
+            msg = (
+                f"Model returned non-conforming structured output after {retry_attempts} "
+                f"{'retry' if retry_attempts == 1 else 'retries'} (Shape B: uncoercible scalar types). "
+                "Raw text stored in result. Check JSON Schema type spelling and field values."
+            )
+            self._emit_soft_fail_signal(
+                shared,
+                node_id,
+                kind="claude_code.schema_not_satisfied_after_retries",
+                msg=msg,
+                warning_context=warning_context,
+                retry_attempts=retry_attempts,
+            )
+            return
+
         if structured_output is not None:
             shared["result"] = structured_output
             if is_error_from_sdk:

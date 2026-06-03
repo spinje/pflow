@@ -546,13 +546,13 @@ class WorkflowTraceCollector:
         # Create aggregated llm_usage with summed tokens/cost/turns
         aggregated = dict(llm_usage)  # Shallow copy
 
-        # Sum input/output tokens
-        aggregated["input_tokens"] = llm_usage.get("input_tokens", 0)
-        aggregated["output_tokens"] = llm_usage.get("output_tokens", 0)
+        # Sum input/output tokens (None-safe: use `or 0` to coerce explicit None to 0)
+        aggregated["input_tokens"] = llm_usage.get("input_tokens") or 0
+        aggregated["output_tokens"] = llm_usage.get("output_tokens") or 0
 
-        # Sum cache tokens
+        # Sum cache tokens (None-safe)
         for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
-            aggregated[cache_key] = llm_usage.get(cache_key, 0)
+            aggregated[cache_key] = llm_usage.get(cache_key) or 0
 
         # Sum cost (handle None for models without pricing like Ollama)
         # If all costs are None, result is None. If any cost is numeric, sum only numeric ones.
@@ -563,17 +563,21 @@ class WorkflowTraceCollector:
         else:
             aggregated["cost_usd"] = None
 
-        # Sum turns
-        aggregated["num_turns"] = llm_usage.get("num_turns", 0)
+        # Sum turns (None-safe: .get() with default only handles absent keys, not explicit None)
+        # Use `or 0` to coerce None to 0 for aggregation
+        aggregated["num_turns"] = llm_usage.get("num_turns") or 0
         for retry in retries:
-            aggregated["num_turns"] += retry.get("num_turns", 0)
+            aggregated["num_turns"] += retry.get("num_turns") or 0
 
-        # Aggregate retry contributions to tokens
+        # Aggregate retry contributions to tokens (None-safe)
         for retry in retries:
-            aggregated["input_tokens"] += retry.get("input_tokens", 0)
-            aggregated["output_tokens"] += retry.get("output_tokens", 0)
+            aggregated["input_tokens"] += retry.get("input_tokens") or 0
+            aggregated["output_tokens"] += retry.get("output_tokens") or 0
             for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
-                aggregated[cache_key] += retry.get(cache_key, 0)
+                aggregated[cache_key] += retry.get(cache_key) or 0
+
+        # Recompute total_tokens after aggregation (was stale from main-only shallow copy)
+        aggregated["total_tokens"] = aggregated["input_tokens"] + aggregated["output_tokens"]
 
         return aggregated
 

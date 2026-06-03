@@ -253,6 +253,38 @@ class TestSchemaCoercion:
         assert coerced["field"] is True
         assert coerced is not original  # New dict
 
+    def test_coerce_python_float_to_int(self):
+        """Regression test for float-to-int coercion bug.
+
+        When the SDK returns a Python float (5.0) but schema expects integer,
+        it should coerce. The original implementation only handled STRING "5.0"
+        → int coercion, not actual float 5.0 → int.
+
+        Bug found during verification adversarial testing on 2026-06-03.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer"},
+            },
+        }
+
+        # Test Python float → int (the bug case)
+        structured_output = {"count": 5.0}
+        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+
+        assert coerced["count"] == 5
+        assert isinstance(coerced["count"], int)
+        assert conforming is True
+        assert "count" in coerced_fields
+
+        # Test float with non-integer value (should NOT coerce)
+        structured_output = {"count": 5.5}
+        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+
+        assert coerced["count"] == 5.5  # Unchanged
+        assert conforming is False  # Non-conforming
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
