@@ -20,6 +20,7 @@ Interface:
     - duration_ms: int  # Execution time in milliseconds
     - num_turns: int  # Number of conversation turns
     - session_id: str  # Session ID for resuming conversations
+    - retries: list  # Schema retry attempts (optional, present only when schema_retries > 0 and retries occurred). Each entry has same structure as main llm_usage.
 - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
 - Params: model: str  # Claude model identifier (default: claude-sonnet-4-5)
 - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
@@ -29,6 +30,7 @@ Interface:
 - Params: timeout: int  # Execution timeout in seconds (default: 300; max: 3600)
 - Params: system_prompt: str  # System instructions for Claude (optional)
 - Params: resume: str  # Session ID to resume a previous conversation (optional)
+- Params: schema_retries: int  # Number of retry attempts for schema mismatches (default: 1; max: 5; 0 disables both coercion and retry). When structured_output doesn't match the schema, the node attempts scalar coercion first (e.g., "false" → False for boolean fields), then retries by resuming the session with a corrective prompt.
 - Params: sandbox: dict  # Sandbox configuration for command isolation (optional)
     - enabled: bool  # Enable sandbox mode (default: false)
     - autoAllowBashIfSandboxed: bool  # Auto-allow bash when sandboxed (default: false)
@@ -469,6 +471,42 @@ class ClaudeCodeNode(Node):
             "Console, or omit it to use your Claude Pro/Max subscription."
         )
 
+    def _validate_schema_retries(self, schema_retries: Any, max_turns: int) -> int:
+        """Validate and convert schema_retries parameter.
+
+        Args:
+            schema_retries: Schema retry attempts parameter
+            max_turns: Validated max_turns value (needed for room check)
+
+        Returns:
+            Validated schema_retries count
+
+        Raises:
+            ValueError: If validation fails
+        """
+        default_schema_retries = 1
+        if schema_retries is None:
+            return default_schema_retries
+        try:
+            retries_int = int(schema_retries)
+            if retries_int < 0:
+                raise ValueError("schema_retries cannot be negative")
+            if retries_int > 5:
+                raise ValueError("schema_retries cannot exceed 5 (cap to prevent runaway costs)")
+            # Check that max_turns has room for retry turns
+            if retries_int > 0 and max_turns < 2:
+                raise ValueError(
+                    f"schema_retries={retries_int} requires max_turns >= 2 (got {max_turns}). "
+                    "Retry requires at least one additional turn beyond the initial response."
+                )
+            return retries_int
+        except ValueError as e:
+            if "cannot" in str(e) or "requires" in str(e):
+                # Re-raise our validation errors as-is
+                raise
+            # Catch int() conversion failures
+            raise ValueError(f"Invalid schema_retries: {schema_retries}. Must be integer between 0 and 5.") from None
+
     def _validate_sandbox(self, sandbox: Any) -> Optional[dict]:
         """Validate sandbox configuration parameter.
 
@@ -552,6 +590,7 @@ class ClaudeCodeNode(Node):
                 "Structured output requires the agent to take at least one turn beyond producing "
                 "the final response. Set max_turns to 2 or higher (default is typically sufficient)."
             )
+        schema_retries = self._validate_schema_retries(self.params.get("schema_retries"), max_turns)
 
         # Get system prompt
         system_prompt = self.params.get("system_prompt", "")
@@ -585,6 +624,7 @@ class ClaudeCodeNode(Node):
             "timeout": timeout,
             "sandbox": sandbox,
             "use_api_key": use_api_key,
+            "schema_retries": schema_retries,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -607,13 +647,13 @@ class ClaudeCodeNode(Node):
         return result
 
     async def _exec_async(self, prep_res: dict[str, Any]) -> dict[str, Any]:
-        """Async implementation using Claude Code SDK.
+        """Async implementation using Claude Code SDK with schema retry support.
 
         Args:
             prep_res: Prepared parameters
 
         Returns:
-            Dictionary with results to be processed by post()
+            Dictionary with results to be processed by post(), including retry_metadata
         """
         # Use the user prompt directly. Structured output is enforced by SDK options.
         prompt = prep_res["prompt"]
@@ -626,9 +666,106 @@ class ClaudeCodeNode(Node):
 
         logger.debug(f"Using model: {prep_res['model']}, max_turns: {prep_res['max_turns']}")
 
-        # Execute with timeout handling
-        result = await self._execute_with_timeout(prompt, options, prep_res)
-        return result
+        # Execute with timeout handling (first attempt)
+        exec_res = await self._execute_with_timeout(prompt, options, prep_res)
+
+        # Initialize retry tracking
+        output_schema = prep_res.get("output_schema")
+        schema_retries = prep_res.get("schema_retries", 1)
+        attempts = 0
+        coerced_fields_all: list[str] = []
+        retry_usages: list[dict[str, Any]] = []
+
+        # Apply coercion and retry loop if output_schema is present
+        if output_schema is not None:
+            structured_output = exec_res.get("structured_output")
+
+            # Phase 1: Coercion (if structured_output is present)
+            if structured_output is not None:
+                coerced, conforming, coerced_fields = self._coerce_structured_output(structured_output, output_schema)
+                exec_res["structured_output"] = coerced
+                coerced_fields_all.extend(coerced_fields)
+            else:
+                conforming = False
+
+            # Phase 2: Retry loop (if non-conforming and retries remain)
+            while not conforming and attempts < schema_retries:
+                # Check if we have a session_id to resume
+                metadata = exec_res.get("metadata", {})
+                session_id = metadata.get("session_id")
+
+                if not session_id:
+                    logger.warning("Cannot retry schema mismatch: no session_id available")
+                    break
+
+                attempts += 1
+                logger.info(f"Schema retry attempt {attempts}/{schema_retries} for session {session_id}")
+
+                # Build corrective prompt
+                import json
+
+                schema_json = json.dumps(output_schema, indent=2)
+                corrective_prompt = (
+                    "Your previous response did not produce output matching the required schema. "
+                    f"Reply with ONLY a JSON object matching this schema:\n\n{schema_json}\n\n"
+                    "No prose before or after. Only the JSON object."
+                )
+
+                # Build retry options with resume=session_id
+                # The user's explicit resume param (if set) is in prep_res["resume"],
+                # but for the corrective retry we override with the captured session_id
+                retry_prep_res = prep_res.copy()
+                retry_prep_res["resume"] = session_id
+                retry_options = self._build_claude_options(retry_prep_res, system_prompt)
+
+                # Execute retry
+                retry_exec_res = await self._execute_with_timeout(corrective_prompt, retry_options, retry_prep_res)
+
+                # Track retry usage for cost accounting
+                retry_metadata = retry_exec_res.get("metadata", {})
+                retry_usage = retry_metadata.get("usage") or {}
+                if retry_usage:
+                    # Extract token counts for this retry
+                    retry_usage_record = {
+                        "input_tokens": retry_usage.get("input_tokens", 0),
+                        "output_tokens": retry_usage.get("output_tokens", 0),
+                        "cache_creation_input_tokens": retry_usage.get("cache_creation_input_tokens", 0),
+                        "cache_read_input_tokens": retry_usage.get("cache_read_input_tokens", 0),
+                        "cost_usd": retry_metadata.get("total_cost_usd"),
+                        "duration_ms": retry_metadata.get("duration_ms"),
+                        "num_turns": retry_metadata.get("num_turns"),
+                        "session_id": retry_metadata.get("session_id"),
+                        "model": prep_res.get("model", "claude-sonnet-4-5"),
+                    }
+                    retry_usages.append(retry_usage_record)
+
+                # Update exec_res with retry results
+                exec_res = retry_exec_res
+
+                # Apply coercion to the retry result
+                structured_output = exec_res.get("structured_output")
+                if structured_output is not None:
+                    coerced, conforming, coerced_fields = self._coerce_structured_output(
+                        structured_output, output_schema
+                    )
+                    exec_res["structured_output"] = coerced
+                    coerced_fields_all.extend(coerced_fields)
+                else:
+                    conforming = False
+
+        # Add retry metadata to exec_res for telemetry
+        exec_res["retry_metadata"] = {
+            "attempts": attempts,
+            "coerced_fields": coerced_fields_all,
+            "conforming": output_schema is not None
+            and (exec_res.get("structured_output") is not None or attempts == 0),
+        }
+
+        # Add retry usages for cost tracking
+        if retry_usages:
+            exec_res["retry_usages"] = retry_usages
+
+        return exec_res
 
     def _build_claude_options(self, prep_res: dict[str, Any], system_prompt: str) -> ClaudeAgentOptions:
         """Build Claude Code options object.
@@ -1047,6 +1184,152 @@ class ClaudeCodeNode(Node):
             "ANTHROPIC_API_KEY to your Anthropic Console (pay per token)."
         )
 
+    @staticmethod
+    def _coerce_structured_output(  # noqa: C901 - Legitimate complexity for multi-type coercion
+        structured_output: Any, schema: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool, list[str]]:
+        """Coerce scalar fields in structured output to match schema types.
+
+        This handles Shape B failures where the agent returns structurally-valid
+        output but a scalar field has the wrong type (e.g., {"continue": "false"}
+        for a declared boolean). Applies canonical coercion only:
+        - boolean: "true"/"false" (case-insensitive, stripped) → True/False
+        - integer/number: numeric strings ("3", "3.0") → int/float
+        - string: non-string scalar → str()
+
+        Args:
+            structured_output: The output to coerce (must be a dict)
+            schema: JSON Schema dict with 'properties' and optionally 'required'
+
+        Returns:
+            Tuple of (coerced_output, conforming, coerced_fields):
+            - coerced_output: New dict with coerced scalar values
+            - conforming: True if all top-level scalar types now match schema
+            - coerced_fields: List of field names that were coerced
+
+        Edge cases (defensive — coerce nothing, never raise):
+        - Schema missing 'properties' or has unknown shape → no coercion
+        - Nested/array fields → ignore (not coerced in v1)
+        - Extra fields (not in schema) → ignore
+        - Missing required fields → mark as non-conforming
+        - type: ["string", "null"] → coerce only if result matches after coercion
+        """
+        # Guard: structured_output must be a dict
+        if not isinstance(structured_output, dict):
+            return structured_output, False, []
+
+        # Guard: schema must have properties dict
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            return structured_output, False, []
+
+        required = schema.get("required", [])
+        coerced = structured_output.copy()  # Shallow copy at top level
+        coerced_fields = []
+        all_conform = True
+
+        for field_name, field_schema in properties.items():
+            if not isinstance(field_schema, dict):
+                continue
+
+            runtime_value = coerced.get(field_name)
+            declared_type = field_schema.get("type")
+
+            # Missing required field → non-conforming (cannot coerce what isn't there)
+            if field_name not in coerced and field_name in required:
+                all_conform = False
+                continue
+
+            # Field not present and not required → skip
+            if field_name not in coerced:
+                continue
+
+            # Handle type as array (e.g., ["string", "null"])
+            type_list = (
+                [declared_type]
+                if isinstance(declared_type, str)
+                else (declared_type if isinstance(declared_type, list) else [])
+            )
+
+            # If "null" is in type list and runtime is None, accept as conforming
+            if (None in type_list or "null" in type_list) and runtime_value is None:
+                continue  # Conforming
+
+            # Try to coerce for each type in the list
+            coerced_value = runtime_value
+            coercion_succeeded = False
+
+            for target_type in type_list:
+                if target_type == "null":
+                    continue  # Already handled above
+
+                # Boolean coercion
+                if target_type == "boolean":
+                    if isinstance(runtime_value, bool):
+                        coercion_succeeded = True
+                        break
+                    if isinstance(runtime_value, str):
+                        normalized = runtime_value.strip().lower()
+                        if normalized == "true":
+                            coerced_value = True
+                            coercion_succeeded = True
+                            break
+                        elif normalized == "false":
+                            coerced_value = False
+                            coercion_succeeded = True
+                            break
+
+                # Integer coercion
+                elif target_type == "integer":
+                    if isinstance(runtime_value, int) and not isinstance(runtime_value, bool):
+                        coercion_succeeded = True
+                        break
+                    if isinstance(runtime_value, str):
+                        try:
+                            # Accept "3" or "3.0" as integers
+                            float_val = float(runtime_value)
+                            if float_val.is_integer():
+                                coerced_value = int(float_val)
+                                coercion_succeeded = True
+                                break
+                        except (ValueError, OverflowError):
+                            pass
+
+                # Number coercion
+                elif target_type == "number":
+                    if isinstance(runtime_value, (int, float)) and not isinstance(runtime_value, bool):
+                        coercion_succeeded = True
+                        break
+                    if isinstance(runtime_value, str):
+                        try:
+                            coerced_value = float(runtime_value)
+                            coercion_succeeded = True
+                            break
+                        except (ValueError, OverflowError):
+                            pass
+
+                # String coercion
+                elif target_type == "string":
+                    if isinstance(runtime_value, str):
+                        coercion_succeeded = True
+                        break
+                    # Coerce non-string scalars to string
+                    if isinstance(runtime_value, (bool, int, float, type(None))):
+                        coerced_value = str(runtime_value)
+                        coercion_succeeded = True
+                        break
+
+            # Apply coercion if it succeeded
+            if coercion_succeeded:
+                if coerced_value != runtime_value:
+                    coerced[field_name] = coerced_value
+                    coerced_fields.append(field_name)
+            else:
+                # Uncoercible field → non-conforming
+                all_conform = False
+
+        return coerced, all_conform, coerced_fields
+
     def _store_results(
         self,
         shared: dict[str, Any],
@@ -1108,6 +1391,12 @@ class ClaudeCodeNode(Node):
                 "session_id": metadata.get("session_id"),
             }
 
+            # Add retry costs if present (Phase 2 — synthetic item pattern)
+            retry_usages = exec_res.get("retry_usages", [])
+            if retry_usages:
+                shared["llm_usage"]["retries"] = retry_usages
+                logger.debug(f"Stored {len(retry_usages)} schema retry attempts in llm_usage")
+
             if metadata.get("total_cost_usd"):
                 logger.info(f"Claude Code execution cost: ${metadata['total_cost_usd']}")
         else:
@@ -1130,6 +1419,10 @@ class ClaudeCodeNode(Node):
             shared["result"] = result_text
             return
 
+        # Extract retry metadata for soft-fail signaling
+        retry_metadata = exec_res.get("retry_metadata", {})
+        retry_attempts = retry_metadata.get("attempts", 0)
+
         self._store_schema_result(
             shared,
             node_id,
@@ -1137,6 +1430,7 @@ class ClaudeCodeNode(Node):
             structured_output=structured_output,
             is_error_from_sdk=is_error_from_sdk,
             warning_context=warning_context,
+            retry_attempts=retry_attempts,
         )
 
     def _store_schema_result(
@@ -1148,6 +1442,7 @@ class ClaudeCodeNode(Node):
         structured_output: Any,
         is_error_from_sdk: bool,
         warning_context: dict[str, Any],
+        retry_attempts: int = 0,
     ) -> None:
         """Place result + soft-fail signals on the schema path.
 
@@ -1160,6 +1455,9 @@ class ClaudeCodeNode(Node):
         Soft-fail signals use ``setdefault("_schema_error", ...)`` (so any
         prior write — like ``_emit_schema_resolved_null_warning`` — wins)
         plus an ``__warnings__[node_id]`` write when ``node_id`` is bound.
+
+        Args:
+            retry_attempts: Number of schema retry attempts made (0 = no retries)
         """
         if structured_output is not None:
             shared["result"] = structured_output
@@ -1173,6 +1471,7 @@ class ClaudeCodeNode(Node):
                         "Using structured_output as result; check provider for partial-response details."
                     ),
                     warning_context=warning_context,
+                    retry_attempts=retry_attempts,
                 )
             return
 
@@ -1184,13 +1483,25 @@ class ClaudeCodeNode(Node):
             )
             kind = "claude_code.sdk_error_no_structured_output"
         else:
-            msg = (
-                "Model did not return structured output matching the schema. "
-                "Raw text stored in result. Check JSON Schema type spelling, required fields, "
-                "and impossible enum/const constraints."
-            )
-            kind = "claude_code.schema_not_satisfied"
-        self._emit_soft_fail_signal(shared, node_id, kind=kind, msg=msg, warning_context=warning_context)
+            # Base message for schema not satisfied
+            # If retry was attempted, adjust the kind and message
+            if retry_attempts > 0:
+                kind = "claude_code.schema_not_satisfied_after_retries"
+                msg = (
+                    f"Model did not return structured output matching the schema after {retry_attempts} "
+                    f"{'retry' if retry_attempts == 1 else 'retries'}. Raw text stored in result. "
+                    "Check JSON Schema type spelling, required fields, and impossible enum/const constraints."
+                )
+            else:
+                kind = "claude_code.schema_not_satisfied"
+                msg = (
+                    "Model did not return structured output matching the schema. "
+                    "Raw text stored in result. Check JSON Schema type spelling, required fields, "
+                    "and impossible enum/const constraints."
+                )
+        self._emit_soft_fail_signal(
+            shared, node_id, kind=kind, msg=msg, warning_context=warning_context, retry_attempts=retry_attempts
+        )
 
     @staticmethod
     def _emit_soft_fail_signal(
@@ -1200,6 +1511,7 @@ class ClaudeCodeNode(Node):
         kind: str,
         msg: str,
         warning_context: dict[str, Any],
+        retry_attempts: int = 0,
     ) -> None:
         """Centralized soft-fail signaling for structured-output mode.
 
@@ -1208,14 +1520,21 @@ class ClaudeCodeNode(Node):
         bound. The ``__warnings__`` entry is what flips workflow status to
         ``DEGRADED``; ``_schema_error`` is the fallback signal that survives
         when ``node_id`` is unbound (test paths).
+
+        Args:
+            retry_attempts: Number of schema retry attempts made (0 = no retries)
         """
         shared.setdefault("_schema_error", msg)
         if node_id is not None:
-            shared.setdefault("__warnings__", {})[node_id] = {
+            warning_entry: dict[str, Any] = {
                 "kind": kind,
                 "text": msg,
                 "context": warning_context,
             }
+            # Include retry attempts in the warning entry if > 0
+            if retry_attempts > 0:
+                warning_entry["retry_attempts"] = retry_attempts
+            shared.setdefault("__warnings__", {})[node_id] = warning_entry
 
     @staticmethod
     def _build_schema_warning_context(prep_res: dict[str, Any], exec_res: dict[str, Any]) -> dict[str, Any]:
