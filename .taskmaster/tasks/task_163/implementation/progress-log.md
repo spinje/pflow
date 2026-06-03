@@ -1267,3 +1267,80 @@ intelligent" codex actually found the highest-value issues. None were critical/b
 **Verified ($0):** recursive `--validate-only` clean; `execute-plan` standalone clean; harness tests
 7/7 (5 skeleton + 2 new structural); example-validation 3/3; `ruff check`/`format` clean; README
 regenerated (`verify → push → ship`, threads `base_branch`).
+
+---
+
+## Entry: Dogfood run — harness built pflow #465; surfaced 3 gaps; validate-fix gate added (2026-06-03)
+
+Used the harness to implement a REAL pflow change — issue #465 (claude-code `output_schema`
+self-heal: scalar coercion + resume-retry) — as the first real-plan dogfood and the first real
+observation of gap #1 (whole-codebase review on a non-toy codebase).
+
+### The run
+- Target: pflow itself, via a clean **worktree** `fix/resolve-invalid-pointer-dereference` (off
+  `main`); plan + progress log in `/tmp` (outside the repo → tree stays clean for preflight).
+- Ran a **throwaway COPY** of the harness rerouted `verify → end` (skip push/ship → no PR for the
+  experiment; the worktree shares `origin` with the real repo). simplify also skipped (its lens
+  isn't on `main`; `simplify_lens` set to a dummy to satisfy preflight).
+- **$40.09, ~60 min, exit 0, model = Sonnet 4.5, breakdown = 2 segments.** 9 agent calls.
+- Per-stage cost: **review-round1 $12.58 + review-round2 $15.58 = $28 (70%)**; implement×2 $4.74;
+  plan-review-fix $3.70; happy-check×2 $2.03; verify $1.31; breakdown $0.17.
+
+### What the harness got right (verified against git/fs, not self-report)
+- Clean isolation: pflow `main` untouched, clean tree, NO scratch files (gap #3 stays closed).
+- Substantial #465 impl (+925 lines: both mechanisms, 2 new test files, docs); `make check` clean;
+  18 new tests pass. `plan-review-fix` caught a real architecture issue (`_store_schema_result`
+  runs in `post()`, no SDK call site → retry must live in `exec()`). `happy-check` self-review
+  fixed a missing `import json`.
+
+### Finding #1 (CRITICAL, now FIXED): verify shipped a regression while reporting success
+- Full suite: **8 existing `test_claude_code.py` tests FAILED.** #465's coercion marked any
+  output containing an **array/object** schema field non-conforming (only scalars handled) →
+  dropped valid structured output to an empty raw-string soft-fail. The harness's `verify` ran its
+  own new tests + lint, returned exit 0, but **never ran the full existing suite.** Independent
+  `make test` caught it.
+- Root cause of the HARNESS gap: **no stage owned "the full pre-existing suite must pass."** Each
+  stage read CLAUDE.md's "run make test" as its own scope. A prompt (even in CLAUDE.md) is a SOFT
+  guarantee — same soft-vs-hard distinction as preflight/push.
+- **FIX: the `validate-fix` gate** (commit `e91fdf5f`) — a reusable sub-workflow
+  (`run-validate → check-validate → fix-tests` loop) whose exit condition is the project's
+  `validate_command` (e.g. `make test && make check`) **exit code** — ground truth, not an agent
+  claim. Wired **per-segment** (`seg-gate`, catches a regression at its source before the next
+  segment builds on it) AND **final** (`final-gate` after verify; `check-final` refuses to ship a
+  red tree). New inputs `validate_command` + `max_fix_rounds` (cap 5). Regression test → 11 cases
+  (per-segment ordering, `seg-gate-fail`/`final-gate-fail` aborts, validate-fix structural test).
+  Had this existed during the run, segment 1 would have gone red on the array bug and fixed-or-
+  aborted instead of shipping under a false success.
+
+### Finding #2 (UNADDRESSED): agents rewrote git history
+- Reflog: review round 2 committed (`ba1be85a`) → amended (`51bfc524`) → **`git reset HEAD~1`**
+  dropped it → verify recommitted. ~$15.58 of review work discarded. The "state bridge IS commits"
+  assumption gets shaky if agents `reset`/`amend`. Noted; no guard built yet (candidate: a
+  `disallowed_tools` for history-rewriting git, or a per-stage HEAD-only-advances check).
+
+### Finding #3 (the cost dial, measured): review-fix = 70% of cost on a real codebase
+- $28 of $40, vs ~37% on run 7's toy. Lens subagents read large REAL files × 2 rounds. So
+  `max_review_rounds` + lens count is THE cost lever on real codebases — far more than the toy
+  suggested. (Model was Sonnet, not Opus — model tier is NOT the lever here; rounds/lenses are.)
+  This is gap #1's cost dimension, finally observed. Real-codebase dogfood ≈ **7× the toy** ($40 vs
+  $5.69) — budget accordingly.
+
+### #465 (the artifact, committed + ready for its own PR)
+- Conformance bug fixed (worktree commit `34eaaac7`): only a recognized **scalar** field that
+  fails coercion is non-conforming; non-scalar fields pass through unchanged.
+- 4 pre-existing fallback/is_error tests pinned `schema_retries=0` (they target the no-retry base
+  contract; the retry path is covered by the new schema-coercion tests). **`schema_retries`
+  default stays 1, gated on `output_schema` being set** (user decision). Guide docstring de-leaked
+  the SDK-internal term `structured_output`.
+- GH **#465 updated** to spec the scalar-coercion half (Shape A retry + Shape B coercion), honest
+  that Shape B (a type-wrong dict) is unobserved/likely-impossible-but-unprovable (the closed
+  `claude` CLI binary is the only place type-enforcement could occur; pflow + the Python SDK are
+  verified pure passthrough — `claude_code.py:1164`, `message_parser.py:260`).
+- `make test`: 7485 passed, 0 failed. `make check`: clean.
+
+### Banked lesson
+- "Run all tests before concluding" as a PROMPT line is a SOFT guarantee — it was already in
+  CLAUDE.md (which the agents had at the repo root) and STILL didn't hold. The robust form is a
+  deterministic GRAPH gate with a ground-truth exit condition. The harness already encoded its
+  other hard guarantees (preflight, push) as nodes; the full-suite check was simply on the wrong
+  side of that line, now corrected.
