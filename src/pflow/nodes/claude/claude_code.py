@@ -678,8 +678,9 @@ class ClaudeCodeNode(Node):
         retry_usages: list[dict[str, Any]] = []
         conforming = False  # Default: non-conforming if no schema or no structured_output
 
-        # Apply coercion and retry loop if output_schema is present
-        if output_schema is not None:
+        # Apply coercion and retry loop if output_schema is present AND schema_retries > 0
+        # When schema_retries=0, skip both coercion and retry (strict mode per docs)
+        if output_schema is not None and schema_retries > 0:
             structured_output = exec_res.get("structured_output")
 
             # Phase 1: Coercion (if structured_output is present)
@@ -718,40 +719,46 @@ class ClaudeCodeNode(Node):
                 retry_prep_res["resume"] = session_id
                 retry_options = self._build_claude_options(retry_prep_res, system_prompt)
 
-                # Execute retry
-                retry_exec_res = await self._execute_with_timeout(corrective_prompt, retry_options, retry_prep_res)
+                # Execute retry (wrapped in try to preserve original result on failure)
+                try:
+                    retry_exec_res = await self._execute_with_timeout(corrective_prompt, retry_options, retry_prep_res)
 
-                # Track retry usage for cost accounting
-                retry_metadata = retry_exec_res.get("metadata", {})
-                retry_usage = retry_metadata.get("usage") or {}
-                if retry_usage:
-                    # Extract token counts for this retry
-                    retry_usage_record = {
-                        "input_tokens": retry_usage.get("input_tokens", 0),
-                        "output_tokens": retry_usage.get("output_tokens", 0),
-                        "cache_creation_input_tokens": retry_usage.get("cache_creation_input_tokens", 0),
-                        "cache_read_input_tokens": retry_usage.get("cache_read_input_tokens", 0),
-                        "cost_usd": retry_metadata.get("total_cost_usd"),
-                        "duration_ms": retry_metadata.get("duration_ms"),
-                        "num_turns": retry_metadata.get("num_turns"),
-                        "session_id": retry_metadata.get("session_id"),
-                        "model": prep_res.get("model", "claude-sonnet-4-5"),
-                    }
-                    retry_usages.append(retry_usage_record)
+                    # Track retry usage for cost accounting
+                    retry_metadata = retry_exec_res.get("metadata", {})
+                    retry_usage = retry_metadata.get("usage") or {}
+                    if retry_usage:
+                        # Extract token counts for this retry
+                        retry_usage_record = {
+                            "input_tokens": retry_usage.get("input_tokens", 0),
+                            "output_tokens": retry_usage.get("output_tokens", 0),
+                            "cache_creation_input_tokens": retry_usage.get("cache_creation_input_tokens", 0),
+                            "cache_read_input_tokens": retry_usage.get("cache_read_input_tokens", 0),
+                            "cost_usd": retry_metadata.get("total_cost_usd"),
+                            "duration_ms": retry_metadata.get("duration_ms"),
+                            "num_turns": retry_metadata.get("num_turns"),
+                            "session_id": retry_metadata.get("session_id"),
+                            "model": prep_res.get("model", "claude-sonnet-4-5"),
+                        }
+                        retry_usages.append(retry_usage_record)
 
-                # Update exec_res with retry results
-                exec_res = retry_exec_res
+                    # Update exec_res with retry results
+                    exec_res = retry_exec_res
 
-                # Apply coercion to the retry result
-                structured_output = exec_res.get("structured_output")
-                if structured_output is not None:
-                    coerced, conforming, coerced_fields = self._coerce_structured_output(
-                        structured_output, output_schema
-                    )
-                    exec_res["structured_output"] = coerced
-                    coerced_fields_all.extend(coerced_fields)
-                else:
+                    # Apply coercion to the retry result
+                    structured_output = exec_res.get("structured_output")
+                    if structured_output is not None:
+                        coerced, conforming, coerced_fields = self._coerce_structured_output(
+                            structured_output, output_schema
+                        )
+                        exec_res["structured_output"] = coerced
+                        coerced_fields_all.extend(coerced_fields)
+                    else:
+                        conforming = False
+                except Exception as e:
+                    # Retry failed (timeout, SDK error, etc) - preserve original result
+                    logger.warning(f"Schema retry attempt {attempts} failed: {e}. Keeping original result.")
                     conforming = False
+                    break
 
         # Add retry metadata to exec_res for telemetry
         exec_res["retry_metadata"] = {
@@ -1312,8 +1319,9 @@ class ClaudeCodeNode(Node):
                     if isinstance(runtime_value, str):
                         coercion_succeeded = True
                         break
-                    # Coerce non-string scalars to string
-                    if isinstance(runtime_value, (bool, int, float, type(None))):
+                    # Coerce non-string scalars to string (but NOT None - that's non-conforming)
+                    # Converting None to "None" string is silent corruption
+                    if isinstance(runtime_value, (bool, int, float)):
                         coerced_value = str(runtime_value)
                         coercion_succeeded = True
                         break

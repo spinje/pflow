@@ -855,7 +855,11 @@ def _capture_item_trace(
     if isinstance(node_output, dict):
         llm_usage = node_output.get("llm_usage")
         if isinstance(llm_usage, dict):
-            item_event["llm_call"] = llm_usage
+            # Import here to avoid circular dependency
+            from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+            # Aggregate retry costs/tokens if present (schema self-healing)
+            item_event["llm_call"] = WorkflowTraceCollector.aggregate_llm_usage_with_retries(llm_usage)
         for src_key, dst_key in [
             ("response", "llm_response"),
             ("prompt", "llm_prompt"),
