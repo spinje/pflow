@@ -707,6 +707,7 @@ def test_invalid_json_response_fallback(claude_node):
     claude_node.params = {
         "prompt": "Analyze code",
         "output_schema": schema,
+        "schema_retries": 0,  # FALLBACK test, not the retry feature (#465)
     }
     claude_node.node_id = "review"
     shared = {}
@@ -736,6 +737,7 @@ def test_sdk_is_error_branch(claude_node):
     claude_node.params = {
         "prompt": "Analyze code",
         "output_schema": schema,
+        "schema_retries": 0,  # FALLBACK test, not the retry feature (#465)
     }
     claude_node.node_id = "review"
     shared = {}
@@ -960,7 +962,7 @@ def test_process_error_name_fallback_when_sdk_class_is_none(claude_node):
     StandaloneProcessError.__name__ = "ProcessError"
 
     schema = {"type": "object", "properties": {"x": {"type": "integer"}}, "required": ["x"]}
-    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema, "schema_retries": 0}
     claude_node.node_id = "review"
     shared: dict = {}
 
@@ -1052,7 +1054,7 @@ def test_nested_array_schema(claude_node):
 def test_sticky_is_error_across_multiple_result_messages(claude_node):
     """An early ResultMessage.is_error=True remains visible even if a later message is false."""
     schema = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
-    claude_node.params = {"prompt": "test prompt", "output_schema": schema}
+    claude_node.params = {"prompt": "test prompt", "output_schema": schema, "schema_retries": 0}
     claude_node.node_id = "review"
     shared = {}
 

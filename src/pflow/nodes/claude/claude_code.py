@@ -30,7 +30,7 @@ Interface:
 - Params: timeout: int  # Execution timeout in seconds (default: 300; max: 3600)
 - Params: system_prompt: str  # System instructions for Claude (optional)
 - Params: resume: str  # Session ID to resume a previous conversation (optional)
-- Params: schema_retries: int  # Number of retry attempts for schema mismatches (default: 1; max: 5; 0 disables both coercion and retry). When structured_output doesn't match the schema, the node attempts scalar coercion first (e.g., "false" → False for boolean fields), then retries by resuming the session with a corrective prompt.
+- Params: schema_retries: int  # Number of retry attempts for schema mismatches (default: 1; max: 5; 0 disables both coercion and retry). When the output doesn't match the schema, the node attempts scalar coercion first (e.g., "false" → False for boolean fields), then retries by resuming the session with a corrective prompt.
 - Params: sandbox: dict  # Sandbox configuration for command isolation (optional)
     - enabled: bool  # Enable sandbox mode (default: false)
     - autoAllowBashIfSandboxed: bool  # Auto-allow bash when sandboxed (default: false)
@@ -174,7 +174,7 @@ class ClaudeCodeNode(Node):
     - Params: timeout: int  # Execution timeout in seconds (default: 300; valid: 30-3600)
     - Params: system_prompt: str  # System instructions for Claude (optional)
     - Params: resume: str  # Session ID to resume a previous conversation (optional)
-    - Params: schema_retries: int  # Number of retry attempts for schema mismatches (default: 1; range: 0-5). When structured_output doesn't match the schema, the node attempts scalar coercion first, then retries by resuming the session. Set to 0 to disable both mechanisms.
+    - Params: schema_retries: int  # Number of retry attempts for schema mismatches (default: 1; range: 0-5). When the output doesn't match the schema, the node attempts scalar coercion first, then retries by resuming the session. Set to 0 to disable both mechanisms.
     - Params: sandbox: dict  # Sandbox configuration for command isolation (optional)
         - enabled: bool  # Enable sandbox mode (default: false)
         - autoAllowBashIfSandboxed: bool  # Auto-allow bash when sandboxed (default: false)
@@ -1258,6 +1258,13 @@ class ClaudeCodeNode(Node):
                 else (declared_type if isinstance(declared_type, list) else [])
             )
 
+            # Only recognized SCALAR types are coerced (v1). A field whose declared type is
+            # array/object/unknown is accepted as-is — we never reject the whole output for a
+            # non-scalar field we don't coerce (a genuine nested mismatch is a Shape-A soft-fail
+            # the retry handles). Without this guard, ANY schema with an array/object field would
+            # be marked non-conforming and the valid output dropped to a raw-string soft-fail.
+            is_scalar_field = any(t in ("boolean", "integer", "number", "string") for t in type_list)
+
             # If "null" is in type list and runtime is None, accept as conforming
             if (None in type_list or "null" in type_list) and runtime_value is None:
                 continue  # Conforming
@@ -1338,8 +1345,10 @@ class ClaudeCodeNode(Node):
                 if coerced_value != runtime_value or type(coerced_value) is not type(runtime_value):
                     coerced[field_name] = coerced_value
                     coerced_fields.append(field_name)
-            else:
-                # Uncoercible field → non-conforming
+            elif is_scalar_field:
+                # A recognized scalar field we could NOT coerce → genuinely non-conforming
+                # (triggers retry). Non-scalar/unknown fields fall through as conforming, since
+                # scalar coercion is the only thing this pass judges in v1.
                 all_conform = False
 
         return coerced, all_conform, coerced_fields
