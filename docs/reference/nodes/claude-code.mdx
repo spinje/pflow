@@ -184,7 +184,9 @@ When using `output_schema`, the node automatically recovers from schema soft-fai
    - Integer/Number: Numeric strings (`"3"`, `"3.14"`) → `int`/`float`
    - String: Non-string scalars → `str()`
 
-2. **Resume retry** — If the agent produces no structured output or returns uncoercible values, pflow asks the same session to re-emit the output with an explicit schema prompt. The `schema_retries` parameter (default `1`) controls how many corrective attempts to make.
+2. **Resume retry** — If the agent produces no structured output, returns uncoercible values, or returns a value outside a declared `enum`/`const`, pflow asks the same session to re-emit the output with an explicit schema prompt. The `schema_retries` parameter (default `1`) controls how many corrective attempts to make.
+
+Conformance is judged on top-level scalar types plus `enum`/`const` constraints; an object schema without declared `properties` is treated as unconstrained (any object conforms).
 
 Cost tracking includes retry attempts — the `llm_usage` structure aggregates tokens/cost across the main call and all retries, and `--report` shows the retry count per node.
 

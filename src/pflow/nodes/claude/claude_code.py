@@ -473,41 +473,43 @@ class ClaudeCodeNode(Node):
             "Console, or omit it to use your Claude Pro/Max subscription."
         )
 
-    def _validate_schema_retries(self, schema_retries: Any, max_turns: int) -> int:
-        """Validate and convert schema_retries parameter.
+    def _validate_schema_retries(self, schema_retries: Any) -> int:
+        """Validate and convert the schema_retries parameter.
+
+        Only the int() conversion is wrapped in try/except; the range checks live
+        OUTSIDE it. The previous version re-classified its own ValueErrors by
+        substring-matching their messages ("cannot"/"requires"), which silently
+        misfires the moment a message is reworded.
+
+        It also deliberately does NOT couple schema_retries to max_turns. The retry
+        loop only runs when an output_schema is set, and prep() already enforces
+        max_turns >= 2 in that case — so a max_turns check here was redundant for the
+        schema path and wrongly rejected valid no-schema nodes that intentionally cap
+        Claude to one turn (where the retry would never fire).
 
         Args:
-            schema_retries: Schema retry attempts parameter
-            max_turns: Validated max_turns value (needed for room check)
+            schema_retries: Schema retry attempts parameter (None → default of 1)
 
         Returns:
-            Validated schema_retries count
+            Validated schema_retries count (0-5)
 
         Raises:
-            ValueError: If validation fails
+            ValueError: If not an integer in the range 0-5
         """
         default_schema_retries = 1
         if schema_retries is None:
             return default_schema_retries
         try:
             retries_int = int(schema_retries)
-            if retries_int < 0:
-                raise ValueError("schema_retries cannot be negative")
-            if retries_int > 5:
-                raise ValueError("schema_retries cannot exceed 5 (cap to prevent runaway costs)")
-            # Check that max_turns has room for retry turns
-            if retries_int > 0 and max_turns < 2:
-                raise ValueError(
-                    f"schema_retries={retries_int} requires max_turns >= 2 (got {max_turns}). "
-                    "Retry requires at least one additional turn beyond the initial response."
-                )
-            return retries_int
-        except ValueError as e:
-            if "cannot" in str(e) or "requires" in str(e):
-                # Re-raise our validation errors as-is
-                raise
-            # Catch int() conversion failures
-            raise ValueError(f"Invalid schema_retries: {schema_retries}. Must be integer between 0 and 5.") from None
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Invalid schema_retries: {schema_retries!r}. Must be an integer between 0 and 5."
+            ) from None
+        if retries_int < 0:
+            raise ValueError(f"schema_retries cannot be negative (got {retries_int}).")
+        if retries_int > 5:
+            raise ValueError(f"schema_retries cannot exceed 5 (cap to prevent runaway costs; got {retries_int}).")
+        return retries_int
 
     def _validate_sandbox(self, sandbox: Any) -> Optional[dict]:
         """Validate sandbox configuration parameter.
@@ -592,7 +594,7 @@ class ClaudeCodeNode(Node):
                 "Structured output requires the agent to take at least one turn beyond producing "
                 "the final response. Set max_turns to 2 or higher (default is typically sufficient)."
             )
-        schema_retries = self._validate_schema_retries(self.params.get("schema_retries"), max_turns)
+        schema_retries = self._validate_schema_retries(self.params.get("schema_retries"))
 
         # Get system prompt
         system_prompt = self.params.get("system_prompt", "")
@@ -724,25 +726,18 @@ class ClaudeCodeNode(Node):
                 try:
                     retry_exec_res = await self._execute_with_timeout(corrective_prompt, retry_options, retry_prep_res)
 
-                    # Track retry usage for cost accounting
-                    retry_metadata = retry_exec_res.get("metadata", {})
-                    retry_usage = retry_metadata.get("usage") or {}
-                    if retry_usage:
-                        # Extract token counts for this retry
-                        retry_usage_record = {
-                            "input_tokens": retry_usage.get("input_tokens", 0),
-                            "output_tokens": retry_usage.get("output_tokens", 0),
-                            "cache_creation_input_tokens": retry_usage.get("cache_creation_input_tokens", 0),
-                            "cache_read_input_tokens": retry_usage.get("cache_read_input_tokens", 0),
-                            "cost_usd": retry_metadata.get("total_cost_usd"),
-                            "duration_ms": retry_metadata.get("duration_ms"),
-                            "num_turns": retry_metadata.get("num_turns"),
-                            "session_id": retry_metadata.get("session_id"),
-                            "model": prep_res.get("model", "claude-sonnet-4-5"),
-                        }
-                        retry_usages.append(retry_usage_record)
+                    # Record the OUTGOING attempt (the one we are about to replace) for cost
+                    # accounting — NOT the incoming one. _store_results builds the main
+                    # llm_usage from the FINAL exec_res, so recording the incoming attempt here
+                    # would double-count the final attempt and drop the first one entirely.
+                    # Recording the outgoing attempt instead keeps main + retries disjoint and
+                    # complete: main = final attempt, retries = [attempt 1 .. attempt n-1], so
+                    # the aggregator counts every attempt exactly once.
+                    outgoing = self._usage_record_from(exec_res, prep_res.get("model", "claude-sonnet-4-5"))
+                    if outgoing:
+                        retry_usages.append(outgoing)
 
-                    # Update exec_res with retry results
+                    # The retry result becomes the new main result
                     exec_res = retry_exec_res
 
                     # Apply coercion to the retry result
@@ -756,7 +751,9 @@ class ClaudeCodeNode(Node):
                     else:
                         conforming = False
                 except Exception as e:
-                    # Retry failed (timeout, SDK error, etc) - preserve original result
+                    # Retry failed (timeout, SDK error, etc). The exception fires BEFORE we
+                    # record the outgoing attempt or reassign exec_res above, so the pre-retry
+                    # result and its usage are preserved intact (no double-count, no loss).
                     logger.warning(f"Schema retry attempt {attempts} failed: {e}. Keeping original result.")
                     conforming = False
                     break
@@ -773,6 +770,31 @@ class ClaudeCodeNode(Node):
             exec_res["retry_usages"] = retry_usages
 
         return exec_res
+
+    @staticmethod
+    def _usage_record_from(exec_res: dict[str, Any], model: str) -> Optional[dict[str, Any]]:
+        """Build a per-attempt usage record from an exec_res's metadata.
+
+        Used to record a superseded attempt into ``llm_usage["retries"]`` when a schema
+        retry replaces it, so cost/token/turn accounting stays complete. Returns None
+        when the attempt carried no usage (nothing to account for). Mirrors the main
+        ``llm_usage`` shape minus ``total_tokens`` (the aggregator recomputes that).
+        """
+        metadata = exec_res.get("metadata") or {}
+        usage = metadata.get("usage") or {}
+        if not usage:
+            return None
+        return {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
+            "cost_usd": metadata.get("total_cost_usd"),
+            "duration_ms": metadata.get("duration_ms"),
+            "num_turns": metadata.get("num_turns"),
+            "session_id": metadata.get("session_id"),
+            "model": model,
+        }
 
     def _build_claude_options(self, prep_res: dict[str, Any], system_prompt: str) -> ClaudeAgentOptions:
         """Build Claude Code options object.
@@ -1211,24 +1233,30 @@ class ClaudeCodeNode(Node):
         Returns:
             Tuple of (coerced_output, conforming, coerced_fields):
             - coerced_output: New dict with coerced scalar values
-            - conforming: True if all top-level scalar types now match schema
+            - conforming: True if all top-level scalar types match the schema AND every
+              enum/const constraint is satisfied
             - coerced_fields: List of field names that were coerced
 
         Edge cases (defensive — coerce nothing, never raise):
-        - Schema missing 'properties' or has unknown shape → no coercion
-        - Nested/array fields → ignore (not coerced in v1)
+        - Schema missing 'properties' → unconstrained object: conforming as-is, no coercion
+        - Nested/array fields → not coerced; enum/const on them is still checked
         - Extra fields (not in schema) → ignore
         - Missing required fields → mark as non-conforming
+        - enum / const → value must be in the allowed set / equal the const, else non-conforming
         - type: ["string", "null"] → coerce only if result matches after coercion
         """
         # Guard: structured_output must be a dict
         if not isinstance(structured_output, dict):
             return structured_output, False, []
 
-        # Guard: schema must have properties dict
+        # An object schema without a 'properties' dict is unconstrained (JSON Schema
+        # permits it): there are no declared scalar fields to coerce or judge, so a dict
+        # output conforms as-is. Returning False here would wrongly mark valid generic-object
+        # output non-conforming, trigger a pointless retry, and then drop it to raw text. The
+        # non-dict guard above still rejects a genuinely wrong-shaped (non-dict) output.
         properties = schema.get("properties")
         if not isinstance(properties, dict):
-            return structured_output, False, []
+            return structured_output, True, []
 
         required = schema.get("required", [])
         coerced = structured_output.copy()  # Shallow copy at top level
@@ -1349,6 +1377,18 @@ class ClaudeCodeNode(Node):
                 # A recognized scalar field we could NOT coerce → genuinely non-conforming
                 # (triggers retry). Non-scalar/unknown fields fall through as conforming, since
                 # scalar coercion is the only thing this pass judges in v1.
+                all_conform = False
+
+            # enum / const are the common constrained-string patterns (e.g.
+            # risk_level: {enum: [...]}). Type coercion alone can't judge them: a value of
+            # the right TYPE but outside the allowed set must be non-conforming so the retry
+            # can re-prompt. Checked against the post-coercion value. Scope is deliberately
+            # enum + const ONLY — this is not a general JSON Schema validator.
+            final_value = coerced.get(field_name)
+            field_enum = field_schema.get("enum")
+            if (isinstance(field_enum, list) and field_enum and final_value not in field_enum) or (
+                "const" in field_schema and final_value != field_schema["const"]
+            ):
                 all_conform = False
 
         return coerced, all_conform, coerced_fields

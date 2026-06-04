@@ -76,7 +76,7 @@ When `output_schema` is set, the node automatically recovers from schema soft-fa
 
 1. **Scalar coercion**: Type-wrong scalar fields are canonically coerced (e.g., `"false"` string → `False` boolean, `"3"` → `3` int). Nested objects/arrays aren't coerced.
 
-2. **Resume retry** (default `schema_retries: 1`): If the model produces no structured output or uncoercible values, pflow asks the same session to re-emit with an explicit schema prompt. One corrective pass by default. Set `schema_retries: 0` to disable (schema soft-failures immediately fall through to raw text + warning).
+2. **Resume retry** (default `schema_retries: 1`): If the model produces no structured output, uncoercible values, or a value outside a declared `enum`/`const`, pflow asks the same session to re-emit with an explicit schema prompt. One corrective pass by default. Set `schema_retries: 0` to disable (schema soft-failures immediately fall through to raw text + warning). An object schema without declared `properties` is unconstrained (any object conforms).
 
 Cost tracking aggregates the main call and all retries — `llm_usage` top-level fields already include retry costs. `--report` shows the retry count per node.
 

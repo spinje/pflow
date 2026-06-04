@@ -190,12 +190,58 @@ class TestSchemaCoercion:
 
         assert conforming is False
 
-    def test_no_output_schema_no_coercion(self):
-        """Test that coercion gates on output_schema being present."""
-        # This is tested at the node level, not the helper level
-        # The helper assumes schema is valid; the node must check
-        # prep_res.get("output_schema") is not None before calling coercion
-        pass
+    def test_object_schema_without_properties_conforms(self):
+        """A generic object schema (no 'properties') is unconstrained → conforming as-is.
+
+        Regression (#465 review): this used to return conforming=False, which under the
+        default schema_retries triggered a pointless retry and then dropped valid output to
+        raw text. (The node-level gate that coercion only runs when an output_schema is set
+        is covered by test_schema_retries_no_op_without_output_schema in test_claude_code.py.)
+        """
+        schema = {"type": "object"}  # no 'properties' key
+        output = {"anything": 1, "nested": {"x": 2}}
+        coerced, conforming, fields = ClaudeCodeNode._coerce_structured_output(output, schema)
+        assert conforming is True
+        assert coerced == output
+        assert fields == []
+
+    def test_enum_violation_non_conforming(self):
+        """A value of the right TYPE but outside the enum is non-conforming (triggers retry)."""
+        schema = {
+            "type": "object",
+            "properties": {"risk_level": {"type": "string", "enum": ["low", "medium", "high"]}},
+            "required": ["risk_level"],
+        }
+        _, conforming, _ = ClaudeCodeNode._coerce_structured_output({"risk_level": "unknown"}, schema)
+        assert conforming is False
+
+    def test_enum_valid_conforming(self):
+        """A value within the enum conforms."""
+        schema = {
+            "type": "object",
+            "properties": {"risk_level": {"type": "string", "enum": ["low", "medium", "high"]}},
+        }
+        _, conforming, _ = ClaudeCodeNode._coerce_structured_output({"risk_level": "low"}, schema)
+        assert conforming is True
+
+    def test_const_violation_non_conforming(self):
+        """A field constrained by const must equal it, else non-conforming."""
+        schema = {"type": "object", "properties": {"kind": {"const": "report"}}}
+        _, bad, _ = ClaudeCodeNode._coerce_structured_output({"kind": "other"}, schema)
+        assert bad is False
+        _, good, _ = ClaudeCodeNode._coerce_structured_output({"kind": "report"}, schema)
+        assert good is True
+
+    def test_enum_checked_after_coercion(self):
+        """enum is validated against the POST-coercion value (e.g. integer enum given "2")."""
+        schema = {
+            "type": "object",
+            "properties": {"level": {"type": "integer", "enum": [1, 2, 3]}},
+        }
+        coerced, conforming, fields = ClaudeCodeNode._coerce_structured_output({"level": "2"}, schema)
+        assert coerced["level"] == 2
+        assert conforming is True
+        assert "level" in fields
 
     def test_type_array_with_null(self):
         """Test type: ["string", "null"] accepts None."""

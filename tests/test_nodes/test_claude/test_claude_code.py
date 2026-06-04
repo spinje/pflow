@@ -1797,3 +1797,152 @@ def test_non_auth_error_result_stays_generic(claude_node):
         claude_node.exec_fallback(prep_res, exc_info.value)
     assert "claude auth login" not in str(fb.value)
     assert "disk full" in str(fb.value)
+
+
+# ---------------------------------------------------------------------------
+# Issue #465: schema retry orchestration loop (coercion → resume-retry → cost
+# aggregation). These exercise the wiring in _exec_async — the one part the
+# helper-level unit tests don't reach, and where the cost-accounting bug lived.
+# ---------------------------------------------------------------------------
+
+
+def test_schema_retry_records_superseded_attempt_for_cost(claude_node):
+    """A schema retry must count every attempt exactly once.
+
+    Regression guard (#465 review): the loop used to append the INCOMING retry to
+    llm_usage["retries"] and ALSO make it the main usage, so the aggregator summed the
+    final attempt twice and dropped the first attempt entirely. The fix records the
+    OUTGOING (superseded) attempt instead, keeping main + retries disjoint and complete.
+
+    Setup: attempt 1 returns a non-coercible boolean (triggers one retry); attempt 2
+    returns "true" (coerces to True → conforming). Token/cost/turns differ per attempt
+    so the aggregation is unambiguous.
+    """
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    schema = {"type": "object", "properties": {"continue": {"type": "boolean"}}, "required": ["continue"]}
+    claude_node.params = {"prompt": "decide", "output_schema": schema, "schema_retries": 1}
+    claude_node.node_id = "review"
+    shared = {"__warnings__": {}}
+    claude_node.shared = shared
+
+    async def attempt1(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text="maybe?")])
+        yield ResultMessage(
+            structured_output={"continue": "maybe"},  # not coercible to bool → retry
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+            total_cost_usd=0.01,
+            num_turns=3,
+            session_id="s1",
+        )
+
+    async def attempt2(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text='{"continue": "true"}')])
+        yield ResultMessage(
+            structured_output={"continue": "true"},  # coerces to True → conforming
+            usage={
+                "input_tokens": 200,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+            total_cost_usd=0.02,
+            num_turns=2,
+            session_id="s1",
+        )
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.side_effect = [attempt1(), attempt2()]
+
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+
+    # One retry fired and the final result is the coerced, conforming output.
+    assert mock_query.call_count == 2
+    assert result["structured_output"] == {"continue": True}
+    assert result["retry_metadata"]["attempts"] == 1
+    assert result["retry_metadata"]["conforming"] is True
+
+    # The recorded retry usage is the SUPERSEDED first attempt (100), NOT the final (200).
+    # Pre-fix this list held the final attempt — the core of the double-count bug.
+    assert [r["input_tokens"] for r in result["retry_usages"]] == [100]
+
+    claude_node.post(shared, prep_res, result)
+    assert shared["result"] == {"continue": True}
+    lu = shared["llm_usage"]
+    assert lu["input_tokens"] == 200  # main = final attempt
+    assert lu["num_turns"] == 2
+    assert [r["input_tokens"] for r in lu["retries"]] == [100]
+
+    # Aggregation counts both attempts once: 100 + 200 = 300 (pre-fix was 400 = 2x final).
+    agg = WorkflowTraceCollector.aggregate_llm_usage_with_retries(lu)
+    assert agg["input_tokens"] == 300
+    assert agg["output_tokens"] == 30
+    assert agg["num_turns"] == 5
+    assert agg["cost_usd"] == pytest.approx(0.03)
+
+
+def test_schema_retries_no_op_without_output_schema(claude_node):
+    """schema_retries > 0 with NO output_schema must not coerce or retry (the gate).
+
+    Replaces a former no-op `pass` test that claimed this was "tested at the node level"
+    while no such test existed.
+    """
+    claude_node.params = {"prompt": "hello", "schema_retries": 3}
+    claude_node.node_id = "plain"
+    shared = {}
+    claude_node.shared = shared
+
+    async def mock_response(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text="just prose")])
+        yield ResultMessage(structured_output=None, result="just prose", session_id="s1")
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+
+    assert mock_query.call_count == 1  # no retry fired
+    assert result["retry_metadata"]["attempts"] == 0
+    assert "retry_usages" not in result
+
+    claude_node.post(shared, prep_res, result)
+    assert shared["result"] == "just prose"
+    assert "retries" not in shared.get("llm_usage", {})
+
+
+def test_schema_retries_no_schema_one_turn_allowed(claude_node):
+    """A no-schema node with max_turns=1 and explicit schema_retries>0 is NOT rejected.
+
+    Regression guard (#465 review): _validate_schema_retries used to couple schema_retries
+    to max_turns, rejecting valid no-schema nodes that cap Claude to one turn — even though
+    the retry only ever runs when an output_schema is set.
+    """
+    claude_node.params = {"prompt": "hi", "max_turns": 1, "schema_retries": 2}
+    prep_res = claude_node.prep({"__warnings__": {}})  # no output_schema → must not raise
+    assert prep_res["schema_retries"] == 2
+    assert prep_res["max_turns"] == 1
+
+
+def test_schema_retries_invalid_value_rejected(claude_node):
+    """A non-integer schema_retries raises a clear ValueError (only int() is wrapped)."""
+    claude_node.params = {"prompt": "hi", "schema_retries": "abc"}
+    with pytest.raises(ValueError, match="Invalid schema_retries"):
+        claude_node.prep({"__warnings__": {}})
+
+
+def test_schema_retries_out_of_range_rejected(claude_node):
+    """Range checks live outside the try and keep their specific messages."""
+    claude_node.params = {"prompt": "hi", "schema_retries": 9}
+    with pytest.raises(ValueError, match="cannot exceed 5"):
+        claude_node.prep({"__warnings__": {}})
+
+    claude_node.params = {"prompt": "hi", "schema_retries": -1}
+    with pytest.raises(ValueError, match="cannot be negative"):
+        claude_node.prep({"__warnings__": {}})
