@@ -819,6 +819,41 @@ def _try_execute_named_workflow(
     raise WorkflowNotFoundError(first_arg, similar_names=[])
 
 
+# Verbs that mean `--validate-only`. Other CLIs spell validation as a subcommand
+# (`terraform validate`, `cargo check`), so `pflow validate <wf>` is the natural
+# guess. pflow has no such subcommand — validation is a run-mode flag — so these
+# words are reserved: a bare `pflow validate` redirects rather than running a
+# workflow named "validate" (run that via its file path). `lint` is intentionally
+# excluded — it's reserved for the planned linting feature (Task 118).
+_VALIDATION_VERBS = frozenset({"validate", "check"})
+
+
+def _redirect_validation_verb(workflow: tuple[str, ...]) -> None:
+    """Redirect `pflow validate <wf>` to `pflow <wf> --validate-only`.
+
+    No-op unless the first token is a validation verb. Reconstructs the user's
+    intended target (and any params) from the remaining tokens so the suggestion
+    is copy-pasteable.
+    """
+    from pflow.core.user_errors import UserFriendlyError
+
+    if not workflow or workflow[0].lower() not in _VALIDATION_VERBS:
+        return
+
+    verb = workflow[0]
+    target = " ".join(workflow[1:]) if len(workflow) > 1 else "<workflow>"
+    raise UserFriendlyError(
+        title=f"pflow has no '{verb}' command — use the --validate-only flag",
+        explanation=(
+            "Validation is a flag on the workflow you want to check, not a "
+            "subcommand. Pass --validate-only (params are still accepted)."
+        ),
+        suggestions=[
+            f"pflow {target} --validate-only",
+        ],
+    )
+
+
 def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
     """Emit user guidance for input that is not a known workflow or command."""
     from pflow.core.user_errors import UserFriendlyError
@@ -968,6 +1003,10 @@ def run(
 
         raw_input = " ".join(workflow) if workflow else ""
         ctx.obj["workflow_text"] = raw_input
+
+        # `pflow validate <wf>` is a guessed command, not a real one — redirect to
+        # the --validate-only flag before we try to resolve it as a workflow name.
+        _redirect_validation_verb(workflow)
 
         if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
             return
