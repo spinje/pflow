@@ -61,6 +61,7 @@ class OutputController:
         print_flag: bool = False,
         stdin_tty: Optional[bool] = None,
         stdout_tty: Optional[bool] = None,
+        stderr_tty: Optional[bool] = None,
     ):
         """Initialize output controller with execution mode parameters.
 
@@ -68,6 +69,7 @@ class OutputController:
             print_flag: CLI flag -p/--print to force non-interactive mode
             stdin_tty: Override for sys.stdin.isatty() (for testing)
             stdout_tty: Override for sys.stdout.isatty() (for testing)
+            stderr_tty: Override for sys.stderr.isatty() (for testing)
         """
         self.print_flag = print_flag
 
@@ -85,6 +87,18 @@ class OutputController:
             self.stdout_tty = False
         else:
             self.stdout_tty = sys.stdout.isatty()
+
+        # Whether stderr is a terminal. Distinguishes the agent case (stderr
+        # captured/piped → non-TTY) from the human-redirect case (stderr is a
+        # terminal while stdout is a file). The ``Workflow output:`` label is
+        # suppressed ONLY in the latter — see ``_show_output_header`` in
+        # ``cli/workflow_output.py``.
+        if stderr_tty is not None:
+            self.stderr_tty = stderr_tty
+        elif sys.stderr is None:
+            self.stderr_tty = False
+        else:
+            self.stderr_tty = sys.stderr.isatty()
 
         # Tracks whether _handle_node_start left a partial line open (nl=False).
         # Required so that anything else writing to stderr — nested-workflow

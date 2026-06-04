@@ -280,11 +280,10 @@ class TestWorkflowOutputHandling:
             )
             assert "HELLO_STDOUT_CANARY_GH194" in result.stdout
             assert "HELLO_STDOUT_CANARY_GH194" not in result.stderr
-            # The "Workflow output (desc):" label is TTY-gated. CliRunner reports
-            # stdout_tty=False, so the label must be suppressed — this is the
-            # redirect-UX fix. For the gh194 invariant (data stream correctness)
-            # the relevant assertions are the two above.
-            assert "Workflow output" not in result.stderr
+            # GH194 invariant: the DATA lives on stdout only (the two asserts
+            # above). The "Workflow output (desc):" label is a stderr delimiter —
+            # CliRunner captures both streams (the agent case), so under Option B
+            # it IS shown on stderr; it just must never carry the data value.
         finally:
             Path(workflow_file).unlink()
 
@@ -728,12 +727,12 @@ class TestWorkflowOutputHandling:
         finally:
             Path(workflow_file).unlink()
 
-    def test_non_tty_mode_suppresses_output_header(self, mock_registry_instance, mock_compile, mock_validate_ir):
-        """When stdout is not a TTY (pipe/redirect), the label is suppressed.
+    def test_both_streams_captured_shows_header(self, mock_registry_instance, mock_compile, mock_validate_ir):
+        """Both streams captured (the agent case) → the label IS shown on stderr.
 
-        A naked ``Workflow output (description):`` header on stderr with the
-        value elsewhere (in the file/pipe) reads as "empty output" to both
-        humans and agents. The fix: skip the label on non-TTY stdout.
+        CliRunner reports isatty()=False for BOTH stdout and stderr, so this is
+        the agent/merged-capture branch of Option B: the label delimits where the
+        result begins. Data still goes to stdout only.
         """
         runner = click.testing.CliRunner(mix_stderr=False)
 
@@ -754,10 +753,58 @@ class TestWorkflowOutputHandling:
             workflow_file = f.name
 
         try:
-            # CliRunner already reports isatty()=False — this is the redirect case.
             result = runner.invoke(main, [workflow_file])
 
             assert result.exit_code == 0
+            assert "Workflow output (The final processed result):" in result.stderr
+            assert "Processing complete" in result.stdout
+            assert "Processing complete" not in result.stderr
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_stdout_redirected_stderr_terminal_suppresses_header(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """stdout redirected to a file WHILE stderr is a terminal → label suppressed.
+
+        This is the only case the suppression fires in (Option B): a naked
+        ``Workflow output (...)`` label on the terminal with the value in the
+        redirected file reads as "empty output". Forced via ``stderr_tty=True``
+        + ``stdout_tty=False`` since CliRunner reports both as non-TTY.
+        """
+        runner = click.testing.CliRunner(mix_stderr=False)
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {"final_result": {"description": "The final processed result", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"output_key": "final_result", "output_value": "Processing complete"},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        from pflow.core.output_controller import OutputController
+
+        original_init = OutputController.__init__
+
+        def redirect_init(self, *args, **kwargs):
+            kwargs.setdefault("stdout_tty", False)
+            kwargs.setdefault("stderr_tty", True)
+            original_init(self, *args, **kwargs)
+
+        try:
+            with patch.object(OutputController, "__init__", redirect_init):
+                result = runner.invoke(main, [workflow_file])
+
+            assert result.exit_code == 0
+            # Label suppressed because stderr is a terminal; data still on stdout.
             assert "Workflow output" not in result.stderr
             assert "Processing complete" in result.stdout
         finally:

@@ -1148,8 +1148,8 @@ class TestRealSubprocessProgressRendering:
         2. ``stderr`` contains the header line AND the completion summary
            (verifies both diagnostic components reach stderr)
         3. ``stdout`` contains NO stderr markers (``Executing workflow``,
-           ``Workflow completed``, ``📊``) — catches the Mode 3 regression
-           where diagnostics bleed onto stdout
+           ``Workflow completed``, ``Workflow trace saved``) — catches the
+           Mode 3 regression where diagnostics bleed onto stdout
         4. ``stderr`` does NOT contain the declared canary value — catches
            the original #194 bug where data landed on stderr
 
@@ -1207,7 +1207,7 @@ class TestRealSubprocessProgressRendering:
 
         # 3. Stderr markers must NOT appear on stdout (the #194 Mode 3 regression
         #    would route them to stdout alongside data, breaking `pflow foo | jq`)
-        for marker in ("Executing workflow", "Workflow completed", "📊"):
+        for marker in ("Executing workflow", "Workflow completed", "Workflow trace saved"):
             assert marker not in result.stdout, (
                 f"Diagnostic marker {marker!r} leaked onto stdout — this is the "
                 f"#194 Mode 3 regression where diagnostics contaminate the data "

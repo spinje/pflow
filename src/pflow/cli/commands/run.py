@@ -108,6 +108,15 @@ def _handle_workflow_success(
         if diagnostic.severity in {Severity.WARNING, Severity.INFO}
     ]
 
+    # Text mode renders the trace path in the summary's meta block (above the
+    # data), so save it now and thread the path down. JSON leaves it None — its
+    # ``set_json_output`` mutates the trace during output handling, so the file
+    # must be saved afterward (in the finally block), where the line is echoed.
+    trace_path = None
+    if output_format == "text" and workflow_trace and ctx.obj.get("trace"):
+        trace_file = _save_trace_file(ctx, workflow_trace)
+        trace_path = str(trace_file) if trace_file else None
+
     # Writes data to stdout, summary/advice to stderr; rationale in docstring.
     _handle_workflow_output(
         shared_storage,
@@ -121,26 +130,43 @@ def _handle_workflow_success(
         workflow_trace=workflow_trace,
         status=status,
         warnings=result_warnings,
+        trace_path=trace_path,
     )
 
 
-def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> None:
-    """Save trace to file and generate report if requested."""
-    if not workflow_trace:
-        return
-    if not ctx.obj.get("trace", False):
-        return
-    try:
-        trace_file = workflow_trace.save_to_file()
-    except Exception as trace_err:
-        logger.error("Failed to save trace: %s", trace_err, exc_info=True)
-        return
+def _save_trace_file(ctx: click.Context, workflow_trace: Any) -> Any | None:
+    """Save the trace to disk once; cache and return its path.
 
-    if trace_file:
-        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
-        report = ctx.obj.get("report")
-        if report:
-            _generate_and_echo_report(ctx, trace_file, report, workflow_trace)
+    Idempotent across the two callers — the text-success path (which renders the
+    path in the summary's meta block above the data) and the ``finally`` block
+    (report generation + the failure/JSON-path trace echo) — so the file is
+    written exactly once. Returns ``None`` if the save fails.
+    """
+    if "trace_file" not in ctx.obj:
+        try:
+            ctx.obj["trace_file"] = workflow_trace.save_to_file()
+        except Exception as trace_err:
+            logger.error("Failed to save trace: %s", trace_err, exc_info=True)
+            ctx.obj["trace_file"] = None
+    return ctx.obj["trace_file"]
+
+
+def _finalize_trace_and_report(ctx: click.Context, workflow_trace: Any, *, echo_trace_line: bool) -> None:
+    """Save the trace, optionally echo its path, and generate the report.
+
+    ``echo_trace_line`` is False on the text-success path — there the path is
+    already rendered in the summary's meta block (above the data). It's True for
+    JSON and failure paths, which have no such meta block, so the line is echoed
+    here (after the payload / error output), matching the prior behavior.
+    """
+    trace_file = _save_trace_file(ctx, workflow_trace)
+    if not trace_file:
+        return
+    if echo_trace_line:
+        _echo_trace(ctx, f"Workflow trace saved: {trace_file}")
+    report = ctx.obj.get("report")
+    if report:
+        _generate_and_echo_report(ctx, trace_file, report, workflow_trace)
 
 
 def _generate_and_echo_report(ctx: click.Context, trace_file: Any, report: Any, workflow_trace: Any) -> None:
@@ -294,7 +320,10 @@ def execute_json_workflow(  # noqa: C901
     finally:
         trace = result.trace if result else None
         if trace and config.trace_enabled:
-            _save_trace_and_report(ctx, trace)
+            # Text-success already rendered the trace line in the summary's meta
+            # block (above the data); JSON and failure paths echo it here.
+            text_success = bool(result and result.success and output_format == "text")
+            _finalize_trace_and_report(ctx, trace, echo_trace_line=not text_success)
         _cleanup_temp_files(stdin_data, effective_verbose)
 
 
