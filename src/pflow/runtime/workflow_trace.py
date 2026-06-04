@@ -14,13 +14,18 @@ from typing import Any, Callable, Optional
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.exceptions import OnlySnapshotMissingError
+from pflow.core.node_type_display import is_llm_node_type
+from pflow.core.trace_io import intern_blobs, load_trace_file
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
 
-# Trace format version. 2.4.0 adds the top-level ``only_node`` field
-# (additive/forward-compat — consumers gate on ``startswith("2.")``).
-TRACE_FORMAT_VERSION = "2.4.0"
+# Trace format version. 2.5.0 adds the top-level ``blobs`` map with
+# ``{"$pflow_blob": hash}`` refs for large string leaves, and canonicalizes
+# LLM prompt/system into ``llm_prompt``/``llm_system`` by removing redundant
+# LLM copies from node_output/template_resolutions/node_params. Consumers gate
+# on ``startswith("2.")``; old traces remain readable.
+TRACE_FORMAT_VERSION = "2.5.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -102,7 +107,7 @@ def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple
     pattern = f"workflow-trace-{wf_hash}-*.json"
     for trace_file in sorted(debug_dir.glob(pattern), key=_trace_recency_key, reverse=True):
         try:
-            data = json.loads(trace_file.read_text(encoding="utf-8"))
+            data = load_trace_file(trace_file)
         except (json.JSONDecodeError, OSError):
             logger.debug("Skipping unparseable trace %s", trace_file, exc_info=True)
             continue
@@ -143,6 +148,24 @@ def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
         and (str(warning.get("severity", "")).lower() == "info" or warning.get("source") in ("parser", "validator"))
         for warning in warnings
     )
+
+
+def _strip_redundant_llm_trace_fields(event: dict[str, Any]) -> None:
+    """Keep LLM prompt/system content only in canonical ``llm_*`` fields.
+
+    Parent/non-batch path only. We do NOT strip ``user_message_blocks`` here
+    (unlike ``_capture_item_trace``) because prewarm is batch-only, so a
+    non-batch ``node_output`` never carries it. The batch path owns that strip.
+    """
+    for container_key in ("node_output", "template_resolutions"):
+        container = event.get(container_key)
+        if isinstance(container, dict):
+            container.pop("prompt", None)
+            container.pop("system", None)
+
+    node_params = event.get("node_params")
+    if isinstance(node_params, dict):
+        node_params.pop("prompt", None)
 
 
 def load_full_run_events(
@@ -414,9 +437,19 @@ class WorkflowTraceCollector:
       the adapter's ``trace_hook`` ``before_call`` event; sourced from
       ``prep_res["system_blocks"]`` when prep built one, else
       ``prep_res["system"]``.
+    - 2.5.0 on disk: large string leaves may be replaced by
+      ``{"$pflow_blob": hash}`` refs with plaintext bodies in the top-level
+      ``blobs`` trailer. All content readers resolve these through
+      ``pflow.core.trace_io.load_trace_file`` before consumers inspect events.
+    - 2.5.0 LLM events: the rendered prompt/effective system live in
+      canonical ``llm_prompt`` / ``llm_system`` fields. Redundant LLM copies
+      are stripped from ``node_output`` / ``template_resolutions`` and
+      ``node_params.prompt``; ``node_params.system`` stays as the configured
+      system line for reports.
 
-    Consumer rule: gate on ``format_version.startswith("2.")``. New
-    additive fields are forward-compatible with that gate.
+    Consumer rule: gate on ``format_version.startswith("2.")``. Old 2.x
+    traces still render; current readers are updated together for newer
+    non-additive-but-compatible shape changes.
     """
 
     def __init__(
@@ -523,6 +556,8 @@ class WorkflowTraceCollector:
 
         # Add LLM-specific data if present
         self._add_llm_data(event, node_id, node_output or {})
+        if is_llm_node_type(node_type):
+            _strip_redundant_llm_trace_fields(event)
 
         self.events.append(event)
 
@@ -609,8 +644,9 @@ class WorkflowTraceCollector:
         # llm_prompts dict (each engine.run installs its own collector into
         # shared["__trace_collector__"]); the parent's WorkflowExecutor event
         # then aggregates child events via sub_workflow_events.
-        # The LLM node does NOT write "prompt" to shared, so the
-        # node_output fallback only fires for legacy/external callers.
+        # LLMNode.post writes "prompt" to shared; the trace_hook capture wins
+        # for normal non-batch calls, while the node_output fallback covers
+        # batch workers and legacy/external callers.
         prompt = self.llm_prompts.get(node_id)
         if not prompt and isinstance(node_output, dict):
             prompt = node_output.get("prompt")
@@ -904,8 +940,8 @@ class WorkflowTraceCollector:
             trace_data["json_output"] = self.json_output
 
         # Write to file with proper formatting
-        with open(filepath, "w") as f:
-            json.dump(trace_data, f, indent=2, default=str)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(intern_blobs(trace_data), f, indent=2, default=str)
 
         return filepath
 

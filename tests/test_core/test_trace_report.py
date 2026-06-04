@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from pflow.core.exceptions import ReportGenerationError
+from pflow.core.trace_io import intern_blobs
 from pflow.core.trace_report import (
     _build_batch_item_file,
     _build_batch_item_summary,
@@ -125,6 +126,19 @@ class TestGenerateReport:
         assert report_dir is not None
         assert (report_dir / "01-fetch.md").exists()
         assert (report_dir / "02-transform.md").exists()
+
+    def test_interned_trace_report_renders_resolved_content(self, tmp_path: Path) -> None:
+        large_prompt = "REPORT-PROMPT-" + ("x" * 2048)
+        trace = _make_trace(nodes=[_make_event(node_id="ask", node_type="LLMNode", llm_prompt=large_prompt)])
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(intern_blobs(trace)), encoding="utf-8")
+
+        report_dir = generate_report(trace_file, str(tmp_path / "report"))
+
+        assert report_dir is not None
+        node_md = (report_dir / "01-ask.md").read_text(encoding="utf-8")
+        assert large_prompt in node_md
+        assert "$pflow_blob" not in node_md
 
     def test_failed_batch_aggregate_report_compacts_error_items(self, tmp_path: Path) -> None:
         payload = "PAYLOAD-START " + " ".join(f"token{i}" for i in range(200)) + " PAYLOAD-END"
@@ -766,6 +780,37 @@ class TestBuildNodeFile:
         md = _build_node_file(event)
         assert "## Prompt" in md
         assert "Direct prompt text" in md
+
+    def test_llm_prompt_fallback_renders_blocks_as_json(self) -> None:
+        """Block-shaped prewarm prompts render without assuming a flat string."""
+        event = _make_event(
+            llm_prompt=[
+                {"type": "text", "text": "Shared prefix", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "Dynamic suffix"},
+            ]
+        )
+        md = _build_node_file(event)
+        assert "## Prompt" in md
+        assert "```json" in md
+        assert '"cache_control"' in md
+        assert "Dynamic suffix" in md
+
+    def test_batch_item_file_renders_llm_prompt_blocks(self) -> None:
+        """Per-item report files flow through the same prompt renderer."""
+        item = {
+            "index": 0,
+            "success": True,
+            "duration_ms": 12,
+            "llm_prompt": [
+                {"type": "text", "text": "Shared prefix", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "red"},
+            ],
+        }
+        md = _build_batch_item_file(item, _make_event(node_id="scorer", node_type="LLMNode"))
+        assert "## Prompt" in md
+        assert "```json" in md
+        assert '"cache_control"' in md
+        assert "red" in md
 
     def test_shell_command_resolution(self) -> None:
         event = _make_event(

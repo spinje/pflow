@@ -890,6 +890,28 @@ def _build_system_blocks(
     return blocks, chunks_skipped
 
 
+def _mirror_rendered_trace_inputs(shared: dict[str, Any], prep_res: dict[str, Any]) -> None:
+    """Expose rendered prompt/system data for per-item batch trace capture."""
+    # Surface the rendered prompt for tracing/audit. Critical for per-item
+    # batch traces: WorkflowTraceCollector keys llm_prompts by node_id only,
+    # so parallel batch workers all overwrite the same slot. The batch
+    # executor's _capture_item_trace falls back to node_output for per-item
+    # visibility — populating it here is the seam.
+    rendered_prompt = prep_res.get("prompt")
+    if isinstance(rendered_prompt, str):
+        shared["prompt"] = rendered_prompt
+    rendered_user_blocks = prep_res.get("user_message_blocks")
+    if isinstance(rendered_user_blocks, list):
+        shared["user_message_blocks"] = rendered_user_blocks
+    # 2.2.0: same seam for the effective system content (cache-rendered
+    # list[dict] when present, else plain string). Parallel batch workers
+    # overwrite the collector's llm_systems slot; the per-item trace falls
+    # back to node_output["system"] for per-item visibility.
+    rendered_system = prep_res.get("system_blocks") or prep_res.get("system")
+    if isinstance(rendered_system, (str, list)):
+        shared["system"] = rendered_system
+
+
 class LLMNode(Node):
     """
     General-purpose LLM node for text processing and AI reasoning or data transformation.
@@ -1232,21 +1254,7 @@ class LLMNode(Node):
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store."""
-        # Surface the rendered prompt for tracing/audit. Critical for per-item
-        # batch traces: WorkflowTraceCollector keys llm_prompts by node_id only,
-        # so parallel batch workers all overwrite the same slot. The batch
-        # executor's _capture_item_trace falls back to node_output["prompt"]
-        # for per-item visibility — populating it here is the seam.
-        rendered_prompt = prep_res.get("prompt")
-        if isinstance(rendered_prompt, str):
-            shared["prompt"] = rendered_prompt
-        # 2.2.0: same seam for the effective system content (cache-rendered
-        # list[dict] when present, else plain string). Parallel batch workers
-        # overwrite the collector's llm_systems slot; the per-item trace
-        # falls back to node_output["system"] for per-item visibility.
-        rendered_system = prep_res.get("system_blocks") or prep_res.get("system")
-        if isinstance(rendered_system, (str, list)):
-            shared["system"] = rendered_system
+        _mirror_rendered_trace_inputs(shared, prep_res)
 
         # Check for error first
         if isinstance(exec_res, dict) and exec_res.get("status") == "error":

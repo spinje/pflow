@@ -25,13 +25,14 @@ from pflow.core.prompt_cache_analysis.stages.summary import (
     _build_summary,
     _maybe_append_gemini_note,
 )
-from pflow.core.prompt_cache_analysis.trace_loading import _build_trace_execution_index
+from pflow.core.prompt_cache_analysis.trace_loading import _build_trace_execution_index, _load_trace_explicit
 from pflow.core.prompt_cache_analysis.types import (
     CacheAnalysis,
     PerCallRow,
     TraceUnexecutedLLMRow,
     invocation_count_for,
 )
+from pflow.core.trace_io import intern_blobs
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
@@ -3530,6 +3531,31 @@ def test_explicit_from_trace_loads_regardless_of_model(tmp_path: Path) -> None:
     assert result.trace_path == str(trace_path)
     drift_notes = [n for n in result.notes if "recorded with model" in n]
     assert len(drift_notes) == 1
+
+
+def test_explicit_from_trace_resolves_interned_content(tmp_path: Path) -> None:
+    """The analyze-cache explicit trace seam resolves disk blob refs before consumers see them."""
+    large_prompt = "ANALYZE-PROMPT-" + ("x" * 2048)
+    trace_path = tmp_path / "trace.json"
+    trace = {
+        "format_version": "2.5.0",
+        "workflow_path": "/abs/x.pflow.md",
+        "nodes": [
+            {
+                "node_id": "ask",
+                "node_type": "LLMNode",
+                "success": True,
+                "llm_prompt": large_prompt,
+            }
+        ],
+    }
+    trace_path.write_text(json.dumps(intern_blobs(trace)), encoding="utf-8")
+
+    loaded = _load_trace_explicit(trace_path, [])
+
+    assert loaded is not None
+    assert loaded["nodes"][0]["llm_prompt"] == large_prompt
+    assert "blobs" not in loaded
 
 
 def test_autoload_model_drift_appends_notes_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

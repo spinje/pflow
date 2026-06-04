@@ -12,6 +12,7 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import normalize_model_name
+from pflow.core.trace_io import load_trace_file
 
 from .sub_workflow_walker import walk_cross_workflow
 from .types import PerCallRow, TraceExecutionIndex, TraceListEntry
@@ -156,7 +157,7 @@ def _load_trace_explicit(path: Path, notes: list[str]) -> dict[str, Any] | None:
     if not path.exists():
         raise FileNotFoundError(f"Trace file not found: {path}")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = load_trace_file(path)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Trace file {path} is not a valid pflow trace (JSON parse error).") from exc
     if not isinstance(data, dict) or "format_version" not in data:

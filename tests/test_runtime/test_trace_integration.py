@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from pflow.core.trace_io import BLOB_SENTINEL, intern_blobs
+from pflow.runtime.engine.batch_executor import _capture_item_trace
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
 
@@ -729,6 +731,7 @@ class TestLLMTraceHookCapture:
                     "type": "llm",
                     "params": {
                         "prompt": "Say hello to the world.",
+                        "system": "Be concise.",
                         "model": "anthropic/claude-sonnet-4-5",
                     },
                 },
@@ -746,6 +749,13 @@ class TestLLMTraceHookCapture:
         # `pflow report` read this field).
         ask_event = next(e for e in collector.events if e["node_id"] == "ask")
         assert ask_event.get("llm_prompt") == "Say hello to the world."
+        assert ask_event.get("llm_system") == "Be concise."
+        assert "prompt" not in ask_event.get("node_output", {})
+        assert "system" not in ask_event.get("node_output", {})
+        assert "prompt" not in ask_event.get("template_resolutions", {})
+        assert "system" not in ask_event.get("template_resolutions", {})
+        assert "prompt" not in ask_event.get("node_params", {})
+        assert ask_event.get("node_params", {}).get("system") == "Be concise."
 
 
 class TestSubWorkflowTraceCollector:
@@ -1168,9 +1178,9 @@ class TestParallelBatchOfLLMs:
     Per-item llm_prompt was either missing or non-deterministic (last-write-wins).
 
     Fix (LLMNode.post writes shared["prompt"]): each item's NamespacedSharedStore
-    routes the rendered prompt to ``shared[node_id]["prompt"]``, which the batch
-    executor's _capture_item_trace mapping ``("prompt", "llm_prompt")`` already
-    expects. Each batch_items[i] now carries its own resolved prompt.
+    routes the rendered prompt to ``shared[node_id]["prompt"]``. The batch
+    executor's _capture_item_trace now promotes either structured
+    user_message_blocks or that flat prompt into the canonical ``llm_prompt``.
     """
 
     def test_each_batch_item_llm_captures_own_rendered_prompt(self, mock_llm_client):
@@ -1203,12 +1213,161 @@ class TestParallelBatchOfLLMs:
 
         seen_prompts = sorted(item.get("llm_prompt") for item in batch_items)
         assert seen_prompts == ["Score this: blue", "Score this: green", "Score this: red"]
+        for item in batch_items:
+            assert "prompt" not in item.get("node_output", {})
+            assert "system" not in item.get("node_output", {})
+            assert "prompt" not in item.get("template_resolutions", {})
+            assert "system" not in item.get("template_resolutions", {})
 
         # The aggregate batch wrapper stores only one representative prompt
         # because WorkflowTraceCollector.llm_prompts is keyed by node_id. In
         # parallel mode this is last-writer-wins by design; the per-item
         # prompts above are the authoritative data.
         assert scorer_event.get("llm_prompt") in seen_prompts
+
+    def test_prewarm_batch_items_capture_user_message_blocks_for_interning(self, mock_llm_client):
+        static_prefix = "stable rubric " * 1200
+        prompt_template = f"{static_prefix}Score this: ${{item}}"
+        expected_static_block = f"{static_prefix}Score this: "
+        ir = {
+            "ir_version": "0.1.0",
+            "inputs": {"items": {"type": "array", "description": "items to fan out over"}},
+            "nodes": [
+                {
+                    "id": "scorer",
+                    "type": "llm",
+                    "params": {
+                        "model": "anthropic/claude-sonnet-4-5",
+                        "prompt": prompt_template,
+                    },
+                    "batch": {
+                        "items": "${items}",
+                        "as": "item",
+                        "parallel": True,
+                    },
+                    "prewarm": True,
+                },
+            ],
+            "edges": [],
+        }
+
+        mock_llm_client.set_response("*", None, "ok")
+        shared, collector = _run_with_trace(ir, initial_params={"items": ["red", "blue"]})
+
+        scorer_event = next(e for e in collector.events if e["node_id"] == "scorer")
+        real_items = [
+            item for item in scorer_event.get("batch_items", []) if not item.get("llm_call", {}).get("is_warmup")
+        ]
+        assert len(real_items) == 2
+
+        prompts = [item.get("llm_prompt") for item in real_items]
+        assert all(isinstance(prompt, list) and len(prompt) == 2 for prompt in prompts)
+        assert {prompt[0]["text"] for prompt in prompts if isinstance(prompt, list)} == {expected_static_block}
+        assert {prompt[1]["text"] for prompt in prompts if isinstance(prompt, list)} == {"red", "blue"}
+        for item in real_items:
+            assert "user_message_blocks" not in item.get("node_output", {})
+            assert "prompt" not in item.get("node_output", {})
+
+        # B3 regression: user_message_blocks is a trace-capture-only seam and
+        # must NOT leak into the user-facing batch output (shared[node_id]
+        # ["results"]) — it would re-inject the large cache-rendered blocks into
+        # downstream/displayed output that the trace shrink is meant to avoid.
+        batch_results = shared["scorer"]["results"]
+        assert len(batch_results) == 2
+        for result in batch_results:
+            assert "user_message_blocks" not in result
+
+        interned = intern_blobs({"format_version": "2.5.0", "nodes": [scorer_event]})
+        interned_real_items = [
+            item
+            for item in interned["nodes"][0].get("batch_items", [])
+            if not item.get("llm_call", {}).get("is_warmup")
+        ]
+        static_refs = [item["llm_prompt"][0]["text"] for item in interned_real_items]
+        assert len(static_refs) == 2
+        assert static_refs[0] == static_refs[1]
+        assert isinstance(static_refs[0], dict)
+        digest = static_refs[0][BLOB_SENTINEL]
+        assert interned["blobs"][digest] == expected_static_block
+        assert {item["llm_prompt"][1]["text"] for item in interned_real_items} == {"red", "blue"}
+
+
+def test_llm_batch_item_trace_strips_without_mutating_last_resolutions() -> None:
+    """Batch LLM canonicalization must copy before stripping aliased resolutions."""
+    parent_shared: dict[str, Any] = {"_batch_trace": {"scorer": []}}
+    item_shared = {
+        "scorer": {
+            "prompt": "Score this: red",
+            "system": "System",
+            "response": "ok",
+            "llm_usage": {"model": "m", "total_tokens": 1},
+        }
+    }
+    last_resolutions = {
+        "prompt": {"template": "Score this: ${item}", "resolved": "Score this: red"},
+        "system": {"template": "System", "resolved": "System"},
+        "workflow": {"template": "./child.pflow.md", "resolved": "./child.pflow.md"},
+    }
+
+    _capture_item_trace(
+        parent_shared,
+        "scorer",
+        "LLMNode",
+        item_shared,
+        0,
+        "red",
+        12.0,
+        None,
+        last_resolutions,
+    )
+
+    item_event = parent_shared["_batch_trace"]["scorer"][0]
+    assert item_event["llm_prompt"] == "Score this: red"
+    assert item_event["llm_system"] == "System"
+    assert item_event["template_resolutions"] == {
+        "workflow": {"template": "./child.pflow.md", "resolved": "./child.pflow.md"}
+    }
+    assert "prompt" not in item_event["node_output"]
+    assert "system" not in item_event["node_output"]
+    assert "prompt" in last_resolutions
+    assert "system" in last_resolutions
+    assert "workflow" in last_resolutions
+
+
+def test_llm_batch_item_trace_prefers_user_message_blocks_and_drops_stored_copy() -> None:
+    """Block-shaped prewarm prompts must be the single canonical prompt copy."""
+    blocks = [
+        {"type": "text", "text": "Shared prefix", "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": "red"},
+    ]
+    parent_shared: dict[str, Any] = {"_batch_trace": {"scorer": []}}
+    item_shared = {
+        "scorer": {
+            "prompt": "Shared prefixred",
+            "user_message_blocks": blocks,
+            "response": "ok",
+        }
+    }
+
+    _capture_item_trace(
+        parent_shared,
+        "scorer",
+        "LLMNode",
+        item_shared,
+        0,
+        "red",
+        12.0,
+        None,
+        {},
+    )
+
+    item_event = parent_shared["_batch_trace"]["scorer"][0]
+    assert item_event["llm_prompt"] is blocks
+    assert "user_message_blocks" not in item_event["node_output"]
+    assert "prompt" not in item_event["node_output"]
+    # B3: the trace-only field is also dropped from the LIVE per-item output
+    # (item_shared[node_id]) so it can't leak into the aggregated batch results.
+    assert "user_message_blocks" not in item_shared["scorer"]
 
 
 class TestCachedSystemEndToEnd:
