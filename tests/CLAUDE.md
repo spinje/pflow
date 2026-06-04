@@ -322,10 +322,12 @@ def test_warns(caplog):
     assert "warning message" in caplog.text
 ```
 
-### 17. `claude_agent_sdk` Mocked via `sys.modules` (Session-Wide)
-`test_nodes/test_claude/test_claude_code.py` injects mock `claude_agent_sdk` into `sys.modules` **at module level** (not in a fixture). This happens at import time, persists for the entire pytest session, and has no cleanup. If you need to test real `claude_agent_sdk` integration, it won't work in the same pytest run.
+### 17. `claude_agent_sdk` Mocked via `sys.modules` (installed in `conftest.py`)
+The mock `claude_agent_sdk` lives in `tests/shared/claude_sdk_stub.py` and is injected into `sys.modules` by `tests/test_nodes/test_claude/conftest.py` (which calls `install()` at import). pytest loads a directory's `conftest.py` before collecting its test modules, so the mock is in place **before any test file in that directory imports the node** — independent of import order, with no cleanup (it persists for the session). If you need to test real `claude_agent_sdk` integration, it won't work in the same pytest run.
 
-`ResultMessage` is a real `@dataclass` in that test file, not an auto-Mock. This is load-bearing: the Claude Code node probes `ResultMessage.__annotations__` at import time to verify SDK structured-output support. Keep `mock_sdk_types.ResultMessage = ResultMessage` before `sys.modules["claude_agent_sdk.types"] = mock_sdk_types`, or imports will fail before tests run.
+Why a stub + conftest rather than module-level injection in the test file: the node binds its SDK names (`query`, `ResultMessage`, `ProcessError`, ...) at import via `from claude_agent_sdk import ...`, so they're fixed to whatever is in `sys.modules` the first time the node is imported. When the injection lived at module scope in `test_claude_code.py`, it only worked if that file won the import race; another test (e.g. `test_schema_coercion.py`) importing the node first bound it to the **real** SDK, and the mock `ResultMessage`/`ProcessError` then failed the node's `isinstance` checks — surfacing as ~14 unrelated failures whenever the two files shared a process in that order.
+
+`ResultMessage` is a real `@dataclass` in the stub, not an auto-Mock. This is load-bearing: the Claude Code node probes `ResultMessage.__annotations__` at import time to verify SDK structured-output support. Keep `mock_sdk_types.ResultMessage = ResultMessage` before `sys.modules["claude_agent_sdk.types"] = mock_sdk_types` in `install()`, or imports will fail before tests run.
 
 ### 18. Rewritten Tests That Assert Less Are Regression Signals
 When rewriting tests during a refactor, if the new test asserts LESS than the original, the new implementation likely dropped behavior — the old test wasn't over-specified. Investigate before weakening the assertion.
