@@ -70,6 +70,16 @@ Downstream nodes can read structured fields directly:
 - Do not ask Claude Code to emit both prose and machine data in the same result; put all required fields in the schema.
 - If the task is only "transform this object into that object", use `code` instead.
 
+### Schema self-healing
+
+When `output_schema` is set, the node automatically recovers from schema soft-failures through two mechanisms:
+
+1. **Scalar coercion**: Type-wrong scalar fields are canonically coerced (e.g., `"false"` string → `False` boolean, `"3"` → `3` int). Nested objects/arrays aren't coerced.
+
+2. **Resume retry** (default `schema_retries: 1`): If the model produces no structured output, uncoercible values, or a value outside a declared `enum`/`const`, pflow asks the same session to re-emit with an explicit schema prompt. One corrective pass by default. Set `schema_retries: 0` to disable (schema soft-failures immediately fall through to raw text + warning). An object schema without declared `properties` is unconstrained (any object conforms).
+
+Cost tracking aggregates the main call and all retries — `llm_usage` top-level fields already include retry costs. `--report` shows the retry count per node.
+
 ### Recovering from schema soft-failures
 
 `claude-code` always returns `default`. Schema soft-failures (model didn't comply, a provider error landed alongside the output, or a templated `output_schema` reference resolved to None) do NOT route through `- on-error:` edges.

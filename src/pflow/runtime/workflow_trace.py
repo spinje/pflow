@@ -526,6 +526,61 @@ class WorkflowTraceCollector:
 
         self.events.append(event)
 
+    @staticmethod
+    def aggregate_llm_usage_with_retries(llm_usage: dict[str, Any]) -> dict[str, Any]:
+        """Aggregate tokens/cost/turns from main llm_usage + retries array.
+
+        When llm_usage has a 'retries' field (schema retry attempts from claude-code node),
+        returns a new dict with summed tokens/cost/turns. Otherwise returns the input unchanged.
+
+        Args:
+            llm_usage: Raw llm_usage dict (may contain retries[] field)
+
+        Returns:
+            Aggregated dict (if retries present) or original dict (if no retries)
+        """
+        retries = llm_usage.get("retries", [])
+        if not retries:
+            return llm_usage
+
+        # Create aggregated llm_usage with summed tokens/cost/turns
+        aggregated = dict(llm_usage)  # Shallow copy
+
+        # Sum input/output tokens (None-safe: use `or 0` to coerce explicit None to 0)
+        aggregated["input_tokens"] = llm_usage.get("input_tokens") or 0
+        aggregated["output_tokens"] = llm_usage.get("output_tokens") or 0
+
+        # Sum cache tokens (None-safe)
+        for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
+            aggregated[cache_key] = llm_usage.get(cache_key) or 0
+
+        # Sum cost (handle None for models without pricing like Ollama)
+        # If all costs are None, result is None. If any cost is numeric, sum only numeric ones.
+        main_cost = llm_usage.get("cost_usd")
+        retry_costs = [r.get("cost_usd") for r in retries if r.get("cost_usd") is not None]
+        if main_cost is not None or retry_costs:
+            aggregated["cost_usd"] = (main_cost or 0) + sum(retry_costs)
+        else:
+            aggregated["cost_usd"] = None
+
+        # Sum turns (None-safe: .get() with default only handles absent keys, not explicit None)
+        # Use `or 0` to coerce None to 0 for aggregation
+        aggregated["num_turns"] = llm_usage.get("num_turns") or 0
+        for retry in retries:
+            aggregated["num_turns"] += retry.get("num_turns") or 0
+
+        # Aggregate retry contributions to tokens (None-safe)
+        for retry in retries:
+            aggregated["input_tokens"] += retry.get("input_tokens") or 0
+            aggregated["output_tokens"] += retry.get("output_tokens") or 0
+            for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
+                aggregated[cache_key] += retry.get(cache_key) or 0
+
+        # Recompute total_tokens after aggregation (was stale from main-only shallow copy)
+        aggregated["total_tokens"] = aggregated["input_tokens"] + aggregated["output_tokens"]
+
+        return aggregated
+
     def _add_llm_data(
         self,
         event: dict[str, Any],
@@ -533,6 +588,8 @@ class WorkflowTraceCollector:
         node_output: dict[str, Any],
     ) -> None:
         """Add LLM usage and response data to the event if present.
+
+        Aggregates tokens/cost across main usage + retries for claude-code schema retry.
 
         Args:
             event: Event dictionary to update
@@ -542,7 +599,8 @@ class WorkflowTraceCollector:
         # Look for llm_usage directly in node_output
         llm_usage = node_output.get("llm_usage") if isinstance(node_output, dict) else None
         if isinstance(llm_usage, dict):
-            event["llm_call"] = llm_usage
+            # Aggregate tokens/cost across main usage + retries (if present)
+            event["llm_call"] = self.aggregate_llm_usage_with_retries(llm_usage)
 
         # Look for prompt via the trace_hook capture first, then node_output.
         # The LLM adapter calls collector.get_trace_hook(node_id) to get a

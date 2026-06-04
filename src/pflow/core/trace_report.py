@@ -958,6 +958,19 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
             cached=bool(event.get("cached")),
         )
 
+    # Show retry metadata for claude-code schema retries
+    node_output = event.get("node_output", {})
+    if isinstance(node_output, dict):
+        llm_usage = node_output.get("llm_usage")
+        if isinstance(llm_usage, dict):
+            retries = llm_usage.get("retries", [])
+            if retries:
+                # Show retry count
+                retry_count = len(retries)
+                lines.append(f"- Schema retries: {retry_count}")
+                # Note: soft-fail status is already rendered by _append_runtime_warnings()
+                # from trace-level warnings. No need to duplicate here.
+
     # Show user-configured LLM parameters (only when explicitly set in workflow)
     node_params = event.get("node_params", {})
     _format_llm_params(node_params, lines)

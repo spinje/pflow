@@ -40,6 +40,7 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 | `timeout` | int | No | `300` | Execution timeout in seconds (30-3600) |
 | `system_prompt` | str | No | - | Custom system instructions |
 | `resume` | str | No | - | Session ID to resume a previous conversation |
+| `schema_retries` | int | No | `1` | Schema retry attempts (0-5) when `output_schema` is used. 0 disables self-heal, 1 allows one corrective pass |
 | `sandbox` | dict | No | - | Sandbox configuration for command isolation |
 | `use_api_key` | bool | No | `false` | Bill to `ANTHROPIC_API_KEY` (Anthropic Console). Default uses your Claude Pro/Max subscription |
 
@@ -80,11 +81,26 @@ The node always returns `default` from `post()` — schema soft-failures and SDK
   "cost_usd": 0.0234,
   "duration_ms": 3450,
   "num_turns": 2,
-  "session_id": "abc123"
+  "session_id": "abc123",
+  "retries": [
+    {
+      "input_tokens": 500,
+      "output_tokens": 150,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 100,
+      "cost_usd": 0.0078,
+      "duration_ms": 1200,
+      "num_turns": 1,
+      "session_id": "abc123",
+      "model": "claude-sonnet-4-5"
+    }
+  ]
 }
 ```
 
 `cost_usd` is the SDK-reported API-equivalent estimated cost. Actual billing depends on auth method; Claude Pro/Max subscription runs may report an API-equivalent cost without a direct per-call charge.
+
+The `retries` field (optional) contains an array of usage records for schema retry attempts. Token/cost values shown at the top level aggregate the main call and all retries — when reading `llm_usage` for cost tracking, use the top-level fields (they already include retry costs).
 
 ## Authentication
 
@@ -158,6 +174,23 @@ ${review.result.score}       -> 6
 If the schema is set but the SDK returns no structured output, pflow preserves the raw text in `${node.result}`, writes `${node._schema_error}`, and emits `shared["__warnings__"][node_id]` so JSON execution output reports workflow status as `DEGRADED`.
 
 Warning kinds distinguish model/schema misses from SDK error signals: `claude_code.schema_not_satisfied` means the model did not produce matching structured output; `claude_code.sdk_error_no_structured_output` means the Claude CLI reported an error and no structured output was usable.
+
+### Schema self-healing
+
+When using `output_schema`, the node automatically recovers from schema soft-failures through two mechanisms:
+
+1. **Scalar type coercion** — If the agent returns a structurally-valid response but a scalar field has the wrong type (e.g., `"false"` string instead of `false` boolean), pflow coerces it to the declared type using canonical conversions:
+   - Boolean: `"true"`/`"false"` (case-insensitive) → `True`/`False`
+   - Integer/Number: Numeric strings (`"3"`, `"3.14"`) → `int`/`float`
+   - String: Non-string scalars → `str()`
+
+2. **Resume retry** — If the agent produces no structured output, returns uncoercible values, or returns a value outside a declared `enum`/`const`, pflow asks the same session to re-emit the output with an explicit schema prompt. The `schema_retries` parameter (default `1`) controls how many corrective attempts to make.
+
+Conformance is judged on top-level scalar types plus `enum`/`const` constraints; an object schema without declared `properties` is treated as unconstrained (any object conforms).
+
+Cost tracking includes retry attempts — the `llm_usage` structure aggregates tokens/cost across the main call and all retries, and `--report` shows the retry count per node.
+
+Set `schema_retries: 0` to disable both mechanisms (schema soft-failures immediately fall through to raw text + warning, matching pre-v0.13 behavior).
 
 ## Examples
 
