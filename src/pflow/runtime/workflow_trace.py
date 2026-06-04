@@ -14,9 +14,9 @@ from typing import Any, Callable, Optional
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.exceptions import OnlySnapshotMissingError
+from pflow.core.node_type_display import is_llm_node_type
 from pflow.core.trace_io import intern_blobs, load_trace_file
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
-from pflow.runtime.engine.instrumentation import is_llm_node_type
 
 logger = logging.getLogger(__name__)
 

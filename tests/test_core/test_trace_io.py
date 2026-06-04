@@ -135,6 +135,15 @@ def test_resolve_removes_only_top_level_blob_trailer() -> None:
     assert resolve_blobs(trace) == {"nodes": [{"node_output": {"blobs": {"user": "value"}}}]}
 
 
+def test_empty_blobs_map_drops_trailer_without_resolving_ref_shaped_user_data() -> None:
+    # An empty blobs map means intern_blobs minted zero refs, so the fast path
+    # returns content verbatim (minus the trailer) and must NOT resolve a user
+    # dict that merely happens to look like a {sentinel: ...} ref.
+    trace = {"nodes": [{"value": {BLOB_SENTINEL: "deadbeef"}}], "blobs": {}}
+
+    assert resolve_blobs(trace) == {"nodes": [{"value": {BLOB_SENTINEL: "deadbeef"}}]}
+
+
 def test_dumped_trace_keeps_blobs_as_searchable_trailer(tmp_path: Path) -> None:
     large = _large_text("searchable")
     encoded = intern_blobs({"format_version": "2.4.0", "nodes": [{"a": large}, {"b": large}]})

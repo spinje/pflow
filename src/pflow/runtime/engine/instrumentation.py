@@ -14,6 +14,7 @@ import time
 from typing import Any, Optional
 
 from pflow.core.exceptions import MaxNodeVisitsError
+from pflow.core.node_type_display import is_llm_node_type
 
 from .types import BatchConfig
 
@@ -284,11 +285,6 @@ def memo_cache_lookup(
     cached_action, cached_output, created_at = cached_with_age
     cached_action = cached_action or "default"
     return True, cache_key, (cached_action, cached_output, created_at)
-
-
-def is_llm_node_type(node_type_name: str) -> bool:
-    """Return whether ``node_type_name`` is pflow's built-in LLM node."""
-    return node_type_name == "LLMNode"
 
 
 def _should_write_cache_metadata(node_type_name: str) -> bool:

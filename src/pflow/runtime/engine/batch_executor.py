@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError
 from pflow.core.json_utils import try_parse_json
+from pflow.core.node_type_display import is_llm_node_type
 
 if TYPE_CHECKING:
     from pflow.core.prompt_cache import CacheRenderContext
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .batch_item_summary import summarize_batch_item
-from .instrumentation import is_llm_node_type
 from .types import BatchConfig, NodeConfig
 
 logger = logging.getLogger(__name__)
@@ -864,6 +864,14 @@ def _capture_item_trace(
 
     if is_llm_event:
         _strip_redundant_item_llm_fields(item_event)
+        # user_message_blocks is a trace-capture-only seam (LLMNode.post writes
+        # it solely so _promote_item_llm_data can build the block-shaped
+        # llm_prompt above). Drop it from the LIVE per-item output so the
+        # cache-rendered blocks don't leak into the aggregated batch results,
+        # user-facing output, or the parent event's node_output. The llm_prompt
+        # capture holds the list by reference, so the trace is unaffected.
+        if isinstance(node_output, dict):
+            node_output.pop("user_message_blocks", None)
 
     # Sub-workflow trace events (from WorkflowExecutor batch items).
     # Stored as "events" so collect_llm_calls() can recurse into them.

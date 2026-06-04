@@ -21,7 +21,12 @@ def intern_blobs(trace: dict[str, Any]) -> dict[str, Any]:
 
     The returned dict always has a trailing ``"blobs"`` map. This function is
     pure: every dict/list container is rebuilt, and the input trace is never
-    mutated or aliased into the output.
+    mutated or aliased into the output. Rebuilding means a transient ~2x memory
+    peak at dump time (live tree + interned copy + blob map) — a once-per-run,
+    save-time cost. Do NOT "optimize" this into in-place mutation: ``save_to_file``
+    aliases the live event dicts into the dump tree, so mutating would corrupt
+    them and break the in-memory-is-always-plain invariant (guarded by
+    ``test_intern_blobs_does_not_mutate_or_alias_input_containers``).
     """
     blobs: dict[str, str] = {}
 
@@ -42,10 +47,12 @@ def intern_blobs(trace: dict[str, Any]) -> dict[str, Any]:
             return [walk(child) for child in value]
         # String-only is load-bearing: resolve substitutes one immutable object
         # into every ref. Do not extend this to containers without revisiting that.
-        if isinstance(value, str) and len(value.encode("utf-8")) >= INTERN_MIN_BYTES:
-            digest = hashlib.md5(value.encode("utf-8"), usedforsecurity=False).hexdigest()
-            blobs.setdefault(digest, value)
-            return {BLOB_SENTINEL: digest}
+        if isinstance(value, str):
+            encoded = value.encode("utf-8")
+            if len(encoded) >= INTERN_MIN_BYTES:
+                digest = hashlib.md5(encoded, usedforsecurity=False).hexdigest()
+                blobs.setdefault(digest, value)
+                return {BLOB_SENTINEL: digest}
         return value
 
     interned = walk(trace)
@@ -62,10 +69,19 @@ def resolve_blobs(trace: dict[str, Any]) -> dict[str, Any]:
 
     Old traces without ``"blobs"`` are returned unchanged. Malformed blob maps
     also degrade to a no-op rather than making trace loading brittle.
+
+    ``intern_blobs`` never mints a ref under a ``__``-prefixed key, so this walk
+    deliberately does not special-case those subtrees — substitution only fires
+    on the ``{sentinel: real-digest}`` shape, which they never contain.
     """
     blobs = trace.get("blobs")
     if not isinstance(blobs, dict):
         return trace
+    # intern_blobs always emits a "blobs" map, even when nothing was interned.
+    # An empty map means zero refs exist anywhere, so skip the full recursive
+    # walk and just drop the trailer (a frequent case: traces with no >=1 KB leaf).
+    if not blobs:
+        return {key: value for key, value in trace.items() if key != "blobs"}
 
     def walk(value: Any) -> Any:
         if (

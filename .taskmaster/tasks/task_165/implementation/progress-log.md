@@ -276,3 +276,82 @@ Verification commands/results:
   `7507 passed, 19 skipped`.
 - `ruff check` over changed source/tests -> passed.
 - `mypy` over changed source modules -> success.
+
+## Post-review fixes (PR #467 review round)
+
+Two reviews on the PR were evaluated (human-style review comment + Codex review). Each finding was
+independently verified against the code (parallel `pflow-codebase-searcher` passes + direct reads)
+before acting. Four findings were fixed, two disputed Codex P2s were accepted as documented
+no-actions, and one bonus suggestion from a separate Codex review was taken.
+
+**Fixed:**
+
+1. **`user_message_blocks` leaked into user-facing batch output (Codex P2, real bug).** `LLMNode.post`
+   mirrors `user_message_blocks` into the per-item `shared[node_id]` for trace capture. The per-item
+   trace strip (`_strip_redundant_item_llm_fields`) only pops it from the *shallow trace copy*
+   (`dict(node_output)`), not from the live result that `_normalize_result` returns by reference — so
+   the large cache-rendered blocks flowed into `shared[node_id]["results"][*]` (downstream/displayed
+   output) and the parent batch event's `node_output.results[*]`. NOTE the Codex claim that this
+   "reintroduces the duplicated cache-prefix payload" is overstated *for the on-disk trace*: interning
+   is shape-agnostic and still collapses the byte-identical block `text` to one blob. The genuine
+   defect is **user-facing output pollution** (a trace-only field appearing full-size in batch results)
+   plus in-memory bloat (interning is disk-only). Fix: in `_capture_item_trace`, after
+   `_promote_item_llm_data` captures the block-shaped `llm_prompt` (by reference, so the trace is
+   unaffected), `pop("user_message_blocks", None)` from the **live** `node_output`. Scoped to the new
+   field only — pre-existing `prompt`/`system` leakage into `results[*]` was left as-is (out of scope;
+   `shared["prompt"]` is a documented audit field). Regression tests added at both integration level
+   (`test_prewarm_batch_items_capture_user_message_blocks_for_interning` now asserts `results[*]` has
+   no `user_message_blocks`) and unit level
+   (`test_llm_batch_item_trace_prefers_user_message_blocks_and_drops_stored_copy` asserts the live
+   `item_shared[node_id]` lost the key).
+
+2. **Import-layering: `is_llm_node_type` relocated to `core/node_type_display.py` (human Warning).**
+   The Phase-3 placement put `is_llm_node_type` in `runtime/engine/instrumentation.py`, and
+   `workflow_trace.py` imported it from there — a direct `runtime → runtime.engine` edge. Moved the
+   one-line predicate to `core/node_type_display.py` (dependency-free, already special-cases
+   `"LLMNode"`); `instrumentation.py` (with `_should_write_cache_metadata` still delegating),
+   `batch_executor.py`, and `workflow_trace.py` now import it from `core`. Behavior-identical
+   (`== "LLMNode"`). **Correction to the review's rationale:** `pflow/runtime/__init__.py` *already*
+   eagerly imports `WorkflowEngine`, so importing `workflow_trace` (or `core/trace_report` →
+   `workflow_trace`) already loaded the engine package on `main` — the line-19 import did NOT introduce
+   the render-path import cost the review described. What it introduced (and the fix removes) is a
+   fragile **cyclic edge** `workflow_trace → engine.instrumentation`, kept from deadlocking only by
+   `engine.py`'s lazy `workflow_trace` import. No import-hygiene guard test was added: "importing
+   workflow_trace must not import engine" would fail regardless of the fix because of the package
+   `__init__`, so such a test would be misleading.
+
+3. **`trace_io.py` tidy (human Suggestions).** `intern_blobs` now encodes each qualifying leaf to
+   UTF-8 once (was twice — threshold check + md5); added a docstring note that the ~2x transient
+   dump-time memory peak must not be "optimized" into in-place mutation (it aliases `self.events`); and
+   a comment in `resolve_blobs` explaining the intentional `__`-key asymmetry (intern skips `__`
+   subtrees, resolve walks uniformly — benign because intern never mints a ref under `__`).
+
+4. **Empty-`blobs` fast path (bonus, from a separate Codex review).** `intern_blobs` always emits a
+   `blobs` map even when empty (every trace with no >=1 KB leaf), so `resolve_blobs` walked the whole
+   tree for nothing. Added `if not blobs: return {k: v for k, v in trace.items() if k != "blobs"}` —
+   behavior-preserving (empty map => zero refs => nothing to substitute; still drops the trailer).
+   Guarded by a new test that an empty-`blobs` trace doesn't resolve a ref-shaped user dict.
+
+**Disputed — accepted as documented no-actions (replied on PR, no code):**
+
+- **`--only` can't re-seed `${node.prompt}`/`${node.system}` (Codex P2).** Mechanic confirmed, but
+   it's the intentional, documented caveat: `seed_snapshot_into_shared` restores only `node_output`;
+   live runs are unaffected (`post` still writes `shared["prompt"]`); a repo-wide grep finds zero
+   downstream `${node.prompt}`/`${node.system}` references (only the `runtime/CLAUDE.md` caveat note);
+   fail-loud, not silent.
+- **User dict shaped like a blob sentinel could be misresolved (Codex P2).** Resolver shape confirmed,
+   but `resolve_blobs` only substitutes when the value is also a key present in the `blobs` map —
+   corruption needs three coincidences (single-key dict, key literally `$pflow_blob`, value a 32-hex
+   md5 that collides with a real blob in the same trace). The unique `$pflow_blob` sentinel is the
+   deliberate mitigation; documented accepted residual; no observed trigger.
+
+Verification (post-review):
+- `ruff check` + `mypy` over all 5 changed source files -> clean.
+- `tests/test_core/test_trace_io.py` + `tests/test_runtime/test_trace_integration.py` -> 33 passed.
+- Full `tests/test_runtime/` -> `1811 passed, 1 skipped`.
+- `test_trace_report` + `test_trace_tree` + cache-analysis (analyze/trace_listing/renderers) +
+  `tests/test_nodes/test_llm/` -> `822 passed, 9 skipped`.
+- Files: `src/pflow/core/node_type_display.py`, `src/pflow/core/trace_io.py`,
+  `src/pflow/runtime/engine/instrumentation.py`, `src/pflow/runtime/engine/batch_executor.py`,
+  `src/pflow/runtime/workflow_trace.py`, `tests/test_core/test_trace_io.py`,
+  `tests/test_runtime/test_trace_integration.py` (+64/-13).

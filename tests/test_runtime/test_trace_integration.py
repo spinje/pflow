@@ -1252,7 +1252,7 @@ class TestParallelBatchOfLLMs:
         }
 
         mock_llm_client.set_response("*", None, "ok")
-        _, collector = _run_with_trace(ir, initial_params={"items": ["red", "blue"]})
+        shared, collector = _run_with_trace(ir, initial_params={"items": ["red", "blue"]})
 
         scorer_event = next(e for e in collector.events if e["node_id"] == "scorer")
         real_items = [
@@ -1267,6 +1267,15 @@ class TestParallelBatchOfLLMs:
         for item in real_items:
             assert "user_message_blocks" not in item.get("node_output", {})
             assert "prompt" not in item.get("node_output", {})
+
+        # B3 regression: user_message_blocks is a trace-capture-only seam and
+        # must NOT leak into the user-facing batch output (shared[node_id]
+        # ["results"]) — it would re-inject the large cache-rendered blocks into
+        # downstream/displayed output that the trace shrink is meant to avoid.
+        batch_results = shared["scorer"]["results"]
+        assert len(batch_results) == 2
+        for result in batch_results:
+            assert "user_message_blocks" not in result
 
         interned = intern_blobs({"format_version": "2.5.0", "nodes": [scorer_event]})
         interned_real_items = [
@@ -1356,6 +1365,9 @@ def test_llm_batch_item_trace_prefers_user_message_blocks_and_drops_stored_copy(
     assert item_event["llm_prompt"] is blocks
     assert "user_message_blocks" not in item_event["node_output"]
     assert "prompt" not in item_event["node_output"]
+    # B3: the trace-only field is also dropped from the LIVE per-item output
+    # (item_shared[node_id]) so it can't leak into the aggregated batch results.
+    assert "user_message_blocks" not in item_shared["scorer"]
 
 
 class TestCachedSystemEndToEnd:

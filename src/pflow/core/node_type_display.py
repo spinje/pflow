@@ -24,3 +24,13 @@ NODE_TYPE_TAGS: dict[str, str] = {
 def node_type_tag(node_type: str) -> str:
     """Return short display tag for a Python node class name."""
     return NODE_TYPE_TAGS.get(node_type, node_type.lower())
+
+
+def is_llm_node_type(node_type_name: str) -> bool:
+    """Return whether ``node_type_name`` is pflow's built-in LLM node.
+
+    Lives here (a dependency-free ``core`` module that already special-cases
+    ``"LLMNode"``) so trace-shape code can import it without pulling in the
+    ``runtime.engine`` package — see ``runtime/workflow_trace.py``.
+    """
+    return node_type_name == "LLMNode"

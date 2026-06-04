@@ -32,8 +32,10 @@ Faithful to the plan across Phases 1–5. Verified deviations (all sound):
 - **Three helper extractions to satisfy Ruff C901 instead of suppressing it:**
   `_template_resolutions_for_item_trace`, `_promote_item_llm_data`, `_strip_redundant_item_llm_fields`
   (batch_executor) and `_mirror_rendered_trace_inputs` (llm.py `post`). These improved the final shape.
-- **`is_llm_node_type(node_type_name)` added** to `instrumentation.py` with `_should_write_cache_metadata`
-  delegating to it (the plan recommended this rename-for-intent; the gate logic is identical, `== "LLMNode"`).
+- **`is_llm_node_type(node_type_name)` added** with `_should_write_cache_metadata` delegating to it (the
+  plan recommended this rename-for-intent; the gate logic is identical, `== "LLMNode"`). *Originally
+  placed in `instrumentation.py`; relocated to `core/node_type_display.py` in the PR-review round (see
+  "Post-review fixes") to drop a `workflow_trace → engine` import edge — current home is `core`.*
 - **The `("prompt","llm_prompt")` entry was removed from the batch promotion loop** — without this, the
   generic loop would clobber the block-shaped `llm_prompt` back to a flat string. This was a
   plan-review-flagged hazard; the fix is in place and tested.
@@ -82,6 +84,16 @@ A naive edit to any of these reintroduces a real bug — each has a guarding tes
    is dead-and-stripped.
 8. **Top-level `"blobs"` is now reserved** — `intern_blobs` overwrites any pre-existing one. (Nested
    user `blobs` keys survive; guard: `test_resolve_removes_only_top_level_blob_trailer`.)
+9. **`user_message_blocks` must be stripped from the LIVE per-item output, not just the trace copy.**
+   (Added in the PR-review round — see "Post-review fixes".) `LLMNode.post` mirrors the cache-rendered
+   blocks into `shared[node_id]` purely as a trace-capture seam. `_capture_item_trace` takes a *shallow
+   copy* (`dict(node_output)`) for the trace, and `_normalize_result` returns the live `node_output` by
+   reference into the aggregated batch `results` — so popping the field from the trace copy alone leaves
+   it in `shared[node_id].results[*]` (user-facing output + parent event). The strip must `pop` from the
+   live `node_output` **after** `_promote_item_llm_data` has captured `llm_prompt` (which holds the list
+   by reference, so the trace is unaffected). Guard:
+   `test_llm_batch_item_trace_prefers_user_message_blocks_and_drops_stored_copy` (live-output pop) +
+   `test_prewarm_batch_items_capture_user_message_blocks_for_interning` (`results[*]` clean).
 
 ### Shared Store Keys
 - `shared["user_message_blocks"]` — **new** capture seam written by `LLMNode.post` (prewarm batch
@@ -168,6 +180,41 @@ The placement of blobs changes (top-trailer → inline-first-occurrence) but the
 content-hash, and the substitution walk are identical. Swap the parser behind `load_trace_file`; keep
 the walk shape-agnostic (it already is).
 
+## Post-review fixes (PR #467 review round)
+
+After the PR opened, a human-style review (1 Warning + 2 Suggestions) and a Codex review (3 P2 inline
+comments) landed. Each finding was independently verified against the code before acting. Net: 4 fixes,
+2 disputed-but-accepted no-actions, 1 bonus. Full chronology in `implementation/progress-log.md` →
+"Post-review fixes". The load-bearing takeaways for a future agent:
+
+- **Real bug fixed — `user_message_blocks` leaked into user-facing batch output.** See landmine #9
+  above. The trace-only field reached `shared[node_id].results[*]` (downstream + display) and the parent
+  event because the per-item strip only touched the trace's shallow copy. Fixed by popping it from the
+  live `node_output` in `_capture_item_trace` after `llm_prompt` promotion. *The Codex framing ("re-
+  introduces the duplicated cache-prefix payload") was overstated for the on-disk trace — interning
+  still dedupes the block text to one blob; the actual defect was user-facing output pollution + in-
+  memory bloat (interning is disk-only).*
+
+- **Layering — `is_llm_node_type` now lives in `core/node_type_display.py`** (was `instrumentation.py`).
+  Removed the `workflow_trace → engine.instrumentation` import edge. **Important correction to the
+  Warning's rationale:** `pflow/runtime/__init__.py` already eagerly imports `WorkflowEngine`, so any
+  import of `workflow_trace` (incl. via `core/trace_report`) already loaded the engine package on `main`
+  — the predicate import did NOT add the render-path import cost the review claimed. Its real harm (now
+  removed) was a fragile **cyclic edge**, avoided from deadlock only by `engine.py`'s lazy `workflow_trace`
+  import. No "import doesn't pull engine" guard test was added — it would fail regardless of the fix
+  because of the package `__init__`, and would mislead.
+
+- **`trace_io.py` tidy:** encode-once in `intern_blobs`; transient-memory + `__`-asymmetry comments;
+  empty-`blobs` fast path in `resolve_blobs` (skip the full walk when nothing was interned — frequent,
+  behavior-preserving, still drops the trailer).
+
+- **Disputed Codex P2s accepted as documented no-actions (replied on the PR, no code):** the `--only`
+  re-seed caveat (intentional, documented, zero downstream `${node.prompt}`/`${node.system}` refs in the
+  repo, fail-loud) and the sentinel-collision (requires 3 coincidences incl. a digest-in-blob-map
+  collision; the unique `$pflow_blob` sentinel is the deliberate mitigation). These are accepted
+  residuals, not defects.
+
 ---
 
-*Generated from the design + review + verification context of Task 165 (issue #382).*
+*Generated from the design + review + verification context of Task 165 (issue #382), updated after the
+PR #467 review round.*
