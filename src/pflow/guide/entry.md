@@ -55,7 +55,6 @@ Features — when the user says X, load topic Y:
                    → "reuse this", "same validation as X", "up to N times", "iterate over a fixed count"
   prompt-caching   Provider prompt caching, ## Cache, prompt_cache:
                    → "cache prompts", "reduce LLM cost", "speed up retries"
-                   Alias accepted: `pflow guide caching`
 
 Start here:
   core             Framework fundamentals — how to design and build workflows
