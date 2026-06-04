@@ -1344,3 +1344,58 @@ observation of gap #1 (whole-codebase review on a non-toy codebase).
   deterministic GRAPH gate with a ground-truth exit condition. The harness already encoded its
   other hard guarantees (preflight, push) as nodes; the full-suite check was simply on the wrong
   side of that line, now corrected.
+
+### Additional insights mined from the run's own output (agents' progress log + trace)
+
+A second pass over the dogfood's artifacts (the agents' `/tmp/t465-dogfood/progress-log.md` + the
+trace) surfaced more than the live-watch did:
+
+- **The review-fix loop earned its keep, hard — it caught 10 real critical bugs (6 in round 1, 4 in
+  round 2), all genuine.** The standout: round 2 found `schema_retries` was added to the *module*
+  docstring but NOT the *class* Interface docstring — and `PflowMetadataExtractor` reads the class
+  docstring, so the static validator would have **rejected every workflow using `schema_retries`**
+  (`--validate-only`/`--dry-run`/`save`/run all blocked). Without review round 2, #465 ships DOA.
+  Other round-1/2 finds were equally real: `schema_retries=0` didn't actually disable coercion;
+  `None`→`"None"` string corruption; a retry exception escalating a soft-fail to a hard failure;
+  batch executor bypassing retry-cost aggregation; dead telemetry code. → This REFRAMES "review is
+  70% of cost": yes it's the dominant cost, but here that $28 caught 10 real bugs including a
+  feature-killer the implementer AND its self-review both missed. The multi-round design (and the
+  fresh-context-per-round) is validated, not just expensive.
+- **The review loop converged CORRECTLY (stopped at 2 rounds) — and was right that what remained was
+  test gaps, not new bugs.** Its stated reasoning ("a third round would re-report the same test
+  gaps without finding new bugs in the fixes") held. But it ALSO means: review *identifies* missing
+  coverage and then correctly classifies it as "implementation work, not a review finding" — and
+  **no harness stage owns acting on a flagged test gap.** Structural gap, distinct from finding #1.
+- **`verify` caught an INCOMPLETE review fix** — round 2 claimed to fix the `None + int` token-
+  aggregation crash but applied None-safety to `num_turns` only, not the other token fields; verify
+  re-broke it and extended the fix. Concrete proof of verify's distinct value: it independently
+  attacks the result and catches what a reviewer's own fix left half-done.
+- **#465 ships with REAL test gaps the agents themselves flagged but never closed — confirmed
+  against ground truth, NOT just the log:** the **resume-retry loop (Shape A, #465's PRIMARY
+  mechanism) has ZERO test coverage.** `test_schema_coercion.py` tests only the static coercion
+  helper; `test_claude_code.py` references `schema_retries` solely via the 4 `=0` (retry-DISABLING)
+  fallback patches. The integration test file was created in Phase 3 (`cff521e9`) then **deleted as
+  broken by review round 1** (`34faa7ba`, "patched a non-existent `run_agent` symbol, never ran")
+  and never restored. `_validate_schema_retries` is also untested. So **the green 7485-test suite
+  does NOT cover #465's headline self-healing path** — finding #1 at a finer grain (a passing suite
+  ≠ covered behavior). This is the load-bearing caveat for PR #468; the coercion (Shape B) half IS
+  well-tested, the retry (Shape A) half is not.
+- **Agent self-report overclaimed (again).** The Phase-3 log presents the integration tests as a
+  delivered artifact ("Created … 4 test cases"); ground truth is they were deleted two stages later
+  and are absent from the final code. Append-only logs make this *eventually* visible, but a reader
+  of one section is misled — reinforces "treat the agent's log as a claim; check git/fs."
+- **Gap #3 hygiene re-confirmed with evidence.** `verify` put its 17 KB adversarial probe script at
+  `/tmp/adversarial_schema_test.py` (OUTSIDE the repo) and left the tree clean — the
+  scratch-file-hygiene rule held on a real run, not just by construction.
+- **Known #465 cost caveats (from plan-hardening, deliberately declined, documented here so they're
+  not a surprise):** batch + `schema_retries` can ~2× cost per item (W4 — accepted: retry is opt-in,
+  set `schema_retries=0` to avoid); `--dry-run` will estimate ~2× for nodes that have retried
+  historically then 1× on first-try success (W5 — accepted estimator variance).
+
+**Net:** the dogfood is even more valuable read-in-full than watched-live. The harness's review +
+verify did genuinely excellent, evidence-backed work (10+ real bugs, incl. a DOA-preventer and an
+incomplete-fix catch) — yet still shipped a regression (finding #1) AND left its primary mechanism
+untested, because no stage enforces "the full suite must pass" or "flagged gaps must be closed."
+Both are coverage/enforcement gaps, not reasoning gaps — exactly the class the new validate-fix gate
+(finding #1) addresses for the suite, and a candidate follow-up (a coverage/gap-closing stage)
+addresses for the rest.
