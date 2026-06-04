@@ -1399,3 +1399,56 @@ untested, because no stage enforces "the full suite must pass" or "flagged gaps 
 Both are coverage/enforcement gaps, not reasoning gaps — exactly the class the new validate-fix gate
 (finding #1) addresses for the suite, and a candidate follow-up (a coverage/gap-closing stage)
 addresses for the rest.
+
+---
+
+## Entry: PR #468 review round 2 — fixed all findings; the harness's own review missed a cost bug in its untested path (2026-06-04)
+
+The #465 dogfood artifact (PR #468) drew two external AI reviews (codex + claude[bot]). Evaluated
+every finding against the code on the worktree (HEAD == the reviewed commit `34eaaac7`, so nothing
+was already-fixed); all 8 are real. Fixed them all on the #468 branch
+`fix/resolve-invalid-pointer-dereference` (commits `5908426d` + `19bb977d`, pushed; PR body updated).
+These fixes are on the #468 branch, NOT this harness branch.
+
+**Findings + fixes:**
+- **Retry cost telemetry double-counted (the one critical).** The retry loop appended the *incoming*
+  retry's usage to `llm_usage["retries"]` AND made it the main usage, so the aggregator summed the
+  final attempt twice and dropped the first entirely — every successful self-heal reported a wrong,
+  internally-inconsistent cost, contradicting the docs. Fix: record the *superseded* (outgoing)
+  attempt instead, so main + retries are disjoint and complete. (New `_usage_record_from` helper.)
+- **Coercion edge cases.** An object schema without `properties` was marked non-conforming → retried
+  → dropped to raw text (a real regression for generic-object schemas); now unconstrained =
+  conforming. `enum`/`const` were never checked (type-only coercion), so an off-enum value was
+  stored silently; now a conformance miss that triggers retry. (Scoped to enum+const, not a general
+  JSON-Schema validator.)
+- **`_validate_schema_retries`.** Dropped the `max_turns` coupling (it rejected valid no-schema nodes
+  capping to one turn; prep already enforces `max_turns>=2` for schema nodes) and moved range checks
+  outside the try (no more error-message substring matching). Also fixes a runtime-vs-validator
+  asymmetry — the validator never had that coupling.
+- **Coverage.** Added the retry-orchestration-loop test (mocks `query` through prep→exec→post→
+  aggregate) — the exact untested path the cost bug lived in — and replaced a no-op `pass` test with
+  a real node-level gate test.
+
+**The meta-lesson (load-bearing for the harness story).** The double-count lived in code the
+harness's OWN review loop had touched — review round 1 *created* the `aggregate_llm_usage_with_retries`
+helper and even fixed a `None + int` crash in it — yet it missed the double-count, because **no test
+ever exercised the retry loop** (the integration test was created then deleted by review round 1 and
+never restored — already flagged in the dogfood entry as "#465 ships with its primary mechanism
+untested"). The external reviewers caught what the harness's review structurally could not: a bug in
+the one path it left uncovered. Sharpest evidence yet for the candidate **coverage/gap-closing
+stage** — a passing suite is not covered behavior, and a review that flags a gap but can't enforce
+closing it lets the gap ship.
+
+**Pre-existing test-isolation bug found + fixed in passing (`19bb977d`, unrelated to #465).** Running
+`test_schema_coercion.py` and `test_claude_code.py` in the same process with coercion first caused
+~14 failures: the node binds its SDK names at import (`from claude_agent_sdk import ...`, real SDK
+installed), and `test_claude_code.py` injected its mock into `sys.modules` at module scope — only
+effective if it won the import race. Proved pre-existing by stashing the round-2 edits (it failed
+identically on the committed branch); masked in `make test` by alphabetical collection + xdist
+file-isolation. Fix: extracted the mock to `tests/shared/claude_sdk_stub.py` + a dir `conftest.py`
+that installs it before any test module in the dir imports the node (import-order-independent);
+updated `tests/CLAUDE.md` #17.
+
+**Verified:** `make test` 7494 passed / 1 skipped (was 7485; +9 net new tests); `make check` clean;
+the previously-failing orderings (schema-coercion-first, the 3-file combo, the whole claude dir) all
+green.
