@@ -61,7 +61,5 @@ Read the implementation plan at this path (read it in full before grouping):
 
 For each segment, give the list of top-level phase titles it covers, a short label, and a
 one-line rationale for why these phases belong together and why the boundary after them is a
-clean handoff.
-
-Your FINAL message must be ONLY the JSON object matching the required schema — a `segments`
-array whose items each have `phases`, `label`, and `rationale`. No prose before or after it.
+clean handoff. Return the `segments` array defined by the required schema (`phases`, `label`,
+`rationale` per item).

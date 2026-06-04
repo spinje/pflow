@@ -1452,3 +1452,64 @@ updated `tests/CLAUDE.md` #17.
 **Verified:** `make test` 7494 passed / 1 skipped (was 7485; +9 net new tests); `make check` clean;
 the previously-failing orderings (schema-coercion-first, the 3-file combo, the whole claude dir) all
 green.
+
+---
+
+## Entry: Simplification — review-fix loop collapsed to `loop:` (3 nodes → 1) (2026-06-04)
+
+After reading `pflow --help` + all 12 guide topics to look for high-leverage simplifications, the
+clear win was the whole-codebase review loop — the harness's least-readable section (a backward-edge
+worker/checker with two scaffolding code nodes). #465 (schema self-heal) is now rebased onto this
+branch, which made the collapse safe (see below).
+
+**The change (all $0, structural):**
+- `execute-plan.pflow.md`: deleted `review-tick` (the round counter) and `check-rounds` (the
+  decision + its `"true"/"false"` string-coercion band-aid). `review-round` now carries a
+  `loop:` block — `while: ${review-round.result.continue}`, `max_iterations: ${max_review_rounds}`
+  — with `next: simplify` and `round: ${__iteration__}` (the engine-injected 1-based counter
+  replaces the review-tick counter). `check-groups` routes the post-segment path to `review-round`
+  (cap==0 still skips straight to `simplify` — the cost dial is untouched, since `loop:` is a
+  do-while that always runs once, so the skip MUST stay outside the loop, which it already is).
+- `breakdown.prompt.md`: dropped the now-redundant `"FINAL message must be ONLY the JSON … no prose"`
+  band-aid (softened to a one-line schema reference). #465's resume-retry sends that corrective
+  instruction centrally, only when needed. **`happy-check.prompt.md`'s `ONLY JSON` kept (user
+  decision)** — it's the resume-based producer of the consumed `{commits_made}` hard-failure gate
+  signal, so belt-and-suspenders is warranted there.
+- `tests/test_integration/test_plan_to_code_harness.py`: the skeleton mirror's review loop collapsed
+  to a single `loop:` code node (proving a `code` node `loop:` runs); structural test now pins
+  `check-groups → {group-tick, review-round, simplify}`, `review-round → {simplify}`, and asserts
+  the `loop:` config block (replacing the deleted `check-rounds` successor assertion).
+- `README.md` regenerated — diagram shows `check-groups → review-round → simplify`. (The loop's
+  backward edge isn't drawn — the known #452 mermaid limitation, not new.)
+
+**Why #465 made it safe (the load-bearing verification).** The original soft-fail worry: if
+`${review-round.result.continue}` can't resolve (the agent never emits a parseable `continue`),
+does the loop spin or hard-error instead of the old `check-rounds`'s graceful "stop"? Settled with
+ground truth, not reasoning:
+- **Validation gate** (`runtime/template_validation/validator.py::_loop_condition_diagnostic`):
+  rejects a `while:` source ONLY when its inferred type is EXACTLY `str`/`string`; `any`/un-inferable
+  is allowed. claude-code `.result.continue` infers `any` (subfield of a `str|dict` result, not
+  statically typed) → **validates clean** (confirmed by a $0 spike on the real claude-code node shape).
+- **Runtime behavior** ($0 spike, `/tmp/t163-loop-spike/softfail2.pflow.md`): a `loop:` node whose
+  body returns a dict WITHOUT the `continue` key runs the body **exactly once, then stops** (unresolved
+  condition treated as falsy → exits forward, exit 0). It does NOT spin to the cap and does NOT
+  hard-error. → **the collapse PRESERVES the old graceful-degrade exactly; zero behavior regression.**
+- And #465 makes that residual doubly unlikely on a flat `{continue, reason}` schema: Phase-1
+  coercion fixes a `"false"` string → bool, and Phase-2 resume-retry re-asks for JSON if the agent
+  ends on prose. So `.result.continue` is a reliable bool in the normal case; the graceful-stop is a
+  belt for the rare retry-also-failed/infra-error case.
+
+**Cost note (for the ledger):** a schema soft-fail on any of the harness's schema'd nodes
+(`breakdown`, `review-round`, `happy-check`, `verify`, `ship`) now spends one extra resumed turn
+(#465's retry) — net-good for reliability, but real spend when a node misses.
+
+**What does NOT collapse (calibration):** the segment loop (`group-tick → implement-chunk →
+seg-gate → check-groups`) and the validate-fix loop (`run-validate → check-validate → fix-tests`)
+both have genuine multi-node bodies — the guide explicitly says keep the manual backward-edge form
+there. So `loop:` is a one-place win: −2 nodes, one band-aid gone, the hardest-to-read section now
+one legible loop node.
+
+**Verified ($0):** recursive `--validate-only` clean (execute-plan standalone + full tree); harness
+regression 11/11; example-validation suite 14/14; `ruff check`/`format` clean on the edited test.
+Behavior identical on every path (happy / cap / skip-review / soft-fail). Uncommitted parked items
+unchanged (per-segment `seg-gate` observed-vs-theorized; whether to inline `implement-chunk`).

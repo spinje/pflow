@@ -148,9 +148,7 @@ graph TD
         execute-plan__in_base_branch --> execute-plan__seg-gate__in_base_branch
         execute-plan__in_max_fix_rounds --> execute-plan__seg-gate__in_max_fix_rounds
         execute-plan__check-groups{"check-groups (code)<br/>Decide: loop back for the next segment, or (once all segments are implemented) a"}:::decision
-        execute-plan__review-tick["review-tick (code)<br/>Hold the review-round counter for the whole-codebase review-fix loop."]:::code
         execute-plan__review-round["review-round (claude-code)<br/>One whole-codebase review-fix round (a fresh agent): deploy the relevant lenses "]:::code
-        execute-plan__check-rounds{"check-rounds (code)<br/>Enforce the loop condition: continue only if the agent wants another round AND w"}:::decision
         execute-plan__simplify["simplify (claude-code)<br/>One focused simplicity pass over the COMPLETE implemented + reviewed change, run"]:::code
         execute-plan__verify["verify (claude-code)<br/>Adversarial verification of the fully-implemented, reviewed, and simplified resu"]:::code
         subgraph execute-plan__final-gate-in ["final-gate inputs"]
@@ -200,12 +198,9 @@ graph TD
         execute-plan__seg-gate__out_ok --> execute-plan__check-groups
         execute-plan__seg-gate__out_summary --> execute-plan__check-groups
         execute-plan__check-groups -->|group-tick| execute-plan__group-tick
-        execute-plan__check-groups -->|review-tick| execute-plan__review-tick
+        execute-plan__check-groups -->|review-round| execute-plan__review-round
         execute-plan__check-groups -->|simplify| execute-plan__simplify
-        execute-plan__review-tick --> execute-plan__review-round
-        execute-plan__review-round --> execute-plan__check-rounds
-        execute-plan__check-rounds -->|review-tick| execute-plan__review-tick
-        execute-plan__check-rounds -->|simplify| execute-plan__simplify
+        execute-plan__review-round --> execute-plan__simplify
         execute-plan__simplify --> execute-plan__verify
         execute-plan__final-gate__out_ok --> execute-plan__check-final
         execute-plan__final-gate__out_summary --> execute-plan__check-final

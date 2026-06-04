@@ -205,7 +205,7 @@ Loop to next segment, advance to review (or skip to simplify when cap==0), or ab
 no-commits OR a gate that couldn't go green.
 
 - type: code
-- next: group-tick, review-tick, simplify, end
+- next: group-tick, review-round, simplify, end
 - inputs:
     commits: ${implement-chunk.result}
     gate_ok: ${seg-gate.result.ok}
@@ -227,35 +227,26 @@ elif not gate_ok:
     next: str = "end"
 elif is_last:
     result: dict = {"next_index": index, "status": "implemented"}
-    next: str = "simplify" if cap == 0 else "review-tick"
+    next: str = "simplify" if cap == 0 else "review-round"
 else:
     result: dict = {"next_index": index + 1, "status": "continuing"}
     next: str = "group-tick"
 ```
 
-### review-tick
-
-Review-round counter. Routing target of check-rounds' loop-back.
-
-- type: code
-- next: review-round
-- inputs:
-    prior: ${check-rounds.result.next_round ?? 1}
-
-```python code
-prior: int
-result: int = prior
-```
-
 ### review-round
 
-Stand-in whole-codebase review-fix round. `cap` scenario never converges; others
-converge after round 1.
+Stand-in whole-codebase review-fix round, as a single `loop:` node — mirrors the real harness,
+which collapsed review-tick/review-round/check-rounds into one looped agent. The `cap` scenario
+never converges (loops to max_review_rounds); others converge after round 1. `${__iteration__}`
+is the 1-based round number; the backward edge lives in the loop block, not the graph.
 
 - type: code
-- next: check-rounds
+- next: simplify
+- loop:
+    while: ${review-round.result.continue}
+    max_iterations: ${max_review_rounds}
 - inputs:
-    round: ${review-tick.result}
+    round: ${__iteration__}
     scenario: ${scenario}
     log: ${log}
 
@@ -267,29 +258,6 @@ with open(log, "a") as f:
     f.write(f"review:round{round}\\n")
 keep = scenario == "cap"
 result: dict = {"round": round, "continue": keep}
-```
-
-### check-rounds
-
-Continue review only if the round wants to AND under the cap; else advance to simplify.
-
-- type: code
-- next: review-tick, simplify
-- inputs:
-    keep: ${review-round.result.continue}
-    round: ${review-round.result.round}
-    cap: ${max_review_rounds}
-
-```python code
-keep: bool
-round: int
-cap: int
-if keep and round < cap:
-    result: dict = {"next_round": round + 1}
-    next: str = "review-tick"
-else:
-    result: dict = {"next_round": round}
-    next: str = "simplify"
 ```
 
 ### simplify
@@ -551,14 +519,23 @@ def test_real_execute_plan_routing_matches_skeleton() -> None:
     The ``end`` abort sentinel is not a node, so it is never a declared edge target — assert the
     concrete successors only (aborts route via the check-* code bodies' ``next = "end"``).
     """
-    succ = _successors(_HARNESS_DIR / "execute-plan/execute-plan.pflow.md")
+    ir = parse_markdown((_HARNESS_DIR / "execute-plan/execute-plan.pflow.md").read_text()).ir
+    succ: dict[str, set[str]] = {}
+    for edge in ir["edges"]:
+        succ.setdefault(edge["from"], set()).add(edge["to"])
     # Per-segment validate gate sits between the implement worker and the loop checker.
     assert succ["implement-chunk"] == {"seg-gate"}
     assert succ["seg-gate"] == {"check-groups"}
     # Segment-loop gate: loop back, advance to the review loop, or skip-to-simplify (cost dial).
-    assert succ["check-groups"] == {"group-tick", "review-tick", "simplify"}
-    # Review-loop gate: loop back for another round, or advance to simplify.
-    assert succ["check-rounds"] == {"review-tick", "simplify"}
+    assert succ["check-groups"] == {"group-tick", "review-round", "simplify"}
+    # The review loop is now a single `loop:` node (review-tick/check-rounds collapsed away). Its
+    # backward edge lives in the loop block, not the graph, so its only forward successor is simplify.
+    assert succ["review-round"] == {"simplify"}
+    review_round = next(n for n in ir["nodes"] if n["id"] == "review-round")
+    assert review_round.get("loop") == {
+        "while": "${review-round.result.continue}",
+        "max_iterations": "${max_review_rounds}",
+    }, review_round.get("loop")
     # End-stage chain: verify (last code-touching stage) → final validate gate → ship-or-abort.
     assert succ["simplify"] == {"verify"}
     assert succ["verify"] == {"final-gate"}

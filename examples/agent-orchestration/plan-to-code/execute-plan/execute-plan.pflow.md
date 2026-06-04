@@ -295,7 +295,7 @@ whole-codebase review — skipping straight to the simplicity pass when review i
 segment produced no commits) so we don't run remaining dependent segments or ship.
 
 - type: code
-- next: group-tick, review-tick, simplify, end
+- next: group-tick, review-round, simplify, end
 - inputs:
     commits: ${implement-chunk.commits_made}
     gate_ok: ${seg-gate.ok}
@@ -318,41 +318,33 @@ elif not gate_ok:
 elif is_last:
     result: dict = {"next_index": index, "status": f"All {index + 1} segment(s) implemented and validated."}
     # max_review_rounds == 0 disables the whole-codebase review LOOP (cost dial); simplify still runs.
-    next: str = "simplify" if cap == 0 else "review-tick"
+    next: str = "simplify" if cap == 0 else "review-round"
 else:
     result: dict = {"next_index": index + 1, "status": f"Segment {index} done and validated; continuing."}
     next: str = "group-tick"
-```
-
-### review-tick
-
-Hold the review-round counter for the whole-codebase review-fix loop. On first entry the checker
-hasn't run, so `??` seeds 1. Routing target of `check-rounds`'s loop-back edge.
-
-- type: code
-- next: review-round
-- inputs:
-    prior: ${check-rounds.result.next_round ?? 1}
-
-```python code
-prior: int
-result: int = prior
 ```
 
 ### review-round
 
 One whole-codebase review-fix round (a fresh agent): deploy the relevant lenses as subagents
 over the FULL implemented change, adjudicate findings (real? critical? not false-positive?), fix
-the real-critical ones, commit, log, and report `{continue, reason}`. A loop revisit re-runs this
-as a new process (fresh context). The agent's `{continue:false}` (diminishing returns) is the
-normal exit; `max_review_rounds` is the runaway backstop.
+the real-critical ones, commit, log, and report `{continue, reason}`. The `loop:` block re-runs
+this as a fresh process (new context) while the agent reports `continue: true`, capped at
+`max_review_rounds`; `{continue: false}` (diminishing returns) is the normal exit and the cap is
+the runaway backstop. `${__iteration__}` (1-based) is the round number, passed to the prompt so it
+can weigh prior rounds. The loop condition is a reliable bool because the node self-heals a
+soft-failed `continue` — scalar coercion turns a `"false"` string into a bool, and a missing
+structured result triggers one resume-retry (claude-code `schema_retries`, default 1).
 
 - type: claude-code
 - prompt: ./prompts/review-fix.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 60
 - timeout: 1200
-- next: check-rounds
+- next: simplify
+- loop:
+    while: ${review-round.result.continue}
+    max_iterations: ${max_review_rounds}
 - inputs:
     repo_dir: ${repo_dir}
     plan_path: ${plan}
@@ -360,7 +352,7 @@ normal exit; `max_review_rounds` is the runaway backstop.
     progress_log_path: ${progress_log}
     available_lenses: ${review_lenses}
     base_branch: ${base_branch}
-    round: ${review-tick.result}
+    round: ${__iteration__}
 - allowed_tools:
     - Bash
     - Read
@@ -376,35 +368,6 @@ properties:
   continue: { type: boolean }
   reason: { type: string }
 required: [continue, reason]
-```
-
-### check-rounds
-
-Enforce the loop condition: continue only if the agent wants another round AND we're under the
-cap (`max_review_rounds`). The `isinstance` guard treats a schema soft-fail (string result) as
-"stop" — don't loop on an unreliable signal. When done, advance to the simplicity pass.
-
-- type: code
-- next: review-tick, simplify
-- inputs:
-    rev: ${review-round.result}
-    round: ${review-tick.result}
-    cap: ${max_review_rounds}
-
-```python code
-rev: object
-round: int
-cap: int
-raw = rev.get("continue", False) if isinstance(rev, dict) else False
-# Coerce defensively: claude-code output_schema is a SOFT request, so a boolean field can come back
-# as the string "true"/"false" — and a bare string is truthy either way, which would loop on "false".
-keep = (raw.strip().lower() == "true") if isinstance(raw, str) else bool(raw)
-if keep and round < cap:
-    result: dict = {"next_round": round + 1}
-    next: str = "review-tick"
-else:
-    result: dict = {"next_round": round}
-    next: str = "simplify"
 ```
 
 ### simplify
