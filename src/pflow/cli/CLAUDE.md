@@ -103,13 +103,14 @@ This split is critical: `pflow workflow.pflow.md | jq` works because progress no
 
 ### Output routing (`_output_with_header` in workflow_output.py)
 
-Routing is TTY-agnostic: data always goes to stdout, diagnostics always go to stderr. The stderr header (`Workflow output (<desc>):`) is the only TTY-sensitive element — suppressed when stdout is non-TTY because a naked label with the value elsewhere reads as "empty output" to both humans and agents.
+Routing is TTY-agnostic: data always goes to stdout, diagnostics always go to stderr. The stderr header (`Workflow output (<desc>):`) is the only TTY-sensitive element — shown when stdout is a TTY **or** stderr is non-TTY, and suppressed ONLY when stdout is redirected to a file/pipe while stderr is a terminal (`pflow wf > out.json` watched in a shell), where a naked label with the value elsewhere reads as "empty output". Agents capturing both streams (e.g. `2>&1`) see the label as a result delimiter. This is the Option B refinement of the Task 149 suppression — see `_show_output_header` in `workflow_output.py`.
 
 | Mode | When | Header | Data | Summary |
 |------|------|--------|------|---------|
 | `--print` (`-p`) | Explicitly requested | None | stdout | None |
-| TTY stdout | Interactive terminal | stderr | stdout | stderr |
-| Non-TTY stdout | Pipe / redirect / CI / agent subprocess | None | stdout | stderr |
+| stdout TTY | Interactive terminal | stderr | stdout | stderr |
+| stdout non-TTY, stderr non-TTY | Pipe / CI / agent (`2>&1`, both captured) | stderr | stdout | stderr |
+| stdout non-TTY, stderr TTY | Redirect to file while watching terminal (`pflow wf > out`) | None | stdout | stderr |
 
 `--print` suppresses header, summary, and warnings on stderr. Data still goes to stdout.
 

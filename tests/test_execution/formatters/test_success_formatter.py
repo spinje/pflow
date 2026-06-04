@@ -1196,9 +1196,9 @@ class TestStderrWarningsCliMcpParity:
     """Tests for ``format_stderr_warnings`` shared helper + MCP rendering parity.
 
     PARITY GUARDRAIL — shell nodes that exit 0 but wrote to stderr are an
-    important agent signal (hidden pipeline failures). CLI ``_display_stderr_warnings``
-    has emitted a ``⚠️  Shell stderr (exit code 0):`` block and upgraded the
-    completion glyph from ``✓`` to ``⚠️`` since GH #194 shipped. The MCP side
+    important agent signal (hidden pipeline failures). The CLI summary (via the
+    shared ``format_stderr_warnings``) emits a ``⚠️  Shell stderr (exit code 0):``
+    block and upgrades the completion glyph from ``✓`` to ``⚠️`` since GH #194 shipped. The MCP side
     (``format_success_as_text``) was silently missing both behaviors, so an
     agent calling the MCP ``workflow_execute`` tool on a workflow with a
     failing grep pipeline would see ``✓ Workflow completed`` with no visibility.

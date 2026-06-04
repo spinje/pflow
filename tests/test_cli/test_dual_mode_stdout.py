@@ -1,19 +1,22 @@
 """Integration tests for stdout output routing (`stdout: true` marker + TTY-gated label).
 
-Mirrors ``test_dual_mode_stdin.py``. Covers the redirect UX bug (naked
-``Workflow output (desc):`` label when stdout is redirected) and the
+Mirrors ``test_dual_mode_stdin.py``. Covers the ``Workflow output (desc):``
+label routing (Option B: shown when both streams are captured — the agent case;
+suppressed only when stdout is redirected while stderr is a terminal) and the
 multi-output silent-drop bug (declared outputs vanishing without warning).
 
 These tests use real subprocesses because:
 - ``CliRunner`` always reports ``isatty() = False``, which can't distinguish
   "stdout is a pipe" from "stdout is a file" from "stdout is a terminal".
-- Subprocess pipes let us verify that the label is suppressed on redirect
-  while the payload is intact on stdout.
+- Subprocess pipes let us verify the payload reaches stdout while the label and
+  summary reach stderr.
 - The ambiguity error path goes through the full CLI exit-code and stderr
   rendering pipeline, which ``CliRunner`` handles but fragilely.
 
-See `tests/test_cli/test_workflow_output_handling.py` for in-process unit
-tests of the selection logic itself.
+The header heuristic's four TTY combinations (including the genuine-suppression
+case) are unit-tested in ``test_workflow_output_handling.py`` —
+``capture_output=True`` captures BOTH streams as pipes, so a subprocess can
+only exercise the both-non-TTY (agent) branch.
 """
 
 from __future__ import annotations
@@ -50,10 +53,13 @@ def _run_pflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
 @pytest.mark.e2e
 class TestStdoutRedirectLabel:
-    """When stdout is not a TTY, the ``Workflow output (desc):`` label is suppressed."""
+    """Both streams captured (the agent case) → the ``Workflow output (desc):``
+    label IS shown on stderr so a merged ``2>&1`` capture is delimited; the data
+    still goes to stdout only. (Suppression fires only when stderr is a terminal
+    — unit-tested separately.)"""
 
-    def test_single_output_label_suppressed_when_stdout_redirected(self, tmp_path, prepared_subprocess_env):
-        """Single declared output + pipe/redirect → no label, value on stdout."""
+    def test_label_shown_on_stderr_when_both_streams_captured(self, tmp_path, prepared_subprocess_env):
+        """Single declared output + both streams captured → label on stderr, value on stdout."""
         workflow = {
             "ir_version": "0.1.0",
             "outputs": {"greeting": {"description": "The greeting", "source": "${hello.stdout}"}},
@@ -72,13 +78,14 @@ class TestStdoutRedirectLabel:
         _skip_uv_sandbox_panic(result)
 
         assert result.returncode == 0, f"stderr: {result.stderr!r}"
+        # Data on stdout only; label/summary delimit it on stderr (Option B).
         assert "CANARY_REDIRECT_VALUE" in result.stdout
-        # The naked label must not appear on stderr when stdout is captured
-        assert "Workflow output" not in result.stderr, (
-            f"Label should be TTY-gated; stderr still has it:\n{result.stderr}"
+        assert "CANARY_REDIRECT_VALUE" not in result.stderr
+        assert "Workflow output" in result.stderr, (
+            f"Label should be shown when stderr is captured (agent case); stderr:\n{result.stderr}"
         )
 
-    def test_stdout_marker_routes_to_stdout_on_redirect(self, tmp_path, prepared_subprocess_env):
+    def test_stdout_marker_routes_to_stdout(self, tmp_path, prepared_subprocess_env):
         """Multi-output with ``stdout: true`` on one → only that one on stdout."""
         workflow = {
             "ir_version": "0.1.0",
@@ -115,8 +122,8 @@ class TestStdoutRedirectLabel:
         assert result.returncode == 0, f"stderr: {result.stderr!r}"
         assert "PRIMARY_MARKED_VALUE" in result.stdout
         assert "METADATA_VALUE" not in result.stdout, "Only the marked output should stream to stdout; metadata leaked"
-        # And no label on stderr (redirected stdout)
-        assert "Workflow output" not in result.stderr
+        # Label on stderr (agent case), data clean on stdout
+        assert "Workflow output" in result.stderr
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")

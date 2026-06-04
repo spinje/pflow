@@ -11,7 +11,7 @@ import json
 from click.testing import CliRunner
 
 from pflow.cli.main import main
-from pflow.cli.workflow_output import _display_stderr_warnings
+from pflow.execution.formatters.success_formatter import format_stderr_warnings
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -349,10 +349,10 @@ class TestPipelineFailureScenario:
 
 
 class TestDisplayStderrWarnings:
-    """Unit tests for _display_stderr_warnings function."""
+    """Unit tests for the ``format_stderr_warnings`` SSoT the CLI summary renders."""
 
-    def test_displays_stderr_for_steps_with_has_stderr(self, capsys):
-        """Should display stderr for steps with has_stderr=True."""
+    def test_displays_stderr_for_steps_with_has_stderr(self):
+        """Should produce stderr lines for steps with has_stderr=True."""
         steps = [
             {
                 "node_id": "test-node",
@@ -362,26 +362,21 @@ class TestDisplayStderrWarnings:
             }
         ]
 
-        _display_stderr_warnings(steps)
+        out = "\n".join(format_stderr_warnings(steps))
+        assert "Shell stderr (exit code 0):" in out
+        assert "test-node:" in out
+        assert "Some error message" in out
 
-        captured = capsys.readouterr()
-        assert "Shell stderr (exit code 0):" in captured.err
-        assert "test-node:" in captured.err
-        assert "Some error message" in captured.err
-
-    def test_no_output_when_no_stderr_steps(self, capsys):
-        """Should not display anything when no steps have stderr."""
+    def test_no_output_when_no_stderr_steps(self):
+        """Should produce no lines when no steps have stderr."""
         steps = [
             {"node_id": "node1", "status": "completed"},
             {"node_id": "node2", "status": "completed"},
         ]
 
-        _display_stderr_warnings(steps)
+        assert format_stderr_warnings(steps) == []
 
-        captured = capsys.readouterr()
-        assert captured.err == ""
-
-    def test_truncates_long_stderr(self, capsys):
+    def test_truncates_long_stderr(self):
         """Long stderr should be truncated to 300 chars."""
         long_stderr = "X" * 400
 
@@ -394,14 +389,12 @@ class TestDisplayStderrWarnings:
             }
         ]
 
-        _display_stderr_warnings(steps)
-
-        captured = capsys.readouterr()
-        assert "..." in captured.err
+        out = "\n".join(format_stderr_warnings(steps))
+        assert "..." in out
         # Should have truncated to 300 + "..."
-        assert "X" * 301 not in captured.err
+        assert "X" * 301 not in out
 
-    def test_multiline_stderr_indented(self, capsys):
+    def test_multiline_stderr_indented(self):
         """Multiline stderr should be properly indented."""
         multiline_stderr = "Line 1\nLine 2\nLine 3"
 
@@ -414,9 +407,7 @@ class TestDisplayStderrWarnings:
             }
         ]
 
-        _display_stderr_warnings(steps)
-
-        captured = capsys.readouterr()
+        out = "\n".join(format_stderr_warnings(steps))
         # Check that newlines are replaced with indented newlines
-        assert "Line 1" in captured.err
-        assert "Line 2" in captured.err
+        assert "Line 1" in out
+        assert "Line 2" in out

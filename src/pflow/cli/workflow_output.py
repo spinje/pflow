@@ -62,13 +62,14 @@ def safe_output(value: Any) -> bool:
         raise
 
 
-def _stdout_is_tty() -> bool:
-    """Return whether stdout is a TTY, preferring OutputController's captured state.
+def _stream_is_tty(stream_name: str) -> bool:
+    """Return whether ``stdout``/``stderr`` is a TTY.
 
-    Falls back to ``sys.stdout.isatty()`` when no Click context / OutputController
-    is available — matches what ``OutputController.__init__`` does itself, so the
-    TTY decision stays consistent for any caller of ``_output_with_header``
-    (including non-CLI entry points that don't thread through ``_initialize_context``).
+    Prefers ``OutputController``'s captured state (set once at CLI startup) and
+    falls back to ``sys.<stream>.isatty()`` when no Click context /
+    OutputController is available — so the TTY decision stays consistent for any
+    caller of ``_output_with_header`` (including non-CLI entry points that don't
+    thread through ``_initialize_context``).
     """
     import sys
 
@@ -77,24 +78,41 @@ def _stdout_is_tty() -> bool:
     except RuntimeError:
         ctx = None
     if ctx is not None and ctx.obj and "output_controller" in ctx.obj:
-        return bool(ctx.obj["output_controller"].stdout_tty)
-    return sys.stdout.isatty() if sys.stdout is not None else False
+        return bool(getattr(ctx.obj["output_controller"], f"{stream_name}_tty"))
+    stream = getattr(sys, stream_name, None)
+    return stream.isatty() if stream is not None else False
+
+
+def _show_output_header() -> bool:
+    """Whether to emit the ``Workflow output:`` label before the data.
+
+    Show it whenever stdout is interactive OR stderr is captured. The label is
+    suppressed in exactly one case — stdout redirected to a file/pipe WHILE
+    stderr is a terminal (``pflow wf > out.json`` watched in a shell) — where a
+    naked label on stderr with the data elsewhere reads as empty output.
+
+    For the agent case (both streams captured, non-TTY) the label IS shown: it
+    delimits where the result begins in a merged ``2>&1`` capture. This is the
+    Option B refinement of the Task 149 suppression, which only ever needed to
+    fire for the human-redirect case.
+    """
+    return _stream_is_tty("stdout") or not _stream_is_tty("stderr")
 
 
 def _output_with_header(value: Any, print_flag: bool, description: str | None = None) -> None:
     """Output value with Unix-convention routing.
 
     - ``--print`` mode: data to stdout, no header.
-    - Non-TTY stdout (pipe/redirect): data to stdout, no header — the naked
-      stderr label would otherwise look like empty output when the terminal
-      has nothing to render below it.
-    - TTY stdout: header to stderr, data to stdout — the description is
-      useful interactive context.
+    - stdout redirected while stderr is a terminal: data to stdout, no header —
+      the naked stderr label would look like empty output (see
+      ``_show_output_header``).
+    - Otherwise (interactive, or both streams captured by an agent): header to
+      stderr, data to stdout — the label delimits the result.
     """
     from pflow.execution.formatters.batch_errors import compact_batch_output_value
 
     value = compact_batch_output_value(value)
-    if print_flag or not _stdout_is_tty():
+    if print_flag or not _show_output_header():
         safe_output(value)
         return
 
@@ -113,6 +131,7 @@ def _handle_text_output(
     workflow_metadata: dict[str, Any] | None = None,
     status: Any = None,
     warnings: list[Any] | None = None,
+    trace_path: str | None = None,
 ) -> None:
     """Handle text formatted output with execution summary.
 
@@ -136,6 +155,10 @@ def _handle_text_output(
         print_flag: Whether -p flag is set (suppress warnings)
         metrics_collector: Optional MetricsCollector for execution metrics
         workflow_metadata: Optional workflow metadata
+        status: Optional tri-state workflow status
+        warnings: Optional list of warning diagnostics
+        trace_path: Optional trace file path, rendered in the meta block above
+            the data (text-success path only)
     """
     # Display execution summary or --only mode indicator (dispatch in helper)
     _emit_summary_or_only_indicator(
@@ -148,6 +171,7 @@ def _handle_text_output(
         warnings=warnings,
         verbose=verbose,
         print_flag=print_flag,
+        trace_path=trace_path,
     )
 
     # User-specified key takes priority. Supports dotted paths (e.g.
@@ -160,6 +184,9 @@ def _handle_text_output(
             _output_with_header(value, print_flag)
         elif not print_flag:
             hint = _diagnose_path_failure(shared_storage, output_key)
+            # Blank line separates this advisory from the summary block above,
+            # matching the other output-section advisories (airy layout).
+            click.echo("", err=True)
             click.echo(
                 f"cli: Warning - output key '{output_key}' not found. {hint}",
                 err=True,
@@ -226,6 +253,8 @@ def _emit_only_output(shared_storage: dict[str, Any], print_flag: bool) -> bool:
         return True
 
     if not print_flag:
+        # Blank line separates this advisory from the summary block above (airy).
+        click.echo("", err=True)
         click.echo(
             f"cli: --only active — streaming auto-detected key '{key_found}' from target '{only_node}' to stdout.",
             err=True,
@@ -412,6 +441,9 @@ def _emit_auto_detected_output(
     if not key_found:
         return False
     if message_template and not print_flag:
+        # Blank line separates this output advisory from the summary block above
+        # (airy layout); the header below carries its own leading blank.
+        click.echo("", err=True)
         click.echo(message_template.format(key=key_found), err=True)
     _output_with_header(value, print_flag)
     return True
@@ -478,6 +510,8 @@ def _warn_multi_output_ambiguity(chosen: str, dropped: list[str]) -> None:
     """
     total = 1 + len(dropped)
     names = ", ".join([chosen, *dropped])
+    # Blank line separates this advisory from the summary block above (airy).
+    click.echo("", err=True)
     click.echo(
         f"cli: Workflow declares {total} outputs ({names}). "
         f"Streaming '{chosen}' to stdout. Mark one output with `- stdout: true`, "
@@ -567,64 +601,50 @@ def _truncate_error_message(message: str, max_length: int = 200) -> str:
     return shared_truncate_error_message(message, max_length)
 
 
-def _display_batch_errors(steps: list[dict[str, Any]]) -> None:
-    """Display batch errors section for all batch nodes with failures.
+def _as_block(lines: list[str]) -> list[str]:
+    """Normalize a formatter's output into a clean block.
 
-    Args:
-        steps: List of execution step dicts
+    Drops leading/trailing blank lines and a newline baked into the first line,
+    so ``_echo_summary_blocks`` is the single owner of inter-block spacing.
+    ``format_stderr_warnings`` leads with a ``""`` element;
+    ``format_batch_errors_section`` bakes a ``\\n`` into its first line — this
+    flattens both to bare content.
     """
-    from pflow.execution.formatters.batch_errors import format_batch_errors_section
+    block = list(lines)
+    while block and block[0] == "":
+        block.pop(0)
+    while block and block[-1] == "":
+        block.pop()
+    if block:
+        block[0] = block[0].lstrip("\n")
+    return block
 
-    for line in format_batch_errors_section(steps):
-        click.echo(line, err=True)
 
+def _echo_summary_blocks(blocks: list[list[str]]) -> None:
+    """Echo summary blocks to stderr with one blank line before each (airy).
 
-def _display_stderr_warnings(steps: list[dict[str, Any]]) -> None:
-    """Display stderr warnings for shell nodes that succeeded but produced stderr.
-
-    This helps surface hidden errors from shell pipeline failures where
-    intermediate commands fail but the overall exit code is 0.
-
-    Delegates to ``format_stderr_warnings`` in ``success_formatter.py`` so CLI
-    and MCP text output stay in lockstep (same bullet shape, same truncation,
-    same ⚠️ header). MCP consumers of this block are in
-    ``success_formatter.format_success_as_text``; any change to the block
-    shape must be made in the shared helper, not here.
-
-    Args:
-        steps: List of execution step dicts (may contain has_stderr and stderr fields)
+    The leading blank before the first block separates the summary from the
+    progress stream above it (replacing the old per-action blank line). Empty
+    blocks are skipped so absent sections leave no dangling separators.
     """
-    from pflow.execution.formatters.success_formatter import format_stderr_warnings
-
-    for line in format_stderr_warnings(steps):
-        click.echo(line, err=True)
-
-
-def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:
-    """Display workflow name and action message.
-
-    Args:
-        workflow_name: Name of the workflow
-        workflow_action: Action type (reused, created, unsaved)
-    """
-    click.echo("", err=True)
-    if workflow_action == "reused":
-        click.echo(f"{workflow_name} was executed", err=True)
-    elif workflow_action == "created":
-        click.echo(f"{workflow_name} was created and executed", err=True)
-    # Skip showing workflow line for "unsaved" workflows
+    for block in blocks:
+        if not block:
+            continue
+        click.echo("", err=True)
+        for line in block:
+            click.echo(line, err=True)
 
 
-def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, Any]) -> None:
-    """Display LLM cost and token usage summary.
+def _format_cost_summary_lines(total_cost: float | None, formatted_result: dict[str, Any]) -> list[str]:
+    """Build the LLM cost / token usage summary lines.
 
-    Renders ``💰 Cost: ...`` (priced) or ``⚠️  Cost unavailable — ...``
-    (unpriced) on the first line, followed by a ``   Total LLM calls: N``
+    Returns ``💰 Cost: ...`` (priced) or ``⚠️  Cost unavailable — ...``
+    (unpriced) as the first line, followed by a ``   Total LLM calls: N``
     sibling line (3-space indent) whenever the run actually made any LLM
     calls. The sibling line is intentionally suppressed when no LLM calls
     happened so workflows that never touch an LLM don't see ``Total LLM
     calls: 0`` (mirrors the "honest unmeasurable" precedent in
-    ``format_dry_run_nudge``).
+    ``format_dry_run_nudge``). Returns ``[]`` when there is no cost to show.
 
     Args:
         total_cost: Total cost in USD
@@ -643,18 +663,15 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
         models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
         partial = total_metrics.get("partial_cost_usd")
         if partial is not None:
-            click.echo(
-                f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})",
-                err=True,
-            )
+            lines = [f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})"]
         else:
-            click.echo(f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}", err=True)
+            lines = [f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}"]
         if total_llm_calls > 0:
-            click.echo(f"   Total LLM calls: {total_llm_calls}", err=True)
-        return
+            lines.append(f"   Total LLM calls: {total_llm_calls}")
+        return lines
 
     if total_cost is None or total_cost <= 0:
-        return
+        return []
 
     # Get token count for context
     workflow_metrics = metrics.get("workflow", {})
@@ -667,20 +684,19 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
         detail_parts.append(f"{total_tokens:,} tokens")
 
     if detail_parts:
-        click.echo(f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})", err=True)
-    else:
-        click.echo(f"💰 Cost: ${total_cost:.4f}", err=True)
+        return [f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})"]
+    return [f"💰 Cost: ${total_cost:.4f}"]
 
 
-def _display_workflow_completion_status(
+def _format_workflow_completion_status(
     duration_s: float,
     status: str,
     has_stderr_warnings: bool,
     cache_hits: int = 0,
     nodes_executed: int = 0,
     warning_count: int = 0,
-) -> None:
-    """Display workflow completion status with appropriate indicator.
+) -> str:
+    """Build the workflow completion status line with the appropriate indicator.
 
     Args:
         duration_s: Execution duration in seconds
@@ -696,18 +712,16 @@ def _display_workflow_completion_status(
         cache_suffix = f" ({cache_hits} cached, {executed_fresh} executed)"
 
     if status == "degraded":
-        click.echo(f"⚠️ Workflow completed with warnings in {duration_s:.3f}s{cache_suffix}", err=True)
-    elif status == "failed":
+        return f"⚠️ Workflow completed with warnings in {duration_s:.3f}s{cache_suffix}"
+    if status == "failed":
         if warning_count:
-            click.echo(f"❌ Workflow failed ({warning_count} warnings) after {duration_s:.3f}s{cache_suffix}", err=True)
-        else:
-            click.echo(f"❌ Workflow failed after {duration_s:.3f}s{cache_suffix}", err=True)
-    elif warning_count:
-        click.echo(f"⚠️ Workflow completed with {warning_count} warnings in {duration_s:.3f}s{cache_suffix}", err=True)
-    elif has_stderr_warnings:
-        click.echo(f"⚠️ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
-    else:
-        click.echo(f"✓ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
+            return f"❌ Workflow failed ({warning_count} warnings) after {duration_s:.3f}s{cache_suffix}"
+        return f"❌ Workflow failed after {duration_s:.3f}s{cache_suffix}"
+    if warning_count:
+        return f"⚠️ Workflow completed with {warning_count} warnings in {duration_s:.3f}s{cache_suffix}"
+    if has_stderr_warnings:
+        return f"⚠️ Workflow completed in {duration_s:.3f}s{cache_suffix}"
+    return f"✓ Workflow completed in {duration_s:.3f}s{cache_suffix}"
 
 
 def _emit_summary_or_only_indicator(
@@ -721,17 +735,21 @@ def _emit_summary_or_only_indicator(
     warnings: list[Any] | None,
     verbose: bool,
     print_flag: bool,
+    trace_path: str | None = None,
 ) -> None:
     """Dispatch between full summary, --only-only emission, or nothing.
 
-    The full summary (workflow action + completion tag + batch errors +
-    cost + warnings + --only line) is suppressed in ``-p`` mode because
-    the user explicitly asked for minimal stderr. The ``--only`` mode
-    confirmation is a mode signal (not a suppressible detail) and is
-    emitted even in ``-p`` mode when ``--only`` is active. Verbosity
-    flags hide details; mode flags survive verbosity. Matches the
-    convention of ``make -k``, ``pytest --maxfail``, ``rsync --dry-run``,
-    ``apt-get --simulate``, ``kubectl --dry-run``, etc.
+    The full summary (completion tag + batch errors + cost + trace path +
+    warnings + --only line) is suppressed in ``-p`` mode because the user
+    explicitly asked for minimal stderr. The ``--only`` mode confirmation is a
+    mode signal (not a suppressible detail) and is emitted even in ``-p`` mode
+    when ``--only`` is active. Verbosity flags hide details; mode flags survive
+    verbosity. Matches the convention of ``make -k``, ``pytest --maxfail``,
+    ``rsync --dry-run``, ``apt-get --simulate``, ``kubectl --dry-run``, etc.
+
+    ``trace_path``, when given, rides into the summary so the "Workflow trace
+    saved" line renders in the meta block above the data (text mode). JSON and
+    failure paths leave it ``None`` and echo the trace line from ``run.py``.
 
     No-op when there's no metrics collector OR when neither path applies.
     """
@@ -750,7 +768,7 @@ def _emit_summary_or_only_indicator(
         metrics_collector=metrics_collector,
         workflow_metadata=workflow_metadata,
         output_key=output_key,
-        trace_path=None,
+        trace_path=trace_path,
         status=status,
         warnings=warnings,
     )
@@ -766,14 +784,24 @@ def _emit_summary_or_only_indicator(
     _display_execution_summary(formatted, verbose, warning_diagnostics=warning_diags or None)
 
 
-def _emit_only_indicator(formatted_result: dict[str, Any]) -> None:
-    """Emit the ``--only`` mode confirmation line to stderr.
+def _only_indicator_line(formatted_result: dict[str, Any]) -> str | None:
+    """Build the ``--only`` mode confirmation line, or ``None`` if not active.
 
-    Used by ``_handle_text_output`` in ``-p`` mode (where the full summary
-    is suppressed). The full default-mode summary path
-    (``_display_execution_summary``) emits the same line via the same
-    shared formatter — see ``format_only_indicator`` in
-    ``success_formatter.py``.
+    Shared by ``_emit_only_indicator`` (the ``-p`` path) and the default
+    summary block so the indicator text has one source — see
+    ``format_only_indicator`` in ``success_formatter.py``.
+    """
+    from pflow.execution.formatters.success_formatter import format_only_indicator
+
+    execution = formatted_result.get("execution", {})
+    only_node = execution.get("only_node")
+    if not only_node:
+        return None
+    return format_only_indicator(only_node, execution.get("nodes_skipped", 0))
+
+
+def _emit_only_indicator(formatted_result: dict[str, Any]) -> None:
+    """Emit the ``--only`` mode confirmation line to stderr (``-p`` path).
 
     Why this exists: ``--only`` is a mode signal, not a summary detail.
     Without this emission, ``pflow -p foo --only target`` produces zero
@@ -783,14 +811,9 @@ def _emit_only_indicator(formatted_result: dict[str, Any]) -> None:
     ``rsync --dry-run``, ``apt-get --simulate``, ``kubectl --dry-run``,
     etc.).
     """
-    from pflow.execution.formatters.success_formatter import format_only_indicator
-
-    execution = formatted_result.get("execution", {})
-    only_node = execution.get("only_node")
-    if not only_node:
-        return
-    nodes_skipped = execution.get("nodes_skipped", 0)
-    click.echo(format_only_indicator(only_node, nodes_skipped), err=True)
+    line = _only_indicator_line(formatted_result)
+    if line:
+        click.echo(line, err=True)
 
 
 def _display_execution_summary(
@@ -798,8 +821,20 @@ def _display_execution_summary(
     verbose: bool,
     warning_diagnostics: list[Diagnostic] | None = None,
 ) -> None:
-    """Display one-line execution summary with supplementary info."""
-    from pflow.execution.formatters.success_formatter import partition_surfaced_diagnostics
+    """Display the execution summary as airy blocks (one blank line between).
+
+    Order: completion · --only · batch errors · shell-stderr · cost · warnings ·
+    advisories · trace path. The trace path is read from
+    ``formatted_result["trace_path"]`` (populated only on the text-success path)
+    so the "Workflow trace saved" line lands in the meta block above the data,
+    de-emoji'd. Sections are collected first and emitted with a single blank
+    line before each present one — absent sections leave no dangling separators.
+    """
+    from pflow.execution.formatters.batch_errors import format_batch_errors_section
+    from pflow.execution.formatters.success_formatter import (
+        format_stderr_warnings,
+        partition_surfaced_diagnostics,
+    )
 
     # INFO advisories (e.g. an empty batch) are not warnings: only WARNING/ERROR
     # diagnostics drive the "completed with N warnings" header. Advisories get
@@ -810,50 +845,47 @@ def _display_execution_summary(
     total_cost = formatted_result.get("total_cost_usd")
     execution = formatted_result.get("execution", {})
     steps = execution.get("steps", []) if execution else []
-    workflow_metadata = formatted_result.get("workflow", {})
-    workflow_name = workflow_metadata.get("name", "workflow")
-    workflow_action = workflow_metadata.get("action", "executed")
-    _display_workflow_action(workflow_name, workflow_action)
+
+    blocks: list[list[str]] = []
 
     if duration_ms is not None:
-        duration_s = duration_ms / 1000.0
-        status = formatted_result.get("status", "success")
-        has_stderr_warnings = any(step.get("has_stderr") for step in steps)
-        cache_hits = execution.get("cache_hits", 0)
-        completed_count = execution.get("nodes_executed", 0)
         warning_count = len(warnings_list)
-        _display_workflow_completion_status(
-            duration_s,
-            status,
-            has_stderr_warnings,
-            cache_hits=cache_hits,
-            nodes_executed=completed_count,
-            warning_count=warning_count,
-        )
+        blocks.append([
+            _format_workflow_completion_status(
+                duration_ms / 1000.0,
+                formatted_result.get("status", "success"),
+                any(step.get("has_stderr") for step in steps),
+                cache_hits=execution.get("cache_hits", 0),
+                nodes_executed=execution.get("nodes_executed", 0),
+                warning_count=warning_count,
+            )
+        ])
 
-    # --only mode confirmation: always emit when --only is active, even
-    # when no downstream nodes were skipped (e.g., --only targeted the
-    # last node). Delegated to _emit_only_indicator so there's ONE call
-    # site for the indicator — the -p path (_emit_summary_or_only_indicator)
-    # and the default path (here) share this function, preventing drift.
-    _emit_only_indicator(formatted_result)
+    # --only mode confirmation: always emit when --only is active, even when no
+    # downstream nodes were skipped (e.g. --only targeted the last node).
+    only_line = _only_indicator_line(formatted_result)
+    if only_line:
+        blocks.append([only_line])
 
     if steps:
-        _display_batch_errors(steps)
-        _display_stderr_warnings(steps)
+        blocks.append(_as_block(format_batch_errors_section(steps)))
+        blocks.append(_as_block(format_stderr_warnings(steps)))
 
-    _display_cost_summary(total_cost, formatted_result)
+    blocks.append(_format_cost_summary_lines(total_cost, formatted_result))
 
     if warnings_list:
-        click.echo("", err=True)
-        click.echo("⚠️ Warnings:", err=True)
-        for warning in warnings_list:
-            click.echo(format_diagnostic(warning), err=True)
+        blocks.append(["⚠️ Warnings:", *(format_diagnostic(w) for w in warnings_list)])
     if advisories_list:
-        click.echo("", err=True)
-        click.echo("\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:", err=True)
-        for advisory in advisories_list:
-            click.echo(format_diagnostic(advisory), err=True)
+        blocks.append([
+            "\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:",
+            *(format_diagnostic(a) for a in advisories_list),
+        ])
+
+    trace_path = formatted_result.get("trace_path")
+    if trace_path:
+        blocks.append([f"Workflow trace saved: {trace_path}"])
+
+    _echo_summary_blocks(blocks)
 
 
 def _handle_json_output(
@@ -971,6 +1003,7 @@ def _handle_workflow_output(
     workflow_trace: Any | None = None,
     status: Any = None,
     warnings: list[Any] | None = None,
+    trace_path: str | None = None,
 ) -> None:
     """Handle output from workflow execution.
 
@@ -987,6 +1020,11 @@ def _handle_workflow_output(
         print_flag: Whether -p flag is set (suppress warnings)
         workflow_metadata: Optional workflow metadata for JSON output
         workflow_trace: Optional workflow trace collector for saving JSON output
+        status: Optional tri-state workflow status
+        warnings: Optional list of warning diagnostics
+        trace_path: Optional trace file path. In text mode it renders in the
+            meta block above the data; JSON leaves it ``None`` (the trace line
+            is echoed from ``run.py`` after the JSON payload).
     """
     if output_format == "json":
         _handle_json_output(
@@ -1013,4 +1051,5 @@ def _handle_workflow_output(
         workflow_metadata,
         status=status,
         warnings=warnings,
+        trace_path=trace_path,
     )

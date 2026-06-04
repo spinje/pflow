@@ -287,7 +287,11 @@ def format_success_as_text(  # noqa: C901
     warnings_list, advisories_list = partition_surfaced_diagnostics(warning_diagnostics)
     warning_count = len(warnings_list)
 
-    # Show workflow name and action (matches CLI)
+    # Show workflow name and action (MCP text only). The CLI summary
+    # deliberately dropped this line as redundant with the completion line
+    # below (PR #470); MCP keeps it because agents calling the tool have no
+    # command-line context for which workflow ran. Do NOT "restore parity" by
+    # re-adding it to the CLI.
     if workflow_action == "reused":
         lines.append(f"{workflow_name} was executed")
     elif workflow_action == "created":
@@ -325,10 +329,11 @@ def format_success_as_text(  # noqa: C901
     # Show node execution details (matches CLI lines 646-655)
     _append_execution_steps(lines, execution_data)
 
-    # Shell-stderr warnings (CLI/MCP parity — mirrors CLI _display_stderr_warnings)
+    # Shell-stderr warnings (CLI/MCP parity — same `format_stderr_warnings`
+    # the CLI summary block calls in `_display_execution_summary`)
     lines.extend(format_stderr_warnings(steps))
 
-    # Show cost (matches CLI _display_cost_summary). The "Total LLM calls: N"
+    # Show cost (matches CLI `_format_cost_summary_lines`). The "Total LLM calls: N"
     # sibling line below the cost line keeps the call tally visible at all
     # three surfaces (CLI text, success formatter, trace report); call counts
     # are also now interpolated into the priced cost line and per-model in
@@ -465,7 +470,7 @@ def format_stderr_warnings(steps: list[dict[str, Any]]) -> list[str]:
     """Format shell-stderr warning block for nodes that exited 0 with non-empty stderr.
 
     Single source of truth used by both:
-    - CLI ``cli/workflow_output.py::_display_stderr_warnings`` (emits via ``click.echo`` in a loop)
+    - CLI ``cli/workflow_output.py::_display_execution_summary`` (as a summary block)
     - MCP ``format_success_as_text`` below (extends the lines list)
 
     Mirrors the CLI/MCP parity pattern established by ``format_only_indicator`` and
