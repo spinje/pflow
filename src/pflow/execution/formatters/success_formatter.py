@@ -287,7 +287,11 @@ def format_success_as_text(  # noqa: C901
     warnings_list, advisories_list = partition_surfaced_diagnostics(warning_diagnostics)
     warning_count = len(warnings_list)
 
-    # Show workflow name and action (matches CLI)
+    # Show workflow name and action (MCP text only). The CLI summary
+    # deliberately dropped this line as redundant with the completion line
+    # below (PR #470); MCP keeps it because agents calling the tool have no
+    # command-line context for which workflow ran. Do NOT "restore parity" by
+    # re-adding it to the CLI.
     if workflow_action == "reused":
         lines.append(f"{workflow_name} was executed")
     elif workflow_action == "created":

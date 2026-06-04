@@ -316,7 +316,7 @@ directories for migration.
 
 **Per-node files include**: metadata (type, timing, status, LLM model/tokens/cost, error), resolved inputs (`## Command` for shell, `## Prompt` for LLM, `## Code` + `## Inputs` for python), outputs (`## stdout`, `## stderr`, `## Result`, `## Response`), and a catch-all for remaining output keys.
 
-**Consumer**: `cli/main.py:_save_trace_and_report()` (CLI `--report` flag), `cli/commands/trace.py` (trace subcommand).
+**Consumer**: `cli/commands/run.py:_finalize_trace_and_report()` (CLI `--report` flag), `cli/commands/report.py` (`pflow report` command).
 
 **Binary encoding convention**: `{"__type": "base64", "data": "..."}` — used project-wide for binary data in JSON. Sensitive params auto-masked before caching.
 

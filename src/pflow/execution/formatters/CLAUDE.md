@@ -68,8 +68,8 @@ Parity gaps have shipped before — e.g. adding `status`/`warnings` to `format_e
 
 **Shared SSoT helpers in `success_formatter.py`** enforce text-rendering parity structurally for the tricky parts:
 - `format_only_indicator(only_node, nodes_skipped)` — `--only` mode confirmation line. Called from CLI default summary (`_display_execution_summary`), CLI `-p` mode emission (`_emit_only_indicator`), and MCP text (`_append_execution_steps`).
-- `format_stderr_warnings(steps)` — shell-stderr warning block (`⚠️  Shell stderr (exit code 0):` + per-node bullets with 300-char truncation). Called from CLI `_display_stderr_warnings` and MCP `format_success_as_text`.
+- `format_stderr_warnings(steps)` — shell-stderr warning block (`⚠️  Shell stderr (exit code 0):` + per-node bullets with 300-char truncation). Consumed directly by the CLI summary block (`_display_execution_summary` in `workflow_output.py`) and MCP `format_success_as_text`.
 - `_append_outputs` (MCP text) and `cli/workflow_output.py::safe_output` (CLI stdout) both JSON-encode non-string output values with `ensure_ascii=False, allow_nan=False, default=str` and fall back to `repr(value)` on serialization failure. MCP can't emit a side-channel warning on failure, so the divergence is the warning emission only; the fallback VALUE is aligned.
-- `format_success_as_text` upgrades the ✓ completion glyph to ⚠️ when any step has `has_stderr` — mirroring CLI `_display_workflow_completion_status`.
+- `format_success_as_text` upgrades the ✓ completion glyph to ⚠️ when any step has `has_stderr` — mirroring CLI `_format_workflow_completion_status`.
 
 Parity tests: `TestAppendOutputsCliMcpParity` and `TestStderrWarningsCliMcpParity` in `tests/test_execution/formatters/test_success_formatter.py`. Add to these when expanding the shared helpers rather than documenting the parity contract by comment.
