@@ -219,6 +219,8 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 160: Cache Analysis Architectural Refactor
 - ✅ Task 161: Safer Cache Defaults
 - ✅ Task 162: Loop Config — Condition-Terminated Iteration
+- ✅ Task 163: Agentic Coding Workflow Harness example
+- ✅ Task 165: Shrink Trace Interning
 
 ### Planned Features (in order of priority)
 
