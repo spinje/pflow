@@ -339,9 +339,9 @@ class ExecutionService(BaseService):
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
             msg = format_validation_failure(vresult.errors)
-            extra_diagnostics = [d for d in vresult.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
-            if extra_diagnostics:
-                msg += "\n\n" + "\n".join(format_diagnostic(diagnostic) for diagnostic in extra_diagnostics)
+            surfaced_diagnostics = _mcp_surfaced_diagnostics(vresult.diagnostics)
+            if surfaced_diagnostics:
+                msg += "\n\n" + _format_mcp_diagnostic_sections(surfaced_diagnostics)
             return msg
 
     @classmethod

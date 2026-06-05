@@ -11,9 +11,9 @@ Ensures the destination path is clear while leaving the source file absent.
 - type: shell
 
 ```shell command
-mkdir -p /private/tmp/pflow-retry-with-backoff-example
-rm -f /private/tmp/pflow-retry-with-backoff-example/source.txt
-rm -f /private/tmp/pflow-retry-with-backoff-example/dest.txt
+mkdir -p /tmp/pflow-retry-with-backoff-example
+rm -f /tmp/pflow-retry-with-backoff-example/source.txt
+rm -f /tmp/pflow-retry-with-backoff-example/dest.txt
 ```
 
 ### copy-missing-file
@@ -21,8 +21,8 @@ rm -f /private/tmp/pflow-retry-with-backoff-example/dest.txt
 Attempts to copy a missing file, exhausts retry attempts, then routes to recovery.
 
 - type: copy-file
-- source_path: /private/tmp/pflow-retry-with-backoff-example/source.txt
-- dest_path: /private/tmp/pflow-retry-with-backoff-example/dest.txt
+- source_path: /tmp/pflow-retry-with-backoff-example/source.txt
+- dest_path: /tmp/pflow-retry-with-backoff-example/dest.txt
 - retry:
     max: 2
     wait: 0.1

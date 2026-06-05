@@ -822,11 +822,44 @@ class WorkflowValidator:
                 diagnostics.extend(llm_diags)
                 if forms is not None and display_model is not None and provider_name is not None:
                     catalog_check_list.append((node_id, display_model, provider_name, forms))
+            elif node_type == "workflow" and node.get("retry") is not None:
+                diagnostics.append(WorkflowValidator._retry_on_workflow_node_advisory(node_id))
 
         if catalog_check_list:
             diagnostics.extend(WorkflowValidator._validate_llm_model_id_catalog(catalog_check_list))
 
         return diagnostics
+
+    @staticmethod
+    def _retry_on_workflow_node_advisory(node_id: str) -> Diagnostic:
+        """Advisory: a ``retry:`` block on a ``workflow`` (sub-workflow) node is inert.
+
+        ``WorkflowExecutor`` returns child failures as an action rather than
+        raising, so the node-level retry loop never fires. Surface this as an
+        INFO advisory (``source="validator"`` → non-degrading) so an agent that
+        wrote ``retry:`` there learns it has no effect instead of hitting a
+        silent no-op.
+        """
+        return Diagnostic(
+            severity=Severity.INFO,
+            source="validator",
+            title="Retry on Sub-Workflow Node",
+            node_id=node_id,
+            message=(
+                "`retry:` has no effect on a `workflow` (sub-workflow) node — a failing "
+                "sub-workflow is not retried. Put `retry:` on the child workflow's own steps, "
+                "or use `- on-error:` to route a failed sub-workflow elsewhere."
+            ),
+            suggestions=[
+                "Move `retry:` onto the relevant step inside the child workflow.",
+                "Or add `- on-error: <node>` to handle a failed sub-workflow.",
+            ],
+            context={
+                "category": "node_semantics",
+                "node_type": "workflow",
+                "path": f"nodes[id={node_id}].retry",
+            },
+        )
 
     @staticmethod
     def _validate_claude_code_params(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:

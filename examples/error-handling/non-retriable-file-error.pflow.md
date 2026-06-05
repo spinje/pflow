@@ -11,9 +11,9 @@ Creates a directory where the copy node expects a file.
 - type: shell
 
 ```shell command
-mkdir -p /private/tmp/pflow-non-retriable-example
-rm -f /private/tmp/pflow-non-retriable-example/dest.txt
-mkdir -p /private/tmp/pflow-non-retriable-example/source-dir
+mkdir -p /tmp/pflow-non-retriable-example
+rm -f /tmp/pflow-non-retriable-example/dest.txt
+mkdir -p /tmp/pflow-non-retriable-example/source-dir
 ```
 
 ### copy-directory
@@ -21,8 +21,8 @@ mkdir -p /private/tmp/pflow-non-retriable-example/source-dir
 Attempts to copy a directory as if it were a file; this is deterministic and should not retry.
 
 - type: copy-file
-- source_path: /private/tmp/pflow-non-retriable-example/source-dir
-- dest_path: /private/tmp/pflow-non-retriable-example/dest.txt
+- source_path: /tmp/pflow-non-retriable-example/source-dir
+- dest_path: /tmp/pflow-non-retriable-example/dest.txt
 - retry:
     max: 3
     wait: 0.5
