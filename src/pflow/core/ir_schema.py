@@ -156,6 +156,24 @@ LOOP_CONFIG_SCHEMA: dict[str, Any] = {
                 "falsy → stop. Must be a single ${...} reference, not a comparison."
             ),
         },
+        "until": {
+            "type": "string",
+            "pattern": r"^\$\{.+\}$",
+            "description": (
+                "Template reference to the loop node's own typed output "
+                "(e.g., '${wait.done}'). Falsy → re-run (do-while); truthy → stop. "
+                "Must be a single ${...} reference, not a comparison."
+            ),
+        },
+        "carry": {
+            "type": "object",
+            "additionalProperties": {"type": "string", "pattern": r"^\$\{.+\}$"},
+            "description": (
+                "Mapping of body input name to this loop node's prior output reference. "
+                "The node's inputs mapping supplies round-1 seed values; carry overrides "
+                "those keys on round 2+."
+            ),
+        },
         "max_iterations": {
             "oneOf": [
                 {
@@ -172,7 +190,7 @@ LOOP_CONFIG_SCHEMA: dict[str, Any] = {
             "description": "Iteration cap: positive integer OR ${template} resolving to one.",
         },
     },
-    "required": ["while"],
+    "required": [],
     "additionalProperties": False,
 }
 

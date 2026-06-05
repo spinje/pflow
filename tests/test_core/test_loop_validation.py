@@ -32,6 +32,10 @@ def _errors(ir, registry):
     ]
 
 
+def _diagnostics(ir, registry):
+    return WorkflowValidator.validate(ir, extracted_params={}, registry=registry)
+
+
 def _ir(nodes, inputs=None):
     ir = {"ir_version": "0.1.0", "nodes": nodes, "edges": []}
     if inputs:
@@ -233,3 +237,275 @@ def test_literal_max_iterations_over_cap_rejected_on_validate_path(registry) -> 
     # only at compile time. Default MAX_NODE_VISITS is 100.
     errs = _errors(_shell_loop("${c.exit_code}", max_it=999), registry)
     assert any("hard visit cap" in d.message for d in errs)
+
+
+def test_until_known_string_rejected_with_until_path_and_message(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {"command": "echo hi"},
+            "loop": {"until": "${c.stdout}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("`loop: until:`" in d.message for d in errs)
+    assert any(d.context and d.context.get("path") == "nodes[id=c].loop.until" for d in errs)
+
+
+def test_while_and_until_both_rejected_on_validate_path(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {"command": "echo hi"},
+            "loop": {"while": "${c.exit_code}", "until": "${c.exit_code}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert sum("exactly one" in d.message for d in errs) == 1
+
+
+def test_neither_while_nor_until_rejected_on_validate_path(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {"command": "echo hi"},
+            "loop": {"max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("exactly one" in d.message for d in errs)
+
+
+def test_carry_key_without_seed_rejected(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {},
+                "code": 'result: dict = {"next_state": "x", "more": False}',
+            },
+            "loop": {"carry": {"state": "${c.result}"}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("does not seed" in d.message for d in errs)
+
+
+def test_carry_value_must_self_reference_loop_node(registry) -> None:
+    ir = _ir([
+        {
+            "id": "other",
+            "type": "code",
+            "params": {"code": 'result: str = "x"'},
+        },
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": "${other.result}"}, "while": "${c.result.more}", "max_iterations": 3},
+        },
+    ])
+    errs = _errors(ir, registry)
+    assert any("must reference this loop node" in d.message for d in errs)
+
+
+def test_bare_carry_alias_rejected_as_self_reference_error(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": "${result}"}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("must reference this loop node" in d.message for d in errs)
+    assert not any("does not declare output" in d.message for d in errs)
+
+
+def test_typoed_carry_output_rejected_for_precise_code_output(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": "${c.missing}"}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("does not declare output 'missing'" in d.message for d in errs)
+
+
+def test_carry_typo_diagnostic_offers_did_you_mean_and_available_outputs(registry) -> None:
+    """A typo'd carry output names the close match (`reslt` → `result`) AND lists the loop
+    node's declared outputs — the validator already has both, so surface them."""
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": "${c.reslt}"}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    typo = next(d for d in errs if "does not declare output 'reslt'" in d.message)
+    assert "result" in typo.context.get("similar_names", [])
+    assert "result" in typo.context.get("available_fields", [])
+    assert typo.context.get("available_fields_label") == "outputs"
+
+
+def test_empty_loop_block_rejected_as_missing_polarity(registry) -> None:
+    """`loop: {}` must error (missing polarity), not be silently ignored (the `is None` vs
+    `not` distinction this task deliberately changed)."""
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {"code": 'result: dict = {"more": False}'},
+            "loop": {},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("exactly one of `while:` or `until:`" in d.message for d in errs)
+
+
+def test_shell_carry_key_not_referenced_warns(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {
+                "inputs": {"state": "seed"},
+                "command": "echo hi",
+            },
+            "loop": {"carry": {"state": "${c.exit_code}"}, "while": "${c.exit_code}", "max_iterations": 3},
+        }
+    ])
+    diagnostics = _diagnostics(ir, registry)
+    assert any(d.severity == Severity.WARNING and "carries input 'state'" in d.message for d in diagnostics)
+
+
+def test_coalesce_carry_with_literal_fallback_not_falsely_rejected(registry) -> None:
+    """A coalesce carry with a literal fallback (`${c.result ?? "start"}`) must NOT be
+    rejected: the first operand is a real output and the literal isn't a typo. The
+    pre-fix parser read the output name as `result ?? "start"` and hard-errored on it.
+    """
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": '${c.result ?? "start"}'}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert not any("does not declare output" in d.message for d in errs), [d.message for d in errs]
+
+
+def test_coalesce_carry_typo_in_operand_still_caught(registry) -> None:
+    """Operand-by-operand checking must still catch a typo'd output inside a coalesce."""
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {
+                "carry": {"state": "${c.result ?? c.missing}"},
+                "while": "${c.result.more}",
+                "max_iterations": 3,
+            },
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("does not declare output 'missing'" in d.message for d in errs)
+
+
+def test_shell_carry_key_referenced_via_nested_path_no_warning(registry) -> None:
+    """A carried key used via a NESTED path (`${state.summary}`) is referenced — the old
+    exact `${state}` substring check false-positived on this and warned spuriously.
+    """
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {
+                "inputs": {"state": "seed"},
+                "command": "echo ${state.summary}",
+            },
+            "loop": {"carry": {"state": "${c.stdout}"}, "while": "${c.exit_code}", "max_iterations": 3},
+        }
+    ])
+    diagnostics = _diagnostics(ir, registry)
+    assert not any("carries input 'state'" in d.message for d in diagnostics), [d.message for d in diagnostics]
+
+
+def test_carry_literal_coalesce_fallback_warns(registry) -> None:
+    """A LITERAL coalesce fallback in carry (`${c.result.next ?? "x"}`) always resolves, so it
+    silently re-seeds when the body omits the output — defeating the loud carry guard. Warn
+    (not error: a literal fallback may be intentional).
+    """
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next": state, "more": False}',
+            },
+            "loop": {
+                "carry": {"state": '${c.result.next ?? "x"}'},
+                "while": "${c.result.more}",
+                "max_iterations": 3,
+            },
+        }
+    ])
+    diagnostics = _diagnostics(ir, registry)
+    assert any(d.severity == Severity.WARNING and "literal fallback" in d.message for d in diagnostics), [
+        d.message for d in diagnostics
+    ]
+    # It is a WARNING, never an ERROR (the workflow still validates).
+    assert not any("literal fallback" in d.message for d in _errors(ir, registry))
+
+
+def test_carry_two_output_coalesce_does_not_warn_literal_fallback(registry) -> None:
+    """A coalesce between two real outputs (`${c.result.a ?? c.result.b}`) has no literal
+    operand — the silent-re-seed warning must NOT fire on it."""
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"a": state, "b": state, "more": False}',
+            },
+            "loop": {
+                "carry": {"state": "${c.result.a ?? c.result.b}"},
+                "while": "${c.result.more}",
+                "max_iterations": 3,
+            },
+        }
+    ])
+    diagnostics = _diagnostics(ir, registry)
+    assert not any("literal fallback" in d.message for d in diagnostics), [d.message for d in diagnostics]

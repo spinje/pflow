@@ -18,6 +18,7 @@ from .instrumentation import (
     in_process_cache_lookup,
     memo_cache_lookup,
 )
+from .loop_control import carry_effective_config
 from .template_resolution import resolve_templates
 from .types import NodeConfig
 
@@ -56,7 +57,14 @@ def plan_node(node: Any, config: NodeConfig, shared: dict[str, Any]) -> NodePlan
     behavior; DD#19). On a strict-mode template-resolution failure, the
     config hash is still computed (without cache content) for trace fidelity,
     matching pre-task behavior.
+
+    Task 166: on a carried loop iteration (round N>1) the node's effective inputs
+    differ from its round-1 seed. ``carry_effective_config`` swaps the carried keys
+    here — before resolution AND hashing — so cache key, resolution, and execution
+    stay consistent. No-op on round 1 and for non-carry nodes (so the planner, which
+    walks each loop body once at ``__iteration__ == 1``, is unaffected).
     """
+    config = carry_effective_config(config, shared)
     resolved_params, last_resolutions, template_errors, template_exc = _resolve_for_plan(node, config, shared)
     prompt_cache_content = None if template_exc is not None else _render_cache_for_hash(config, shared)
     config_hash = compute_config_hash(

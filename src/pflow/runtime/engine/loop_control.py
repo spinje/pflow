@@ -15,13 +15,14 @@ the two runtime decisions that drive that re-entry:
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any
 
-from pflow.core.exceptions import LoopConditionError
+from pflow.core.exceptions import LoopCarryError, LoopConditionError
 from pflow.runtime.template_resolver import TemplateResolver
 
 from . import instrumentation
-from .types import LoopConfig
+from .types import LoopConfig, NodeConfig, TemplateConfig
 
 
 @contextmanager
@@ -60,7 +61,66 @@ def loop_runtime_scope(
                 shared.pop("__iteration__", None)
 
 
-def evaluate_loop_condition(while_template: str, shared: dict[str, Any], node_id: str) -> bool:
+def apply_carry_overrides(template_config: TemplateConfig, carry: dict[str, str]) -> TemplateConfig:
+    """Return an effective TemplateConfig for carried loop iterations.
+
+    The compiled TemplateConfig is reused across visits. This helper never
+    mutates it: carried keys are moved into the effective ``inputs`` template
+    map for the current visit, while non-carried inputs keep their original
+    static/template values.
+    """
+    static_inputs = template_config.static_params.get("inputs", {})
+    template_inputs = template_config.template_params.get("inputs", {})
+    current_inputs: dict[str, Any] = {}
+    if isinstance(static_inputs, dict):
+        current_inputs.update(static_inputs)
+    if isinstance(template_inputs, dict):
+        current_inputs.update(template_inputs)
+
+    effective_inputs = {**current_inputs, **carry}
+    return replace(
+        template_config,
+        template_params={**template_config.template_params, "inputs": effective_inputs},
+        static_params={k: v for k, v in template_config.static_params.items() if k != "inputs"},
+    )
+
+
+def is_carry_iteration(config: NodeConfig, shared: dict[str, Any]) -> bool:
+    """True when a carried loop node is past round 1 (carry overrides the round-1 seed)."""
+    loop_config = config.loop_config
+    return loop_config is not None and bool(loop_config.carry) and shared.get("__iteration__", 1) > 1
+
+
+def carry_effective_config(config: NodeConfig, shared: dict[str, Any]) -> NodeConfig:
+    """Return ``config`` with carried inputs overridden for round N>1, else unchanged.
+
+    Owned by the resolution layer (called from ``plan_node``, the single authority for
+    template resolution + config hashing — see runtime/CLAUDE.md), so the carry override
+    is part of "what inputs does this node resolve this iteration" and config-hash,
+    resolution, and execution all observe the same effective inputs. The planner walks a
+    loop body once at ``__iteration__ == 1``, so carry never fires during planning — no
+    special-casing in ``execution/plan.py`` is needed.
+    """
+    if not is_carry_iteration(config, shared):
+        return config
+    loop_config = config.loop_config
+    if loop_config is None:  # unreachable post-is_carry_iteration; narrows for mypy
+        return config
+    if config.template_config is None:
+        raise LoopCarryError(
+            f"Loop '{config.node_id}' has carried inputs but no template configuration to resolve them.",
+            node_id=config.node_id,
+            suggestion="Declare round-1 seed values under the node's `inputs:` mapping.",
+        )
+    return replace(
+        config,
+        template_config=apply_carry_overrides(config.template_config, loop_config.carry),
+    )
+
+
+def evaluate_loop_condition(
+    condition_template: str, shared: dict[str, Any], node_id: str, *, until: bool = False
+) -> bool:
     """Return whether the loop should re-run, given the node's just-completed output.
 
     Reads ``shared`` at the engine seam where ``shared[node_id]`` holds the fresh
@@ -69,37 +129,45 @@ def evaluate_loop_condition(while_template: str, shared: dict[str, Any], node_id
     ``"0\\n"`` or ``"false"`` is truthy — exactly the foot-gun this guards).
     """
     context = dict(shared)
-    var = TemplateResolver.extract_simple_template_var(while_template)
+    var = TemplateResolver.extract_simple_template_var(condition_template)
     if var is None:
         # Not a single ${...} reference. The validator rejects this shape at parse time
         # (_make_loop_shape_diagnostic), so this is the backstop for a programmatic IR that
         # bypassed validation — stop rather than loop on garbage.
+        #
+        # Polarity-agnostic STOP is intentional (does NOT apply the `until` inversion): a
+        # malformed TEMPLATE is garbage, distinct from an absent VALUE (handled below, where
+        # `until` + absent → continue). Fail-closed for both. This is load-bearing ONLY while
+        # the validator keeps rejecting this shape for `until` too — if that ever loosens, a
+        # malformed `until:` would stop on pass 1 (the "runs once and exits" bug).
         return False
 
     if TemplateResolver.is_coalesce_expression(var):
         value, status = TemplateResolver.resolve_coalesce(var, context)
         if status != "resolved":
-            return False
+            value = None
     else:
         if not TemplateResolver.variable_exists(var, context):
-            return False
-        value = TemplateResolver.resolve_value(var, context)
+            value = None
+        else:
+            value = TemplateResolver.resolve_value(var, context)
 
     if isinstance(value, str):
         preview = value if len(value) <= 60 else value[:57] + "..."
         raise LoopConditionError(
-            f"Node '{node_id}' loop condition '{while_template}' resolved to a string ({preview!r}). "
+            f"Node '{node_id}' loop condition '{condition_template}' resolved to a string ({preview!r}). "
             f"String truthiness is unsafe — a non-empty string like '0\\n' or 'false' is truthy, "
             f"so the loop would never stop on those values.",
             node_id=node_id,
             suggestion=(
-                "Reference a typed output in `while:` — a list (drains to empty), a number "
-                "(counts to 0), or a boolean. If the source is genuinely a list/number, declare "
-                "its output type so it isn't produced as a string."
+                "Reference a typed output in `while:` or `until:` — a list (drains to empty), "
+                "a number (counts to 0), or a boolean. If the source is genuinely a list/number, "
+                "declare its output type so it isn't produced as a string."
             ),
         )
 
-    return bool(value)
+    truthy = bool(value)
+    return not truthy if until else truthy
 
 
 def resolve_loop_cap(loop_config: LoopConfig, shared: dict[str, Any], node_id: str) -> int:

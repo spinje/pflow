@@ -134,6 +134,10 @@ def test_cap_hit_is_non_degrading_advisory(tmp_path) -> None:
     advisory = sa["__warnings__"]["counter"]
     assert advisory.severity == Severity.INFO
     assert advisory.id == "loop.max-iterations-reached"
+    # Polarity-correct wording for a `while:` loop (caps still truthy; make source go falsy).
+    assert "`while:`" in advisory.message and "still truthy" in advisory.message
+    assert "`until:`" not in advisory.message
+    assert any("goes falsy" in s for s in advisory.suggestions)
 
 
 def test_cap_hit_advisory_in_result_diagnostics(tmp_path) -> None:
@@ -328,6 +332,62 @@ Recovery handler.
     assert "__iteration__" not in sa  # cleared before routing to on-error
 
 
+def test_carry_loop_error_action_archives_failed_iteration_for_on_error(tmp_path) -> None:
+    """A carried loop that routes to on-error must not expose stale carried output.
+
+    The failed iteration is archived in __failures__; the active shared store no
+    longer exposes the worker's stale successful output under `worker`.
+    """
+    body = """# Carry error action loop
+
+Carry state until iteration 2 fails and routes to the handler.
+
+## Steps
+
+### worker
+
+Advance state, then fail on the second iteration.
+
+- type: code
+- on-error: recover
+- inputs:
+    state: 0
+    iteration: ${__iteration__}
+
+```python code
+state: int
+iteration: int
+next_state = state + 1
+result: dict = {"state": next_state, "more": True}
+if iteration >= 2:
+    next: str = "error"
+```
+
+- loop:
+    carry:
+      state: ${worker.result.state}
+    while: ${worker.result.more}
+    max_iterations: 5
+
+### recover
+
+Recovery handler.
+
+- type: shell
+- next: end
+- command: echo recovered
+"""
+    r = _run(tmp_path, body)
+    assert r.success
+    assert r.status == WorkflowStatus.DEGRADED
+    sa = r.shared_after
+    assert sa["__execution__"]["node_visit_counts"]["worker"] == 2
+    assert "worker" in sa["__failures__"]
+    assert "worker" not in sa
+    assert sa["__failures__"]["worker"]["data"]["result"]["state"] == 2
+    assert sa["recover"]["stdout"].strip() == "recovered"
+
+
 def test_iteration_threaded_into_sub_workflow_inputs(tmp_path) -> None:
     """Flagship pattern: ${__iteration__} is resolved in the parent and passed to a
     looped sub-workflow's inputs each iteration; the child output drives the drain."""
@@ -399,6 +459,679 @@ Run the child until its remaining list drains.
     assert sa["__execution__"]["node_visit_counts"]["loop-child"] == 3
     assert sa["loop-child"]["remaining"] == []
     assert sa["loop-child"]["loop_stopped"] == "condition"
+
+
+def test_carry_tournament_threads_previous_survivors_into_next_round(tmp_path) -> None:
+    child = tmp_path / "judge-round.pflow.md"
+    log_path = tmp_path / "rounds.jsonl"
+    child.write_text(
+        """# Judge Round
+
+## Inputs
+
+### contenders
+
+Current contenders.
+
+- type: array
+
+### log_path
+
+Round log path.
+
+- type: string
+
+## Outputs
+
+### survivors
+
+Survivors for the next round.
+
+- type: array
+- source: ${judge.result.survivors}
+
+### more
+
+Whether another round is needed.
+
+- type: boolean
+- source: ${judge.result.more}
+
+## Steps
+
+### judge
+
+Keep every other contender and log the input this round received.
+
+- type: code
+- inputs:
+    contenders: ${contenders}
+    log_path: ${log_path}
+
+```python code
+import json
+
+contenders: list
+log_path: str
+survivors = contenders[::2] if len(contenders) > 1 else contenders
+with open(log_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(contenders) + "\\n")
+result: dict = {"survivors": survivors, "more": len(survivors) > 1}
+```
+""",
+        encoding="utf-8",
+    )
+    outer = tmp_path / "tournament.pflow.md"
+    outer.write_text(
+        f"""# Tournament
+
+## Steps
+
+### run-rounds
+
+Run elimination rounds.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    contenders: ["ada", "beck", "cy", "dee"]
+    log_path: {log_path}
+- loop:
+    carry:
+      contenders: ${{run-rounds.survivors}}
+    while: ${{run-rounds.more}}
+    max_iterations: 10
+""",
+        encoding="utf-8",
+    )
+
+    r = WorkflowRunner().run(str(outer), {}, RunnerConfig())
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["run-rounds"] == 2
+    assert r.shared_after["run-rounds"]["survivors"] == ["ada"]
+
+    import json
+
+    rounds = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert rounds == [["ada", "beck", "cy", "dee"], ["ada", "cy"]]
+
+
+def test_workflow_body_carry_typo_rejected_before_runtime(tmp_path) -> None:
+    """Workflow-body carry refs must be checked against declared child outputs.
+
+    This is the primary user-facing shape for stateful loops. It exercises the
+    child-workflow output registration path, which is distinct from code-node
+    `result` output validation.
+    """
+    child = tmp_path / "judge-round.pflow.md"
+    child.write_text(
+        """# Judge Round
+
+## Inputs
+
+### contenders
+
+Current contenders.
+
+- type: array
+
+## Outputs
+
+### survivors
+
+Survivors for the next round.
+
+- type: array
+- source: ${judge.result.survivors}
+
+### more
+
+Whether another round is needed.
+
+- type: boolean
+- source: ${judge.result.more}
+
+## Steps
+
+### judge
+
+Keep every other contender.
+
+- type: code
+- inputs:
+    contenders: ${contenders}
+
+```python code
+contenders: list
+survivors = contenders[::2] if len(contenders) > 1 else contenders
+result: dict = {"survivors": survivors, "more": len(survivors) > 1}
+```
+""",
+        encoding="utf-8",
+    )
+    outer = tmp_path / "bad-carry.pflow.md"
+    outer.write_text(
+        f"""# Bad Carry
+
+## Steps
+
+### run-rounds
+
+Run elimination rounds.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    contenders: ["ada", "beck", "cy", "dee"]
+- loop:
+    carry:
+      contenders: ${{run-rounds.surviviors}}
+    while: ${{run-rounds.more}}
+    max_iterations: 10
+""",
+        encoding="utf-8",
+    )
+
+    r = WorkflowRunner().run(str(outer), {}, RunnerConfig())
+    assert not r.success
+    assert any("does not declare output 'surviviors'" in err.message for err in r.errors)
+
+
+def test_until_poll_runs_until_truthy(tmp_path) -> None:
+    body = """# Poll
+
+## Steps
+
+### wait
+
+Done on the third check.
+
+- type: code
+- inputs:
+    iteration: ${__iteration__}
+
+```python code
+iteration: int
+result: dict = {"done": iteration >= 3}
+```
+
+- loop:
+    until: ${wait.result.done}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["wait"] == 3
+    assert r.shared_after["wait"]["loop_stopped"] == "condition"
+
+
+def test_until_absent_runtime_source_continues_to_cap(tmp_path) -> None:
+    """Absent `until:` source must not silently exit after one iteration."""
+    body = """# Missing Until
+
+## Steps
+
+### wait
+
+Never emits result.done.
+
+- type: code
+
+```python code
+result: dict = {"still_missing": True}
+```
+
+- loop:
+    until: ${wait.result.done}
+    max_iterations: 3
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["wait"] == 3
+    assert r.shared_after["wait"]["loop_stopped"] == "max_iterations"
+    # Cap advisory must be polarity-correct for `until:` — NOT the `while:` wording.
+    # A `while`-worded advisory ("goes falsy") would re-introduce the exact polarity
+    # confusion `until:` exists to kill (an until: source should go *truthy* to stop).
+    advisory = r.shared_after["__warnings__"]["wait"]
+    assert "`until:`" in advisory.message and "still falsy" in advisory.message
+    assert "`while:`" not in advisory.message and "truthy" not in advisory.message
+    assert any("goes truthy" in s for s in advisory.suggestions)
+
+
+def test_until_cap_advisory_is_polarity_correct(tmp_path) -> None:
+    """Regression for the `until:` cap advisory wording (read as a fresh agent).
+
+    The advisory text was hard-coded for `while:` ("condition still truthy" / "check
+    that the `while:` source eventually goes falsy"). For an `until:` loop that is
+    backwards (it caps still *falsy*) and names the wrong keyword. This pins the fix.
+    """
+    body = """# Until Cap Wording
+
+## Steps
+
+### poll
+
+Never becomes done, so `until:` caps.
+
+- type: code
+
+```python code
+result: dict = {"done": False}
+```
+
+- loop:
+    until: ${poll.result.done}
+    max_iterations: 2
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    advisory = r.shared_after["__warnings__"]["poll"]
+    assert advisory.id == "loop.max-iterations-reached"
+    assert "`until:` condition still falsy" in advisory.message
+    assert any("`until:` source eventually goes truthy" in s for s in advisory.suggestions)
+
+
+def test_validate_fix_carries_draft_and_feedback_pair(tmp_path) -> None:
+    body = """# Validate Fix
+
+## Steps
+
+### fix
+
+Carry both the draft and the next feedback.
+
+- type: code
+- inputs:
+    iteration: ${__iteration__}
+    draft: a
+    feedback: b
+
+```python code
+iteration: int
+draft: str
+feedback: str
+result: dict = {
+    "draft": draft + feedback,
+    "feedback": "!",
+    "more": iteration < 3,
+}
+```
+
+- loop:
+    carry:
+      draft: ${fix.result.draft}
+      feedback: ${fix.result.feedback}
+    while: ${fix.result.more}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["fix"] == 3
+    assert r.shared_after["fix"]["result"]["draft"] == "ab!!"
+
+
+def test_carry_preserves_constant_inputs(tmp_path) -> None:
+    body = """# Constant Carry
+
+## Steps
+
+### step
+
+Carry state but keep label constant.
+
+- type: code
+- inputs:
+    state: 0
+    label: fixed
+
+```python code
+state: int
+label: str
+next_state = state + 1
+result: dict = {"state": next_state, "label": label, "more": state < 2}
+```
+
+- loop:
+    carry:
+      state: ${step.result.state}
+    while: ${step.result.more}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["step"]["result"]["state"] == 3
+    assert r.shared_after["step"]["result"]["label"] == "fixed"
+
+
+def test_no_carry_loop_leaves_static_inputs_unchanged(tmp_path) -> None:
+    body = """# No Carry
+
+## Steps
+
+### step
+
+Loop without carry.
+
+- type: code
+- inputs:
+    seed: 5
+    iteration: ${__iteration__}
+
+```python code
+seed: int
+iteration: int
+result: dict = {"seed": seed, "more": iteration < 2}
+```
+
+- loop:
+    while: ${step.result.more}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["step"] == 2
+    assert r.shared_after["step"]["result"]["seed"] == 5
+
+
+def test_no_carry_loop_without_inputs_does_not_trip_carry_guard(tmp_path) -> None:
+    """A no-carry loop with NO inputs must never enter the carry path.
+
+    This guards the shared `is_carry_iteration` gate's specificity. If the gate
+    regressed to fire for any loop on iteration > 1 (dropping its `carry` conjunct),
+    this node — which has no `template_config` and no resolved inputs — would raise
+    `LoopCarryError` ("no inputs mapping" from the engine guard, or "no template
+    configuration" from `carry_effective_config`) on round 2. Running cleanly to the
+    cap proves carry stays inert for non-carry loops.
+    """
+    body = """# No Inputs Loop
+
+## Steps
+
+### step
+
+Always continue; runs to the cap.
+
+- type: code
+
+```python code
+result: dict = {"more": True}
+```
+
+- loop:
+    while: ${step.result.more}
+    max_iterations: 2
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["step"] == 2
+    assert r.shared_after["step"]["loop_stopped"] == "max_iterations"
+
+
+def test_permissive_mode_still_raises_for_unresolved_carry(tmp_path) -> None:
+    child = tmp_path / "dynamic-child.pflow.md"
+    child.write_text(
+        """# Dynamic Child
+
+## Inputs
+
+### state
+
+Carried state.
+
+- type: string
+
+## Outputs
+
+### done
+
+Never done.
+
+- type: boolean
+- source: ${emit.result.done}
+
+## Steps
+
+### emit
+
+Emit no carried field.
+
+- type: code
+
+```python code
+result: dict = {"done": False}
+```
+""",
+        encoding="utf-8",
+    )
+    ir = {
+        "ir_version": "0.1.0",
+        "template_resolution_mode": "permissive",
+        "inputs": {"child_path": {"type": "string", "required": False, "default": str(child)}},
+        "nodes": [
+            {
+                "id": "run",
+                "type": "workflow",
+                "params": {
+                    "workflow": "${child_path}",
+                    "inputs": {"state": "seed"},
+                },
+                "loop": {
+                    "carry": {"state": "${run.missing}"},
+                    "until": "${run.done}",
+                    "max_iterations": 3,
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    r = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert not r.success
+    # Carry-aware, in permissive mode: names the carried input + lists available outputs.
+    assert any("carried input 'state'" in err.message and "Available outputs" in err.message for err in r.errors)
+
+
+def test_strict_mode_carry_failure_is_carry_aware_not_generic_template_error(tmp_path) -> None:
+    """Default (strict) mode must surface a CARRY-aware error, not a generic `inputs:` one.
+
+    A first-contact agent runs on the default strict mode. When the loop body omits a
+    carried output, strict `plan_node` captures a generic "Unresolved variables in
+    parameter 'inputs'" template error — which never mentions `carry:`/the loop and
+    blames `inputs:` (where the agent wrote the *seed*, not `${run.missing}`). The
+    carry guard now runs BEFORE that raise, so both modes name the carried input, the
+    missing output, and the loop node's available outputs. (Dynamic child bypasses the
+    validate-time typo check so the RUNTIME guard is what's exercised.)
+    """
+    child = tmp_path / "dynamic-child.pflow.md"
+    child.write_text(
+        """# Dynamic Child
+
+## Inputs
+
+### state
+
+Carried state.
+
+- type: string
+
+## Outputs
+
+### done
+
+Never done.
+
+- type: boolean
+- source: ${emit.result.done}
+
+## Steps
+
+### emit
+
+Emit no carried field.
+
+- type: code
+
+```python code
+result: dict = {"done": False}
+```
+""",
+        encoding="utf-8",
+    )
+    ir = {
+        "ir_version": "0.1.0",
+        # NOTE: no `template_resolution_mode` → default strict.
+        "inputs": {"child_path": {"type": "string", "required": False, "default": str(child)}},
+        "nodes": [
+            {
+                "id": "run",
+                "type": "workflow",
+                "params": {"workflow": "${child_path}", "inputs": {"state": "seed"}},
+                "loop": {"carry": {"state": "${run.missing}"}, "until": "${run.done}", "max_iterations": 3},
+            }
+        ],
+        "edges": [],
+    }
+
+    r = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert not r.success
+    # Carry-aware message wins over the generic template error in strict mode.
+    assert any(
+        "carried input 'state'" in err.message
+        and "did not produce output 'missing'" in err.message
+        and "Available outputs: done" in err.message
+        for err in r.errors
+    ), [err.message for err in r.errors]
+    # The misleading generic `inputs:` template error must NOT be what surfaces.
+    assert not any("Unresolved variables in parameter 'inputs'" in err.message for err in r.errors)
+
+
+def test_strict_mode_code_body_nested_carry_is_carry_aware() -> None:
+    """A CODE body carries via a NESTED ref `${node.result.field}`. The strict carry guard must
+    diagnose the FULL path (`result.next`), not bail because the first segment `result` exists —
+    so the most common inline loop shape (code) gets the carry-aware message in default strict
+    mode, names the inner missing field, lists `result`'s keys (not the result/stderr/stdout
+    noise), and offers a paste-able nested example — never the generic `inputs:` template error.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        # default strict mode (no template_resolution_mode)
+        "nodes": [
+            {
+                "id": "tick",
+                "type": "code",
+                "params": {"inputs": {"acc": 0}, "code": 'acc: int\nresult: dict = {"done": False}'},
+                "loop": {
+                    "carry": {"acc": "${tick.result.next}"},
+                    "until": "${tick.result.done}",
+                    "max_iterations": 3,
+                },
+            }
+        ],
+        "edges": [],
+    }
+    r = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert not r.success
+    assert any(
+        "carried input 'acc'" in err.message
+        and "did not produce output 'result.next'" in err.message
+        and "Available outputs: done" in err.message
+        # paste-able NESTED example in the suggestion (not the wrong top-level ${tick.next})
+        and "${tick.result.done}" in " ".join(err.suggestions or [])
+        for err in r.errors
+    ), [(err.message, err.suggestions) for err in r.errors]
+    assert not any("Unresolved variables in parameter 'inputs'" in err.message for err in r.errors)
+
+
+def test_permissive_mode_code_body_nested_carry_lists_inner_fields_not_noise() -> None:
+    """GAP 3 (permissive): a code-body nested carry must also get the high-quality message — name
+    the inner missing field (`result.next`) and list `result`'s keys (`done`), NOT the top-level
+    `result, stderr, stdout` noise. Here the runtime guard (not plan_node) is what fires.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "template_resolution_mode": "permissive",
+        "nodes": [
+            {
+                "id": "tick",
+                "type": "code",
+                "params": {"inputs": {"acc": 0}, "code": 'acc: int\nresult: dict = {"done": False}'},
+                "loop": {
+                    "carry": {"acc": "${tick.result.next}"},
+                    "until": "${tick.result.done}",
+                    "max_iterations": 3,
+                },
+            }
+        ],
+        "edges": [],
+    }
+    r = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert not r.success
+    msgs = [err.message for err in r.errors]
+    assert any("did not produce output 'result.next'" in m and "Available outputs: done" in m for m in msgs), msgs
+    # The misleading top-level result/stderr/stdout list must NOT be what's shown.
+    assert not any("stderr, stdout" in m for m in msgs), msgs
+
+
+def test_diagnose_carry_ref_full_path_and_safe_deferral() -> None:
+    """Unit-cover `_diagnose_carry_ref`: full-path absence detection PLUS the conservative
+    deferrals (coalesce, bare node, descent through a non-dict) that keep it from claiming an
+    absence it can't prove — the branch that prevents false positives on JSON-string/list outputs.
+    """
+    from pflow.runtime.engine.engine import _diagnose_carry_ref as dx
+
+    # top-level absent → (missing_path, available_at_level, resolved_prefix)
+    assert dx("${n.missing}", "n", {"a": 1, "b": 2}) == ("missing", ["a", "b"], "")
+    # nested absent → full path, PARENT-level keys, resolved prefix
+    assert dx("${n.result.next}", "n", {"result": {"done": False}, "stderr": ""}) == (
+        "result.next",
+        ["done"],
+        "result",
+    )
+    # fully resolved → None (not a failure)
+    assert dx("${n.result.done}", "n", {"result": {"done": False}}) is None
+    # DEFER (None) — descent through a non-dict value (JSON string / list) we won't guess at
+    assert dx("${n.blob.x}", "n", {"blob": '{"x": 1}'}) is None
+    assert dx("${n.items.x}", "n", {"items": [1, 2]}) is None
+    # DEFER — coalesce (its ?? fallback may resolve), bare node (whole-output carry)
+    assert dx("${n.a ?? n.b}", "n", {"z": 1}) is None
+    assert dx("${n}", "n", {"z": 1}) is None
+    # engine-internal keys filtered from available outputs
+    assert dx("${n.missing}", "n", {"a": 1, "loop_stopped": "x", "_hidden": 2}) == ("missing", ["a"], "")
+
+
+def test_shell_carry_threads_into_command_text_across_rounds(tmp_path) -> None:
+    """End-to-end parity: for a SHELL body the carried value reaches the body ONLY via the
+    command text (`${state}`), not `inputs:`. Assert the carried stdout accumulates across
+    rounds — an inert carry would re-use the seed and every round would be identical ("ab").
+
+    Closes the one parity claim that was previously proven by construction + validation but
+    not by execution (carry RUN tests otherwise use code/workflow bodies). `until: ${c.exit_code}`
+    keeps looping (exit 0 is a falsy *int*, so it validates and never trips the string guard).
+    """
+    body = """# Shell Carry
+
+## Steps
+
+### c
+
+Append a char to the carried stdout each round.
+
+- type: shell
+- inputs:
+    state: a
+- command: printf '%s' "${state}b"
+
+- loop:
+    carry:
+      state: ${c.stdout}
+    until: ${c.exit_code}
+    max_iterations: 3
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["c"] == 3
+    # seed "a" → "ab" → "abb" → "abbb": the prior round's stdout threaded into the command.
+    assert r.shared_after["c"]["stdout"].strip() == "abbb"
 
 
 def test_templated_max_iterations_caps_at_runtime(tmp_path) -> None:

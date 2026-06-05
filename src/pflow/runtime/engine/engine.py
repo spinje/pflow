@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Optional
 
-from pflow.core.exceptions import CompilationError
+from pflow.core.exceptions import CompilationError, LoopCarryError, LoopConditionError
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
@@ -50,10 +50,10 @@ from .instrumentation import (
     record_trace,
     write_memo_cache,
 )
-from .loop_control import evaluate_loop_condition, loop_runtime_scope, resolve_loop_cap
+from .loop_control import evaluate_loop_condition, is_carry_iteration, loop_runtime_scope, resolve_loop_cap
 from .namespaced_store import NamespacedSharedStore
-from .plan_node import plan_node
-from .template_resolution import resolve_templates
+from .plan_node import NodePlan, plan_node
+from .template_resolution import contains_unresolved_template, resolve_templates
 from .types import CompiledWorkflow, NodeConfig
 
 # Map node class names to failure categories for step 17.5 (error-action
@@ -70,6 +70,137 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 # child engine.run completes when the parent had no value installed. Module
 # level so deeply-nested sub-workflow restores don't allocate per call.
 _EMPTY_PROMPT_CACHE: Mapping[str, CacheRenderContext] = MappingProxyType({})
+
+
+def _diagnose_carry_ref(template: str, node_id: str, latest: Any) -> Optional[tuple[str, list[str], str]]:
+    """For a simple self-ref carry ``${node_id.a.b...}``, walk the loop node's latest
+    output along the WHOLE path and, if a segment is absent, return
+    ``(missing_path, available_keys_at_that_level, resolved_prefix)``; else ``None``.
+
+    Unlike a first-segment-only check, this diagnoses NESTED refs — a ``code`` body's
+    ``${tick.result.next}`` (``result`` exists but has no ``next``) is reported at the
+    ``result.next`` level with ``result``'s keys as the available outputs, so the most
+    common inline carry shape gets the carry-aware message instead of falling through
+    to the generic ``inputs:`` template error.
+
+    Conservative by construction — returns ``None`` (defer to the value-based permissive
+    check / generic strict error) for:
+    - coalesce/complex refs (their ``??`` fallback may resolve);
+    - a bare ``${node_id}`` whole-output carry (never "absent");
+    - any path that descends through a NON-dict value (e.g. a JSON string or list),
+      which might still resolve at runtime — never claim absence we can't prove.
+    """
+    if not isinstance(latest, dict):
+        return None
+    var = TemplateResolver.extract_simple_template_var(template)
+    if var is None or TemplateResolver.is_coalesce_expression(var):
+        return None
+    prefix = f"{node_id}."
+    if not var.startswith(prefix):
+        return None
+    # Path after the node id; strip any [index] suffix per segment (dict-keyed walk).
+    segments = [seg.split("[", 1)[0] for seg in var[len(prefix) :].split(".") if seg]
+    current: Any = latest
+    walked: list[str] = []
+    for seg in segments:
+        if not isinstance(current, dict):
+            return None  # descends into a non-dict — may still resolve; defer
+        if seg not in current:
+            return (".".join([*walked, seg]), _loop_available_outputs(current), ".".join(walked))
+        walked.append(seg)
+        current = current[seg]
+    return None  # fully resolved — not a carry failure
+
+
+def _loop_available_outputs(latest: Any) -> list[str]:
+    """The output keys an agent can carry from a given output level — minus engine-internal ones."""
+    if not isinstance(latest, dict):
+        return []
+    return sorted(k for k in latest if not str(k).startswith("_") and k != "loop_stopped")
+
+
+def _carry_unresolved_error(
+    node_id: str, key: str, template: str, missing_path: Optional[str], available: list[str], parent_prefix: str
+) -> LoopCarryError:
+    avail_str = ", ".join(available) if available else "(none)"
+    produced = f"output '{missing_path}'" if missing_path else "the carried output"
+    if available:
+        # Reconstruct the correct ref depth so the example is paste-able for nested
+        # (code) bodies too: ${node.result.done}, not the wrong top-level ${node.done}.
+        ref_root = f"{node_id}.{parent_prefix}." if parent_prefix else f"{node_id}."
+        fix = (
+            "A carried input is fed from this loop node's own output each iteration. "
+            f"Reference one of its outputs ({avail_str}) — e.g. `{key}: ${{{ref_root}{available[0]}}}` — "
+            "or have the loop node emit that output."
+        )
+    else:
+        fix = (
+            "A carried input is fed from this loop node's own output each iteration. "
+            "Reference a declared output of the loop, or have the loop node emit the carried value."
+        )
+    return LoopCarryError(
+        f"Loop '{node_id}': carried input '{key}' could not be resolved — loop node "
+        f"'{node_id}' did not produce {produced} this iteration (carried via {template}). "
+        f"Available outputs: {avail_str}.",
+        node_id=node_id,
+        suggestion=fix,
+    )
+
+
+def _assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: dict[str, Any]) -> None:
+    """Make a carried output the body didn't produce this iteration fail LOUD and
+    CARRY-AWARE in every template-resolution mode.
+
+    Carry is structural plumbing, so an unresolved carried input must raise a
+    ``LoopCarryError`` that names the loop node and lists its available outputs —
+    never a generic ``inputs:`` template error (strict) nor a silent literal
+    (permissive). Two detection paths feed one message:
+
+    - resolved (permissive, or a clean strict miss): ``plan.resolved_params`` is
+      populated; a carried key absent from, or still holding its ``${...}`` ref in,
+      the resolved inputs is unresolved.
+    - strict failure: ``plan_node`` raised (``plan.template_exception`` set, no
+      resolved params); a carried *self-reference* whose output the body omitted is
+      the failure. Coalesce/complex refs are deferred to the generic error.
+    """
+    carry = config.loop_config.carry if config.loop_config is not None else {}
+    if not carry:
+        return
+    node_id = config.node_id
+    latest = shared.get(node_id)
+    available = _loop_available_outputs(latest)
+
+    resolved_params = plan.resolved_params
+    resolved_inputs = resolved_params.get("inputs") if isinstance(resolved_params, dict) else None
+    if not isinstance(resolved_inputs, dict):
+        resolved_inputs = None
+
+    # Resolved cleanly but produced no inputs mapping — structural (shouldn't happen for
+    # a validated carry loop, but keep the loud guard instead of silently skipping).
+    if resolved_inputs is None and plan.template_exception is None:
+        raise LoopCarryError(
+            f"Loop '{node_id}' carried inputs could not be resolved because the node produced no inputs mapping.",
+            node_id=node_id,
+            suggestion="Seed every carried key in the node's `inputs:` mapping.",
+        )
+
+    for key, template in carry.items():
+        diag = _diagnose_carry_ref(template, node_id, latest)
+        if resolved_inputs is not None:
+            unresolved = key not in resolved_inputs or contains_unresolved_template(resolved_inputs[key], template)
+        else:
+            # strict: plan_node raised before resolving — only flag a self-ref whose
+            # output the body demonstrably omitted (so an unrelated template error
+            # isn't masked by a misleading carry message; it falls through to raise).
+            unresolved = plan.template_exception is not None and diag is not None
+        if unresolved:
+            if diag is not None:
+                missing_path, key_available, parent_prefix = diag
+            else:
+                # coalesce/complex ref, or a non-dict descent we won't guess at:
+                # name no specific field; list the loop node's top-level outputs.
+                missing_path, key_available, parent_prefix = None, available, ""
+            raise _carry_unresolved_error(node_id, key, template, missing_path, key_available, parent_prefix)
 
 
 def build_prompt_cache_dict(
@@ -602,7 +733,16 @@ class WorkflowEngine:
         if loop_config is None:  # caller guards; defensive for type-narrowing
             return False
 
-        should_continue = evaluate_loop_condition(loop_config.while_template, shared, node_id)
+        if loop_config.until_template is not None:
+            should_continue = evaluate_loop_condition(loop_config.until_template, shared, node_id, until=True)
+        elif loop_config.while_template is not None:
+            should_continue = evaluate_loop_condition(loop_config.while_template, shared, node_id)
+        else:
+            raise LoopConditionError(
+                f"Node '{node_id}' loop has neither `while:` nor `until:` configured.",
+                node_id=node_id,
+                suggestion="Declare exactly one loop condition: `while: ${node.output}` or `until: ${node.output}`.",
+            )
         if not should_continue:
             self._mark_loop_stopped(shared, node_id, "condition")
             return False
@@ -614,7 +754,7 @@ class WorkflowEngine:
 
         if loop_counts[node_id] >= cap:
             self._mark_loop_stopped(shared, node_id, "max_iterations")
-            self._emit_loop_cap_advisory(shared, node_id, cap)
+            self._emit_loop_cap_advisory(shared, node_id, cap, until=loop_config.until_template is not None)
             return False
 
         return True
@@ -627,12 +767,18 @@ class WorkflowEngine:
             node_output["loop_stopped"] = reason
 
     @staticmethod
-    def _emit_loop_cap_advisory(shared: dict[str, Any], node_id: str, cap: int) -> None:
+    def _emit_loop_cap_advisory(shared: dict[str, Any], node_id: str, cap: int, *, until: bool = False) -> None:
         """Emit a non-degrading INFO advisory when a loop stops because it hit its cap.
 
         Mirrors the empty-input batch advisory (``batch_executor._push_batch_warnings``):
         an ``INFO`` Diagnostic written to ``__warnings__`` surfaces in reports / CLI /
         JSON without flipping the workflow to DEGRADED.
+
+        The wording is polarity-aware (``until``): a ``while:`` loop caps with its
+        condition still *truthy* (it never went falsy); an ``until:`` loop caps with
+        its condition still *falsy* (it never went truthy). Hard-coding the ``while``
+        phrasing for an ``until`` loop would tell the agent to make the source "go
+        falsy" — the exact polarity confusion ``until:`` exists to prevent.
 
         Overwrite precedence (deliberate): this writes ``__warnings__[node_id]``
         unconditionally. It is reached only on the non-error re-entry path, and the
@@ -646,16 +792,19 @@ class WorkflowEngine:
         """
         from pflow.core.diagnostic import Diagnostic, Severity
 
+        keyword = "until" if until else "while"
+        still_state = "falsy" if until else "truthy"
+        target_state = "truthy" if until else "falsy"
         shared.setdefault("__warnings__", {})[node_id] = Diagnostic(
             severity=Severity.INFO,
             title="Loop reached max_iterations",
             message=(
                 f"Loop node '{node_id}' stopped after reaching its max_iterations cap ({cap}) "
-                f"with its condition still truthy."
+                f"with its `{keyword}:` condition still {still_state}."
             ),
             suggestions=[
                 "Expected when capping a stop-on-condition loop. If the loop should have drained "
-                "naturally, raise max_iterations or check that the `while:` source eventually goes falsy.",
+                f"naturally, raise max_iterations or check that the `{keyword}:` source eventually goes {target_state}.",
             ],
             node_id=node_id,
             source="runtime",
@@ -744,7 +893,15 @@ class WorkflowEngine:
         return "error"
 
     def _execute_node(self, node: Any, config: NodeConfig, shared: dict[str, Any]) -> str:  # noqa: C901
-        """Execute a single node with all runtime concerns."""
+        """Execute a single node with all runtime concerns.
+
+        The carried-loop input override (round N>1) lives in ``plan_node`` —
+        resolution + config-hash + execution all observe the effective inputs.
+        Here we assert that no carried input was left unresolved and raise a
+        carry-aware error in EITHER mode — strict (``plan_node`` captured a
+        template error) or permissive (``plan_node`` left a literal ``${...}``).
+        See ``_assert_carried_inputs_resolved``.
+        """
         start_time = time.perf_counter()
         shared_keys_before = set(shared.keys()) if (self.trace or self.metrics) else set()
 
@@ -771,6 +928,15 @@ class WorkflowEngine:
 
         try:
             plan = plan_node(node, config, shared)
+
+            # Task 166: carry owns its own error in BOTH resolution modes. Run this
+            # BEFORE re-raising a strict template_exception so a carried output the
+            # body omitted surfaces as a carry-aware LoopCarryError (naming the loop
+            # node + listing available outputs), not a generic `inputs:` template
+            # error. Skipped on cache hits (a carry iteration is always a re-entry
+            # miss, but stay defensive). Permissive mode lands here with no exception.
+            if is_carry_iteration(config, shared) and plan.status not in ("cached_memo", "cached_in_process"):
+                _assert_carried_inputs_resolved(config, plan, shared)
 
             if plan.template_exception is not None:
                 raise plan.template_exception

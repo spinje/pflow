@@ -69,8 +69,29 @@ def test_valid_loop_passes_schema() -> None:
 def test_whlie_typo_rejected_by_schema() -> None:
     with pytest.raises(SchemaValidationError) as exc:
         validate_ir(_ir(_BASE.replace("while:", "whlie:")))
-    # additionalProperties:false + required:while → 'while' is required
-    assert "while" in str(exc.value)
+    # additionalProperties:false is the thing that catches misspelled loop keys.
+    assert "whlie" in str(exc.value)
+
+
+def test_until_loop_passes_schema() -> None:
+    ir = _ir(_BASE.replace("while: ${counter.stdout}", "until: ${counter.done}"))
+    validate_ir(ir)
+    assert ir["nodes"][0]["loop"]["until"] == "${counter.done}"
+
+
+def test_carry_loop_passes_schema() -> None:
+    md = _BASE.replace(
+        "while: ${counter.stdout}",
+        "carry:\n      state: ${counter.next_state}\n    while: ${counter.more}",
+    )
+    ir = _ir(md)
+    validate_ir(ir)
+    assert ir["nodes"][0]["loop"]["carry"] == {"state": "${counter.next_state}"}
+
+
+def test_non_dict_carry_rejected_by_schema() -> None:
+    with pytest.raises(SchemaValidationError):
+        validate_ir(_ir(_BASE.replace("while: ${counter.stdout}", "carry: ${counter.x}\n    while: ${counter.more}")))
 
 
 def test_max_iterations_zero_rejected_by_schema() -> None:

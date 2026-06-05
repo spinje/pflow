@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.suggestion_utils import find_similar_items
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
@@ -133,6 +134,9 @@ def validate_workflow_templates(
         # Only loop conditions remain to check (no node-param templates).
         diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
         diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
+        diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
+        diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
+        diagnostics.extend(_validate_loop_carry_literal_fallback(workflow_ir))
         return diagnostics
 
     logger.debug(
@@ -162,11 +166,14 @@ def validate_workflow_templates(
     # Pass 9: Validate code-node input annotations against upstream template types
     diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
 
-    # Pass 10 (issue #445): Validate loop `while:` conditions — typed-output gate
+    # Pass 10 (issue #445): Validate loop `while:`/`until:` conditions — typed-output gate
     # (reject known-string sources like ${shell.stdout}) + operator rejection
     # (reject ${x > 0} and arithmetic). Belt-and-suspenders with the runtime
     # str-condition raise in the engine.
     diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
+    diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
+    diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
+    diagnostics.extend(_validate_loop_carry_literal_fallback(workflow_ir))
 
     errors = [d for d in diagnostics if d.severity == Severity.ERROR]
     warnings = [d for d in diagnostics if d.severity != Severity.ERROR]
@@ -205,26 +212,33 @@ _KNOWN_STRING_TYPES = frozenset({"string", "str"})
 
 
 def _validate_loop_conditions(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
-    """Validate `loop: while:` conditions (issue #445), one diagnostic per loop node."""
+    """Validate `loop: while:` / `loop: until:` conditions, one diagnostic per field."""
     diagnostics: list[Diagnostic] = []
     for node in workflow_ir.get("nodes", []):
         loop_config = node.get("loop")
         if not isinstance(loop_config, dict):
             continue
         node_id = node.get("id")
-        while_template = loop_config.get("while")
-        if not isinstance(node_id, str) or not isinstance(while_template, str):
+        if not isinstance(node_id, str):
             continue
-        diag = _loop_condition_diagnostic(node_id, while_template, workflow_ir, node_outputs)
-        if diag is not None:
-            diagnostics.append(diag)
+        for field_name in ("while", "until"):
+            condition_template = loop_config.get(field_name)
+            if not isinstance(condition_template, str):
+                continue
+            diag = _loop_condition_diagnostic(node_id, field_name, condition_template, workflow_ir, node_outputs)
+            if diag is not None:
+                diagnostics.append(diag)
     return diagnostics
 
 
 def _loop_condition_diagnostic(
-    node_id: str, while_template: str, workflow_ir: dict[str, Any], node_outputs: dict[str, Any]
+    node_id: str,
+    field_name: str,
+    condition_template: str,
+    workflow_ir: dict[str, Any],
+    node_outputs: dict[str, Any],
 ) -> Optional[Diagnostic]:
-    """Return the (at most one) ERROR for a `while:` condition, or None if valid.
+    """Return the (at most one) ERROR for a loop condition, or None if valid.
 
     - **Operator rejection**: `while: ${x > 0}` / arithmetic is unsupported — the
       condition is truthiness over a typed value, not an expression.
@@ -237,15 +251,15 @@ def _loop_condition_diagnostic(
     """
     from pflow.runtime.template_validation.type_checker import infer_template_type
 
-    if any(ch in _LOOP_OPERATOR_CHARS for ch in while_template):
-        return _make_loop_operator_diagnostic(node_id, while_template)
+    if any(ch in _LOOP_OPERATOR_CHARS for ch in condition_template):
+        return _make_loop_operator_diagnostic(node_id, field_name, condition_template)
 
-    var = TemplateResolver.extract_simple_template_var(while_template)
+    var = TemplateResolver.extract_simple_template_var(condition_template)
     if var is None:
         # Not a single ${...} reference. The schema pattern (^\$\{.+\}$) is too broad to
         # catch a multi-reference like `${a}${b}`, so reject it HERE rather than leaving the
         # runtime to silently single-pass on it (the runtime stops on this shape — issue #445).
-        return _make_loop_shape_diagnostic(node_id, while_template)
+        return _make_loop_shape_diagnostic(node_id, field_name, condition_template)
 
     # NOTE: a bare node reference (`while: ${c}`, no field) needs no loop-specific
     # check here — it is already rejected by the generic template validator ("Invalid
@@ -259,18 +273,18 @@ def _loop_condition_diagnostic(
             continue
         inferred = infer_template_type(operand, workflow_ir, node_outputs)
         if inferred in _KNOWN_STRING_TYPES:
-            return _make_loop_string_type_diagnostic(node_id, while_template, operand, str(inferred))
+            return _make_loop_string_type_diagnostic(node_id, field_name, condition_template, operand, str(inferred))
     return None
 
 
-def _make_loop_operator_diagnostic(node_id: str, while_template: str) -> Diagnostic:
+def _make_loop_operator_diagnostic(node_id: str, field_name: str, condition_template: str) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
         title="Validation Error",
         node_id=node_id,
         message=(
-            f"Node '{node_id}' `loop: while:` is '{while_template}', which uses a comparison or "
+            f"Node '{node_id}' `loop: {field_name}:` is '{condition_template}', which uses a comparison or "
             f"arithmetic operator. The loop condition is truthiness over a typed value, not an expression."
         ),
         suggestions=[
@@ -279,18 +293,18 @@ def _make_loop_operator_diagnostic(node_id: str, while_template: str) -> Diagnos
             "If you need a comparison, compute it in the loop body and reference the boolean output: "
             "`while: ${step.should_continue}`.",
         ],
-        context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.{field_name}"},
     )
 
 
-def _make_loop_shape_diagnostic(node_id: str, while_template: str) -> Diagnostic:
+def _make_loop_shape_diagnostic(node_id: str, field_name: str, condition_template: str) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
         title="Validation Error",
         node_id=node_id,
         message=(
-            f"Node '{node_id}' `loop: while:` is '{while_template}', which is not a single "
+            f"Node '{node_id}' `loop: {field_name}:` is '{condition_template}', which is not a single "
             f"${{...}} reference. The loop condition must be one reference to a typed output "
             f"whose truthiness decides whether to continue."
         ),
@@ -299,18 +313,20 @@ def _make_loop_shape_diagnostic(node_id: str, while_template: str) -> Diagnostic
             "(counts to 0), or a boolean. Combine multiple signals in the loop body and "
             "reference the single boolean output: `while: ${step.should_continue}`.",
         ],
-        context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.{field_name}"},
     )
 
 
-def _make_loop_string_type_diagnostic(node_id: str, while_template: str, var: str, inferred: str) -> Diagnostic:
+def _make_loop_string_type_diagnostic(
+    node_id: str, field_name: str, condition_template: str, var: str, inferred: str
+) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
         title="Validation Error",
         node_id=node_id,
         message=(
-            f"Node '{node_id}' `loop: while:` references '{while_template}', whose type is "
+            f"Node '{node_id}' `loop: {field_name}:` references '{condition_template}', whose type is "
             f"'{inferred}' (a string). String truthiness is a foot-gun — a non-empty string like "
             f"'0\\n' or 'false' is truthy, so the loop would never stop on those values."
         ),
@@ -321,9 +337,226 @@ def _make_loop_string_type_diagnostic(node_id: str, while_template: str, var: st
         ],
         context={
             "category": "validation",
-            "path": f"nodes[id={node_id}].loop.while",
-            "template": while_template,
+            "path": f"nodes[id={node_id}].loop.{field_name}",
+            "template": condition_template,
         },
+    )
+
+
+def _validate_loop_carry_refs(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
+    """Validate carry refs against precise loop-node outputs when available."""
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        loop_config = node.get("loop")
+        if not isinstance(loop_config, dict):
+            continue
+        carry = loop_config.get("carry")
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not isinstance(carry, dict):
+            continue
+        if not _loop_outputs_are_precise(node, node_outputs):
+            continue
+        available = _loop_declared_outputs(node_id, node_outputs)
+        for key, value in carry.items():
+            if not isinstance(value, str):
+                continue
+            output_name = _carry_value_unknown_output(value, node_id, node_outputs)
+            if output_name:
+                diagnostics.append(
+                    _make_loop_carry_unknown_output_diagnostic(node_id, str(key), value, output_name, available)
+                )
+    return diagnostics
+
+
+def _loop_declared_outputs(node_id: str, node_outputs: dict[str, Any]) -> list[str]:
+    """The loop node's carryable top-level output names (from the namespaced node_outputs keys).
+
+    Excludes ``loop_stopped`` — it's the engine-injected stop-reason marker, only present once
+    the loop ends, so it's never a meaningful carry source mid-loop.
+    """
+    names = {
+        key[len(node_id) + 1 :].split(".", 1)[0].split("[", 1)[0]
+        for key in node_outputs
+        if key.startswith(f"{node_id}.")
+    }
+    names.discard("loop_stopped")
+    return sorted(names)
+
+
+def _carry_value_unknown_output(value: str, node_id: str, node_outputs: dict[str, Any]) -> Optional[str]:
+    """Return the first self-referencing output segment in a carry value that the loop
+    node does NOT declare (a typo), or None when every self-ref operand is declared.
+
+    Coalesce is checked operand-by-operand, skipping literals — mirrors the loop
+    CONDITION validator. Parsing the whole `${c.next_state ?? "start"}` as one path would
+    read the output as `next_state ?? "start"` and falsely reject a valid carry; splitting
+    first checks each self-ref operand against the declared outputs. Non-self-ref operands
+    are left to the self-ref check in data_flow.
+    """
+    var = TemplateResolver.extract_simple_template_var(value)
+    if var is None:
+        return None
+    operands = TemplateResolver.split_coalesce_operands(var) if TemplateResolver.is_coalesce_expression(var) else [var]
+    for operand in operands:
+        if TemplateResolver.is_literal_operand(operand):
+            continue
+        if TemplateResolver.extract_root_node_id(operand) != node_id:
+            continue
+        output_name = TemplateResolver.extract_first_field_segment(operand)
+        if output_name and f"{node_id}.{output_name}" not in node_outputs:
+            return output_name
+    return None
+
+
+def _loop_outputs_are_precise(node: dict[str, Any], node_outputs: dict[str, Any]) -> bool:
+    node_id = node.get("id")
+    node_type = node.get("type")
+    if not isinstance(node_id, str) or not isinstance(node_type, str):
+        return False
+    if node_outputs.get(node_id, {}).get("is_workflow_dynamic"):
+        return False
+    has_namespaced_outputs = any(key.startswith(f"{node_id}.") for key in node_outputs)
+    return has_namespaced_outputs and node_type in {"workflow", "pflow.runtime.workflow_executor", "code"}
+
+
+def _make_loop_carry_unknown_output_diagnostic(
+    node_id: str, key: str, template: str, output_name: str, available: list[str]
+) -> Diagnostic:
+    similar = find_similar_items(output_name, available, method="fuzzy")
+    context: dict[str, Any] = {
+        "category": "validation",
+        "path": f"nodes[id={node_id}].loop.carry.{key}",
+        "template": template,
+        "output": output_name,
+        "available_fields": available,
+        "available_fields_total": len(available),
+        "available_fields_label": "outputs",
+    }
+    if similar:
+        context["similar_names"] = similar
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: carry:` entry '{key}' references '{template}', but loop node "
+            f"'{node_id}' does not declare output '{output_name}'."
+        ),
+        suggestions=[
+            "Reference one of the loop node's declared outputs, or update the body workflow/code output declaration.",
+        ],
+        context=context,
+    )
+
+
+def _validate_loop_carry_prompt_usage(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Warn when shell/llm carry inputs are not interpolated into their executable text."""
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        node_type = node.get("type")
+        if node_type not in {"shell", "llm"}:
+            continue
+        node_id = node.get("id")
+        loop_config = node.get("loop")
+        carry = loop_config.get("carry") if isinstance(loop_config, dict) else None
+        if not isinstance(node_id, str) or not isinstance(carry, dict):
+            continue
+        text = _loop_prompt_sink_text(node)
+        # Collect the ROOT id of every template referenced in the prompt/command text.
+        # A carried key used via a nested path (`${state.summary}`), index
+        # (`${state[0]}`), or coalesce (`${state ?? ""}`) still roots at `state`, so it
+        # counts as referenced — an exact `${state}` substring check false-positives on
+        # all of those forms (the carry IS used, just not bare).
+        referenced_roots: set[str] = set()
+        for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(text):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                if TemplateResolver.is_literal_operand(operand):
+                    continue
+                root = TemplateResolver.extract_root_node_id(operand)
+                if root:
+                    referenced_roots.add(root)
+        for key in carry:
+            if isinstance(key, str) and key not in referenced_roots:
+                diagnostics.append(_make_loop_carry_unreferenced_warning(node_id, node_type, key))
+    return diagnostics
+
+
+def _loop_prompt_sink_text(node: dict[str, Any]) -> str:
+    params = node.get("params", {})
+    if not isinstance(params, dict):
+        return ""
+    values: list[str] = []
+    for key in ("command", "prompt", "system"):
+        value = params.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    return "\n".join(values)
+
+
+def _make_loop_carry_unreferenced_warning(node_id: str, node_type: str, key: str) -> Diagnostic:
+    sink = "command" if node_type == "shell" else "prompt/system"
+    return Diagnostic(
+        severity=Severity.WARNING,
+        source="validator",
+        title="Validation Warning",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' carries input '{key}', but the {node_type} node's {sink} text does not "
+            f"reference `${{{key}}}`. Carrying into `inputs:` alone is inert for {node_type} nodes."
+        ),
+        suggestions=[
+            f"Reference `${{{key}}}` in the node's {sink} text, or remove the carried key.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
+    )
+
+
+def _validate_loop_carry_literal_fallback(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Warn when a `carry:` value uses a LITERAL coalesce fallback (e.g. `${node.x ?? 0}`).
+
+    A literal fallback always resolves, so on a round where the loop body omits the
+    carried output the fallback resolves silently and re-seeds the carried key — the
+    loud carry guard (`_assert_carried_inputs_resolved`) never fires. That is the exact
+    silent stale-state failure carry exists to prevent. A coalesce between two real
+    outputs (`${a ?? b}`) is fine — both are body outputs — so only a literal operand
+    trips this warning.
+    """
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        loop_config = node.get("loop")
+        carry = loop_config.get("carry") if isinstance(loop_config, dict) else None
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not isinstance(carry, dict):
+            continue
+        for key, value in carry.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                continue
+            var = TemplateResolver.extract_simple_template_var(value)
+            if var is None or not TemplateResolver.is_coalesce_expression(var):
+                continue
+            operands = TemplateResolver.split_coalesce_operands(var)
+            if any(TemplateResolver.is_literal_operand(op) for op in operands):
+                diagnostics.append(_make_loop_carry_literal_fallback_warning(node_id, key, value))
+    return diagnostics
+
+
+def _make_loop_carry_literal_fallback_warning(node_id: str, key: str, template: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.WARNING,
+        source="validator",
+        title="Validation Warning",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: carry:` entry '{key}' uses a literal fallback ({template}). "
+            f"If the loop body omits the carried output on a round, the fallback resolves silently and "
+            f"re-seeds '{key}' instead of failing — the loud carry guard will not fire (silent stale state)."
+        ),
+        suggestions=[
+            f"Use a plain `${{{node_id}.output}}` reference so a missing carried output fails loudly. "
+            "Keep the literal fallback only if silent re-seeding is genuinely intended.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
     )
 
 
@@ -526,7 +759,7 @@ def _operands_in_string(value: str) -> Iterator[tuple[str, bool]]:
 
 def _node_template_value_sources(node: dict[str, Any]) -> Iterator[Any]:
     """Yield every value on a node that may carry templates: params, ``batch.items``,
-    and the loop ``while:`` / ``max_iterations:`` sources (issue #445).
+    and the loop condition / ``max_iterations:`` sources.
 
     Including the loop sources means an input used ONLY in ``while:`` isn't flagged
     "unused", and the root of ``while: ${typo.x}`` is path-validated.
@@ -537,7 +770,7 @@ def _node_template_value_sources(node: dict[str, Any]) -> Iterator[Any]:
         yield batch_config["items"]
     loop_config = node.get("loop")
     if isinstance(loop_config, dict):
-        for key in ("while", "max_iterations"):
+        for key in ("while", "until", "max_iterations"):
             value = loop_config.get(key)
             if isinstance(value, str):
                 yield value

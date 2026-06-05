@@ -31,6 +31,25 @@ def test_template_max_iterations_deferred() -> None:
     assert lc is not None and lc.max_iterations is None and lc.max_iterations_template == "${cap}"
 
 
+def test_until_condition_supported() -> None:
+    lc = _build_loop_config(_node({"until": "${n.done}", "max_iterations": 5}), False)
+    assert lc == LoopConfig(
+        while_template=None,
+        max_iterations=5,
+        max_iterations_template=None,
+        until_template="${n.done}",
+    )
+
+
+def test_carry_supported() -> None:
+    lc = _build_loop_config(
+        _node({"while": "${n.more}", "carry": {"items": "${n.remaining}"}, "max_iterations": 5}),
+        False,
+    )
+    assert lc is not None
+    assert lc.carry == {"items": "${n.remaining}"}
+
+
 def test_no_max_iterations_defaults_none() -> None:
     lc = _build_loop_config(_node({"while": "${n.x}"}), False)
     assert lc is not None and lc.max_iterations is None and lc.max_iterations_template is None
@@ -41,9 +60,19 @@ def test_batch_and_loop_mutually_exclusive() -> None:
         _build_loop_config(_node({"while": "${n.x}"}, batch={"items": [1]}), True)
 
 
-def test_missing_while_rejected() -> None:
-    with pytest.raises(CompilationError, match="missing a `while:`"):
+def test_missing_condition_rejected() -> None:
+    with pytest.raises(CompilationError, match="exactly one"):
         _build_loop_config(_node({"max_iterations": 3}), False)
+
+
+def test_both_while_and_until_rejected() -> None:
+    with pytest.raises(CompilationError, match="not both"):
+        _build_loop_config(_node({"while": "${n.more}", "until": "${n.done}"}), False)
+
+
+def test_non_dict_carry_rejected() -> None:
+    with pytest.raises(CompilationError, match="`loop: carry` must be a mapping"):
+        _build_loop_config(_node({"while": "${n.more}", "carry": "${n.x}"}), False)
 
 
 def test_max_iterations_zero_rejected() -> None:
