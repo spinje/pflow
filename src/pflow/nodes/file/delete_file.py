@@ -142,7 +142,7 @@ class DeleteFileNode(Node):
         failure_message = (
             "Failed to delete file without retrying deterministic error"
             if isinstance(exc, NonRetriableError)
-            else f"Failed to delete file after {self.max_retries} retries"
+            else f"Failed to delete file after {self.max_retries} attempts"
         )
         logger.error(
             failure_message,
@@ -158,7 +158,7 @@ class DeleteFileNode(Node):
         elif isinstance(exc, OSError) and hasattr(exc, "errno") and exc.errno == errno.EBUSY:
             error_msg = f"Error: File '{file_path}' is in use and cannot be deleted."
         else:
-            error_msg = f"Error: Could not delete '{file_path}' after {self.max_retries} retries. {exc!s}. Check if the file is locked or if there are system issues."
+            error_msg = f"Error: Could not delete '{file_path}' after {self.max_retries} attempts. {exc!s}. Check if the file is locked or if there are system issues."
 
         return error_msg
 

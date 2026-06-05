@@ -174,7 +174,7 @@ class ReadFileNode(Node):
         file_path, encoding = prep_res
 
         logger.error(
-            f"Failed to read file after {self.max_retries} retries",
+            f"Failed to read file after {self.max_retries} attempts",
             extra={"file_path": file_path, "error": str(exc), "phase": "fallback"},
         )
 
@@ -188,7 +188,7 @@ class ReadFileNode(Node):
         elif isinstance(exc, IsADirectoryError):
             error_msg = f"Error: '{file_path}' is a directory, not a file."
         else:
-            error_msg = f"Error: Could not read '{file_path}' after {self.max_retries} retries. {exc!s}. Please check if the file is locked or if there are system issues."
+            error_msg = f"Error: Could not read '{file_path}' after {self.max_retries} attempts. {exc!s}. Please check if the file is locked or if there are system issues."
 
         # Return error message that will be stored in shared["error"]
         return error_msg

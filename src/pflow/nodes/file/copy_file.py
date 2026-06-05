@@ -193,7 +193,7 @@ class CopyFileNode(Node):
         failure_message = (
             "Failed to copy file without retrying deterministic error"
             if isinstance(exc, NonRetriableError)
-            else f"Failed to copy file after {self.max_retries} retries"
+            else f"Failed to copy file after {self.max_retries} attempts"
         )
         logger.error(
             failure_message,
@@ -213,7 +213,7 @@ class CopyFileNode(Node):
         elif isinstance(exc, OSError) and ("No space left" in str(exc) or "disk full" in str(exc).lower()):
             error_msg = f"Error: No space left on device when copying to '{dest_path}'."
         else:
-            error_msg = f"Error: Could not copy '{source_path}' to '{dest_path}' after {self.max_retries} retries. {exc!s}. Check if files are locked or if there are system issues."
+            error_msg = f"Error: Could not copy '{source_path}' to '{dest_path}' after {self.max_retries} attempts. {exc!s}. Check if files are locked or if there are system issues."
 
         return error_msg
 

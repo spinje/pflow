@@ -290,7 +290,7 @@ def execute_batch(
     return action
 
 
-def _execute_batch_item(  # noqa: C901
+def _execute_batch_item(
     idx: int,
     item: Any,
     node: Any,
@@ -325,72 +325,9 @@ def _execute_batch_item(  # noqa: C901
 
     for retry in range(batch_config.max_retries):
         try:
-            # Reset namespace for this attempt
-            item_shared[config.node_id] = {}
-            item_shared[batch_config.item_alias] = item
-            item_shared["__index__"] = idx
-            item_shared["_pflow_child_workflow_paths"] = {}
-
-            # Execute via callback
-            action, last_resolutions, template_errors = execute_single_fn(node, config, item_shared)
-
-            # Extract child trace events from WorkflowExecutor (sub-workflow in batch)
-            item_child_trace_events: list[dict[str, Any]] | None = getattr(node, "_child_trace_events", None)
-            item_child_workflow_path = _pop_child_workflow_path(item_shared, config.node_id)
-
-            # Normalize result
-            raw_result = item_shared.get(config.node_id)
-            result = _normalize_result(raw_result)
-
-            # Include original item
-            if "item" in result:
-                logger.warning(
-                    "Batch result already has 'item' key, overwriting with original batch item",
-                    extra={"node_id": config.node_id, "existing_item": result["item"]},
-                )
-            result["item"] = item
-            result["original_index"] = idx
-
-            # Check for error in result dict
-            error_msg = _extract_error(result)
-
-            # Fallback: detect error via action string
-            if not error_msg and isinstance(action, str) and action.startswith("error"):
-                error_msg = "Node returned error action"
-
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            if error_msg:
-                error_info = _build_batch_error(idx, item, error_msg, None)
-                _capture_item_trace(
-                    parent_shared,
-                    config.node_id,
-                    config.node_type_name,
-                    item_shared,
-                    idx,
-                    item,
-                    duration_ms,
-                    error_info,
-                    last_resolutions,
-                    child_trace_events=item_child_trace_events,
-                    child_workflow_path=item_child_workflow_path,
-                )
-                return result, error_info, duration_ms, last_resolutions, template_errors
-
-            _capture_item_trace(
-                parent_shared,
-                config.node_id,
-                config.node_type_name,
-                item_shared,
-                idx,
-                item,
-                duration_ms,
-                None,
-                last_resolutions,
-                child_trace_events=item_child_trace_events,
-                child_workflow_path=item_child_workflow_path,
+            return _run_batch_item_once(
+                idx, item, node, config, parent_shared, execute_single_fn, batch_config, item_shared, start_time
             )
-            return result, None, duration_ms, last_resolutions, template_errors
-
         except CompilationError:
             raise  # Workflow definition is broken — never swallow, never retry
         except Exception as e:
@@ -420,6 +357,72 @@ def _execute_batch_item(  # noqa: C901
         child_workflow_path=_pop_child_workflow_path(item_shared, config.node_id),
     )
     return None, error_info, duration_ms, last_resolutions, template_errors
+
+
+def _run_batch_item_once(
+    idx: int,
+    item: Any,
+    node: Any,
+    config: NodeConfig,
+    parent_shared: dict[str, Any],
+    execute_single_fn: Callable,
+    batch_config: BatchConfig,
+    item_shared: dict[str, Any],
+    start_time: float,
+) -> tuple[dict | None, dict | None, float, dict, list]:
+    """Run one batch-item attempt: execute, normalize, capture the per-item trace.
+
+    Returns the standard ``_execute_batch_item`` result tuple (with ``error_info``
+    set when the item produced an error action, else ``None``). Raises on an exec
+    exception so the caller's retry loop owns retry/exhaustion handling.
+    """
+    # Reset namespace for this attempt
+    item_shared[config.node_id] = {}
+    item_shared[batch_config.item_alias] = item
+    item_shared["__index__"] = idx
+    item_shared["_pflow_child_workflow_paths"] = {}
+
+    # Execute via callback
+    action, last_resolutions, template_errors = execute_single_fn(node, config, item_shared)
+
+    # Extract child trace events from WorkflowExecutor (sub-workflow in batch)
+    item_child_trace_events: list[dict[str, Any]] | None = getattr(node, "_child_trace_events", None)
+    item_child_workflow_path = _pop_child_workflow_path(item_shared, config.node_id)
+
+    # Normalize result
+    raw_result = item_shared.get(config.node_id)
+    result = _normalize_result(raw_result)
+
+    # Include original item
+    if "item" in result:
+        logger.warning(
+            "Batch result already has 'item' key, overwriting with original batch item",
+            extra={"node_id": config.node_id, "existing_item": result["item"]},
+        )
+    result["item"] = item
+    result["original_index"] = idx
+
+    # Check for error in result dict, then fall back to detecting it via the action string
+    error_msg = _extract_error(result)
+    if not error_msg and isinstance(action, str) and action.startswith("error"):
+        error_msg = "Node returned error action"
+
+    duration_ms = (time.perf_counter() - start_time) * 1000
+    error_info = _build_batch_error(idx, item, error_msg, None) if error_msg else None
+    _capture_item_trace(
+        parent_shared,
+        config.node_id,
+        config.node_type_name,
+        item_shared,
+        idx,
+        item,
+        duration_ms,
+        error_info,
+        last_resolutions,
+        child_trace_events=item_child_trace_events,
+        child_workflow_path=item_child_workflow_path,
+    )
+    return result, error_info, duration_ms, last_resolutions, template_errors
 
 
 def _pop_child_workflow_path(shared: dict[str, Any], node_id: str) -> str | None:
@@ -603,7 +606,7 @@ def _execute_synthetic_warmup(
         return None
 
 
-def _collect_parallel_results(  # noqa: C901
+def _collect_parallel_results(
     future_to_idx: dict,
     items: list[Any],
     results: list,
@@ -635,36 +638,66 @@ def _collect_parallel_results(  # noqa: C901
         total = len(future_to_idx)
 
     for future in as_completed(future_to_idx):
-        try:
-            idx, result, error, duration_ms, buffered_events = future.result()
-            results[idx] = result
-            timings[idx] = duration_ms
-            completed_count += 1
+        completed_count += 1
+        had_error = _collect_one_future(
+            future,
+            future_to_idx,
+            items,
+            results,
+            timings,
+            pending_errors,
+            config,
+            callback,
+            depth,
+            completed_count,
+            total,
+        )
+        if had_error and batch_config.error_handling == "fail_fast" and not should_stop:
+            should_stop = True
+            for f in future_to_idx:
+                f.cancel()
 
-            _drain_worker_buffer(callback, buffered_events)
-            _report_batch_progress(callback, config.node_id, duration_ms, depth, completed_count, total, error is None)
 
-            if error:
-                pending_errors.append(error)
-                if batch_config.error_handling == "fail_fast" and not should_stop:
-                    should_stop = True
-                    for f in future_to_idx:
-                        f.cancel()
+def _collect_one_future(
+    future: Any,
+    future_to_idx: dict,
+    items: list[Any],
+    results: list,
+    timings: list,
+    pending_errors: list,
+    config: NodeConfig,
+    callback: Any,
+    depth: int,
+    completed_count: int,
+    total: int,
+) -> bool:
+    """Record one completed future into the shared result lists.
 
-        except CompilationError:
+    Returns True when the item produced an error (so the caller can trigger
+    fail-fast cancellation). Re-raises ``CompilationError`` and non-retriable
+    executor exceptions so the whole batch aborts.
+    """
+    try:
+        idx, result, error, duration_ms, buffered_events = future.result()
+    except CompilationError:
+        raise
+    except Exception as e:
+        if not getattr(e, "retriable", True):
             raise
-        except Exception as e:
-            if not getattr(e, "retriable", True):
-                raise
-            idx = future_to_idx[future]
-            pending_errors.append(_build_batch_error(idx, items[idx], f"Executor error: {e}", e))
-            timings[idx] = 0.0
-            completed_count += 1
-            _report_batch_progress(callback, config.node_id, 0.0, depth, completed_count, total, False)
-            if batch_config.error_handling == "fail_fast" and not should_stop:
-                should_stop = True
-                for f in future_to_idx:
-                    f.cancel()
+        idx = future_to_idx[future]
+        pending_errors.append(_build_batch_error(idx, items[idx], f"Executor error: {e}", e))
+        timings[idx] = 0.0
+        _report_batch_progress(callback, config.node_id, 0.0, depth, completed_count, total, False)
+        return True
+
+    results[idx] = result
+    timings[idx] = duration_ms
+    _drain_worker_buffer(callback, buffered_events)
+    _report_batch_progress(callback, config.node_id, duration_ms, depth, completed_count, total, error is None)
+    if error:
+        pending_errors.append(error)
+        return True
+    return False
 
 
 def _execute_parallel(
