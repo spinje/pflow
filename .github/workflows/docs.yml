@@ -1,0 +1,41 @@
+name: Docs
+
+# Validate the Mintlify docs build whenever docs change. `mint validate` runs
+# the build in strict mode and exits non-zero on any warning or error, catching
+# broken config, bad OpenAPI, and MDX syntax errors before they ship.
+#
+# Note: `mint validate` does NOT catch ${...} templates that leak out of code
+# blocks (they compile to valid-but-undefined JS expressions and only crash at
+# render). That class is covered by the check-mdx-fences pre-commit hook, which
+# also runs in CI via the `quality` job in main.yml (make check).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Mintlify CLI
+        run: npm install -g mint
+
+      - name: Validate docs build
+        working-directory: docs
+        run: mint validate
