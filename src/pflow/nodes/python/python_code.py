@@ -257,7 +257,84 @@ def extract_code_load_references(code: str) -> set[str]:
         tree = ast.parse(code)
     except SyntaxError:
         return set()
-    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    return _loaded_names(tree)
+
+
+def _loaded_names(node: ast.AST) -> set[str]:
+    """Names read (``ast.Load``) anywhere within ``node`` (an expression subtree)."""
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+
+
+def _stored_names(node: ast.AST) -> set[str]:
+    """Names written (``ast.Store``) anywhere within ``node`` (handles tuple/list unpack)."""
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+
+
+def _top_level_bound_names(node: ast.stmt) -> set[str]:
+    """Names a single module-top-level statement *unconditionally* binds.
+
+    Returns the empty set for statements that don't establish a definite binding
+    before use — ``AugAssign``, control flow, and ``for``/``with``/comprehension
+    targets simply don't match here. See ``extract_code_assigned_names`` for the
+    full rationale.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {node.name}
+    if isinstance(node, ast.Assign):
+        stores: set[str] = set()
+        for target in node.targets:
+            stores |= _stored_names(target)
+        # Drop read-before-write (`x = x[...]`, swaps). This also excludes a name
+        # reused as a comprehension target in its own RHS (`x = [x for x in ...]`),
+        # where the outer `x` IS bound — a false negative in the SAFE direction
+        # (yields "add to inputs" rather than an unsafe "remove").
+        return stores - _loaded_names(node.value)
+    if isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
+        return {node.target.id} - _loaded_names(node.value)
+    return set()
+
+
+def extract_code_assigned_names(code: str) -> set[str]:
+    """Return names *unconditionally bound* at module top level in ``code``.
+
+    A declared code-node input is a **bare** annotation (``x: T``) whose value is
+    injected from ``inputs:``. A safely-removable **local** is one the code itself
+    binds before use. This returns the names for which removing an orphan
+    annotation is safe — i.e. the name stays bound at runtime.
+
+    "Safe" means *definitely bound before use*, approximated soundly as an
+    **unconditional, top-level** binding that does not read the name in its own
+    right-hand side:
+
+    - ``x = expr`` / ``x: T = expr`` as a direct module statement (tuple/list
+      unpack targets included), excluding any target that is read in ``expr``
+      (``x = x[...]`` is a read-before-write, not a safe local).
+    - ``def x`` / ``async def x`` / ``class x`` — the definition binds ``x`` at
+      module scope; the name is recorded without descending into the body.
+
+    Deliberately NOT counted, because removing the annotation would (or could)
+    leave the name unbound at runtime — for these the only safe fix is to bind
+    the input:
+
+    - ``x += 1`` (``AugAssign`` reads the prior value before storing; a plain
+      ``x = ...`` earlier still counts via the rule above).
+    - bindings nested in ``if``/``for``/``while``/``with``/``try`` (conditional —
+      may not run).
+    - ``for`` targets (empty iterable → unbound), ``with ... as`` targets, and
+      comprehension/walrus targets (loop-scoped or conditional).
+
+    Erring toward "not safe" is intentional: a missed local just gets the
+    always-valid "add to inputs" suggestion instead of "remove". Returns an
+    empty set on SyntaxError so callers fail-open at validate time.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    assigned: set[str] = set()
+    for node in tree.body:  # module top level only — nested bindings are conditional
+        assigned |= _top_level_bound_names(node)
+    return assigned
 
 
 # Reverse of _PYTHON_TO_S1_CANONICAL for display in code-node diagnostics.

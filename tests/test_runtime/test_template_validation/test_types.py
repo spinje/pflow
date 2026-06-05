@@ -1480,6 +1480,127 @@ class TestCodeNodeInputAnnotationValidation:
         assert any("Add 'y' to the inputs dict" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
         assert not any("Remove" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
 
+    def test_orphan_annotation_assigned_suggests_remove_or_add(self, test_registry):
+        """Orphan annotation that is ALSO assigned is a local — offer remove (lead) or add.
+
+        Removing the annotation is safe because the name carries a value, so both
+        fixes are valid. Contrast with the read-but-unassigned case above, where
+        removing would leave the name unbound and only "add" is offered.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        # all_items is annotated AND assigned -> a local, not an input.
+                        "code": "x: dict\nall_items: list = [x]\nresult: int = len(all_items)",
+                        "inputs": {"x": "literal_value"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [
+            d for d in errors if "has no corresponding entry in 'inputs'" in d.message and "all_items" in d.message
+        ]
+        assert len(annotation_errors) == 1
+        suggestions = annotation_errors[0].suggestions or []
+        # Both fixes present...
+        assert any("Remove the annotation 'all_items" in s and "local variable" in s for s in suggestions), suggestions
+        assert any("add 'all_items' to the inputs dict" in s.lower() for s in suggestions), suggestions
+        # ...and the local reading leads.
+        assert "Remove" in suggestions[0], suggestions
+
+    def test_orphan_annotation_conditional_assignment_is_not_safe_local(self, test_registry):
+        """Orphan assigned only inside `if` may be unbound at runtime — add, don't lead with remove (C1)."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "items: list\nif True:\n    items = []\nresult: int = len(items)",
+                        "inputs": {},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann = [d for d in errors if "Annotation 'items: list'" in d.message]
+        assert len(ann) == 1, [d.message for d in errors]
+        suggestions = ann[0].suggestions or []
+        assert any("Add 'items' to the inputs dict" in s for s in suggestions), suggestions
+        assert not any("local variable" in s for s in suggestions), suggestions
+
+    def test_orphan_annotation_augmented_assignment_is_not_safe_local(self, test_registry):
+        """`count += 1` reads before storing, so removing the annotation unbinds it — add, not remove (C4)."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "count: int\ncount += 1\nresult: int = count",
+                        "inputs": {},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann = [d for d in errors if "Annotation 'count: int'" in d.message]
+        assert len(ann) == 1, [d.message for d in errors]
+        suggestions = ann[0].suggestions or []
+        assert any("Add 'count' to the inputs dict" in s for s in suggestions), suggestions
+        assert not any("local variable" in s for s in suggestions), suggestions
+
+    def test_orphan_annotation_on_def_name_suggests_remove(self, test_registry):
+        """A def name is a module-level local binding — removing the orphan annotation is right (C2)."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        "code": "helper: Any\ndef helper():\n    return 1\nresult: int = helper()",
+                        "inputs": {},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann = [d for d in errors if "Annotation 'helper: Any'" in d.message]
+        assert len(ann) == 1, [d.message for d in errors]
+        suggestions = ann[0].suggestions or []
+        assert any("Remove the annotation 'helper" in s and "local variable" in s for s in suggestions), suggestions
+        assert "Remove" in suggestions[0], suggestions
+
+    def test_orphan_batch_alias_assigned_preserves_alias_suggestion(self, test_registry):
+        """An assigned batch alias still needs `item: ${item}` — the alias isn't injected into exec (C3)."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batched",
+                    "type": "code",
+                    "params": {"code": "item: dict\nitem = {'k': 1}\nresult: dict = item"},
+                    "batch": {"items": [1, 2, 3]},  # default alias = "item"
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        ann = [d for d in errors if "Annotation 'item: dict'" in d.message]
+        assert len(ann) == 1, [d.message for d in errors]
+        suggestions = ann[0].suggestions or []
+        # Batch alias keeps its exact binding, not the remove-local lead.
+        assert any("item: ${item}" in s for s in suggestions), suggestions
+        assert not any("local variable" in s for s in suggestions), suggestions
+
     def test_orphan_annotation_typo_surfaces_fuzzy_match(self, test_registry):
         """Typo'd orphan (read in body) surfaces fuzzy-matched input key via similar_names."""
         workflow_ir = {

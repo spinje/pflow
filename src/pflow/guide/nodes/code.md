@@ -60,6 +60,7 @@ result: dict = {
 **Code node rules:**
 - Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
+- The reverse also holds: a top-level `name: type` IS read as an input declaration, so do NOT annotate locals — write `total = ...`, not `total: int = ...`. Only declared inputs plus `result`/`next` take annotations.
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
 - Use `Any` as the type when you don't want type validation (see syntax table below — auto-injected, no import needed)
 - Single output via `result` variable — use dict for structured output
@@ -73,11 +74,18 @@ Three code-node input errors are now caught at validate time (`pflow
 1. **Input bound, annotation missing** — `inputs: {x: ${ref}}` with no `x:
    <type>` in code. The suggestion uses the upstream's declared type when
    known (`Add an annotation (in params.code): x: str  (inferred from ...)`).
-2. **Annotation declared, no input bound** — opinionated one-fix-per-case:
-   `Remove the annotation 'y: list' — it is never read in the code` for dead
-   annotations, `Add 'y' to the inputs dict` when the name is read in the
-   body, `Rename the annotation to 'items'` when a fuzzy-matched input key
-   exists (typo case).
+2. **Annotation declared, no input bound** — the fix depends on whether the
+   name is assigned in the body:
+   - **assigned** (`all_items: list = ...`) → it's a local, so removing the
+     annotation is safe. Offers both, local first: `Remove the annotation
+     'all_items: list' — '...' is assigned in the code, so it's a local
+     variable` *or* `add 'all_items' to the inputs dict` (if it was meant as
+     an input).
+   - **read but not assigned** (`y: list` + `len(y)`) → removing would leave
+     `y` unbound, so the only fix is `Add 'y' to the inputs dict` (or `Rename
+     the annotation to 'items'` for a fuzzy-matched typo).
+   - **neither read nor assigned** → dead annotation: `Remove the annotation
+     'y: list' — it is never read in the code`.
 3. **Type mismatch** — `x: dict` bound to `${upstream.result}` that declares
    `list`:
 
