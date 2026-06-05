@@ -51,9 +51,12 @@ RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
     "shell",
     "file",
     "batch",
+    "loop",
     "branching",
+    "error-handling",
     "sub-workflows",
     "prompt-caching",
+    "patterns",
     "caching",
 })
 

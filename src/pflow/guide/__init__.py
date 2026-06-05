@@ -122,8 +122,10 @@ def _node_topics(node: dict, available: set[str]) -> set[str]:
 
     if node.get("batch") is not None:  # batch is at node top-level, not in params
         topics.add("batch")
-    if node.get("loop") is not None:  # issue #445: loop documented in the branching guide
-        topics.add("branching")
+    if node.get("loop") is not None:
+        topics.add("loop")
+    if node.get("retry") is not None:
+        topics.add("error-handling")
     # Caching: per-node opt-in. Presence (not truthiness) — ``prewarm: false`` is
     # still engaging with the feature and should surface the guide.
     if node.get("prompt_cache") is not None or node.get("prewarm") is not None:
@@ -148,11 +150,13 @@ def detect_topics_from_ir(ir: dict) -> list[str]:
     if ir.get("cache") is not None:
         topics.add(PROMPT_CACHING_TOPIC)
 
-    # Branching detection via non-default edge actions
+    # Branching / error-handling detection via non-default edge actions
     for edge in ir.get("edges") or []:
-        if edge.get("action", "default") != "default":
+        action = edge.get("action", "default")
+        if action == "error":
+            topics.add("error-handling")
+        elif action != "default":
             topics.add("branching")
-            break
 
     return sorted(topics)
 
@@ -411,7 +415,7 @@ def _format_param_line(param: dict) -> str:
 def _placeholder_entry_content() -> str:
     return """\
 pflow runs workflows — sequences of nodes (http, shell, llm, claude-code, code, file, mcp) \
-that chain together through a shared data store.
+that pass data via `${...}` templates.
 
 Quick start:
   pflow <workflow-file>       Run a workflow file

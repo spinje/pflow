@@ -205,6 +205,6 @@ Fetch each URL with node-level exponential backoff.
     parallel: true
 ````
 
-For common nodes that convert exhausted failures into an `"error"` action (`llm`, `shell`, `mcp`, `code`, file nodes), the batch item finishes with that action and `batch.max_retries` does not run another item attempt. Multiplication happens only for nodes whose fallback re-raises after node retries are exhausted (`http`, `claude-code`, or custom nodes using the default fallback). In those cases the upper bound is `batch.max_retries * retry.max` total node attempts per item.
+For `llm`, `shell`, `mcp`, `code`, and file nodes, an exhausted node `retry:` budget ends the item as a handled failure, and `batch.max_retries` does not start another attempt for it. For `http` and `claude-code` nodes, an exhausted `retry:` budget surfaces as a failure that `batch.max_retries` re-attempts, so the upper bound is `batch.max_retries * retry.max` attempts per item.
 
 Parallel batch workers inherit the configured node retry budget. A `fail_fast` batch cannot interrupt a worker that is already sleeping in backoff; exponential node backoff is clamped to 60 seconds per wait.

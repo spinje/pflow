@@ -549,8 +549,8 @@ def _make_loop_carry_literal_fallback_warning(node_id: str, key: str, template: 
         node_id=node_id,
         message=(
             f"Node '{node_id}' `loop: carry:` entry '{key}' uses a literal fallback ({template}). "
-            f"If the loop body omits the carried output on a round, the fallback resolves silently and "
-            f"re-seeds '{key}' instead of failing — the loud carry guard will not fire (silent stale state)."
+            f"If the loop body skips producing '{key}' on a round, the literal silently re-seeds it "
+            f"instead of stopping the loop — so the loop can keep running on stale state with no error."
         ),
         suggestions=[
             f"Use a plain `${{{node_id}.output}}` reference so a missing carried output fails loudly. "

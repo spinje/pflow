@@ -17,8 +17,9 @@ Data transformation → `code` node · External tools/side effects → `shell` n
 **Quick wins (memorize these):**
 - **Step order = execution order** → No wiring needed, steps run top to bottom
 - **Templates reach any previous step** → No need for pass-through nodes
-- **Same operation per item?** → `batch` config (Batch Processing pattern)
-- **Need different paths?** → `on-error:` or code node with `next` (Conditional Branching pattern)
+- **Same operation per item?** → `batch` config
+- **Repeat until done, carrying state?** → `loop:`
+- **Need different paths?** → `on-error:` or a `code` node with `next`
 - **Keep it simple** → Don't invent requirements or add unnecessary nodes.
 
 ### Core Philosophy - Understanding the WHY
@@ -48,7 +49,7 @@ fetch-data → process-data → save-results
 - `process-data` starts ONLY after `fetch-data` completely finishes
 - `save-results` starts ONLY after `process-data` completely finishes
 - No node can start until its predecessor completes
-- By default each node has one successor (next in document order), but conditional branching can override this (see Conditional Branching pattern)
+- By default each node has one successor (next in document order), but conditional branching can override this
 - No parallel execution (use `batch` with `parallel: true` for concurrent operations)
 
 #### Concept 2: Data Access (Templates)
@@ -150,18 +151,18 @@ This accumulation pattern is fundamental - each node adds to the available data 
 ❌ **Wrong**: "Templates must follow the step order"
 ✅ **Right**: Templates can jump over steps. Step order just defines execution sequence.
 
-### What Workflows CANNOT Do (Hard Limits)
+### What Workflows Can and Cannot Do
 
-**Supported — don't assume otherwise:** loops, conditional branching, retries, and reusable sub-workflows all work (see `pflow guide branching` and `pflow guide sub-workflows`). The genuine limits below are about *dynamic operation counts* and *cross-run state*.
-
-**Recognize these immediately and offer alternatives:**
+**Supported — don't assume otherwise:** loops, conditional branching, retries, and reusable sub-workflows all work (see `pflow guide loop`, `pflow guide branching`, `pflow guide error-handling`, and `pflow guide sub-workflows`). The genuine limits below are about *dynamic operation counts* and *cross-run state*.
 
 #### ✅ Loops and Bounded Iteration (Supported)
-**Loops and bounded iteration ARE supported** — via backward edges (see `pflow guide branching` → Loops) or sub-workflow batch with `parallel: false` (see `pflow guide sub-workflows` → Bounded iteration). The hard limit is *dynamic* operation count: `batch` items must be a static list or a list produced by an upstream node — you can't create operations whose count is unknown until mid-execution.
+**Loops and bounded iteration ARE supported** — via `loop:` or sub-workflow batch with `parallel: false`. The hard limit is *dynamic* operation count: `batch` items must be a static list or a list produced by an upstream node — you can't create operations whose count is unknown until mid-execution.
 
 #### ✅ Conditional Branching (Supported)
 **User wants**: "If the API returns error, handle it; else process data"
-**How**: Use `- on-error:` for error routing, or a `code` node with `next: str = "target"` for data-driven decisions. See Conditional Branching pattern below.
+**How**: Use `- on-error:` for error routing, or a `code` node with `next: str = "target"` for data-driven decisions.
+
+**Recognize these immediately and offer alternatives:**
 
 #### ❌ No State or Memory
 **User wants**: "Track which records we've already processed and skip them"
@@ -174,7 +175,7 @@ This accumulation pattern is fundamental - each node adds to the available data 
 **Alternative**: "I'll create a workflow that lists files to delete, then a separate one that performs deletion after your review"
 
 #### ❌ No Parallel Paths
-Conditional branching picks ONE path (not multiple simultaneously). Batch processing handles concurrent operations on multiple items.
+Conditional branching picks ONE path (not multiple simultaneously). Batch processing handles concurrent operations on multiple items (see `pflow guide batch`).
 
 ### One Workflow or Multiple? (Critical Decision)
 
@@ -315,7 +316,8 @@ Parsed record array from the fetch response.
 - Use `-` for parameters, `*` for documentation bullets.
 - Code blocks require a tag: `shell command`, `python code`, `prompt`, `yaml batch`, `yaml output_schema`
 - Batch config: inline `- batch:` for simple cases, `yaml batch` code block for complex arrays
-- Retry config: `- retry: {max: 3, wait: 0.5, backoff: exponential}`; `max` is total attempts (`1` = no retry), `wait` is finite seconds, and `backoff` is `fixed` or `exponential`. Exponential waits are clamped to 60s per wait; fixed waits use `wait` as declared. `retry:` overrides node-type defaults and is best for transient/idempotent failures raised during node execution. It does not re-run ordinary `"error"` actions returned from `post()` (for example, a shell command that exits non-zero). On side-effecting nodes, use it only when repeating the attempted operation is acceptable. On `workflow` nodes it is ignored; put retry policies inside the child workflow instead.
+- Loop config: `- loop:` with `while:` or `until:` (and optional `carry:`) — repeat a node until a condition is met
+- Retry config: `- retry: {max: 3, wait: 0.5, backoff: exponential}`; `max` is total attempts (`1` = no retry), `wait` is finite seconds, and `backoff` is `fixed` or `exponential`. Exponential waits are clamped to 60s per wait; fixed waits use `wait` as declared. `retry:` overrides node-type defaults and is best for transient/idempotent failures raised during node execution. It does not re-run a node that completed but signalled failure through its result (for example, a shell command that exits non-zero). On side-effecting nodes, use it only when repeating the attempted operation is acceptable. On `workflow` nodes it is ignored; put retry policies inside the child workflow instead.
 - Any code block parameter can reference an external file instead: `- prompt: ./prompts/system.md`, `- code: ./scripts/transform.py`. Paths are relative to the workflow file. Use for long prompts or reusable scripts.
 
 **Description shapes** — match the shape to the content:
@@ -398,11 +400,11 @@ state. Use this:
 - **`cache: false` on a node** — explicit opt-out (redundant for non-`llm` nodes under the default; useful for documenting intent).
 - `pflow report` — when errors aren't enough, inspect per-node resolved inputs and outputs
 
-**What the memo cache models:** a node's cache key is computed from its node type, its static params (`- key: value`), raw template strings (the `${foo.bar}` *string*, not the resolved value), batch configuration, prompt-cache content, and resolved input values. It does NOT model retry settings, filesystem state, environment variables, current time, or external API responses — anything that affects how an attempt is scheduled or what a node reads from the world outside its declared inputs. This is why non-`llm` nodes don't cache by default: a `shell` node running `cat queue.txt` has a stable cache key even as the file changes, so caching it would silently re-serve stale output in an iteration loop. (A literal string inside a `??` fallback cannot contain the `??` sequence itself — see `pflow guide branching` → Loops for fallback patterns.)
+**What the memo cache models:** a node's cache key is computed from its node type, its static params (`- key: value`), raw template strings (the `${foo.bar}` *string*, not the resolved value), batch configuration, prompt-cache content, and resolved input values. It does NOT model retry settings, filesystem state, environment variables, current time, or external API responses — anything that affects how an attempt is scheduled or what a node reads from the world outside its declared inputs. This is why non-`llm` nodes don't cache by default: a `shell` node running `cat queue.txt` has a stable cache key even as the file changes, so caching it would silently re-serve stale output in an iteration loop. (A literal string inside a `??` fallback cannot contain the `??` sequence itself — see `pflow guide branching` for fallback patterns.)
 
 **How to diagnose stale cache:** if a node returns the same output across runs when you expect change, the cache is hitting because all of the above inputs are stable. Either (a) the input genuinely hasn't changed (cache is correct); (b) the node reads external state — under the defaults this is auto-uncached for non-`llm` nodes, so check you don't have an explicit `cache: true`; or (c) upstream produced identical output — check the upstream node via `pflow report` or `--only <node>`.
 
-For safe loops where state lives on disk, see `pflow guide sub-workflows` → Bounded iteration; for in-store loops (counters, accumulators), see `pflow guide branching` → Loops.
+For safe loops where state lives on disk, see `pflow guide sub-workflows` → Bounded iteration; for in-store loops (counters, accumulators), see `pflow guide loop`.
 
 Provider prompt caching: if many LLM calls reuse the same long context, run
 `pflow analyze-cache workflow.pflow.md`, then follow `pflow guide prompt-caching`.
@@ -659,11 +661,11 @@ Review each item using an external prompt that expects specific variable names.
     items: ${load-data.results}
 ````
 
-The prompt file uses `${concept_brief}` and `${creative_direction}` — resolved from the `inputs` mapping, not from the shared store. In production (where upstream node names already match the prompt's variables), `inputs` is optional.
+The prompt file uses `${concept_brief}` and `${creative_direction}` — resolved from the `inputs:` mapping rather than from upstream node outputs by name. In production (where upstream node names already match the prompt's variables), `inputs` is optional.
 
 ### Parameter Types - Complete Guide
 
-### Type Vocabulary - Two Surfaces
+#### Type Vocabulary - Two Surfaces
 
 Workflow `## Inputs` / `## Outputs` use canonical JSON-Schema-style names. Python code blocks use Python annotations. Same meaning, different spelling.
 

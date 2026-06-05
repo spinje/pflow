@@ -2,7 +2,7 @@
 
 **Use for**: Multi-step agentic tasks that require a fully autonomous agent.
 
-**Don't use Claude Code for**: Deterministic data reshaping (use `code`), simple shell commands (use `shell`), API calls (use `http`), or ordinary text analysis that does not need repository tools (use `llm`).
+**Use the narrower node when it fits**: deterministic data reshaping → `code`, simple shell commands → `shell`, API calls → `http`, ordinary text analysis that doesn't need repository tools → `llm`.
 
 **The test**: Does the task need an autonomous coding agent with access to multiple tools like reading files, editing code, bash etc? YES -> `claude-code`. NO -> use the smaller node that matches the operation.
 

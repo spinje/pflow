@@ -56,7 +56,7 @@ Uppercase via `tr`.
 ````markdown
 ## Steps
 
-### process_title
+### process-title
 
 Convert the title to uppercase using the shared sub-workflow.
 
@@ -65,7 +65,7 @@ Convert the title to uppercase using the shared sub-workflow.
 - inputs:
     text: ${title}
 
-### process_body
+### process-body
 
 Convert the body to uppercase using the shared sub-workflow.
 
@@ -79,7 +79,7 @@ Convert the body to uppercase using the shared sub-workflow.
 Combine the processed title and body into a single output.
 
 - type: shell
-- command: printf "Title: %s\nBody: %s" "${process_title.result}" "${process_body.result}"
+- command: printf "Title: %s\nBody: %s" "${process-title.result}" "${process-body.result}"
 ````
 
 ### Dynamic Child Selection (Template References)
@@ -227,11 +227,12 @@ This pattern is for a fixed iteration count. To loop a sub-workflow **until a co
 
 - type: workflow
 - workflow: ./process-one.pflow.md
-- inputs: { iteration: ${__iteration__} }
+- inputs:
+    iteration: ${__iteration__}
 - loop:
     while: ${iterate.remaining}   # a declared `## Output` of the child (typed list/number/bool)
     max_iterations: 20
 ````
 
-The child must declare the `while:` source as a typed `## Output` (e.g. `- type: integer`) so it isn't treated as a raw string. See `pflow guide branching` → Loops — that section is the canonical guide to choosing between `batch:` (fixed count), `loop:` (stop-on-condition), and the manual backward-edge form.
+The child must declare the `while:` source as a typed `## Output` (e.g. `- type: integer`) so it isn't treated as a raw string. See `pflow guide loop` — the canonical guide to choosing between `batch:` (fixed count), `loop:` (stop-on-condition, with `carry:`/`while:`/`until:`), and the manual backward-edge form.
 
