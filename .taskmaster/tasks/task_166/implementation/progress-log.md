@@ -183,3 +183,96 @@ Landed on the converged shape (now in the spec's **Target Syntax**).
   high-confidence; graders/designers ran on a smaller model, so exact keywords are implementation
   bikeshed, and the two flagged loose ends (inline-body path, `${node-id}` vs `${body}`) are
   genuinely open.
+
+## Phase 7 — From design to implementation plan (start-work session)
+
+> Outcome: a zero-ambiguity implementation plan at
+> `.taskmaster/tasks/task_166/implementation/implementation-plan.md`. This phase did NOT write
+> feature code — it run-proved the substrate, resolved the open questions, and hardened the plan
+> against a 4-agent review. Read the plan for the *what*; this records the *evidence* and the
+> decisions a future agent should not re-open.
+
+### Step-0 spikes — the substrate is run-PROVEN, not just code-read
+
+The braindump's highest-leverage instruction was "prove the self-reference substrate by RUNNING it
+before writing a line." Done, on current `main`, with three throwaway `.pflow.md` files (now kept as
+regression fixtures in `scratchpads/task-166-loop-carry/`):
+
+- **Inline code-node carry** (`spike-self-reference.pflow.md`): a `code` node whose `inputs:`
+  reference its own prior output (`${tick.result.acc ?? 0}`) accumulated `1→2→3→4` and stopped on
+  the **condition** at 4 iterations (not the cap). Self-reference threads at runtime. ✓
+- **Sub-workflow carry** (`spike-subworkflow-carry.pflow.md` + `child-inc.pflow.md`): a `type:
+  workflow` loop feeding the child's `n_plus` output back into the child's `n` input accumulated
+  `1→2→3`, condition stop. The primary v1 case works. ✓
+- **Ref-as-coalesce-fallback** (`spike-coalesce-refseed.pflow.md`): `${self.x ?? some_input}` seeds
+  round 1 from a *referenced* workflow input (not just a literal). ✓
+
+**Consequence:** `carry:` is a thin, statically-checked *surface* over a proven mechanism — manual
+carry via `${self.field ?? seed}` already works today. This collapsed the risk of the whole task.
+
+### Two design decisions the spikes resolved (the spec had left open)
+
+1. **Body-type scope → ALL node types, uniformly** (the spec hedged "sub-workflow only, inline is
+   under-worked"). The spikes + a verification pass showed carry is just an override of the node's
+   `inputs:` map, and `inputs:` resolution is **node-type-agnostic** (single code path). So the
+   inline/sub-workflow split *dissolves* — simpler AND more capable than the spec's fallback. The one
+   real nuance: for **llm/shell** bodies the resolved value reaches the body only via the
+   prompt/command text (`inputs:` is a context-enrichment device there, not a value sink), so a
+   carried key must be referenced in the prompt — captured as a validation WARNING + doc note.
+2. **Runtime mechanism → explicit per-iteration override, NOT desugar-to-coalesce.** Coalesce
+   (`${ref ?? seed}`) already works, but it silently re-seeds if the body omits the carried output a
+   round — exactly the silent-coupling failure the task exists to kill. Explicit override always uses
+   the carry ref from round 2+, so absent/typo is loud. Robustness > fewer lines.
+
+The low-stakes micro-decisions were settled on the spec defaults (`${node-id.field}` not `${body}`;
+`inputs:` not `initial:`; `max_iterations` optional) — to be A/B'd via the Phase-7 acceptance gate
+only if fresh agents trip. **The Phase-6 "inline-body path" loose end is now RESOLVED** (uniform on
+`inputs:`); `${node-id}` vs `${body}` settled on `${node-id}`.
+
+### The 4-agent plan review — caught a CRITICAL bug in the first plan draft
+
+Ran `/code-review` (plan mode) with 4 specialists (plan / validation-consistency /
+feature-interactions / silent-failures) + 4 source verifications. The review **paid for itself**:
+
+- **🔴 CRITICAL — the carry-override hook was dead code** (found independently by *two* agents,
+  traced to a stale `engine/CLAUDE.md:160` claim I'd inherited). The first draft hooked
+  `_execute_single_node`, which is the **batch-only** callback; since batch+loop are mutually
+  exclusive, a loop node never reaches it → the override would have *silently never fired*, re-using
+  the round-1 seed forever (the exact bug the task targets). **Fix:** rebind `config` at the top of
+  `_execute_node` (the real chokepoint for both walk re-entry and `--only`) via `dataclasses.replace`
+  before `plan_node()`, so resolution + config-hash + execution all see the override. The unit tests
+  would have passed while the feature was inert — only a *content-asserting* integration test catches
+  it (now mandated, non-negotiable).
+- **🔴 Permissive-mode hole** (verified): the "absent → loud" guarantee is strict-mode-only; in
+  `template_resolution_mode: permissive` an absent carry ref passes the literal `"${...}"` string
+  through with only a DEGRADED warning. **Decision (user): strict on carry refs ALWAYS** — a
+  per-iteration guard raises regardless of mode (carry is structural plumbing).
+- **🟡 `until` + absent polarity bug** (reviewers split; I sided with correctness after re-deriving):
+  my draft kept "absent → stop" for both polarities, which re-introduces the "runs once and exits"
+  bug for a body that omits the field while not-yet-done. **Decision (user): `until` + absent →
+  CONTINUE** (bounded by cap). `evaluate_loop_condition` restructured so absent becomes a falsy
+  *value* and polarity applies uniformly; `while` behavior unchanged; malformed-template + string
+  stay hard stops.
+
+Hardening also folded in: a **shared `check_loop_polarity` helper** (one source of truth for
+exactly-one-of across the two parity layers), `until` field-name parameterized in message text *and*
+path, carry-typo check restricted to the namespaced key + ordered after the self-ref check, the
+llm/shell unreferenced-carry WARNING, and tests for no-carry-loop / carry×on-error / permissive-strict.
+
+**Verified clean (disputed or non-issues):** constant-input coercion across the static→template move
+(scalars are no-ops both paths — no *new* divergence); nested `loop + storage_mode: shared` (recursive
+validation catches it, and `mapped` child storage keeps inner `__iteration__` in a separate dict);
+`--only`/`--dry-run`/memo interactions.
+
+### Method note (trust calibration)
+
+Every load-bearing claim was verified by a *fresh* `pflow-codebase-searcher` against current source
+(line anchors drift — re-confirm). The review agents were treated as fallible: the critical dead-hook
+finding was confirmed by a dedicated hook-location verification before accepting the fix, and the
+`until`-polarity disagreement between reviewers was resolved by first-principles re-derivation, not by
+vote. The plan marks every review correction with `[review-fix]` so they are not silently reverted.
+
+### Documentation updated this session
+
+- `context/CONTEXT.md` — added glossary terms **Carry**, **Seed**, the **Carry vs Seed**
+  discriminator, and a polarity note on **Loop condition** (glossary-only; no implementation detail).
