@@ -173,7 +173,8 @@ shared["__failures__"] = {
         "data": {...},        # what was at shared[node_id] before the move (may be {})
         "category": "shell_failure" | "node_action_error" | "api_warning" | "routing_error" | "exception" | "template_error",
         "error": "...",       # human-readable error (optional)
-        "warning": "...",     # set for api_warning and on-error recovery (optional)
+        # NOTE: warning text is NOT stored here — structured warnings (api_warning
+        # + on-error recovery) live only in shared["__warnings__"][node_id].
     }
 }
 

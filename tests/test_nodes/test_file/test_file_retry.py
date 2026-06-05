@@ -304,19 +304,7 @@ class TestFileNodeRetryBehavior:
             pass
 
     def test_configuration_errors_vs_transient_errors_behave_differently(self):
-        """Test that retry mechanism is properly activated for different error types.
-
-        BEHAVIOR: Verifies that retry mechanism triggers for both config and system errors.
-
-        FIX HISTORY:
-        - Replaced flaky timing comparison with behavior-based assertions
-        - Discovered that NonRetriableError still triggers retries (implementation issue)
-        - Simplified to focus on retry behavior verification without timing comparisons
-        - Uses attempt counting to confirm retry mechanism activation
-
-        LESSON LEARNED: Current implementation retries NonRetriableError despite intention.
-        This test verifies retry behavior works as currently implemented.
-        """
+        """Configuration errors fail fast while transient system errors retry."""
         # Test 1: Configuration error (directory instead of file)
         node1 = CopyFileNode()
         node1.wait = 0  # Speed up tests by removing retry delays
@@ -329,10 +317,13 @@ class TestFileNodeRetryBehavior:
 
             node1.set_params({"source_path": source_path, "dest_path": dest_path})
             shared = {}
-            action = node1.run(shared)
+            with patch.object(node1, "exec", wraps=node1.exec) as exec_spy:
+                action = node1.run(shared)
 
             # BEHAVIOR: Configuration errors should fail with descriptive message
             assert action == "error"
+            assert exec_spy.call_count == 1
+            assert shared["error"].startswith("Error: ")
             assert "file" in shared["error"].lower()  # Mentions file requirement
             assert (
                 "not a file" in shared["error"]

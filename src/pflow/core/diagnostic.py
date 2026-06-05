@@ -124,6 +124,21 @@ class Diagnostic:
             result["see_also"] = list(self.see_also)
         return result
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Diagnostic:
+        """Deserialize the structured JSON shape produced by ``to_dict()``."""
+        return cls(
+            severity=Severity(data["severity"]),
+            message=data["message"],
+            title=data.get("title"),
+            suggestions=data.get("suggestions"),
+            node_id=data.get("node_id"),
+            source=data.get("source", ""),
+            context=data.get("context"),
+            see_also=data.get("see_also"),
+            id=data.get("id"),
+        )
+
     def to_display_dict(self) -> dict[str, Any]:
         """Serialize with context merged into top-level keys for display consumers."""
         result = self.to_dict()
@@ -196,6 +211,24 @@ def normalize_runtime_warning(warning: Any) -> tuple[str, dict[str, Any]]:
         return message, context
 
     return str(warning), {}
+
+
+_NON_DEGRADING_SOURCES = frozenset({"parser", "validator"})
+
+
+def warning_degrades_status(entry: Any) -> bool:
+    """Whether a warning entry flips the run/trace status to DEGRADED.
+
+    Shared predicate for live ``__warnings__`` entries and trace
+    ``execution_warnings`` dictionaries. Parser/validator warnings describe
+    definition quality, not runtime data loss, and INFO diagnostics are
+    advisories. Legacy severity-less shapes fail closed as degrading.
+    """
+    if isinstance(entry, Diagnostic):
+        return entry.severity is not Severity.INFO and entry.source not in _NON_DEGRADING_SOURCES
+    if isinstance(entry, dict):
+        return str(entry.get("severity", "")).lower() != "info" and entry.get("source") not in _NON_DEGRADING_SOURCES
+    return True
 
 
 # LLM failure category — single source of truth for the string used by both

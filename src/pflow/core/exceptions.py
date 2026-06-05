@@ -44,6 +44,8 @@ def copy_pflow_annotations(source: BaseException, target: BaseException) -> None
 class PflowError(Exception):
     """Base exception for all pflow errors."""
 
+    retriable: bool = True
+
     def to_diagnostics(self) -> list[Diagnostic]:
         """Convert to diagnostic representation. Override in subclasses for rich output."""
         return [
@@ -781,6 +783,8 @@ class CompilationError(PflowError):
             ``compile_validation.py`` to carry the ``validate_data_flow()`` list
             through the compiler boundary without flattening it to a string.
     """
+
+    retriable = False
 
     def __init__(
         self,

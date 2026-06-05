@@ -22,6 +22,9 @@ import textwrap
 
 import pytest
 
+from pflow.core.diagnostic import Severity
+from pflow.core.exceptions import SchemaValidationError
+from pflow.core.ir_schema import validate_ir
 from pflow.core.markdown_parser import (
     MarkdownParseError,
     _coerce_yaml_scalar,
@@ -291,7 +294,10 @@ class TestSectionHandling:
         """)
         result = parse_markdown(content)
         warnings = result.warnings
-        assert any("Input" in w.message and "Inputs" in w.message for w in warnings)
+        near_miss = [w for w in warnings if "Input" in w.message and "Inputs" in w.message]
+        assert near_miss
+        assert near_miss[0].severity is Severity.INFO
+        assert near_miss[0].source == "parser"
 
     def test_missing_steps_section_error(self) -> None:
         content = _md("""\
@@ -309,6 +315,63 @@ class TestSectionHandling:
         """)
         with pytest.raises(MarkdownParseError, match="Missing '## Steps' section"):
             parse_markdown(content)
+
+    def test_retry_field_is_hoisted_to_node_top_level(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### fetch
+
+            Fetches a transient source with an explicit retry policy.
+
+            - type: shell
+            - retry:
+                max: 3
+                wait: 0.25
+                backoff: exponential
+
+            ```shell command
+            echo ok
+            ```
+        """)
+
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+
+        assert node["retry"] == {"max": 3, "wait": 0.25, "backoff": "exponential"}
+        assert "retry" not in node["params"]
+
+    @pytest.mark.parametrize("wait_literal", [".inf", ".nan"])
+    def test_non_finite_retry_wait_from_markdown_is_rejected(self, wait_literal: str) -> None:
+        content = _md(f"""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### fetch
+
+            Fetches a transient source with an invalid retry wait.
+
+            - type: shell
+            - retry:
+                wait: {wait_literal}
+
+            ```shell command
+            echo ok
+            ```
+        """)
+
+        result = parse_markdown(content)
+        result.ir["ir_version"] = "0.1.0"
+
+        with pytest.raises(SchemaValidationError, match="finite"):
+            validate_ir(result.ir)
 
 
 # ===========================================================================
@@ -2476,7 +2539,10 @@ echo step {i}
             ```
         """)
         result = parse_markdown(content)
-        assert any("Unparsed content" in w.message and "Inputs" in w.message for w in result.warnings)
+        orphan_warnings = [w for w in result.warnings if "Unparsed content" in w.message and "Inputs" in w.message]
+        assert orphan_warnings
+        assert orphan_warnings[0].severity is Severity.INFO
+        assert orphan_warnings[0].source == "parser"
         # Workflow still parses correctly
         assert "message" in result.ir["inputs"]
 
@@ -2513,7 +2579,10 @@ echo step {i}
             ```
         """)
         result = parse_markdown(content)
-        assert any("Unparsed content" in w.message and "Inputs" in w.message for w in result.warnings)
+        orphan_warnings = [w for w in result.warnings if "Unparsed content" in w.message and "Inputs" in w.message]
+        assert orphan_warnings
+        assert orphan_warnings[0].severity is Severity.INFO
+        assert orphan_warnings[0].source == "parser"
 
     def test_no_orphan_detection_for_unknown_sections(self) -> None:
         """Content under unknown ## sections does not trigger orphan warnings."""

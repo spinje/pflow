@@ -21,6 +21,8 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
+from pflow.core.diagnostic import Diagnostic
+
 
 class NodeStatus(Enum):
     """Three execution states a node can be in."""
@@ -92,8 +94,10 @@ def get_node_failure(shared: dict[str, Any], node_id: str) -> dict[str, Any] | N
             "data": {...},        # what was at shared[node_id] before the move
             "category": "...",    # one of the FAILURE_CATEGORY_* constants
             "error": "...",       # human-readable error message (optional)
-            "warning": "...",     # set for api_warning and on-error recovery (optional)
         }
+
+    Warning text is NOT mirrored here — structured warnings live only in
+    ``shared["__warnings__"][node_id]`` (their sole consumer boundary).
 
     Trusts the single-writer invariant — see ``get_node_output``.
     """
@@ -107,7 +111,7 @@ def mark_node_failed(
     *,
     category: str,
     error: str | None = None,
-    warning: str | None = None,
+    warning: Diagnostic | str | None = None,
 ) -> None:
     """Archive a failed node's output and update execution state.
 
@@ -164,8 +168,6 @@ def mark_node_failed(
     }
     if error is not None:
         record["error"] = str(error)
-    if warning is not None:
-        record["warning"] = str(warning)
 
     shared.setdefault("__failures__", {})[node_id] = record
     shared["__execution__"]["failed_node"] = node_id

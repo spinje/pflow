@@ -14,6 +14,7 @@ The core behavior under test:
 
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -579,6 +580,71 @@ class TestErrorHandling:
         assert error["item"] == large_item
         assert error["item_summary"]["label"] == "oversized-item"
         assert "PAYLOAD-START" not in error["item_summary"]["summary"]
+
+    def test_non_retriable_exception_is_fatal_without_batch_retries(self):
+        """retriable=False exceptions propagate instead of becoming per-item errors."""
+
+        class DeterministicBatchError(Exception):
+            retriable = False
+
+        attempts = 0
+
+        def execute_single_fn(node, config, item_shared):
+            nonlocal attempts
+            attempts += 1
+            raise DeterministicBatchError("invalid item config")
+
+        shared: dict = {"data": ["bad"]}
+
+        with (
+            patch("pflow.runtime.engine.batch_executor.time.sleep") as sleep,
+            pytest.raises(DeterministicBatchError, match="invalid item config"),
+        ):
+            _run_batch(
+                MockInnerNode("test_node"),
+                shared,
+                error_handling="continue",
+                max_retries=3,
+                retry_wait=10,
+                execute_single_fn=execute_single_fn,
+            )
+
+        assert attempts == 1
+        assert "test_node" not in shared
+        sleep.assert_not_called()
+
+    def test_parallel_non_retriable_exception_is_fatal_without_batch_retries(self):
+        """Parallel futures must not convert retriable=False exceptions into item errors."""
+
+        class DeterministicBatchError(Exception):
+            retriable = False
+
+        attempts = 0
+
+        def execute_single_fn(node, config, item_shared):
+            nonlocal attempts
+            attempts += 1
+            raise DeterministicBatchError("invalid item config")
+
+        shared: dict = {"data": ["bad"]}
+
+        with (
+            patch("pflow.runtime.engine.batch_executor.time.sleep") as sleep,
+            pytest.raises(DeterministicBatchError, match="invalid item config"),
+        ):
+            _run_batch(
+                MockInnerNode("test_node"),
+                shared,
+                error_handling="continue",
+                parallel=True,
+                max_retries=3,
+                retry_wait=10,
+                execute_single_fn=execute_single_fn,
+            )
+
+        assert attempts == 1
+        assert "test_node" not in shared
+        sleep.assert_not_called()
 
     def test_parallel_executor_error_records_item_summary_and_full_item(self):
         """Parallel future-level exceptions use the same batch error shape."""

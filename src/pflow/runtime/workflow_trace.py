@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.node_type_display import is_llm_node_type
 from pflow.core.trace_io import intern_blobs, load_trace_file
@@ -127,8 +127,7 @@ def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
 
     Returns True only when there IS a readable ``warnings`` array AND every entry
     is provably non-degrading — INFO severity, or a parser/validator source
-    (input-quality, not runtime data loss; mirrors the trace-level status
-    blacklist and the result-level ``_is_degrading_warning`` severity rule). An
+    (input-quality, not runtime data loss; mirrors ``warning_degrades_status``). An
     INFO-only advisory (empty-input batch, loop-cap) is benign → no snapshot
     advisory; a WARNING/ERROR runtime warning (e.g. a batch host with
     ``error_handling: continue`` that dropped failed items) is NOT benign → the
@@ -143,11 +142,20 @@ def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
     warnings = data.get("warnings")
     if not isinstance(warnings, list) or not warnings:
         return False
-    return all(
-        isinstance(warning, dict)
-        and (str(warning.get("severity", "")).lower() == "info" or warning.get("source") in ("parser", "validator"))
-        for warning in warnings
-    )
+    return all(not warning_degrades_status(warning) for warning in warnings)
+
+
+def _unrecovered_failed_node_ids(
+    final_events: dict[str, dict[str, Any]],
+    execution_warnings: list[dict[str, Any]] | None,
+) -> set[str]:
+    failed_node_ids = {node_id for node_id, event in final_events.items() if not event.get("success", True)}
+    recovered_node_ids: set[str] = set()
+    for warning in execution_warnings or []:
+        node_id = warning.get("node_id") if isinstance(warning, dict) else None
+        if isinstance(node_id, str) and warning.get("type") == "on_error_recovery":
+            recovered_node_ids.add(node_id)
+    return failed_node_ids - recovered_node_ids
 
 
 def _strip_redundant_llm_trace_fields(event: dict[str, Any]) -> None:
@@ -824,24 +832,13 @@ class WorkflowTraceCollector:
         """
         if final_events is None:
             final_events = final_events_by_node(self.events)
-        if any(not e.get("success", True) for e in final_events.values()):
+        execution_warnings = self.execution_warnings or []
+        unrecovered_failures = _unrecovered_failed_node_ids(final_events, execution_warnings)
+        if unrecovered_failures:
             return "failed"
-        if self.execution_warnings and any(
-            self._warning_changes_status(warning) for warning in self.execution_warnings
-        ):
+        if execution_warnings and any(warning_degrades_status(warning) for warning in execution_warnings):
             return "degraded"
         return "success"
-
-    @staticmethod
-    def _warning_changes_status(warning: dict[str, Any]) -> bool:
-        """Return whether a warning should mark the trace as degraded.
-
-        Blacklist (not whitelist) is intentional: unknown sources default to
-        degrading, so new source types are fail-closed rather than silently
-        ignored.  Only parser and validator warnings are excluded — they
-        indicate input quality issues, not runtime degradation.
-        """
-        return warning.get("source") not in {"parser", "validator"}
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """Recursively collect LLM call data from tree-structured events.
@@ -899,7 +896,7 @@ class WorkflowTraceCollector:
         # list is walked once per save. See GH #240.
         final_events = final_events_by_node(self.events)
         final_status = self._determine_trace_status(final_events)
-        failed_node_ids = sorted(nid for nid, e in final_events.items() if not e.get("success", True))
+        failed_node_ids = sorted(_unrecovered_failed_node_ids(final_events, self.execution_warnings))
 
         # Prepare trace data with format version
         trace_data: dict[str, Any] = {

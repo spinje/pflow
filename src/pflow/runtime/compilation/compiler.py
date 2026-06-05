@@ -13,10 +13,12 @@ Supporting concerns are in sibling modules:
 
 import json
 import logging
+import math
 from typing import Any, Optional, Union
 
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
+from pflow.core.node import Node
 from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR
 from pflow.core.workflow.loop_validation import check_loop_polarity
 from pflow.registry import Registry
@@ -29,6 +31,10 @@ from .node_loader import import_node_class
 
 # Set up module logger
 logger = logging.getLogger(__name__)
+
+# Keep direct-compile retry validation in lockstep with core.ir_schema's
+# RETRY_CONFIG_SCHEMA; this path protects callers that bypass schema validation.
+_RETRY_CONFIG_KEYS = frozenset({"max", "wait", "backoff"})
 
 
 def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
@@ -325,6 +331,14 @@ def _create_node_and_config(
     if static_params:
         node_instance.set_params(static_params)
 
+    retry_data = _validate_retry_config(node_data.get("retry"), node_id, node_type)
+    if retry_data and isinstance(node_instance, Node):
+        node_instance.max_retries = _coerce_retry_int(
+            retry_data.get("max", node_instance.max_retries), "max", node_id, node_type
+        )
+        node_instance.wait = _coerce_retry_float(retry_data.get("wait", node_instance.wait), "wait", node_id, node_type)
+        node_instance.backoff = _coerce_retry_backoff(retry_data.get("backoff", "fixed"), node_id, node_type)
+
     # Build batch config (None if not a batch node)
     batch_config = None
     batch_data = node_data.get("batch")
@@ -540,6 +554,88 @@ def _validate_loop_cap(value: int, node_id: Optional[str], node_type: Optional[s
             ),
         )
     return value
+
+
+def _validate_retry_config(value: Any, node_id: str, node_type: str) -> dict[str, Any] | None:
+    """Validate direct-compile retry config before optional application to Node instances."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise CompilationError(
+            f"Node '{node_id}' `retry:` must be a mapping.",
+            phase="retry_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Declare `- retry:` with optional `max:`, `wait:`, and `backoff:` fields.",
+        )
+
+    unknown_keys = sorted(str(key) for key in value if key not in _RETRY_CONFIG_KEYS)
+    if unknown_keys:
+        keys = ", ".join(repr(key) for key in unknown_keys)
+        raise CompilationError(
+            f"Node '{node_id}' `retry:` contains unknown field(s): {keys}.",
+            phase="retry_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Use only `max`, `wait`, and `backoff` under `retry:`.",
+        )
+
+    if "max" in value:
+        _coerce_retry_int(value["max"], "max", node_id, node_type)
+    if "wait" in value:
+        _coerce_retry_float(value["wait"], "wait", node_id, node_type)
+    if "backoff" in value:
+        _coerce_retry_backoff(value["backoff"], node_id, node_type)
+    return value
+
+
+def _coerce_retry_int(value: Any, field: str, node_id: str, node_type: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise CompilationError(
+            f"Invalid retry config '{field}': expected an integer, got {value!r}",
+            phase="retry_config",
+            node_id=node_id,
+            node_type=node_type,
+        )
+    coerced: int = value
+    if coerced < 1 or coerced > 10:
+        raise CompilationError(
+            f"Invalid retry config '{field}': expected an integer from 1 to 10, got {value!r}",
+            phase="retry_config",
+            node_id=node_id,
+            node_type=node_type,
+        )
+    return coerced
+
+
+def _coerce_retry_float(value: Any, field: str, node_id: str, node_type: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CompilationError(
+            f"Invalid retry config '{field}': expected a number, got {value!r}",
+            phase="retry_config",
+            node_id=node_id,
+            node_type=node_type,
+        )
+    coerced = float(value)
+    if coerced < 0 or not math.isfinite(coerced):
+        raise CompilationError(
+            f"Invalid retry config '{field}': expected a finite non-negative number, got {value!r}",
+            phase="retry_config",
+            node_id=node_id,
+            node_type=node_type,
+        )
+    return coerced
+
+
+def _coerce_retry_backoff(value: Any, node_id: str, node_type: str) -> str:
+    if value in ("fixed", "exponential"):
+        return str(value)
+    raise CompilationError(
+        f"Invalid retry config 'backoff': expected 'fixed' or 'exponential', got {value!r}",
+        phase="retry_config",
+        node_id=node_id,
+        node_type=node_type,
+    )
 
 
 def _default_cache_for_node_type(node_type: str) -> bool:

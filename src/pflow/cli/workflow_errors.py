@@ -12,6 +12,7 @@ import click
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.execution.formatters.success_formatter import partition_surfaced_diagnostics
 
 
 def _display_single_error(
@@ -62,11 +63,12 @@ def _display_text_error_details(
     # `result.warnings` property filters to WARNING-only by name; pull from
     # diagnostics directly to include INFO too. Matches the parallel filter
     # in `cli/commands/run.py` on the success path.
-    warnings = [
+    surfaced_diagnostics = [
         diagnostic
         for diagnostic in getattr(result, "diagnostics", [])
         if diagnostic.severity in {Severity.WARNING, Severity.INFO}
     ]
+    warnings, advisories = partition_surfaced_diagnostics(surfaced_diagnostics)
     errors = result.errors
 
     if len(errors) > 1:
@@ -94,3 +96,8 @@ def _display_text_error_details(
         click.echo("⚠️ Warnings:", err=True)
         for warning in warnings:
             click.echo(format_diagnostic(warning), err=True)
+    if advisories:
+        click.echo("", err=True)
+        click.echo("\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:", err=True)
+        for advisory in advisories:
+            click.echo(format_diagnostic(advisory), err=True)

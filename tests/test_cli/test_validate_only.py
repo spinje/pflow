@@ -624,6 +624,7 @@ class TestValidationErrorDiagnosticShape:
             f"Parser warning not in validate-only JSON diagnostics.\nFull output: {json.dumps(data, indent=2)}"
         )
         assert any("Input" in w["message"] for w in parser_warnings)
+        assert all(w["severity"] == "info" for w in parser_warnings)
 
     def test_parser_typo_warning_appears_in_execution_output(self, tmp_path: Path) -> None:
         """A parser warning must survive through execution (not just validate-only)."""
@@ -706,8 +707,10 @@ class TestFailurePathShowsWarnings:
         assert "failed" in result.stderr.lower() or "error" in result.stderr.lower(), (
             f"Expected error in output.\nstderr: {result.stderr}"
         )
-        # Parser warning must ALSO be present — this is the regression guard
-        assert "Warning" in result.stderr, f"Expected warnings section in failure output.\nstderr: {result.stderr}"
+        # Parser advisory must ALSO be present — this is the regression guard
+        assert "Input" in result.stderr and "Inputs" in result.stderr, (
+            f"Expected parser advisory in failure output.\nstderr: {result.stderr}"
+        )
 
 
 class TestValidateOnlyWithComplexWorkflows:

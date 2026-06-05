@@ -397,6 +397,11 @@ def _display_validation_result(
             if vresult.warnings:
                 for diagnostic in vresult.warnings:
                     click.echo(format_diagnostic(diagnostic), err=True)
+            info_diagnostics = [d for d in vresult.diagnostics if d.severity is Severity.INFO]
+            if info_diagnostics:
+                click.echo("", err=True)
+                for diagnostic in info_diagnostics:
+                    click.echo(format_diagnostic(diagnostic), err=True)
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 

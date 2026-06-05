@@ -198,8 +198,13 @@ class MoveFileNode(Node):
         """Handle final failure after all retries with user-friendly messages."""
         source_path, dest_path, _ = prep_res
 
+        failure_message = (
+            "Failed to move file without retrying deterministic error"
+            if isinstance(exc, NonRetriableError)
+            else f"Failed to move file after {self.max_retries} retries"
+        )
         logger.error(
-            f"Failed to move file after {self.max_retries} retries",
+            failure_message,
             extra={"source_path": source_path, "dest_path": dest_path, "error": str(exc), "phase": "fallback"},
         )
 

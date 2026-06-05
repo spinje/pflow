@@ -290,7 +290,7 @@ def execute_batch(
     return action
 
 
-def _execute_batch_item(
+def _execute_batch_item(  # noqa: C901
     idx: int,
     item: Any,
     node: Any,
@@ -394,6 +394,8 @@ def _execute_batch_item(
         except CompilationError:
             raise  # Workflow definition is broken — never swallow, never retry
         except Exception as e:
+            if not getattr(e, "retriable", True):
+                raise  # Deterministic/fatal errors should not burn batch retries
             last_exception = e
             if retry < batch_config.max_retries - 1:
                 if batch_config.retry_wait > 0:
@@ -601,7 +603,7 @@ def _execute_synthetic_warmup(
         return None
 
 
-def _collect_parallel_results(
+def _collect_parallel_results(  # noqa: C901
     future_to_idx: dict,
     items: list[Any],
     results: list,
@@ -652,6 +654,8 @@ def _collect_parallel_results(
         except CompilationError:
             raise
         except Exception as e:
+            if not getattr(e, "retriable", True):
+                raise
             idx = future_to_idx[future]
             pending_errors.append(_build_batch_error(idx, items[idx], f"Executor error: {e}", e))
             timings[idx] = 0.0

@@ -139,8 +139,13 @@ class DeleteFileNode(Node):
         """Handle final failure after all retries with user-friendly messages."""
         file_path, _ = prep_res
 
+        failure_message = (
+            "Failed to delete file without retrying deterministic error"
+            if isinstance(exc, NonRetriableError)
+            else f"Failed to delete file after {self.max_retries} retries"
+        )
         logger.error(
-            f"Failed to delete file after {self.max_retries} retries",
+            failure_message,
             extra={"file_path": file_path, "error": str(exc), "phase": "fallback"},
         )
 

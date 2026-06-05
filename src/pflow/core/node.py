@@ -12,6 +12,8 @@ import time
 import warnings
 from typing import Any, Optional
 
+_MAX_RETRY_BACKOFF_SECONDS: float = 60.0
+
 
 class BaseNode:
     def __init__(self) -> None:
@@ -73,19 +75,30 @@ class Node(BaseNode):
     (2) parallel batch deep-copies the node per thread.
     """
 
-    def __init__(self, max_retries: int = 1, wait: float = 0) -> None:
+    def __init__(self, max_retries: int = 1, wait: float = 0, backoff: str = "fixed") -> None:
         super().__init__()
-        self.max_retries, self.wait = max_retries, wait
+        self.max_retries: int = max_retries
+        self.wait: float = wait
+        self.backoff: str = backoff
 
     def exec_fallback(self, prep_res: Any, exc: Exception) -> Any:
         raise exc
+
+    def _retry_delay(self) -> float:
+        wait = float(self.wait)
+        if self.backoff == "exponential":
+            retry_index = int(getattr(self, "cur_retry", 0))
+            delay: float = wait * (2**retry_index)
+            return min(delay, _MAX_RETRY_BACKOFF_SECONDS)
+        return wait
 
     def _exec(self, prep_res: Any) -> Any:
         for self.cur_retry in range(self.max_retries):  # noqa: B020
             try:
                 return self.exec(prep_res)
             except Exception as e:
-                if self.cur_retry == self.max_retries - 1:
+                if not getattr(e, "retriable", True) or self.cur_retry == self.max_retries - 1:
                     return self.exec_fallback(prep_res, e)
-                if self.wait > 0:
-                    time.sleep(self.wait)
+                delay = self._retry_delay()
+                if delay > 0:
+                    time.sleep(delay)

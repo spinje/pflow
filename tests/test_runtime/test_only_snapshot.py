@@ -384,6 +384,23 @@ def test_degraded_trace_with_info_only_reports_success(tmp_path: Path) -> None:
     assert status == "success"
 
 
+@pytest.mark.parametrize("source", ["parser", "validator"])
+def test_degraded_trace_with_definition_warning_reports_success(tmp_path: Path, source: str) -> None:
+    """Parser/validator WARNING dicts are definition advisories, not degraded runtime data."""
+    wf = f"ir-hash:degraded-{source}"
+    _write_trace(
+        tmp_path,
+        wf,
+        timestamp="20260101-000000",
+        final_status="degraded",
+        warnings=[{"severity": "warning", "source": source, "message": f"{source} advisory"}],
+    )
+    loaded = load_full_run_events(wf, debug_dir=tmp_path)
+    assert loaded is not None
+    _nodes, status = loaded
+    assert status == "success"
+
+
 def test_degraded_trace_without_warnings_stays_degraded(tmp_path: Path) -> None:
     """Fail-safe: a degraded trace with NO usable warning detail must NOT downgrade to
     success. We can't prove it lost no data, so the advisory still fires (PR #459 CODEX-3)."""

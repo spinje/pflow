@@ -582,7 +582,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         else:
             warnings.append(
                 Diagnostic(
-                    severity=Severity.WARNING,
+                    severity=Severity.INFO,
                     message=(
                         f"Unparsed content in '{section_name}' section ({line_ref}). "
                         "Content before the first ### heading is not captured."
@@ -747,7 +747,7 @@ def _resolve_section(section_name: str, line_num: int) -> tuple[_SectionType, bo
     if section_lower in _NEAR_MISS_SECTIONS:
         expected = _NEAR_MISS_SECTIONS[section_lower]
         warning = Diagnostic(
-            severity=Severity.WARNING,
+            severity=Severity.INFO,
             message=f"Line {line_num}: '## {section_name}' looks like a typo for '## {expected}'.",
             suggestions=[f"Rename to '## {expected}'."],
             source="parser",
@@ -1592,12 +1592,12 @@ def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
     # Hoist top-level node fields out of params (they are NOT params). Each must
     # be a top-level key so the params-only unknown-key walk never sees it and the
     # IR-schema check + data-flow carve-outs can inspect ``node[field]`` directly:
-    #   batch / loop — fan-out vs condition-terminated iteration (siblings)
+    #   batch / loop / retry — fan-out, condition-terminated iteration, retry policy
     #   cache        — per-node memoization toggle
     #   prompt_cache / prewarm — Task 159 LLM cache opt-ins; top-level so the
     #     ``cache.invalid-on-non-llm`` rule and IR-schema check (B2.2/B2.3) see them
     #     and validator step 8 doesn't silently allow them on non-LLM nodes.
-    for top_level_field in ("batch", "loop", "cache", "prompt_cache", "prewarm"):
+    for top_level_field in ("batch", "loop", "retry", "cache", "prompt_cache", "prewarm"):
         if top_level_field in all_params:
             node[top_level_field] = all_params.pop(top_level_field)
 

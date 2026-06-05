@@ -18,6 +18,8 @@ These workflows double as regression fixtures for the Task 148 failed-node invar
 | `typo-on-failed-node.pflow.md` | When you typo a field on a failed node (`${primary.stddout}`), the error surfaces BOTH the failure (primary signal) AND the typo correction (secondary hint), and the paste-able fix uses the corrected field |
 | `coalesce-mixed-absent-failed.pflow.md` | A coalesce `${never_run.x ?? fails.y}` with one absent operand and one failed operand errors loudly with the "All coalesce operands are unavailable" summary block — it does NOT silently skip (that was the Task 128 bug class) |
 | `loop-recovery.pflow.md` | A node fails on visit 1, succeeds on visit 2. The loop guard clears the stale `__failures__` entry, the workflow reports success, and downstream references see the visit-2 data |
+| `retry-with-backoff.pflow.md` | A file node uses `retry:` with exponential backoff before exhausting into its `on-error` path |
+| `non-retriable-file-error.pflow.md` | A file-node validation error skips retry sleeps even with `retry:` configured, then routes to `on-error` |
 | `source-line-multi-output.pflow.md` | Multiple output declarations at different lines — the diagnostic's `At:` line points at the exact failing output, not the last output or the top of the file |
 | `source-line-heavy-offsets.pflow.md` | Heavy blank-line padding and prose before the Outputs section — the parser's line tracker handles real-world offsets without off-by-N errors |
 
@@ -29,4 +31,6 @@ These workflows double as regression fixtures for the Task 148 failed-node invar
 pflow examples/error-handling/failed-node-direct-reference.pflow.md --no-cache --no-trace
 pflow examples/error-handling/typo-on-failed-node.pflow.md --no-cache --no-trace
 pflow examples/error-handling/loop-recovery.pflow.md --no-cache --no-trace
+pflow examples/error-handling/retry-with-backoff.pflow.md --no-cache --no-trace
+pflow examples/error-handling/non-retriable-file-error.pflow.md --no-cache --no-trace
 ```

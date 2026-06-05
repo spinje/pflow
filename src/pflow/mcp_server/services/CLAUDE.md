@@ -90,6 +90,8 @@ Every shared formatter has two call sites: CLI (`cli/main.py`) and MCP (`executi
 
 Same rule for rendering exceptions: the MCP `save_workflow` path relies on `save_workflow_with_options()` for parse + validation + save, then catches `WorkflowValidationError` and renders it via `format_validation_failure(e.validation_errors)` — parity with the CLI save/validate paths. `WorkflowValidationError.validation_warnings` is a constructor kwarg (not a dynamic attribute), so warnings survive the exception boundary without special plumbing.
 
+MCP validation/execution responses intentionally surface parser/validator INFO diagnostics as `advisories` alongside warnings/errors. This preserves agent-visible definition advisories after parser near-miss diagnostics were reclassified from WARNING to INFO; runtime INFO diagnostics remain suppressed unless a formatter explicitly opts into them.
+
 ## Testing
 
 Mock at service layer (service methods return predictable results). Integration tests use real Registry/WorkflowManager. See `mcp_server/CLAUDE.md` for test file listing.

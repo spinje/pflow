@@ -1,9 +1,12 @@
 """Tests for direct execution helper functions in CLI."""
 
+from types import SimpleNamespace
+
 import click
 import click.testing
 
 from pflow.cli.param_parsing import infer_type, parse_workflow_params
+from pflow.cli.workflow_errors import _display_text_error_details
 from pflow.cli.workflow_output import _display_execution_summary, _format_cost_summary_lines
 from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core.diagnostic import Diagnostic, Severity
@@ -381,3 +384,29 @@ class TestDisplayExecutionSummaryAdvisories:
         cli_result = click.testing.CliRunner().invoke(cmd)
         assert "✓ Workflow completed" in cli_result.output
         assert "with 1 warnings" not in cli_result.output
+
+
+class TestDisplayFailureDetailsAdvisories:
+    def test_info_advisory_renders_under_advisories_not_warnings(self) -> None:
+        error = Diagnostic(
+            severity=Severity.ERROR,
+            message="workflow failed",
+            source="runtime",
+        )
+        advisory = Diagnostic(
+            severity=Severity.INFO,
+            message="Line 3: '## Input' looks like a typo for '## Inputs'.",
+            source="parser",
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_text_error_details(SimpleNamespace(errors=[error], diagnostics=[error, advisory]))
+
+        cli_result = click.testing.CliRunner(mix_stderr=False).invoke(cmd)
+
+        assert cli_result.exit_code == 0, cli_result.output
+        assert "Advisories:" in cli_result.stderr
+        assert "⚠️ Warnings:" not in cli_result.stderr
+        assert "1 warning" not in cli_result.stderr
+        assert "## Input" in cli_result.stderr

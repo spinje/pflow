@@ -84,6 +84,30 @@ class TestExecuteWorkflowSuccess:
         assert "Workflow output:" in result, "Success output should include the workflow output header"
         assert "hello" in result, "Success output should include the workflow output value"
 
+    def test_file_workflow_surfaces_parser_info_advisory(self, tmp_path):
+        workflow_path = tmp_path / "typo.pflow.md"
+        workflow_path.write_text(
+            "# Typo\n\n"
+            "## Input\n\n"
+            "### api-key\n\n"
+            "Unused typo.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### echo\n\n"
+            "Echo hello.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo hello\n",
+            encoding="utf-8",
+        )
+
+        result = ExecutionService.execute_workflow(str(workflow_path))
+
+        assert "Workflow completed" in result
+        assert "Advisories:" in result
+        assert "## Input" in result
+        assert "## Inputs" in result
+
     def test_library_workflow_returns_success_string(self, isolate_pflow_config):
         """When given a saved workflow name, execute_workflow resolves it
         from the library and returns a success string."""
@@ -137,6 +161,31 @@ class TestExecuteWorkflowErrors:
 
         with pytest.raises(RuntimeError):
             ExecutionService.execute_workflow(str(workflow_path))
+
+    def test_failure_surfaces_parser_info_advisory(self, tmp_path):
+        workflow_path = tmp_path / "fail-with-typo.pflow.md"
+        workflow_path.write_text(
+            "# Typo Failure\n\n"
+            "## Input\n\n"
+            "### api-key\n\n"
+            "Unused typo.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### fail\n\n"
+            "Fail intentionally.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: exit 1\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            ExecutionService.execute_workflow(str(workflow_path))
+
+        text = str(exc_info.value)
+        assert "Advisories:" in text
+        assert "## Input" in text
+        assert "## Inputs" in text
 
     def test_large_batch_failure_text_uses_compact_item_summary(self, tmp_path):
         workflow_path = tmp_path / "large-batch-fail.pflow.md"

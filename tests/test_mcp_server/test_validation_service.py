@@ -167,6 +167,31 @@ class TestValidationCorrectBehavior:
         # Minimal success message (token-efficient), may include cache lint warnings
         assert result.startswith("✓ Workflow is valid")
 
+    def test_valid_markdown_surfaces_parser_info_advisory(self, tmp_path):
+        """MCP validation should mirror CLI validate-only for parser INFO advisories."""
+        workflow_path = tmp_path / "typo.pflow.md"
+        workflow_path.write_text(
+            "# Typo\n\n"
+            "## Input\n\n"
+            "### api-key\n\n"
+            "Unused typo.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### echo\n\n"
+            "Echo hello.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo hello\n",
+            encoding="utf-8",
+        )
+
+        result = ExecutionService.validate_workflow(str(workflow_path))
+
+        assert result.startswith("✓ Workflow is valid")
+        assert "Advisories:" in result
+        assert "## Input" in result
+        assert "## Inputs" in result
+
     def test_accepts_workflow_with_valid_templates(self):
         """Valid template variables should pass."""
         workflow = {

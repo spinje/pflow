@@ -37,6 +37,8 @@ Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Resul
 | `parallel` | `false` | Concurrent execution |
 | `max_concurrent` | `10` | 1-100; use 30-50 for LLM APIs (rate limits) |
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
+| `max_retries` | `1` | Batch item total attempts after an exception escapes the node (`1` = no batch retry) |
+| `retry_wait` | `0` | Seconds between batch item attempts |
 
 **`parallel: false` is the default** — items run sequentially, in order. Use sequential when items must run in a specific order, when each item depends on side effects from the previous one (e.g. reading filesystem state a prior item wrote), or when you're using batch for bounded iteration. Sequential iteration over a sub-workflow is the cleanest loop-with-disk-state pattern — see `pflow guide sub-workflows` → Bounded iteration.
 
@@ -183,3 +185,26 @@ the normal output shape.
 ```
 
 **Common mistake: missing explicit prompt wiring on batch LLM.** Batch items may have `prompt:` fields in the data, but the LLM node ignores them unless you wire it explicitly: `- prompt: ${item.prompt}`. Batch provides data; the node still needs explicit parameter references.
+
+**Retry interaction:** `batch.max_retries` and node-level `retry:` are separate loops. Node-level retry handles transient failures inside the node attempt:
+
+````markdown
+### fetch-each
+
+Fetch each URL with node-level exponential backoff.
+
+- type: http
+- url: ${url}
+- retry:
+    max: 3
+    wait: 0.5
+    backoff: exponential
+- batch:
+    items: ${urls}
+    as: url
+    parallel: true
+````
+
+For common nodes that convert exhausted failures into an `"error"` action (`llm`, `shell`, `mcp`, `code`, file nodes), the batch item finishes with that action and `batch.max_retries` does not run another item attempt. Multiplication happens only for nodes whose fallback re-raises after node retries are exhausted (`http`, `claude-code`, or custom nodes using the default fallback). In those cases the upper bound is `batch.max_retries * retry.max` total node attempts per item.
+
+Parallel batch workers inherit the configured node retry budget. A `fail_fast` batch cannot interrupt a worker that is already sleeping in backoff; exponential node backoff is clamped to 60 seconds per wait.
