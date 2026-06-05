@@ -467,12 +467,40 @@ class TestAnnotationExtractionHelper:
         assert "total" in assigned
         assert "x" not in assigned  # bare annotation, not assigned
 
-    def test_assigned_names_excludes_function_locals(self):
-        code = "def helper():\n    y: int = 1\n    z = 2\n    return y + z\nresult: int = helper()"
+    def test_assigned_names_records_def_and_class_names(self):
+        # The def statement binds the name at module scope (C2): removing an
+        # orphan annotation on it is the right fix. Function-internal locals
+        # (different scope) stay excluded.
+        code = "helper: Any\ndef helper():\n    y: int = 1\n    z = 2\n    return y + z\nresult: int = helper()"
         assigned = extract_code_assigned_names(code)
+        assert "helper" in assigned  # def name = module-level binding
         assert "result" in assigned
         assert "y" not in assigned  # function-local, different scope
         assert "z" not in assigned
+
+    def test_assigned_names_records_class_name(self):
+        code = "Config: Any\nclass Config:\n    pass\nresult: Any = Config"
+        assert "Config" in extract_code_assigned_names(code)
+
+    def test_assigned_names_excludes_conditional_assignment(self):
+        # Assignment nested in `if` may not run -> not a safe local (C1).
+        code = "items: list\nif True:\n    items = []\nresult: int = len(items)"
+        assert "items" not in extract_code_assigned_names(code)
+
+    def test_assigned_names_excludes_augmented_assignment(self):
+        # `count += 1` reads before storing -> needs a prior binding (C4).
+        code = "count: int\ncount += 1\nresult: int = count"
+        assert "count" not in extract_code_assigned_names(code)
+
+    def test_assigned_names_excludes_read_before_write(self):
+        # `x = x[...]` reads x before binding -> removing the annotation unbinds it.
+        code = "data: dict\ndata = data['x']\nresult: dict = data"
+        assert "data" not in extract_code_assigned_names(code)
+
+    def test_assigned_names_excludes_for_target(self):
+        # `for x in ...` leaves x unbound when the iterable is empty.
+        code = "x: int\nfor x in [1, 2, 3]:\n    pass\nresult: int = x"
+        assert "x" not in extract_code_assigned_names(code)
 
     def test_assigned_names_malformed_code_returns_empty(self):
         assert extract_code_assigned_names("x: dict =") == set()

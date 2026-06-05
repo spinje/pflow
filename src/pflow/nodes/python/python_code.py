@@ -260,44 +260,76 @@ def extract_code_load_references(code: str) -> set[str]:
     return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
 
 
+def _loaded_names(node: ast.AST) -> set[str]:
+    """Names read (``ast.Load``) anywhere within ``node`` (an expression subtree)."""
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+
+
+def _stored_names(node: ast.AST) -> set[str]:
+    """Names written (``ast.Store``) anywhere within ``node`` (handles tuple/list unpack)."""
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+
+
+def _top_level_bound_names(node: ast.stmt) -> set[str]:
+    """Names a single module-top-level statement *unconditionally* binds.
+
+    Returns the empty set for statements that don't establish a definite binding
+    before use — ``AugAssign``, control flow, and ``for``/``with``/comprehension
+    targets simply don't match here. See ``extract_code_assigned_names`` for the
+    full rationale.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {node.name}
+    if isinstance(node, ast.Assign):
+        stores: set[str] = set()
+        for target in node.targets:
+            stores |= _stored_names(target)
+        return stores - _loaded_names(node.value)  # drop read-before-write (x = x[...])
+    if isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
+        return {node.target.id} - _loaded_names(node.value)
+    return set()
+
+
 def extract_code_assigned_names(code: str) -> set[str]:
-    """Return module-level names the author *binds to a value* in ``code``.
+    """Return names *unconditionally bound* at module top level in ``code``.
 
     A declared code-node input is a **bare** annotation (``x: T``) whose value is
-    injected from ``inputs:``. A **local** carries a value — ``x: T = expr`` or a
-    plain ``x = expr``. This returns the latter set.
+    injected from ``inputs:``. A safely-removable **local** is one the code itself
+    binds before use. This returns the names for which removing an orphan
+    annotation is safe — i.e. the name stays bound at runtime.
 
-    It distinguishes the two orphan-annotation fixes that ``extract_code_load_references``
-    alone cannot: removing an orphan annotation is only safe when the name is
-    assigned (it stays a working local); for a read-but-unassigned orphan,
-    removing would leave the name unbound at runtime, so ``inputs`` is the only fix.
+    "Safe" means *definitely bound before use*, approximated soundly as an
+    **unconditional, top-level** binding that does not read the name in its own
+    right-hand side:
 
-    Scoped to module level (skips ``def``/``class``/``lambda`` bodies) so a
-    same-named function local can't flip the decision. Bare annotations
-    (``AnnAssign`` with no value) are NOT assignments. Returns an empty set on
-    SyntaxError so callers fail-open at validate time.
+    - ``x = expr`` / ``x: T = expr`` as a direct module statement (tuple/list
+      unpack targets included), excluding any target that is read in ``expr``
+      (``x = x[...]`` is a read-before-write, not a safe local).
+    - ``def x`` / ``async def x`` / ``class x`` — the definition binds ``x`` at
+      module scope; the name is recorded without descending into the body.
+
+    Deliberately NOT counted, because removing the annotation would (or could)
+    leave the name unbound at runtime — for these the only safe fix is to bind
+    the input:
+
+    - ``x += 1`` (``AugAssign`` reads the prior value before storing; a plain
+      ``x = ...`` earlier still counts via the rule above).
+    - bindings nested in ``if``/``for``/``while``/``with``/``try`` (conditional —
+      may not run).
+    - ``for`` targets (empty iterable → unbound), ``with ... as`` targets, and
+      comprehension/walrus targets (loop-scoped or conditional).
+
+    Erring toward "not safe" is intentional: a missed local just gets the
+    always-valid "add to inputs" suggestion instead of "remove". Returns an
+    empty set on SyntaxError so callers fail-open at validate time.
     """
     try:
         tree = ast.parse(code)
     except SyntaxError:
         return set()
     assigned: set[str] = set()
-    boundaries = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-    stack: list[ast.AST] = list(tree.body)
-    while stack:
-        node = stack.pop()
-        if isinstance(node, boundaries):
-            continue  # Don't descend into new scopes.
-        if isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
-            assigned.add(node.target.id)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                for sub in ast.walk(target):
-                    if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
-                        assigned.add(sub.id)
-        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-            assigned.add(node.target.id)
-        stack.extend(ast.iter_child_nodes(node))
+    for node in tree.body:  # module top level only — nested bindings are conditional
+        assigned |= _top_level_bound_names(node)
     return assigned
 
 

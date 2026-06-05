@@ -499,11 +499,17 @@ def _build_orphan_code_annotation_diagnostics(
             "annotation_key": key,
         }
 
-        if is_assigned:
+        if is_assigned and not (batch_alias and key == batch_alias):
             # The author binds this name to a value, so it's a local, not an
             # injected input. Removing the annotation is safe (it stays a working
             # local); binding it is also valid if it was meant as an input. Offer
             # both, local first.
+            #
+            # The batch alias is excluded: it is NOT injected into code exec
+            # (only into template resolution), so removing its annotation would
+            # leave it unbound regardless of any in-code assignment. It falls
+            # through to the batch-alias branch below, which gives the exact
+            # `alias: ${alias}` binding.
             fixes = [
                 f"Remove the annotation '{key}: {annotation_str}' — '{key}' is assigned in the code, "
                 f"so it's a local variable (only declared inputs and result/next take annotations).",
