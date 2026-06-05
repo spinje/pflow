@@ -877,6 +877,29 @@ class LoopConditionError(PflowError):
         ]
 
 
+class LoopCarryError(PflowError):
+    """Raised when a carried loop input cannot resolve on a carried iteration."""
+
+    def __init__(self, message: str, *, node_id: str | None = None, suggestion: str | None = None):
+        self.raw_message = message
+        self.node_id = node_id
+        self.suggestion = suggestion
+        super().__init__(message)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=self.raw_message,
+                title="Loop Carry Error",
+                suggestions=[self.suggestion] if self.suggestion else None,
+                node_id=self.node_id,
+                source="runtime",
+                context={"category": "validation", "node_id": self.node_id},
+            )
+        ]
+
+
 class OnlySnapshotMissingError(PflowError):
     """Raised when ``--only`` has no prior full-run trace to restore upstream from (issue #443).
 

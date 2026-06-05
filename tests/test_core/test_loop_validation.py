@@ -32,6 +32,10 @@ def _errors(ir, registry):
     ]
 
 
+def _diagnostics(ir, registry):
+    return WorkflowValidator.validate(ir, extracted_params={}, registry=registry)
+
+
 def _ir(nodes, inputs=None):
     ir = {"ir_version": "0.1.0", "nodes": nodes, "edges": []}
     if inputs:
@@ -233,3 +237,129 @@ def test_literal_max_iterations_over_cap_rejected_on_validate_path(registry) -> 
     # only at compile time. Default MAX_NODE_VISITS is 100.
     errs = _errors(_shell_loop("${c.exit_code}", max_it=999), registry)
     assert any("hard visit cap" in d.message for d in errs)
+
+
+def test_until_known_string_rejected_with_until_path_and_message(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {"command": "echo hi"},
+            "loop": {"until": "${c.stdout}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("`loop: until:`" in d.message for d in errs)
+    assert any(d.context and d.context.get("path") == "nodes[id=c].loop.until" for d in errs)
+
+
+def test_while_and_until_both_rejected_on_validate_path(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {"command": "echo hi"},
+            "loop": {"while": "${c.exit_code}", "until": "${c.exit_code}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert sum("exactly one" in d.message for d in errs) == 1
+
+
+def test_neither_while_nor_until_rejected_on_validate_path(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {"command": "echo hi"},
+            "loop": {"max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("exactly one" in d.message for d in errs)
+
+
+def test_carry_key_without_seed_rejected(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {},
+                "code": 'result: dict = {"next_state": "x", "more": False}',
+            },
+            "loop": {"carry": {"state": "${c.result}"}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("does not seed" in d.message for d in errs)
+
+
+def test_carry_value_must_self_reference_loop_node(registry) -> None:
+    ir = _ir([
+        {
+            "id": "other",
+            "type": "code",
+            "params": {"code": 'result: str = "x"'},
+        },
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": "${other.result}"}, "while": "${c.result.more}", "max_iterations": 3},
+        },
+    ])
+    errs = _errors(ir, registry)
+    assert any("must reference this loop node" in d.message for d in errs)
+
+
+def test_bare_carry_alias_rejected_as_self_reference_error(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": "${result}"}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("must reference this loop node" in d.message for d in errs)
+    assert not any("does not declare output" in d.message for d in errs)
+
+
+def test_typoed_carry_output_rejected_for_precise_code_output(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "code",
+            "params": {
+                "inputs": {"state": "seed"},
+                "code": 'state: str\nresult: dict = {"next_state": state, "more": False}',
+            },
+            "loop": {"carry": {"state": "${c.missing}"}, "while": "${c.result.more}", "max_iterations": 3},
+        }
+    ])
+    errs = _errors(ir, registry)
+    assert any("does not declare output 'missing'" in d.message for d in errs)
+
+
+def test_shell_carry_key_not_referenced_warns(registry) -> None:
+    ir = _ir([
+        {
+            "id": "c",
+            "type": "shell",
+            "params": {
+                "inputs": {"state": "seed"},
+                "command": "echo hi",
+            },
+            "loop": {"carry": {"state": "${c.exit_code}"}, "while": "${c.exit_code}", "max_iterations": 3},
+        }
+    ])
+    diagnostics = _diagnostics(ir, registry)
+    assert any(d.severity == Severity.WARNING and "carries input 'state'" in d.message for d in diagnostics)

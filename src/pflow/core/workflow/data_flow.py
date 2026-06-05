@@ -21,6 +21,7 @@ from pflow.core.diagnostic import (
 )
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.types import is_template_reserved_internal_key
+from pflow.core.workflow.loop_validation import check_loop_polarity
 from pflow.runtime.template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
@@ -565,7 +566,7 @@ def _validate_loop_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
     namespacing_on = workflow_ir.get("enable_namespacing", True)
     for node in workflow_ir.get("nodes", []):
         loop_data = node.get("loop")
-        if not loop_data:
+        if loop_data is None:
             continue
         node_id = node.get("id")
         if not namespacing_on:
@@ -584,10 +585,46 @@ def _validate_loop_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         # >= 1 lower bound and integer-ness of the literal branch. Exclude bool (a bool
         # cap is a separate schema concern, not an over-cap one) — bool is an int subclass.
         if isinstance(loop_data, dict):
-            raw_max = loop_data.get("max_iterations")
-            if isinstance(raw_max, int) and not isinstance(raw_max, bool) and raw_max > instrumentation.MAX_NODE_VISITS:
-                diagnostics.append(_make_loop_cap_diagnostic(node_id, raw_max, instrumentation.MAX_NODE_VISITS))
+            diagnostics.extend(_validate_loop_dict_rules(node, loop_data, instrumentation.MAX_NODE_VISITS))
     return diagnostics
+
+
+def _validate_loop_dict_rules(node: dict[str, Any], loop_data: dict[str, Any], max_visits: int) -> list[Diagnostic]:
+    diagnostics: list[Diagnostic] = []
+    node_id = node.get("id")
+    polarity_error = check_loop_polarity(loop_data)
+    if polarity_error is not None:
+        return [_make_loop_polarity_diagnostic(node_id, polarity_error)]
+
+    raw_max = loop_data.get("max_iterations")
+    if isinstance(raw_max, int) and not isinstance(raw_max, bool) and raw_max > max_visits:
+        diagnostics.append(_make_loop_cap_diagnostic(node_id, raw_max, max_visits))
+    diagnostics.extend(_validate_loop_carry_shape(node, loop_data))
+    return diagnostics
+
+
+def _validate_loop_carry_shape(node: dict[str, Any], loop_data: dict[str, Any]) -> list[Diagnostic]:
+    carry = loop_data.get("carry")
+    if not isinstance(carry, dict):
+        return []
+    node_id = node.get("id")
+    inputs = node.get("params", {}).get("inputs")
+    input_keys = set(inputs) if isinstance(inputs, dict) else set()
+    diagnostics: list[Diagnostic] = []
+    for key, value in carry.items():
+        if isinstance(key, str) and key not in input_keys:
+            diagnostics.append(_make_loop_carry_seed_diagnostic(node_id, key))
+        if isinstance(value, str):
+            diagnostics.extend(_validate_loop_carry_value_self_ref(node_id, key, value))
+    return diagnostics
+
+
+def _validate_loop_carry_value_self_ref(node_id: Optional[str], key: Any, value: str) -> list[Diagnostic]:
+    var = TemplateResolver.extract_simple_template_var(value)
+    root = TemplateResolver.extract_root_node_id(var) if var is not None else None
+    if root == node_id:
+        return []
+    return [_make_loop_carry_self_ref_diagnostic(node_id, key, value)]
 
 
 def _make_loop_namespacing_diagnostic(node_id: Optional[str]) -> Diagnostic:
@@ -653,6 +690,54 @@ def _make_loop_batch_exclusion_diagnostic(node_id: Optional[str]) -> Diagnostic:
             "Keep `batch:` for fixed-count fan-out, or `loop:` for stop-on-condition repetition — not both.",
         ],
         context={"category": "validation", "path": f"nodes[id={node_id}].loop"},
+    )
+
+
+def _make_loop_polarity_diagnostic(node_id: Optional[str], message: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=f"Node '{node_id}' {message}",
+        suggestions=[
+            "Use exactly one polarity: `while: ${node.should_continue}` or `until: ${node.done}`.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop"},
+    )
+
+
+def _make_loop_carry_seed_diagnostic(node_id: Optional[str], key: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' carries input '{key}' but does not seed it in `inputs:`. "
+            "A carried input needs a round-1 value before carry overrides it on later iterations."
+        ),
+        suggestions=[
+            f"Add `{key}: <initial value>` under the node's `inputs:` mapping.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
+    )
+
+
+def _make_loop_carry_self_ref_diagnostic(node_id: Optional[str], key: Any, value: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: carry:` entry '{key}' references '{value}', but carry values "
+            "must reference this loop node's own latest output."
+        ),
+        suggestions=[
+            f"Use `{key}: ${{{node_id}.output_name}}` so round N+1 reads round N's output.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
     )
 
 
@@ -798,6 +883,21 @@ def _validate_node_params(
             _check_param_value(
                 "loop.while",
                 while_template,
+                node_id,
+                node_position,
+                nodes_by_id,
+                node_positions,
+                node_refs,
+                loop_forward_limits,
+                loop_node_ids,
+                check_inputs,
+                errors,
+            )
+        until_template = loop_block.get("until")
+        if isinstance(until_template, str):
+            _check_param_value(
+                "loop.until",
+                until_template,
                 node_id,
                 node_position,
                 nodes_by_id,

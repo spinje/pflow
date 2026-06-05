@@ -328,6 +328,62 @@ Recovery handler.
     assert "__iteration__" not in sa  # cleared before routing to on-error
 
 
+def test_carry_loop_error_action_archives_failed_iteration_for_on_error(tmp_path) -> None:
+    """A carried loop that routes to on-error must not expose stale carried output.
+
+    The failed iteration is archived in __failures__; the active shared store no
+    longer exposes the worker's stale successful output under `worker`.
+    """
+    body = """# Carry error action loop
+
+Carry state until iteration 2 fails and routes to the handler.
+
+## Steps
+
+### worker
+
+Advance state, then fail on the second iteration.
+
+- type: code
+- on-error: recover
+- inputs:
+    state: 0
+    iteration: ${__iteration__}
+
+```python code
+state: int
+iteration: int
+next_state = state + 1
+result: dict = {"state": next_state, "more": True}
+if iteration >= 2:
+    next: str = "error"
+```
+
+- loop:
+    carry:
+      state: ${worker.result.state}
+    while: ${worker.result.more}
+    max_iterations: 5
+
+### recover
+
+Recovery handler.
+
+- type: shell
+- next: end
+- command: echo recovered
+"""
+    r = _run(tmp_path, body)
+    assert r.success
+    assert r.status == WorkflowStatus.DEGRADED
+    sa = r.shared_after
+    assert sa["__execution__"]["node_visit_counts"]["worker"] == 2
+    assert "worker" in sa["__failures__"]
+    assert "worker" not in sa
+    assert sa["__failures__"]["worker"]["data"]["result"]["state"] == 2
+    assert sa["recover"]["stdout"].strip() == "recovered"
+
+
 def test_iteration_threaded_into_sub_workflow_inputs(tmp_path) -> None:
     """Flagship pattern: ${__iteration__} is resolved in the parent and passed to a
     looped sub-workflow's inputs each iteration; the child output drives the drain."""
@@ -399,6 +455,435 @@ Run the child until its remaining list drains.
     assert sa["__execution__"]["node_visit_counts"]["loop-child"] == 3
     assert sa["loop-child"]["remaining"] == []
     assert sa["loop-child"]["loop_stopped"] == "condition"
+
+
+def test_carry_tournament_threads_previous_survivors_into_next_round(tmp_path) -> None:
+    child = tmp_path / "judge-round.pflow.md"
+    log_path = tmp_path / "rounds.jsonl"
+    child.write_text(
+        """# Judge Round
+
+## Inputs
+
+### contenders
+
+Current contenders.
+
+- type: array
+
+### log_path
+
+Round log path.
+
+- type: string
+
+## Outputs
+
+### survivors
+
+Survivors for the next round.
+
+- type: array
+- source: ${judge.result.survivors}
+
+### more
+
+Whether another round is needed.
+
+- type: boolean
+- source: ${judge.result.more}
+
+## Steps
+
+### judge
+
+Keep every other contender and log the input this round received.
+
+- type: code
+- inputs:
+    contenders: ${contenders}
+    log_path: ${log_path}
+
+```python code
+import json
+
+contenders: list
+log_path: str
+survivors = contenders[::2] if len(contenders) > 1 else contenders
+with open(log_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(contenders) + "\\n")
+result: dict = {"survivors": survivors, "more": len(survivors) > 1}
+```
+""",
+        encoding="utf-8",
+    )
+    outer = tmp_path / "tournament.pflow.md"
+    outer.write_text(
+        f"""# Tournament
+
+## Steps
+
+### run-rounds
+
+Run elimination rounds.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    contenders: ["ada", "beck", "cy", "dee"]
+    log_path: {log_path}
+- loop:
+    carry:
+      contenders: ${{run-rounds.survivors}}
+    while: ${{run-rounds.more}}
+    max_iterations: 10
+""",
+        encoding="utf-8",
+    )
+
+    r = WorkflowRunner().run(str(outer), {}, RunnerConfig())
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["run-rounds"] == 2
+    assert r.shared_after["run-rounds"]["survivors"] == ["ada"]
+
+    import json
+
+    rounds = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert rounds == [["ada", "beck", "cy", "dee"], ["ada", "cy"]]
+
+
+def test_workflow_body_carry_typo_rejected_before_runtime(tmp_path) -> None:
+    """Workflow-body carry refs must be checked against declared child outputs.
+
+    This is the primary user-facing shape for stateful loops. It exercises the
+    child-workflow output registration path, which is distinct from code-node
+    `result` output validation.
+    """
+    child = tmp_path / "judge-round.pflow.md"
+    child.write_text(
+        """# Judge Round
+
+## Inputs
+
+### contenders
+
+Current contenders.
+
+- type: array
+
+## Outputs
+
+### survivors
+
+Survivors for the next round.
+
+- type: array
+- source: ${judge.result.survivors}
+
+### more
+
+Whether another round is needed.
+
+- type: boolean
+- source: ${judge.result.more}
+
+## Steps
+
+### judge
+
+Keep every other contender.
+
+- type: code
+- inputs:
+    contenders: ${contenders}
+
+```python code
+contenders: list
+survivors = contenders[::2] if len(contenders) > 1 else contenders
+result: dict = {"survivors": survivors, "more": len(survivors) > 1}
+```
+""",
+        encoding="utf-8",
+    )
+    outer = tmp_path / "bad-carry.pflow.md"
+    outer.write_text(
+        f"""# Bad Carry
+
+## Steps
+
+### run-rounds
+
+Run elimination rounds.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    contenders: ["ada", "beck", "cy", "dee"]
+- loop:
+    carry:
+      contenders: ${{run-rounds.surviviors}}
+    while: ${{run-rounds.more}}
+    max_iterations: 10
+""",
+        encoding="utf-8",
+    )
+
+    r = WorkflowRunner().run(str(outer), {}, RunnerConfig())
+    assert not r.success
+    assert any("does not declare output 'surviviors'" in err.message for err in r.errors)
+
+
+def test_until_poll_runs_until_truthy(tmp_path) -> None:
+    body = """# Poll
+
+## Steps
+
+### wait
+
+Done on the third check.
+
+- type: code
+- inputs:
+    iteration: ${__iteration__}
+
+```python code
+iteration: int
+result: dict = {"done": iteration >= 3}
+```
+
+- loop:
+    until: ${wait.result.done}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["wait"] == 3
+    assert r.shared_after["wait"]["loop_stopped"] == "condition"
+
+
+def test_until_absent_runtime_source_continues_to_cap(tmp_path) -> None:
+    """Absent `until:` source must not silently exit after one iteration."""
+    body = """# Missing Until
+
+## Steps
+
+### wait
+
+Never emits result.done.
+
+- type: code
+
+```python code
+result: dict = {"still_missing": True}
+```
+
+- loop:
+    until: ${wait.result.done}
+    max_iterations: 3
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["wait"] == 3
+    assert r.shared_after["wait"]["loop_stopped"] == "max_iterations"
+
+
+def test_validate_fix_carries_draft_and_feedback_pair(tmp_path) -> None:
+    body = """# Validate Fix
+
+## Steps
+
+### fix
+
+Carry both the draft and the next feedback.
+
+- type: code
+- inputs:
+    iteration: ${__iteration__}
+    draft: a
+    feedback: b
+
+```python code
+iteration: int
+draft: str
+feedback: str
+result: dict = {
+    "draft": draft + feedback,
+    "feedback": "!",
+    "more": iteration < 3,
+}
+```
+
+- loop:
+    carry:
+      draft: ${fix.result.draft}
+      feedback: ${fix.result.feedback}
+    while: ${fix.result.more}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["fix"] == 3
+    assert r.shared_after["fix"]["result"]["draft"] == "ab!!"
+
+
+def test_carry_preserves_constant_inputs(tmp_path) -> None:
+    body = """# Constant Carry
+
+## Steps
+
+### step
+
+Carry state but keep label constant.
+
+- type: code
+- inputs:
+    state: 0
+    label: fixed
+
+```python code
+state: int
+label: str
+next_state = state + 1
+result: dict = {"state": next_state, "label": label, "more": state < 2}
+```
+
+- loop:
+    carry:
+      state: ${step.result.state}
+    while: ${step.result.more}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["step"]["result"]["state"] == 3
+    assert r.shared_after["step"]["result"]["label"] == "fixed"
+
+
+def test_no_carry_loop_leaves_static_inputs_unchanged(tmp_path) -> None:
+    body = """# No Carry
+
+## Steps
+
+### step
+
+Loop without carry.
+
+- type: code
+- inputs:
+    seed: 5
+    iteration: ${__iteration__}
+
+```python code
+seed: int
+iteration: int
+result: dict = {"seed": seed, "more": iteration < 2}
+```
+
+- loop:
+    while: ${step.result.more}
+    max_iterations: 5
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["step"] == 2
+    assert r.shared_after["step"]["result"]["seed"] == 5
+
+
+def test_no_carry_loop_without_inputs_does_not_trip_carry_guard(tmp_path) -> None:
+    """A no-carry loop with NO inputs must never enter the carry path.
+
+    This guards the shared `is_carry_iteration` gate's specificity. If the gate
+    regressed to fire for any loop on iteration > 1 (dropping its `carry` conjunct),
+    this node — which has no `template_config` and no resolved inputs — would raise
+    `LoopCarryError` ("no inputs mapping" from the engine guard, or "no template
+    configuration" from `carry_effective_config`) on round 2. Running cleanly to the
+    cap proves carry stays inert for non-carry loops.
+    """
+    body = """# No Inputs Loop
+
+## Steps
+
+### step
+
+Always continue; runs to the cap.
+
+- type: code
+
+```python code
+result: dict = {"more": True}
+```
+
+- loop:
+    while: ${step.result.more}
+    max_iterations: 2
+"""
+    r = _run(tmp_path, body)
+    assert r.success, r.errors
+    assert r.shared_after["__execution__"]["node_visit_counts"]["step"] == 2
+    assert r.shared_after["step"]["loop_stopped"] == "max_iterations"
+
+
+def test_permissive_mode_still_raises_for_unresolved_carry(tmp_path) -> None:
+    child = tmp_path / "dynamic-child.pflow.md"
+    child.write_text(
+        """# Dynamic Child
+
+## Inputs
+
+### state
+
+Carried state.
+
+- type: string
+
+## Outputs
+
+### done
+
+Never done.
+
+- type: boolean
+- source: ${emit.result.done}
+
+## Steps
+
+### emit
+
+Emit no carried field.
+
+- type: code
+
+```python code
+result: dict = {"done": False}
+```
+""",
+        encoding="utf-8",
+    )
+    ir = {
+        "ir_version": "0.1.0",
+        "template_resolution_mode": "permissive",
+        "inputs": {"child_path": {"type": "string", "required": False, "default": str(child)}},
+        "nodes": [
+            {
+                "id": "run",
+                "type": "workflow",
+                "params": {
+                    "workflow": "${child_path}",
+                    "inputs": {"state": "seed"},
+                },
+                "loop": {
+                    "carry": {"state": "${run.missing}"},
+                    "until": "${run.done}",
+                    "max_iterations": 3,
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    r = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert not r.success
+    assert any("carried input 'state' did not resolve" in err.message for err in r.errors)
 
 
 def test_templated_max_iterations_caps_at_runtime(tmp_path) -> None:

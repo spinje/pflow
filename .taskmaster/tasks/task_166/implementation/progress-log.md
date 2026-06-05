@@ -276,3 +276,126 @@ vote. The plan marks every review correction with `[review-fix]` so they are not
 
 - `context/CONTEXT.md` — added glossary terms **Carry**, **Seed**, the **Carry vs Seed**
   discriminator, and a polarity note on **Loop condition** (glossary-only; no implementation detail).
+
+## Phase 8 — Implementation completed (Codex, 2026-06-05)
+
+Implemented the plan's core surface: `LoopConfig` now supports optional `while`, `until`, and
+`carry`; schema accepts the new keys; compiler and validate-only paths share `check_loop_polarity`;
+runtime carry overrides happen at `_execute_node` before `plan_node`, so config hash, template
+resolution, execution, and cache behavior all see the same effective inputs. Added strict
+`LoopCarryError` after resolution so permissive mode cannot pass an unresolved carried template
+literal through structural loop state.
+
+Key implementation learning: static-only seed inputs need a `TemplateConfig` when `carry` is present.
+Without that, an all-literal round-1 seed would never enter the template-resolution path on round 2,
+so the carry override would be inert for the simplest examples. The compiler now creates a
+TemplateConfig for carry loops even when no original param contains `${...}`.
+
+Validation landed in the planned split: `data_flow.py` handles exactly-one, self-reference, seed
+presence, and `until` forward refs; `template_validation/validator.py` handles typed `until`, precise
+carry-output typo checks for workflow/code bodies, and the shell/llm carried-but-unreferenced
+warning. One small deviation from the plan: the Phase-0 scratchpad fixtures were not moved as files;
+instead, equivalent self-contained integration tests were added in
+`tests/test_integration/test_loop_carry_substrate.py`. Reason: tests should not depend on
+scratchpad file presence or relative paths, and the inline fixtures still pin the same substrate.
+
+Docs and examples were updated: `pflow guide branching`, `docs/how-it-works/loops.mdx`, and
+`examples/core/stateful-loop-tournament.pflow.md` + child workflow. Added the planned carry ×
+on-error regression after final audit, then added three high-value fidelity tests before calling the
+task done: workflow-body carry typo rejection (primary `type: workflow` path), absent `until:` source
+continuing to cap, and dry-run planning with carry (seed iteration only, no premature carry
+resolution). Verification: focused loop + dry-run suite `128 passed`; broader loop/sub-workflow
+harness `193 passed`; near-full sandbox run `7587 passed, 19 skipped` after excluding seven
+`/opt/homebrew/bin/uv` subprocess tests that panic before Python starts in this sandbox. The
+unfiltered near-full run failed only on that known uv sandbox class, not on pflow assertions.
+
+### Final verification audit
+
+Re-audited tests for fidelity rather than coverage. No whole tests were removed: each new test maps
+to a distinct failure mode. One low-value assertion was changed in the dry-run carry test: instead of
+asserting the output did not mention `run.state` (brittle if dry-run later displays carry refs), it
+now asserts the durable contract — dry-run succeeds and emits an execution plan.
+
+Manual CLI verification used real `.pflow.md` workflows under `scratchpads/task-166-manual-cli/`:
+valid code carry with static seed, workflow-body tournament carry with logged round inputs, absent
+`until:` source capping at `max_iterations`, carry-output typo validation, missing-seed validation,
+both-polarities validation, shell carried-but-unreferenced warning, permissive-mode runtime carry
+failure via `PFLOW_TEMPLATE_RESOLUTION_MODE=permissive`, dry-run planning with carry, and `--only`
+on a loop node. Results matched the intended contracts. The manual tournament log accumulated across
+multiple runs until removed before execution, which is expected scratchpad state, not a pflow
+regression.
+
+## Phase 9 — Post-implementation review + architectural refactor (staged-change review)
+
+> A critical read of the staged implementation against the plan. Confirmed it's faithful and
+> well-tested, found two quality-gate misses, and — prompted by a sharp user question — resolved the
+> `plan_node` invariant tension *properly* rather than documenting around it. All changes re-staged
+> and re-verified.
+
+### The review verdict: faithful + strong tests, but the quality gate had not been run
+
+The implementation matches the plan including every `[review-fix]`. Test fidelity is high — the
+tournament integration test asserts the *carried content* threaded per round
+(`rounds == [["ada","beck","cy","dee"], ["ada","cy"]]`), so it would fail under the dead-hook
+regression; `until`+absent→continue, permissive-strict, and `apply_carry_overrides` mutation-safety
+are all directly asserted. **But `make check` failed**, which the implementer's log (test counts only)
+didn't surface:
+- **mypy** `union-attr` at the carry hook (`config.loop_config.carry` unnarrowed because a separate
+  `is_carry_iteration` boolean can't be tracked).
+- **ruff-format** reflowed 3 files — the staged code wasn't formatted.
+
+Both runtime-harmless but gate-blocking. Lesson recorded: *run `make check`, not just the tests,
+before declaring done.*
+
+### A real plan gap the implementer caught (credit)
+
+The plan's Phase 2 was wrong for **all-static-seed carry loops**: the original compiler builds
+`template_config = None` when no param has `${...}`, so the override would have been inert (or
+crashed on `None`). The implementer fixed it — the compiler now builds a `TemplateConfig` when
+`template_params OR loop_config.carry`. Legitimate defect in the plan; my own plan-review missed it.
+
+### The architectural fix (user-prompted): carry override → `plan_node`, not a doc comment
+
+First pass parked the carry override in `engine._execute_node` (rebinding `config` before
+`plan_node`) with a comment acknowledging the tension with the load-bearing invariant
+(*"template resolution MUST live in `plan_node()`"*, runtime/CLAUDE.md). The user challenged whether
+a doc comment was the right solution. It wasn't. Verified two facts, then moved it:
+- The engine has **no** post-`plan_node` read of `config.template_config` on the loop path (the only
+  such reads are in `_execute_single_node`, the batch-only callback) — so the engine never needed the
+  effective config; it was rebinding for nothing downstream.
+- The planner walks each loop body once at `__iteration__ == 1`, so a carry gate of `> 1` is
+  **inert during planning by construction** — no `execution/plan.py` special-casing required.
+
+Refactor: new `carry_effective_config(config, shared)` + `is_carry_iteration(config, shared)` in
+`loop_control.py`; `plan_node` calls `carry_effective_config` at the top (before resolution AND
+hashing). Result — the engine dropped the `config` rebind, the `import dataclasses`, and the
+mypy-narrowing hack; the permissive-mode strict guard (`_assert_carried_inputs_resolved`) stays in
+the engine (a runtime concern) gated by the shared `is_carry_iteration` so the two sites can't drift.
+Net code *removal*, and the invariant is now honored, not annotated. Engine/planner parity holds
+(`test_plan_drift` / `test_plan_classify` green).
+
+### Test hardening (mutation-verified)
+
+The plan's "no-carry loop guard" test was vacuous — an empty-carry override is a no-op, so it passed
+even under a regressed gate. Added `test_no_carry_loop_without_inputs_does_not_trip_carry_guard` (a
+no-`inputs` loop): mutation-tested by dropping the `carry` conjunct from `is_carry_iteration` →
+the test **fails** with the exact `LoopCarryError`; correct code passes. A real guard now.
+
+### A note that was withdrawn (don't re-flag it)
+
+`LoopCarryError.to_diagnostics` uses `context={"category": "validation", ...}, source="runtime"` —
+initially flagged as odd for a runtime error, then withdrawn: it matches the pre-existing sibling
+`LoopConditionError` **exactly**. Changing it would create inconsistency. Leave it.
+
+### Verification
+
+`make check` green (ruff, ruff-format, mypy 229 files, deptry); focused loop/carry/parity/dry-run
+suite green; broad runtime + integration + core regression **5053 passed, 1 skipped**. All review
+fixes (mypy narrowing via `plan_node` move, formatting, the new test) re-staged cleanly.
+
+### Remaining (optional, non-blocking)
+
+- **Phase 7 acceptance gate not yet run** — fresh agents authoring tournament/poll/validate-fix from
+  the new guide text (the plan's "real definition of done"). Guide + examples are in place to support it.
+- Strict-guard regression test for carried values that legitimately contain literal `${...}` text
+  (low risk; the check is keyed to the original template, so safe by construction).

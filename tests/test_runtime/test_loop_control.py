@@ -12,11 +12,12 @@ from pflow.core.exceptions import LoopConditionError
 from pflow.runtime.engine import instrumentation
 from pflow.runtime.engine.loop_control import (
     _coerce_runtime_cap,
+    apply_carry_overrides,
     evaluate_loop_condition,
     loop_runtime_scope,
     resolve_loop_cap,
 )
-from pflow.runtime.engine.types import LoopConfig
+from pflow.runtime.engine.types import LoopConfig, TemplateConfig
 
 # --- evaluate_loop_condition ------------------------------------------------
 
@@ -59,6 +60,66 @@ def test_coalesce_falls_through_to_stop_when_unresolved() -> None:
 
 def test_coalesce_resolves_typed_value() -> None:
     assert evaluate_loop_condition("${a.x ?? b.y}", {"b": {"y": 1}}, "n") is True
+
+
+def test_until_true_stops_false_continues() -> None:
+    assert evaluate_loop_condition("${n.done}", {"n": {"done": True}}, "n", until=True) is False
+    assert evaluate_loop_condition("${n.done}", {"n": {"done": False}}, "n", until=True) is True
+
+
+def test_until_absent_reference_continues_to_cap() -> None:
+    assert evaluate_loop_condition("${n.done}", {}, "n", until=True) is True
+
+
+def test_until_string_value_raises() -> None:
+    with pytest.raises(LoopConditionError, match="string"):
+        evaluate_loop_condition("${n.done}", {"n": {"done": "false"}}, "n", until=True)
+
+
+def test_until_malformed_template_stops_safely() -> None:
+    assert evaluate_loop_condition("not a template", {}, "n", until=True) is False
+
+
+# --- apply_carry_overrides ---------------------------------------------------
+
+
+def test_apply_carry_overrides_is_fresh_and_preserves_constants() -> None:
+    tc = TemplateConfig(
+        template_params={"inputs": {"state": "${seed}", "constant_ref": "${constant}"}},
+        static_params={"inputs": {"limit": 3}, "command": "echo ${state}"},
+        expected_types={},
+        resolution_mode="strict",
+    )
+    original_template_inputs = tc.template_params["inputs"]
+    original_static_inputs = tc.static_params["inputs"]
+
+    effective = apply_carry_overrides(tc, {"state": "${step.next_state}"})
+
+    assert effective is not tc
+    assert effective.template_params["inputs"] == {
+        "limit": 3,
+        "state": "${step.next_state}",
+        "constant_ref": "${constant}",
+    }
+    assert "inputs" not in effective.static_params
+    assert tc.template_params["inputs"] is original_template_inputs
+    assert tc.static_params["inputs"] is original_static_inputs
+    assert tc.template_params["inputs"] == {"state": "${seed}", "constant_ref": "${constant}"}
+    assert tc.static_params["inputs"] == {"limit": 3}
+
+
+def test_apply_carry_overrides_moves_all_static_inputs_to_template_inputs() -> None:
+    tc = TemplateConfig(
+        template_params={},
+        static_params={"inputs": {"state": "seed", "limit": 3}},
+        expected_types={},
+        resolution_mode="strict",
+    )
+
+    effective = apply_carry_overrides(tc, {"state": "${step.next_state}"})
+
+    assert effective.template_params["inputs"] == {"state": "${step.next_state}", "limit": 3}
+    assert effective.static_params == {}
 
 
 # --- resolve_loop_cap / _coerce_runtime_cap ---------------------------------

@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Optional
 
-from pflow.core.exceptions import CompilationError
+from pflow.core.exceptions import CompilationError, LoopCarryError, LoopConditionError
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
@@ -50,10 +50,10 @@ from .instrumentation import (
     record_trace,
     write_memo_cache,
 )
-from .loop_control import evaluate_loop_condition, loop_runtime_scope, resolve_loop_cap
+from .loop_control import evaluate_loop_condition, is_carry_iteration, loop_runtime_scope, resolve_loop_cap
 from .namespaced_store import NamespacedSharedStore
 from .plan_node import plan_node
-from .template_resolution import resolve_templates
+from .template_resolution import contains_unresolved_template, resolve_templates
 from .types import CompiledWorkflow, NodeConfig
 
 # Map node class names to failure categories for step 17.5 (error-action
@@ -70,6 +70,38 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 # child engine.run completes when the parent had no value installed. Module
 # level so deeply-nested sub-workflow restores don't allocate per call.
 _EMPTY_PROMPT_CACHE: Mapping[str, CacheRenderContext] = MappingProxyType({})
+
+
+def _assert_carried_inputs_resolved(config: NodeConfig, resolved_params: Optional[dict[str, Any]]) -> None:
+    """Raise if permissive template resolution left any carried input unresolved."""
+    carry = config.loop_config.carry if config.loop_config is not None else {}
+    resolved_inputs = resolved_params.get("inputs") if isinstance(resolved_params, dict) else None
+    if not isinstance(resolved_inputs, dict):
+        raise LoopCarryError(
+            f"Loop '{config.node_id}' carried inputs could not be resolved because the node has no inputs mapping.",
+            node_id=config.node_id,
+            suggestion="Seed every carried key in the node's `inputs:` mapping.",
+        )
+
+    for key, template in carry.items():
+        if key not in resolved_inputs:
+            raise LoopCarryError(
+                f"Loop '{config.node_id}' carried input '{key}' is missing from resolved inputs.",
+                node_id=config.node_id,
+                suggestion="Seed every carried key in `inputs:` and keep the key names identical.",
+            )
+        value = resolved_inputs[key]
+        if contains_unresolved_template(value, template):
+            raise LoopCarryError(
+                f"Loop '{config.node_id}': carried input '{key}' did not resolve ({value!r}). "
+                "The loop body did not produce the carried output this iteration.",
+                node_id=config.node_id,
+                suggestion=(
+                    "Check the `carry:` reference and the loop body's declared outputs. "
+                    "Carry references must point at this loop node's latest output, e.g. "
+                    f"`{key}: ${{{config.node_id}.output_name}}`."
+                ),
+            )
 
 
 def build_prompt_cache_dict(
@@ -602,7 +634,16 @@ class WorkflowEngine:
         if loop_config is None:  # caller guards; defensive for type-narrowing
             return False
 
-        should_continue = evaluate_loop_condition(loop_config.while_template, shared, node_id)
+        if loop_config.until_template is not None:
+            should_continue = evaluate_loop_condition(loop_config.until_template, shared, node_id, until=True)
+        elif loop_config.while_template is not None:
+            should_continue = evaluate_loop_condition(loop_config.while_template, shared, node_id)
+        else:
+            raise LoopConditionError(
+                f"Node '{node_id}' loop has neither `while:` nor `until:` configured.",
+                node_id=node_id,
+                suggestion="Declare exactly one loop condition: `while: ${node.output}` or `until: ${node.output}`.",
+            )
         if not should_continue:
             self._mark_loop_stopped(shared, node_id, "condition")
             return False
@@ -744,7 +785,14 @@ class WorkflowEngine:
         return "error"
 
     def _execute_node(self, node: Any, config: NodeConfig, shared: dict[str, Any]) -> str:  # noqa: C901
-        """Execute a single node with all runtime concerns."""
+        """Execute a single node with all runtime concerns.
+
+        The carried-loop input override (round N>1) lives in ``plan_node`` —
+        resolution + config-hash + execution all observe the effective inputs.
+        Here we only assert (post-resolution) that no carried input was left
+        unresolved, which catches the permissive-mode case where ``plan_node``
+        does not raise. See ``_assert_carried_inputs_resolved``.
+        """
         start_time = time.perf_counter()
         shared_keys_before = set(shared.keys()) if (self.trace or self.metrics) else set()
 
@@ -816,6 +864,8 @@ class WorkflowEngine:
             resolved_params = plan.resolved_params
             cache_key = plan.cache_key
             config_hash = plan.config_hash
+            if is_carry_iteration(config, shared):
+                _assert_carried_inputs_resolved(config, resolved_params)
 
             if config.node_id in shared["__execution__"]["completed_nodes"]:
                 cached_hash = shared["__execution__"]["node_hashes"].get(config.node_id)

@@ -38,6 +38,83 @@ def test_dry_run_does_not_execute_shell_node(tmp_path) -> None:
     assert not proof.exists()
 
 
+def test_dry_run_with_loop_carry_plans_seed_iteration_only(tmp_path) -> None:
+    """Dry-run must not resolve carry refs that only exist after iteration 1."""
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        """# Child
+
+## Inputs
+
+### state
+
+Current state.
+
+- type: integer
+
+## Outputs
+
+### state
+
+Next state.
+
+- type: integer
+- source: ${step.result.state}
+
+### more
+
+Whether to continue.
+
+- type: boolean
+- source: ${step.result.more}
+
+## Steps
+
+### step
+
+Advance state.
+
+- type: code
+- inputs:
+    state: ${state}
+
+```python code
+state: int
+result: dict = {"state": state + 1, "more": False}
+```
+""",
+        encoding="utf-8",
+    )
+    workflow_path = tmp_path / "carry-dry-run.pflow.md"
+    workflow_path.write_text(
+        f"""# Carry Dry Run
+
+## Steps
+
+### run
+
+Loop child with carried state.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    state: 0
+- loop:
+    carry:
+      state: ${{run.state}}
+    while: ${{run.more}}
+    max_iterations: 3
+""",
+        encoding="utf-8",
+    )
+
+    result = invoke_cli(["--dry-run", str(workflow_path)])
+
+    assert result.exit_code == 0
+    assert "Summary" in result.output
+    assert "would execute" in result.output
+
+
 def test_dry_run_json_output_is_valid_json(tmp_path) -> None:
     """Dry-run JSON output should be a single JSON document."""
     workflow_path = tmp_path / "dry-run-json.pflow.md"

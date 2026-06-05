@@ -44,11 +44,13 @@ class LoopConfig:
     (do-while); falsy → advance to the successor. Mutually exclusive with batch.
     """
 
-    while_template: str  # Condition source, raw "${node.output}" template string
+    while_template: Optional[str] = None  # Condition source, raw "${node.output}" template string
     # Iteration cap. Either a pre-validated positive int (literal branch) OR a raw
     # "${template}" string resolved + validated at loop entry. None → MAX_NODE_VISITS.
     max_iterations: Optional[int] = None
     max_iterations_template: Optional[str] = None
+    until_template: Optional[str] = None
+    carry: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

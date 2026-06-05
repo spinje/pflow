@@ -18,6 +18,7 @@ from typing import Any, Optional, Union
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR
+from pflow.core.workflow.loop_validation import check_loop_polarity
 from pflow.registry import Registry
 from pflow.runtime.engine import instrumentation
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, LoopConfig, NodeConfig, TemplateConfig
@@ -324,17 +325,6 @@ def _create_node_and_config(
     if static_params:
         node_instance.set_params(static_params)
 
-    # Build template config (None if no templates)
-    template_config = None
-    if template_params:
-        template_config = TemplateConfig(
-            template_params=template_params,
-            static_params=static_params,
-            expected_types=expected_types,
-            resolution_mode=template_resolution_mode,
-            optional_input_keys=optional_input_keys,
-        )
-
     # Build batch config (None if not a batch node)
     batch_config = None
     batch_data = node_data.get("batch")
@@ -351,6 +341,19 @@ def _create_node_and_config(
 
     # Build loop config (None if not a loop node). batch/loop are mutually exclusive.
     loop_config = _build_loop_config(node_data, batch_config is not None)
+
+    # Build template config (None if no templates). A carry loop needs a
+    # TemplateConfig even when round-1 inputs are all static literals, because
+    # round 2+ swaps carried inputs into template_params before resolution.
+    template_config = None
+    if template_params or (loop_config is not None and loop_config.carry):
+        template_config = TemplateConfig(
+            template_params=template_params,
+            static_params=static_params,
+            expected_types=expected_types,
+            resolution_mode=template_resolution_mode,
+            optional_input_keys=optional_input_keys,
+        )
 
     # Build NodeConfig
     node_config = NodeConfig(
@@ -374,12 +377,12 @@ def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[L
 
     Returns None when no ``loop:`` is declared. Enforces:
     - batch/loop mutual exclusion (both set → ``CompilationError``),
-    - a non-empty ``while:`` condition,
+    - exactly one of ``while:`` / ``until:``,
     - literal ``max_iterations`` coerced to int and bounded to ``[1, MAX_NODE_VISITS]``;
       a ``${template}`` ``max_iterations`` is deferred to runtime (resolved at loop entry).
     """
     loop_data = node_data.get("loop")
-    if not loop_data:
+    if loop_data is None:
         return None
 
     node_id = node_data.get("id")
@@ -396,22 +399,18 @@ def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[L
 
     if not isinstance(loop_data, dict):
         raise CompilationError(
-            f"Node '{node_id}' `loop:` must be a mapping with a `while:` condition.",
+            f"Node '{node_id}' `loop:` must be a mapping with a `while:` or `until:` condition.",
             phase="loop_config",
             node_id=node_id,
             node_type=node_type,
-            suggestion="Declare `- loop:` with `while: ${node.output}` and optional `max_iterations:`.",
+            suggestion=(
+                "Declare `- loop:` with `while: ${node.output}` to continue while truthy, "
+                "or `until: ${node.output}` to continue until truthy."
+            ),
         )
 
-    while_template = loop_data.get("while")
-    if not isinstance(while_template, str) or not while_template.strip():
-        raise CompilationError(
-            f"Node '{node_id}' `loop:` is missing a `while:` condition.",
-            phase="loop_config",
-            node_id=node_id,
-            node_type=node_type,
-            suggestion="Add `while: ${node.output}` — a single ${...} reference to this node's typed output.",
-        )
+    while_template, until_template = _extract_loop_polarity(loop_data, node_id, node_type)
+    carry = _extract_loop_carry(loop_data, node_id, node_type)
 
     max_iterations: Optional[int] = None
     max_iterations_template: Optional[str] = None
@@ -422,10 +421,68 @@ def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[L
         max_iterations = _validate_loop_cap(_coerce_loop_cap_int(raw_max, node_id, node_type), node_id, node_type)
 
     return LoopConfig(
-        while_template=while_template,
+        while_template=while_template or None,
         max_iterations=max_iterations,
         max_iterations_template=max_iterations_template,
+        until_template=until_template or None,
+        carry=dict(carry),
     )
+
+
+def _extract_loop_polarity(
+    loop_data: dict[str, Any], node_id: Optional[str], node_type: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    polarity_error = check_loop_polarity(loop_data)
+    if polarity_error is not None:
+        raise CompilationError(
+            f"Node '{node_id}' {polarity_error}",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion=("Use exactly one polarity: `while: ${node.should_continue}` or `until: ${node.done}`."),
+        )
+
+    while_template = loop_data.get("while")
+    until_template = loop_data.get("until")
+    if while_template is not None and not isinstance(while_template, str):
+        raise CompilationError(
+            f"Node '{node_id}' `loop: while` must be a non-empty string template.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Set `while: ${node.output}` — a single ${...} reference to this node's typed output.",
+        )
+    if until_template is not None and not isinstance(until_template, str):
+        raise CompilationError(
+            f"Node '{node_id}' `loop: until` must be a non-empty string template.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Set `until: ${node.output}` — a single ${...} reference to this node's typed output.",
+        )
+    return while_template or None, until_template or None
+
+
+def _extract_loop_carry(loop_data: dict[str, Any], node_id: Optional[str], node_type: Optional[str]) -> dict[str, str]:
+    carry = loop_data.get("carry") or {}
+    if not isinstance(carry, dict):
+        raise CompilationError(
+            f"Node '{node_id}' `loop: carry` must be a mapping of input name to ${{node.output}} reference.",
+            phase="loop_config",
+            node_id=node_id,
+            node_type=node_type,
+            suggestion="Use `carry: {input_name: ${this-node.output_name}}`.",
+        )
+    for key, value in carry.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise CompilationError(
+                f"Node '{node_id}' `loop: carry` entries must be string keys and string ${{...}} references.",
+                phase="loop_config",
+                node_id=node_id,
+                node_type=node_type,
+                suggestion="Use `carry: {input_name: ${this-node.output_name}}`.",
+            )
+    return dict(carry)
 
 
 def _coerce_loop_cap_int(value: Any, node_id: Optional[str], node_type: Optional[str]) -> int:

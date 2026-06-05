@@ -1,0 +1,51 @@
+---
+title: "Loops"
+description: "Condition-terminated and stateful iteration with loop:"
+---
+
+`loop:` repeats a single node until its own typed output says to stop. It is a do-while loop: the node runs once, then pflow evaluates the condition.
+
+```md
+### wait
+- type: workflow
+- workflow: ./check-status.pflow.md
+- inputs:
+    job_id: ${job_id}
+- loop:
+    until: ${wait.done}
+    max_iterations: 60
+```
+
+Use exactly one condition:
+
+- `while: ${node.more}` continues while the value is truthy.
+- `until: ${node.done}` continues while the value is falsy.
+
+Conditions must be single template references to typed outputs. Put comparisons inside the loop body and output a boolean.
+
+## Carried State
+
+Use `carry:` when the next iteration needs state produced by the previous one. The node's `inputs:` are the round-1 seed. On round 2 and later, `carry:` overrides only the carried keys.
+
+```md
+### run-rounds
+- type: workflow
+- workflow: ./judge-round.pflow.md
+- inputs:
+    contenders: ${initial_lineup}
+- loop:
+    carry:
+      contenders: ${run-rounds.survivors}
+    while: ${run-rounds.more}
+    max_iterations: 100
+```
+
+Each `carry:` value must reference this loop node's latest output. A missing or typoed carried output is a runtime error even when template resolution is permissive.
+
+For `shell` and `llm` nodes, carried keys are effective only when referenced in `command`, `prompt`, or `system` text. Code and workflow nodes consume `inputs:` directly.
+
+## Caps And Inspection
+
+`max_iterations` is optional and defaults to the visit guard. Hitting the cap is not a failure; pflow stamps `loop_stopped: "max_iterations"` on the loop output. A condition stop stamps `loop_stopped: "condition"`.
+
+`--only <loop-node>` runs exactly one iteration with round-1 seed inputs. It does not reproduce a mid-loop carried state.

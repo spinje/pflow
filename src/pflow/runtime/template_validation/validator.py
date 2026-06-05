@@ -133,6 +133,8 @@ def validate_workflow_templates(
         # Only loop conditions remain to check (no node-param templates).
         diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
         diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
+        diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
+        diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
         return diagnostics
 
     logger.debug(
@@ -162,11 +164,13 @@ def validate_workflow_templates(
     # Pass 9: Validate code-node input annotations against upstream template types
     diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
 
-    # Pass 10 (issue #445): Validate loop `while:` conditions — typed-output gate
+    # Pass 10 (issue #445): Validate loop `while:`/`until:` conditions — typed-output gate
     # (reject known-string sources like ${shell.stdout}) + operator rejection
     # (reject ${x > 0} and arithmetic). Belt-and-suspenders with the runtime
     # str-condition raise in the engine.
     diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
+    diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
+    diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
 
     errors = [d for d in diagnostics if d.severity == Severity.ERROR]
     warnings = [d for d in diagnostics if d.severity != Severity.ERROR]
@@ -205,26 +209,33 @@ _KNOWN_STRING_TYPES = frozenset({"string", "str"})
 
 
 def _validate_loop_conditions(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
-    """Validate `loop: while:` conditions (issue #445), one diagnostic per loop node."""
+    """Validate `loop: while:` / `loop: until:` conditions, one diagnostic per field."""
     diagnostics: list[Diagnostic] = []
     for node in workflow_ir.get("nodes", []):
         loop_config = node.get("loop")
         if not isinstance(loop_config, dict):
             continue
         node_id = node.get("id")
-        while_template = loop_config.get("while")
-        if not isinstance(node_id, str) or not isinstance(while_template, str):
+        if not isinstance(node_id, str):
             continue
-        diag = _loop_condition_diagnostic(node_id, while_template, workflow_ir, node_outputs)
-        if diag is not None:
-            diagnostics.append(diag)
+        for field_name in ("while", "until"):
+            condition_template = loop_config.get(field_name)
+            if not isinstance(condition_template, str):
+                continue
+            diag = _loop_condition_diagnostic(node_id, field_name, condition_template, workflow_ir, node_outputs)
+            if diag is not None:
+                diagnostics.append(diag)
     return diagnostics
 
 
 def _loop_condition_diagnostic(
-    node_id: str, while_template: str, workflow_ir: dict[str, Any], node_outputs: dict[str, Any]
+    node_id: str,
+    field_name: str,
+    condition_template: str,
+    workflow_ir: dict[str, Any],
+    node_outputs: dict[str, Any],
 ) -> Optional[Diagnostic]:
-    """Return the (at most one) ERROR for a `while:` condition, or None if valid.
+    """Return the (at most one) ERROR for a loop condition, or None if valid.
 
     - **Operator rejection**: `while: ${x > 0}` / arithmetic is unsupported — the
       condition is truthiness over a typed value, not an expression.
@@ -237,15 +248,15 @@ def _loop_condition_diagnostic(
     """
     from pflow.runtime.template_validation.type_checker import infer_template_type
 
-    if any(ch in _LOOP_OPERATOR_CHARS for ch in while_template):
-        return _make_loop_operator_diagnostic(node_id, while_template)
+    if any(ch in _LOOP_OPERATOR_CHARS for ch in condition_template):
+        return _make_loop_operator_diagnostic(node_id, field_name, condition_template)
 
-    var = TemplateResolver.extract_simple_template_var(while_template)
+    var = TemplateResolver.extract_simple_template_var(condition_template)
     if var is None:
         # Not a single ${...} reference. The schema pattern (^\$\{.+\}$) is too broad to
         # catch a multi-reference like `${a}${b}`, so reject it HERE rather than leaving the
         # runtime to silently single-pass on it (the runtime stops on this shape — issue #445).
-        return _make_loop_shape_diagnostic(node_id, while_template)
+        return _make_loop_shape_diagnostic(node_id, field_name, condition_template)
 
     # NOTE: a bare node reference (`while: ${c}`, no field) needs no loop-specific
     # check here — it is already rejected by the generic template validator ("Invalid
@@ -259,18 +270,18 @@ def _loop_condition_diagnostic(
             continue
         inferred = infer_template_type(operand, workflow_ir, node_outputs)
         if inferred in _KNOWN_STRING_TYPES:
-            return _make_loop_string_type_diagnostic(node_id, while_template, operand, str(inferred))
+            return _make_loop_string_type_diagnostic(node_id, field_name, condition_template, operand, str(inferred))
     return None
 
 
-def _make_loop_operator_diagnostic(node_id: str, while_template: str) -> Diagnostic:
+def _make_loop_operator_diagnostic(node_id: str, field_name: str, condition_template: str) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
         title="Validation Error",
         node_id=node_id,
         message=(
-            f"Node '{node_id}' `loop: while:` is '{while_template}', which uses a comparison or "
+            f"Node '{node_id}' `loop: {field_name}:` is '{condition_template}', which uses a comparison or "
             f"arithmetic operator. The loop condition is truthiness over a typed value, not an expression."
         ),
         suggestions=[
@@ -279,18 +290,18 @@ def _make_loop_operator_diagnostic(node_id: str, while_template: str) -> Diagnos
             "If you need a comparison, compute it in the loop body and reference the boolean output: "
             "`while: ${step.should_continue}`.",
         ],
-        context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.{field_name}"},
     )
 
 
-def _make_loop_shape_diagnostic(node_id: str, while_template: str) -> Diagnostic:
+def _make_loop_shape_diagnostic(node_id: str, field_name: str, condition_template: str) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
         title="Validation Error",
         node_id=node_id,
         message=(
-            f"Node '{node_id}' `loop: while:` is '{while_template}', which is not a single "
+            f"Node '{node_id}' `loop: {field_name}:` is '{condition_template}', which is not a single "
             f"${{...}} reference. The loop condition must be one reference to a typed output "
             f"whose truthiness decides whether to continue."
         ),
@@ -299,18 +310,20 @@ def _make_loop_shape_diagnostic(node_id: str, while_template: str) -> Diagnostic
             "(counts to 0), or a boolean. Combine multiple signals in the loop body and "
             "reference the single boolean output: `while: ${step.should_continue}`.",
         ],
-        context={"category": "validation", "path": f"nodes[id={node_id}].loop.while"},
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.{field_name}"},
     )
 
 
-def _make_loop_string_type_diagnostic(node_id: str, while_template: str, var: str, inferred: str) -> Diagnostic:
+def _make_loop_string_type_diagnostic(
+    node_id: str, field_name: str, condition_template: str, var: str, inferred: str
+) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
         title="Validation Error",
         node_id=node_id,
         message=(
-            f"Node '{node_id}' `loop: while:` references '{while_template}', whose type is "
+            f"Node '{node_id}' `loop: {field_name}:` references '{condition_template}', whose type is "
             f"'{inferred}' (a string). String truthiness is a foot-gun — a non-empty string like "
             f"'0\\n' or 'false' is truthy, so the loop would never stop on those values."
         ),
@@ -321,9 +334,128 @@ def _make_loop_string_type_diagnostic(node_id: str, while_template: str, var: st
         ],
         context={
             "category": "validation",
-            "path": f"nodes[id={node_id}].loop.while",
-            "template": while_template,
+            "path": f"nodes[id={node_id}].loop.{field_name}",
+            "template": condition_template,
         },
+    )
+
+
+def _validate_loop_carry_refs(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
+    """Validate carry refs against precise loop-node outputs when available."""
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        loop_config = node.get("loop")
+        if not isinstance(loop_config, dict):
+            continue
+        carry = loop_config.get("carry")
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not isinstance(carry, dict):
+            continue
+        if not _loop_outputs_are_precise(node, node_outputs):
+            continue
+        for key, value in carry.items():
+            if not isinstance(value, str):
+                continue
+            var = TemplateResolver.extract_simple_template_var(value)
+            root = TemplateResolver.extract_root_node_id(var) if var is not None else None
+            if root != node_id:
+                continue
+            output_name = _first_path_segment_after_root(var, node_id) if var is not None else None
+            if output_name and f"{node_id}.{output_name}" not in node_outputs:
+                diagnostics.append(_make_loop_carry_unknown_output_diagnostic(node_id, str(key), value, output_name))
+    return diagnostics
+
+
+def _loop_outputs_are_precise(node: dict[str, Any], node_outputs: dict[str, Any]) -> bool:
+    node_id = node.get("id")
+    node_type = node.get("type")
+    if not isinstance(node_id, str) or not isinstance(node_type, str):
+        return False
+    if node_outputs.get(node_id, {}).get("is_workflow_dynamic"):
+        return False
+    has_namespaced_outputs = any(key.startswith(f"{node_id}.") for key in node_outputs)
+    return has_namespaced_outputs and node_type in {"workflow", "pflow.runtime.workflow_executor", "code"}
+
+
+def _first_path_segment_after_root(var: str, root: str) -> Optional[str]:
+    remainder = var[len(root) :]
+    if not remainder.startswith("."):
+        return None
+    segment = remainder[1:]
+    for separator in (".", "["):
+        if separator in segment:
+            segment = segment.split(separator, 1)[0]
+    return segment or None
+
+
+def _make_loop_carry_unknown_output_diagnostic(node_id: str, key: str, template: str, output_name: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: carry:` entry '{key}' references '{template}', but this loop "
+            f"body does not declare output '{output_name}'."
+        ),
+        suggestions=[
+            "Reference one of the loop body's declared outputs, or update the body workflow/code output declaration.",
+        ],
+        context={
+            "category": "validation",
+            "path": f"nodes[id={node_id}].loop.carry.{key}",
+            "template": template,
+            "output": output_name,
+        },
+    )
+
+
+def _validate_loop_carry_prompt_usage(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Warn when shell/llm carry inputs are not interpolated into their executable text."""
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        node_type = node.get("type")
+        if node_type not in {"shell", "llm"}:
+            continue
+        node_id = node.get("id")
+        loop_config = node.get("loop")
+        carry = loop_config.get("carry") if isinstance(loop_config, dict) else None
+        if not isinstance(node_id, str) or not isinstance(carry, dict):
+            continue
+        text = _loop_prompt_sink_text(node)
+        for key in carry:
+            if isinstance(key, str) and f"${{{key}}}" not in text:
+                diagnostics.append(_make_loop_carry_unreferenced_warning(node_id, node_type, key))
+    return diagnostics
+
+
+def _loop_prompt_sink_text(node: dict[str, Any]) -> str:
+    params = node.get("params", {})
+    if not isinstance(params, dict):
+        return ""
+    values: list[str] = []
+    for key in ("command", "prompt", "system"):
+        value = params.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    return "\n".join(values)
+
+
+def _make_loop_carry_unreferenced_warning(node_id: str, node_type: str, key: str) -> Diagnostic:
+    sink = "command" if node_type == "shell" else "prompt/system"
+    return Diagnostic(
+        severity=Severity.WARNING,
+        source="validator",
+        title="Validation Warning",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' carries input '{key}', but the {node_type} node's {sink} text does not "
+            f"reference `${{{key}}}`. Carrying into `inputs:` alone is inert for {node_type} nodes."
+        ),
+        suggestions=[
+            f"Reference `${{{key}}}` in the node's {sink} text, or remove the carried key.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
     )
 
 
@@ -526,7 +658,7 @@ def _operands_in_string(value: str) -> Iterator[tuple[str, bool]]:
 
 def _node_template_value_sources(node: dict[str, Any]) -> Iterator[Any]:
     """Yield every value on a node that may carry templates: params, ``batch.items``,
-    and the loop ``while:`` / ``max_iterations:`` sources (issue #445).
+    and the loop condition / ``max_iterations:`` sources.
 
     Including the loop sources means an input used ONLY in ``while:`` isn't flagged
     "unused", and the root of ``while: ${typo.x}`` is path-validated.
@@ -537,7 +669,7 @@ def _node_template_value_sources(node: dict[str, Any]) -> Iterator[Any]:
         yield batch_config["items"]
     loop_config = node.get("loop")
     if isinstance(loop_config, dict):
-        for key in ("while", "max_iterations"):
+        for key in ("while", "until", "max_iterations"):
             value = loop_config.get(key)
             if isinstance(value, str):
                 yield value
