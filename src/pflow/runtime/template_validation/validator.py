@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.suggestion_utils import find_similar_items
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
@@ -135,6 +136,7 @@ def validate_workflow_templates(
         diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
         diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
         diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
+        diagnostics.extend(_validate_loop_carry_literal_fallback(workflow_ir))
         return diagnostics
 
     logger.debug(
@@ -171,6 +173,7 @@ def validate_workflow_templates(
     diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
     diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
     diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
+    diagnostics.extend(_validate_loop_carry_literal_fallback(workflow_ir))
 
     errors = [d for d in diagnostics if d.severity == Severity.ERROR]
     warnings = [d for d in diagnostics if d.severity != Severity.ERROR]
@@ -353,17 +356,56 @@ def _validate_loop_carry_refs(workflow_ir: dict[str, Any], node_outputs: dict[st
             continue
         if not _loop_outputs_are_precise(node, node_outputs):
             continue
+        available = _loop_declared_outputs(node_id, node_outputs)
         for key, value in carry.items():
             if not isinstance(value, str):
                 continue
-            var = TemplateResolver.extract_simple_template_var(value)
-            root = TemplateResolver.extract_root_node_id(var) if var is not None else None
-            if root != node_id:
-                continue
-            output_name = _first_path_segment_after_root(var, node_id) if var is not None else None
-            if output_name and f"{node_id}.{output_name}" not in node_outputs:
-                diagnostics.append(_make_loop_carry_unknown_output_diagnostic(node_id, str(key), value, output_name))
+            output_name = _carry_value_unknown_output(value, node_id, node_outputs)
+            if output_name:
+                diagnostics.append(
+                    _make_loop_carry_unknown_output_diagnostic(node_id, str(key), value, output_name, available)
+                )
     return diagnostics
+
+
+def _loop_declared_outputs(node_id: str, node_outputs: dict[str, Any]) -> list[str]:
+    """The loop node's carryable top-level output names (from the namespaced node_outputs keys).
+
+    Excludes ``loop_stopped`` — it's the engine-injected stop-reason marker, only present once
+    the loop ends, so it's never a meaningful carry source mid-loop.
+    """
+    names = {
+        key[len(node_id) + 1 :].split(".", 1)[0].split("[", 1)[0]
+        for key in node_outputs
+        if key.startswith(f"{node_id}.")
+    }
+    names.discard("loop_stopped")
+    return sorted(names)
+
+
+def _carry_value_unknown_output(value: str, node_id: str, node_outputs: dict[str, Any]) -> Optional[str]:
+    """Return the first self-referencing output segment in a carry value that the loop
+    node does NOT declare (a typo), or None when every self-ref operand is declared.
+
+    Coalesce is checked operand-by-operand, skipping literals — mirrors the loop
+    CONDITION validator. Parsing the whole `${c.next_state ?? "start"}` as one path would
+    read the output as `next_state ?? "start"` and falsely reject a valid carry; splitting
+    first checks each self-ref operand against the declared outputs. Non-self-ref operands
+    are left to the self-ref check in data_flow.
+    """
+    var = TemplateResolver.extract_simple_template_var(value)
+    if var is None:
+        return None
+    operands = TemplateResolver.split_coalesce_operands(var) if TemplateResolver.is_coalesce_expression(var) else [var]
+    for operand in operands:
+        if TemplateResolver.is_literal_operand(operand):
+            continue
+        if TemplateResolver.extract_root_node_id(operand) != node_id:
+            continue
+        output_name = TemplateResolver.extract_first_field_segment(operand)
+        if output_name and f"{node_id}.{output_name}" not in node_outputs:
+            return output_name
+    return None
 
 
 def _loop_outputs_are_precise(node: dict[str, Any], node_outputs: dict[str, Any]) -> bool:
@@ -377,36 +419,34 @@ def _loop_outputs_are_precise(node: dict[str, Any], node_outputs: dict[str, Any]
     return has_namespaced_outputs and node_type in {"workflow", "pflow.runtime.workflow_executor", "code"}
 
 
-def _first_path_segment_after_root(var: str, root: str) -> Optional[str]:
-    remainder = var[len(root) :]
-    if not remainder.startswith("."):
-        return None
-    segment = remainder[1:]
-    for separator in (".", "["):
-        if separator in segment:
-            segment = segment.split(separator, 1)[0]
-    return segment or None
-
-
-def _make_loop_carry_unknown_output_diagnostic(node_id: str, key: str, template: str, output_name: str) -> Diagnostic:
+def _make_loop_carry_unknown_output_diagnostic(
+    node_id: str, key: str, template: str, output_name: str, available: list[str]
+) -> Diagnostic:
+    similar = find_similar_items(output_name, available, method="fuzzy")
+    context: dict[str, Any] = {
+        "category": "validation",
+        "path": f"nodes[id={node_id}].loop.carry.{key}",
+        "template": template,
+        "output": output_name,
+        "available_fields": available,
+        "available_fields_total": len(available),
+        "available_fields_label": "outputs",
+    }
+    if similar:
+        context["similar_names"] = similar
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
         title="Validation Error",
         node_id=node_id,
         message=(
-            f"Node '{node_id}' `loop: carry:` entry '{key}' references '{template}', but this loop "
-            f"body does not declare output '{output_name}'."
+            f"Node '{node_id}' `loop: carry:` entry '{key}' references '{template}', but loop node "
+            f"'{node_id}' does not declare output '{output_name}'."
         ),
         suggestions=[
-            "Reference one of the loop body's declared outputs, or update the body workflow/code output declaration.",
+            "Reference one of the loop node's declared outputs, or update the body workflow/code output declaration.",
         ],
-        context={
-            "category": "validation",
-            "path": f"nodes[id={node_id}].loop.carry.{key}",
-            "template": template,
-            "output": output_name,
-        },
+        context=context,
     )
 
 
@@ -423,8 +463,21 @@ def _validate_loop_carry_prompt_usage(workflow_ir: dict[str, Any]) -> list[Diagn
         if not isinstance(node_id, str) or not isinstance(carry, dict):
             continue
         text = _loop_prompt_sink_text(node)
+        # Collect the ROOT id of every template referenced in the prompt/command text.
+        # A carried key used via a nested path (`${state.summary}`), index
+        # (`${state[0]}`), or coalesce (`${state ?? ""}`) still roots at `state`, so it
+        # counts as referenced — an exact `${state}` substring check false-positives on
+        # all of those forms (the carry IS used, just not bare).
+        referenced_roots: set[str] = set()
+        for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(text):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+                if TemplateResolver.is_literal_operand(operand):
+                    continue
+                root = TemplateResolver.extract_root_node_id(operand)
+                if root:
+                    referenced_roots.add(root)
         for key in carry:
-            if isinstance(key, str) and f"${{{key}}}" not in text:
+            if isinstance(key, str) and key not in referenced_roots:
                 diagnostics.append(_make_loop_carry_unreferenced_warning(node_id, node_type, key))
     return diagnostics
 
@@ -454,6 +507,54 @@ def _make_loop_carry_unreferenced_warning(node_id: str, node_type: str, key: str
         ),
         suggestions=[
             f"Reference `${{{key}}}` in the node's {sink} text, or remove the carried key.",
+        ],
+        context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
+    )
+
+
+def _validate_loop_carry_literal_fallback(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Warn when a `carry:` value uses a LITERAL coalesce fallback (e.g. `${node.x ?? 0}`).
+
+    A literal fallback always resolves, so on a round where the loop body omits the
+    carried output the fallback resolves silently and re-seeds the carried key — the
+    loud carry guard (`_assert_carried_inputs_resolved`) never fires. That is the exact
+    silent stale-state failure carry exists to prevent. A coalesce between two real
+    outputs (`${a ?? b}`) is fine — both are body outputs — so only a literal operand
+    trips this warning.
+    """
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        loop_config = node.get("loop")
+        carry = loop_config.get("carry") if isinstance(loop_config, dict) else None
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not isinstance(carry, dict):
+            continue
+        for key, value in carry.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                continue
+            var = TemplateResolver.extract_simple_template_var(value)
+            if var is None or not TemplateResolver.is_coalesce_expression(var):
+                continue
+            operands = TemplateResolver.split_coalesce_operands(var)
+            if any(TemplateResolver.is_literal_operand(op) for op in operands):
+                diagnostics.append(_make_loop_carry_literal_fallback_warning(node_id, key, value))
+    return diagnostics
+
+
+def _make_loop_carry_literal_fallback_warning(node_id: str, key: str, template: str) -> Diagnostic:
+    return Diagnostic(
+        severity=Severity.WARNING,
+        source="validator",
+        title="Validation Warning",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' `loop: carry:` entry '{key}' uses a literal fallback ({template}). "
+            f"If the loop body omits the carried output on a round, the fallback resolves silently and "
+            f"re-seeds '{key}' instead of failing — the loud carry guard will not fire (silent stale state)."
+        ),
+        suggestions=[
+            f"Use a plain `${{{node_id}.output}}` reference so a missing carried output fails loudly. "
+            "Keep the literal fallback only if silent re-seeding is genuinely intended.",
         ],
         context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
     )

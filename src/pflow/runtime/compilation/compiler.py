@@ -421,10 +421,11 @@ def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[L
         max_iterations = _validate_loop_cap(_coerce_loop_cap_int(raw_max, node_id, node_type), node_id, node_type)
 
     return LoopConfig(
-        while_template=while_template or None,
+        # while_template / until_template are already `... or None` from _extract_loop_polarity.
+        while_template=while_template,
         max_iterations=max_iterations,
         max_iterations_template=max_iterations_template,
-        until_template=until_template or None,
+        until_template=until_template,
         carry=dict(carry),
     )
 

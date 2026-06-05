@@ -399,3 +399,133 @@ fixes (mypy narrowing via `plan_node` move, formatting, the new test) re-staged 
   the new guide text (the plan's "real definition of done"). Guide + examples are in place to support it.
 - Strict-guard regression test for carried values that legitimately contain literal `${...}` text
   (low risk; the check is keyed to the original template, so safe by construction).
+
+## Phase 10 — Post-merge review consolidation + agent-UX fixes
+
+> A `/code-review` of the branch (3 best-fit specialists: validation-consistency, silent-failures,
+> feature-interactions) PLUS `/evaluate-review` of two PR reviews (a human cloud review + Gemini,
+> weak-model) — all findings inventoried, de-duplicated, and **verified against source** before acting.
+> The highest-value findings came from a method correction the user insisted on: *read the RAW CLI
+> output as a fresh agent before classifying anything* — not from the category reviews, which reasoned
+> from code structure and missed two first-contact bugs entirely.
+
+### What the six reviews + four verifications converged on
+
+- **Verified contradiction resolved:** the validation-consistency agent and this task's own docs claimed
+  the carry guard "raises regardless of mode." A source trace (`engine.py:824` re-raises
+  `plan.template_exception` *before* the carry guard at `:868`; default mode is **strict**) proved the
+  carry-specific `LoopCarryError` only fired in **permissive** — the strict default surfaced a generic
+  `inputs:` template error. Not a silent failure (both modes fail loud) but a first-contact UX gap.
+- **Gemini G2 (non-string `while`/`until` polarity ordering) — DISPUTED:** verified the jsonschema
+  `LOOP_CONFIG_SCHEMA` (`type: string`) in `WorkflowValidator` step 1 rejects `while: true` *before* the
+  compiler, so the "misleading message" is unreachable. Not implemented. (Confirms the weak-model caveat.)
+
+### Fixes applied (all verified in raw CLI as a fresh agent, then unit/integration-tested)
+
+1. **`until:` cap advisory was polarity-inverted (🔴 first-contact).** `engine._emit_loop_cap_advisory`
+   hard-coded the `while:` phrasing ("condition still truthy" / "make the `while:` source go falsy").
+   For an `until:` loop that is backwards AND names the wrong keyword — re-introducing the exact polarity
+   confusion `until:` exists to kill. Now polarity-aware (`until=loop_config.until_template is not None`).
+   None of the three category reviews caught this; reading the cap output did.
+2. **Carry failure is now carry-aware in BOTH modes.** Moved `_assert_carried_inputs_resolved` to run
+   *before* the strict `template_exception` re-raise, and rewrote it to detect the failure in either mode
+   (resolved-value check for permissive; absent-self-ref-output for strict) and emit one rich message that
+   names the carried input, the missing output, and the loop node's **available outputs**, drops the
+   "loop body" jargon → **"loop node 'X'"**, and gives a concrete `${node.output}` example. **Side effect:
+   the task's "raises regardless of mode" claim is now literally true** — strict raises `LoopCarryError`
+   too. Coalesce/complex carry refs are deferred to the generic error in strict (their `??` may resolve).
+3. **Carry-typo validator no longer false-rejects coalesce (🟠, validation-rejects-valid).**
+   `_validate_loop_carry_refs` rolled its own path parsing (`_first_path_segment_after_root`) that split
+   only on `.`/`[`, so `${c.next_state ?? "start"}` parsed the output as `next_state ?? "start"` and hard-
+   errored. Now splits coalesce operands + skips literals (mirrors the sibling CONDITION validator) and
+   uses the canonical `TemplateResolver.extract_first_field_segment`; the rolled-own helper was **deleted**
+   (the root cause). Typos inside coalesce are still caught.
+4. **Prompt-usage WARNING no longer false-positives on nested refs (🟠, 3-reviewer convergence).**
+   `_validate_loop_carry_prompt_usage` used an exact `${key}` substring, so `${state.summary}` for carried
+   key `state` warned spuriously. Now collects the **root id** of every template in the prompt/command via
+   `TEMPLATE_EXTRACT_PATTERN` + `split_coalesce_operands` + `extract_root_node_id`. Same root cause as #3
+   (rolled-own parsing); both now reuse `TemplateResolver`.
+5. **Carry-typo diagnostic now offers "did you mean?" + available outputs.** The validator had the loop
+   node's declared outputs in hand; the typo error now surfaces fuzzy matches (`surviviors` → `survivors`)
+   and an `Available outputs` block (excluding the engine-injected `loop_stopped` marker).
+
+**Trivials:** removed the redundant `or None` at the `LoopConfig(...)` site (already coerced in
+`_extract_loop_polarity`); added a clarifying comment on `evaluate_loop_condition`'s polarity-agnostic
+malformed-template backstop (load-bearing only while the validator keeps rejecting that shape for `until`).
+
+**D2 (carried output that is legitimately `None`) — DECISION: allow.** `None` is a valid emitted value
+(distinct from the seed-reuse bug, which does NOT occur); a warning would be noisy, and a strict-typed
+carried input still catches an unexpected `None` downstream. No code change.
+
+### Tests + gate
+
+New: strict-mode carry-aware error (asserts the generic `inputs:` error does NOT surface), `until` cap
+advisory polarity (+ `while` regression), shell carry RUN test (carried stdout accumulates `a→ab→abb→abbb`
+— closes the shell/llm parity claim that was construction-only), coalesce-not-rejected + coalesce-operand-
+typo-still-caught, nested-ref-no-warning, did-you-mean, empty `loop: {}`. Updated the permissive test's
+assertion to the new wording. `make check` green (ruff/format/mypy 229/deptry); broad sweep
+`test_runtime`+`test_execution`+`test_integration`+`test_core` **5546 passed, 1 skipped**.
+
+## Phase 11 — Adversarial CLI verification (break-it) + gap fixes
+
+> A verification specialist drove every Phase-10 fix through the REAL `pflow` CLI with hand-authored
+> `.pflow.md` files (`scratchpads/task-166-verify/`), targeting the last 20% rather than confirming the
+> happy path. Test-suite green was treated as context, not evidence. The Phase-10 validation-layer fixes
+> (cap-advisory polarity, coalesce-not-rejected, prompt-usage nested-ref, did-you-mean) all held under
+> adversarial input. Reading raw output found two real gaps in the headline carry-aware fix + one new
+> silent-failure path — all now fixed and regression-tested.
+
+### Gaps found by reading raw CLI output (not category labels)
+
+- **GAP 1 — carry-aware error only covered workflow bodies.** `_carried_output_absent` checked only the
+  FIRST path segment, so a **code** body's nested `${node.result.field}` (the most common inline loop
+  shape, and the guide's first example) saw `result` exists and **fell through to the generic
+  `inputs:` template error** — the exact "blamed on `inputs:`, no `carry:` mention" confusion Phase 10
+  set out to kill. Coalesce refs fell through too. The strict/permissive asymmetry (NEW-2) was thus only
+  *partially* closed. Reproduced: `t7` strict=generic vs permissive=carry-aware on the same file.
+- **GAP 3 — where it DID fire for code bodies (permissive), the message was low-quality:** said "the
+  carried output" (no field name) and listed "result, stderr, stdout" (top-level noise; the agent needs
+  a field *inside* `result`), with a misleading whole-dict example.
+- **GAP 2 — NEW silent re-seed path.** `carry: { x: ${node.f ?? "lit"} }` where the body omits `f`
+  **silently re-seeds `x="lit"` every round and runs to the cap — no error, no warning** (the literal
+  resolves, so the loud guard never trips). Exactly the silent-stale-state class the whole task targets,
+  reachable + undocumented, and plausibly first-contact (the guide teaches `${checker.result ?? 0}` as
+  the seeding idiom). Reproduced: `t4` → `final_tally=RESEEDx stop=max_iterations`.
+- **GAP 4 — residual "loop body" jargon** survived in the suggestion tail ("or have the loop body
+  produce it") even though the main message now said "loop node 'X'".
+
+### Fixes
+
+1. **`_carried_output_absent` → `_diagnose_carry_ref` (engine.py).** Walks the WHOLE dotted path against
+   the loop node's latest output and returns `(missing_path, available_at_that_level, resolved_prefix)`.
+   Code/nested carries now get the carry-aware message in BOTH modes (strict + permissive), naming the
+   full missing path (`result.next`), listing the *parent level's* keys (`done`, not result/stderr/stdout),
+   and emitting a paste-able nested example (`${tick.result.done}`). **Conservative by construction:** defers
+   (returns None → generic error / value-check) for coalesce, bare `${node}`, and any descent through a
+   NON-dict value (JSON string/list) — never claims an absence it can't prove, so no false positives on
+   JSON-string-typed outputs. Closes GAP 1 + GAP 3 + GAP 4.
+2. **`_validate_loop_carry_literal_fallback` (validator.py, NEW WARNING).** Fires when a `carry:` value is
+   a coalesce with a LITERAL operand (`${node.x ?? 0}`); a two-real-output coalesce (`${a ?? b}`) does not
+   trip it. Wired into both Pass-10 sites. Plus a `pflow guide branching` note: the round-1 default belongs
+   in `inputs:`, not a carry fallback. Closes GAP 2 (D2's unaddressed half from Phase 10).
+
+### Verification
+
+CLI-confirmed: T7 code-strict now `did not produce output 'result.next' … Available outputs: done … e.g.
+`acc: ${tick.result.done}` … or have the loop node emit that output`; T1 workflow-top-level unchanged;
+T3 coalesce still defers to generic (no false carry claim); T2 non-carry strict still generic; T9 success +
+`--dry-run` + shipped tournament example all unchanged; T5/T6 cap-advisory polarity intact. New regression
+tests: `test_strict_mode_code_body_nested_carry_is_carry_aware`, `test_carry_literal_coalesce_fallback_warns`,
+`test_carry_two_output_coalesce_does_not_warn_literal_fallback`, plus (loose-end pass)
+`test_permissive_mode_code_body_nested_carry_lists_inner_fields_not_noise` (guards GAP 3 in permissive) and
+`test_diagnose_carry_ref_full_path_and_safe_deferral` (unit-covers the non-dict-descent / coalesce / bare-node
+DEFERRAL branch that prevents false positives). Doc parity: the literal-fallback caveat is now in BOTH the agent
+guide (`branching.md`) AND `docs/how-it-works/loops.mdx`. `make check` green (ruff/format/mypy 229/deptry);
+targeted regression sweep `test_runtime` + loop + carry-substrate + plan-parity + `test_docs` + `test_cli`
+**~2750 passed, 1 skipped** (full 5546-suite not re-run — changes are localized to the engine carry guard,
+the validator pass, and docs; untouched suites — nodes/mcp/registry — are not on any path these changes alter).
+
+**Still open (deliberate, documented):** a coalesce carry whose operands are ALL absent with no literal
+(`${run.a ?? run.b}`, both genuinely missing) still surfaces the generic `inputs:` error in strict — rare,
+still actionable (lists available fields), and the `_diagnose_carry_ref` deferral for coalesce is what keeps
+the common literal-fallback case from being mis-diagnosed. Not worth special-casing.

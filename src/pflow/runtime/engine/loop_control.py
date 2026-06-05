@@ -134,6 +134,12 @@ def evaluate_loop_condition(
         # Not a single ${...} reference. The validator rejects this shape at parse time
         # (_make_loop_shape_diagnostic), so this is the backstop for a programmatic IR that
         # bypassed validation — stop rather than loop on garbage.
+        #
+        # Polarity-agnostic STOP is intentional (does NOT apply the `until` inversion): a
+        # malformed TEMPLATE is garbage, distinct from an absent VALUE (handled below, where
+        # `until` + absent → continue). Fail-closed for both. This is load-bearing ONLY while
+        # the validator keeps rejecting this shape for `until` too — if that ever loosens, a
+        # malformed `until:` would stop on pass 1 (the "runs once and exits" bug).
         return False
 
     if TemplateResolver.is_coalesce_expression(var):

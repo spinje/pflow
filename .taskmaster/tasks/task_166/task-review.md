@@ -260,6 +260,27 @@ content-assert) + `tests/test_execution/test_plan_drift.py` + `test_plan_classif
 parity) + `tests/test_runtime/test_loop_control.py`. Then `make check` (mypy + ruff) — the gate that
 the first implementation pass skipped.
 
+## Post-Review Addendum (Phase 10 — agent-UX fixes)
+
+A `/code-review` of the branch + `/evaluate-review` of two PR reviews surfaced six findings; all were
+verified against source and the real ones fixed. See progress-log Phase 10 for the full account. Two
+corrections to claims made **above** in this document:
+
+- **"Strict-on-carry-always" / `_assert_carried_inputs_resolved` "raises regardless of mode"** — this was
+  an *overstatement at review time*: a source trace proved the strict (default) path re-raised the generic
+  `template_exception` at `engine.py:824` **before** the carry guard at `:868`, so the carry-specific
+  `LoopCarryError` only fired in permissive mode. **Now corrected in code** — the guard runs before that
+  re-raise and is carry-aware in both modes, so the claim is now literally true. The message also names
+  "loop node 'X'" (not "loop body"), lists the loop node's available outputs, and gives a `${node.output}`
+  example.
+- **The `until:` cap advisory** (`engine._emit_loop_cap_advisory`) was hard-coded for `while:` polarity —
+  for an `until:` loop it printed backwards guidance naming the wrong keyword. Now polarity-aware.
+
+Also fixed: the carry-typo validator falsely rejecting coalesce carry values (`${c.x ?? "y"}`), the
+prompt-usage WARNING false-positiving on nested refs (`${state.summary}`) — both were rolled-own template
+parsing, now reusing `TemplateResolver`; and the carry-typo diagnostic now offers did-you-mean + available
+outputs. `make check` green; broad sweep 5546 passed, 1 skipped.
+
 ---
 
 *Generated from the implementation + review + refactor context of Task 166.*
