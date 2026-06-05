@@ -91,6 +91,15 @@ def test_unclosed_fence_is_flagged():
     assert any("never closed" in p for p in problems), problems
 
 
+def test_column_points_past_inline_code_on_same_line():
+    # A line with a harmless ${...} inside inline code AND a real leak in prose.
+    # The reported column must point at the leak (col 34), not the inline one.
+    text = "Some `${inline}` and then leaked ${leak}\n"
+    problems = _linter.check_text(text, "test.mdx")
+    assert len(problems) == 1, problems
+    assert problems[0].startswith("test.mdx:1:34:"), problems[0]
+
+
 def test_real_docs_have_no_leaks():
     docs_dir = _REPO_ROOT / "docs"
     problems: list[str] = []

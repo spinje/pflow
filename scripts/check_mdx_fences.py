@@ -46,9 +46,14 @@ FENCE_RE = re.compile(r"^\s*(`{3,})(.*)$")
 INLINE_CODE_RE = re.compile(r"(`+)(.+?)\1")
 
 
-def _strip_inline_code(text: str) -> str:
-    """Drop inline `code` spans so ${...} inside them is not mistaken for a leak."""
-    return INLINE_CODE_RE.sub("", text)
+def _blank_inline_code(text: str) -> str:
+    """Replace inline `code` spans with equal-length runs of spaces.
+
+    Blanking (rather than deleting) hides any ${...} inside inline code from
+    the leak check while keeping the string the same length as the original,
+    so a column index found here maps straight back to the source line.
+    """
+    return INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), text)
 
 
 def check_text(text: str, path: str) -> list[str]:
@@ -76,10 +81,13 @@ def check_text(text: str, path: str) -> list[str]:
                 fence_len = len(match.group(1))
                 fence_open_line = lineno
                 continue
-            prose = _strip_inline_code(raw)
+            prose = _blank_inline_code(raw)
             idx = prose.find("${")
             if idx != -1:
-                col = raw.find("${") + 1
+                # `prose` is the same length as `raw` (inline code blanked to
+                # spaces), so this index is the true column even when an earlier
+                # ${...} sits inside inline code on the same line.
+                col = idx + 1
                 problems.append(
                     f"{path}:{lineno}:{col}: leaked `${{...}}` template in prose — "
                     "this compiles to a live JS expression and crashes the page at "
