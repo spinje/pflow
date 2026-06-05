@@ -260,6 +260,47 @@ def extract_code_load_references(code: str) -> set[str]:
     return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
 
 
+def extract_code_assigned_names(code: str) -> set[str]:
+    """Return module-level names the author *binds to a value* in ``code``.
+
+    A declared code-node input is a **bare** annotation (``x: T``) whose value is
+    injected from ``inputs:``. A **local** carries a value — ``x: T = expr`` or a
+    plain ``x = expr``. This returns the latter set.
+
+    It distinguishes the two orphan-annotation fixes that ``extract_code_load_references``
+    alone cannot: removing an orphan annotation is only safe when the name is
+    assigned (it stays a working local); for a read-but-unassigned orphan,
+    removing would leave the name unbound at runtime, so ``inputs`` is the only fix.
+
+    Scoped to module level (skips ``def``/``class``/``lambda`` bodies) so a
+    same-named function local can't flip the decision. Bare annotations
+    (``AnnAssign`` with no value) are NOT assignments. Returns an empty set on
+    SyntaxError so callers fail-open at validate time.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    assigned: set[str] = set()
+    boundaries = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, boundaries):
+            continue  # Don't descend into new scopes.
+        if isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
+            assigned.add(node.target.id)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                for sub in ast.walk(target):
+                    if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                        assigned.add(sub.id)
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            assigned.add(node.target.id)
+        stack.extend(ast.iter_child_nodes(node))
+    return assigned
+
+
 # Reverse of _PYTHON_TO_S1_CANONICAL for display in code-node diagnostics.
 # Code-block annotations speak Python, so diagnostic messages and suggestions
 # must too — otherwise a user copy-pasting "x: array" gets a NameError.

@@ -462,17 +462,23 @@ def _build_orphan_code_annotation_diagnostics(
     annotation_keys: set[str],
     annotations: dict[str, str],
     load_refs: set[str],
+    assigned_names: set[str],
     batch_alias: Optional[str],
 ) -> list[Diagnostic]:
     """Build diagnostics for annotations with no matching input binding.
 
-    Chooses a canonical single-fix suggestion per orphan (Task 154 pattern):
+    The fix depends on whether the orphan name is *assigned* a value in the body,
+    because that decides which fixes are even safe:
 
-    - Orphan key appears as ``ast.Name(ctx=Load())`` in the code body → the
-      author expected the variable to be bound at runtime. Canonical fix is
-      "Add to the inputs dict". Typo-level fuzzy matches against existing
-      input keys are surfaced via ``similar_names``.
-    - Orphan key has no Load reference → dead annotation. Canonical fix is
+    - Orphan key is assigned (``x: T = ...`` / ``x = ...``) → it's a local. BOTH
+      fixes are valid: drop the annotation (it stays a working local) or, if it
+      was meant as an input, bind it. We list both, leading with the more-likely
+      local reading.
+    - Orphan key is read but never assigned (``ast.Name(ctx=Load())`` only) → the
+      author expected it bound at runtime. Removing the annotation would leave the
+      name unbound, so the only valid fix is "Add to the inputs dict" (or "Rename"
+      for a typo-level fuzzy match against an existing input key).
+    - Orphan key is neither read nor assigned → dead annotation; the fix is
       "Remove the annotation".
 
     ``batch_alias`` (when present) narrows the "add to inputs" suggestion to
@@ -485,6 +491,7 @@ def _build_orphan_code_annotation_diagnostics(
     for key in sorted(annotation_keys - input_keys):
         annotation_str = annotations[key]
         is_used = key in load_refs
+        is_assigned = key in assigned_names
         context: dict[str, Any] = {
             "category": "validation",
             "path": f"nodes[id={node_id}].params.code",
@@ -492,7 +499,21 @@ def _build_orphan_code_annotation_diagnostics(
             "annotation_key": key,
         }
 
-        if is_used:
+        if is_assigned:
+            # The author binds this name to a value, so it's a local, not an
+            # injected input. Removing the annotation is safe (it stays a working
+            # local); binding it is also valid if it was meant as an input. Offer
+            # both, local first.
+            fixes = [
+                f"Remove the annotation '{key}: {annotation_str}' — '{key}' is assigned in the code, "
+                f"so it's a local variable (only declared inputs and result/next take annotations).",
+                f"Or add '{key}' to the inputs dict (in params.inputs): {key}: ${{<source>}} "
+                f"— if it's a workflow input.",
+            ]
+        elif is_used:
+            # Read but never assigned: removing the annotation would leave '{key}'
+            # unbound at runtime, so only add/rename is a valid fix.
+            #
             # Batch alias is deterministic metadata and must win over fuzzy
             # matching. Otherwise a near-miss between `item` (the alias) and
             # a user input like `items` produces "Rename to 'items'", which
@@ -501,19 +522,19 @@ def _build_orphan_code_annotation_diagnostics(
                 # The engine injects the batch alias into template resolution
                 # only — code-exec requires an explicit binding. The canonical
                 # fix is to route the alias through `inputs:` verbatim.
-                fix = (
+                fixes = [
                     f"Add '{key}' to the inputs dict (in params.inputs): {key}: ${{{key}}} "
                     f"(binds the batch alias into the code block)"
-                )
+                ]
             else:
                 similar = find_similar_items(key, sorted(input_keys), method="fuzzy", cutoff=0.6, max_results=3)
                 if similar:
-                    fix = f"Rename the annotation to '{similar[0]}' to match the existing input binding."
+                    fixes = [f"Rename the annotation to '{similar[0]}' to match the existing input binding."]
                     context["similar_names"] = similar
                 else:
-                    fix = f"Add '{key}' to the inputs dict (in params.inputs): {key}: ${{<source>}}"
+                    fixes = [f"Add '{key}' to the inputs dict (in params.inputs): {key}: ${{<source>}}"]
         else:
-            fix = f"Remove the annotation '{key}: {annotation_str}' — it is never read in the code."
+            fixes = [f"Remove the annotation '{key}: {annotation_str}' — it is never read in the code."]
 
         diagnostics.append(
             Diagnostic(
@@ -522,7 +543,7 @@ def _build_orphan_code_annotation_diagnostics(
                 title="Validation Error",
                 node_id=node_id,
                 message=f"Annotation '{key}: {annotation_str}' has no corresponding entry in 'inputs'.",
-                suggestions=[fix],
+                suggestions=fixes,
                 context=context,
             )
         )
@@ -745,6 +766,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
     from pflow.nodes.python.python_code import (
         _extract_annotations,
         _get_outer_type,
+        extract_code_assigned_names,
         extract_code_load_references,
         extract_top_level_annotations,
     )
@@ -857,6 +879,9 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         # Load references disambiguate orphan annotations: a name read in the
         # body signals "add to inputs"; an unused annotation is dead code.
         load_refs = extract_code_load_references(code)
+        # Assigned names mark locals (`x: T = ...` / `x = ...`): removing their
+        # annotation is safe, so the orphan builder offers remove-or-add there.
+        assigned_names = extract_code_assigned_names(code)
         # Batch alias is used to produce a specific `${alias}` suggestion when
         # the orphan is the batch iteration variable.
         batch_cfg = node.get("batch")
@@ -869,7 +894,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         )
         diagnostics.extend(
             _build_orphan_code_annotation_diagnostics(
-                node_id, input_keys, annotation_keys, annotations, load_refs, batch_alias
+                node_id, input_keys, annotation_keys, annotations, load_refs, assigned_names, batch_alias
             )
         )
         diagnostics.extend(

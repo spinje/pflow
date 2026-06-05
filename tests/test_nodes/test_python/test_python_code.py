@@ -15,6 +15,7 @@ from pflow.nodes.python.python_code import (
     _get_outer_type_name,
     _is_optional_type,
     extract_code_annotation_type,
+    extract_code_assigned_names,
     extract_code_load_references,
     extract_optional_input_keys,
     extract_top_level_annotations,
@@ -453,6 +454,28 @@ class TestAnnotationExtractionHelper:
 
     def test_load_references_malformed_code_returns_empty(self):
         assert extract_code_load_references("x: dict =") == set()
+
+    def test_assigned_names_annotated_local_with_value(self):
+        # `data: list` is a bare annotation (an input) — NOT assigned.
+        # `all_items: list = [...]` and `result: int = ...` carry values — assigned.
+        code = "data: list\nall_items: list = [data]\nresult: int = len(all_items)"
+        assert extract_code_assigned_names(code) == {"all_items", "result"}
+
+    def test_assigned_names_plain_assignment(self):
+        code = "x: int\ntotal = x + 1\nresult: int = total"
+        assigned = extract_code_assigned_names(code)
+        assert "total" in assigned
+        assert "x" not in assigned  # bare annotation, not assigned
+
+    def test_assigned_names_excludes_function_locals(self):
+        code = "def helper():\n    y: int = 1\n    z = 2\n    return y + z\nresult: int = helper()"
+        assigned = extract_code_assigned_names(code)
+        assert "result" in assigned
+        assert "y" not in assigned  # function-local, different scope
+        assert "z" not in assigned
+
+    def test_assigned_names_malformed_code_returns_empty(self):
+        assert extract_code_assigned_names("x: dict =") == set()
 
     def test_get_outer_type_name_unwraps_forward_ref(self):
         """Forward-ref annotations (`x: "list"`) come through as `"'list'"` via ast.unparse.

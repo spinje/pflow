@@ -1480,6 +1480,40 @@ class TestCodeNodeInputAnnotationValidation:
         assert any("Add 'y' to the inputs dict" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
         assert not any("Remove" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
 
+    def test_orphan_annotation_assigned_suggests_remove_or_add(self, test_registry):
+        """Orphan annotation that is ALSO assigned is a local — offer remove (lead) or add.
+
+        Removing the annotation is safe because the name carries a value, so both
+        fixes are valid. Contrast with the read-but-unassigned case above, where
+        removing would leave the name unbound and only "add" is offered.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "consumer",
+                    "type": "code",
+                    "params": {
+                        # all_items is annotated AND assigned -> a local, not an input.
+                        "code": "x: dict\nall_items: list = [x]\nresult: int = len(all_items)",
+                        "inputs": {"x": "literal_value"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        annotation_errors = [
+            d for d in errors if "has no corresponding entry in 'inputs'" in d.message and "all_items" in d.message
+        ]
+        assert len(annotation_errors) == 1
+        suggestions = annotation_errors[0].suggestions or []
+        # Both fixes present...
+        assert any("Remove the annotation 'all_items" in s and "local variable" in s for s in suggestions), suggestions
+        assert any("add 'all_items' to the inputs dict" in s.lower() for s in suggestions), suggestions
+        # ...and the local reading leads.
+        assert "Remove" in suggestions[0], suggestions
+
     def test_orphan_annotation_typo_surfaces_fuzzy_match(self, test_registry):
         """Typo'd orphan (read in body) surfaces fuzzy-matched input key via similar_names."""
         workflow_ir = {
