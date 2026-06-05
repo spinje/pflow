@@ -2,7 +2,7 @@
 
 **Use for**: Tasks requiring judgment — summarizing, interpreting, deciding what matters. Costs tokens per workflow execution.
 
-**Don't use LLM for**: Extracting fields from structured data (`${node.result.data.field}` does this for free), transforming/filtering data (use `code` node), or formatting with a fixed structure (use `code` node).
+**Reach for `code` or templates instead when the task is deterministic**: extracting fields (`${node.result.data.field}` does this for free), transforming or filtering data, or formatting with a fixed structure.
 
 **The test**: Can you write a deterministic algorithm for it? YES → `code` node. NO → LLM.
 

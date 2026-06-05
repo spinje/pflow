@@ -221,11 +221,11 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 162: Loop Config — Condition-Terminated Iteration
 - ✅ Task 163: Agentic Coding Workflow Harness example
 - ✅ Task 165: Shrink Trace Interning
+- ✅ Task 166: Declarative Stateful Loop Primitive
 
 ### Planned Features (in order of priority)
 
 **Next?**
-- Task 166: Declarative Stateful Loop Primitive
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 164: Resume Workflow From a Failed Node
 

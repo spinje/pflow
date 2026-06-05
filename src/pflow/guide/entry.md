@@ -1,5 +1,5 @@
-pflow — workflow execution system. Chains nodes (http, shell, llm, code, file, mcp)
-through a shared data store. Write `.pflow.md` files, run them, iterate.
+pflow — workflow execution system. Chains nodes (http, shell, llm, code, file, mcp, claude-code)
+that pass data via `${...}` templates. Write `.pflow.md` files, run them, iterate.
 
 First Action:
 
@@ -49,12 +49,16 @@ Nodes:
 Features — when the user says X, load topic Y:
   batch            Same operation on N items
                    → "each", "for every", "in parallel", "N at a time", "one at a time / in order"
-  branching        Conditional paths, error handling, loops
-                   → "if X then Y", "handle failures", "retry on error", "loop until X", "repeat while"
+  loop             Repeat until a condition is met, carrying state
+                   → "loop until X", "repeat while", "keep refining until good", "poll until ready", "run rounds until one remains"
+  branching        Conditional paths and routing
+                   → "if X then Y", "classify and route", "pick a path based on data"
+  error-handling   Retry, fallback, recover from failures
+                   → "retry on failure", "fall back if X fails", "handle the error", "undo on failure"
   sub-workflows    Reusable composition, bounded iteration
-                   → "reuse this", "same validation as X", "up to N times", "iterate over a fixed count"
+                   → "reuse this", "same validation as X", "iterate over a fixed count"
   prompt-caching   Provider prompt caching, ## Cache, prompt_cache:
-                   → "cache prompts", "reduce LLM cost", "speed up retries"
+                   → "cache prompts", "reduce LLM cost", "speed up repeated calls"
 
 Start here:
   core             Framework fundamentals — how to design and build workflows

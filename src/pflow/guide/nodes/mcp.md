@@ -13,8 +13,6 @@ MCP servers span these categories (each has unique output structure):
 
 Examples: Databases (PostgreSQL, MySQL), Chat (Slack, Discord), Cloud (S3, GCS), Version Control (GitHub, GitLab), Docs (Notion, Sheets), REST/GraphQL
 
-**Always test - never assume similarity.**
-
 See `pflow mcp describe <tool> --help` for how to interpret tool details.
 
 ## ⚠️ MCP Output Has NO Standard Structure
@@ -106,8 +104,6 @@ Email the analysis report to the recipient.
 **Note**: `analyze-and-format` combines analysis and formatting in one LLM call - don't use separate LLM nodes when one can do both. If you just need to concatenate data with a fixed structure, use code node or templates instead.
 
 ### MCP/HTTP Reality vs Documentation
-
-**Documentation lies. Testing reveals truth.**
 
 | What Docs Say | What You Get | How to Handle |
 |---------------|--------------|---------------|

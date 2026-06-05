@@ -68,7 +68,7 @@ result: dict = {
 
 ## Validate-Time Type Checking
 
-Three code-node input errors are now caught at validate time (`pflow
+Three code-node input errors are caught at validate time (`pflow
 --validate-only`) instead of runtime:
 
 1. **Input bound, annotation missing** — `inputs: {x: ${ref}}` with no `x:

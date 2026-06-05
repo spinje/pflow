@@ -23,13 +23,22 @@ defined by a format invariant, not a heuristic. Any complete workflow added
 to the guide later carries ``## Steps`` and is covered automatically — there
 is no marker to forget.
 
-Not an e2e test
----------------
-Validation is in-process (same path as CLI ``--validate-only``): parse →
-inject dummy params → ``WorkflowValidator.validate``. Guide examples are never
-*executed*, so there are no network calls, no LLM cost, and no shell side
-effects. It runs in the default ``make test`` suite — which is the point: an
-``e2e`` marker would exclude it and the guard would not run by default.
+Two tiers, both in-process
+--------------------------
+1. **Validation** (every complete example): same path as CLI
+   ``--validate-only`` — parse → inject dummy params →
+   ``WorkflowValidator.validate``.
+2. **Execution** (the self-contained subset only — ``code``/``shell`` nodes,
+   no caller-supplied inputs): runs via ``WorkflowRunner`` and asserts the run
+   reaches a terminal state without raising or ending FAILED. This catches
+   runtime drift validation can't see — a documented loop that errors or never
+   produces its condition, a code body that raises. It replaces the former
+   hand-copied ``test_loop_example.py``, which mirrored one guide loop by hand.
+
+Both tiers are in-process and run in the default ``make test`` suite (no
+``e2e`` marker, or the guard would not run by default). The execution subset is
+deliberately narrow: no network (http/mcp), no LLM cost (llm/claude-code), and
+no missing-input failures, so it stays hermetic and fast.
 
 Tolerances (deliberate, not false-failure suppression)
 ------------------------------------------------------
@@ -55,7 +64,10 @@ from pflow.core.file_resolver import get_base_dir, resolve_file_references
 from pflow.core.ir_schema import normalize_ir
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.validation_utils import generate_dummy_parameters
+from pflow.core.workflow.status import WorkflowStatus
 from pflow.core.workflow.validator import WorkflowValidator
+from pflow.execution.result import RunnerConfig
+from pflow.execution.runner import WorkflowRunner
 from pflow.registry import Registry
 
 GUIDE_DIR = Path(__file__).parent.parent.parent / "src" / "pflow" / "guide"
@@ -156,6 +168,30 @@ def _unregistered_types(path: Path, registered: set[str]) -> set[str]:
     return used - registered
 
 
+# Node types safe to execute in-process with no external dependencies and
+# deterministic behavior. NOT http/mcp (network), llm/claude-code (cost), or
+# file ops (would need a hermetic-cwd guarantee before widening).
+_RUNNABLE_NODE_TYPES = {"code", "shell"}
+
+
+def _is_self_contained_runnable(path: Path) -> bool:
+    """True if the example runs with ``{}`` — only ``code``/``shell`` nodes and
+    no caller-supplied required inputs. Keeps the execution tier hermetic: no
+    network, no LLM cost, no missing-input failures.
+    """
+    ir = parse_markdown(path.read_text()).ir
+    normalize_ir(ir)
+    types = {n.get("type") for n in ir.get("nodes", []) if n.get("type")}
+    if not types or not types <= _RUNNABLE_NODE_TYPES:
+        return False
+    # pflow inputs are required-by-default: a declared input needs a caller value
+    # unless it has a `default` or is explicitly `required: false`.
+    for spec in (ir.get("inputs") or {}).values():
+        if isinstance(spec, dict) and "default" not in spec and spec.get("required") is not False:
+            return False
+    return True
+
+
 class TestGuideExampleValidation:
     """Every complete workflow shown in the guide must pass structural validation."""
 
@@ -233,3 +269,35 @@ class TestGuideExampleValidation:
             except (MarkdownParseError, SchemaValidationError, ValueError):
                 continue  # raising is also an acceptable "caught it"
             assert errors, f"{label!r} should have produced a validation error but passed"
+
+    def test_self_contained_examples_execute(self, guide_workflows: list[tuple[str, Path]]) -> None:
+        """The self-contained subset must RUN, not just validate.
+
+        Validation proves a workflow is structurally sound; it cannot prove the
+        loop terminates or the code body doesn't raise. Running the
+        ``code``/``shell``-only, no-input examples closes that gap — a documented
+        example that crashes or ends FAILED breaks CI. A run that ends DEGRADED
+        is allowed: the ``on-error:`` fallback example legitimately completes
+        with a warning. Examples needing network/LLM or caller inputs are
+        validated above but not executed here.
+        """
+        runnable = [(label, path) for label, path in guide_workflows if _is_self_contained_runnable(path)]
+        assert len(runnable) >= 2, (
+            f"Expected >=2 self-contained runnable examples (the loop and error-handling demos), "
+            f"found {len(runnable)}. The runnable filter or a code fence may have broken."
+        )
+
+        failures: list[tuple[str, str]] = []
+        for label, path in runnable:
+            try:
+                result = WorkflowRunner().run(str(path), {}, RunnerConfig(cache_enabled=False))
+            except Exception as exc:
+                failures.append((label, f"raised {type(exc).__name__}: {exc}"))
+                continue
+            if result.status == WorkflowStatus.FAILED:
+                msgs = "; ".join(d.message for d in result.errors) or "(no error message)"
+                failures.append((label, f"ended FAILED: {msgs}"))
+
+        if failures:
+            rendered = "\n".join(f"  {label}: {msg}" for label, msg in failures)
+            pytest.fail(f"{len(failures)} self-contained guide example(s) failed to run:\n{rendered}")
