@@ -167,6 +167,61 @@ class TestValidationCorrectBehavior:
         # Minimal success message (token-efficient), may include cache lint warnings
         assert result.startswith("✓ Workflow is valid")
 
+    def test_valid_markdown_surfaces_parser_info_advisory(self, tmp_path):
+        """MCP validation should mirror CLI validate-only for parser INFO advisories."""
+        workflow_path = tmp_path / "typo.pflow.md"
+        workflow_path.write_text(
+            "# Typo\n\n"
+            "## Input\n\n"
+            "### api-key\n\n"
+            "Unused typo.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### echo\n\n"
+            "Echo hello.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo hello\n",
+            encoding="utf-8",
+        )
+
+        result = ExecutionService.validate_workflow(str(workflow_path))
+
+        assert result.startswith("✓ Workflow is valid")
+        assert "Advisories:" in result
+        assert "## Input" in result
+        assert "## Inputs" in result
+
+    def test_invalid_markdown_surfaces_parser_info_advisory(self, tmp_path):
+        """A FAILED validation still separates parser INFO advisories under 'Advisories:'.
+
+        The validate failure branch must mirror the success branch (and the CLI):
+        parser/validator advisories go under a dedicated 'Advisories:' section, not
+        bundled with warnings. Regression guard for the across-error-surfaces
+        consistency fix (#471 review).
+        """
+        workflow_path = tmp_path / "typo-and-error.pflow.md"
+        workflow_path.write_text(
+            "# Typo And Error\n\n"
+            "## Input\n\n"  # parser typo -> INFO advisory
+            "### api-key\n\n"
+            "Unused typo.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### echo\n\n"
+            "Echo something.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo ${nonexistent.stdout}\n",  # undefined ref -> validation ERROR
+            encoding="utf-8",
+        )
+
+        result = ExecutionService.validate_workflow(str(workflow_path))
+
+        assert not result.startswith("✓ Workflow is valid")
+        assert "Advisories:" in result
+        assert "## Input" in result and "## Inputs" in result
+
     def test_accepts_workflow_with_valid_templates(self):
         """Valid template variables should pass."""
         workflow = {

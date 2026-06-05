@@ -10,6 +10,7 @@ from pflow.core.diagnostic import (
     deduplicate_diagnostics,
     exception_to_diagnostics,
     normalize_runtime_warning,
+    warning_degrades_status,
 )
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.exceptions import (
@@ -529,3 +530,31 @@ def test_all_see_also_literals_resolve_to_real_guide_topics() -> None:
         "No see_also=[...] literals found in src/pflow — regex drift or feature regressed. "
         "Expected at least the 8 annotated sites from Issue #311."
     )
+
+
+def test_warning_degrades_status_honors_source_dimension() -> None:
+    """A WARNING-severity parser/validator diagnostic must NOT degrade run status.
+
+    Regression guard for the dual-dimension predicate (Issue #471): status
+    degradation is ``severity is not INFO AND source not in {parser, validator}``.
+    If the predicate ever regresses to severity-only, the parser/validator
+    WARNING cases below flip to True and this test fails loudly. The
+    runtime-WARNING controls prove the predicate is not simply "always False",
+    and both the live ``Diagnostic`` and the ``to_display_dict()`` dict shapes
+    are pinned because the runner and the trace layer feed it different shapes.
+    """
+    # Definition-quality WARNINGs (parser/validator) are non-degrading.
+    for source in ("parser", "validator"):
+        assert warning_degrades_status(Diagnostic(severity=Severity.WARNING, message="x", source=source)) is False
+        assert warning_degrades_status({"severity": "warning", "source": source}) is False
+
+    # Runtime WARNINGs DO degrade (control — guards against an always-False regression).
+    assert warning_degrades_status(Diagnostic(severity=Severity.WARNING, message="x", source="runtime")) is True
+    assert warning_degrades_status({"severity": "warning", "source": "runtime"}) is True
+
+    # INFO never degrades, regardless of source (severity dimension).
+    assert warning_degrades_status(Diagnostic(severity=Severity.INFO, message="x", source="runtime")) is False
+    assert warning_degrades_status({"severity": "info", "source": "runtime"}) is False
+
+    # Legacy/untyped shapes (no severity) fail closed — degrade.
+    assert warning_degrades_status("plain string warning") is True

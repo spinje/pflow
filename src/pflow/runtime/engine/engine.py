@@ -1116,16 +1116,30 @@ class WorkflowEngine:
             # returns DEGRADED instead of SUCCESS. Without this, recovered
             # workflows silently report SUCCESS (GH #246).
             if str(action).startswith("error"):
+                from pflow.core.diagnostic import Diagnostic, Severity
+
                 node_data = shared.get(config.node_id, {})
                 node_error = node_data.get("error") if isinstance(node_data, dict) else None
                 error_handler = node.successors.get("error")
                 handler_id = getattr(error_handler, "node_id", None) if error_handler else None
+                category = _NODE_TYPE_FAILURE_CATEGORY.get(config.node_type_name, FAILURE_CATEGORY_NODE_ERROR)
+                recovery_warning = (
+                    Diagnostic(
+                        severity=Severity.WARNING,
+                        message=f"Node '{config.node_id}' failed — on-error → '{handler_id}'",
+                        node_id=config.node_id,
+                        source="runtime",
+                        context={"type": "on_error_recovery", "category": category},
+                    )
+                    if handler_id
+                    else None
+                )
                 mark_node_failed(
                     shared,
                     config.node_id,
-                    category=_NODE_TYPE_FAILURE_CATEGORY.get(config.node_type_name, FAILURE_CATEGORY_NODE_ERROR),
+                    category=category,
                     error=node_error,
-                    warning=f"Node '{config.node_id}' failed — on-error → '{handler_id}'" if handler_id else None,
+                    warning=recovery_warning,
                 )
 
             return action

@@ -198,8 +198,13 @@ class MoveFileNode(Node):
         """Handle final failure after all retries with user-friendly messages."""
         source_path, dest_path, _ = prep_res
 
+        failure_message = (
+            "Failed to move file without retrying deterministic error"
+            if isinstance(exc, NonRetriableError)
+            else f"Failed to move file after {self.max_retries} attempts"
+        )
         logger.error(
-            f"Failed to move file after {self.max_retries} retries",
+            failure_message,
             extra={"source_path": source_path, "dest_path": dest_path, "error": str(exc), "phase": "fallback"},
         )
 
@@ -216,7 +221,7 @@ class MoveFileNode(Node):
         elif isinstance(exc, OSError) and ("No space left" in str(exc) or "disk full" in str(exc).lower()):
             error_msg = f"Error: No space left on device when moving to '{dest_path}'."
         else:
-            error_msg = f"Error: Could not move '{source_path}' to '{dest_path}' after {self.max_retries} retries. {exc!s}. Check if files are locked or if there are system issues."
+            error_msg = f"Error: Could not move '{source_path}' to '{dest_path}' after {self.max_retries} attempts. {exc!s}. Check if files are locked or if there are system issues."
 
         return error_msg
 

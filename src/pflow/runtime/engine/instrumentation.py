@@ -13,6 +13,7 @@ import os
 import time
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic
 from pflow.core.exceptions import MaxNodeVisitsError
 from pflow.core.node_type_display import is_llm_node_type
 
@@ -396,6 +397,8 @@ def apply_memo_hit(
     restored = {k: v for k, v in cached_output.items() if k not in reserved_keys}
     cached_warning = cached_output.get("__pflow_warnings__")
     if cached_warning is not None:
+        if isinstance(cached_warning, dict) and "severity" in cached_warning and "message" in cached_warning:
+            cached_warning = Diagnostic.from_dict(cached_warning)
         shared.setdefault("__warnings__", {})[node_id] = cached_warning
     shared[node_id] = restored
     completed_nodes.append(node_id)
@@ -503,7 +506,9 @@ def write_memo_cache(
         output_dict = dict(node_output) if isinstance(node_output, dict) else {"value": node_output}
         node_warning = shared.get("__warnings__", {}).get(node_id)
         if node_warning is not None:
-            output_dict["__pflow_warnings__"] = node_warning
+            output_dict["__pflow_warnings__"] = (
+                node_warning.to_dict() if isinstance(node_warning, Diagnostic) else node_warning
+            )
         if duration_ms is not None:
             output_dict["__pflow_stats__"] = {"duration_ms": float(duration_ms)}
         memo_cache.put(cache_key, node_id, workflow_path, action or "default", output_dict)

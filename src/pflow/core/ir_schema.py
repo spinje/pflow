@@ -63,6 +63,7 @@ For comprehensive examples, see the examples/ directory.
 """
 
 import json
+import math
 from typing import Any, Union
 
 import jsonschema
@@ -195,6 +196,31 @@ LOOP_CONFIG_SCHEMA: dict[str, Any] = {
 }
 
 
+RETRY_CONFIG_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Per-node retry on transient failure (overrides the node-type default). No effect on `workflow` nodes.",
+    "properties": {
+        "max": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Max total attempts (1 = no retry).",
+        },
+        # Keep retry bounds in lockstep with runtime.compilation.compiler's
+        # direct-compile retry validation; the compiler is the safety net for
+        # schema-bypassing dict IR and also rejects non-finite Python floats.
+        "wait": {"type": "number", "minimum": 0, "description": "Base finite seconds between attempts."},
+        "backoff": {
+            "type": "string",
+            "enum": ["fixed", "exponential"],
+            "default": "fixed",
+            "description": "Delay growth mode; exponential waits are clamped at 60s.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+
 # JSON Schema for workflow IR (minimal MVP version)
 FLOW_IR_SCHEMA: dict[str, Any] = {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -224,6 +250,7 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                     },
                     "batch": BATCH_CONFIG_SCHEMA,
                     "loop": LOOP_CONFIG_SCHEMA,
+                    "retry": RETRY_CONFIG_SCHEMA,
                     "_source_lines": {
                         "type": "object",
                         "description": "Markdown source line offsets for code block params (injected by parser)",
@@ -654,6 +681,7 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
     if not errors:
         # Additional custom validations
         if isinstance(data, dict):
+            _validate_retry_waits_finite(data)
             _validate_node_references(data)
             _validate_duplicate_node_ids(data)
         return
@@ -669,6 +697,28 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
         suggestion=suggestion,
         **context_kwargs,
     )
+
+
+def _validate_retry_waits_finite(data: dict[str, Any]) -> None:
+    """Reject non-finite retry waits that jsonschema's number type admits for Python floats."""
+    nodes = data.get("nodes")
+    if not isinstance(nodes, list):
+        return
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        retry = node.get("retry")
+        if not isinstance(retry, dict) or "wait" not in retry:
+            continue
+        wait = retry["wait"]
+        if isinstance(wait, bool) or not isinstance(wait, (int, float)):
+            continue
+        if not math.isfinite(float(wait)):
+            raise ValidationError(
+                message=f"{wait!r} is not a finite number",
+                path=f"nodes[{index}].retry.wait",
+                suggestion="Set retry.wait to a finite non-negative number of seconds.",
+            )
 
 
 def _validate_node_references(data: dict[str, Any]) -> None:

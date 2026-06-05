@@ -14,6 +14,7 @@ from pflow.core.diagnostic import (
     deduplicate_diagnostics,
     exception_to_diagnostics,
     normalize_runtime_warning,
+    warning_degrades_status,
 )
 from pflow.core.exceptions import (
     CompilationError,
@@ -35,14 +36,11 @@ logger = logging.getLogger(__name__)
 def _is_degrading_warning(value: Any) -> bool:
     """Return True when a ``__warnings__`` entry should flip workflow status to DEGRADED.
 
-    ``Severity.INFO`` Diagnostics are advisories — they surface in reports but
-    don't represent a regression. Everything else (WARNING/ERROR diagnostics
-    and the legacy string/dict warning shapes used by the LLM adapter and
-    on-error recovery) flips DEGRADED.
+    Parser/validator diagnostics are definition-quality signals, not runtime
+    degradation. ``Severity.INFO`` entries are advisories. Legacy string/dict
+    shapes without severity/source fail closed as degrading.
     """
-    if isinstance(value, Diagnostic):
-        return value.severity is not Severity.INFO
-    return True
+    return warning_degrades_status(value)
 
 
 # Backward-compat alias: the helper moved to ``core/workflow_id.py`` so the
@@ -374,10 +372,9 @@ class WorkflowRunner:
             )
             diagnostics = [*resolved.diagnostics, *validator_diagnostics]
             # Compute ``valid`` from the combined list, not only ``validator_diagnostics``.
-            # ``resolved.diagnostics`` only carries parser WARNINGs today, but the type
-            # system permits ERROR severity there, so checking the combined list makes
-            # the invariant explicit and hardens against future parser changes that add
-            # error-severity diagnostics at resolution time.
+            # ``resolved.diagnostics`` carries parser advisories as well as any future
+            # parser errors, so checking the combined list keeps validity tied to
+            # severity rather than whichever phase produced the diagnostic.
             errors = [diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.ERROR]
 
             return ValidationResult(
@@ -503,7 +500,7 @@ class WorkflowRunner:
         return resolve_workflow(workflow)
 
     def _validate(self, ir: dict[str, Any], params: dict[str, Any]) -> list[Diagnostic]:
-        """Run WorkflowValidator once. Returns validation warnings."""
+        """Run WorkflowValidator once. Returns non-error validation diagnostics."""
         from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry import Registry
 
@@ -517,15 +514,17 @@ class WorkflowRunner:
             workflow_file=Path(wf_path) if wf_path else None,
         )
         errors = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.ERROR]
-        warnings = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.WARNING]
+        non_error_diagnostics = [
+            diagnostic for diagnostic in validator_diagnostics if diagnostic.severity is not Severity.ERROR
+        ]
 
         if errors:
             raise WorkflowValidationError(
                 validation_errors=errors,
-                validation_warnings=list(warnings),
+                validation_warnings=list(non_error_diagnostics),
             )
 
-        return warnings
+        return non_error_diagnostics
 
     def _initialize_shared_store(
         self,
@@ -587,13 +586,10 @@ class WorkflowRunner:
         """Map action result + store state to (success, status).
 
         DEGRADED fires when ``__template_errors__`` is non-empty OR
-        ``__warnings__`` contains at least one entry the catalog tags as a
-        regression signal (``Severity.WARNING`` or ``Severity.ERROR``).
-        ``Severity.INFO`` entries are advisories — they surface in the
-        diagnostics list and reports but do not flip workflow status.
-        Legacy string/dict warning shapes (pre-catalog producers like the LLM
-        adapter and on-error recovery) default to degrading since they don't
-        carry a typed severity.
+        ``__warnings__`` contains at least one runtime-degrading warning.
+        Parser/validator diagnostics and ``Severity.INFO`` advisories surface
+        in diagnostics/reports but do not flip workflow status. Legacy
+        severity-less warning shapes fail closed as degrading.
         """
         if action_result and isinstance(action_result, str) and action_result.startswith("error"):
             return False, WorkflowStatus.FAILED
@@ -613,57 +609,33 @@ class WorkflowRunner:
     def _extract_runtime_warnings(self, shared_store: dict[str, Any]) -> list[Diagnostic]:
         """Extract runtime warnings from shared store."""
         warnings: list[Diagnostic] = []
-        failures = shared_store.get("__failures__", {})
         for node_id, raw_message in shared_store.get("__warnings__", {}).items():
             if isinstance(raw_message, Diagnostic):
                 # Catalog-emitted Diagnostic. Preserve as-is and bypass the
-                # recovery/api_warning classifier plus canned suggestions:
+                # api_warning classifier plus canned suggestions:
                 # the Diagnostic already carries id, severity, category,
                 # suggestions, and path context end-to-end.
                 warnings.append(raw_message if raw_message.node_id else replace(raw_message, node_id=node_id))
                 continue
 
             message, warning_context = normalize_runtime_warning(raw_message)
-            failure = failures.get(node_id)
-            is_recovery = (
-                failure is not None
-                and failure.get("warning") is not None
-                and failure.get("category") not in ("api_warning", "routing_error")
-            ) or (
-                # Sub-workflow recovery: __warnings__ propagates to parent
-                # but __failures__ stays in child scope. Fall back to the
-                # message pattern written by engine step 17.5.
-                failure is None and "\u2014 on-error \u2192" in message
+            context = {"type": "api_warning"}
+            context.update(warning_context)
+            if "kind" in warning_context:
+                context.setdefault("category", LLM_WARNING_CATEGORY)
+            warnings.append(
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message=message,
+                    suggestions=[
+                        f"Inspect '{node_id}' upstream inputs and output to verify the warning is expected.",
+                        "If unintended, fix the upstream data or add error handling to this node.",
+                    ],
+                    node_id=node_id,
+                    source="runtime",
+                    context=context,
+                )
             )
-            if is_recovery:
-                category = failure.get("category") if failure else None
-                warnings.append(
-                    Diagnostic(
-                        severity=Severity.WARNING,
-                        message=message,
-                        node_id=node_id,
-                        source="runtime",
-                        context={"type": "on_error_recovery", "category": category},
-                    )
-                )
-            else:
-                context = {"type": "api_warning"}
-                context.update(warning_context)
-                if "kind" in warning_context:
-                    context.setdefault("category", LLM_WARNING_CATEGORY)
-                warnings.append(
-                    Diagnostic(
-                        severity=Severity.WARNING,
-                        message=message,
-                        suggestions=[
-                            f"Inspect '{node_id}' upstream inputs and output to verify the warning is expected.",
-                            "If unintended, fix the upstream data or add error handling to this node.",
-                        ],
-                        node_id=node_id,
-                        source="runtime",
-                        context=context,
-                    )
-                )
         for node_id, error_data in shared_store.get("__template_errors__", {}).items():
             # Every entry in __template_errors__ carries a structured
             # Diagnostic built at the source site (see

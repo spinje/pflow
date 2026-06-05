@@ -74,19 +74,36 @@ def _format_success_result(
         workflow_metadata=workflow_metadata,
         trace_path=trace_path,
         status=result.status,
-        # INTENTIONAL: MCP surfaces WARNING/ERROR only, never INFO advisories
-        # (e.g. an empty-batch note). MCP agents already see an empty result via
-        # `shared_after` + `batch_metadata.count: 0`, so the advisory would be
-        # redundant noise. This asymmetry with the CLI (which DOES show an
-        # `advisories` section/key) is deliberate — do not "fix" it by passing
-        # the full diagnostics list without a decision. Mirror at the text path
-        # below (`format_success_as_text(..., warning_diagnostics=result.warnings)`).
-        warnings=[
-            diagnostic for diagnostic in getattr(result, "diagnostics", []) if diagnostic.severity == Severity.WARNING
-        ],
+        warnings=_mcp_surfaced_diagnostics(getattr(result, "diagnostics", [])),
     )
 
     return formatted
+
+
+def _mcp_surfaced_diagnostics(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
+    """Diagnostics worth surfacing on MCP text/structured responses.
+
+    MCP suppresses runtime INFO notes that duplicate structured data agents can
+    inspect directly (for example empty-batch metadata), but parser/validator
+    INFO diagnostics are definition-quality advisories with no other surface.
+    """
+    return [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.severity is Severity.WARNING
+        or (diagnostic.severity is Severity.INFO and diagnostic.source in {"parser", "validator"})
+    ]
+
+
+def _format_mcp_diagnostic_sections(diagnostics: list[Diagnostic]) -> str:
+    warning_diagnostics = [diagnostic for diagnostic in diagnostics if diagnostic.severity is Severity.WARNING]
+    advisory_diagnostics = [diagnostic for diagnostic in diagnostics if diagnostic.severity is Severity.INFO]
+    sections: list[str] = []
+    if warning_diagnostics:
+        sections.append("Warnings:\n" + "\n".join(format_diagnostic(warning) for warning in warning_diagnostics))
+    if advisory_diagnostics:
+        sections.append("Advisories:\n" + "\n".join(format_diagnostic(advisory) for advisory in advisory_diagnostics))
+    return "\n\n".join(sections)
 
 
 def _format_error_result(
@@ -147,6 +164,11 @@ def _format_error_result(
             for diagnostic in getattr(result, "diagnostics", [])
             if diagnostic.severity == Severity.WARNING
         ],
+        "advisories": [
+            diagnostic.to_display_dict()
+            for diagnostic in getattr(result, "diagnostics", [])
+            if diagnostic.severity == Severity.INFO and diagnostic.source in {"parser", "validator"}
+        ],
     }
 
 
@@ -190,9 +212,7 @@ def _build_error_text(
         lines.extend(format_batch_errors_section(steps))
 
     if warnings:
-        lines.append("\nWarnings:")
-        for warning in warnings:
-            lines.append(format_diagnostic(warning))
+        lines.append("\n" + _format_mcp_diagnostic_sections(warnings))
 
     if trace_path and Path(trace_path).exists():
         lines.append(f"\nTrace: {trace_path}")
@@ -266,14 +286,13 @@ class ExecutionService(BaseService):
                 success_dict = _format_success_result(result, resolved, str(workflow))
                 from pflow.execution.formatters.success_formatter import format_success_as_text
 
-                # `result.warnings` is WARNING-only by design — see the comment at
-                # the `_format_success_result` filter above. INFO advisories are
-                # intentionally not surfaced to MCP, so the formatter's
-                # "Advisories:" branch never fires on this path.
-                return format_success_as_text(success_dict, warning_diagnostics=result.warnings)
+                return format_success_as_text(
+                    success_dict,
+                    warning_diagnostics=_mcp_surfaced_diagnostics(result.diagnostics),
+                )
             else:
                 error_diagnostics = [d for d in result.diagnostics if d.severity == Severity.ERROR]
-                warning_diagnostics = [d for d in result.diagnostics if d.severity == Severity.WARNING]
+                warning_diagnostics = _mcp_surfaced_diagnostics(result.diagnostics)
                 trace_path = (
                     str(result.trace.trace_path) if result.trace and hasattr(result.trace, "trace_path") else ""
                 )
@@ -312,17 +331,17 @@ class ExecutionService(BaseService):
             from pflow.execution.formatters.validation_formatter import format_validation_success
 
             msg = format_validation_success()
-            if vresult.warnings:
-                warning_text = "\n".join(format_diagnostic(warning) for warning in vresult.warnings)
-                msg += f"\n\nWarnings:\n{warning_text}"
+            surfaced_diagnostics = _mcp_surfaced_diagnostics(vresult.diagnostics)
+            if surfaced_diagnostics:
+                msg += "\n\n" + _format_mcp_diagnostic_sections(surfaced_diagnostics)
             return msg
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
             msg = format_validation_failure(vresult.errors)
-            extra_diagnostics = [d for d in vresult.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
-            if extra_diagnostics:
-                msg += "\n\n" + "\n".join(format_diagnostic(diagnostic) for diagnostic in extra_diagnostics)
+            surfaced_diagnostics = _mcp_surfaced_diagnostics(vresult.diagnostics)
+            if surfaced_diagnostics:
+                msg += "\n\n" + _format_mcp_diagnostic_sections(surfaced_diagnostics)
             return msg
 
     @classmethod
@@ -712,7 +731,7 @@ class ExecutionService(BaseService):
                 # Use diagnostic pipeline directly
 
                 error_diagnostics = result.errors
-                warning_diagnostics = result.warnings
+                warning_diagnostics = _mcp_surfaced_diagnostics(result.diagnostics)
                 trace_path = (
                     str(result.trace.trace_path) if result.trace and hasattr(result.trace, "trace_path") else ""
                 )

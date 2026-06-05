@@ -213,7 +213,7 @@ class TestWorkflowExecutor:
         assert isinstance(parser_diagnostics, list)
         assert len(parser_diagnostics) == 1
         diagnostic = parser_diagnostics[0]
-        assert diagnostic.severity == Severity.WARNING
+        assert diagnostic.severity == Severity.INFO
         assert diagnostic.source == "parser"
         assert "## Input" in diagnostic.message
 

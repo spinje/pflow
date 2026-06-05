@@ -180,7 +180,7 @@ class WorkflowRunner:
 
 **Resource lifecycle**: Resources created in `run()` scope (not inside helpers) so `finally` always has them for cleanup. This prevents MCP server subprocess leaks.
 
-**On-error recovery status** (GH #246 fix): When a node fails and has an `on-error` handler, engine step 17.5 passes `warning=` to `mark_node_failed`, which populates `__warnings__`. This naturally triggers DEGRADED status via the existing `_determine_status` check on `__warnings__`. The `_extract_runtime_warnings` method distinguishes recovery warnings from api_warnings by checking the `__failures__` record's `warning` field and `category`.
+**On-error recovery status** (GH #246 fix): When a node fails and has an `on-error` handler, engine step 17.5 builds a structured runtime `Diagnostic` with `context["type"] == "on_error_recovery"` and passes it as `warning=` to `mark_node_failed`, which preserves it in `__warnings__`. This naturally triggers DEGRADED status via the shared warning predicate. `_extract_runtime_warnings` passes existing `Diagnostic` values through unchanged; legacy string/dict warnings still use the generic runtime-warning path.
 
 ## Result Types (result.py)
 

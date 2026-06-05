@@ -11,6 +11,9 @@ after the shim was deprecated (Task 135/138).
 
 from typing import Any
 
+import pytest
+
+from pflow.core.diagnostic import Diagnostic, Severity, warning_degrades_status
 from pflow.runtime.cache import MemoizationCache
 
 # ---------------------------------------------------------------------------
@@ -268,6 +271,69 @@ def test_memo_cache_rehydrates_node_warning(tmp_path: Any) -> None:
 
     assert replay_shared["review"] == {"result": "raw text", "_schema_error": warning["text"]}
     assert replay_shared["__warnings__"]["review"] == warning
+
+
+@pytest.mark.parametrize(
+    ("severity", "degrades"),
+    [(Severity.WARNING, True), (Severity.INFO, False)],
+)
+def test_memo_cache_round_trips_diagnostic_warning(
+    tmp_path: Any,
+    severity: Severity,
+    degrades: bool,
+) -> None:
+    """Diagnostic warnings keep severity/message/source through SQLite memo cache."""
+    from pflow.runtime.engine.instrumentation import apply_memo_hit, write_memo_cache
+
+    cache = MemoizationCache(db_path=tmp_path / f"{severity.value}.db")
+    warning = Diagnostic(
+        severity=severity,
+        message=f"{severity.value} diagnostic",
+        title="Cached Diagnostic",
+        suggestions=["Inspect the cached warning."],
+        node_id="review",
+        source="runtime",
+        context={"type": "on_error_recovery", "category": "shell_failure"},
+        id=f"test.{severity.value}",
+    )
+    shared = {
+        "__memoization_cache__": cache,
+        "__warnings__": {"review": warning},
+        "_pflow_workflow_file": "workflow.pflow.md",
+        "review": {"result": "raw text"},
+    }
+
+    write_memo_cache(
+        "review",
+        shared,
+        "cache-key",
+        node_type_name="ShellNode",
+    )
+    cached = cache.get("cache-key")
+    assert cached is not None
+    cached_action, cached_output = cached
+    assert isinstance(cached_output["__pflow_warnings__"], dict)
+    assert cached_output["__pflow_warnings__"]["severity"] == severity.value
+    assert cached_output["__pflow_warnings__"]["message"] == warning.message
+
+    replay_shared: dict[str, Any] = {}
+    apply_memo_hit(
+        "review",
+        replay_shared,
+        cached_action,
+        cached_output,
+        "config-hash",
+        node_type_name="ShellNode",
+    )
+
+    replay_warning = replay_shared["__warnings__"]["review"]
+    assert isinstance(replay_warning, Diagnostic)
+    assert replay_warning.severity is severity
+    assert replay_warning.message == warning.message
+    assert replay_warning.source == "runtime"
+    assert replay_warning.id == warning.id
+    assert warning_degrades_status(replay_warning) is degrades
+    assert replay_shared["review"] == {"result": "raw text"}
 
 
 def test_memo_cache_no_write_on_error(tmp_path: Any) -> None:

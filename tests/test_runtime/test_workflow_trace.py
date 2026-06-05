@@ -541,7 +541,7 @@ class TestWorkflowTraceCollector:
             )
             collector.set_warnings([
                 Diagnostic(
-                    severity=Severity.WARNING,
+                    severity=Severity.INFO,
                     message="Line 3: '## Input' looks like a typo for '## Inputs'.",
                     source="parser",
                     suggestions=["Rename to '## Inputs'."],
@@ -555,6 +555,32 @@ class TestWorkflowTraceCollector:
 
             assert trace_data["final_status"] == "success"
             assert trace_data["warnings"][0]["source"] == "parser"
+
+    @pytest.mark.parametrize("source", ["parser", "validator"])
+    def test_final_status_success_with_definition_warning_dict(self, collector, temp_home, source):
+        """Dict-shaped parser/validator WARNINGs are definition advisories, not runtime degradation."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="node-1",
+                node_type="TestNode",
+                duration_ms=10.0,
+                success=True,
+            )
+            collector.set_warnings([
+                {
+                    "severity": "warning",
+                    "source": source,
+                    "message": f"{source} advisory",
+                }
+            ])
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            assert trace_data["final_status"] == "success"
+            assert trace_data["warnings"][0]["source"] == source
 
     def test_final_status_degraded_with_runtime_warning(self, collector, temp_home):
         """Runtime warnings should still mark the trace as degraded."""
@@ -582,6 +608,41 @@ class TestWorkflowTraceCollector:
 
             assert trace_data["final_status"] == "degraded"
             assert trace_data["warnings"][0]["source"] == "runtime"
+
+    def test_final_status_degraded_with_on_error_recovery(self, collector, temp_home):
+        """Recovered error-route failures should be degraded, not failed."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="fail",
+                node_type="ShellNode",
+                duration_ms=10.0,
+                success=False,
+                error="exit 1",
+            )
+            collector.record_node_execution(
+                node_id="recover",
+                node_type="ShellNode",
+                duration_ms=10.0,
+                success=True,
+            )
+            collector.set_warnings([
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message="Node 'fail' failed \u2014 on-error \u2192 'recover'",
+                    node_id="fail",
+                    source="runtime",
+                    context={"type": "on_error_recovery", "category": "shell_failure"},
+                )
+            ])
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            assert trace_data["final_status"] == "degraded"
+            assert trace_data["nodes_failed"] == 0
+            assert trace_data["failed_node_ids"] == []
 
     def test_llm_summary_in_trace(self, collector, temp_home):
         """Test that LLM summary is included when LLM calls are present in events.

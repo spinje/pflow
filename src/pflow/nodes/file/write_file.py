@@ -279,7 +279,7 @@ class WriteFileNode(Node):
         _, file_path, _, _append, _ = prep_res
 
         logger.error(
-            f"Failed to write file after {self.max_retries} retries",
+            f"Failed to write file after {self.max_retries} attempts",
             extra={"file_path": file_path, "error": str(exc), "phase": "fallback"},
         )
 
@@ -293,7 +293,7 @@ class WriteFileNode(Node):
         elif isinstance(exc, FileNotFoundError):
             error_msg = f"Error: Parent directory for '{file_path}' does not exist and could not be created."
         else:
-            error_msg = f"Error: Could not write to '{file_path}' after {self.max_retries} retries. {exc!s}. Check if the directory is writable or if there are system issues."
+            error_msg = f"Error: Could not write to '{file_path}' after {self.max_retries} attempts. {exc!s}. Check if the directory is writable or if there are system issues."
 
         return error_msg
 

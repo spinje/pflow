@@ -30,6 +30,28 @@ feedback, recurrence, state-threading.
 produced output. From round 2 on, the Carry supplies the value. A role, not a separate field —
 a carried input's ordinary input value *is* its Seed. _Avoid_: initial, default, base.
 
+**Retry** — re-running a *single step's own work* after a **transient** failure, capped by a
+maximum attempt count, same inputs each time. A *deterministic* failure (e.g. bad config) is
+not retried. A retry that eventually succeeds leaves no trace — the run is a clean Success.
+_Avoid_: loop (advances across iterations), fallback, recursion.
+
+**Backoff** — the growing wait between Retry attempts, either *fixed* (constant) or
+*exponential* (doubling), clamped to a ceiling. _Avoid_: delay, sleep, cooldown.
+
+**Fallback (on-error)** — routing to a *different* step when one fails, instead of re-running
+it. The original step genuinely failed, so the run is Degraded (data may be lost) — distinct
+from a Retry that makes the same step succeed. pflow recovery is forward-only: no rollback of
+side effects already done. _Avoid_: catch, rescue, compensation.
+
+**Degraded** — a run that *finished its work but flagged a non-fatal problem* (a Fallback
+fired, a batch dropped failed items, output was salvaged). Completes successfully. Distinct
+from **Failed** (a fatal error halted the run) and from a clean **Success**.
+_Avoid_: partial, warning-state.
+
+**Advisory** — information surfaced about a run that does **not**, on its own, mark it
+Degraded (an empty batch, a Loop hitting its cap, a section typo parsed around). Contrast
+with a degrading warning. _Avoid_: note, hint, info.
+
 **Snapshot** — the frozen prior-run state that `--only <step>` runs a single step against:
 every *other* step's output reused from the most recent full run, so only the target
 re-executes and upstream side effects never re-fire. Requires a prior full run.
@@ -39,6 +61,14 @@ _Avoid_: replay, restore, checkpoint.
 
 **Batch vs Loop** — both repeat a step. Discriminator: can you write the list of runs
 before starting (Batch), or only know you're done by inspecting what just happened (Loop).
+
+**Retry vs Loop** — both re-run a step. Retry re-runs the *same attempt* after a transient
+failure (same inputs, capped, invisible once it succeeds). Loop re-runs across *iterations*,
+each building on the last, until a condition goes falsy.
+
+**Retry vs Fallback** — both are failure responses. Retry re-runs the *same* step hoping it
+succeeds (→ Success). Fallback routes to a *different* step because the original failed
+(→ Degraded).
 
 **Snapshot vs Cache** — both reuse prior output. Cache reuses a step's *own* output when
 its declared inputs are unchanged (correctness-gated, per-step, can still re-run the step).

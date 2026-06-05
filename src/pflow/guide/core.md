@@ -303,7 +303,7 @@ Parsed record array from the fetch response.
 
 **Output fields**: `source` (template expression like `${node.key}`), `type` (optional hint), `stdout` (true|false — at most one output may set this; marks the output that streams to stdout in text mode), description as prose.
 
-**Node fields**: `type` (required), all other params as `- key: value`. Code/prompts/batch go in tagged code blocks.
+**Node fields**: `type` (required), top-level controls like `batch`, `loop`, `retry`, `cache`, `prompt_cache`, and `prewarm`, then node params as `- key: value`. Code/prompts/batch go in tagged code blocks.
 
 **Execution order**: Top to bottom in `## Steps`. No explicit edges.
 
@@ -315,6 +315,7 @@ Parsed record array from the fetch response.
 - Use `-` for parameters, `*` for documentation bullets.
 - Code blocks require a tag: `shell command`, `python code`, `prompt`, `yaml batch`, `yaml output_schema`
 - Batch config: inline `- batch:` for simple cases, `yaml batch` code block for complex arrays
+- Retry config: `- retry: {max: 3, wait: 0.5, backoff: exponential}`; `max` is total attempts (`1` = no retry), `wait` is finite seconds, and `backoff` is `fixed` or `exponential`. Exponential waits are clamped to 60s per wait; fixed waits use `wait` as declared. `retry:` overrides node-type defaults and is best for transient/idempotent failures raised during node execution. It does not re-run ordinary `"error"` actions returned from `post()` (for example, a shell command that exits non-zero). On side-effecting nodes, use it only when repeating the attempted operation is acceptable. On `workflow` nodes it is ignored; put retry policies inside the child workflow instead.
 - Any code block parameter can reference an external file instead: `- prompt: ./prompts/system.md`, `- code: ./scripts/transform.py`. Paths are relative to the workflow file. Use for long prompts or reusable scripts.
 
 **Description shapes** — match the shape to the content:
@@ -397,7 +398,7 @@ state. Use this:
 - **`cache: false` on a node** — explicit opt-out (redundant for non-`llm` nodes under the default; useful for documenting intent).
 - `pflow report` — when errors aren't enough, inspect per-node resolved inputs and outputs
 
-**What the memo cache models:** a node's cache key is computed from its node type, its static params (`- key: value`), raw template strings (the `${foo.bar}` *string*, not the resolved value), batch configuration, prompt-cache content, and resolved input values. It does NOT model filesystem state, environment variables, current time, or external API responses — anything a node reads from the world outside its declared inputs. This is why non-`llm` nodes don't cache by default: a `shell` node running `cat queue.txt` has a stable cache key even as the file changes, so caching it would silently re-serve stale output in an iteration loop. (A literal string inside a `??` fallback cannot contain the `??` sequence itself — see `pflow guide branching` → Loops for fallback patterns.)
+**What the memo cache models:** a node's cache key is computed from its node type, its static params (`- key: value`), raw template strings (the `${foo.bar}` *string*, not the resolved value), batch configuration, prompt-cache content, and resolved input values. It does NOT model retry settings, filesystem state, environment variables, current time, or external API responses — anything that affects how an attempt is scheduled or what a node reads from the world outside its declared inputs. This is why non-`llm` nodes don't cache by default: a `shell` node running `cat queue.txt` has a stable cache key even as the file changes, so caching it would silently re-serve stale output in an iteration loop. (A literal string inside a `??` fallback cannot contain the `??` sequence itself — see `pflow guide branching` → Loops for fallback patterns.)
 
 **How to diagnose stale cache:** if a node returns the same output across runs when you expect change, the cache is hitting because all of the above inputs are stable. Either (a) the input genuinely hasn't changed (cache is correct); (b) the node reads external state — under the defaults this is auto-uncached for non-`llm` nodes, so check you don't have an explicit `cache: true`; or (c) upstream produced identical output — check the upstream node via `pflow report` or `--only <node>`.
 

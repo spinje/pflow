@@ -7,7 +7,7 @@ exercise the full pipeline: engine step 17.5 → mark_node_failed →
 __warnings__ → _determine_status → _extract_runtime_warnings.
 """
 
-from pflow.core.diagnostic import Severity
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -192,18 +192,26 @@ def test_api_warning_not_classified_as_recovery():
 
 def test_sub_workflow_recovery_classified_correctly_without_failures():
     """When a child sub-workflow recovers via on-error, __warnings__ propagates
-    to the parent but __failures__ stays in child scope. The cross-reference
-    fails — fall back to message pattern detection."""
+    to the parent as a producer-built Diagnostic while __failures__ stays in
+    child scope."""
     runner = WorkflowRunner()
+    recovery_warning = Diagnostic(
+        severity=Severity.WARNING,
+        message="Node 'child-node' failed \u2014 on-error \u2192 'handler'",
+        node_id="child-node",
+        source="runtime",
+        context={"type": "on_error_recovery", "category": "node_action_error"},
+    )
     shared = {
         "__warnings__": {
-            "child-node": "Node 'child-node' failed \u2014 on-error \u2192 'handler'",
+            "child-node": recovery_warning,
         },
         # No __failures__ entry — child's __failures__ didn't propagate
     }
     diagnostics = runner._extract_runtime_warnings(shared)
 
     recovery_diags = [d for d in diagnostics if d.context and d.context.get("type") == "on_error_recovery"]
-    assert len(recovery_diags) == 1, f"Sub-workflow recovery should be detected via message pattern, got: {diagnostics}"
+    assert len(recovery_diags) == 1, f"Sub-workflow recovery should preserve propagated Diagnostic, got: {diagnostics}"
     assert recovery_diags[0].node_id == "child-node"
+    assert recovery_diags[0].context.get("category") == "node_action_error"
     assert not recovery_diags[0].suggestions, "Recovery diagnostic should have no suggestions"

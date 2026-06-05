@@ -8,4 +8,4 @@ class NonRetriableError(Exception):
     change with retries (e.g., wrong file type, invalid parameters).
     """
 
-    pass
+    retriable = False

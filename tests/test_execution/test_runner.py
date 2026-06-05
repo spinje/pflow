@@ -76,6 +76,39 @@ def test_successful_workflow_runs_through_full_pipeline():
     assert result.metrics is not None
 
 
+def test_parser_section_typo_is_info_and_non_degrading_end_to_end(tmp_path: Path):
+    workflow_path = tmp_path / "typo.pflow.md"
+    workflow_path.write_text(
+        "# Typo\n\n"
+        "## Input\n\n"
+        "### api-key\n\n"
+        "Unused input typo.\n\n"
+        "- type: string\n\n"
+        "## Steps\n\n"
+        "### echo\n\n"
+        "Echo hello.\n\n"
+        "- type: shell\n"
+        "- cache: false\n"
+        "- command: echo hello\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(workflow_path), {}, RunnerConfig())
+
+    assert result.success is True
+    assert result.status == WorkflowStatus.SUCCESS
+    parser_advisories = [
+        diagnostic
+        for diagnostic in result.diagnostics
+        if diagnostic.source == "parser" and "## Input" in diagnostic.message
+    ]
+    assert len(parser_advisories) == 1
+    assert parser_advisories[0].severity is Severity.INFO
+
+    assert result.trace is not None
+    assert result.trace.execution_warnings[0]["severity"] == "info"
+
+
 def test_llm_structured_warning_survives_runner_pipeline(mock_llm_client):
     """E2E: structured LLM warnings render as text and preserve context.
 
@@ -800,7 +833,7 @@ def test_child_parser_warning_survives_prep_failure(tmp_path: Path):
     parser_warnings = [
         diagnostic
         for diagnostic in result.diagnostics
-        if diagnostic.severity == Severity.WARNING and diagnostic.source == "parser"
+        if diagnostic.severity == Severity.INFO and diagnostic.source == "parser"
     ]
     assert len(parser_warnings) == 1
     assert "## Input" in parser_warnings[0].message
@@ -839,7 +872,7 @@ def test_sibling_child_parser_warnings_not_collapsed_by_dedup(tmp_path: Path):
 
     result = WorkflowRunner().run(str(parent), {}, RunnerConfig())
 
-    parser_warnings = [d for d in result.diagnostics if d.severity == Severity.WARNING and d.source == "parser"]
+    parser_warnings = [d for d in result.diagnostics if d.severity == Severity.INFO and d.source == "parser"]
     # Both children's parser warnings must survive — not collapsed by dedup
     assert len(parser_warnings) == 2, (
         f"Expected 2 parser warnings (one per child), got {len(parser_warnings)}: "
@@ -1205,6 +1238,34 @@ class TestDetermineStatusSeverity:
         success, status = self._run_status(warnings_dict={"n": self._warning()})
         assert success is True
         assert status == WorkflowStatus.DEGRADED
+
+    def test_parser_warning_diagnostic_is_success(self):
+        success, status = self._run_status(
+            warnings_dict={
+                "n": Diagnostic(
+                    severity=Severity.WARNING,
+                    source="parser",
+                    message="definition advisory",
+                    node_id="n",
+                )
+            }
+        )
+        assert success is True
+        assert status == WorkflowStatus.SUCCESS
+
+    def test_validator_warning_diagnostic_is_success(self):
+        success, status = self._run_status(
+            warnings_dict={
+                "n": Diagnostic(
+                    severity=Severity.WARNING,
+                    source="validator",
+                    message="definition advisory",
+                    node_id="n",
+                )
+            }
+        )
+        assert success is True
+        assert status == WorkflowStatus.SUCCESS
 
     def test_error_severity_diagnostic_is_degraded(self):
         """ERROR severity in __warnings__ also flips DEGRADED — only INFO is

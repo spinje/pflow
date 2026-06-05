@@ -56,8 +56,8 @@ This runs the `classify` node once for each issue. The `as: "issue"` creates a t
 | `parallel` | bool | No | `false` | Run items concurrently instead of sequentially |
 | `max_concurrent` | int | No | `10` | Maximum parallel items (1-100) |
 | `error_handling` | string | No | `"fail_fast"` | `"fail_fast"` or `"continue"` |
-| `max_retries` | int | No | `0` | Retry failed items this many times |
-| `retry_wait` | int | No | `1` | Seconds to wait between retries |
+| `max_retries` | int | No | `1` | Batch item total attempts after an exception escapes the node (`1` = no batch retry) |
+| `retry_wait` | number | No | `0` | Seconds to wait between batch item attempts |
 
 ## Sequential vs parallel
 
@@ -189,10 +189,31 @@ Process each API call with retries and error tolerance.
     error_handling: continue
 ```
 
-This configuration retries each failed item up to 3 times, waiting 2 seconds between attempts. Common in scenarios involving:
+This configuration gives each failed item up to 3 total batch attempts, waiting 2 seconds between attempts. Common in scenarios involving:
 - Transient API errors
 - Rate limit recovery
 - Network timeouts
+
+Node-level `retry:` is separate from batch retry and applies inside each node attempt:
+
+```markdown
+### fetch
+
+Fetch each API call with exponential node backoff.
+
+- type: http
+- url: ${call.url}
+- retry:
+    max: 3
+    wait: 0.5
+    backoff: exponential
+- batch:
+    items: ${api_calls}
+    as: call
+    parallel: true
+```
+
+For nodes that return an `"error"` action when exhausted (`llm`, `shell`, `mcp`, `code`, file nodes), batch does not run another item attempt. Attempts multiply only for nodes that re-raise after node retries are exhausted, such as `http`, `claude-code`, or custom nodes using the default fallback.
 
 ## What you'll see
 

@@ -374,6 +374,20 @@ def _display_execution_result(
         ctx.exit(1)
 
 
+def _echo_diagnostic_group(diagnostics: list[Any], *, blank_line: bool) -> None:
+    """Render a group of diagnostics to stderr, optionally preceded by a blank line.
+
+    Shared by the validation success and failure paths so warnings and INFO
+    advisories are grouped and spaced consistently on both.
+    """
+    if not diagnostics:
+        return
+    if blank_line:
+        click.echo("", err=True)
+    for diagnostic in diagnostics:
+        click.echo(format_diagnostic(diagnostic), err=True)
+
+
 def _display_validation_result(
     ctx: click.Context,
     vresult: Any,
@@ -394,18 +408,16 @@ def _display_validation_result(
             from pflow.execution.formatters.validation_formatter import format_validation_success
 
             click.echo(format_validation_success())
-            if vresult.warnings:
-                for diagnostic in vresult.warnings:
-                    click.echo(format_diagnostic(diagnostic), err=True)
+            _echo_diagnostic_group(list(vresult.warnings), blank_line=False)
+            _echo_diagnostic_group([d for d in vresult.diagnostics if d.severity is Severity.INFO], blank_line=True)
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
             click.echo(format_validation_failure(vresult.errors))
-            extra_diagnostics = [d for d in vresult.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
-            if extra_diagnostics:
-                click.echo("", err=True)
-                for diagnostic in extra_diagnostics:
-                    click.echo(format_diagnostic(diagnostic), err=True)
+            # Separate warnings from INFO advisories with a blank line, matching the
+            # success branch above (so advisories read consistently on both paths).
+            _echo_diagnostic_group([d for d in vresult.diagnostics if d.severity is Severity.WARNING], blank_line=True)
+            _echo_diagnostic_group([d for d in vresult.diagnostics if d.severity is Severity.INFO], blank_line=True)
 
     ctx.exit(0 if vresult.valid else 1)
 

@@ -2,6 +2,7 @@
 
 import pytest
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_API_WARNING,
     FAILURE_CATEGORY_EXCEPTION,
@@ -201,3 +202,25 @@ class TestClearNodeFailure:
 
         assert "flaky" not in shared["__failures__"]
         assert "flaky" not in shared["__warnings__"]
+
+    def test_preserves_diagnostic_warning_only_in_warnings_channel(self):
+        """Structured warnings stay structured in __warnings__ for runner consumers."""
+        warning = Diagnostic(
+            severity=Severity.WARNING,
+            message="Node 'flaky' failed \u2014 on-error \u2192 'handler'",
+            node_id="flaky",
+            source="runtime",
+            context={"type": "on_error_recovery", "category": FAILURE_CATEGORY_SHELL},
+        )
+        shared: dict = {"__execution__": {}, "flaky": {"error": "boom"}}
+
+        mark_node_failed(
+            shared,
+            "flaky",
+            category=FAILURE_CATEGORY_SHELL,
+            error="boom",
+            warning=warning,
+        )
+
+        assert shared["__warnings__"]["flaky"] is warning
+        assert "warning" not in shared["__failures__"]["flaky"]
