@@ -1,0 +1,185 @@
+# Task 166 — Progress log
+
+> The **how we got here** (kept out of the spec deliberately). Records the exploration, the
+> reframings, the dead ends, and the *evidence* behind each decision — so a future agent
+> understands *why* the loop syntax is what it is, and doesn't re-litigate settled questions.
+> Several conclusions here are broader than the loop primitive (they shaped it); a couple spawned
+> separate artifacts (noted inline).
+
+## Guiding principles (emerged during the discussion; shaped every decision)
+
+1. **Agent-first.** The author is an AI agent; human readability of `.pflow.md` is a *bonus*, not
+   the goal — humans are better served by a rendered (ideally trace-derived) flow view. Optimize
+   syntax for an AI agent authoring it *correctly on the first try*.
+2. **Optimize for FINAL-code simplicity, not ease-of-getting-there.** Ask "what would the top 10%
+   of comparable codebases do?" — but do **not** overfit or overengineer. For an AI agent, simple
+   = fewer files, less text, fewer tool calls, fewer idiosyncratic rules.
+3. **Fix the primitive; don't flee to code.** The framework should own hard, correctness-critical
+   control flow so agents *can't* get it wrong. Offloading retry/loops/error-handling to
+   agent-written `try/except` is fragile and defeats pflow's purpose.
+4. **Inline by default; a separate sub-workflow file is the most expensive unit for an agent.**
+   Cost ladder: inline param < inline code block < `${ref}` < separate file. Don't force a file
+   where an inline node/value suffices.
+5. **No expression language in `${...}`** (verified: none exists; `${x > 0}` is illegal). Logic
+   lives in the body (Python); conditions are field references. A guard-expression micro-syntax
+   would be agent-hostile (out of training distribution).
+6. **Explicit, statically-checkable wiring beats implicit coupling** — the #1 silent-failure source.
+
+## Phase 0 — Trigger
+
+Began with: is `.pflow.md` hard for agents to author *complex* patterns (the "6 workflow patterns"
++ Anthropic "5 effective-agent patterns" tables)? Grounded in the repo's most complex real
+workflow (`examples/agent-orchestration/plan-to-code/`), which exposed concrete pain: stateful
+loops as 3-node backward-edge worker/checker triangles with the counter threaded across siblings;
+4-way code routers; per-agent schema-soft-fail guard nodes.
+
+## Phase 1 — Explored "go code", then set it aside
+
+Considered a code-orchestration plane (imperative Python calling effects via `run()`, like the
+Claude Code Workflow tool). Genuinely cleaner for loops, and it would fix error-handling for free
+(retry/saga = `try/except`). Rejected as the *primary* answer:
+
+- **Forfeits pflow's core bets** — static visualization, built-in/correct handling, constraint.
+- **Offloads correctness** to agent-written code (violates principle 3).
+- **Static visualization of code is degraded.** Key sub-finding: authoring / execution /
+  presentation are *separable* concerns. Humans should get a **trace-derived** render (the trace
+  is rich enough — verified). But *before* a run, a declarative workflow has a **full** static
+  graph; code yields only an AST skeleton, degrading fast with dynamic dispatch. That pre-run
+  completeness is declarative's durable advantage. (Aside: graphs can be extracted from code via
+  variable use-def — the modern-orchestrator ecosystem does this — but it's moot once we stay
+  declarative.)
+- The user's framing held throughout: **fix the declarative primitive, don't flee to code.**
+
+## Phase 2 — Reframe: the friction is an incomplete primitive library, not the paradigm
+
+Reasoning steps that matter:
+
+- **Why is this even hard? It's a solved problem — by domain restriction.** A stateful loop is
+  irreducibly code (`acc = init; while cond(acc): acc = step(acc)`). The deep tension is
+  *expressiveness vs. analyzability* — you cannot, in general, statically analyze arbitrary
+  control flow (Rice/halting). It's "solved" only by closing the vocabulary: SQL, spreadsheets,
+  build DAGs, and **statecharts/XState** all give up generality to regain analyzability +
+  visualization. So a declarative loop will never be *as* terse as a `while` — and that's the
+  correct trade given principle 1.
+- **`loop:` today is not a real primitive.** It's sugar over backward edges (themselves sugar over
+  `next` routing), its condition must be its own output, and it has **no accumulator**. In
+  functional terms the genuine primitives are `map`/`filter`/`reduce`/`scan`/`unfold`; `loop:` is
+  an amputated `unfold`/`scan`. And `next`/`end` is essentially `goto` (with goto's footguns).
+- **The bounded pattern space makes a closed vocabulary viable.** The user rightly pushed back on
+  the functional-language analogy: pflow is *much* more constrained than a general FP language.
+  That makes special constructs *feasible* (you can enumerate the patterns) but doesn't mandate them.
+- **"Modern orchestrators use code" is NOT evidence for pflow.** Airflow TaskFlow / Dagster /
+  Prefect went to code because their authors are human engineers, their *work* is arbitrary code,
+  their control flow is genuinely general, and their viz is secondary (monitoring). pflow is the
+  **opposite on all four** (AI authors, typed-effect work, bounded patterns, comprehension-first
+  viz). The *declarative* orchestrators (AWS Step Functions ASL, Argo) are the ones whose context
+  is closest to pflow's. The industry trend doesn't transfer.
+- **Net scope collapse:** pflow already chose "pattern-as-primitive" with `batch:`/`loop:`. Five
+  of six control needs (sequence, references, map/`batch`, branch, compose) are already sound. The
+  one genuinely-broken primitive is the **stateful loop** → make it the symmetric sibling of `batch:`.
+
+## Phase 2b — Patterns, guides, and what the tables omitted
+
+- **Named patterns (tournament, evaluator-optimizer, adversarial-verify) are library recipes +
+  guide topics, NOT node types.** Decision rule: promote to a first-class primitive only if
+  *common AND hard-to-compose AND* benefits from engine-level validation/optimization. General
+  combinators qualify; specific patterns don't (0-file recipes; the trace of a loop-of-shrinking-
+  maps already renders as a bracket, so bespoke rendering wants a renderer hint, not a node type).
+- **Statecharts/XState = inspiration, not a template.** Borrow: context (= accumulator), guards,
+  compound-state composition, the canonical diagram. Reject: the event model and a guard-expression
+  language.
+- **The user's tables are the *agent-reasoning* subset of what fits pflow.** As a general
+  execution engine, pflow naturally hosts patterns the "effective agents" literature omits:
+  **poll-until-ready, map-reduce with deterministic aggregation, retry-with-backoff, and the whole
+  error-handling/saga family** (the biggest omission — the tables have *zero* failure patterns).
+  Proposed guide shape: primitive guides (core, batch, loop, branching, sub-workflows) + ~5
+  composition topics (evaluator-optimizer, adversarial-verification, orchestrator-workers,
+  tournament, generate-and-filter) + the omitted error-handling family.
+- **Composition risk resolved.** "Do combinators nest?" → yes, via typed sub-workflow bodies;
+  verified that `batch:` already works on `workflow` nodes, so a `loop:` over a workflow body that
+  `batch:`es composes today with no engine change.
+
+## Phase 3 — Verified the codebase (overturned the core premise)
+
+Ran a 7-way parallel code audit (see `research/codebase-findings.md`). Decisive finding: the
+assumption the whole design rested on — "a node can't read its own previous output" — is
+**FALSE**. The loop self-reference substrate already exists (`shared[node_id]` persists across
+iterations; resolution context is `dict(shared)` with no self-exclusion; the validator already
+blesses loop self-reference). So carrying state is *substrate that already exists*; the task is a
+clean **surface** on top of it. Also corrected two earlier wrong assumptions: document-order
+fallthrough is already rejected at parse time; node types are cheap (1 file) but control flow is
+engine work.
+
+A separate pattern-coverage stress test (fresh agent) rated 8/11 patterns CLEAN and 3 AWKWARD, and
+corrected me: the **tournament is awkward** (a `batch` nested in a `loop` + manual pairing/byes),
+not clean as I'd claimed; and the error-handling family is awkward *and* semantically wrong
+(degraded-after-recovery).
+
+## Phase 4 — Designing the loop surface (and killing the first attempts)
+
+First sketch: magic `${acc}` + `init:`. A blind cold-read rated it **4/10** — the
+`init`-must-mirror-the-body's-*output* coupling was a silent trap, `${acc}` "changed meaning per
+line," the `inputs:`/`init:` overlap confused. A second sketch (bare-name `${satisfied}` +
+auto-threading) was caught by the user as "too much magic" (invented scope + hidden data flow).
+Cataloged **eight** distinct alternatives (A–H: self-ref+`??`, magic `${acc}`, named-state+`update`,
+body-I/O name-match, explicit feedback, python-reducer-block, bare-name accumulator, no-accumulator)
+for blind grading.
+
+## Phase 5 — Blind grading + independent design → convergence
+
+Four blind graders (fresh, no pflow context, no provenance, neutral prompts) **disagreed on the
+winner** — treat as signal not truth (smaller model) — but converged on the *principle*:
+**implicit / invisible output→input coupling is the #1 reliability risk**; explicit,
+statically-checkable wiring is what makes loops reliable. The python-reducer-block (F) was broadly
+rejected (heavy; violates the simple-poll-case). Implicit options (name-match, magic `acc`,
+bare-name) were distrusted for silent failure.
+
+Three independent designer agents (criteria only, no catalog, no conclusions) **converged on the
+same shape**, and one's adversarial self-critique surfaced the highest-value finding of the whole
+exercise: **`while:` polarity inversion is a silent killer** ("poll until done" → `while: done` →
+runs once and exits; type-checks, runs, looks plausible; uncatchable statically) → fix with
+**both `while:` and `until:` keywords (exactly one required)**.
+
+## Phase 6 — Reconciling the blind designs with verified pflow
+
+The fresh designers proposed `type: loop` (a dedicated type with a `body:` param) — an **artifact
+of withholding pflow context**. Corrected to the **`- loop:` modifier** (batch-symmetric, on the
+verified substrate, supports inline bodies, no new node type). Then settled references and seed:
+
+- **References:** the existing `${loop-node-id.field}` model over a new `${body}` alias
+  (consistency, zero new words, verified self-reference). **Rejected `${item}`** — it is batch's
+  per-iteration *input* injected *into* the body; a loop needs the per-iteration *output*,
+  referenced in the *parent* config. Opposite role. (`${body}` remains a low-stakes open alternative.)
+- **Seed:** collapsed `seed:` into `inputs:` — `carry:` already declares carried-ness, so a carried
+  input's `inputs:` value is its round-1 value. 2 of 3 designers independently did this. Accepted
+  cost: the round-1-only nature is implicit (surface via a validation note).
+- **Form:** `carry:` mirrors `inputs:` (destination : `${source}`) so direction is un-reversible;
+  the bare `output -> input` arrow was self-rejected (parser-fragile, guessable).
+
+Landed on the converged shape (now in the spec's **Target Syntax**).
+
+## Cross-cutting outcomes (broader than this task)
+
+- **Error/resilience model → GitHub issue spinje/pflow#471** (audit-first). The error-handling
+  family is both the category the tables omitted *and* the most broken in the engine: `on-error`
+  always DEGRADES (no "recovered-cleanly" status); retry is hardcoded per node type and not
+  settable in `.pflow.md`; no exponential backoff. Independent of this task; retry-style loops
+  benefit from both.
+- **Guide structure** (Phase 2b) — not yet its own task; recorded here as the agreed shape.
+
+## Epistemic / method notes (so a future agent calibrates trust correctly)
+
+- **The design oscillated, and the user's pushbacks were load-bearing course-corrections.** I
+  over-leaned toward "go code" more than once and was repeatedly pulled back to "fix declarative."
+  Calibrated conclusion: **declarative was NOT a mistake** (~15–20% confidence it was) — it has a
+  real ceiling only for dynamic/stateful loops, which this task fixes.
+- **Disclosed bias:** I (Claude) run on an imperative code-orchestration tool (the Workflow tool),
+  so I'm predisposed to favor the code shape — discount enthusiasm for it accordingly.
+- **Method:** fresh, uninfluenced subagents were used for both *verification* (codebase facts) and
+  *evaluation* (blind grading + independent design), specifically to avoid anchoring on my own
+  proposals or on each other. Provenance and conclusions were withheld from graders/designers; the
+  blind A/B comparison never revealed which form existed today vs. was proposed.
+- **Confidence split:** the **convergence** (the shape) and the **polarity finding** are
+  high-confidence; graders/designers ran on a smaller model, so exact keywords are implementation
+  bikeshed, and the two flagged loose ends (inline-body path, `${node-id}` vs `${body}`) are
+  genuinely open.
