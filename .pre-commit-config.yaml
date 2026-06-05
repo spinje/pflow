@@ -22,3 +22,14 @@ repos:
       - id: ruff
         args: [--exit-non-zero-on-fix]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      # Catches ${...} templates leaking out of code blocks in docs — these
+      # compile to live JS expressions and crash the page at render, a class
+      # `mint validate` does not catch. See scripts/check_mdx_fences.py.
+      - id: check-mdx-fences
+        name: check MDX for leaked templates and unclosed fences
+        entry: python3 scripts/check_mdx_fences.py
+        language: system
+        files: \.mdx$
