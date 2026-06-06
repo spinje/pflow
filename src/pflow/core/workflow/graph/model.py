@@ -20,15 +20,24 @@ class NodeId:
     """Runtime-aligned node identity.
 
     Top-level and sub-workflow child nodes keep their authored ``node_id``.
-    Nesting is represented by ``ancestor_path``. Literal batch sub-workflow
-    items use ``AncestorStep.batch_index``; dynamic batches use ``None`` because
-    the static model has one representative body. Looped nodes remain one
-    static identity; a future runtime overlay joins N loop visits to this one
-    node with event sequence data, not by changing the static identity.
+    Nesting is represented by ``ancestor_path``, which is the chain of *real*
+    host descents only. Literal batch sub-workflow items use
+    ``AncestorStep.batch_index``; dynamic batches use ``None`` because the static
+    model has one representative body. Looped nodes remain one static identity;
+    a future runtime overlay joins N loop visits to this one node with event
+    sequence data, not by changing the static identity.
+
+    ``port`` disambiguates synthetic IO-wrapper nodes, which may share a name
+    with each other (an input and output both named ``changelog_file``) or with
+    a body node at the same level. It is the role, not an ancestor — keeping it
+    off ``ancestor_path`` preserves the real-descents-only invariant. Body nodes
+    (the only runtime-trace join targets) always carry ``port=None``, so the
+    runtime overlay join is unaffected.
     """
 
     node_id: str
     ancestor_path: tuple[AncestorStep, ...] = ()
+    port: Literal["in", "out"] | None = None
 
 
 @dataclass(frozen=True)

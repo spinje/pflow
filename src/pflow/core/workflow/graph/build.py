@@ -29,8 +29,6 @@ logger = logging.getLogger(__name__)
 
 _WORKFLOW_TYPES = {"workflow", "pflow.runtime.workflow_executor"}
 _END_NODE = "__end__"
-_INPUT_SCOPE = "__inputs__"
-_OUTPUT_SCOPE = "__outputs__"
 
 
 ResolveChild = Callable[[dict[str, Any], Path | None], SubWorkflowResult | None]
@@ -45,7 +43,7 @@ def build_graph(
     max_depth: int = 1,
 ) -> GraphModel:
     """Build a pure structural graph model from a workflow IR."""
-    builder = _GraphBuilder(resolve_child=resolve_child, base_path=base_path, max_depth=max_depth)
+    builder = _GraphBuilder(resolve_child=resolve_child, max_depth=max_depth)
     builder.build_level(
         ir,
         ancestor_path=(),
@@ -70,7 +68,6 @@ class _LevelResult:
 @dataclass
 class _GraphBuilder:
     resolve_child: ResolveChild | None
-    base_path: Path | None
     max_depth: int
     nodes: list[Node] = field(default_factory=list)
     edges: list[Edge] = field(default_factory=list)
@@ -96,28 +93,28 @@ class _GraphBuilder:
 
         # Pass A: create all node identities, containers, child models, and local
         # routing maps before any data-flow resolution reads them.
+        level_nodes: dict[str, Node] = {}
         for raw_node in nodes:
             node_id = NodeId(str(raw_node["id"]), ancestor_path)
             result.nodes[node_id.node_id] = node_id
-            self._add_node(
-                Node(
-                    id=node_id,
-                    kind=str(raw_node.get("type", "unknown")),
-                    purpose=str(raw_node.get("purpose", "")),
-                    parent=parent_container,
-                    loop=_build_loop(raw_node.get("loop"), node_id.node_id),
-                    batch=_build_batch(raw_node.get("batch")),
-                    source=_source_ref(raw_node, source_file),
-                    param_sources=_param_source_refs(raw_node, source_file),
-                )
+            node = Node(
+                id=node_id,
+                kind=str(raw_node.get("type", "unknown")),
+                purpose=str(raw_node.get("purpose", "")),
+                parent=parent_container,
+                loop=_build_loop(raw_node.get("loop"), node_id.node_id),
+                batch=_build_batch(raw_node.get("batch")),
+                source=_source_ref(raw_node, source_file),
+                param_sources=_param_source_refs(raw_node, source_file),
             )
+            self._add_node(node)
+            level_nodes[node_id.node_id] = node
 
             if parent_container is not None:
                 self._container_index[parent_container].members.append(node_id)
 
         for raw_node in nodes:
-            node_id = result.nodes[str(raw_node["id"])]
-            node = self._require_node(node_id)
+            node = level_nodes[str(raw_node["id"])]
             if node.batch is not None:
                 self._build_batch_container(
                     raw_node, node, ancestor_path, parent_container, current_depth, source_file, base_path, result
@@ -145,14 +142,6 @@ class _GraphBuilder:
 
     def _add_node(self, node: Node) -> None:
         self.nodes.append(node)
-
-    def _require_node(self, node_id: NodeId) -> Node:
-        for node in self.nodes:
-            if node.id == node_id:
-                return node
-        # Internal invariant: every node id is added in Pass A before this is called.
-        # Plain ValueError (not a PflowError) — a miss is a builder bug, not user input.
-        raise ValueError(f"Missing graph node: {node_id}")
 
     def _add_container(self, container: Container) -> Container:
         self.containers.append(container)
@@ -793,11 +782,11 @@ def _container_id(ancestor_path: tuple[AncestorStep, ...], suffix: str) -> str:
 
 
 def _input_node_id(name: str, ancestor_path: tuple[AncestorStep, ...]) -> NodeId:
-    return NodeId(name, (*ancestor_path, AncestorStep(_INPUT_SCOPE)))
+    return NodeId(name, ancestor_path, port="in")
 
 
 def _output_node_id(name: str, ancestor_path: tuple[AncestorStep, ...]) -> NodeId:
-    return NodeId(name, (*ancestor_path, AncestorStep(_OUTPUT_SCOPE)))
+    return NodeId(name, ancestor_path, port="out")
 
 
 def _child_key(child_result: SubWorkflowResult) -> str:

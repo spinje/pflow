@@ -23,8 +23,6 @@ from pflow.core.workflow.graph import (
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
 
 ROOT = Path(__file__).resolve().parents[2]
-INPUT_SCOPE = "__inputs__"
-OUTPUT_SCOPE = "__outputs__"
 
 
 def _node(graph: GraphModel, node_id: NodeId) -> Node:
@@ -38,11 +36,11 @@ def _parse(path: str) -> dict[str, Any]:
 
 
 def _input_id(name: str, *ancestor_path: AncestorStep) -> NodeId:
-    return NodeId(name, (*ancestor_path, AncestorStep(INPUT_SCOPE)))
+    return NodeId(name, ancestor_path, port="in")
 
 
 def _output_id(name: str, *ancestor_path: AncestorStep) -> NodeId:
-    return NodeId(name, (*ancestor_path, AncestorStep(OUTPUT_SCOPE)))
+    return NodeId(name, ancestor_path, port="out")
 
 
 def test_model_helpers_are_derived_from_edges() -> None:
@@ -167,10 +165,7 @@ def test_nested_subworkflow_outputs_thread_to_sibling_consumer() -> None:
         max_depth=3,
     )
 
-    score_output = NodeId(
-        "score",
-        (AncestorStep("analyze-sources", None), AncestorStep("score"), AncestorStep(OUTPUT_SCOPE)),
-    )
+    score_output = _output_id("score", AncestorStep("analyze-sources", None), AncestorStep("score"))
     compile_node = NodeId("compile", (AncestorStep("analyze-sources", None),))
     assert _node(graph, score_output).kind == "output"
     assert (
@@ -303,6 +298,10 @@ def test_synthetic_input_and_output_with_same_name_have_distinct_identity() -> N
     assert input_node.kind == "input"
     assert output_node.kind == "output"
     assert input_node.id != output_node.id
+    # Disambiguation lives in NodeId.port, NOT a synthetic ancestor step: ancestor_path
+    # stays empty (real descents only) so the runtime-trace join key is unaffected.
+    assert (input_node.id.port, output_node.id.port) == ("in", "out")
+    assert input_node.id.ancestor_path == () and output_node.id.ancestor_path == ()
 
 
 def test_routes_to_end_builds_synthetic_end_edges_without_changing_decision_or_terminal() -> None:

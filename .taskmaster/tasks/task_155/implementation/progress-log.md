@@ -414,3 +414,84 @@ as predicted); purity grep clean.
 > **NOTE — `task-review.md` is now stale:** it documents the alias ordering, the literal-batch silent gap,
 > the duplicate `_refs_in`, and the params guard as limitations/findings that are now FIXED. Reconcile it
 > when (re)generating the task review.
+
+## 2026-06-06 — Post-implementation cleanup pass (`/simplify`-inspired review)
+
+Ran a quality-only review of the whole graph diff (not bug-hunting — `/code-review` already covered that)
+using the `/simplify` method: four parallel review agents over `git diff main...HEAD`, one per angle (reuse,
+simplification, efficiency, altitude). Verified every finding against the code before acting, then triaged
+into safe-now / judgment-call / defer. All changes below are **behavior-preserving** — the 8 Mermaid goldens
+stay **byte-identical** throughout (the tripwire that proves it).
+
+**Applied — Tier-1 safe deletions + one consolidation (net −8 LOC, two dead symbols + one O(N²) scan gone):**
+- **A** — deleted the dead `_GraphBuilder.base_path` field (stored, never read; `base_path` only ever flows
+  as a method param). `build.py`.
+- **B** — deleted `_container_ancestor_path` — a pure no-op alias for `_container_level_path`; repointed its
+  2 callers. `mermaid.py`.
+- **C** — removed `_require_node` (a linear scan over the cumulative `self.nodes` to re-find a Node Pass A had
+  just built). Pass A now captures the `Node` in a local `level_nodes: dict[str, Node]`; Pass B reads it
+  directly. Kills an O(N²)-with-workflow-size scan on the shared build path. `build.py`.
+- **D** — extracted `_batch_count(batch)` for the 3 duplicated `count = batch.count if … else len(items …)`
+  expressions. `mermaid.py`.
+
+**Investigated then REVERTED — F (unify `_try_build_workflow_node` + `_build_dynamic_batch_workflow`):**
+- The two methods are ~90% identical (the only real differences: container id suffix + parent container; the
+  dynamic batch nests its workflow container inside the batch container). A shared `_expand_workflow_child` +
+  `_recurse_child` (the latter shared by all 3 expansion paths incl. literal-batch) is *correct* — built it,
+  goldens stayed byte-identical.
+- ❌ **But it ADDED ~31 LOC**, not deleted them. 💡 **Key learning:** this package is lean enough that the
+  duplication is *structural similarity*, not copy-paste bloat — extracting a ~40-line shared algorithm costs
+  ~40 lines back (helper sig + docstrings + thin wrappers + call plumbing). It's a wash on lines; the only
+  benefit is single-source-of-truth (anti-drift), and behavioral drift is already caught by the structural
+  `test_graph_build.py` suite. Against the stated goal (LOC deletion) it didn't qualify → **reverted entirely**
+  (Tier-1 A/C preserved). No trace of F remains.
+
+**Implemented — G (replace the `__inputs__`/`__outputs__` IO-scope marker with a first-class `NodeId.port`):**
+- 💡 The altitude smell: a workflow may declare an input and output with the same name (`generate-changelog`
+  → `changelog_file` in both), which collide as bare `NodeId(name, ())`. The old fix smuggled a synthetic
+  `AncestorStep("__inputs__")`/`("__outputs__")` into the identity field — a *fake ancestor* — then stripped
+  it via `_strip_io_scope` at **6 renderer sites**, with the magic strings **duplicated** across `build.py`
+  and `mermaid.py` (model internals leaking across the layer seam).
+- Fix: `NodeId` gains `port: Literal["in","out"] | None = None`. Role lives in `port`; `ancestor_path` is
+  **real host descents only** again (the invariant ADR-0003 implies). Deleted `_strip_io_scope` + the 3 dup
+  constants + the 2 build constants; the 6 call sites use `ancestor_path` directly; the renderer derives its
+  `in_`/`out_` prefix from `Node.kind` (it never needs to read `port` — `port` is identity-only).
+- **Two load-bearing facts (both verified, both held):**
+  1. *Flat-id equivalence* → goldens byte-identical: the marker was always exactly the trailing `+1` step
+     `_strip_io_scope` removed, so `ancestor_path` now equals the old stripped value. `_natural_node_id`
+     (and the pre-reservation pass) emit identical strings; with no natural-id collisions in the goldens,
+     assignment order is irrelevant. **All 8 goldens unchanged, zero regeneration.**
+  2. *Trace-join orthogonality*: `port` is set only on `kind ∈ {input,output}` nodes, which have **no runtime
+     events** and are never join targets (§6a). Body nodes — the join key `(node_id, ancestor_path)` — keep
+     `port=None`, so the future JSONL/streaming-trace overlay join is untouched.
+- ⚠️ The one behavioral surface was `_assign_flat_ids`'s `sort_key`: an input/output sharing a name+level now
+  tie on `(len, node_id)`, so the marker-bearing tiebreaker was replaced with a deterministic
+  `port_rank` (`None`<`in`<`out`). Their natural ids differ by `in_`/`out_` prefix → no suffixing → goldens
+  unaffected; the rank only keeps the sort total/deterministic.
+- Tests: only `test_graph_build.py` touched — the two `_input_id`/`_output_id` helpers + one inline
+  construction switched to `port=`; the existing same-name collision test was strengthened to pin
+  `port == ("in","out")` and `ancestor_path == ()`. The plan/seam reasoning behind G (the React-Flow renderer
+  needing the same role disambiguation = the second adapter that earns the seam) is in the conversation, not a
+  separate doc.
+- Docs: `graph/CLAUDE.md` NodeId invariant + join-contract note updated.
+
+**Why G but not F:** both were ~LOC-neutral, but G removes a *genuine cross-layer coupling* (duplicated magic
+strings leaking the model's internals into the renderer) and restores a documented invariant — shaping the
+model for the React-renderer + streaming-trace future. F only de-duplicated structurally-similar code behind
+more indirection. Altitude/coupling win vs. line count.
+
+**Verification (whole pass):**
+- `make check` clean (ruff, ruff-format, MDX fences, mypy 230 files, deptry).
+- `tests/test_core/test_graph_build.py test_graph_mermaid_renderer.py test_mermaid.py test_mermaid_golden.py
+  tests/test_cli/test_visualize.py tests/test_docs/` → **152 passed**; 8 goldens byte-identical.
+- Purity grep: `__inputs__` / `__outputs__` / `_strip_io_scope` / `_INPUT_SCOPE` / `_OUTPUT_SCOPE` /
+  `_IO_SCOPES` all gone from `src/` and `tests/`.
+
+**Status:** all changes are in the working tree, **uncommitted** (repo rule). Findings **H** (renderer re-pairs
+output→input by name in `_resolve_edge_endpoints` when DATA_FLOW edges already carry `output_field`/`input_name`)
+was triaged but **left untouched** — lower-value, render-routing logic with golden-regression risk; revisit if
+the React Flow renderer lands.
+
+> **NOTE — `task-review.md` is doubly stale now:** in addition to the earlier fixes, `NodeId` gained a `port`
+> field and the `__inputs__`/`__outputs__` synthetic-ancestry mechanism it documented is **gone**. Reconcile
+> the node-identity section when (re)generating the task review.

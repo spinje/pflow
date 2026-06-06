@@ -24,8 +24,12 @@ Renderers consume `GraphModel`; they do not read IR. The legacy
 
 ## Load-Bearing Invariants
 
-- `NodeId(node_id, ancestor_path)` is structural identity. Renderers derive flat
-  IDs such as Mermaid's `parent__child`; the model never stores them.
+- `NodeId(node_id, ancestor_path, port)` is structural identity. `ancestor_path`
+  is real host descents only. `port ∈ {in, out, None}` disambiguates synthetic
+  IO-wrapper nodes that may share a name with each other or a body node at the
+  same level — the role is `port`, never a synthetic ancestor step. Body nodes
+  carry `port=None`. Renderers derive flat IDs such as Mermaid's `parent__child`
+  (and `in_`/`out_` prefixes from `Node.kind`); the model never stores them.
 - Literal batch sub-workflow items use `AncestorStep(host, batch_index)`.
   Dynamic batches use `AncestorStep(host, None)`. Leaf batch items are
   `BatchSpec.items` data, not nodes.
@@ -55,7 +59,9 @@ The static identity mirrors today's runtime shape without importing trace code:
 top-level/sub-workflow child events use bare node ids nested under their parent
 events; batch items are keyed by integer index; IO nodes and the synthetic END
 node have no runtime node events. Future JSONL/span trace work should join onto
-this identity rather than changing the graph model.
+this identity rather than changing the graph model. The join keys on body-node
+identity `(node_id, ancestor_path)` — and body nodes always have `port=None` —
+so `NodeId.port` (set only on the never-traced IO nodes) is invisible to the join.
 
 ## Build Notes
 

@@ -23,7 +23,7 @@ IR → build_graph() → GraphModel ─┬→ render_mermaid()   → str
                                  └→ dataclasses.asdict  → JSON payload          (future)
 ```
 
-- **`model.py`** — frozen dataclasses, no Mermaid syntax. Structural identity `NodeId(node_id, ancestor_path)` (ADR-0003); `AncestorStep(node_id, batch_index?)`. `Node`/`Edge`/`Container`/`LoopSpec`/`BatchSpec`/`IOPort`/`SourceRef`. `is_decision`/`is_terminal`/`shadowed`/`node` are **derived methods, not stored fields**. `__post_init__` enforces three invariants (unique ids, edge/host/member referential integrity, `Node.parent`↔`Container.members` bidirectional consistency).
+- **`model.py`** — frozen dataclasses, no Mermaid syntax. Structural identity `NodeId(node_id, ancestor_path, port)` (ADR-0003; `port` disambiguates synthetic IO nodes so `ancestor_path` is real descents only); `AncestorStep(node_id, batch_index?)`. `Node`/`Edge`/`Container`/`LoopSpec`/`BatchSpec`/`IOPort`/`SourceRef`. `is_decision`/`is_terminal`/`shadowed`/`node` are **derived methods, not stored fields**. `__post_init__` enforces three invariants (unique ids, edge/host/member referential integrity, `Node.parent`↔`Container.members` bidirectional consistency).
 - **`build.py`** — the single IR walk, structured as a per-level two-sub-pass (create all identities/containers/child-IO maps first, then resolve all edges). Recursion-stack cycle detection, sub-workflow expansion, batch (literal-all-items / leaf-as-data / dynamic-one-representative), `unexpanded` discriminator, data-flow inference.
 - **`scope.py`** — only `refs_in`/`source_refs_in` (moved verbatim). `Scope.resolve`/`for_level` were **reimplemented structurally inside build**, not moved.
 - **`renderers/mermaid.py`** — consumes only the model; derives flat IDs, shapes, classDefs, labels, batch truncation, end sink, suppression.
@@ -34,8 +34,8 @@ IR → build_graph() → GraphModel ─┬→ render_mermaid()   → str
 | Plan said | Actually shipped | Why |
 |---|---|---|
 | **Mermaid ignores `EdgeKind.END` edges**; derive sink purely from `is_terminal()`; "D2 adds zero Mermaid edges" | **Mermaid renders explicit END edges** to `pflow_end` (deduped against the terminal-sink so a node that's both isn't drawn twice) | Review found authored `next: end` routes were invisible in the first renderer. The model's structural truth should be visible. This **did shift two goldens** (`error-handling.mmd` +3, `generate-changelog.mmd` +2). |
-| `node()` is "O(1) lookup (cache dict)" | `node()` is an **O(n) linear scan** (`model.py:126`); `_require_node` in build is also linear | Fine at current scale (82-node harness); no cache was added. See Technical Debt. |
-| Node identity is `NodeId(node_id, ancestor_path)`, bare | IO nodes needed **synthetic `__inputs__`/`__outputs__` scope markers** in `ancestor_path` | Valid IR reuses one name for both an input and output (`generate-changelog` has `changelog_file` in both); bare `NodeId(name, path)` collided and tripped the uniqueness invariant. |
+| `node()` is "O(1) lookup (cache dict)" | `node()` is an **O(n) linear scan** (`model.py:126`) | Fine at current scale (82-node harness); no cache was added. See Technical Debt. |
+| Node identity is `NodeId(node_id, ancestor_path)`, bare | IO nodes carry a **`port` discriminator** (`in`/`out`) on `NodeId` | Valid IR reuses one name for both an input and output (`generate-changelog` has `changelog_file` in both); bare `NodeId(name, path)` collided and tripped the uniqueness invariant. |
 | Spec: heading-level `source` back-ref | Added **`Node.param_sources: dict[str, SourceRef]`** (review fix) | Click-to-read needs per-param origins (prompt/command/code), not just the node heading. |
 
 Everything else tracked the plan: derived views over stored flags, structural identity, primitive-only (no analysis/SCC layer, ADR-0004), `resolve_child` as the one injected port.
@@ -74,11 +74,11 @@ coalesce/literal-operand handling the local copy lacked); `scope.py` `Optional[s
 alias docstring; an `is_terminal` comment on why `DATA_FLOW` counts toward non-terminality (guards the
 `handle-error --> pflow_end` pin); renamed `_validate_duplicate_node_ids` → `_validate_node_ids` (it also
 rejects reserved `end`/`__end__`); comments on the deliberate internal-invariant `ValueError`s in
-`model.__post_init__` / `_require_node`.
+`model.__post_init__`.
 
 **Decision — kept `ValueError`, did NOT switch to `PflowError`.** The convention ("never vanilla
-`ValueError`") targets *user-facing* errors that flow through the diagnostic/CLI/MCP pipeline. These two
-sites are internal construction invariants (`build_graph` is the sole constructor); a violation is a builder
+`ValueError`") targets *user-facing* errors that flow through the diagnostic/CLI/MCP pipeline. The remaining
+site is an internal construction invariant (`build_graph` is the sole constructor); a violation is a builder
 bug, never user input, and there is no handler / no `to_diagnostics` payoff. A `PflowError` subclass here
 would add a class with no consumer purely to satisfy the rule's letter — overengineering. Kept the idiomatic
 `ValueError` + a one-line comment so a future agent doesn't "fix" it.
@@ -146,7 +146,7 @@ Parser **writes** it (2 sites) → schema **whitelists** it (`additionalProperti
 - **`→ end` as a distinct `EdgeKind.END`** (not BRANCH). A BRANCH-kind end edge would corrupt `is_decision` (distinct-branch-label count). Distinct kind keeps `is_decision` (BRANCH-only) and `is_terminal` (excludes ERROR+END) correct.
 
 ### Technical debt incurred
-- **O(n) lookups in the model/build** (`GraphModel.node`, `_GraphBuilder._require_node`, and `shadowed`'s `_has_expanded_outputs`/`_batch_item_members`/`_expanded_input_members` helpers each scan all nodes/containers). The renderer builds its own `nodes_by_id` dict, so render is fine; the model helper is not cached. Quadratic-ish in `build` and per-`shadowed`-call. Acceptable now; cache if graphs grow large.
+- **O(n) lookups in the model** (`GraphModel.node` and `shadowed`'s `_has_expanded_outputs`/`_batch_item_members`/`_expanded_input_members` helpers each scan all nodes/containers). The renderer builds its own `nodes_by_id` dict, so render is fine; the model helper is not cached. Quadratic-ish per-`shadowed`-call. Acceptable now; cache if graphs grow large.
 - **Flat-id collision scheme is patched, not bulletproof** (`_assign_flat_ids`). The legacy string-concat namespace (`parent__child`, `pflow_end`, `input_x`, batch `dots`) is inherently collision-prone. The fix disambiguates with numeric suffixes and pre-reserves synthetic ids; a **residual fixpoint case** (a node colliding with a *suffixed* host's synthetic id, requiring the host name to also collide) is left unfixed **by design**. The real answer is an injective id scheme in the React Flow renderer, not more patching.
 - **Model purity is grep-verified, not test-gated.** No automated test fails if `classDef`/`@{`/`:::`/`fill:` leaks into `model.py`/`build.py`. Future agents must keep running the grep (plan §9.2).
 - **Model vs render suppression asymmetry.** `GraphModel.shadowed()` is the general model-level view; the renderer's `_edge_shadowed_for_render` is deliberately **narrower** (keeps a single direct arrow for node-to-node data-flow, since Mermaid has no separate visual treatment). Two suppression predicates that must not be conflated.
@@ -158,7 +158,7 @@ Structural assertions moved to `test_graph_build.py` (assert on the `GraphModel`
 
 ### Critical test cases (catch real bugs, not coverage)
 - `test_nested_subworkflow_outputs_thread_to_sibling_consumer` — asserts the **endpoint** `score.score → compile` (output_field + target = the output Node), not mere existence. The first build cut **missed this** (it only generated data-flow for expanded child inputs, mirroring old Mermaid); this test forced the broader structural truth.
-- `test_synthetic_input_and_output_with_same_name_have_distinct_identity` — guards the `changelog_file`-in-both collision that the `__inputs__`/`__outputs__` markers fix.
+- `test_synthetic_input_and_output_with_same_name_have_distinct_identity` — guards the `changelog_file`-in-both collision that `NodeId.port` fixes.
 - `test_shadowed_suppresses_direct_same_source_data_flow_edges` / `test_shadowed_preserves_expanded_output_sources_and_requires_full_batch_coverage` — the shim cutover exposed a real regression (`prepare → subwf` suppressed when the only replacement edge was `workflow-input → subwf-input`); these pin same-source coverage + the 3-clause batch rule.
 - `test_public_mermaid_output_is_structurally_valid` (10 real workflows, `descriptions=True`) — guards a bug class **goldens cannot**: a golden freezes the exact string *including a broken one* if regenerated after a bug. Asserts no `${}` leak, balanced subgraph/end nesting, no id defined twice.
 - The 5 collision/leak regression tests (`test_node_name_colliding_with_*`, `test_template_refs_in_descriptions_do_not_leak`) — **mutation-verified**: reverting either fix fails them. These are the only tests exercising the collision code path with actual collisions (no real workflow names a node `pflow_end`).
@@ -175,7 +175,7 @@ Structural assertions moved to `test_graph_build.py` (assert on the `GraphModel`
 - **`SubWorkflowResult.warnings` are Diagnostic objects** — stored as `str()` in `annotations` because Diagnostics break `json.dumps`.
 
 ### Edge cases
-- Input/output name reuse (synthetic scope markers).
+- Input/output name reuse (`NodeId.port`).
 - 0-item batch, dynamic batch (`items=None`) — the per-item label rule must no-op, never `IndexError`/`NoneType`-subscript.
 - A node with both an ERROR edge and an END edge is still `is_terminal=True`.
 - `${a ?? b}` coalesce → N data-flow edges sharing a target; literal operands (`"none"`) filtered by `source_refs_in`.

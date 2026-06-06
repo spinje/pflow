@@ -44,9 +44,6 @@ _CLASSDEF_STYLES: dict[str, str] = {
 
 _SUBGRAPH_OPACITIES = [0.07, 0.14, 0.21, 0.28]
 _STRUCTURAL_KINDS = {EdgeKind.SEQUENTIAL, EdgeKind.BRANCH, EdgeKind.ERROR}
-_INPUT_SCOPE = "__inputs__"
-_OUTPUT_SCOPE = "__outputs__"
-_IO_SCOPES = {_INPUT_SCOPE, _OUTPUT_SCOPE}
 
 
 def render_mermaid(graph: GraphModel, *, direction: str = "LR", descriptions: bool = False) -> str:
@@ -185,7 +182,7 @@ class _MermaidRenderer:
 
         mermaid_id = self._node_mermaid_id(node.id)
         parallel = "parallel " if batch.parallel else ""
-        count = batch.count if batch.count is not None else len(batch.items or [])
+        count = _batch_count(batch)
         subgraph_label = _escape_label(f"{node.id.node_id} ({parallel}x{count})")
         self.lines.append(f'{indent}subgraph {mermaid_id} ["{subgraph_label}"]')
         self.rendered_nodes.add(node.id)
@@ -233,7 +230,7 @@ class _MermaidRenderer:
         self.lines.append(f'{indent}subgraph {item_mermaid_id} ["{subgraph_label}"]')
         for member in container.members:
             self.rendered_nodes.add(member)
-        member_path = self._container_ancestor_path(container)
+        member_path = self._container_level_path(container)
         self._render_level(
             ancestor_path=member_path,
             parent_container=container.id,
@@ -367,11 +364,7 @@ class _MermaidRenderer:
                 continue
             if source_kinds_exclude is not None and source.kind in source_kinds_exclude:
                 continue
-            if (
-                exclude_top_level_input_sources
-                and source.kind == "input"
-                and _strip_io_scope(source.id.ancestor_path) == ()
-            ):
+            if exclude_top_level_input_sources and source.kind == "input" and source.id.ancestor_path == ():
                 continue
             if target_kinds_exclude is not None and target.kind in target_kinds_exclude:
                 continue
@@ -568,7 +561,7 @@ class _MermaidRenderer:
             for edge in self.graph.edges
             if edge.kind == EdgeKind.DATA_FLOW
             and self.nodes_by_id[edge.source].kind == "input"
-            and _strip_io_scope(edge.source.ancestor_path) == ()
+            and edge.source.ancestor_path == ()
         }
 
     def _start_node_for_inputs(self, container: Container) -> NodeId | None:
@@ -586,13 +579,10 @@ class _MermaidRenderer:
 
     def _container_level_path(self, container: Container) -> tuple[AncestorStep, ...]:
         if container.members:
-            return _strip_io_scope(container.members[0].ancestor_path)
+            return container.members[0].ancestor_path
         if container.host is not None:
             return (*container.host.ancestor_path, AncestorStep(container.host.node_id))
         return ()
-
-    def _container_ancestor_path(self, container: Container) -> tuple[AncestorStep, ...]:
-        return self._container_level_path(container)
 
     def _batch_render_ids(self, node: Node) -> list[str]:
         batch = node.batch
@@ -604,11 +594,11 @@ class _MermaidRenderer:
         return ids
 
     def _visible_batch_indexes(self, batch: BatchSpec) -> range:
-        count = batch.count if batch.count is not None else len(batch.items or [])
+        count = _batch_count(batch)
         return range(count if count <= 4 else min(count, 2))
 
     def _has_hidden_batch_items(self, batch: BatchSpec) -> bool:
-        count = batch.count if batch.count is not None else len(batch.items or [])
+        count = _batch_count(batch)
         return count > 4
 
     def _batch_item_container(self, host: NodeId, index: int) -> Container | None:
@@ -619,7 +609,7 @@ class _MermaidRenderer:
         for container in self.children_by_parent.get(batch_container.id, []):
             if container.kind != "workflow" or container.host is not None:
                 continue
-            if self._container_ancestor_path(container) == item_path:
+            if self._container_level_path(container) == item_path:
                 return container
         return None
 
@@ -655,7 +645,7 @@ class _MermaidRenderer:
         if node_id.node_id == "__end__":
             return f"{self._level_prefix(node_id.ancestor_path)}__end__"
         node = self.nodes_by_id[node_id]
-        display_path = _strip_io_scope(node_id.ancestor_path)
+        display_path = node_id.ancestor_path
         prefix = self._level_prefix(display_path)
         if node.kind == "input":
             return f"input_{node_id.node_id}" if not display_path else f"{prefix}in_{node_id.node_id}"
@@ -678,9 +668,11 @@ class _MermaidRenderer:
         used: set[str] = {"pflow_end", "workflow-inputs", "workflow-outputs"}
 
         def sort_key(node: Node) -> tuple[int, str, int, tuple[tuple[str, int], ...]]:
-            stripped = _strip_io_scope(node.id.ancestor_path)
             path = tuple((s.node_id, -1 if s.batch_index is None else s.batch_index) for s in node.id.ancestor_path)
-            return (len(stripped), node.id.node_id, len(node.id.ancestor_path), path)
+            # port_rank gives input/output ports that share a name + level a deterministic
+            # order (their natural ids differ by in_/out_ prefix, so no suffixing results).
+            port_rank = {None: 0, "in": 1, "out": 2}[node.id.port]
+            return (len(node.id.ancestor_path), node.id.node_id, port_rank, path)
 
         # Pre-reserve synthetic ids (sink, wrappers, dots, item boxes) from NATURAL host
         # prefixes before assigning any node, so a shallower node cannot squat on a deeper
@@ -798,6 +790,10 @@ def _subgraph_style(mermaid_id: str, depth: int) -> str:
     return f"style {mermaid_id} fill:#808080,fill-opacity:{opacity},stroke:#999"
 
 
+def _batch_count(batch: BatchSpec) -> int:
+    return batch.count if batch.count is not None else len(batch.items or [])
+
+
 def _get_item_label(item: Any, index: int) -> str:
     if not isinstance(item, dict):
         return f"#{index + 1}"
@@ -853,18 +849,12 @@ def _edge_arrow(edge: Edge) -> str:
     return " --> "
 
 
-def _strip_io_scope(ancestor_path: tuple[AncestorStep, ...]) -> tuple[AncestorStep, ...]:
-    if ancestor_path and ancestor_path[-1].node_id in _IO_SCOPES:
-        return ancestor_path[:-1]
-    return ancestor_path
-
-
 def _is_batch_item_descendant(candidate: NodeId, batch_host: NodeId) -> bool:
     return _batch_index_for(candidate, batch_host) is not None
 
 
 def _batch_index_for(candidate: NodeId, batch_host: NodeId) -> int | None:
-    path = _strip_io_scope(candidate.ancestor_path)
+    path = candidate.ancestor_path
     if len(path) <= len(batch_host.ancestor_path):
         return None
     if path[: len(batch_host.ancestor_path)] != batch_host.ancestor_path:
