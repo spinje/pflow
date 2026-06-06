@@ -420,8 +420,8 @@ def extract_runtime_paths(outputs: dict[str, Any]) -> tuple[list[tuple[str, str]
     for key, value in outputs.items():
         if isinstance(key, str) and key.startswith("_"):
             continue  # Skip reserved keys (engine-injected metadata, private markers).
-        # Check if this value is identical to one we've already processed
-        # (MCP nodes often return both 'result' and 'server_TOOL_result' with same data)
+        # Check if this value is identical to one we've already processed.
+        # This keeps legacy or custom duplicate structures from exploding paths.
         value_hash = get_value_hash(value)
 
         if value_hash in seen_structures:

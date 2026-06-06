@@ -153,7 +153,11 @@ def _unrecovered_failed_node_ids(
     recovered_node_ids: set[str] = set()
     for warning in execution_warnings or []:
         node_id = warning.get("node_id") if isinstance(warning, dict) else None
-        if isinstance(node_id, str) and warning.get("type") == "on_error_recovery":
+        if not isinstance(node_id, str):
+            continue
+        if warning.get("type") == "on_error_recovery":
+            recovered_node_ids.add(node_id)
+        if warning.get("type") == "api_warning" and warning.get("recovered") is True:
             recovered_node_ids.add(node_id)
     return failed_node_ids - recovered_node_ids
 

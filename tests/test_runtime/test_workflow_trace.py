@@ -644,6 +644,41 @@ class TestWorkflowTraceCollector:
             assert trace_data["nodes_failed"] == 0
             assert trace_data["failed_node_ids"] == []
 
+    def test_final_status_degraded_with_recovered_api_warning(self, collector, temp_home):
+        """API warnings routed through on-error should be degraded, not failed."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="api",
+                node_type="MCPNode",
+                duration_ms=10.0,
+                success=False,
+                error="API error: expired auth",
+            )
+            collector.record_node_execution(
+                node_id="recover",
+                node_type="PythonCodeNode",
+                duration_ms=10.0,
+                success=True,
+            )
+            collector.set_warnings([
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message="API error: expired auth",
+                    node_id="api",
+                    source="runtime",
+                    context={"type": "api_warning", "recovered": True},
+                )
+            ])
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            assert trace_data["final_status"] == "degraded"
+            assert trace_data["nodes_failed"] == 0
+            assert trace_data["failed_node_ids"] == []
+
     def test_llm_summary_in_trace(self, collector, temp_home):
         """Test that LLM summary is included when LLM calls are present in events.
 

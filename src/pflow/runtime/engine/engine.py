@@ -1018,7 +1018,7 @@ class WorkflowEngine:
                     child_trace_events = getattr(node, "_child_trace_events", None)
 
             # 10. API warning detection
-            warning = detect_api_warning(config.node_id, shared)
+            warning = detect_api_warning(config.node_id, shared, node_type_name=config.node_type_name)
             if warning:
                 # Drain the per-item buffer even though ``handle_api_warning``
                 # discards batch items today (pre-existing, see W2 in PR #405
@@ -1036,6 +1036,7 @@ class WorkflowEngine:
                     shared_keys_before,
                     config.node_type_name,
                     node.params,
+                    recovered=node.successors.get("error") is not None,
                 )
 
             # 11. Cache result (in-process only — not gated by cache_enabled)

@@ -1,35 +1,48 @@
 """API warning detection for node execution results.
 
 Detects API errors in node output that should surface as warnings rather than
-failures. Uses a 3-tier priority system:
-1. Error codes (most reliable signal)
-2. Validation patterns (defer to normal error handling)
-3. Resource patterns (surface as API warning)
+clean successes. Uses a provenance-aware priority system:
+1. Explicit failure flags (status:error, ok:false, success:false, etc.)
+2. Error codes
+3. Validation patterns (defer to normal error handling)
+4. Resource patterns (surface as API warning)
 
 When an error matches both validation and resource patterns, validation wins.
 """
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
-def detect_api_warning(node_id: str, shared: dict[str, Any]) -> Optional[str]:
+@dataclass(frozen=True)
+class _ErrorSignal:
+    message: str
+    from_explicit_failure_flag: bool
+
+
+def detect_api_warning(node_id: str, shared: dict[str, Any], *, node_type_name: Optional[str] = None) -> Optional[str]:
     """Detect API errors that should surface as warnings.
 
-    Returns None for validation-style errors so normal error handling can proceed.
+    Explicit failure flags are trusted as self-reported API failures. For
+    message-only signals, returns None for validation-style errors so normal
+    error handling can proceed.
 
     Strategy:
-    1. Check error codes first (most reliable)
-    2. Check for validation patterns (defer to normal execution errors)
-    3. Check for resource patterns (surface warning)
-    4. Default to no API warning
+    1. Check explicit failure flags first
+    2. Check error codes
+    3. Check for validation patterns (defer to normal execution errors)
+    4. Check for resource patterns (surface warning)
+    5. Default to no API warning
 
     Args:
         node_id: The node identifier to check in shared store
         shared: The shared store containing node outputs
+        node_type_name: Optional runtime node type. When provided, canonical
+            result-wrapper unwrapping is limited to MCP nodes.
 
     Returns:
         Warning message string if API warning detected, None otherwise
@@ -45,7 +58,7 @@ def detect_api_warning(node_id: str, shared: dict[str, Any]) -> Optional[str]:
     )
 
     # Handle MCP nested responses
-    output = unwrap_mcp_response(output)
+    output = unwrap_mcp_response(output, inspect_result=node_type_name in (None, "MCPNode"))
     if not output:
         return None
 
@@ -57,27 +70,54 @@ def detect_api_warning(node_id: str, shared: dict[str, Any]) -> Optional[str]:
 
     # Extract error information
     error_code = extract_error_code(output)
-    error_msg = extract_error_message(output)
+    error_signal = _extract_error_signal(output)
 
-    if not error_msg:
+    if not error_signal:
         return None  # No error detected
 
+    error_msg = error_signal.message
+
+    # Explicit top-level failure flags are a self-report from the tool/API. Do
+    # not discard them just because the free-text message is novel.
+    if error_signal.from_explicit_failure_flag:
+        return _format_explicit_failure_warning(error_msg, error_code)
+
     # PRIORITY 1: Check error codes (most reliable signal)
+    code_handled, code_warning = _warning_from_error_code(error_code, error_msg)
+    if code_handled:
+        return code_warning
+
+    return _warning_from_message(error_msg)
+
+
+def _format_explicit_failure_warning(error_msg: str, error_code: Optional[str]) -> str:
     if error_code:
-        error_category = _categorize_by_error_code(error_code)
+        logger.info(f"Explicit API failure detected: {error_code} - {error_msg}")
+        return f"API error ({error_code}): {error_msg}"
+    logger.info(f"Explicit API failure detected: {error_msg}")
+    return f"API error: {error_msg}"
 
-        if error_category == "validation":
-            # Validation error - leave it to normal execution handling
-            logger.debug(f"Validation error detected: {error_code} - {error_msg}")
-            return None
 
-        elif error_category == "resource":
-            # Resource error - surface as API warning
-            logger.info(f"Resource error detected: {error_code} - {error_msg}")
-            return f"API error ({error_code}): {error_msg}"
+def _warning_from_error_code(error_code: Optional[str], error_msg: str) -> tuple[bool, Optional[str]]:
+    if not error_code:
+        return False, None
 
-        # Unknown error code - continue to message analysis
+    error_category = _categorize_by_error_code(error_code)
+    if error_category == "validation":
+        # Validation error - leave it to normal execution handling
+        logger.debug(f"Validation error detected: {error_code} - {error_msg}")
+        return True, None
 
+    if error_category == "resource":
+        # Resource error - surface as API warning
+        logger.info(f"Resource error detected: {error_code} - {error_msg}")
+        return True, f"API error ({error_code}): {error_msg}"
+
+    # Unknown error code - continue to message analysis.
+    return False, None
+
+
+def _warning_from_message(error_msg: str) -> Optional[str]:
     # PRIORITY 2: Check if it's a validation error
     if _is_validation_error(error_msg):
         logger.debug(f"Validation error detected: {error_msg}")
@@ -93,7 +133,7 @@ def detect_api_warning(node_id: str, shared: dict[str, Any]) -> Optional[str]:
     return None
 
 
-def unwrap_mcp_response(output: Any) -> Optional[dict]:
+def unwrap_mcp_response(output: Any, *, inspect_result: bool = True) -> Optional[dict]:
     """Unwrap MCP nested responses to get actual API response."""
     if not isinstance(output, dict):
         return None
@@ -103,13 +143,15 @@ def unwrap_mcp_response(output: Any) -> Optional[dict]:
     if parsed is not None:
         return parsed
 
+    # Handle canonical MCP node output: {"result": {...}}.
+    if inspect_result and isinstance(output.get("result"), dict):
+        result = output["result"]
+        return _unwrap_successful_data(result) or result
+
     # Handle MCP dict with nested data
-    if output.get("successful") is True and "data" in output:
-        data = output["data"]
-        # Ensure data is a dict before returning
-        if isinstance(data, dict):
-            return data
-        return None
+    data = _unwrap_successful_data(output)
+    if data is not None:
+        return data
 
     # Handle HTTP node with response field
     if "response" in output and "status_code" in output:
@@ -142,6 +184,16 @@ def _parse_mcp_json_result(output: dict) -> Optional[dict]:
     except (json.JSONDecodeError, TypeError):
         pass
 
+    return None
+
+
+def _unwrap_successful_data(output: dict) -> Optional[dict]:
+    """Return nested MCP data from successful wrapper payloads."""
+    if output.get("successful") is True and "data" in output:
+        data = output["data"]
+        if isinstance(data, dict):
+            return data
+        return None
     return None
 
 
@@ -182,22 +234,22 @@ def _check_boolean_error_flags(output: dict) -> Optional[str]:
 
     # Check various boolean error indicators
     if output.get("ok") is False:
-        return output.get("error") or "API request failed"
+        return _first_error_message(output.get("error"), default="API request failed")
 
     if output.get("success") is False:
-        return output.get("error") or output.get("message") or "API request failed"
+        return _first_error_message(output.get("error"), output.get("message"), default="API request failed")
 
     if output.get("successful") is False or output.get("successfull") is False:  # MCP typo
-        return output.get("error") or output.get("message") or "API request failed"
+        return _first_error_message(output.get("error"), output.get("message"), default="API request failed")
 
     if output.get("succeeded") is False:
-        return output.get("error") or output.get("message") or "API request failed"
+        return _first_error_message(output.get("error"), output.get("message"), default="API request failed")
 
     if output.get("isError") is True:
         error_info = output.get("error", {})
         if isinstance(error_info, dict):
-            return error_info.get("message") or "API request failed"
-        return str(error_info) if error_info else "API request failed"
+            return _first_error_message(error_info.get("message"), default="API request failed")
+        return _first_error_message(error_info, default="API request failed")
 
     return None
 
@@ -217,7 +269,7 @@ def _check_status_field(output: dict) -> Optional[str]:
 
     status = str(output.get("status", "")).lower()
     if status in ["error", "failed", "failure"]:
-        return output.get("message") or output.get("error") or "API request failed"
+        return _first_error_message(output.get("message"), output.get("error"), default="API request failed")
     return None
 
 
@@ -260,26 +312,62 @@ def extract_error_message(output: dict) -> Optional[str]:
     if not isinstance(output, dict):
         return None
 
+    signal = _extract_error_signal(output)
+    if signal is None:
+        return None
+    return signal.message
+
+
+def _extract_error_signal(output: dict) -> Optional[_ErrorSignal]:
+    """Extract error text and whether it came from an explicit failure flag."""
+    # Defensive type check
+    if not isinstance(output, dict):
+        return None
+
     # Check boolean error flags
     error_msg = _check_boolean_error_flags(output)
     if error_msg:
-        return error_msg
+        return _ErrorSignal(error_msg, from_explicit_failure_flag=True)
 
     # Check status field
     error_msg = _check_status_field(output)
     if error_msg:
-        return error_msg
+        return _ErrorSignal(error_msg, from_explicit_failure_flag=True)
 
     # Check for GraphQL errors
     error_msg = _check_graphql_errors(output)
     if error_msg:
-        return error_msg
+        return _ErrorSignal(error_msg, from_explicit_failure_flag=False)
 
     # Check if there's an error field with content
     if output.get("error"):
-        return output.get("error")
+        error_text = _coerce_error_message(output.get("error"))
+        if error_text:
+            return _ErrorSignal(error_text, from_explicit_failure_flag=False)
 
     return None
+
+
+def _first_error_message(*values: Any, default: str) -> str:
+    for value in values:
+        message = _coerce_error_message(value)
+        if message:
+            return message
+    return default
+
+
+def _coerce_error_message(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ("message", "error", "reason"):
+            message = _coerce_error_message(value.get(key))
+            if message:
+                return message
+        return str(value)
+    return str(value)
 
 
 def _categorize_by_error_code(code: str) -> str:

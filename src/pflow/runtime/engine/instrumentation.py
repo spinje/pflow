@@ -13,7 +13,7 @@ import os
 import time
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MaxNodeVisitsError
 from pflow.core.node_type_display import is_llm_node_type
 
@@ -754,6 +754,7 @@ def handle_api_warning(
     shared_keys_before: set,
     node_type_name: str,
     node_params: dict,
+    recovered: bool = False,
 ) -> str:
     """Handle API warning: record trace/metrics, archive via ``mark_node_failed``.
 
@@ -809,12 +810,24 @@ def handle_api_warning(
     # of category — ``_extract_error_info`` in the runner just reads it.
     from pflow.runtime.node_state import FAILURE_CATEGORY_API_WARNING, mark_node_failed
 
+    warning_diagnostic = Diagnostic(
+        severity=Severity.WARNING,
+        message=warning,
+        suggestions=[
+            f"Inspect '{node_id}' upstream inputs and output to verify the warning is expected.",
+            "If unintended, fix the upstream data or add error handling to this node.",
+        ],
+        node_id=node_id,
+        source="runtime",
+        context={"type": "api_warning", "recovered": recovered},
+    )
+
     mark_node_failed(
         shared,
         node_id,
         category=FAILURE_CATEGORY_API_WARNING,
         error=warning,
-        warning=warning,
+        warning=warning_diagnostic,
     )
 
     return "error"
