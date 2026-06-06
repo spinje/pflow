@@ -229,6 +229,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 ### Planned Features (in order of priority)
 
 **Next?**
+- Task 155: Workflow Graph Model for Multi-Renderer Support
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 164: Resume Workflow From a Failed Node
 
@@ -265,7 +266,6 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - Task 120: Strict Input Type Validation
 
 **Later:**
-- Task 155: Workflow Graph Model for Multi-Renderer Support
 - Task 124: Code Node Dependency Management
 - Task 45: Evaluate n8n integration
 - Task 62: Route stdin to Workflow Inputs

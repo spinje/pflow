@@ -1,8 +1,7 @@
 # Braindump: loop rendering in mermaid — done, and what it hands to Task 155
 
 **Date:** 2026-06-06. This replaces a formal plan doc (the user asked for a braindump instead — they
-don't want plan docs lingering once the work is done). The fix described is **implemented + verified +
-uncommitted**. This is the tacit layer; the durable payload is "What this hands to 155" below.
+don't want plan docs lingering once the work is done). The fix described is **implemented + verified + merged to `main`** (#483, `463795f5`). This is the tacit layer; the durable payload is "What this hands to 155" below.
 
 ## Where this came from (the journey — not in any file)
 
@@ -32,7 +31,7 @@ near-throwaway *honesty* fix; the real value is (a) informing 155 and (b) the re
 ## The fix is DONE — don't re-explain it, read the code
 
 `make check` clean; full mermaid/visualize suite (92) green; **zero existing-golden regressions** (verified:
-no golden renders a loop workflow). Files (uncommitted — user commits, never the agent):
+no golden renders a loop workflow). Files (merged in #483):
 `mermaid/_context.py` (`_loop_label` + `_strip_template`), `_render.py` (2 append sites + a `loop` param on
 `_render_subgraph`), `__init__.py` (re-export), `tests/test_core/test_mermaid.py` (13 tests), new golden
 `tests/test_core/golden_mermaid/stateful-loop-tournament.mmd` + its parametrize entry.
@@ -82,7 +81,7 @@ A forked agent built a self-contained react-flow mockup proving the "great" vers
 `scratchpads/handoff-see-control-storage/loop-containers-mockup.html` + screenshot
 `loop-containers-final.png`. It renders **both** harness loops as collapsible first-class containers (the
 hand-wired group loop AND the declarative review loop get identical treatment — the point being mermaid can
-render *neither* well). That is the visual target 155 → the UI should hit. The user wants, verbatim: *"run
+render *neither* well). NOTE (updated this session): the user later judged this specific mockup *"isnt great"* — it is a *discarded reference*, not the visual target; the actual component design is a deferred, separate problem. The durable point is the renderer-divergence thesis (mermaid renders neither loop well; react-flow can). The user wants, verbatim: *"run
 in a react server locally on demand using something like react flow,"* *"clicking to read prompts."*
 (Side effect of that fork: it ran `pflow mcp sync chrome-devtools`, registering 29 chrome-devtools tools in
 the local registry.)
@@ -143,9 +142,11 @@ the local registry.)
 - **The loop fix is DONE and is your concrete reference** for what the GraphModel must carry for loops. Read
   `_loop_label` + the two append sites in `_render.py`; they ARE the "what a loop looks like" decision,
   ready to relocate into `build_graph`.
-- **Use the react-flow mockup** (`scratchpads/handoff-see-control-storage/loop-containers-mockup.html`) as
-  the visual target AND the 155 acceptance check — the spec's "throwaway react-flow sketch" should render
-  the six workflow patterns (incl. both loop shapes) from the GraphModel.
+- **The 155 acceptance check** (rewritten `task-155.md` → Verification): the throwaway react-flow sketch
+  must reconstruct the six workflow patterns (incl. both loop shapes) **+ the 163 harness** from the
+  GraphModel *with no information loss*. The react-flow mockup
+  (`scratchpads/handoff-see-control-storage/loop-containers-mockup.html`) is a *discarded reference*, NOT
+  the visual target — the user judged it "isnt great"; component design is a separate, deferred problem.
 - **The user's real priority** is SEEING + CONTROLLING the Task 163 harness. 155 is the SEE substrate; this
   loop fix is a tiny down-payment that proves the renderer-divergence thesis.
 
@@ -153,4 +154,6 @@ the local registry.)
 > and understood by summarizing the key points — especially (1) the three loop shapes and the
 > loop-on-subgraph = clean-multinode finding, (2) what 155 must carry (a first-class loop **node property**,
 > loop-on-subgraph representable, the loop as the strongest multi-renderer demonstration), (3) the loop fix
-> is done/verified/uncommitted, (4) the react-flow mockup is the visual target — then state you're ready.
+> is done/verified/**merged** (#483), (4) the react-flow mockup is a *discarded reference*, not the visual
+> target — the 155 acceptance check is completeness (the six patterns + the 163 harness reconstructed from
+> the GraphModel with no info loss) — then state you're ready.

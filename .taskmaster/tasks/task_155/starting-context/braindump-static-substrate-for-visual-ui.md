@@ -67,6 +67,11 @@ They are **independent** and **converge only at the UI**: 155 *draws* the graph;
 
 ## What this means for the GraphModel design (the spec's sketch is necessary but not sufficient for the user's actual goal)
 
+> **Update (this session):** the reasoning in this section predates the spec rewrite. It is now
+> *settled, not open* — the rewritten `task-155.md` **requires** the per-node source back-ref
+> (description / prompt-ref / params) and an `annotations` slot. Read the below for *why* those
+> matter, not as a gap still to close.
+
 The spec's verification says "write a throwaway ~20-line React Flow sketch to confirm the model is
 sufficient." **Take that far more seriously than "a formality to prove a second renderer is
 possible."** Because the user's actual target IS a React Flow UI, the sketch is a real design check:
@@ -83,11 +88,13 @@ task starts.
   so a renderer can look params up from the IR, or include an extensible per-node `meta`. The point
   of 155 is "the IR walk happens once"; if the UI later has to re-walk the IR to get prompts, 155
   failed its own thesis.
-- **Hold the line on scope, though:** 155 is a **behavior-preserving refactor** — `render_mermaid`
-  must be byte-identical on the goldens (the spec is emphatic). Don't let UI excitement pull you
-  into changing mermaid output or adding UI-only fields *now*. The discipline: extract the
-  GraphModel + keep mermaid parity + leave a clean extension seam for the UI task. The UI fields are
-  the *UI task's* job; 155's job is to make adding them cheap.
+- **Hold the line on scope, though** *(updated this session)*: mermaid parity is a regression
+  **tripwire, not a frozen contract** — if the correct model shifts a golden, investigate and
+  regenerate (rewritten `task-155.md` → Verification); don't contort the model to preserve
+  byte-parity. And the seam decision moved: 155 now **carries the per-node source back-ref
+  (click-to-read) and an `annotations` slot as requirements** — no longer deferred to the UI task
+  (verified cheap). Still deferred: rich UI-only rendering and the analysis layer (ADR-0004). The
+  discipline still holds — extract the GraphModel, don't over-build — the line just moved.
 
 ---
 
@@ -127,10 +134,11 @@ that's the $0 baseline; 155 → UI is the interactive, multi-renderer upgrade of
 
 ## Assumptions & uncertainties
 
-- **NEEDS VERIFICATION: does the GraphModel as the spec sketches it carry enough for the react-flow
-  click-to-read UI?** I believe NOT (missing description/prompt-ref/params per node) — but that's
-  reasoned, not tested. The throwaway sketch is how you find out. Settle this in 155 by leaving the
-  extension seam, even if you don't populate the fields.
+- **RESOLVED (this session): the GraphModel carries enough for click-to-read.** Verified the IR
+  already holds it — `purpose` (description), `params` (incl. `prompt`), and
+  `_source_files`/`_source_lines`/`_source_line` (the on-disk origin) — and synthetic (expanded/batch)
+  nodes are reachable at build time. The rewritten `task-155.md` now **requires** the per-node source
+  back-ref (populated, not just a seam); statically-unresolvable `${template}` refs render opaque.
 - **ASSUMPTION: the UI is genuinely coming** (the user committed to the runtime substrate this
   session and has stated the UI intent repeatedly). 155's "do the full refactor not the Scope-only
   consolidation" bet (in the spec's Design Decisions) rests on the UI being real. It is. Don't
@@ -146,12 +154,12 @@ that's the $0 baseline; 155 → UI is the interactive, multi-renderer upgrade of
   `dataclasses.asdict(GraphModel)` as JSON; a local React app renders it. 155 should make sure the
   GraphModel is cleanly `asdict`-able (the spec says "no new deps; `dataclasses.asdict` + `json.dumps`
   for any future payload" — honor that literally; no non-serializable fields).
-- **MIGHT MATTER: the live overlay's data contract is owned by the storage thread, not 155.** When
-  the UI animates the graph, it maps runtime events (by `node_id`) onto GraphModel nodes. So the
-  GraphModel's **stable node IDs must match the IDs the runtime/trace uses** — the spec's "keep the
-  existing mermaid ID convention" matters for *this* reason too (joining static structure to runtime
-  events later), not only for internal mermaid routing. Worth keeping the ID scheme aligned with what
-  the trace/event log keys on.
+- **RESOLVED (this session, ADR-0003): node identity is structural, not the mermaid convention.**
+  Verified (searcher B) that mermaid's flat IDs do **not** match the runtime/trace IDs — the runtime
+  is structural (bare `node_id` + ancestry + batch index). So the GraphModel adopts the **runtime's
+  structural identity** `(node_id, ancestor_path, batch_index?)` and renderers *derive* their flat IDs.
+  That is exactly what lets the live overlay join runtime events onto static nodes later — the goal
+  this bullet flagged, now achieved structurally (NOT by keeping the mermaid convention in the model).
 - **CONSIDER: sub-workflow expansion depth in the UI.** Mermaid uses `--depth`. The 163 harness is a
   deep tree; the UI will want collapse/expand interactivity. The GraphModel already encodes nesting
   (`parent_subgraph_id`, `nesting_depth`) — make sure that's rich enough for a UI to collapse/expand
@@ -163,8 +171,9 @@ that's the $0 baseline; 155 → UI is the interactive, multi-renderer upgrade of
   other. The storage/trace redesign (Substrate 2) is in flight in another thread; the user committed
   to building the streamable span-model event log there.
 - **File the web-UI task** (depends on GraphModel + event log). Not done.
-- The user has NOT yet seen 155 scoped as "the next thing" concretely — I offered to move it to the
-  front and scope it; that offer is open.
+- **DONE (this session):** 155 is now scoped — `task-155.md` was rewritten to current truth
+  (structural identity, loop field, Container, click-to-read, primitive-only Non-Goals), with ADR-0003
+  and ADR-0004 recording the load-bearing decisions. Next artifact is the implementation plan.
 
 ## Relevant files & references
 
@@ -187,7 +196,7 @@ that's the $0 baseline; 155 → UI is the interactive, multi-renderer upgrade of
 > (Option X landed) and was promoted to lead; (2) the GraphModel must stay PURELY static —
 > runtime/live data is a separate substrate (the storage thread's event log), and the two converge
 > only at the UI; (3) the real driver is a react-flow UI to comprehend the Task 163 harness, so the
-> throwaway sketch is a genuine design check and the model needs an extension seam for
-> description/prompt-ref/params (without breaking mermaid byte-parity); (4) keep stable node IDs
-> aligned with what the runtime/trace keys on, so the live overlay can join later — then state
-> you're ready to proceed.
+> throwaway sketch is a genuine design check and the model **carries** (not just seams) a per-node
+> source back-ref for description/prompt/params — parity is a **tripwire**, not byte-identical; (4)
+> node identity is **structural** (ADR-0003) so the live overlay can join runtime events later — then
+> state you're ready to proceed.

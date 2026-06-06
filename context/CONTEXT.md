@@ -57,6 +57,19 @@ every *other* step's output reused from the most recent full run, so only the ta
 re-executes and upstream side effects never re-fire. Requires a prior full run.
 _Avoid_: replay, restore, checkpoint.
 
+**Graph model** — the renderer-agnostic semantic structure of a workflow: its nodes, edges,
+and Containers as pure data, carrying no rendering syntax. Built once from the IR by a single
+walk; every renderer (mermaid, react-flow, JSON) consumes it. _Avoid_: diagram, AST, scene.
+
+**IR** — the compiled, *executable* representation of a workflow (nodes, edges, params) the
+engine runs. The Graph model is the *structural* view derived from it: the IR is for running,
+the Graph model is for showing. _Avoid_: AST, graph model.
+
+**Container** — a named grouping of nodes in the Graph model: a sub-workflow, a Batch fan-out,
+an input/output wrapper, or (future) a detected cycle. One record type for every grouping kind,
+carrying its members, nesting depth, parent, and optional Loop. _Avoid_: subgraph, cluster,
+box, group.
+
 ## Ambiguity
 
 **Batch vs Loop** — both repeat a step. Discriminator: can you write the list of runs
@@ -78,3 +91,8 @@ regardless of whether their inputs changed, and never runs the frozen steps at a
 **Carry vs Seed** — both supply a carried input's value. Discriminator: the Seed is the value
 for round 1 only (before the body has produced output); the Carry is the value for every round
 after (the prior Iteration's output). One input key carries both roles.
+
+**Graph model vs IR** — both represent a whole workflow. Discriminator: the IR is what the
+engine *executes* (run-oriented, the source of truth for behavior); the Graph model is what a
+renderer *draws* (structure-oriented, derived from the IR, never executed). They also identify
+nodes differently — see ADR-0003.
