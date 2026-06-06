@@ -6,11 +6,11 @@ Migrate the Claude Code node's `output_schema` from a custom Python-alias format
 
 ## Status
 
-Ready for implementation. Prework completed:
-- SDK upgraded to `claude-agent-sdk>=0.2.82` (`pyproject.toml` + `uv.lock`); existing test suite passes (47/47 Claude Code tests)
-- Phase 0 smoke test executed; findings captured in [`implementation/phase-0-findings.md`](./implementation/phase-0-findings.md)
+done
 
-Implementation plan: [`implementation/implementation-plan.md`](./implementation/implementation-plan.md).
+## Completed
+
+2026-05-15
 
 ## Priority
 

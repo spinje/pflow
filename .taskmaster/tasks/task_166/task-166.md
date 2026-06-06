@@ -6,7 +6,11 @@ Extend pflow's existing `loop:` node modifier with first-class **carried state**
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-06-05
 
 ## Priority
 

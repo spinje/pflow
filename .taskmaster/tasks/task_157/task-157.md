@@ -1,5 +1,13 @@
 # Task 157: Fix Dry-Run Batch Sub-Workflow Recursion
 
+## Status
+
+done
+
+## Completed
+
+2026-04-20
+
 ## Problem
 
 `pflow <workflow> --dry-run` produces three incorrect behaviors for batch sub-workflow nodes (nodes with both `type: workflow` and a `batch:` config):

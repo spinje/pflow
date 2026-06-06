@@ -12,19 +12,7 @@ into a reusable harness.
 
 ## Status
 
-in progress — v1 built, validated, and PROVEN by a paid live run of the current (review-once)
-topology (run 7, 2026-06-03: $5.69, 3 segments, exit 0), all checked against ground truth (git /
-trace / ran the tests). Confirmed live: the `happy-check` resume self-review (resumes the implement
-session, not a blind fork), the whole-codebase review-once loop with finding adjudication, the
-`simplify` stage, verify's scratch-file hygiene, and **real-remote `ship`** (PR #1 opened on the
-throwaway repo `spinje/t163-harness-live`; `main` untouched). One finding fixed: an agent's
-`git push` is blocked by a user's `~/.claude/settings.json` `ask` rule EVEN under
-`permission_mode: bypassPermissions` (bypass skips prompts, not settings policy), so ship's push
-was moved to a deterministic `shell` node (`verify → push → ship`). Control flow guarded for $0 by
-`tests/test_integration/test_plan_to_code_harness.py` (5/5). Remaining: gap #1 (whole-codebase
-review context on a LARGE plan) is still unexercised and needs a deliberate large run; then commit
-(user's call) and v1.1 (swarm refactor). See progress log (Run 7 entry) +
-`starting-context/braindump-implementation-handoff.md`.
+in progress
 
 ## Priority
 

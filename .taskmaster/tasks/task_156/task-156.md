@@ -8,6 +8,10 @@ Add `--dry-run` to `pflow run` that builds a static execution plan — which nod
 
 done
 
+## Completed
+
+2026-04-20
+
 ## Priority
 
 medium

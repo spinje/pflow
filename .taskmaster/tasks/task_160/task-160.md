@@ -18,7 +18,11 @@ two should stay in agreement.
 
 ## Status
 
-complete — implemented and committed on branch `refactor/cache-analysis-refactor`.
+done
+
+## Completed
+
+2026-05-27
 
 ## Priority
 

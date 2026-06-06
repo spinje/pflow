@@ -8,7 +8,11 @@ This work was originally Phase 0 + Phase A of [Task 159 (Prompt Caching)](../tas
 
 ## Status
 
-ready for review
+done
+
+## Completed
+
+2026-04-26
 
 ## Priority
 

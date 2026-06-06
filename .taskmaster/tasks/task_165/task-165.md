@@ -14,8 +14,11 @@ On-disk trace format bumps `2.4.0 → 2.5.0`.
 
 ## Status
 
-in progress — implementation (Phases 1–5) complete, multi-agent reviewed, and verified; changes are
-staged. PR not yet opened.
+done
+
+## Completed
+
+2026-06-04
 
 ## Priority
 

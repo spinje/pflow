@@ -6,7 +6,11 @@ Add provider-level prompt caching to pflow workflows: a new `## Cache` top-level
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-05-11
 
 ## Priority
 

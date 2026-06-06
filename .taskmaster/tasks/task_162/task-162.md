@@ -11,6 +11,10 @@ hand-rolling a multi-node loop. Implements GitHub issue #445.
 
 done
 
+## Completed
+
+2026-05-31
+
 ## Priority
 
 medium
