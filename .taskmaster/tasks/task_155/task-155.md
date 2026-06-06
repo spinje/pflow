@@ -70,21 +70,23 @@ A `graph/` package — the model + `build_graph` at the top (renderer-agnostic),
   - **source back-ref** for click-to-read — the param content (incl. `prompt`/`command`/`code`) and the on-disk origin (the IR's `_source_files` / `_source_lines` / `_source_line`), so a UI can open a node's prompt at its source. For synthetic nodes (expanded sub-workflows, batch items) this resolves to the child source + file; a statically unresolvable reference (e.g. a `${template}` workflow path) marks the node opaque rather than dropping it.
   - **annotations** — an open `dict` (the extension seam; no semantics implemented here).
   - **parent** — its containing Container.
-- **Edge record** — `source`, `target` (by structural identity), `kind` (`structural` | `data_flow` | `error`), optional `label`, and a suppression flag for "structural edge covered by a data-flow edge."
+- **Edge record** — `source`, `target` (by structural identity), `kind` (`sequential` | `branch` | `error` | `data_flow` | `end`), optional `label`. Structural-edge suppression (and decision/terminal detection) are *derived views* on the model, not stored flags/fields.
 - **Container record** — ONE record type for every grouping: `id`, `label`, `kind` (`workflow` | `batch` | `input_wrapper` | `output_wrapper`; `cycle` reserved for the future analysis layer), `nesting_depth`, `parent`, `member_node_ids`, optional **loop**, **annotations**. `kind` must be fine enough for a renderer to choose the correct style (dashed IO-wrapper vs depth-opacity box).
 
 The exact `kind`/`shape` vocabularies above are illustrative — finalize during implementation as the renderer mapping requires. The requirement is that they are *semantic enumerations*, never mermaid strings.
 
+> **Refined during planning** — the implementation plan (`implementation/implementation-plan.md`, §6 "Deliberate deviations") is authoritative where it differs: `shape` and `decision`/`terminal` are *derived*, not stored fields; node identity is `NodeId(node_id, ancestor_path)` with `batch_index` carried on each `AncestorStep` (leaf batch items are `BatchSpec.items` data, not nodes); `Container` links its `host` node and reads loop/batch via it; the source back-ref is a `(file, line)` pointer, not embedded content; and `- next: end` is captured via a small parser field (`_routes_to_end`) and modeled as an `end`-kind edge to a synthetic per-level END node.
+
 ### build_graph
 
-- `build_graph(ir, *, resolve_child, base_path, max_depth, descriptions) -> GraphModel` — a **pure function** of `(IR, resolve_child)`; emits zero rendering syntax.
+- `build_graph(ir, *, resolve_child, base_path, max_depth) -> GraphModel` — a **pure function** of `(IR, resolve_child)`; emits zero rendering syntax. (`descriptions` is a render concern — it lives on `render_mermaid`, not here.)
 - Produces a **complete model independent of render order** — its result must not depend on any rendering pass.
 - Handles: recursive sub-workflow expansion with **recursion-stack cycle detection** (add-on-enter / discard-on-exit, not a global visited set); batch expansion + fork/join fan-out; external IO wrappers for expanded sub-workflows; data-flow edge inference from `${ref}` templates via `Scope.resolve`; decision and terminal detection.
 - **Testable without mocks** — `resolve_child` is the one injected port (real + test adapters already exist); tests assert on the returned GraphModel.
 
 ### Mermaid renderer
 
-- `render_mermaid(graph, *, direction="LR") -> str` — consumes the model; maps `kind`/`shape` to mermaid classDefs + shape brackets at render time; derives the flat mermaid IDs (`{parent}__{child}`, batch items by label) from structural identity; renders loop as the ⟳ badge / self-edge shipped in #483.
+- `render_mermaid(graph, *, direction="LR", descriptions=False) -> str` — consumes the model; maps `kind` to mermaid classDefs + shape brackets at render time (shape is derived here); derives the flat mermaid IDs (`{parent}__{child}`, batch items by label) from structural identity; renders loop as the ⟳ badge / self-edge shipped in #483. The model always carries `purpose`; `descriptions` only gates whether it appears in the label.
 - Reads no IR fields directly.
 
 ### Behavioral invariants to preserve
@@ -92,10 +94,10 @@ The exact `kind`/`shape` vocabularies above are illustrative — finalize during
 Real structural facts, not cosmetic — the refactor must keep them:
 
 - Recursion-stack cycle detection (above).
-- **Nearest-consumer-only** for top-level inputs (long-range edges break dagre layout).
+- **Top-level input edges** — emitted to each distinct consumer, deduped per `(source, target)` pair (the legacy "nearest-consumer-only" wording is a misnomer: it never collapsed to a single consumer).
 - Structural-edge suppression when a data-flow edge covers the same connection.
-- The `outgoing_routes` / `has_expanded_outputs` pairing — since the latter equals the key-set of the former, the model may carry a single field, but the behavior must be preserved.
-- **Mermaid output IDs unchanged** — the mermaid renderer must emit the same flat ID strings as today (output stability), derived from structural identity.
+- The `outgoing_routes` / `has_expanded_outputs` routing maps are **build-time scratch, not model fields** — their behavior (edge routing/suppression) is preserved but reconstructed at build/render, never stored on the model.
+- **Flat mermaid IDs derived from structural identity** — the renderer derives `{parent}__{child}` IDs from the model. Byte-identical output is not a contract (parity is a tripwire — see Verification); regenerate goldens when the correct model legitimately shifts them.
 
 ### Packaging & public API
 
