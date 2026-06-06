@@ -1,0 +1,29 @@
+graph LR
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
+    subgraph run-rounds-in ["run-rounds inputs"]
+        run-rounds__in_contenders[/"contenders (array)"/]:::input
+    end
+    style run-rounds-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    run-rounds__in_contenders --> run-rounds__judge
+    subgraph run-rounds ["run-rounds (workflow)<br/>⟳ while more · ≤ 10 · carry contenders"]
+        run-rounds__judge["judge (code)"]:::code
+    end
+    style run-rounds fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph run-rounds-out ["run-rounds outputs"]
+        run-rounds__out_survivors(["survivors"]):::output
+        run-rounds__out_more(["more"]):::output
+    end
+    style run-rounds-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    run-rounds__judge --> run-rounds__out_survivors
+    run-rounds__judge --> run-rounds__out_more
+    announce[["announce (shell)"]]:::shell
+    run-rounds__out_survivors --> announce
+    run-rounds__out_more --> announce

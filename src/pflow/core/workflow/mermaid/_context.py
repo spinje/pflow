@@ -174,18 +174,27 @@ def _format_label(
     descriptions: bool,
     purpose: str,
     batch_suffix: str = "",
+    loop: Optional[dict[str, Any]] = None,
 ) -> str:
     """Format the full display label for a node.
+
+    The loop badge is placed BEFORE the description for consistency with
+    subgraph titles, which mermaid clips after ~2 lines — a badge pushed below
+    a description there would be hidden (see ``_render_subgraph``). Node labels
+    don't clip, but keeping the order identical means both label builders share
+    one rule. Loop is structural metadata (like the type), so it reads well
+    directly under the name/type anyway.
 
     The batch suffix (e.g., ``(parallel x|sources|)``) is appended AFTER
     escaping because it contains ``|`` delimiters that must be preserved
     in ``@{ shape: procs }`` labels.
     """
     display_type = _format_node_type(node_type)
-    label = f"{node_id} ({display_type})"
+    label = _escape_label(f"{node_id} ({display_type})")
+    if loop:
+        label += _loop_label(loop, node_id)
     if descriptions and purpose:
-        label += f"<br/>{_first_sentence(purpose)}"
-    label = _escape_label(label)
+        label += f"<br/>{_escape_label(_first_sentence(purpose))}"
     if batch_suffix:
         label += f"<br/>{batch_suffix}"
     return label
@@ -255,6 +264,63 @@ def _dynamic_batch_label(batch: Optional[dict[str, Any]]) -> str:
     source_name = refs[0][0] if refs else "N"
     parallel_prefix = "parallel " if batch.get("parallel", False) else ""
     return f" ({parallel_prefix}x|{source_name}|)"
+
+
+def _strip_template(ref: Any) -> str:
+    """Strip a single ``${...}`` wrapper to its inner expression for display.
+
+    Leaves non-template strings untouched. Does not parse the inner expression
+    (it may be any ``${.+}`` content — a path, a coalesce, an index).
+    """
+    if not isinstance(ref, str):
+        return ""
+    s = ref.strip()
+    if s.startswith("${") and s.endswith("}"):
+        return s[2:-1].strip()
+    return s
+
+
+def _loop_label(loop: dict[str, Any], node_id: str) -> str:
+    """Return a loop suffix like ``<br/>⟳ while result.continue · ≤ 10`` for a ``loop:`` config.
+
+    A looped node re-enters itself in place — the engine creates NO graph edge for the
+    iteration (it is a node property, evaluated at the engine's re-entry seam) — so the loop
+    is invisible unless surfaced on the node/subgraph label. This renders the polarity
+    (``while``/``until``), the gating condition, the iteration cap, and a marker for carried
+    state. Returns ``""`` when there is no usable loop config.
+
+    The condition's leading ``<node_id>.`` is stripped for readability: a loop condition refers
+    to the node's own fresh output, so the self-prefix is noise (``${run-rounds.more}`` ->
+    ``more``). A non-self-referential condition is left intact (the prefix simply won't match).
+    """
+    if not isinstance(loop, dict):
+        return ""
+    # Exactly one of while/until is required by validation; be defensive if neither is present.
+    if "until" in loop:
+        polarity, raw_cond = "until", loop.get("until")
+    elif "while" in loop:
+        polarity, raw_cond = "while", loop.get("while")
+    else:
+        return ""
+
+    cond = _strip_template(raw_cond)
+    if cond.startswith(f"{node_id}."):
+        cond = cond[len(node_id) + 1 :]
+    badge = f"⟳ {polarity} {cond}".rstrip()
+
+    cap = loop.get("max_iterations")
+    if isinstance(cap, bool):
+        pass  # bool is an int subclass; a loop cap is never a bool — ignore.
+    elif isinstance(cap, int):
+        badge += f" · ≤ {cap}"
+    elif isinstance(cap, str) and cap.strip():
+        badge += f" · ≤ {_strip_template(cap)}"
+
+    carry = loop.get("carry")
+    if isinstance(carry, dict) and carry:
+        badge += f" · carry {', '.join(carry)}"
+
+    return f"<br/>{_escape_label(badge)}"
 
 
 def _render_classdefs(ctx: MermaidContext) -> None:

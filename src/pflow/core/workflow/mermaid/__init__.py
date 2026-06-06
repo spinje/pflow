@@ -3,6 +3,7 @@
 from pflow.core.workflow.mermaid._context import (
     _first_sentence,
     _get_item_label,
+    _loop_label,
 )
 from pflow.core.workflow.mermaid._edges import (
     _deduplicate_edges,
@@ -17,5 +18,6 @@ __all__ = [
     "_find_terminal_nodes",
     "_first_sentence",
     "_get_item_label",
+    "_loop_label",
     "generate_mermaid",
 ]

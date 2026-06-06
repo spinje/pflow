@@ -16,6 +16,7 @@ from pflow.core.workflow.mermaid._context import (
     _format_node_type,
     _get_item_label,
     _get_node_shape,
+    _loop_label,
     _render_classdefs,
     _subgraph_style,
     _to_mermaid_id,
@@ -130,6 +131,16 @@ def _render_workflow(ir: dict[str, Any], ctx: MermaidContext) -> dict[str, dict[
     return ctx.outgoing_routes
 
 
+def _render_loop_self_edge(mermaid_id: str, ctx: MermaidContext) -> None:
+    """Emit a dotted self-loop arrow so a ``loop:`` node visually reads as a loop.
+
+    A looped node re-enters itself with no IR edge, so we synthesize one. Dotted
+    (``-.->``) to distinguish it from structural/data edges; marked ``⟳``. The full
+    condition / cap / carry detail lives in the node label badge (``_loop_label``).
+    """
+    ctx.lines.append(f'{ctx.indent}{mermaid_id} -.->|"⟳"| {mermaid_id}')
+
+
 def _render_node(node: dict[str, Any], ctx: MermaidContext) -> None:
     """Render a single node declaration (regular, batch, or sub-workflow)."""
     node_id = node.get("id", "unknown")
@@ -173,6 +184,7 @@ def _render_node(node: dict[str, Any], ctx: MermaidContext) -> None:
                 ctx,
                 purpose=purpose,
                 suppress_io=True,
+                loop=node.get("loop"),
             )
 
             # 3. External output wrapper (AFTER subgraph, replaces _populate_outgoing_map)
@@ -190,9 +202,13 @@ def _render_node(node: dict[str, Any], ctx: MermaidContext) -> None:
                 }
             return
 
-    # Regular node declaration
+    # Regular node declaration. A looped node re-enters itself in place (no IR edge), so surface
+    # it two ways: the loop condition as a label badge (placed BEFORE the description so it survives
+    # mermaid's subgraph-title clip), and a self-loop arrow so it visually reads as a loop.
+    # (batch + loop are mutually exclusive, so this never collides with dynamic_batch_label.)
     is_decision = node_id in ctx.decision_nodes
-    label = _format_label(node_id, node_type, ctx.config.descriptions, purpose, dynamic_batch_label)
+    loop = node.get("loop")
+    label = _format_label(node_id, node_type, ctx.config.descriptions, purpose, dynamic_batch_label, loop=loop)
 
     if dynamic_batch_label:
         # Dynamic batch: use procs (stacked rectangles) shape via @{} syntax.
@@ -203,6 +219,8 @@ def _render_node(node: dict[str, Any], ctx: MermaidContext) -> None:
     else:
         shape_open, shape_close, css_class = _get_node_shape(node_type, is_decision)
         ctx.lines.append(f'{ctx.indent}{mermaid_id}{shape_open}"{label}"{shape_close}:::{css_class}')
+    if loop:
+        _render_loop_self_edge(mermaid_id, ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -359,11 +377,20 @@ def _render_subgraph(
     ctx: MermaidContext,
     purpose: str = "",
     suppress_io: bool = False,
+    loop: Optional[dict[str, Any]] = None,
 ) -> dict[str, dict[str, str]]:
     """Render a sub-workflow as a mermaid subgraph.
 
     Returns the child's ``outgoing_routes`` so the parent can route edges
     through nested sub-workflow outputs.
+
+    When the sub-workflow node carries a ``loop:`` (the body is the whole
+    sub-workflow), the loop badge is appended to the subgraph title — the
+    multinode-body loop renders as the existing box plus a ``⟳`` annotation.
+    The badge goes BEFORE the description: mermaid clips multi-line subgraph
+    titles after ~2 lines, so a badge pushed below a description is hidden.
+    This is the path where that clip actually bites (node labels don't clip);
+    the order mirrors ``_format_label``.
     """
     path_key = str(child_result.path) if child_result.path else None
     if path_key:
@@ -373,6 +400,8 @@ def _render_subgraph(
         subgraph_label = _escape_label(node_id) + dynamic_batch_label
     else:
         subgraph_label = _escape_label(f"{node_id} ({node_type})")
+    if loop:
+        subgraph_label += _loop_label(loop, node_id)
     if ctx.config.descriptions and purpose:
         subgraph_label += f"<br/>{_escape_label(_first_sentence(purpose))}"
 
@@ -384,6 +413,9 @@ def _render_subgraph(
 
     ctx.lines.append(f"{ctx.indent}end")
     ctx.lines.append(f"{ctx.indent}{_subgraph_style(mermaid_id, ctx.current_depth + 1)}")
+    # NB: no self-loop arrow on the subgraph box — mermaid renders a subgraph self-edge as an
+    # ugly dangling line. The loop is surfaced via the title badge (`_loop_label`) instead. A
+    # single-node loop DOES get a self-edge (it renders as a clean arc); see `_render_node`.
 
     if path_key:
         ctx.seen.discard(path_key)
