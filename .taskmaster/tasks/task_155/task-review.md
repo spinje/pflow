@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- **Implementation Date:** 2026-06-06 (single day; planning → phases 0–7 → 4-agent review → 7 review fixes → adversarial verification/hardening pass).
+- **Implementation Date:** 2026-06-06 (single day; planning → phases 0–7 → 4-agent review → 7 review fixes → adversarial verification/hardening pass → external review evaluation (2 PR comments + 3 specialist agents) → review fixes).
 - **Branch:** `feat/workflow-graph-multi-renderer` (merge-base `a77e46bb`).
 - **Branch commits:** `800cb5cd` (plan ready) → `8f5dfb5c` (plan) → `9deec140` (implementation + 4 reviews) → `99063155` (verification fixes).
 - **Authoritative artifacts:** `implementation/implementation-plan.md` (build guide; §6 deviations table is canonical), `implementation/progress-log.md` (the journey), ADRs 0001/0003/0004.
@@ -40,6 +40,60 @@ IR → build_graph() → GraphModel ─┬→ render_mermaid()   → str
 
 Everything else tracked the plan: derived views over stored flags, structural identity, primitive-only (no analysis/SCC layer, ADR-0004), `resolve_child` as the one injected port.
 
+## Post-Review Hardening (external review + 3 specialist agents)
+
+After the verification pass, two external PR review comments (PR #489) + three specialist review agents
+(silent-failures, impact-completeness, feature-interactions) ran against the branch. Every finding was
+verified against the code (incl. empirical parse + validation probes) before acting. Net: a few real
+latent/model-completeness fixes, the rest disputed or already-deferred. **All changes are confined to
+`graph/` + `ir_schema.py`; the execution path is untouched and the 8 goldens stayed byte-identical** (the
+new edges are Mermaid-invisible).
+
+**Fixes — `graph/build.py`:**
+- **Null-`params` guard** in `_add_child_input_data_flow` + `_add_literal_batch_item_input_edges`. Every
+  other site guards `isinstance(params, dict)`; these two chained `.get("params", {}).get("inputs")` and
+  would raise `AttributeError` on `params: None`. Unreachable via validated IR, but `build_graph` is public
+  (tests call it with hand-built IR).
+- **Literal-batch sub-workflow items now record why they did not expand** on the batch
+  `Container.annotations["unexpanded_items"] = {index: reason}` (`unresolved`/`depth_limit`/`dynamic_path`/
+  `cycle`). This **closes a silent model-completeness gap** the plan (§4c) actually mandated: a failed
+  sub-workflow batch item was previously indistinguishable from a genuine leaf item, defeating the
+  "no information loss" bar for downstream renderers. The cycle check also moved *before* container
+  creation, fixing an empty-container-on-cycle artifact (impact-completeness finding). Now all three
+  expansion paths (regular / dynamic / literal-batch) uniformly surface an unexpanded reason.
+- **Batch alias precedence over a same-named top-level input**, in *both* edge paths
+  (`_add_one_param_input_edges` reorder + a `skip_root` arg threaded into `_add_declared_input_edges`). With
+  `as: data` and an input also named `data`, an item binding's `${data.x}` now resolves to the batch source,
+  not the input — and the consumer path no longer draws the spurious input edge. Both edge-building paths
+  are now uniformly alias-aware (the inconsistency *was* the bug).
+- **Leaf (non-workflow) dynamic batches now record the sibling `items:` source data-flow edge** (workflow
+  batches already did) — model-fidelity symmetry for the future React Flow renderer.
+
+**Cleanups:** removed the renderer's duplicate `_refs_in` (imports `scope.refs_in`, which has the
+coalesce/literal-operand handling the local copy lacked); `scope.py` `Optional[str]` → `str | None` + an
+alias docstring; an `is_terminal` comment on why `DATA_FLOW` counts toward non-terminality (guards the
+`handle-error --> pflow_end` pin); renamed `_validate_duplicate_node_ids` → `_validate_node_ids` (it also
+rejects reserved `end`/`__end__`); comments on the deliberate internal-invariant `ValueError`s in
+`model.__post_init__` / `_require_node`.
+
+**Decision — kept `ValueError`, did NOT switch to `PflowError`.** The convention ("never vanilla
+`ValueError`") targets *user-facing* errors that flow through the diagnostic/CLI/MCP pipeline. These two
+sites are internal construction invariants (`build_graph` is the sole constructor); a violation is a builder
+bug, never user input, and there is no handler / no `to_diagnostics` payoff. A `PflowError` subclass here
+would add a class with no consumer purely to satisfy the rule's letter — overengineering. Kept the idiomatic
+`ValueError` + a one-line comment so a future agent doesn't "fix" it.
+
+**Disputed / no-change (verified, not assumed):**
+- *"List-form `next: [a, end]` silently drops the END edge"* — **rejected at parse time**: a flow-style list
+  coerces to a Python list, `str(list)` comma-splits into garbage edge targets that fail reference
+  validation. No valid workflow loses an END edge; the `_routes_to_end` line is a symptom, not the disease.
+  List-form `next` is unsupported end-to-end and out of 155's scope.
+- *"loop+batch assertion missing (plan §10)"* — `pflow visualize` already runs the full validator
+  (`runner.validate` = the `--validate-only` pipeline), which **rejects loop+batch** at `data_flow.py`, so it
+  never reaches `build_graph`. No hard assert was added (it would crash `visualize` on in-progress
+  workflows); documented in `graph/CLAUDE.md` that `build_graph` assumes pre-validated IR.
+- *O(n) lookups* — already in Technical Debt below; deferred until a second renderer.
+
 ## Files Modified/Created
 
 ### Core (new)
@@ -60,7 +114,7 @@ Everything else tracked the plan: derived views over stored flags, structural id
 - `docs/reference/cli/index.mdx`, `plan-to-code/README.md`, `parallel-planner-review/README.md`. The parallel-planner README had **real semantic drift** — it described the old hand-wired counter loop; the workflow now uses a declarative `loop:` on `run-cycle`. Prose was corrected to match the rendered graph.
 
 ### Tests
-- `test_graph_build.py` (713) — **the main structural test surface.** 26 tests asserting on the returned `GraphModel` (no mocks; `resolve_child` via plain closures).
+- `test_graph_build.py` (~830) — **the main structural test surface.** 31 tests asserting on the returned `GraphModel` (no mocks; `resolve_child` via plain closures). Includes 5 post-review regression tests (null-params; literal-batch `unexpanded_items` reasons + depth-limit; cycle + no-empty-container; alias-vs-input precedence with the negative assertion; leaf-batch items source).
 - `test_graph_mermaid_renderer.py` (258) — renderer-specific: collision/leak regressions + a structural-validity sweep.
 - `test_mermaid.py` (±213) — migrated off the 6 deleted helper exports; renderer behavior now tested through `generate_mermaid`.
 - `test_mermaid_golden.py` (+26) + new golden `multi-output-batch-fan.mmd` + fixtures under `examples/_test_fixtures/graph/multi-output-batch/` — pins the batch-output-fan cardinality (W6) that no prior golden covered.

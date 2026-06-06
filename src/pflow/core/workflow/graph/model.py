@@ -119,6 +119,10 @@ class GraphModel:
     containers: list[Container]
 
     def __post_init__(self) -> None:
+        # Internal construction invariants (build_graph is the sole constructor). A
+        # violation is a builder bug, never user input, so these raise plain ValueError
+        # rather than a PflowError subclass — they never reach the user-facing diagnostic
+        # pipeline that PflowError exists to feed.
         self._assert_unique_ids()
         self._assert_referential_integrity()
         self._assert_parent_member_consistency()
@@ -134,6 +138,12 @@ class GraphModel:
         return len(labels) >= 2
 
     def is_terminal(self, n: NodeId) -> bool:
+        # A node is terminal when it has no forward control-flow successor. ERROR and END
+        # edges are excluded (an error handler / authored `next: end` route is still a sink).
+        # DATA_FLOW edges DO count: a node that feeds data downstream is not a structural
+        # sink. The Mermaid end-sink only fires when a level has no declared outputs, where
+        # such data-flow out-edges do not arise — do not "simplify" this to exclude
+        # DATA_FLOW, or the `handle-error --> pflow_end` parity sink can silently change.
         return not any(edge.source == n and edge.kind not in (EdgeKind.ERROR, EdgeKind.END) for edge in self.edges)
 
     def shadowed(self, e: Edge) -> bool:

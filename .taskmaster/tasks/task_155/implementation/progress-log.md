@@ -367,3 +367,50 @@ and negative cases — both kept as-is.
 - `.venv/bin/ruff check src/pflow/core/workflow/graph tests/test_core/test_graph_mermaid_renderer.py` → clean.
 - `.venv/bin/mypy src/pflow/core/workflow/graph` → clean.
 - Structural-validity sweep of the full example corpus (balanced subgraphs, no id collisions incl. same-shape, no `${}` leaks) → all clean.
+
+## 2026-06-06 — External review evaluation + fixes (3 specialist agents + 2 PR comments)
+
+Ran 3 specialist code-review agents (silent-failures, impact-completeness, feature-interactions) on the
+branch and evaluated two external PR review comments (PR #489) via `/evaluate-review`. Verified every
+finding against the code before acting (incl. an empirical parse probe and a loop+batch validation probe).
+
+**Behavioral fixes (`graph/build.py`):**
+- Guard `params` access in `_add_child_input_data_flow` + `_add_literal_batch_item_input_edges` —
+  `build_graph` is public and can be called with `params: None`; matches every other guarded site.
+- Literal-batch sub-workflow items now record WHY they did not expand on the batch
+  `Container.annotations["unexpanded_items"] = {index: reason}` (resolver None/raise/empty, `depth_limit`,
+  `dynamic_path`, `cycle`), symmetric with the regular/dynamic `Node.unexpanded` paths — closes the silent
+  model-completeness gap (a failed sub-wf item was indistinguishable from a genuine leaf item). The cycle
+  check moved before container creation, also fixing the empty-container-on-cycle artifact.
+- Batch alias now takes precedence over a same-named top-level input in BOTH edge paths
+  (`_add_one_param_input_edges` reorder + `_add_declared_input_edges` `skip_root`) — fixes the
+  `as: data` + input `data` collision drawing the wrong edge.
+- Leaf (non-workflow) dynamic batches now record the sibling `items:` source data-flow edge (workflow
+  batches already did) — model-fidelity symmetry for the future React Flow renderer.
+
+**Cleanup:** removed the duplicate `_refs_in` in the renderer (imports `scope.refs_in`, which has the
+coalesce/literal handling); `scope.py` `Optional[str]` → `str | None` + alias docstring; `is_terminal`
+comment on why DATA_FLOW counts (guards the `handle-error --> pflow_end` pin); renamed
+`_validate_duplicate_node_ids` → `_validate_node_ids` (it also rejects reserved `end`/`__end__`);
+clarifying comments on the deliberate internal-invariant `ValueError`s in `model.__post_init__` /
+`_require_node` (not PflowError — never reach the user-facing diagnostic pipeline); `graph/CLAUDE.md` notes
+(build_graph assumes pre-validated IR, `unexpanded_items`, best-effort data-flow `input_name`).
+
+**Disputed / no-change (verified):**
+- List-form `next: [a, end]` "silently drops the END edge" — rejected at parse time (garbage edge targets
+  fail validation); no valid workflow loses an END edge. Not 155's scope.
+- loop+batch assertion "missing" — `pflow visualize` already runs the full validator (`runner.validate`),
+  which rejects loop+batch (`data_flow.py`), so it never reaches `build_graph`. Documented, no assert added
+  (a hard assert would crash `visualize` on in-progress workflows).
+- O(n) model lookups — documented tech debt in `task-review.md`; defer until a second renderer.
+
+**5 regression tests added** to `test_graph_build.py` (null params; unexpanded-item reasons + depth_limit;
+cycle + no-empty-container; alias-vs-input precedence with the negative assertion; leaf-batch items source).
+
+**Verification:** `make check` clean (ruff/ruff-format/mypy 230 files/deptry); 404 graph+mermaid+golden+
+schema+parser+visualize tests pass; 8 goldens byte-identical (the model-fidelity edges are Mermaid-invisible
+as predicted); purity grep clean.
+
+> **NOTE — `task-review.md` is now stale:** it documents the alias ordering, the literal-batch silent gap,
+> the duplicate `_refs_in`, and the params guard as limitations/findings that are now FIXED. Reconcile it
+> when (re)generating the task review.

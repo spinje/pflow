@@ -1,7 +1,6 @@
 """Template-reference extraction helpers for graph construction."""
 
 import re
-from typing import Optional
 
 # Extract refs from INSIDE ``${...}`` blocks only, so literal text (validator-rejected
 # but defensively handled) never produces false positives.  Two-stage scan: find each
@@ -13,16 +12,22 @@ _BRACE_BLOCK_RE = re.compile(r"\$\{([^}]*)\}")
 _REF_IN_BLOCK_RE = re.compile(r"(?:^|[\s?])([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?")
 
 
-def refs_in(value: str) -> list[tuple[str, Optional[str]]]:
-    """Extract ``(root, field)`` pairs from every template ref in ``value``."""
+def refs_in(value: str) -> list[tuple[str, str | None]]:
+    """Extract ``(root, field)`` pairs from every template ref in ``value``.
+
+    Intentionally an alias of :func:`source_refs_in` — ``??`` is a general template
+    operator, so binding refs and output-source refs extract identically. The two names
+    are kept only for call-site readability (``refs_in`` at param bindings,
+    ``source_refs_in`` at output ``source:`` expressions).
+    """
     return source_refs_in(value)
 
 
-def source_refs_in(source: str) -> list[tuple[str, Optional[str]]]:
+def source_refs_in(source: str) -> list[tuple[str, str | None]]:
     """Extract ``(root, field)`` pairs from a template expression."""
     from pflow.runtime.template_resolver import TemplateResolver
 
-    refs: list[tuple[str, Optional[str]]] = []
+    refs: list[tuple[str, str | None]] = []
     for block in _BRACE_BLOCK_RE.finditer(source):
         # Split coalesce operands and skip JSON literals (Optional A) — a
         # literal like ${missing ?? "x"} must not surface "x" as a data-flow

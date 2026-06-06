@@ -66,7 +66,31 @@ ordering trap.
 
 `scope.py` intentionally only contains `refs_in` and `source_refs_in`.
 Mermaid-ID-dependent `Scope.resolve()` was not moved; build performs structural
-resolution to `NodeId` plus optional output field.
+resolution to `NodeId` plus optional output field. `refs_in` is a readability
+alias of `source_refs_in` (identical behavior) — not two distinct extractors.
+
+`build_graph()` assumes **pre-validated IR**. It is not a validation layer: the
+`WorkflowValidator` pipeline is the enforcement point, and the only production
+caller (`pflow visualize`) runs that pipeline (`--validate-only` checks) before
+building. So semantically-invalid combinations the validator rejects upstream —
+e.g. a node with both `loop:` and `batch:` (rejected at `data_flow.py`) — never
+reach `build_graph` via the CLI. Where such a node would still be constructed if
+fed unvalidated IR directly, the model carries both specs faithfully and the
+Mermaid renderer prioritizes the batch (the loop badge is not drawn for a batch
+node); do not add a hard assert that would crash `visualize` on in-progress work.
+
+Literal-batch sub-workflow items that cannot expand (resolver `None`/raise/empty,
+depth limit, `${...}` dynamic path, or recursion-stack cycle) are recorded on the
+batch `Container.annotations["unexpanded_items"] = {index: reason}`, mirroring the
+`Node.unexpanded` discriminator on the regular/dynamic expansion paths. This keeps
+a failed sub-workflow item distinguishable from a genuine leaf item (the "no
+information loss" bar) even though Mermaid renders both as a leaf box.
+
+A `DATA_FLOW` edge's `input_name`/`output_field` attributes are **best-effort**:
+when one source feeds a target through multiple roles (e.g. a `params.inputs`
+binding *and* `loop.max_iterations`), the `(source, target)` dedup keeps a single
+edge and only the first role's `input_name` survives. The structural dependency is
+always preserved; only the role label is lossy in that rare multi-role case.
 
 ## Renderer Notes
 

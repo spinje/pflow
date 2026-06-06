@@ -690,7 +690,7 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
         if isinstance(data, dict):
             _validate_retry_waits_finite(data)
             _validate_node_references(data)
-            _validate_duplicate_node_ids(data)
+            _validate_node_ids(data)
         return
 
     # Format the first error with helpful message
@@ -757,14 +757,14 @@ def _validate_node_references(data: dict[str, Any]) -> None:
             )
 
 
-def _validate_duplicate_node_ids(data: dict[str, Any]) -> None:
-    """Validate that all node IDs are unique.
+def _validate_node_ids(data: dict[str, Any]) -> None:
+    """Validate node IDs: reject reserved keywords (``end``/``__end__``) and duplicates.
 
     Args:
         data: The validated IR data
 
     Raises:
-        ValidationError: If duplicate node IDs exist
+        ValidationError: If a node ID is reserved or duplicated
     """
     seen = set()
     for i, node in enumerate(data["nodes"]):

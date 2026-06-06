@@ -711,3 +711,180 @@ def test_graph_model_is_asdict_json_serializable_with_adversarial_values() -> No
     )
 
     json.dumps(asdict(graph))
+
+
+def test_build_graph_tolerates_null_params_via_public_api() -> None:
+    # build_graph is a public function called directly with hand-built IR; a node may
+    # carry `params: None`. The data-flow input path and the literal-batch construction
+    # path must both tolerate it without raising AttributeError on `params.get(...)`.
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(
+            ir={"inputs": {"text": {"type": "string"}}, "nodes": [{"id": "inner", "type": "code"}]},
+            path=Path("/fake/child.pflow.md"),
+            warnings=(),
+        )
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {"id": "a", "type": "code", "params": None},
+                {"id": "b", "type": "workflow", "params": None, "batch": {"items": [{"workflow": "./child.pflow.md"}]}},
+            ],
+            "edges": [{"from": "a", "to": "b"}],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    assert graph.node(NodeId("a")) is not None
+    assert graph.node(NodeId("b")) is not None
+
+
+def _batch_container(graph: GraphModel, host: NodeId) -> Container:
+    container = next(c for c in graph.containers if c.kind == "batch" and c.host == host)
+    return container
+
+
+def test_literal_batch_unexpandable_items_record_reason_on_container() -> None:
+    # A failed sub-workflow batch item must be distinguishable from a genuine leaf item
+    # (the "no information loss" bar): record WHY each item did not expand, mirroring the
+    # Node.unexpanded discriminator the regular/dynamic expansion paths set.
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        if params.get("workflow") == "./good.pflow.md":
+            return SubWorkflowResult(
+                ir={"nodes": [{"id": "inner", "type": "code"}]}, path=Path("/fake/good.pflow.md"), warnings=()
+            )
+        return None  # ./missing.pflow.md -> unresolved
+
+    parent = {
+        "nodes": [
+            {
+                "id": "reviews",
+                "type": "workflow",
+                "params": {},
+                "batch": {
+                    "items": [
+                        {"workflow": "./good.pflow.md"},
+                        {"workflow": "./missing.pflow.md"},
+                        {"workflow": "${chosen}"},
+                        {"name": "genuine-leaf"},
+                    ]
+                },
+            }
+        ]
+    }
+
+    graph = build_graph(parent, resolve_child=resolver, max_depth=2)
+    unexpanded = _batch_container(graph, NodeId("reviews")).annotations.get("unexpanded_items", {})
+    assert unexpanded.get(1) == "unresolved"
+    assert unexpanded.get(2) == "dynamic_path"
+    assert 0 not in unexpanded  # good item expanded
+    assert 3 not in unexpanded  # genuine leaf item is not a failed expansion
+    json.dumps(unexpanded)  # JSON-able
+
+    # Depth limit on the same items records depth_limit for every sub-workflow item.
+    capped = build_graph(parent, resolve_child=resolver, max_depth=0)
+    capped_unexpanded = _batch_container(capped, NodeId("reviews")).annotations.get("unexpanded_items", {})
+    assert capped_unexpanded.get(0) == "depth_limit"
+    assert capped_unexpanded.get(1) == "depth_limit"
+
+
+def test_literal_batch_item_cycle_records_reason_and_leaves_no_empty_container() -> None:
+    # A literal batch item that re-enters a workflow already on the recursion stack must
+    # be marked "cycle" WITHOUT leaving an empty workflow container behind (the cycle
+    # check now runs before the container is created, matching the other expansion paths).
+    rec_ir = {
+        "nodes": [
+            {"id": "again", "type": "workflow", "params": {}, "batch": {"items": [{"workflow": "./rec.pflow.md"}]}}
+        ]
+    }
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=rec_ir, path=Path("/fake/rec.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {
+                    "id": "reviews",
+                    "type": "workflow",
+                    "params": {},
+                    "batch": {"items": [{"workflow": "./rec.pflow.md"}]},
+                }
+            ]
+        },
+        resolve_child=resolver,
+        max_depth=10,
+    )
+
+    inner_host = NodeId("again", (AncestorStep("reviews", 0),))
+    inner_batch = _batch_container(graph, inner_host)
+    assert inner_batch.annotations.get("unexpanded_items", {}).get(0) == "cycle"
+    # The cycled item left no empty workflow container under the inner batch.
+    empty = [
+        c
+        for c in graph.containers
+        if c.kind == "workflow" and c.host is None and c.parent == inner_batch.id and not c.members
+    ]
+    assert empty == []
+
+
+def test_batch_alias_takes_precedence_over_same_named_top_level_input() -> None:
+    # `as: data` colliding with a top-level input named `data`: an item binding's
+    # `${data.field}` must resolve to the batch source (prep.rows), NOT the input node.
+    child = {"inputs": {"text": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "inputs": {"data": {"type": "array"}},
+            "nodes": [
+                {"id": "prep", "type": "code"},
+                {
+                    "id": "process",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "inputs": {"text": "${data.field}"}},
+                    "batch": {"items": "${prep.rows}", "as": "data"},
+                },
+            ],
+            "edges": [{"from": "prep", "to": "process"}],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    target = _input_id("text", AncestorStep("process", None))
+    assert (
+        Edge(source=NodeId("prep"), target=target, kind=EdgeKind.DATA_FLOW, output_field="rows", input_name="text")
+        in graph.edges
+    )
+    # The same-named top-level input must NOT also draw a (spurious) edge into the child input.
+    assert not any(
+        edge.target == target and edge.source == _input_id("data") and edge.kind == EdgeKind.DATA_FLOW
+        for edge in graph.edges
+    )
+
+
+def test_leaf_dynamic_batch_records_sibling_items_source_data_flow() -> None:
+    # A leaf (non-workflow) batch over a sibling-produced items source must carry the
+    # prep->host dependency in the model — workflow batches already do; leaf batches
+    # used to drop it (only top-level-input sources were resolved).
+    graph = build_graph({
+        "nodes": [
+            {"id": "prep", "type": "code"},
+            {
+                "id": "summarize",
+                "type": "shell",
+                "params": {"command": "echo ${item}"},
+                "batch": {"items": "${prep.rows}"},
+            },
+        ],
+        "edges": [{"from": "prep", "to": "summarize"}],
+    })
+
+    assert (
+        Edge(source=NodeId("prep"), target=NodeId("summarize"), kind=EdgeKind.DATA_FLOW, output_field="rows")
+        in graph.edges
+    )

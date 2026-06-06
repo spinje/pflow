@@ -17,6 +17,7 @@ from pflow.core.workflow.graph.model import (
     Node,
     NodeId,
 )
+from pflow.core.workflow.graph.scope import refs_in
 
 _SHAPE_MAP: dict[str, tuple[str, str, str]] = {
     "llm": ("([", "])", "llm"),
@@ -815,7 +816,7 @@ def _get_item_label(item: Any, index: int) -> str:
 def _dynamic_batch_label(batch: BatchSpec | None) -> str:
     if batch is None or not batch.dynamic or not batch.source_ref:
         return ""
-    refs = _refs_in(batch.source_ref)
+    refs = refs_in(batch.source_ref)
     source_name = refs[0][0] if refs else "N"
     parallel_prefix = "parallel " if batch.parallel else ""
     return f" ({parallel_prefix}x|{source_name}|)"
@@ -872,15 +873,3 @@ def _batch_index_for(candidate: NodeId, batch_host: NodeId) -> int | None:
     if step.node_id != batch_host.node_id:
         return None
     return step.batch_index
-
-
-def _refs_in(value: str) -> list[tuple[str, str | None]]:
-    refs: list[tuple[str, str | None]] = []
-    for match in re.finditer(r"\$\{([^}]+)\}", value):
-        expr = match.group(1).strip()
-        if "??" in expr:
-            expr = expr.split("??", 1)[0].strip()
-        root, _, field = expr.partition(".")
-        if root:
-            refs.append((root, field or None))
-    return refs

@@ -150,6 +150,8 @@ class _GraphBuilder:
         for node in self.nodes:
             if node.id == node_id:
                 return node
+        # Internal invariant: every node id is added in Pass A before this is called.
+        # Plain ValueError (not a PflowError) — a miss is a builder bug, not user input.
         raise ValueError(f"Missing graph node: {node_id}")
 
     def _add_container(self, container: Container) -> Container:
@@ -319,10 +321,24 @@ class _GraphBuilder:
             if not isinstance(item, dict):
                 continue
             workflow_path = item.get("workflow")
-            if not isinstance(workflow_path, str) or workflow_path.startswith("${"):
+            if not isinstance(workflow_path, str):
+                continue  # genuine leaf item, not a sub-workflow expansion
+            if workflow_path.startswith("${"):
+                _record_unexpanded_item(container, index, "dynamic_path")
                 continue
-            child_result = self._resolve_literal_batch_item(workflow_path, current_depth, base_path)
-            if child_result is None or not child_result.ir.get("nodes"):
+            reason, child_result = self._resolve_literal_batch_item(workflow_path, current_depth, base_path)
+            if reason is not None or child_result is None:
+                # Mirror the regular/dynamic expansion paths: record WHY this item did
+                # not expand so a failed sub-workflow item is distinguishable from a
+                # genuine leaf item in the model (the "no information loss" bar).
+                _record_unexpanded_item(container, index, reason or "unresolved")
+                continue
+            child_key = _child_key(child_result)
+            if child_key in self.seen:
+                # Check the recursion stack BEFORE creating the container so a cycle
+                # does not leave an empty workflow container behind (parity with the
+                # regular/dynamic paths).
+                _record_unexpanded_item(container, index, "cycle")
                 continue
             item_path = (*ancestor_path, AncestorStep(node.id.node_id, index))
             item_container = self._add_container(
@@ -334,9 +350,6 @@ class _GraphBuilder:
                     annotations=_warnings_annotation(child_result),
                 )
             )
-            child_key = _child_key(child_result)
-            if child_key in self.seen:
-                continue
             self.seen.add(child_key)
             try:
                 child_level = self.build_level(
@@ -418,14 +431,19 @@ class _GraphBuilder:
 
     def _resolve_literal_batch_item(
         self, workflow_path: str, current_depth: int, base_path: Path | None
-    ) -> SubWorkflowResult | None:
-        if self.resolve_child is None or current_depth >= self.max_depth:
-            return None
+    ) -> tuple[UnexpandedReason | None, SubWorkflowResult | None]:
+        if current_depth >= self.max_depth:
+            return "depth_limit", None
+        if self.resolve_child is None:
+            return "unresolved", None
         try:
-            return self.resolve_child({"workflow": workflow_path}, base_path)
+            result = self.resolve_child({"workflow": workflow_path}, base_path)
         except Exception:
             logger.debug("Failed to resolve batch item workflow '%s'", workflow_path, exc_info=True)
-            return None
+            return "unresolved", None
+        if result is None or not result.ir.get("nodes"):
+            return "unresolved", None
+        return None, result
 
     def _add_routes_to_end(
         self,
@@ -454,7 +472,8 @@ class _GraphBuilder:
             if node_id is None:
                 continue
             target_inputs = level.incoming.get(node_id, {})
-            inputs_dict = raw_node.get("params", {}).get("inputs")
+            params = raw_node.get("params")
+            inputs_dict = params.get("inputs") if isinstance(params, dict) else None
             if not isinstance(inputs_dict, dict):
                 continue
             if node_id in level.batch_item_incoming:
@@ -477,7 +496,8 @@ class _GraphBuilder:
         node_id: NodeId,
         level: _LevelResult,
     ) -> None:
-        inputs_dict = raw_node.get("params", {}).get("inputs")
+        params = raw_node.get("params")
+        inputs_dict = params.get("inputs") if isinstance(params, dict) else None
         if not isinstance(inputs_dict, dict):
             return
         for _index, target_inputs in level.batch_item_incoming.get(node_id, {}).items():
@@ -493,7 +513,7 @@ class _GraphBuilder:
 
     def _add_one_param_input_edges(
         self,
-        input_name: str,
+        input_name: str | None,
         binding: Any,
         target_inputs: dict[str, NodeId],
         node_id: NodeId,
@@ -501,13 +521,19 @@ class _GraphBuilder:
         batch_source: tuple[NodeId, str | None] | None = None,
         batch_alias: str = "item",
     ) -> None:
-        target = target_inputs.get(input_name, node_id)
+        target = target_inputs.get(input_name, node_id) if input_name is not None else node_id
         if not isinstance(binding, str) or "${" not in binding:
             return
         for root, ref_field in refs_in(binding):
-            if root in level.inputs:
+            # The batch alias takes precedence over a same-named top-level input: when
+            # `as: data` collides with an input also named `data`, an item binding's
+            # `${data.x}` must resolve to the batch source, not the input node.
+            if root == batch_alias:
+                resolved = batch_source
+            elif root in level.inputs:
                 continue
-            resolved = batch_source if root == batch_alias else self._resolve_ref(root, ref_field, level)
+            else:
+                resolved = self._resolve_ref(root, ref_field, level)
             if resolved is None:
                 continue
             source, output_field = resolved
@@ -544,8 +570,11 @@ class _GraphBuilder:
         if node_id is None:
             return
         target_inputs = level.incoming.get(node_id, {})
+        alias = _batch_alias(raw_node) if isinstance(raw_node.get("batch"), dict) else None
         for param_name, ref_value in _params_strings(raw_node.get("params", {})):
-            self._add_declared_input_edges(ref_value, param_name, target_inputs, node_id, level, connected)
+            self._add_declared_input_edges(
+                ref_value, param_name, target_inputs, node_id, level, connected, skip_root=alias
+            )
         self._add_loop_cap_edges(raw_node, node_id, level, connected)
 
         batch = raw_node.get("batch")
@@ -553,6 +582,12 @@ class _GraphBuilder:
         if isinstance(items, str):
             fallback_target = next(iter(target_inputs.values()), node_id)
             self._add_declared_input_edges(items, None, {}, fallback_target, level, connected)
+            # Expanded (workflow) batches capture a sibling-produced items source via the
+            # child-input resolution path. A leaf (non-expanded) batch has no child inputs,
+            # so resolve the sibling source onto the host here — otherwise `items: ${prep.rows}`
+            # on a leaf batch silently drops the prep->host dependency the model exists to carry.
+            if node_id not in level.incoming and node_id not in level.batch_item_incoming:
+                self._add_one_param_input_edges(None, items, {}, node_id, level)
 
     def _add_loop_cap_edges(
         self,
@@ -576,8 +611,14 @@ class _GraphBuilder:
         fallback_target: NodeId,
         level: _LevelResult,
         connected: set[tuple[NodeId, NodeId]],
+        skip_root: str | None = None,
     ) -> None:
         for root, _field in refs_in(ref_value):
+            # A batch alias shadows a same-named top-level input inside item bindings:
+            # `${data.x}` under `as: data` is the per-item alias, not the input `data`.
+            # The batch-source edge is drawn by _add_one_param_input_edges instead.
+            if skip_root is not None and root == skip_root:
+                continue
             source = level.inputs.get(root)
             if source is None:
                 continue
@@ -765,6 +806,15 @@ def _child_key(child_result: SubWorkflowResult) -> str:
     # Inline workflows have no path. Hashing the IR gives a deterministic stack
     # key; an md5 collision would be a false cycle, which is acceptable here.
     return synthesize_inline_workflow_id(child_result.ir)
+
+
+def _record_unexpanded_item(container: Container, index: int, reason: UnexpandedReason) -> None:
+    """Record why a literal-batch sub-workflow item did not expand.
+
+    Stored on the batch Container (not the host Node) because individual items may
+    succeed or fail independently. JSON-able: ``{index: reason}``.
+    """
+    container.annotations.setdefault("unexpanded_items", {})[index] = reason
 
 
 def _warnings_annotation(child_result: SubWorkflowResult) -> dict[str, Any]:
