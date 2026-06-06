@@ -9,7 +9,7 @@ Extract a renderer-agnostic **Graph model** from the mermaid visualizer: one IR 
 Domain vocabulary (`context/CONTEXT.md`): **Graph model**, **IR**, **Container**.
 
 ## Status
-not started
+done
 
 ## Priority
 high

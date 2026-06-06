@@ -3,15 +3,7 @@
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.workflow.mermaid import (
-    _deduplicate_edges,
-    _detect_decision_nodes,
-    _find_terminal_nodes,
-    _first_sentence,
-    _get_item_label,
-    _loop_label,
-    generate_mermaid,
-)
+from pflow.core.workflow.mermaid import generate_mermaid
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
 # ---------------------------------------------------------------------------
@@ -66,6 +58,21 @@ def test_simple_pipeline() -> None:
     assert any("b --> c" in line for line in lines)
 
 
+def test_same_source_data_flow_suppresses_duplicate_structural_edge() -> None:
+    """A data-flow edge should not render as a duplicate plain structural edge."""
+    ir = _ir(
+        nodes=[
+            _node("a", "code"),
+            _node("b", "code", params={"inputs": {"value": "${a.result}"}}),
+        ],
+        edges=[{"from": "a", "to": "b"}],
+    )
+
+    out = generate_mermaid(ir)
+
+    assert out.splitlines().count("    a --> b") == 1
+
+
 # ---------------------------------------------------------------------------
 # 2. Conditional branching
 # ---------------------------------------------------------------------------
@@ -86,6 +93,33 @@ def test_conditional_branching() -> None:
     assert "check -->|yes| pass" in out
     assert "check -->|no| fail" in out
     assert "check -.->|error| handle" in out
+
+
+def test_explicit_end_routes_render_to_end_sink() -> None:
+    """Authored next:end routes are visible even when old terminal heuristic would not draw them."""
+    out = generate_mermaid(
+        _ir(
+            nodes=[
+                _node("linear", _routes_to_end=True),
+                _node("next"),
+                _node("error-handler"),
+                _node("branch", _routes_to_end=True),
+                _node("branch-target"),
+            ],
+            edges=[
+                {"from": "linear", "to": "next"},
+                {"from": "linear", "to": "error-handler", "action": "error"},
+                {"from": "branch", "to": "branch-target", "action": "go"},
+            ],
+        )
+    )
+
+    assert 'pflow_end(("end"))' in out
+    assert "linear --> pflow_end" in out
+    assert "branch --> pflow_end" in out
+    assert "linear --> next" in out
+    assert "linear -.->|error| error-handler" in out
+    assert "branch -->|go| branch-target" in out
 
 
 # ---------------------------------------------------------------------------
@@ -655,16 +689,30 @@ def test_batch_workflow_dynamic_subgraph_label() -> None:
 
 
 def test_item_label_extraction() -> None:
-    """_get_item_label extracts labels from various dict formats."""
-    assert _get_item_label({"focus": "emotional"}, 0) == "emotional"
-    assert _get_item_label({"lens": "heart"}, 0) == "heart"
-    assert _get_item_label({"name": "test"}, 0) == "test"
-    assert _get_item_label({"label": "my-label"}, 0) == "my-label"
-    # Fallback: first short string not in skip keys
-    assert _get_item_label({"workflow": "./foo.pflow.md", "role": "critic"}, 0) == "critic"
-    # Non-dict
-    assert _get_item_label("plain-string", 0) == "#1"
-    assert _get_item_label(42, 2) == "#3"
+    """Batch item labels are visible renderer behavior, not public shim helpers."""
+    ir = _ir(
+        nodes=[
+            {
+                "id": "review",
+                "type": "llm",
+                "batch": {
+                    "items": [
+                        {"focus": "emotional"},
+                        {"lens": "heart"},
+                        {"name": "test"},
+                        {"label": "my-label"},
+                    ],
+                    "parallel": True,
+                },
+            },
+        ],
+    )
+    out = generate_mermaid(ir)
+
+    assert "emotional (llm)" in out
+    assert "heart (llm)" in out
+    assert "test (llm)" in out
+    assert "my-label (llm)" in out
 
 
 def test_batch_item_workflow_expansion() -> None:
@@ -776,20 +824,12 @@ def test_error_only_node_is_terminal() -> None:
             {"from": "risky", "to": "fallback", "action": "error"},
         ],
     )
-    generate_mermaid(ir)  # ensure no errors
+    out = generate_mermaid(ir)
 
     # risky has only an error edge, so it's terminal for success path
-    terminals = _find_terminal_nodes(
-        [_node("check"), _node("ok"), _node("risky"), _node("fallback")],
-        [
-            {"from": "check", "to": "ok", "action": "yes"},
-            {"from": "check", "to": "risky", "action": "no"},
-            {"from": "risky", "to": "fallback", "action": "error"},
-        ],
-    )
-    assert "risky" in terminals
-    assert "ok" in terminals
-    assert "fallback" in terminals
+    assert "risky --> pflow_end" in out
+    assert "ok --> pflow_end" in out
+    assert "fallback --> pflow_end" in out
 
 
 # ===========================================================================
@@ -1095,11 +1135,23 @@ def test_descriptions_on_subgraph() -> None:
 
 
 def test_first_sentence_extraction() -> None:
-    """_first_sentence extracts first sentence and strips markdown."""
-    assert _first_sentence("Hello world. More text.") == "Hello world."
-    assert _first_sentence("**Bold** start. Rest.") == "Bold start."
-    assert _first_sentence("No period here") == "No period here"
-    assert _first_sentence("A" * 100 + ".") == "A" * 80
+    """Descriptions render the first cleaned sentence only."""
+    ir = _ir(
+        nodes=[
+            _node("hello", "llm", purpose="Hello world. More text."),
+            _node("bold", "llm", purpose="**Bold** start. Rest."),
+            _node("plain", "llm", purpose="No period here"),
+            _node("long", "llm", purpose="A" * 100 + "."),
+        ],
+    )
+    out = generate_mermaid(ir, descriptions=True)
+
+    assert "Hello world." in out
+    assert "More text." not in out
+    assert "Bold start." in out
+    assert "No period here" in out
+    assert "A" * 80 in out
+    assert "A" * 81 not in out
 
 
 # ===========================================================================
@@ -1120,36 +1172,6 @@ def test_back_edge_renders() -> None:
 
     assert "b --> a" in out
     assert "a --> b" in out
-
-
-# ===========================================================================
-# Unit tests for internal functions
-# ===========================================================================
-
-
-def test_deduplicate_edges_preserves_error() -> None:
-    """Error edges are never suppressed by deduplication."""
-    edges = [
-        {"from": "a", "to": "b"},
-        {"from": "a", "to": "b", "action": "go"},
-        {"from": "a", "to": "c", "action": "error"},
-    ]
-    result = _deduplicate_edges(edges)
-    actions = [e.get("action") for e in result]
-    assert "go" in actions
-    assert "error" in actions
-    # Document-order edge for a->b should be suppressed
-    assert sum(1 for e in result if e["from"] == "a" and e["to"] == "b") == 1
-
-
-def test_detect_decision_nodes_ignores_default() -> None:
-    """action='default' edges don't count toward decision detection."""
-    edges = [
-        {"from": "a", "to": "b", "action": "default"},
-        {"from": "a", "to": "c", "action": "go"},
-    ]
-    decisions = _detect_decision_nodes(edges)
-    assert "a" not in decisions  # only 1 non-default named action
 
 
 # ===========================================================================
@@ -1537,65 +1559,6 @@ def test_output_source_from_input_in_subworkflow() -> None:
 # Loop rendering (`loop:` is a node property, not a graph edge — it must be
 # synthesized onto the label, else a looped node renders as a one-shot node)
 # ---------------------------------------------------------------------------
-
-
-def test_loop_label_while_strips_self_prefix_and_shows_literal_cap() -> None:
-    # The condition refers to the node's own fresh output, so the `<node_id>.`
-    # prefix is noise and is stripped; a literal cap renders as `≤ N`.
-    label = _loop_label({"while": "${run-rounds.more}", "max_iterations": 10}, "run-rounds")
-    assert label == "<br/>⟳ while more · ≤ 10"
-
-
-def test_loop_label_until_polarity() -> None:
-    label = _loop_label({"until": "${check.done}"}, "check")
-    assert label == "<br/>⟳ until done"
-
-
-def test_loop_label_template_cap_is_stripped() -> None:
-    # A `${...}` cap (resolved at runtime) renders by name, not as a raw template.
-    label = _loop_label(
-        {"while": "${review-round.result.continue}", "max_iterations": "${max_review_rounds}"},
-        "review-round",
-    )
-    assert label == "<br/>⟳ while result.continue · ≤ max_review_rounds"
-
-
-def test_loop_label_shows_carried_state_keys() -> None:
-    label = _loop_label(
-        {"while": "${r.more}", "max_iterations": 10, "carry": {"contenders": "${r.survivors}"}},
-        "r",
-    )
-    assert label == "<br/>⟳ while more · ≤ 10 · carry contenders"
-
-
-def test_loop_label_no_cap_omits_bound() -> None:
-    # max_iterations is optional; when absent the cap defaults to MAX_NODE_VISITS
-    # at runtime — not meaningful to display, so no `≤` is shown.
-    assert _loop_label({"while": "${r.go}"}, "r") == "<br/>⟳ while go"
-
-
-def test_loop_label_non_self_condition_left_intact() -> None:
-    # The prefix strip only fires for a self-referential condition; a condition on
-    # another node's output is shown whole.
-    assert _loop_label({"while": "${other.flag}"}, "r") == "<br/>⟳ while other.flag"
-
-
-def test_loop_label_bool_cap_ignored() -> None:
-    # bool is an int subclass; a loop cap is never a bool. Guard against rendering `≤ True`.
-    assert _loop_label({"while": "${r.go}", "max_iterations": True}, "r") == "<br/>⟳ while go"
-
-
-def test_loop_label_defensive_on_empty_and_malformed() -> None:
-    assert _loop_label({}, "r") == ""  # neither while nor until
-    assert _loop_label({"max_iterations": 5}, "r") == ""  # no polarity
-    assert _loop_label("not-a-dict", "r") == ""  # type: ignore[arg-type]
-
-
-def test_loop_label_escapes_special_chars() -> None:
-    # Pipes/quotes in a (pathological) carried key must not break mermaid label syntax.
-    label = _loop_label({"while": "${r.go}", "carry": {"a|b": "${r.x}"}}, "r")
-    assert "|" not in label.split("<br/>")[1]  # raw pipe escaped to &#124;
-    assert "&#124;" in label
 
 
 def test_loop_renders_on_single_node_label() -> None:

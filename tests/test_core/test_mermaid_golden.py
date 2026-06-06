@@ -19,6 +19,7 @@ from pflow.execution.workflow_resolver import resolve_workflow
 
 GOLDEN_DIR = Path(__file__).parent / "golden_mermaid"
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
 
 def _generate_from_file(
@@ -35,6 +36,7 @@ def _generate_from_file(
         resolved.ir,
         resolve_child=resolve_sub_workflow,
         base_path=base_path,
+        source_file=Path(resolved.file_path) if resolved.file_path else None,
         max_depth=depth,
         direction=direction,
         descriptions=descriptions,
@@ -70,5 +72,29 @@ def test_golden_example_workflow(workflow_rel: str, golden_name: str, direction:
     assert actual == expected, (
         f"Mermaid output differs from golden file {golden_name}.\n"
         f"To update: uv run pflow visualize {workflow_path} --depth 5 "
+        f"--direction {direction} -o {golden_path}"
+    )
+
+
+@pytest.mark.parametrize(
+    "workflow_rel,golden_name,direction",
+    [
+        ("graph/multi-output-batch/parent.pflow.md", "multi-output-batch-fan.mmd", "LR"),
+    ],
+)
+def test_golden_fixture_workflow(workflow_rel: str, golden_name: str, direction: str) -> None:
+    """Test-only fixture output matches golden file for graph edge-case coverage."""
+    workflow_path = FIXTURES_DIR / workflow_rel
+    golden_path = GOLDEN_DIR / golden_name
+
+    assert workflow_path.exists(), f"Workflow fixture not found: {workflow_path}"
+    assert golden_path.exists(), f"Golden file not found: {golden_path}"
+
+    actual = _generate_from_file(workflow_path, direction=direction)
+    expected = golden_path.read_text(encoding="utf-8")
+
+    assert actual == expected, (
+        f"Mermaid output differs from golden fixture {golden_name}.\n"
+        f"To update: pflow visualize {workflow_path} --depth 5 "
         f"--direction {direction} -o {golden_path}"
     )

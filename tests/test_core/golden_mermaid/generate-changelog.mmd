@@ -73,6 +73,7 @@ graph LR
     update-changelog-file --> out_changelog_file
     update-mintlify-file --> out_mintlify_file
     save-release-context --> out_context_file
+    pflow_end(("end"))
     get-latest-tag --> resolve-tag
     resolve-tag --> gather-commit-data
     gather-commit-data --> get-task-reviews
@@ -97,3 +98,4 @@ graph LR
     check-slack -->|create-summary| create-summary
     format-slack-message --> notify-slack
     notify-slack --> create-summary
+    create-summary --> pflow_end

@@ -291,6 +291,13 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                             "omit it."
                         ),
                     },
+                    "_routes_to_end": {
+                        "type": "boolean",
+                        "description": (
+                            "Parser-injected metadata marking an authored success route to the reserved "
+                            "terminal keyword ``end``. It is not a runtime edge."
+                        ),
+                    },
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,
@@ -762,6 +769,12 @@ def _validate_duplicate_node_ids(data: dict[str, Any]) -> None:
     seen = set()
     for i, node in enumerate(data["nodes"]):
         node_id = node["id"]
+        if node_id in {"end", "__end__"}:
+            raise ValidationError(
+                message=f"Node ID '{node_id}' is reserved",
+                path=f"nodes[{i}].id",
+                suggestion="Use a different node ID. Use 'next: end' to terminate a route.",
+            )
         if node_id in seen:
             raise ValidationError(
                 message=f"Duplicate node ID '{node_id}'",

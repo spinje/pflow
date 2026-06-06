@@ -1,0 +1,37 @@
+graph LR
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
+    subgraph review-items ["review-items (parallel x5)"]
+        subgraph review-items__alpha ["alpha (workflow)"]
+        review-items__alpha__score["score (code)"]:::code
+        review-items__alpha__out_summary(["summary"]):::output
+        review-items__alpha__score --> review-items__alpha__out_summary
+        review-items__alpha__out_score(["score"]):::output
+        review-items__alpha__score --> review-items__alpha__out_score
+        end
+        style review-items__alpha fill:#808080,fill-opacity:0.14,stroke:#999
+        subgraph review-items__beta ["beta (workflow)"]
+        review-items__beta__score["score (code)"]:::code
+        review-items__beta__out_summary(["summary"]):::output
+        review-items__beta__score --> review-items__beta__out_summary
+        review-items__beta__out_score(["score"]):::output
+        review-items__beta__score --> review-items__beta__out_score
+        end
+        style review-items__beta fill:#808080,fill-opacity:0.14,stroke:#999
+        review-items__dots@{ shape: procs, label: "... x5" }
+        style review-items__dots fill:#FFF2CC,stroke:#D6B656,color:#000
+    end
+    style review-items fill:#808080,fill-opacity:0.14,stroke:#999
+    combine["combine (code)"]:::code
+    review-items__alpha__out_summary --> combine
+    review-items__alpha__out_score --> combine
+    review-items__beta__out_summary --> combine
+    review-items__beta__out_score --> combine
+    review-items__dots --> combine

@@ -140,6 +140,21 @@ class TestValidIR:
         # Template variables should pass through as regular strings
         validate_ir(ir)
 
+    def test_valid_ir_with_routes_to_end_metadata(self):
+        """Parser-injected terminal routing metadata is schema-whitelisted."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "done",
+                    "type": "shell",
+                    "purpose": "Terminates the workflow through the reserved end keyword",
+                    "_routes_to_end": True,
+                }
+            ],
+        }
+        validate_ir(ir)
+
 
 class TestInvalidIR:
     """Test validation catches invalid IR structures."""
@@ -245,6 +260,27 @@ class TestInvalidIR:
         assert "nodes[0]" in error.path
         assert "unknown properties" in error.suggestion.lower()
 
+    def test_routes_to_end_metadata_must_be_boolean(self):
+        """The terminal-routing metadata is a bool, not a user-facing route payload."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "done",
+                    "type": "shell",
+                    "purpose": "Terminates the workflow through the reserved end keyword",
+                    "_routes_to_end": "yes",
+                }
+            ],
+        }
+
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+
+        error = exc_info.value
+        assert "nodes[0]._routes_to_end" in error.path
+        assert "boolean" in error.suggestion.lower()
+
     def test_edge_missing_from(self):
         """Test error when edge is missing 'from' field."""
         ir = {
@@ -300,6 +336,28 @@ class TestInvalidIR:
         assert "Duplicate node ID 'n1'" in str(error)
         assert "nodes[1].id" in error.path
         assert "unique" in error.suggestion.lower()
+
+    @pytest.mark.parametrize("reserved_id", ["end", "__end__"])
+    def test_reserved_terminal_node_ids_are_rejected(self, reserved_id):
+        """Programmatic IR cannot collide with parser/graph terminal sentinels."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": reserved_id,
+                    "type": "test",
+                    "purpose": "Invalid node using a reserved terminal identifier",
+                }
+            ],
+        }
+
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+
+        error = exc_info.value
+        assert f"Node ID '{reserved_id}' is reserved" in str(error)
+        assert "nodes[0].id" in error.path
+        assert "next: end" in error.suggestion
 
     def test_wrong_type_for_nodes(self):
         """Test error when nodes is not an array."""

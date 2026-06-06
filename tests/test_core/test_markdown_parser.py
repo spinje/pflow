@@ -2813,7 +2813,7 @@ class TestConditionalBranching:
         assert b_edges[0] == {"from": "step-b", "to": "step-c"}
 
     def test_next_end_produces_no_outgoing_edge(self) -> None:
-        """When a node has '- next: end', it produces no outgoing edge."""
+        """When a node has '- next: end', it records terminal routing without an IR edge."""
         content = _md("""\
             # Test
 
@@ -2858,6 +2858,9 @@ class TestConditionalBranching:
         # No edge should have from == "step-b"
         b_edges = [e for e in edges if e["from"] == "step-b"]
         assert b_edges == []
+        nodes = {n["id"]: n for n in result.ir["nodes"]}
+        assert nodes["step-b"]["_routes_to_end"] is True
+        assert "_routes_to_end" not in nodes["step-a"]
 
     def test_next_single_target_has_default_action(self) -> None:
         """A single '- next: step-b' produces an edge with action 'default'."""
@@ -3143,6 +3146,43 @@ class TestConditionalBranching:
         actions = {e.get("action") for e in classify_edges}
         assert "fast-path" in actions
         assert "slow-path" in actions
+
+    def test_ast_next_end_records_terminal_routing_without_edge(self) -> None:
+        """Code-level ``next = "end"`` is preserved as parser metadata only."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### classify
+
+            Classify the input.
+
+            - type: code
+
+            ```python code
+            if True:
+                next = "end"
+            result: str = "done"
+            ```
+
+            ### fallback
+
+            Fallback step.
+
+            - type: shell
+
+            ```shell command
+            echo fallback
+            ```
+        """)
+        result = parse_markdown(content)
+        nodes = {n["id"]: n for n in result.ir["nodes"]}
+
+        assert nodes["classify"]["_routes_to_end"] is True
+        assert [e for e in result.ir["edges"] if e["from"] == "classify"] == [{"from": "classify", "to": "fallback"}]
 
     def test_ast_ignores_non_literal_next(self) -> None:
         """Dynamic 'next = some_variable' produces no extra edge (but requires - next:)."""
@@ -4413,6 +4453,7 @@ class TestConditionalBranching:
         assert "end" not in targets
         # Single real target → should get action "default"
         assert {"from": "router", "to": "step-3", "action": "default"} in router_edges
+        assert result.ir["nodes"][0]["_routes_to_end"] is True
 
     def test_node_named_end_rejected(self) -> None:
         """A node with ID 'end' is rejected as reserved keyword."""

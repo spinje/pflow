@@ -641,14 +641,17 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     # Collect AST-detected routing targets from python code blocks
     ast_routing_targets: dict[str, list[str]] = {}
     ast_has_dynamic: set[str] = set()
+    nodes_by_id = {node["id"]: node for node in nodes}
     for entity in step_entities:
         for block in entity.code_blocks:
             if block.param_name == "code":
-                code_targets, has_dynamic = _extract_next_targets_from_code(block.content)
+                code_targets, has_dynamic, has_end = _extract_next_targets_from_code(block.content)
                 if code_targets:
                     ast_routing_targets[entity.id] = code_targets
                 if has_dynamic:
                     ast_has_dynamic.add(entity.id)
+                if has_end:
+                    nodes_by_id[entity.id]["_routes_to_end"] = True
 
     # Build edges with routing
     ir["edges"] = _build_edges(nodes, routing_metadata, ast_routing_targets)
@@ -1209,23 +1212,26 @@ def _parse_next_targets(value: str) -> list[str]:
     return [str(value).strip()]
 
 
-def _extract_next_targets_from_code(code: str) -> tuple[list[str], bool]:
+def _extract_next_targets_from_code(code: str) -> tuple[list[str], bool, bool]:
     """Extract literal 'next' assignment targets from Python code via AST.
 
     Finds ``next: str = "node-id"`` (AnnAssign) and ``next = "node-id"`` (Assign).
     Only extracts string literals. Dynamic values are tracked separately.
 
     Returns:
-        Tuple of (literal_targets, has_dynamic). has_dynamic is True when any
-        assignment to ``next`` uses a non-literal value (e.g. ``next = variable``).
+        Tuple of (literal_targets, has_dynamic, has_end). has_dynamic is True
+        when any assignment to ``next`` uses a non-literal value (e.g.
+        ``next = variable``). has_end is True when any literal assignment routes
+        to the reserved terminal keyword ``"end"``.
     """
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        return [], False
+        return [], False, False
 
     targets: list[str] = []
     has_dynamic = False
+    has_end = False
     for node in ast.walk(tree):
         # Annotated assignment: next: str = "literal" or next: str = variable
         if (
@@ -1248,10 +1254,12 @@ def _extract_next_targets_from_code(code: str) -> tuple[list[str], bool]:
     unique: list[str] = []
     for t in targets:
         # "end" is a special keyword for flow termination, not a node reference
-        if t not in seen and t != "end":
+        if t == "end":
+            has_end = True
+        elif t not in seen:
             seen.add(t)
             unique.append(t)
-    return unique, has_dynamic
+    return unique, has_dynamic, has_end
 
 
 def _build_edges(
@@ -1605,6 +1613,8 @@ def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
     routing: dict[str, Any] = {}
     if "next" in all_params:
         routing["next"] = all_params.pop("next")
+        if "end" in _parse_next_targets(str(routing["next"])):
+            node["_routes_to_end"] = True
     if "on-error" in all_params:
         routing["on_error"] = all_params.pop("on-error")
 
