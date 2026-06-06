@@ -109,14 +109,18 @@ class TestMCPNodeCriticalBehaviors:
         shared = {}
         prep_res = {"server": "test", "tool": "failing-tool"}
 
-        # Test protocol error - should return "default" for connection issues
+        # Protocol/transport errors are node failures, not successful output.
         exec_res = {"error": "Connection failed"}
         action = node.post(shared, prep_res, exec_res)
 
-        # Protocol errors return "default" (lines 370-372 in node.py)
-        assert action == "default"
+        assert action == "error"
         assert "error" in shared
         assert shared["error"] == "Connection failed"
+        assert shared["error_details"] == {
+            "server": "test",
+            "tool": "failing-tool",
+            "timeout": False,
+        }
 
         # Test tool-level error - should return "error" for repair system
         shared = {}
