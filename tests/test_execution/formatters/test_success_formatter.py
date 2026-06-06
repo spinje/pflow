@@ -1134,7 +1134,7 @@ class TestAppendOutputsCliMcpParity:
                 "count": 1,
                 "success_count": 1,
                 "error_count": 0,
-                "errors": None,
+                "errors": [],
                 "batch_metadata": {"timing": {"total_items_ms": 1400.0}},
             }
         }
@@ -1163,18 +1163,28 @@ class TestCollectOutputsDottedPath:
     def test_resolves_dotted_output_key(self):
         from pflow.execution.formatters.success_formatter import _collect_outputs
 
-        shared = {"batch-llm": {"success_count": 2, "count": 2, "errors": None}}
+        shared = {"batch-llm": {"success_count": 2, "count": 2, "errors": []}}
         result = _collect_outputs(shared, workflow_ir={}, output_key="batch-llm.success_count")
         assert result == {"batch-llm.success_count": 2}
 
     def test_resolved_none_emits_null(self):
-        """``-o batch.errors`` on a successful batch preserves the ``None`` value
-        in the JSON outputs dict — distinct from "key missing"."""
+        """A present-but-``None`` value is preserved in the JSON outputs dict —
+        distinct from "key missing". (Batch ``errors`` is now ``[]``, never
+        ``None`` — issue #484 — so this uses an explicit ``None``-valued key to
+        keep exercising the present-but-``None`` distinction.)"""
         from pflow.execution.formatters.success_formatter import _collect_outputs
 
-        shared = {"batch-llm": {"errors": None, "success_count": 1, "count": 1}}
+        shared = {"node": {"value": None, "success_count": 1, "count": 1}}
+        result = _collect_outputs(shared, workflow_ir={}, output_key="node.value")
+        assert result == {"node.value": None}
+
+    def test_resolved_batch_errors_emits_empty_list(self):
+        """``-o batch.errors`` on a successful batch resolves to ``[]`` (issue #484)."""
+        from pflow.execution.formatters.success_formatter import _collect_outputs
+
+        shared = {"batch-llm": {"errors": [], "success_count": 1, "count": 1}}
         result = _collect_outputs(shared, workflow_ir={}, output_key="batch-llm.errors")
-        assert result == {"batch-llm.errors": None}
+        assert result == {"batch-llm.errors": []}
 
     def test_missing_key_returns_empty(self):
         """JSON-mode silently omits a missed key — no human-prose hint."""

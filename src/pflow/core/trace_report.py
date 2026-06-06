@@ -1144,7 +1144,7 @@ def _format_remaining_node_output(output: dict[str, Any], lines: list[str]) -> N
 
 def _has_batch_error_output(output: dict[str, Any]) -> bool:
     errors = output.get("errors")
-    if output.get("batch_metadata") and isinstance(errors, list):
+    if output.get("batch_metadata") and isinstance(errors, list) and errors:
         return True
     return _looks_like_batch_error_list(errors)
 

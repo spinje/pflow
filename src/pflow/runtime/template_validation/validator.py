@@ -55,7 +55,7 @@ BATCH_OUTPUTS: list[dict[str, str]] = [
     {"key": "count", "type": "number", "description": "Total items processed"},
     {"key": "success_count", "type": "number", "description": "Items that succeeded"},
     {"key": "error_count", "type": "number", "description": "Items that failed"},
-    {"key": "errors", "type": "array", "description": "Error details (null if none)"},
+    {"key": "errors", "type": "array", "description": "Error details (empty array when no failures)"},
     {"key": "batch_metadata", "type": "dict", "description": "Execution statistics"},
 ]
 

@@ -1924,7 +1924,7 @@ def _build_batch_output_shape(
         "count": len(items),
         "success_count": len(item_outputs),
         "error_count": 0,
-        "errors": None,
+        "errors": [],
         "batch_metadata": {
             "parallel": batch_config.parallel,
             "max_concurrent": batch_config.max_concurrent if batch_config.parallel else None,
