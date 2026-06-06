@@ -59,6 +59,8 @@ Features — when the user says X, load topic Y:
                    → "reuse this", "same validation as X", "iterate over a fixed count"
   prompt-caching   Provider prompt caching, ## Cache, prompt_cache:
                    → "cache prompts", "reduce LLM cost", "speed up repeated calls"
+  patterns         Multi-step LLM/agent recipes — fan-out, verify, generate-filter, tournament
+                   → "fan out and combine", "verify from multiple angles", "rank/tournament", "generate and pick the best", "orchestrate steps"
 
 Start here:
   core             Framework fundamentals — how to design and build workflows

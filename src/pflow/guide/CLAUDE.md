@@ -18,7 +18,7 @@ src/pflow/guide/
 ├── nodes/               # Per-node-type guides (static prose + dynamic interface from registry)
 │   ├── http.md, llm.md, claude-code.md, code.md, shell.md, file.md, mcp.md
 └── features/            # Per-feature guides (static content only)
-    ├── batch.md, branching.md, error-handling.md, loop.md, prompt-caching.md, sub-workflows.md
+    ├── batch.md, branching.md, error-handling.md, loop.md, patterns.md, prompt-caching.md, sub-workflows.md
 ```
 
 ## Topic Resolution

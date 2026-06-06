@@ -365,7 +365,7 @@ echo "failed" >&2
 
     # Features detected
     assert "Batch" in result  # batch config on notify-each
-    assert "Branching" in result  # on-error edge
+    assert "Error Handling" in result  # on-error edge → error-handling topic
 
 
 def test_compose_workflow_ref_plus_explicit_topic(tmp_path: Path) -> None:
@@ -453,7 +453,8 @@ def test_detect_batch() -> None:
     assert "llm" in topics
 
 
-def test_detect_branching_via_error_edge() -> None:
+def test_detect_error_handling_via_error_edge() -> None:
+    # An `on-error:` edge routes to the error-handling topic, not branching.
     ir = {
         "nodes": [
             {"id": "a", "type": "shell", "params": {}},
@@ -461,7 +462,9 @@ def test_detect_branching_via_error_edge() -> None:
         ],
         "edges": [{"from": "a", "to": "h", "action": "error"}],
     }
-    assert "branching" in detect_topics_from_ir(ir)
+    topics = detect_topics_from_ir(ir)
+    assert "error-handling" in topics
+    assert "branching" not in topics
 
 
 def test_detect_branching_via_named_action() -> None:
