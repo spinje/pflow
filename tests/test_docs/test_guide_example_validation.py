@@ -301,3 +301,38 @@ class TestGuideExampleValidation:
         if failures:
             rendered = "\n".join(f"  {label}: {msg}" for label, msg in failures)
             pytest.fail(f"{len(failures)} self-contained guide example(s) failed to run:\n{rendered}")
+
+    def test_loop_example_terminates_by_condition(self, guide_workflows: list[tuple[str, Path]]) -> None:
+        """Documented ``loop:`` examples must stop on their own condition.
+
+        The breadth execution test above only proves a loop example doesn't
+        crash — it would still pass if the loop silently ran to ``max_iterations``
+        instead of terminating on its ``until:``/``while:`` condition. This pins
+        the behavior that makes the example *correct*: the loop ends because its
+        condition was met (``loop_stopped == "condition"``), not because it hit
+        the iteration cap. A regression in condition-termination fails here.
+        """
+        loop_examples: list[tuple[str, Path, str]] = []
+        for label, path in guide_workflows:
+            if not _is_self_contained_runnable(path):
+                continue
+            ir = parse_markdown(path.read_text()).ir
+            normalize_ir(ir)
+            loop_examples.extend(
+                (label, path, n["id"]) for n in ir.get("nodes", []) if n.get("loop") is not None and n.get("id")
+            )
+
+        assert loop_examples, (
+            "No self-contained loop: example found in the guide (expected the Count Up demo in loop.md). "
+            "The runnable filter or the loop example may have broken."
+        )
+
+        for label, path, loop_id in loop_examples:
+            result = WorkflowRunner().run(str(path), {}, RunnerConfig(cache_enabled=False))
+            assert result.status != WorkflowStatus.FAILED, f"{label}: loop example ended FAILED"
+            output = result.shared_after.get(loop_id) or {}
+            assert output.get("loop_stopped") == "condition", (
+                f"{label}: loop node {loop_id!r} stopped via {output.get('loop_stopped')!r}, expected "
+                "'condition' — the documented loop no longer terminates on its own condition "
+                "(it ran to max_iterations instead)."
+            )
