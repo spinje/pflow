@@ -257,7 +257,7 @@ def extract_code_load_references(code: str) -> set[str]:
         tree = ast.parse(code)
     except SyntaxError:
         return set()
-    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    return _loaded_names(tree)
 
 
 def _loaded_names(node: ast.AST) -> set[str]:
@@ -284,7 +284,11 @@ def _top_level_bound_names(node: ast.stmt) -> set[str]:
         stores: set[str] = set()
         for target in node.targets:
             stores |= _stored_names(target)
-        return stores - _loaded_names(node.value)  # drop read-before-write (x = x[...])
+        # Drop read-before-write (`x = x[...]`, swaps). This also excludes a name
+        # reused as a comprehension target in its own RHS (`x = [x for x in ...]`),
+        # where the outer `x` IS bound — a false negative in the SAFE direction
+        # (yields "add to inputs" rather than an unsafe "remove").
+        return stores - _loaded_names(node.value)
     if isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
         return {node.target.id} - _loaded_names(node.value)
     return set()

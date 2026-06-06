@@ -502,6 +502,14 @@ class TestAnnotationExtractionHelper:
         code = "x: int\nfor x in [1, 2, 3]:\n    pass\nresult: int = x"
         assert "x" not in extract_code_assigned_names(code)
 
+    def test_assigned_names_comprehension_reuse_is_safe_false_negative(self):
+        # `x = [x for x in range(3)]` DOES bind the outer x, but the comprehension's
+        # `x` (Load) lands in the RHS read set, so the read-before-write guard
+        # excludes it. Documented false negative in the SAFE direction: the user
+        # gets "add to inputs", never an unsafe "remove".
+        code = "x = [x for x in range(3)]\nresult: int = len(x)"
+        assert "x" not in extract_code_assigned_names(code)
+
     def test_assigned_names_malformed_code_returns_empty(self):
         assert extract_code_assigned_names("x: dict =") == set()
 
