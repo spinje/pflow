@@ -63,6 +63,19 @@ class _McpApiWarningNode(BaseNode):
         return "default"
 
 
+class _McpProtocolErrorNode(BaseNode):
+    """Mimics MCPNode.post() after exec_fallback reported a transport failure."""
+
+    def post(self, shared, prep_res, exec_res):
+        shared["error"] = self.params.get("error_message", "MCP tool failed: connection refused")
+        shared["error_details"] = {
+            "server": "notebooklm",
+            "tool": "studio_create",
+            "timeout": False,
+        }
+        return "error"
+
+
 class TestUnmatchedActionWarning:
     """When a node returns an action that doesn't match any successor edge,
     the engine should write a warning to __warnings__ and stop traversal.
@@ -538,6 +551,166 @@ class TestApiWarningRecovery:
         assert message == "API error: expired auth"
         assert context["type"] == "api_warning"
         assert context["recovered"] is True
+
+
+class TestMcpProtocolErrorRouting:
+    """MCP protocol/transport errors should fail at the MCP node."""
+
+    def test_unhandled_mcp_protocol_error_stops_before_default_successor(self):
+        from pflow.runtime.node_state import get_node_failure
+
+        api = _McpProtocolErrorNode()
+        api.node_id = "create_audio"
+        downstream = _OutputNode()
+        downstream.node_id = "poll"
+        downstream.set_params({"output_value": "should not run"})
+
+        api >> downstream
+
+        configs = {
+            "create_audio": NodeConfig(
+                node_id="create_audio",
+                node_type_name="MCPNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "poll": NodeConfig(
+                node_id="poll",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=api, node_configs=configs)
+        shared: dict = {}
+        result = WorkflowEngine().run(workflow, shared)
+
+        assert result == "error"
+        assert "poll" not in shared
+
+        failure = get_node_failure(shared, "create_audio")
+        assert failure is not None
+        # Category is message-pattern dependent: resource-like wording is
+        # intercepted earlier by api_warning_detector (pinned below).
+        assert failure["category"] == "mcp_failure"
+        assert failure["error"] == "MCP tool failed: connection refused"
+        assert failure["data"]["error"] == "MCP tool failed: connection refused"
+        assert failure["data"]["error_details"] == {
+            "server": "notebooklm",
+            "tool": "studio_create",
+            "timeout": False,
+        }
+        warning = shared["__warnings__"]["create_audio"]
+        assert "no successor edge matches" in warning
+        assert "on-error" in warning
+
+    def test_mcp_protocol_resource_message_routes_as_api_warning(self):
+        from pflow.runtime.node_state import get_node_failure
+
+        api = _McpProtocolErrorNode()
+        api.node_id = "create_audio"
+        api.set_params({"error_message": "MCP tool failed: repository not found"})
+        downstream = _OutputNode()
+        downstream.node_id = "poll"
+        downstream.set_params({"output_value": "should not run"})
+
+        api >> downstream
+
+        configs = {
+            "create_audio": NodeConfig(
+                node_id="create_audio",
+                node_type_name="MCPNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "poll": NodeConfig(
+                node_id="poll",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=api, node_configs=configs)
+        shared: dict = {}
+        result = WorkflowEngine().run(workflow, shared)
+
+        assert result == "error"
+        assert "poll" not in shared
+
+        failure = get_node_failure(shared, "create_audio")
+        assert failure is not None
+        assert failure["category"] == "api_warning"
+        assert failure["error"] == "API error: MCP tool failed: repository not found"
+        assert failure["data"]["error"] == "MCP tool failed: repository not found"
+        assert failure["data"]["error_details"] == {
+            "server": "notebooklm",
+            "tool": "studio_create",
+            "timeout": False,
+        }
+
+        # The archived failure keeps the detector's API-warning category/message,
+        # while the public runtime warning for an unhandled error action is the
+        # routing hint that tells the user to add on-error.
+        warning = shared["__warnings__"]["create_audio"]
+        assert "no successor edge matches" in warning
+        assert "on-error" in warning
+
+    def test_handled_mcp_protocol_error_routes_to_on_error_handler(self):
+        from pflow.runtime.node_state import get_node_failure
+
+        api = _McpProtocolErrorNode()
+        api.node_id = "create_audio"
+        recover = _OutputNode()
+        recover.node_id = "recover"
+        recover.set_params({"output_value": "handled"})
+
+        api - "error" >> recover
+
+        configs = {
+            "create_audio": NodeConfig(
+                node_id="create_audio",
+                node_type_name="MCPNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "recover": NodeConfig(
+                node_id="recover",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=api, node_configs=configs)
+        shared: dict = {}
+        result = WorkflowEngine().run(workflow, shared)
+
+        assert result == "default"
+        assert shared["recover"]["result"] == "handled"
+
+        failure = get_node_failure(shared, "create_audio")
+        assert failure is not None
+        assert failure["category"] == "mcp_failure"
+        assert failure["error"] == "MCP tool failed: connection refused"
+
+        message, context = normalize_runtime_warning(shared["__warnings__"]["create_audio"])
+        assert message == "Node 'create_audio' failed — on-error → 'recover'"
+        assert context["type"] == "on_error_recovery"
+        assert context["category"] == "mcp_failure"
 
 
 class TestBatchTemplateErrorPropagation:

@@ -235,6 +235,9 @@ def _format_all_context_blocks(diagnostic: Diagnostic, context: dict[str, Any]) 
     if (mcp_error := context.get("mcp_error")) and isinstance(mcp_error, dict):
         lines.extend(_format_mcp_error_lines(mcp_error))
 
+    if (mcp_error_details := context.get("mcp_error_details")) and isinstance(mcp_error_details, dict):
+        lines.extend(_format_mcp_error_details_lines(mcp_error_details))
+
     lines.extend(_format_available_fields_block(context))
 
     if context.get("category") == "template_error":
@@ -597,12 +600,26 @@ def _render_http_failure_block(data: dict[str, Any]) -> list[str]:
 
 
 def _render_mcp_failure_block(data: dict[str, Any]) -> list[str]:
+    from pflow.core.security_utils import sanitize_parameters
+
+    sanitized_data = sanitize_parameters(data)
     lines: list[str] = []
-    if server := data.get("server"):
+    details = sanitized_data.get("error_details")
+    detail_map = details if isinstance(details, dict) else {}
+    if server := sanitized_data.get("server") or detail_map.get("server"):
         lines.append(f"        Server: {server}")
-    if tool := data.get("tool"):
+    if tool := sanitized_data.get("tool") or detail_map.get("tool"):
         lines.append(f"        Tool: {tool}")
-    if details := data.get("error_details"):
+    if (timeout := detail_map.get("timeout")) is not None:
+        lines.append(f"        Timeout: {timeout}")
+    extra_details = {
+        key: value
+        for key, value in detail_map.items()
+        if key not in {"server", "tool", "timeout"} and value is not None
+    }
+    if extra_details:
+        lines.append(f"        Details: {extra_details}")
+    elif details and not isinstance(details, dict):
         lines.append(f"        Details: {details}")
     if not lines:
         lines.append("        (no MCP details captured)")
@@ -719,6 +736,31 @@ def _format_mcp_error_lines(mcp_error: dict[str, Any]) -> list[str]:
         lines.append(f"    Received: {details.get('received')}")
     elif message := sanitized_mcp.get("message"):
         lines.append(f"    {message}")
+
+    return lines
+
+
+def _format_mcp_error_details_lines(mcp_error_details: dict[str, Any]) -> list[str]:
+    """Render MCP runtime error details carried on non-template diagnostics."""
+    from pflow.core.security_utils import sanitize_parameters
+
+    sanitized_details = sanitize_parameters(mcp_error_details)
+    lines = ["", "  MCP Tool:"]
+
+    if server := sanitized_details.get("server"):
+        lines.append(f"    Server: {server}")
+    if tool := sanitized_details.get("tool"):
+        lines.append(f"    Tool: {tool}")
+    if (timeout := sanitized_details.get("timeout")) is not None:
+        lines.append(f"    Timeout: {timeout}")
+
+    extra_details = {
+        key: value
+        for key, value in sanitized_details.items()
+        if key not in {"server", "tool", "timeout"} and value is not None
+    }
+    if extra_details:
+        lines.append(f"    Details: {extra_details}")
 
     return lines
 

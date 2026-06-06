@@ -389,11 +389,10 @@ class MCPNode(Node):
             exec_res: Execution results
 
         Returns:
-            Action string for workflow transition (always "default" for now)
+            Action string: "error" on protocol/tool failure, "default" on success.
         """
         # Check for protocol/execution errors
         if "error" in exec_res:
-            # Store error in shared store
             shared["error"] = exec_res["error"]
             shared["error_details"] = {
                 "server": prep_res["server"],
@@ -401,11 +400,7 @@ class MCPNode(Node):
                 "timeout": exec_res.get("timeout", False),
             }
             logger.debug(exec_res["error"], extra=shared["error_details"])
-            # WORKAROUND: Return "default" instead of "error" because many workflows
-            # do not declare explicit error-handling edges. This prevents
-            # "Flow ends: 'error' not found" crashes. The error is still stored
-            # in shared["error"] for downstream nodes to handle.
-            return "default"
+            return "error"
 
         # Get the result
         result = exec_res.get("result")

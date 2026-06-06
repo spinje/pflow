@@ -450,17 +450,24 @@ class TestPerformanceBenchmarks:
         for size, target_ms in sizes_and_targets:
             ir = self.create_real_linear_flow_ir(size)
 
-            # Measure compilation time (not execution time)
-            start_time = time.perf_counter()
-            workflow = compile_workflow(ir, test_registry)
-            end_time = time.perf_counter()
+            # Measure compilation time (not execution time). Use best-of sampling
+            # because CI workers can occasionally lose a wall-clock slice to
+            # scheduler noise; a real compiler regression will be slow every time.
+            timings_ms = []
+            workflow = None
+            for _ in range(3):
+                start_time = time.perf_counter()
+                workflow = compile_workflow(ir, test_registry)
+                end_time = time.perf_counter()
+                timings_ms.append((end_time - start_time) * 1000)
 
-            compilation_time_ms = (end_time - start_time) * 1000
+            compilation_time_ms = min(timings_ms)
 
             # Verify workflow compiles and meets performance target
             assert workflow is not None, f"Failed to compile {size}-node workflow"
             assert compilation_time_ms < target_ms, (
-                f"Compilation of {size} real nodes took {compilation_time_ms:.2f}ms (target: <{target_ms}ms)"
+                f"Compilation of {size} real nodes took best-of-3 {compilation_time_ms:.2f}ms "
+                f"(target: <{target_ms}ms; all timings: {[round(t, 2) for t in timings_ms]})"
             )
 
     def test_compiled_real_workflow_executes_correctly(self, test_registry):

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pflow.core.diagnostic import Severity
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import RunnerConfig
@@ -925,6 +925,46 @@ def test_step_17_5_maps_mcp_node_type_to_mcp_failure_category():
     rendered = "\n".join(_render_failure_data_block(FAILURE_CATEGORY_MCP, mcp_data))
     assert "Server: github" in rendered
     assert "Tool: search_code" in rendered
+    assert "Details: {'is_tool_error': True}" in rendered
+    assert "Details: {'server':" not in rendered
+
+    protocol_rendered = "\n".join(
+        _render_failure_data_block(
+            FAILURE_CATEGORY_MCP,
+            {
+                "error": "MCP tool failed: connection refused",
+                "error_details": {
+                    "server": "notebooklm",
+                    "tool": "studio_create",
+                    "timeout": False,
+                },
+            },
+        )
+    )
+    assert "Server: notebooklm" in protocol_rendered
+    assert "Tool: studio_create" in protocol_rendered
+    assert "Timeout: False" in protocol_rendered
+    assert "Details:" not in protocol_rendered
+
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        message="MCP tool failed: Connection closed",
+        source="runtime",
+        title="Execution Failed",
+        node_id="create-audio",
+        context={
+            "category": "execution_failure",
+            "mcp_error_details": {
+                "server": "local",
+                "tool": "echo_payload",
+                "timeout": False,
+            },
+        },
+    )
+    runtime_rendered = format_diagnostic(diagnostic)
+    assert "MCP Tool:" in runtime_rendered
+    assert "Server: local" in runtime_rendered
+    assert "Tool: echo_payload" in runtime_rendered
 
     assert _map_failure_category_to_diagnostic(FAILURE_CATEGORY_MCP) == "execution_failure"
 

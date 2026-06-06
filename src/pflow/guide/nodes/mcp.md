@@ -56,9 +56,12 @@ the operation failed. Example: a tool can return:
 ```
 
 That payload is available as `${create-audio.result.status}`,
-`${create-audio.result.error}`, and so on. Guard workflows that poll, download,
-or mutate follow-up state by checking the tool's own success field before
-continuing.
+`${create-audio.result.error}`, and so on in traces/reports. pflow promotes
+common explicit failure flags (`status: "error"`, `ok: false`, `success:
+false`, etc.) to API-warning failures, so use `on-error:` when a workflow
+should recover from those. For tool-specific failure shapes pflow does not
+classify, guard follow-up polling/download/mutation steps by checking the
+tool's own success field before continuing.
 
 MCP failure paths:
 

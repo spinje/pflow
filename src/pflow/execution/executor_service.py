@@ -142,8 +142,7 @@ def _extract_error_info(action_result: Optional[str], shared_store: dict[str, An
        error (shell exit code, API error, exception text). This includes
        api-warning nodes — ``handle_api_warning`` mirrors the warning text
        into ``failure.error`` so downstream readers don't need a side channel.
-    2. **Root-level error** for errors not scoped to a node (e.g. MCP protocol
-       errors that return ``"default"`` and write ``shared["error"]`` directly).
+    2. **Root-level error** for errors not scoped to a node.
     3. **``__warnings__`` mirror** as a last-resort fallback for legacy paths
        that never populated ``failure.error``.
 
