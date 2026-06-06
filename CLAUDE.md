@@ -29,8 +29,8 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ### Core Directive - Operational Precision
 
-1. **Verify at integration points first.**
-   Code boundaries, API contracts, and data handoffs hide 80% of failures. Start verification here, then work outward.
+1. **Verify at seams first.**
+   Integration points — code boundaries, API contracts, data handoffs — hide 80% of failures. Start verification at your seams, then work outward.
 
 2. **Make uncertainty visible through structured decisions.**
    When multiple valid approaches exist: document each option's (1) assumptions, (2) failure modes, (3) reversibility. Never choose silently.
@@ -42,7 +42,7 @@ This file provides guidance to Claude Code when working with code and documentat
    Abstract comprehension fails at edges. Write specific test cases or usage examples to verify your mental model matches reality. Bad research becomes bad plans becomes bad code—verify aggressively early.
 
 5. **Integration readiness > feature completeness.**
-   Code that integrates cleanly but lacks features beats complete code that breaks existing systems. Design for composability first.
+   Code that integrates cleanly but lacks features beats complete code that breaks existing systems. Design for composability first — favor depth over feature surface.
 
 6. **When inheriting code/decisions, document your trust boundary.**
    Mark explicitly: "Verified", "Assumed correct", "Unable to verify". Future agents need to know where to focus skepticism.
@@ -106,15 +106,18 @@ pflow/
 ├── src/pflow/
 │   ├── cli/                 # CLI entrypoints and subcommands
 │   ├── core/                # Schemas, settings, validation, utilities, LLM/prompt utils
-│   │   └── workflow/        # Workflow lifecycle (manager, validator, save, skills, discovery)
+│   │   ├── workflow/        # Workflow lifecycle (manager, validator, save, skills, discovery)
+│   │   └── prompt_cache_analysis/  # Prompt-cache cost & discrepancy analysis
 │   ├── execution/           # Execution UX, formatters
 │   ├── runtime/             # Compilation, engine, tracing
 │   ├── nodes/               # Platform node implementations
 │   │   └── (shell, http, llm, file, mcp, python, claude)
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
 │   ├── mcp_server/          # pflow-as-MCP-server for AI agents
-│   └── registry/            # Node registry, scanning, context building, discovery
+│   ├── registry/            # Node registry, scanning, context building, discovery
+│   └── guide/               # `pflow guide` content — agent instructions (core/nodes/features)
 ├── tests/                   # Test suite
+│   ├── fixtures/            # Shared test fixtures (e.g. cache_analysis workflows)
 │   ├── shared/              # Shared utilities (llm_mock, markdown_utils, registry_utils)
 │   ├── test_cli/            # CLI tests
 │   ├── test_core/           # Core module tests
@@ -137,7 +140,7 @@ pflow/
 **Reasoning-First Approach**: Every code generation task must:
 1. Include rationale of *why* the task is needed and *how* it fits current architecture
 2. Use consistent patterns (shared store, simple IO, single responsibility)
-3. Avoid introducing abstractions not yet justified
+3. Avoid abstractions that don't pass the **deletion test** (see Code Quality)
 4. Write tests AS YOU CODE (test-as-you-go):
    - Every new function/component needs test cases (quality over quantity)
    - Test public APIs, critical paths, error handling, and integration points
@@ -311,43 +314,7 @@ If anything is unclear or ambiguous in the documentation, the user makes the cal
 
 ### Implementation Guidelines
 
-Enforced by `mypy` and `ruff`:
-
-#### Type Hints
-
-- Always type all function parameters and returns
-```python
-   def process(data: list[str], count: int = 10) -> dict[str, int]:
-```
-- Use Optional[T] for nullable arguments
-```python
-   from typing import Optional
-   def fetch(url: str, timeout: Optional[int] = None) -> dict:
-```
-- Use lowercase built-in types (Python 3.9+)
-   ✅ items: list[str]         # CORRECT
-   ❌ items: List[str]          # WRONG - old style
-   ❌ from typing import Dict   # WRONG - deprecated
-
-#### Modern Python
-
-- Use f-strings, not .format() or %
-   ✅ f"Hello {name}, score: {score}"     # CORRECT
-   ❌ "Hello {}, score: {}".format(...)   # WRONG
-- Use comprehensions directly
-   ✅ names = [x.name for x in users]     # CORRECT
-   ❌ names = list(x.name for x in users) # WRONG - unnecessary list()
-
-#### Safety
-
-- Never shadow built-in names
-   ❌ id = 123              # WRONG - shadows id()
-   ❌ list = [1, 2, 3]      # WRONG - shadows list()
-   ✅ user_id = 123         # CORRECT
-   ✅ items = [1, 2, 3]     # CORRECT
-- Use subprocess, not os.system
-   ✅ subprocess.run(["ls", "-la"], check=True)  # CORRECT
-   ❌ os.system("ls -la")                        # WRONG - security risk
+Write modern, typed, safe Python — full type hints (no leaked `Any`, explicit `Optional[T]`), lowercase builtins, f-strings, comprehensions, simple control flow (no needless nesting), no mutable default args, `subprocess` over `os.system`, no shadowing builtins; suppress lints sparingly and always with a code (`# type: ignore[...]`, `# noqa: CODE`). mypy + ruff enforce these; they're named here to prime, not to teach (see *Why this matters* below).
 
 Why this matters: These guidelines aren't about passing linters—they're about you filtering your training data (as an LLM). By specifying "modern Python patterns," you naturally select from well-maintained, professional codebases rather than the vast sea of outdated tutorials and quick fixes. This selection bias toward quality code automatically prevents security issues, maintenance problems, and outdated practices.
 
@@ -357,9 +324,20 @@ Why this matters: These guidelines aren't about passing linters—they're about 
 
 - Write code optimized for change: small focused functions with single responsibilities, clear names that explain intent not implementation, and comprehensive tests that document expected behavior
 - Structure code as isolated, testable components that can be understood and changed independently — the only meaningful measure of code quality is how safely and easily it can be modified
-- Prefer boring and obvious: write code a tired developer can understand at 3am. Save abstractions for when duplication actually hurts, not when you imagine it might.
+- Prefer boring and obvious: write code a tired developer can understand at 3am.
 
-*Mirror the top 10% of well-written CLI tools and small libraries, not enterprise frameworks. Prefer boring, obvious code over clever abstractions. Save fancy patterns for when they're actually needed.*
+**Reason about structure in this vocabulary — and apply it when writing code, not just when refactoring:**
+- **Deep modules over shallow** — maximize behavior behind a *small interface* (leverage); if a module's interface is nearly as complex as its implementation, it's shallow — fold it away. (A deep module can still be small functions inside.)
+- **Place seams deliberately** — a seam is where behavior can change without editing in place; add one only where something actually varies (*one adapter = hypothetical seam, two = real*).
+- **Locality** — make change, bugs, and tests concentrate in one place, not spread across callers.
+- **The interface is the test surface** — test through the interface, not past it.
+- **Deletion test** — before keeping an abstraction, ask: would deleting it *concentrate* complexity (keep it) or just *move* it (drop it)?
+
+**More architecture is not more depth** — depth comes from *consolidating* behavior behind a smaller interface, not from adding layers or seams; the simplest structure that yields real depth wins.
+
+Full definitions and rejected framings: `.claude/skills/improve-codebase-architecture/LANGUAGE.md` (canonical). Project domain nouns: `context/CONTEXT.md`.
+
+*Mirror the top 10% of well-written CLI tools and small libraries, not enterprise frameworks.*
 
 ### Project-specific Memories
 
