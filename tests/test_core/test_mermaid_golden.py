@@ -51,6 +51,9 @@ def _generate_from_file(
         ("real-workflows/generate-changelog/workflow.pflow.md", "generate-changelog.mmd", "LR"),
         ("nested/deep-research/deep-research.pflow.md", "deep-research-TD.mmd", "TD"),
         ("nested/deep-research/deep-research.pflow.md", "deep-research-LR.mmd", "LR"),
+        # Loop rendering: `loop:` on a sub-workflow node (multinode body) renders the
+        # loop badge on the subgraph title — the only golden exercising loop visibility.
+        ("core/stateful-loop-tournament.pflow.md", "stateful-loop-tournament.mmd", "LR"),
     ],
 )
 def test_golden_example_workflow(workflow_rel: str, golden_name: str, direction: str) -> None:

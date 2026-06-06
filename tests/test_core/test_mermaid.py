@@ -9,6 +9,7 @@ from pflow.core.workflow.mermaid import (
     _find_terminal_nodes,
     _first_sentence,
     _get_item_label,
+    _loop_label,
     generate_mermaid,
 )
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
@@ -1530,3 +1531,143 @@ def test_output_source_from_input_in_subworkflow() -> None:
     # Within the sub-workflow scope, the input-root ref resolves to the
     # sub-workflow's input wrapper, not a top-level ``input_*`` node.
     assert "sub__in_data --> sub__out_echo" in out
+
+
+# ---------------------------------------------------------------------------
+# Loop rendering (`loop:` is a node property, not a graph edge — it must be
+# synthesized onto the label, else a looped node renders as a one-shot node)
+# ---------------------------------------------------------------------------
+
+
+def test_loop_label_while_strips_self_prefix_and_shows_literal_cap() -> None:
+    # The condition refers to the node's own fresh output, so the `<node_id>.`
+    # prefix is noise and is stripped; a literal cap renders as `≤ N`.
+    label = _loop_label({"while": "${run-rounds.more}", "max_iterations": 10}, "run-rounds")
+    assert label == "<br/>⟳ while more · ≤ 10"
+
+
+def test_loop_label_until_polarity() -> None:
+    label = _loop_label({"until": "${check.done}"}, "check")
+    assert label == "<br/>⟳ until done"
+
+
+def test_loop_label_template_cap_is_stripped() -> None:
+    # A `${...}` cap (resolved at runtime) renders by name, not as a raw template.
+    label = _loop_label(
+        {"while": "${review-round.result.continue}", "max_iterations": "${max_review_rounds}"},
+        "review-round",
+    )
+    assert label == "<br/>⟳ while result.continue · ≤ max_review_rounds"
+
+
+def test_loop_label_shows_carried_state_keys() -> None:
+    label = _loop_label(
+        {"while": "${r.more}", "max_iterations": 10, "carry": {"contenders": "${r.survivors}"}},
+        "r",
+    )
+    assert label == "<br/>⟳ while more · ≤ 10 · carry contenders"
+
+
+def test_loop_label_no_cap_omits_bound() -> None:
+    # max_iterations is optional; when absent the cap defaults to MAX_NODE_VISITS
+    # at runtime — not meaningful to display, so no `≤` is shown.
+    assert _loop_label({"while": "${r.go}"}, "r") == "<br/>⟳ while go"
+
+
+def test_loop_label_non_self_condition_left_intact() -> None:
+    # The prefix strip only fires for a self-referential condition; a condition on
+    # another node's output is shown whole.
+    assert _loop_label({"while": "${other.flag}"}, "r") == "<br/>⟳ while other.flag"
+
+
+def test_loop_label_bool_cap_ignored() -> None:
+    # bool is an int subclass; a loop cap is never a bool. Guard against rendering `≤ True`.
+    assert _loop_label({"while": "${r.go}", "max_iterations": True}, "r") == "<br/>⟳ while go"
+
+
+def test_loop_label_defensive_on_empty_and_malformed() -> None:
+    assert _loop_label({}, "r") == ""  # neither while nor until
+    assert _loop_label({"max_iterations": 5}, "r") == ""  # no polarity
+    assert _loop_label("not-a-dict", "r") == ""  # type: ignore[arg-type]
+
+
+def test_loop_label_escapes_special_chars() -> None:
+    # Pipes/quotes in a (pathological) carried key must not break mermaid label syntax.
+    label = _loop_label({"while": "${r.go}", "carry": {"a|b": "${r.x}"}}, "r")
+    assert "|" not in label.split("<br/>")[1]  # raw pipe escaped to &#124;
+    assert "&#124;" in label
+
+
+def test_loop_renders_on_single_node_label() -> None:
+    # End-to-end: a node carrying `loop:` surfaces the badge in the rendered graph.
+    ir = _ir(
+        nodes=[
+            {
+                "id": "hunt",
+                "type": "llm",
+                "params": {"prompt": "find a flaky failure"},
+                "loop": {"until": "${hunt.found}", "max_iterations": 20},
+            },
+        ],
+    )
+    out = generate_mermaid(ir)
+    assert "hunt (llm)<br/>⟳ until found · ≤ 20" in out
+
+
+def test_loop_renders_on_subworkflow_subgraph_title() -> None:
+    # `loop:` on a sub-workflow node (multinode body) badges the subgraph title.
+    child_ir = _ir(nodes=[{"id": "judge", "type": "code", "params": {}}])
+
+    def resolver(params: dict[str, Any], base_path: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/x/round.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            {
+                "id": "run-rounds",
+                "type": "workflow",
+                "params": {"workflow": "round"},
+                "loop": {"while": "${run-rounds.more}", "max_iterations": 10},
+            },
+        ],
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver)
+    assert 'subgraph run-rounds ["run-rounds (workflow)<br/>⟳ while more · ≤ 10"]' in out
+    # A subgraph self-edge renders as an ugly dangling line in mermaid — the box badge carries
+    # the loop instead, so NO self-edge is emitted for a sub-workflow loop.
+    assert "run-rounds -.->" not in out
+
+
+def test_single_node_loop_emits_self_edge() -> None:
+    # A single-node loop gets a dotted self-edge (a clean self-loop arc in mermaid) so it
+    # visually reads as a loop, in addition to the label badge.
+    ir = _ir(
+        nodes=[{"id": "hunt", "type": "code", "params": {}, "loop": {"until": "${hunt.result}"}}],
+    )
+    out = generate_mermaid(ir)
+    assert 'hunt -.->|"⟳"| hunt' in out
+
+
+def test_no_loop_means_no_self_edge() -> None:
+    ir = _ir(nodes=[{"id": "plain", "type": "code", "params": {}}])
+    out = generate_mermaid(ir)
+    assert "-.->" not in out
+
+
+def test_loop_badge_precedes_description_to_survive_subgraph_clip() -> None:
+    # mermaid clips multi-line subgraph titles after ~2 lines; the loop badge must come BEFORE
+    # the description, or it gets pushed into the clip zone and disappears (the bug the user hit).
+    ir = _ir(
+        nodes=[
+            {
+                "id": "hunt",
+                "type": "code",
+                "params": {},
+                "purpose": "Keep searching until nothing new turns up at all.",
+                "loop": {"until": "${hunt.result}", "max_iterations": 20},
+            },
+        ],
+    )
+    out = generate_mermaid(ir, descriptions=True)
+    label_line = next(ln for ln in out.splitlines() if ln.strip().startswith("hunt["))
+    assert label_line.index("⟳") < label_line.index("Keep searching")
