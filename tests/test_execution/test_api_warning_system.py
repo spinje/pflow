@@ -3,7 +3,7 @@
 import json
 import time
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import Diagnostic, Severity, normalize_runtime_warning
 from pflow.execution.executor_service import build_error_list
 from pflow.runtime.engine.api_warning_detector import detect_api_warning
 from pflow.runtime.engine.instrumentation import handle_api_warning
@@ -47,7 +47,10 @@ class TestCriticalAPIWarningScenarios:
 
         # Verify it stops workflow execution and records a warning
         assert result == "error", "Should stop workflow"
-        assert shared["__warnings__"]["send_response"] == "API error: channel_not_found"
+        message, context = normalize_runtime_warning(shared["__warnings__"]["send_response"])
+        assert message == "API error: channel_not_found"
+        assert context["type"] == "api_warning"
+        assert context["recovered"] is False
 
     def test_graphql_http_200_with_errors(self):
         """Test GraphQL returning HTTP 200 with errors (common GitHub API case)."""
@@ -108,9 +111,9 @@ class TestCriticalAPIWarningScenarios:
             ({"success": False, "error_code": "UNAUTHORIZED", "error": "Invalid token"}, True),
             # Not found errors
             ({"ok": False, "error": "user_not_found"}, True),
-            # Validation errors - these are now allowed for repair
-            ({"ok": False, "error": "invalid_parameter"}, False),
-            ({"status": "error", "message": "Invalid input format"}, False),
+            # Explicit failure flags are trusted even when wording looks like validation
+            ({"ok": False, "error": "invalid_parameter"}, True),
+            ({"status": "error", "message": "Invalid input format"}, True),
             # Success cases that should NOT trigger
             ({"ok": True, "data": {"messages": []}}, False),
             ({"status": "success", "result": {"id": 123}}, False),
@@ -125,6 +128,79 @@ class TestCriticalAPIWarningScenarios:
                 assert "API error" in warning
             else:
                 assert warning is None, f"Should NOT detect error in: {data}"
+
+    def test_mcp_result_status_error_with_unfamiliar_message_warns(self):
+        """Canonical MCP ``result`` payloads keep explicit failure provenance.
+
+        Regression for GH #486/#488: once MCP nodes stop splaying result keys,
+        ``status`` and ``error`` live under ``result``. The detector must still
+        trust the explicit status failure instead of requiring a known phrase.
+        """
+        payload = {
+            "status": "error",
+            "reason": "expired",
+            "error": (
+                "Cannot create audio: NotebookLM auth is not valid (reason: expired). Run nlm login in a terminal."
+            ),
+            "hint": "nlm login",
+        }
+
+        warning = detect_api_warning("create-audio", {"create-audio": {"result": payload}}, node_type_name="MCPNode")
+
+        assert warning is not None
+        assert "Cannot create audio" in warning
+
+    def test_result_wrapper_not_unwrapped_for_non_mcp_nodes(self):
+        shared = {"calc": {"result": {"status": "error", "error": "boom"}}}
+
+        warning = detect_api_warning("calc", shared, node_type_name="PythonCodeNode")
+
+        assert warning is None
+
+    def test_top_level_explicit_failure_flags_remain_type_agnostic(self):
+        shared = {"calc": {"status": "error", "message": "Invalid input format"}}
+
+        warning = detect_api_warning("calc", shared, node_type_name="PythonCodeNode")
+
+        assert warning == "API error: Invalid input format"
+
+    def test_mcp_result_boolean_failure_with_unfamiliar_message_warns(self):
+        shared = {"api": {"result": {"success": False, "message": "Upstream rejected the request oddly"}}}
+
+        warning = detect_api_warning("api", shared)
+
+        assert warning == "API error: Upstream rejected the request oddly"
+
+    def test_bare_error_key_inside_result_stays_conservative(self):
+        shared = {"api": {"result": {"error": "Something unfamiliar happened"}}}
+
+        warning = detect_api_warning("api", shared)
+
+        assert warning is None
+
+    def test_unknown_error_dict_uses_default_instead_of_repr(self):
+        shared = {"api": {"ok": False, "error": {"code": 500}}}
+
+        warning = detect_api_warning("api", shared)
+
+        assert warning == "API error (500): API request failed"
+
+    def test_is_error_flag_uses_nested_error_and_reason_fields(self):
+        assert (
+            detect_api_warning("api", {"api": {"isError": True, "error": {"error": "nested boom"}}})
+            == "API error: nested boom"
+        )
+        assert (
+            detect_api_warning("api", {"api": {"isError": True, "error": {"reason": "expired auth"}}})
+            == "API error: expired auth"
+        )
+
+    def test_nested_status_error_data_does_not_warn(self):
+        shared = {"api": {"result": {"rows": [{"status": "error", "error": "archived row"}]}}}
+
+        warning = detect_api_warning("api", shared)
+
+        assert warning is None
 
 
 class TestIntegrationWithExistingSystems:

@@ -37,7 +37,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 - `output_mode` (structure format only): `smart` (values + LLM filtering via `smart_filter_fields_cached`), `structure` (paths only), `full` (all values, no truncation)
 - MCPNode error detection: checks BOTH `action == "error"` AND `"error"` key in outputs/shared_store — because `MCPNode.post()` returns "default" action even on errors (workaround for missing error edges in workflows)
 - JSON string auto-parsing: `flatten_runtime_value()` tries to parse strings as JSON via `core.json_utils.try_parse_json`. If a string looks like JSON, it's recursively flattened as structure. This is critical for MCP nodes that return JSON strings as output values.
-- Deduplication: `get_value_hash()` detects when MCP nodes return identical data under different keys (e.g., both `result` and `server_TOOL_result`). Shows a warning and skips duplicates.
+- Deduplication: `get_value_hash()` detects identical data under different keys in legacy traces or custom node output. Shows a warning and skips duplicates.
 
 **error_formatter** uses lazy import of `mcp_server.utils.errors.sanitize_parameters` to avoid circular deps. Sanitizes `raw_response` and `response_headers` fields.
 

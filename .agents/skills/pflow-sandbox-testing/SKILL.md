@@ -65,6 +65,17 @@ Sandbox limits to keep in mind:
 - Filesystem writes are limited to the workspace and writable temp roots; workflows writing elsewhere may hit permission errors.
 - Read-only inspection of accessible local folders can work, but do not assume arbitrary user-home writes are allowed.
 
+## Sandbox Permissions
+
+If an important command fails because of sandbox permissions, shared metadata outside the workspace, restricted network access, blocked credentials, GUI access, or non-interactive approval limits, stop and ask the user to run `/permissions` and choose **"approve for me"**. Do this before trying connector workarounds, hand-assembling commits through APIs, or building brittle alternatives around the sandbox.
+
+Common symptoms:
+
+- `git add` or `git commit` cannot create `.git/.../index.lock`
+- `git push` cannot reach the remote because network is restricted
+- `gh pr create`, `gh auth status`, or other `gh` commands fail because the CLI cannot access credentials or network
+- dependency managers, package downloads, external CLIs, browser/GUI tools, or subprocesses fail only because they need access outside the sandbox
+
 ## Known Failures
 
 Do not trust `make test` or `uv run ...` inside this sandbox. `uv` may fail with:

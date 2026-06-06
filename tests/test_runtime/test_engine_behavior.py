@@ -8,6 +8,7 @@ Covers: unmatched action warnings, --only + output resolution, custom error_acti
 batch template error propagation.
 """
 
+from pflow.core.diagnostic import normalize_runtime_warning
 from pflow.core.node import BaseNode
 from pflow.runtime.engine.engine import WorkflowEngine
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
@@ -51,6 +52,14 @@ class _CaptureNode(BaseNode):
 
     def post(self, shared, prep_res, exec_res):
         shared["seen"] = prep_res
+        return "default"
+
+
+class _McpApiWarningNode(BaseNode):
+    """Writes a canonical MCP result payload that self-reports API failure."""
+
+    def post(self, shared, prep_res, exec_res):
+        shared["result"] = {"status": "error", "error": "expired auth"}
         return "default"
 
 
@@ -486,6 +495,49 @@ class TestLoopReentryFailureRecovery:
         assert shared["flaky"]["stdout"] == "recovered"
         assert shared["sink"]["seen"] == "recovered"
         assert "flaky" in shared["__execution__"]["completed_nodes"]
+
+
+class TestApiWarningRecovery:
+    """API warnings with on-error successors should be marked recovered."""
+
+    def test_mcp_result_api_warning_with_error_successor_marks_warning_recovered(self):
+        api = _McpApiWarningNode()
+        api.node_id = "api"
+        recover = _OutputNode()
+        recover.node_id = "recover"
+        recover.set_params({"output_value": "handled"})
+
+        api - "error" >> recover
+
+        configs = {
+            "api": NodeConfig(
+                node_id="api",
+                node_type_name="MCPNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "recover": NodeConfig(
+                node_id="recover",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=api, node_configs=configs)
+        shared: dict = {}
+        result = WorkflowEngine().run(workflow, shared)
+
+        assert result == "default"
+        assert shared["recover"]["result"] == "handled"
+        message, context = normalize_runtime_warning(shared["__warnings__"]["api"])
+        assert message == "API error: expired auth"
+        assert context["type"] == "api_warning"
+        assert context["recovered"] is True
 
 
 class TestBatchTemplateErrorPropagation:

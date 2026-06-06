@@ -54,14 +54,13 @@ class TestMCPNodeCriticalBehaviors:
                 # Should have tried exactly once
                 assert exec_count == 1
 
-    def test_structured_data_extraction_to_shared_store(self):
-        """Test that structured data fields are extracted to shared store.
+    def test_structured_data_stays_under_result(self):
+        """Structured MCP output uses result as its only success namespace.
 
-        CRITICAL: When MCP returns structured data (e.g., from GitHub),
-        individual fields must be accessible in shared store for downstream nodes.
-
-        Example: GitHub's create-issue returns {"issue_url": "...", "issue_number": 123}
-        Both fields should be directly accessible as shared["issue_url"] and shared["issue_number"]
+        The validator only declares ``result`` for MCP nodes because MCP servers
+        do not publish stable output schemas. Keeping fields under result makes
+        runtime, validation, and probe teach the same downstream path:
+        ``${node.result.field}``.
         """
         node = MCPNode()
         node.set_params({"__mcp_server__": "github", "__mcp_tool__": "create-issue"})
@@ -82,20 +81,15 @@ class TestMCPNodeCriticalBehaviors:
 
         action = node.post(shared, prep_res, exec_res)
 
-        # Verify structured fields were extracted
-        assert shared["issue_url"] == "https://github.com/test/repo/issues/123"
-        assert shared["issue_number"] == 123
-        assert shared["issue_id"] == "I_kwDOBkpqZc5_y5mq"
-
-        # Private fields should NOT be extracted
-        assert "_internal_field" not in shared
-        assert "is_closed" not in shared  # Fields starting with "is_" are internal
-
-        # Full result still available
+        # Full result is available through the canonical result key.
         assert shared["result"] == exec_res["result"]
 
-        # Server-specific result key also available
-        assert shared["github_create-issue_result"] == exec_res["result"]
+        # Structured fields are not splayed into a second namespace.
+        assert "issue_url" not in shared
+        assert "issue_number" not in shared
+        assert "issue_id" not in shared
+        assert "_internal_field" not in shared
+        assert "is_closed" not in shared
 
         # Should return "default" action
         assert action == "default"
@@ -134,32 +128,19 @@ class TestMCPNodeCriticalBehaviors:
         assert "error" in shared
         assert shared["error"] == "Repository not found"
 
-    def test_multiple_server_results_dont_collide(self):
-        """Test that multiple MCP tools in same workflow don't overwrite results.
+    def test_mcp_node_does_not_write_server_specific_result_alias(self):
+        """MCP nodes do not expose duplicate server/tool result aliases.
 
-        CRITICAL: Without proper namespacing, second MCP tool would overwrite
-        first tool's results in shared store.
+        In a real workflow each MCP node is already namespaced by node id. A
+        second ``<server>_<tool>_result`` key inside that namespace is not
+        validator-addressable and creates duplicate probe paths.
         """
-        # First tool execution
-        node1 = MCPNode()
-        node1.set_params({"__mcp_server__": "github", "__mcp_tool__": "list-issues"})
+        node = MCPNode()
+        node.set_params({"__mcp_server__": "github", "__mcp_tool__": "list-issues"})
 
         shared = {}
-        prep1 = {"server": "github", "tool": "list-issues", "arguments": {}}
-        exec1 = {"result": ["issue1", "issue2", "issue3"]}
-        node1.post(shared, prep1, exec1)
+        prep = {"server": "github", "tool": "list-issues", "arguments": {}}
+        exec_res = {"result": ["issue1", "issue2", "issue3"]}
+        node.post(shared, prep, exec_res)
 
-        # Second tool execution (same workflow, different tool)
-        node2 = MCPNode()
-        node2.set_params({"__mcp_server__": "filesystem", "__mcp_tool__": "read-file"})
-
-        prep2 = {"server": "filesystem", "tool": "read-file", "arguments": {}}
-        exec2 = {"result": "File contents here"}
-        node2.post(shared, prep2, exec2)
-
-        # Both results should be available
-        assert shared["github_list-issues_result"] == ["issue1", "issue2", "issue3"]
-        assert shared["filesystem_read-file_result"] == "File contents here"
-
-        # Generic "result" gets overwritten (last one wins)
-        assert shared["result"] == "File contents here"
+        assert shared == {"result": ["issue1", "issue2", "issue3"]}

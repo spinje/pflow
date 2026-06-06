@@ -272,13 +272,13 @@ class TestDeduplicationGuards:
     def test_duplicate_structure_detection(self):
         """DEDUPLICATION: Same structure in multiple keys must be detected.
 
-        Real bug this catches: MCP nodes return both "result" and
-        "mcp_server_TOOL_result" with identical data. Without deduplication,
-        agents see 500 duplicate template paths making output unusable.
+        Real bug this catches: duplicate runtime values, whether from legacy
+        traces or custom nodes, can produce hundreds of duplicate template paths
+        and make output unusable.
 
         AI refactoring might break the hash comparison logic.
         """
-        # MCP pattern: duplicate data in different keys
+        # Legacy/custom duplicate data in different keys.
         duplicate_data = {"status": "ok", "count": 42}
         outputs = {
             "result": duplicate_data,

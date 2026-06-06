@@ -55,21 +55,20 @@ All MCP nodes write to:
 | Key | Type | Description |
 |-----|------|-------------|
 | `result` | any | Tool execution result |
-| `{server}_{tool}_result` | any | Same result with unique key |
 | `error` | str | Error message (only on failure) |
 
-For dict results, top-level fields are also extracted directly:
+For dict results, read nested fields through `result`:
 
-If a tool returns `{"issue_url": "...", "issue_number": 123}`, the shared store contains:
+If a tool returns `{"issue_url": "...", "issue_number": 123}`, use:
 
-```json
-{
-  "result": {"issue_url": "...", "issue_number": 123},
-  "github_create_issue_result": {"issue_url": "...", "issue_number": 123},
-  "issue_url": "...",
-  "issue_number": 123
-}
+```markdown
+${github-issue.result.issue_url}
+${github-issue.result.issue_number}
 ```
+
+MCP nodes do not extract top-level result fields into `${node.field}` and do not
+write a `{server}_{tool}_result` alias. Each workflow node already has its own
+namespace, so `${node.result}` is the canonical success output.
 
 ## Example workflow
 

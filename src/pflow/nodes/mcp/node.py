@@ -420,30 +420,9 @@ class MCPNode(Node):
             # resource failures into user-facing warnings before execution stops.
             return "error"
 
-        # Store successful result
+        # Store successful result. MCP tools expose one canonical output shape:
+        # downstream workflows read fields through ${node.result.field}.
         shared["result"] = result
-
-        # For structured data from outputSchema, extract top-level fields
-        # This makes individual fields directly accessible in the shared store
-        if isinstance(result, dict) and not result.get("error"):
-            # Extract non-private fields to shared store for easier access
-            extracted_fields = []
-            for key, value in result.items():
-                if not key.startswith("_") and not key.startswith("is_"):
-                    # Skip private fields and internal flags
-                    shared[key] = value
-                    extracted_fields.append(key)
-
-            if extracted_fields:
-                logger.debug(
-                    "Extracted structured fields to shared store",
-                    extra={"fields": extracted_fields, "server": prep_res["server"], "tool": prep_res["tool"]},
-                )
-
-        # Store result with server-specific key
-        # This allows multiple MCP tools in same workflow
-        result_key = f"{prep_res['server']}_{prep_res['tool']}_result"
-        shared[result_key] = result
 
         logger.info(
             "MCP tool completed successfully",
@@ -452,7 +431,7 @@ class MCPNode(Node):
                 "tool": prep_res["tool"],
                 "result_type": type(result).__name__,
                 "is_structured": isinstance(result, dict),
-                "result_keys": ["result", result_key],
+                "result_keys": ["result"],
             },
         )
 

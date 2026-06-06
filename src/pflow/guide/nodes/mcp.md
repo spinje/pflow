@@ -17,6 +17,13 @@ See `pflow mcp describe <tool> --help` for how to interpret tool details.
 
 ## ⚠️ MCP Output Has NO Standard Structure
 
+MCP nodes expose one canonical output namespace: `result`.
+
+Use `${node.result}` for the full tool payload and `${node.result.field}` for
+nested fields. Do not use `${node.field}` for MCP tool fields; validation only
+knows the declared `result` output because MCP servers do not publish stable
+output schemas.
+
 **Every MCP server is completely different. Even the SAME operation:**
 
 ```python
@@ -33,6 +40,33 @@ Server C:  result.Items[]                   # DynamoDB style
 
 **There are NO patterns. Test every MCP tool:**
 `pflow probe mcp-service-TOOL param=value`
+
+### MCP Tools Can Report Failure Inside `result`
+
+Some MCP tools return a successful MCP response while the service payload says
+the operation failed. Example: a tool can return:
+
+```json
+{
+  "status": "error",
+  "reason": "expired",
+  "error": "Cannot create audio: NotebookLM auth is not valid",
+  "hint": "nlm login"
+}
+```
+
+That payload is available as `${create-audio.result.status}`,
+`${create-audio.result.error}`, and so on. Guard workflows that poll, download,
+or mutate follow-up state by checking the tool's own success field before
+continuing.
+
+MCP failure paths:
+
+| Outcome | What it is | pflow behavior |
+|---|---|---|
+| Protocol/transport failure | MCP client/server call failed before a tool result | Writes `${node.error}` and `${node.error_details}` |
+| `isError: true` | Tool set the MCP tool-error flag | Returns `error`, so `on-error` can route it |
+| `result.status: "error"`, `result.ok: false`, etc. | Service failure inside a successful MCP payload | Stored under `${node.result}`; pflow surfaces explicit failure flags as API warnings |
 
 ### Node Creation Pattern
 

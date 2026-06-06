@@ -253,6 +253,9 @@ shared["_pflow_child_only_node"] = str   # Transient: remaining dotted --only pa
 - `resource_error` — not found, forbidden
 - API warnings: Slack `"ok": false`, Discord errors, GraphQL `"errors": []`
 - HTTP status codes: 401, 403, 404, 429
+- MCP canonical payloads: explicit failure flags under `${node.result}` (`status: "error"`, `ok: false`,
+  `success: false`, etc.) are trusted even when the message text does not match known resource phrases.
+  Bare `error` keys without a failure flag still use the conservative phrase checks.
 
 **Ambiguity rule**: When an error matches BOTH validation and resource patterns, it's treated as **validation** (validation wins).
 
