@@ -1671,3 +1671,28 @@ def test_loop_badge_precedes_description_to_survive_subgraph_clip() -> None:
     out = generate_mermaid(ir, descriptions=True)
     label_line = next(ln for ln in out.splitlines() if ln.strip().startswith("hunt["))
     assert label_line.index("⟳") < label_line.index("Keep searching")
+
+
+def test_subworkflow_loop_badge_precedes_description_in_subgraph_title() -> None:
+    # The clip that hides a single-node badge also hides a sub-workflow badge pushed below its
+    # description. The subgraph title must order the loop badge BEFORE the description, like
+    # _format_label — this is the path where mermaid's subgraph-title clip actually bites.
+    child_ir = _ir(nodes=[{"id": "judge", "type": "code", "params": {}}])
+
+    def resolver(params: dict[str, Any], base_path: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/x/round.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            {
+                "id": "run-rounds",
+                "type": "workflow",
+                "params": {"workflow": "round"},
+                "purpose": "Run elimination rounds until a single winner remains.",
+                "loop": {"while": "${run-rounds.more}", "max_iterations": 10},
+            },
+        ],
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver, descriptions=True)
+    title_line = next(ln for ln in out.splitlines() if ln.strip().startswith("subgraph run-rounds"))
+    assert title_line.index("⟳") < title_line.index("Run elimination")

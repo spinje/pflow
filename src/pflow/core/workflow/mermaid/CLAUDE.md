@@ -25,7 +25,7 @@ Consumers: `cli/commands/visualize.py`, `tests/test_core/test_mermaid.py`, `test
 
 ```
 mermaid/
-├── __init__.py    # Re-exports generate_mermaid + 5 test-visible helpers
+├── __init__.py    # Re-exports generate_mermaid + 6 test-visible helpers
 ├── _context.py    # MermaidConfig (frozen), MermaidContext (mutable), constants, pure utilities
 ├── _scope.py      # Scope — single primitive for template-ref → mermaid-ID resolution
 ├── _edges.py      # Edge dedup/detection, routing resolution, data-flow edge generation
@@ -69,7 +69,7 @@ mermaid/
 | `_connect_sources_to_output` | `_io.py` | Parse source expression → connect producing nodes to output |
 | `MermaidConfig` | `_context.py` | Frozen config dataclass (resolve_child, max_depth, etc.) |
 | `MermaidContext` | `_context.py` | Mutable per-level state (routing maps, indent, prefix) |
-| Pure utilities (11) | `_context.py` | `_to_mermaid_id`, `_escape_label`, `_get_node_shape`, `_format_label`, `_first_sentence`, `_classdef_to_style`, `_subgraph_style`, `_get_item_label`, `_dynamic_batch_label`, `_format_node_type`, `_render_classdefs` |
+| Pure utilities (13) | `_context.py` | `_to_mermaid_id`, `_escape_label`, `_get_node_shape`, `_format_label`, `_first_sentence`, `_classdef_to_style`, `_subgraph_style`, `_get_item_label`, `_dynamic_batch_label`, `_format_node_type`, `_render_classdefs`, `_strip_template`, `_loop_label` |
 
 ## Two Kinds of Edges
 

@@ -178,9 +178,11 @@ def _format_label(
 ) -> str:
     """Format the full display label for a node.
 
-    The loop badge is placed BEFORE the description: mermaid clips multi-line
-    subgraph titles after ~2 lines, so a loop pushed below a description would
-    be hidden. Loop is structural metadata (like the type), so it reads well
+    The loop badge is placed BEFORE the description for consistency with
+    subgraph titles, which mermaid clips after ~2 lines — a badge pushed below
+    a description there would be hidden (see ``_render_subgraph``). Node labels
+    don't clip, but keeping the order identical means both label builders share
+    one rule. Loop is structural metadata (like the type), so it reads well
     directly under the name/type anyway.
 
     The batch suffix (e.g., ``(parallel x|sources|)``) is appended AFTER

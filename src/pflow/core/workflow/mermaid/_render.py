@@ -387,6 +387,10 @@ def _render_subgraph(
     When the sub-workflow node carries a ``loop:`` (the body is the whole
     sub-workflow), the loop badge is appended to the subgraph title — the
     multinode-body loop renders as the existing box plus a ``⟳`` annotation.
+    The badge goes BEFORE the description: mermaid clips multi-line subgraph
+    titles after ~2 lines, so a badge pushed below a description is hidden.
+    This is the path where that clip actually bites (node labels don't clip);
+    the order mirrors ``_format_label``.
     """
     path_key = str(child_result.path) if child_result.path else None
     if path_key:
@@ -396,10 +400,10 @@ def _render_subgraph(
         subgraph_label = _escape_label(node_id) + dynamic_batch_label
     else:
         subgraph_label = _escape_label(f"{node_id} ({node_type})")
-    if ctx.config.descriptions and purpose:
-        subgraph_label += f"<br/>{_escape_label(_first_sentence(purpose))}"
     if loop:
         subgraph_label += _loop_label(loop, node_id)
+    if ctx.config.descriptions and purpose:
+        subgraph_label += f"<br/>{_escape_label(_first_sentence(purpose))}"
 
     ctx.lines.append(f'{ctx.indent}subgraph {mermaid_id} ["{subgraph_label}"]')
 
