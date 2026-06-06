@@ -6,7 +6,7 @@ Choose the tool by the kind of failure you expect:
 
 | Failure | Tool |
 |---|---|
-| Transient (flaky network, rate limit, timeout) | `retry:` — automatic re-attempts |
+| Transient — the call didn't complete (dropped connection, timeout, model provider rate-limited/overloaded) | `retry:` — automatic re-attempts |
 | Expected, with an alternative path | `on-error:` — route to a handler |
 | A precondition that must hold | no handler — let it fail and stop the run |
 
@@ -24,7 +24,7 @@ Add `retry:` to a node that does work directly (http, shell, llm, code, file). `
     backoff: exponential   # 1s, 2s, 4s, ... (capped at 60s); or `fixed`
 ```
 
-A node that **succeeds on a retry is a clean success** — recovering from a flaky call does not mark the run as degraded. Reach for `retry:` when a re-attempt can fix the failure: network blips, rate limits, timeouts. For a failure a re-run can't fix — a bad URL, an invalid input — let it fail fast, or route it to a handler with `on-error:`.
+A node that **succeeds on a retry is a clean success** — recovering from a flaky call does not mark the run as degraded. Reach for `retry:` when a re-attempt can fix the failure: a dropped connection, a timeout, or an `llm` provider that's rate-limited or overloaded. A call that *completes* with a failure response is different — an HTTP error status (e.g. 429, 503) or a shell command that exits non-zero comes back as a result, not a retry-able error — so route those with `on-error:` (or a `loop:` that reads the status). A failure a re-run can't fix — a 404, an invalid input — should fail fast or go to `on-error:`.
 
 For a sub-workflow, put `retry:` on the failing step *inside* the child, not on the `workflow` node that calls it.
 
@@ -47,7 +47,7 @@ Fetch from the backup source when the primary fails.
 
 A node reached via `on-error:` must declare an explicit `- next:` (see `pflow guide branching`). The handler runs and the workflow finishes — reported as **completed with a warning** that names the fallback, so the failure stays visible rather than hidden. (Unlike `retry:`, where the same node succeeding on a re-attempt is a clean success, `on-error:` routes *around* a node that stayed failed.)
 
-**Reading the failure:** a handler can read what went wrong from the failed node's output (e.g. `${primary.error}`), and `??` lets a later node take whichever path produced a value: `${primary.response ?? use-backup.response}`.
+**Reading the recovery path:** a failed node's own outputs aren't readable downstream — `${primary.…}` won't resolve once `primary` has failed; the failure surfaces in the run's reported result instead. A handler reads from nodes that *succeeded*, and `??` lets a later node take whichever path produced a value, skipping the failed one: `${primary.response ?? use-backup.response}`.
 
 A self-contained version you can run — `fetch` fails, `recover` supplies a backup, and the run finishes (reported with a warning that the fallback fired):
 
