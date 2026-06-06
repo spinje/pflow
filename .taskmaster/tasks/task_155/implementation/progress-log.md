@@ -301,3 +301,69 @@ missing connection.
 - `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest tests/test_cli/test_visualize.py -q` → 11 passed.
 - `.venv/bin/ruff check src/pflow/core/ir_schema.py src/pflow/core/workflow/graph tests/test_core/test_graph_build.py tests/test_core/test_ir_schema.py tests/test_core/test_mermaid.py tests/test_core/test_mermaid_golden.py` → clean.
 - `.venv/bin/mypy src/pflow/core/ir_schema.py src/pflow/core/workflow/graph` → clean.
+
+## 2026-06-06 19:09 CEST — Verification-specialist pass + renderer collision/leak hardening
+
+Ran an adversarial verification pass (try-to-break, not confirm-it-works) over the whole feature: ~16 hand-written
+`.pflow.md` workflows under `scratchpads/task-155-verification/` driven through the real `pflow` CLI, a `build_graph`
+model probe, and a structural Mermaid validator, plus end-to-end execution of each. **No Task 155 regression found** in
+the model or build: cross-boundary data-flow (`analyze.score → compile`), 3-level grandchild output threading, coalesce,
+loop `max_iterations: ${input}` dependency edges, custom batch `as:` aliases, dynamic/literal/0-item batches, recursion
+and diamond expansion, and the `_routes_to_end` parser change all build correctly and execute correctly. The
+`GraphModel.__post_init__` invariants proved un-triggerable from authoring (parser rejects `end` and any `_`-prefixed id).
+
+**END-edge rendering deviation — accepted.** Mermaid now renders explicit `EdgeKind.END` routes to the visual `pflow_end`
+sink (the implementer's review-time reversal of the plan's "D2 adds zero Mermaid edges"). Re-verified it is internally
+consistent: no double-edges, the `handle-error --> pflow_end` parity pin holds, nested-level END sinks stay balanced.
+This is the intended behavior — authored `next: end` routes should be visible.
+
+**Two pre-existing renderer-only flaws fixed** (the `GraphModel` was already correct in every case — unique structural
+identity, clean `json.dumps` round-trip; both bugs lived purely in the Mermaid flat-id derivation, and both reproduced
+identically on `main`):
+
+1. **Flat-id collisions.** An authored node id could collide with another node's derived flat id or with a synthetic id
+   (the `pflow_end` sink, IO-wrapper subgraphs `workflow-inputs`/`{host}-in/-out`, batch `dots`/item-box ids), yielding a
+   broken diagram (one id defined twice). Fixed in `renderers/mermaid.py` with `_assign_flat_ids()`: a deterministic,
+   shallow-to-deep id assignment that resolves ancestor prefixes from already-assigned ancestors (so a disambiguating
+   suffix propagates into descendants), pre-reserves all synthetic ids from natural host prefixes, then suffixes only
+   genuine collisions. Node-vs-node uniqueness is now provable (the assignment loop never reuses an id); node-vs-synthetic
+   is closed by the pre-reservation. **No-op when there are no collisions → all 8 goldens stay byte-identical.**
+2. **`${...}` leaking into labels** under `--descriptions` when a node's description prose contains a literal template
+   ref. `_first_sentence` now neutralizes `${ref}` → `ref` before truncation (so it can't leak or be severed mid-brace).
+
+**Self-audit caught one ordering hole before shipping.** The first cut reserved nested synthetic ids in-loop (when their
+host was processed); because assignment runs shallow-to-deep, a shallow node named like a *deeper* level's sink (e.g.
+top-level `w__c__pflow_end`) could grab that id first. Reproduced it, then closed it with the pre-reservation pass plus
+a deterministic full-path tiebreaker in the sort key. Remaining residual: a node colliding with a *suffixed* host's
+synthetic id (requires the host's own name to also collide) — a fixpoint case reachable only by adversarial names, left
+unfixed by design. The bulletproof answer is an injective id scheme in the future React Flow renderer, not more patching
+of the legacy string-concat scheme.
+
+**Test-quality pass (passing the right thing, not just passing).**
+- Removed `test_generate_mermaid_shim_matches_graph_renderer_for_golden_subjects` — it asserted `shim == graph`, but the
+  shim *is* `render_mermaid(build_graph(...))` and so was the comparison side: a tautological `X == X`, redundant with the
+  golden tests.
+- Added `test_public_mermaid_output_is_structurally_valid` over 10 structurally-diverse real workflows (rendered through
+  the public `generate_mermaid` with `descriptions=True`): asserts no template leak, balanced subgraph/end nesting, and no
+  id defined twice. This guards a bug class goldens cannot — a golden freezes the exact string *including a broken one* if
+  regenerated after a bug.
+- Added 5 targeted collision/leak regression tests (node-vs-sink, node-vs-wrapper, nested `a__b`, deep-sink ordering hole,
+  `${}`-in-description). These are the only tests exercising the collision code path with actual collisions (no real
+  workflow names a node `pflow_end`).
+- Strengthened the test's collision detector to count definitions (catches same-shape collisions, which a distinct-shape
+  check missed); swept the full example corpus under it → no hidden collisions.
+- **Mutation-verified both fix paths:** reverting the id-dedup fails the 4 collision tests; reverting the `${}` strip fails
+  the validity test on the real parallel-planner-review workflow. Confirmed the new tests are not vacuous.
+
+Audited the strong existing tests rather than trusting them blindly: the cross-boundary endpoint test asserts the exact
+`Edge(score_output → compile, output_field, input_name)` (not mere existence), and the `shadowed()` tests carry positive
+and negative cases — both kept as-is.
+
+**Scope:** changes are renderer-only (`src/pflow/core/workflow/graph/renderers/mermaid.py`, +75/−2) plus its test file;
+`model.py`/`build.py` and the execution path are untouched.
+
+**Verification run:**
+- `HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest tests/test_core/test_graph_build.py tests/test_core/test_graph_mermaid_renderer.py tests/test_core/test_mermaid.py tests/test_core/test_mermaid_golden.py tests/test_cli/test_visualize.py tests/test_docs/ -q` → 147 passed (8 goldens byte-identical).
+- `.venv/bin/ruff check src/pflow/core/workflow/graph tests/test_core/test_graph_mermaid_renderer.py` → clean.
+- `.venv/bin/mypy src/pflow/core/workflow/graph` → clean.
+- Structural-validity sweep of the full example corpus (balanced subgraphs, no id collisions incl. same-shape, no `${}` leaks) → all clean.

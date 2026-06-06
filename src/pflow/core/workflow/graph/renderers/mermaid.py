@@ -85,6 +85,8 @@ class _MermaidRenderer:
             for container in self.graph.containers
             if container.kind == "batch" and container.host is not None
         }
+        self._flat: dict[NodeId, str] = {}
+        self._assign_flat_ids()
         self._build_render_maps()
 
     def render(self, direction: str) -> str:
@@ -645,6 +647,10 @@ class _MermaidRenderer:
         return label
 
     def _node_mermaid_id(self, node_id: NodeId) -> str:
+        resolved = self._flat.get(node_id)
+        return resolved if resolved is not None else self._natural_node_id(node_id)
+
+    def _natural_node_id(self, node_id: NodeId) -> str:
         if node_id.node_id == "__end__":
             return f"{self._level_prefix(node_id.ancestor_path)}__end__"
         node = self.nodes_by_id[node_id]
@@ -656,7 +662,71 @@ class _MermaidRenderer:
             return f"out_{node_id.node_id}" if not display_path else f"{prefix}out_{node_id.node_id}"
         return f"{prefix}{_to_mermaid_id(node_id.node_id)}"
 
+    def _assign_flat_ids(self) -> None:
+        """Assign a unique flat Mermaid id to every node.
+
+        The flat-id scheme (``parent__child``, ``input_x``, ``pflow_end`` …) shares
+        one string namespace, so an authored node id can collide with another node's
+        derived id or with a synthetic id (the ``pflow_end`` sink, batch ``dots`` /
+        item-box ids) that is not a model node. We compute ids shallow-to-deep so an
+        ancestor's resolved id (carrying any disambiguating suffix) feeds its
+        descendants' prefixes, reserve the synthetic ids up front, and append a
+        numeric suffix to genuine collisions. With no collisions this reproduces the
+        legacy ids byte-for-byte; suffixes only appear for pathological names.
+        """
+        used: set[str] = {"pflow_end", "workflow-inputs", "workflow-outputs"}
+
+        def sort_key(node: Node) -> tuple[int, str, int, tuple[tuple[str, int], ...]]:
+            stripped = _strip_io_scope(node.id.ancestor_path)
+            path = tuple((s.node_id, -1 if s.batch_index is None else s.batch_index) for s in node.id.ancestor_path)
+            return (len(stripped), node.id.node_id, len(node.id.ancestor_path), path)
+
+        # Pre-reserve synthetic ids (sink, wrappers, dots, item boxes) from NATURAL host
+        # prefixes before assigning any node, so a shallower node cannot squat on a deeper
+        # level's synthetic id — the assignment loop runs shallow-to-deep and would otherwise
+        # reserve a deep sink only after a colliding top-level node already took it.
+        for node in self.graph.nodes:
+            self._reserve_synthetic_ids(node, self._natural_node_id(node.id), used)
+
+        for node in sorted(self.graph.nodes, key=sort_key):
+            natural = self._natural_node_id(node.id)
+            chosen = natural
+            k = 2
+            while chosen in used:
+                chosen = f"{natural}_{k}"
+                k += 1
+            self._flat[node.id] = chosen
+            used.add(chosen)
+            # Re-reserve from the resolved (possibly suffixed) id so a suffixed host's
+            # descendants and synthetic ids stay collision-free.
+            self._reserve_synthetic_ids(node, chosen, used)
+
+    def _reserve_synthetic_ids(self, node: Node, chosen: str, used: set[str]) -> None:
+        if node.id in self.workflow_by_host:
+            used.add(f"{chosen}__pflow_end")
+            # External IO-wrapper subgraph ids for an expanded sub-workflow node.
+            used.add(f"{chosen}-in")
+            used.add(f"{chosen}-out")
+        if node.batch is not None and not node.batch.dynamic:
+            used.add(f"{chosen}__dots")
+            for index in self._visible_batch_indexes(node.batch):
+                label = _to_mermaid_id(self._batch_item_label(node.id, index))
+                used.add(f"{chosen}__{label}")
+                used.add(f"{chosen}__{label}__pflow_end")
+
     def _level_prefix(self, ancestor_path: tuple[AncestorStep, ...]) -> str:
+        if not ancestor_path:
+            return ""
+        last = ancestor_path[-1]
+        host = NodeId(last.node_id, ancestor_path[:-1])
+        base = self._flat.get(host)
+        if base is None:
+            return self._natural_level_prefix(ancestor_path)
+        if last.batch_index is not None:
+            base = f"{base}__{_to_mermaid_id(self._batch_item_label(host, last.batch_index))}"
+        return base + "__"
+
+    def _natural_level_prefix(self, ancestor_path: tuple[AncestorStep, ...]) -> str:
         parts: list[str] = []
         path_so_far: tuple[AncestorStep, ...] = ()
         for step in ancestor_path:
@@ -707,7 +777,10 @@ def _format_label(node: Node, is_decision: bool, descriptions: bool, batch_suffi
 
 
 def _first_sentence(text: str) -> str:
-    clean = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    # Neutralize template refs first so a description like `${max_iterations}` does not
+    # leak ${...} into the label (and truncation never severs a ${ ... } mid-brace).
+    clean = re.sub(r"\$\{([^}]*)\}", r"\1", text)
+    clean = re.sub(r"\*\*(.+?)\*\*", r"\1", clean)
     clean = re.sub(r"\*(.+?)\*", r"\1", clean)
     match = re.match(r"([^.!?]+[.!?])", clean)
     if match:
