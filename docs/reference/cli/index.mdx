@@ -520,8 +520,14 @@ For a workflow with conditional branching:
 ```mermaid
 graph LR
     classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
     classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
     classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
     fetch-data[["fetch-data (shell)"]]:::shell
     classify{"classify (code)"}:::decision
     process-small[["process-small (shell)"]]:::shell

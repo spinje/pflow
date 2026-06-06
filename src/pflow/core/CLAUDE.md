@@ -165,6 +165,7 @@ Validates beyond schema structure: catches duplicate IDs, node reference integri
 
 **Internal metadata fields** allowed by the schema (parser-injected, not user-facing):
 - `nodes[i]._source_lines` — code block source line offsets (read by `python_code.py` for error attribution)
+- `nodes[i]._routes_to_end` — authored success route to reserved `end`; parser metadata consumed by the graph model only, not a runtime edge
 - `outputs[name]._source_line` — source line of the output `source:` declaration (read by `output_resolver` for `At:` rendering)
 
 ### markdown_parser.py

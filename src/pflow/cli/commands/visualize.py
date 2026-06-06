@@ -91,10 +91,12 @@ def visualize(
 
     # Generate mermaid
     base_path = Path(resolved.file_path).parent if resolved.file_path else None
+    source_file = Path(resolved.file_path) if resolved.file_path else None
     mermaid = generate_mermaid(
         resolved.ir,
         resolve_child=resolve_sub_workflow,
         base_path=base_path,
+        source_file=source_file,
         max_depth=depth,
         direction=direction,
         descriptions=descriptions,

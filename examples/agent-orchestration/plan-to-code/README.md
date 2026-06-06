@@ -105,9 +105,9 @@ graph TD
         end
         style execute-plan__implement-chunk-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
         execute-plan__implement-chunk__report-commits --> execute-plan__implement-chunk__out_commits_made
+        execute-plan__group-tick --> execute-plan__implement-chunk__in_delta
         execute-plan__in_plan --> execute-plan__implement-chunk__in_plan
         execute-plan__in_spec --> execute-plan__implement-chunk__in_spec
-        execute-plan__group-tick --> execute-plan__implement-chunk__in_delta
         execute-plan__in_progress_log --> execute-plan__implement-chunk__in_progress_log
         execute-plan__in_repo_dir --> execute-plan__implement-chunk__in_repo_dir
         subgraph execute-plan__seg-gate-in ["seg-gate inputs"]
@@ -148,7 +148,8 @@ graph TD
         execute-plan__in_base_branch --> execute-plan__seg-gate__in_base_branch
         execute-plan__in_max_fix_rounds --> execute-plan__seg-gate__in_max_fix_rounds
         execute-plan__check-groups{"check-groups (code)<br/>Decide: loop back for the next segment, or (once all segments are implemented) a"}:::decision
-        execute-plan__review-round["review-round (claude-code)<br/>One whole-codebase review-fix round (a fresh agent): deploy the relevant lenses "]:::code
+        execute-plan__review-round["review-round (claude-code)<br/>⟳ while result.continue · ≤ max_review_rounds<br/>One whole-codebase review-fix round (a fresh agent): deploy the relevant lenses "]:::code
+        execute-plan__review-round -.->|"⟳"| execute-plan__review-round
         execute-plan__simplify["simplify (claude-code)<br/>One focused simplicity pass over the COMPLETE implemented + reviewed change, run"]:::code
         execute-plan__verify["verify (claude-code)<br/>Adversarial verification of the fully-implemented, reviewed, and simplified resu"]:::code
         subgraph execute-plan__final-gate-in ["final-gate inputs"]
@@ -202,6 +203,7 @@ graph TD
         execute-plan__check-groups -->|simplify| execute-plan__simplify
         execute-plan__review-round --> execute-plan__simplify
         execute-plan__simplify --> execute-plan__verify
+        execute-plan__verify --> execute-plan__final-gate
         execute-plan__final-gate__out_ok --> execute-plan__check-final
         execute-plan__final-gate__out_summary --> execute-plan__check-final
         execute-plan__check-final -->|push| execute-plan__push
@@ -246,4 +248,5 @@ graph TD
     execute-plan__out_pr_url --> out_pr_url
     execute-plan__out_summary --> out_summary
     resolve-repo --> preflight
+    preflight --> execute-plan
 ```

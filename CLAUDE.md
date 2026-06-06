@@ -225,11 +225,11 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 163: Agentic Coding Workflow Harness example
 - ✅ Task 165: Shrink Trace Interning
 - ✅ Task 166: Declarative Stateful Loop Primitive
+- ✅ Task 155: Workflow Graph Model for Multi-Renderer Support
 
 ### Planned Features (in order of priority)
 
 **Next?**
-- Task 155: Workflow Graph Model for Multi-Renderer Support
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 164: Resume Workflow From a Failed Node
 

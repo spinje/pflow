@@ -13,8 +13,11 @@ graph LR
     save-result[("save-result (write-file)")]:::writefile
     log-error[["log-error (shell)"]]:::shell
     create-fallback[("create-fallback (write-file)")]:::writefile
+    pflow_end(("end"))
     read-source --> process-file
     read-source -.->|error| log-error
     process-file --> save-result
     process-file -.->|error| log-error
     log-error --> create-fallback
+    create-fallback --> pflow_end
+    save-result --> pflow_end

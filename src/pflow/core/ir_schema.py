@@ -291,6 +291,13 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                             "omit it."
                         ),
                     },
+                    "_routes_to_end": {
+                        "type": "boolean",
+                        "description": (
+                            "Parser-injected metadata marking an authored success route to the reserved "
+                            "terminal keyword ``end``. It is not a runtime edge."
+                        ),
+                    },
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,
@@ -683,7 +690,7 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
         if isinstance(data, dict):
             _validate_retry_waits_finite(data)
             _validate_node_references(data)
-            _validate_duplicate_node_ids(data)
+            _validate_node_ids(data)
         return
 
     # Format the first error with helpful message
@@ -750,18 +757,24 @@ def _validate_node_references(data: dict[str, Any]) -> None:
             )
 
 
-def _validate_duplicate_node_ids(data: dict[str, Any]) -> None:
-    """Validate that all node IDs are unique.
+def _validate_node_ids(data: dict[str, Any]) -> None:
+    """Validate node IDs: reject reserved keywords (``end``/``__end__``) and duplicates.
 
     Args:
         data: The validated IR data
 
     Raises:
-        ValidationError: If duplicate node IDs exist
+        ValidationError: If a node ID is reserved or duplicated
     """
     seen = set()
     for i, node in enumerate(data["nodes"]):
         node_id = node["id"]
+        if node_id in {"end", "__end__"}:
+            raise ValidationError(
+                message=f"Node ID '{node_id}' is reserved",
+                path=f"nodes[{i}].id",
+                suggestion="Use a different node ID. Use 'next: end' to terminate a route.",
+            )
         if node_id in seen:
             raise ValidationError(
                 message=f"Duplicate node ID '{node_id}'",

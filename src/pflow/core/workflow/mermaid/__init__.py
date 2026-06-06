@@ -1,23 +1,37 @@
-"""Generate Mermaid flowchart diagrams from workflow IR."""
+"""Compatibility shim for Mermaid workflow visualization."""
 
-from pflow.core.workflow.mermaid._context import (
-    _first_sentence,
-    _get_item_label,
-    _loop_label,
-)
-from pflow.core.workflow.mermaid._edges import (
-    _deduplicate_edges,
-    _detect_decision_nodes,
-    _find_terminal_nodes,
-)
-from pflow.core.workflow.mermaid._render import generate_mermaid
+from __future__ import annotations
 
-__all__ = [
-    "_deduplicate_edges",
-    "_detect_decision_nodes",
-    "_find_terminal_nodes",
-    "_first_sentence",
-    "_get_item_label",
-    "_loop_label",
-    "generate_mermaid",
-]
+from pathlib import Path
+from typing import Any, Callable
+
+from pflow.core.workflow.graph import build_graph, render_mermaid
+from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+
+def generate_mermaid(
+    ir: dict[str, Any],
+    *,
+    resolve_child: Callable[[dict[str, Any], Path | None], SubWorkflowResult | None] | None = None,
+    base_path: Path | None = None,
+    source_file: Path | None = None,
+    max_depth: int = 1,
+    direction: str = "LR",
+    descriptions: bool = False,
+) -> str:
+    """Generate a Mermaid flowchart from workflow IR.
+
+    The IR walk now lives in ``workflow.graph.build_graph``; this legacy
+    package path remains as the stable public entry point for existing callers.
+    """
+    graph = build_graph(
+        ir,
+        resolve_child=resolve_child,
+        base_path=base_path,
+        source_file=source_file,
+        max_depth=max_depth,
+    )
+    return render_mermaid(graph, direction=direction, descriptions=descriptions)
+
+
+__all__ = ["generate_mermaid"]

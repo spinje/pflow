@@ -5,13 +5,11 @@ unblocked ones in parallel, opens a PR for each that passes review, then repeats
 — picking up newly-unblocked work each cycle — until nothing is left or a cycle
 cap is hit. This file is the entry point; every node's description explains its
 own role and why it is that node type.
-**The loop.** A backward-edge counter/checker pair: `tick` holds the cycle
-counter, `run-cycle` does the work (a whole sub-workflow per iteration), and
-`check-progress` decides loop-or-stop. The counter ping-pongs between the two
-`code` nodes because a node cannot read its own previous output — that store rule
-is why the loop needs a separate counter node. It converges because `run-cycle`'s
-`open-prs` step strips the `agent-ready` label from handled issues, shrinking the
-pool each cycle until empty (or `max_cycles` caps it).
+**The loop.** The orchestrator repeats the whole `run-cycle` sub-workflow with a
+declarative `loop:` block until the cycle reports no planned issues, or
+`max_cycles` caps it. It converges because `run-cycle`'s `open-prs` step strips
+the `agent-ready` label from handled issues, shrinking the pool each cycle until
+empty.
 **Before running.** `gh` authenticated with push + PR rights on `origin`; the
 labels `agent-ready` and `agent-needs-human` must exist. Opt issues in by
 labelling them `agent-ready` — if none are, the loop correctly no-ops on cycle
@@ -43,7 +41,6 @@ graph TD
         input_max_cycles[/"max_cycles (integer)"/]:::input
     end
     style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
-    tick["tick (code)"]:::code
     subgraph run-cycle-in ["run-cycle inputs"]
         run-cycle__in_base_branch[/"base_branch (string)"/]:::input
         run-cycle__in_max_issues[/"max_issues (integer)"/]:::input
@@ -51,7 +48,7 @@ graph TD
     style run-cycle-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     run-cycle__in_base_branch --> run-cycle__find-repo
     run-cycle__in_max_issues --> run-cycle__find-repo
-    subgraph run-cycle ["run-cycle (workflow)"]
+    subgraph run-cycle ["run-cycle (workflow)<br/>⟳ while issues_planned · ≤ max_cycles"]
         run-cycle__find-repo[["find-repo (shell)"]]:::shell
         run-cycle__fetch-issues[["fetch-issues (shell)"]]:::shell
         run-cycle__plan(["plan (llm)"]):::llm
@@ -85,12 +82,13 @@ graph TD
         run-cycle__implement-and-review-each__review --> run-cycle__implement-and-review-each__out_verdict
         run-cycle__implement-and-review-each__implement --> run-cycle__implement-and-review-each__out_summary
         run-cycle__plan --> run-cycle__implement-and-review-each__in_issue
-        run-cycle__in_base_branch --> run-cycle__implement-and-review-each__in_base_branch
         run-cycle__find-repo --> run-cycle__implement-and-review-each__in_repo_dir
+        run-cycle__in_base_branch --> run-cycle__implement-and-review-each__in_base_branch
         run-cycle__open-prs["open-prs (claude-code)"]:::code
         run-cycle__find-repo --> run-cycle__fetch-issues
         run-cycle__fetch-issues --> run-cycle__plan
         run-cycle__plan --> run-cycle__gate
+        run-cycle__gate -->|implement-and-review-each| run-cycle__implement-and-review-each
         run-cycle__implement-and-review-each__out_branch --> run-cycle__open-prs
         run-cycle__implement-and-review-each__out_commits_made --> run-cycle__open-prs
         run-cycle__implement-and-review-each__out_verdict --> run-cycle__open-prs
@@ -104,17 +102,14 @@ graph TD
     style run-cycle-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     run-cycle__plan --> run-cycle__out_issues_planned
     run-cycle__open-prs --> run-cycle__out_prs_opened
-    check-progress["check-progress (code)"]:::code
+    summarize["summarize (code)"]:::code
     input_base_branch --> run-cycle__in_base_branch
     input_max_issues --> run-cycle__in_max_issues
-    input_max_cycles --> check-progress
     subgraph workflow-outputs ["workflow outputs"]
         out_summary(["summary"]):::output
     end
     style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
-    check-progress --> out_summary
-    tick --> run-cycle
-    run-cycle__out_issues_planned --> check-progress
-    run-cycle__out_prs_opened --> check-progress
-    check-progress -->|tick| tick
+    summarize --> out_summary
+    run-cycle__out_issues_planned --> summarize
+    run-cycle__out_prs_opened --> summarize
 ```
