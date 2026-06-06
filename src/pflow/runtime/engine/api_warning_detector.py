@@ -247,9 +247,7 @@ def _check_boolean_error_flags(output: dict) -> Optional[str]:
 
     if output.get("isError") is True:
         error_info = output.get("error", {})
-        if isinstance(error_info, dict):
-            return _first_error_message(error_info.get("message"), default="API request failed")
-        return _first_error_message(error_info, default="API request failed")
+        return _first_error_message(error_info, output.get("message"), default="API request failed")
 
     return None
 
@@ -361,12 +359,18 @@ def _coerce_error_message(value: Any) -> Optional[str]:
         return None
     if isinstance(value, str):
         return value
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            message = _coerce_error_message(item)
+            if message:
+                return message
+        return None
     if isinstance(value, dict):
         for key in ("message", "error", "reason"):
             message = _coerce_error_message(value.get(key))
             if message:
                 return message
-        return str(value)
+        return None
     return str(value)
 
 

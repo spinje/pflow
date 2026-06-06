@@ -313,9 +313,9 @@ All emitters wrap the callback in `contextlib.suppress(Exception)` so rendering 
 
 ## Utility Files
 
-### `api_warning_detector.py` (449 lines)
+### `api_warning_detector.py`
 
-Classifies node output as API warning based on 93+ patterns. See `runtime/CLAUDE.md` "Error Categorization" for the pattern categories and ambiguity rule. Key function: `detect_api_warning(node_id, shared) → Optional[str]`.
+Classifies node output as API warning based on explicit failure flags, error codes, and resource/validation message patterns. See `runtime/CLAUDE.md` "Error Categorization" for the pattern categories and ambiguity rule. Key function: `detect_api_warning(node_id, shared, *, node_type_name=None) → Optional[str]`. Pass `node_type_name` from the compiled node config so canonical `result` wrapper inspection is limited to MCP nodes.
 
 ### `template_errors.py`
 
