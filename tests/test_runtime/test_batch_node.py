@@ -267,7 +267,7 @@ class TestBatchExecutionBasic:
         assert shared["test_node"]["count"] == 0
         assert shared["test_node"]["success_count"] == 0
         assert shared["test_node"]["error_count"] == 0
-        assert shared["test_node"]["errors"] is None
+        assert shared["test_node"]["errors"] == []
 
     def test_batch_single_item(self):
         """Single item processed correctly."""
@@ -713,14 +713,14 @@ class TestResultStructure:
         assert "error_count" in result
         assert "errors" in result
 
-    def test_errors_none_when_no_errors(self):
-        """errors field is None when all items succeed."""
+    def test_errors_empty_list_when_no_errors(self):
+        """errors field is an empty list (not None) when all items succeed (issue #484)."""
         inner = MockInnerNode("test_node")
         shared: dict = {"data": ["a", "b"]}
 
         _run_batch(inner, shared)
 
-        assert shared["test_node"]["errors"] is None
+        assert shared["test_node"]["errors"] == []
 
     def test_none_is_valid_success(self):
         """None result from node is treated as success, not error."""
@@ -2477,7 +2477,7 @@ class TestBatchActionFallbackErrorDetection:
 
         assert shared["test_node"]["error_count"] == 0
         assert shared["test_node"]["success_count"] == 2
-        assert shared["test_node"]["errors"] is None
+        assert shared["test_node"]["errors"] == []
 
     def test_exec_single_no_error_when_none_action(self):
         """When _run() returns None, item succeeds (no false positive)."""
@@ -2497,7 +2497,7 @@ class TestBatchActionFallbackErrorDetection:
 
         assert shared["test_node"]["error_count"] == 0
         assert shared["test_node"]["success_count"] == 1
-        assert shared["test_node"]["errors"] is None
+        assert shared["test_node"]["errors"] == []
 
     def test_exec_single_with_node_detects_error_via_action(self):
         """Parallel path: all error-action items → all-fail abort."""
@@ -2682,6 +2682,90 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
 
         assert results[1]["item"] == "good-c"
         assert results[1].get("error") is None
+
+    def test_batch_continue_all_success_errors_is_empty_list(self):
+        """continue-mode batch with zero failures → ``errors == []`` (issue #484).
+
+        Pins the contract that ``errors`` is always a list. It used to collapse
+        to ``None`` when empty, breaking its declared ``type: array`` and any
+        downstream consumer that annotates it as a list. ``None == []`` is False,
+        so this assertion fails loudly if the producer ever regresses to ``None``.
+        """
+        from pflow.registry.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        registry = Registry()
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {"command": "echo ok-${item}"},
+                    "batch": {
+                        "items": ["a", "b", "c"],
+                        "error_handling": "continue",
+                    },
+                    "purpose": "Batch shell node where every item succeeds",
+                }
+            ],
+            "edges": [],
+        }
+
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
+
+        batch_output = shared["fetch"]
+        assert batch_output["success_count"] == 3
+        assert batch_output["error_count"] == 0
+        assert batch_output["errors"] == []
+
+    def test_batch_errors_consumed_by_downstream_code_node_as_list(self):
+        """End-to-end (issue #484): a downstream ``code`` node consuming
+        ``${batch.errors}`` annotated ``errors: list`` validates and runs when
+        the batch had zero failures.
+
+        Before the fix this failed at runtime with
+        ``Input 'errors' expects list but received NoneType``. Routed through
+        ``WorkflowRunner`` so the full producer → template-resolution →
+        code-node input-validation path is exercised (tests/CLAUDE.md gotcha #20).
+        """
+        from pflow.execution import RunnerConfig, WorkflowRunner
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {"command": "echo ok-${item}"},
+                    "batch": {
+                        "items": ["a", "b", "c"],
+                        "error_handling": "continue",
+                    },
+                    "purpose": "Batch shell node where every item succeeds",
+                },
+                {
+                    "id": "parse",
+                    "type": "code",
+                    "params": {
+                        "inputs": {"errors": "${fetch.errors}"},
+                        "code": 'errors: list\nresult: str = f"got {len(errors)} errors"\n',
+                    },
+                    "purpose": "Code node consuming the batch errors output as a list",
+                },
+            ],
+            "edges": [{"from": "fetch", "to": "parse", "action": "default"}],
+            "start_node": "fetch",
+        }
+
+        result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+        assert result.success, [d.message for d in result.diagnostics]
+        assert result.shared_after["parse"]["result"] == "got 0 errors"
 
     def test_batch_workflow_partial_failure_parallel(self, tmp_path):
         """Parallel variant of partial-fail: exercises the parallel code path."""

@@ -51,7 +51,7 @@ def make_batch_shape(
         "count": count,
         "success_count": success_count,
         "error_count": error_count,
-        "errors": error_list if error_list else None,
+        "errors": error_list,
         "batch_metadata": {
             "parallel": parallel,
             "max_concurrent": 10 if parallel else None,
@@ -1520,19 +1520,32 @@ class TestOutputKeyDottedPath:
         assert captured.out.strip() == "alpha"
 
     def test_output_key_dotted_path_returns_null_for_none_value(self, capsys):
-        """``-o node.errors`` on a successful batch emits JSON ``null``, NOT a warning.
+        """``-o node.field`` on a present-but-``None`` value emits JSON ``null``, NOT a warning.
 
         Pins the ``variable_exists`` + ``resolve_value`` design — a future
         refactor that uses just ``resolve_value`` and checks for None would fail
-        this test.
+        this test. (Batch ``errors`` is no longer ``None`` — it is ``[]`` — so
+        this uses an explicit ``None``-valued output key to keep exercising the
+        present-but-``None`` distinction.)
         """
         from pflow.cli.workflow_output import _handle_text_output
 
-        shared = {"batch-llm": make_batch_shape(results=[{"result": "ok"}])}
-        assert shared["batch-llm"]["errors"] is None
-        _handle_text_output(shared, output_key="batch-llm.errors", workflow_ir=None, verbose=False)
+        shared = {"node": {"value": None}}
+        _handle_text_output(shared, output_key="node.value", workflow_ir=None, verbose=False)
         captured = capsys.readouterr()
         assert captured.out.strip() == "null"
+        assert "Warning" not in captured.err
+        assert "not found" not in captured.err
+
+    def test_output_key_dotted_path_returns_empty_list_for_batch_errors(self, capsys):
+        """``-o batch.errors`` on a successful batch emits ``[]`` (issue #484), NOT a warning."""
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {"batch-llm": make_batch_shape(results=[{"result": "ok"}])}
+        assert shared["batch-llm"]["errors"] == []
+        _handle_text_output(shared, output_key="batch-llm.errors", workflow_ir=None, verbose=False)
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "[]"
         assert "Warning" not in captured.err
         assert "not found" not in captured.err
 
@@ -1626,15 +1639,19 @@ class TestOutputKeyMissHints:
         assert "'node.text' is a string (value: 'hello world'), cannot descend." in captured.err
 
     def test_output_key_miss_describes_null_dead_end(self, capsys):
-        """None mid-path uses 'null value' type label (likely real-world hit:
-        ``node.errors.field`` where ``errors`` is None on a successful batch).
+        """None mid-path uses the 'null value' type label.
+
+        (Batch ``errors`` is no longer ``None`` — it is ``[]`` (issue #484), and
+        descending into it is covered by ``test_output_key_miss_describes_empty_list``.
+        This uses an explicit ``None``-valued mid-path key to keep pinning the
+        null-value label.)
         """
         from pflow.cli.workflow_output import _handle_text_output
 
-        shared = {"batch-llm": make_batch_shape(results=[{"r": 1}])}
-        _handle_text_output(shared, output_key="batch-llm.errors.first", workflow_ir=None, verbose=False)
+        shared = {"node": {"value": None}}
+        _handle_text_output(shared, output_key="node.value.first", workflow_ir=None, verbose=False)
         captured = capsys.readouterr()
-        assert "'batch-llm.errors' is a null value (value: None), cannot descend." in captured.err
+        assert "'node.value' is a null value (value: None), cannot descend." in captured.err
 
     def test_output_key_miss_describes_boolean_dead_end(self, capsys):
         """Boolean uses its own label, not 'number' (bool subclasses int)."""

@@ -1001,7 +1001,7 @@ def _aggregate_batch_results(
         "count": len(exec_res),
         "success_count": success_count,
         "error_count": len(errors),
-        "errors": errors if errors else None,
+        "errors": errors,
         "batch_metadata": {
             "parallel": batch_config.parallel,
             "max_concurrent": batch_config.max_concurrent if batch_config.parallel else None,

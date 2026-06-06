@@ -81,7 +81,7 @@ def compact_batch_output_value(value: Any) -> Any:
     if not isinstance(value, Mapping):
         return value
     errors = value.get("errors")
-    if not isinstance(errors, list):
+    if not isinstance(errors, list) or not errors:
         return value
     if not value.get("batch_metadata") and not all(
         isinstance(error, Mapping) and "index" in error and "error" in error for error in errors

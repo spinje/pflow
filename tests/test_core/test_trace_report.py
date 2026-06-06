@@ -193,6 +193,46 @@ class TestGenerateReport:
         assert "```json" not in markdown
         assert "## Output" not in markdown
 
+    def test_successful_batch_aggregate_report_surfaces_metadata_no_error_section(self, tmp_path: Path) -> None:
+        """A zero-failure batch report must NOT render a "## Batch Errors" section and
+        MUST keep its aggregate metadata (count/success_count/error_count/batch_metadata)
+        visible in "## Output" (issue #484 companion fix).
+
+        This is the success-case mirror of
+        ``test_failed_batch_aggregate_report_compacts_error_items`` and the ONLY guard
+        on the ``_has_batch_error_output`` ``and errors`` companion fix. With ``errors``
+        now ``[]`` (not ``None``), removing ``and errors`` makes ``_has_batch_error_output``
+        return ``True`` for a successful batch, which suppresses these keys from
+        ``_format_remaining_node_output``'s "## Output" dump while "## Batch Errors" stays
+        empty — so the batch metadata would vanish from the report entirely. The
+        ``"success_count" in markdown`` assertion below fails loudly under that regression.
+        """
+        batch_event = _make_event(
+            node_id="ok-batch",
+            node_type="ShellNode",
+            success=True,
+            node_output={
+                "count": 2,
+                "success_count": 2,
+                "error_count": 0,
+                "errors": [],
+                "batch_metadata": {"execution_mode": "sequential"},
+                "results": [{"stdout": "ok-a"}, {"stdout": "ok-b"}],
+            },
+        )
+        trace = _make_trace(nodes=[batch_event])
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(trace))
+
+        report_dir = generate_report(trace_file, str(tmp_path / "report"))
+
+        assert report_dir is not None
+        markdown = (report_dir / "01-ok-batch.md").read_text()
+        assert "## Batch Errors" not in markdown
+        assert "## Output" in markdown
+        # The regression catcher: this key is suppressed if `and errors` is removed.
+        assert "success_count" in markdown
+
     def test_batch_node_creates_directory(self, tmp_path: Path) -> None:
         batch_event = _make_event(
             node_id="process",

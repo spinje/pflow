@@ -63,7 +63,7 @@ your-command | jq -R -s 'split("\n") | map(select(. != ""))'
 ```
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
-Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`.
+Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`. `.errors` is always an array — `[]` when there are no failures, never `null` — so a downstream node can safely annotate it as a `list`/`array`.
 
 **Batching over results nests one layer per stage.** When a later node batches over `${first.results}`, each `${item}` IS one of those entries — so `${item.response}` is the first node's output for that row and `${item.item}` is its original input. A third stage batched over the second's results adds another layer: `${item.item.response}` reaches two stages back. To avoid deep `item.item.item` chains, correlate earlier stages directly — see **Correlating parallel arrays** below.
 
