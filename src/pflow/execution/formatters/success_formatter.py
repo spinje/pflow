@@ -356,14 +356,16 @@ def format_success_as_text(  # noqa: C901
         if total_llm_calls > 0:
             lines.append(f"   Total LLM calls: {total_llm_calls}")
     elif total_cost and total_cost > 0:
+        # The key is ``tokens_total`` (set by MetricsCollector._build_execution_metrics)
+        # — cache-inclusive input + output. Mirrors the CLI cost line.
         workflow_metrics = metrics.get("workflow", {})
-        total_tokens = workflow_metrics.get("total_tokens", 0)
+        tokens_total = workflow_metrics.get("tokens_total", 0)
 
         detail_parts: list[str] = []
         if total_llm_calls > 0:
             detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
-        if total_tokens > 0:
-            detail_parts.append(f"{total_tokens:,} tokens")
+        if tokens_total > 0:
+            detail_parts.append(f"{tokens_total:,} tokens")
 
         if detail_parts:
             lines.append(f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})")

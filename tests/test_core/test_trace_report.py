@@ -28,6 +28,7 @@ from pflow.core.trace_report import (
     _extract_item_label,
     _find_notable_items,
     _format_cost,
+    _input_token_total,
     _item_filename,
     _replace_report_dir,
     _slugify_label,
@@ -614,13 +615,16 @@ class TestBuildSummary:
 
     def test_agent_calls_label_with_turns_and_cache(self) -> None:
         """claude-code runs render 'Agent calls: N (T turns)', and `in` is the
-        true total (uncached + cache-write + cache-read) with a cache-% suffix."""
+        cache-inclusive input total read directly from ``total_input_tokens`` — the
+        renderer no longer re-adds the cache tiers (#492), with a cache-% suffix."""
         trace = _make_trace(
             llm_summary={
                 "total_calls": 9,
                 "agent_calls": 9,
                 "total_num_turns": 104,
-                "total_input_tokens": 1743,
+                # Inclusive total (uncached 1,743 + cache tiers). Every producer emits
+                # inclusive input_tokens, so the summary stores the inclusive sum here.
+                "total_input_tokens": 2137122,
                 "total_cache_creation_tokens": 153248,
                 "total_cache_read_tokens": 1982131,
                 "total_output_tokens": 41733,
@@ -629,7 +633,7 @@ class TestBuildSummary:
         )
         md = _build_summary(trace, source_path="test")
         assert "- Agent calls: 9 (104 turns)" in md
-        # 1,743 + 153,248 + 1,982,131 = 2,137,122 in; 1,982,131 / 2,137,122 ≈ 93%
+        # `in` is total_input_tokens verbatim; 1,982,131 / 2,137,122 ≈ 93% cached.
         assert "- Tokens: 2,137,122 in / 41,733 out  ·  93% of input cached" in md
         assert "LLM calls" not in md
 
@@ -769,13 +773,14 @@ class TestBuildNodeFile:
 
     def test_cached_llm_metadata_splits_paid_and_historical_cost(self) -> None:
         builder = TraceFixtureBuilder()
-        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07)
+        # input_tokens is the cache-INCLUSIVE total (950 of the 1,950 was a cache read).
+        event = builder.cached_llm_event_with_call("draft", cost_usd=0.07, input_tokens=1950)
 
         md = _build_node_file(event)
 
         assert "- Status: success [cached]" in md
         assert "- Source model: anthropic/claude-sonnet-4-5" in md
-        # `in` is the true total: 1,000 uncached + 950 cache-read = 1,950 (49% cached).
+        # `in` is the inclusive total read verbatim: 950 / 1,950 ≈ 49% cached.
         assert "- Source tokens: 1,950 in / 100 out  ·  49% of input cached" in md
         assert "- Paid this run: $0.0000" in md
         assert "- Historical source cost: $0.0700" in md
@@ -1046,15 +1051,146 @@ class TestBuildNodeFile:
         assert md.count('"cache_control"') == 3
 
 
+class TestInclusiveInputTokenContract:
+    """``input_tokens`` is the cache-inclusive total at every consumer (#492).
+
+    The bug: ``trace_report`` used to add the cache tiers on top of ``input_tokens``
+    (correct only for ClaudeCodeNode's old disjoint shape), double-counting every
+    inclusive LLMNode call. After the fix the renderer reads ``input_tokens`` verbatim,
+    so it agrees with ``metrics.py`` for both node types.
+    """
+
+    def test_input_token_total_returns_inclusive_input_no_cache_addition(self) -> None:
+        """_input_token_total returns ``input_tokens`` verbatim and does NOT re-add the
+        cache tiers; cache_read is returned only for the cache-% display."""
+        total_in, cache_read = _input_token_total({
+            "input_tokens": 26000,
+            "cache_creation_input_tokens": 5000,
+            "cache_read_input_tokens": 20000,
+        })
+        assert (total_in, cache_read) == (26000, 20000)
+
+    def test_per_node_render_does_not_double_count_inclusive_call(self) -> None:
+        """A per-node Tokens line shows the inclusive input total and a sane cache-%
+        (20,000 / 26,000 ≈ 77%) — not the pre-fix 51,000 from re-summing cache."""
+        event = _make_event(
+            node_type="ClaudeCodeNode",
+            llm_call={
+                "model": "claude-sonnet-4-5",
+                "input_tokens": 26000,
+                "uncached_input_tokens": 1000,
+                "output_tokens": 2000,
+                "total_tokens": 28000,
+                "cache_creation_input_tokens": 5000,
+                "cache_read_input_tokens": 20000,
+                "input_token_accounting": "split_cache_fields",
+            },
+        )
+        md = _build_node_file(event)
+        assert "- Tokens: 26,000 in / 2,000 out  ·  77% of input cached" in md
+
+    def test_summary_render_does_not_double_count_inclusive_total(self) -> None:
+        """The summary Tokens line reads ``total_input_tokens`` verbatim (no cache
+        addition) — same 26,000 in / 77% as the per-node path."""
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 1,
+                "agent_calls": 1,
+                "total_num_turns": 4,
+                "total_input_tokens": 26000,
+                "total_cache_creation_tokens": 5000,
+                "total_cache_read_tokens": 20000,
+                "total_output_tokens": 2000,
+                "models_used": ["claude-sonnet-4-5"],
+            }
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "- Tokens: 26,000 in / 2,000 out  ·  77% of input cached" in md
+
+    def test_metrics_and_report_agree_on_inclusive_input_total(self) -> None:
+        """#492's real surface: ``metrics.py`` and ``trace_report.py`` must report the
+        SAME input total for a trace mixing a claude-code (inclusive-with-cache) call and
+        an LLMNode call. Pre-fix, trace_report added cache on top of ``input_tokens`` and
+        diverged from metrics. Runs the real consumers, not mocks (tests/CLAUDE.md #20):
+        the trace's ``llm_summary`` is produced by the real ``WorkflowTraceCollector``
+        aggregation and the metrics by the real ``MetricsCollector``.
+        """
+        from pflow.core.metrics import MetricsCollector
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+        claude_event = {
+            "node_id": "agent",
+            "node_type": "ClaudeCodeNode",
+            "duration_ms": 10.0,
+            "success": True,
+            "timestamp": "2026-03-23T10:00:01",
+            "llm_call": {
+                "model": "claude-sonnet-4-5",
+                "input_tokens": 26000,  # inclusive: 1000 uncached + 5000 + 20000
+                "uncached_input_tokens": 1000,
+                "output_tokens": 2000,
+                "total_tokens": 28000,
+                "cache_creation_input_tokens": 5000,
+                "cache_read_input_tokens": 20000,
+                "input_token_accounting": "split_cache_fields",
+                "cost_usd": 0.05,
+                "num_turns": 3,
+            },
+        }
+        llm_event = TraceFixtureBuilder().llm_event("draft", input_tokens=1000, output_tokens=500, cost_usd=0.01)
+        events = [claude_event, llm_event]
+
+        collector = WorkflowTraceCollector(workflow_name="x")
+        collector.events = events
+        metrics = MetricsCollector().get_summary(collector.collect_llm_calls())
+        tokens_input = metrics["metrics"]["total"]["tokens_input"]
+
+        llm_summary = collector._collect_llm_summary(events)
+        trace = _make_trace(llm_summary=llm_summary, nodes=events)
+        md = _build_summary(trace, source_path="test")
+
+        # Both consumers report 27,000 in (26,000 + 1,000) — no render-time cache addition.
+        assert tokens_input == 27000
+        assert f"- Tokens: {tokens_input:,} in" in md
+        # Second independent inclusive total: llm_summary.total_tokens is summed from each
+        # call's inclusive total_tokens (28,000 + 1,500). Pinned so it can't silently drift.
+        assert llm_summary["total_tokens"] == 29500
+
+    def test_cached_claude_event_source_tokens_render_sane_cache_pct(self) -> None:
+        """A cached claude-code event where cache_read (20,000) exceeds the old uncached
+        slice (1,000): the now-inclusive denominator keeps the 'Source tokens' cache-%
+        under 100% (77%). Pre-fix this latent case could render a nonsensical >100%."""
+        event = _make_event(
+            node_type="ClaudeCodeNode",
+            cached=True,
+            llm_call={
+                "model": "claude-sonnet-4-5",
+                "input_tokens": 26000,
+                "uncached_input_tokens": 1000,
+                "output_tokens": 2000,
+                "total_tokens": 28000,
+                "cache_creation_input_tokens": 5000,
+                "cache_read_input_tokens": 20000,
+                "input_token_accounting": "split_cache_fields",
+                "cost_usd": 0.05,
+            },
+        )
+        md = _build_node_file(event)
+        assert "- Source tokens: 26,000 in / 2,000 out  ·  77% of input cached" in md
+
+
 class TestCacheTelemetrySection:
     """Trace report per-call cache telemetry rendering."""
 
-    def test_live_cache_write_folds_into_tokens_line_no_section(self) -> None:
-        """A live (non-replay, non-declared) cache no longer emits a divorced
-        ``## Cache telemetry`` section — the tiers are part of the input total
-        on the Tokens line. cache-write only (0 read) ⇒ no cache-% suffix."""
+    def test_cache_write_only_renders_inclusive_input_no_section(self) -> None:
+        """The renderer displays the already-inclusive ``input_tokens`` directly — it
+        does NOT re-add the cache tiers (#492). cache-write only (0 read) ⇒ no cache-%
+        suffix and no divorced ``## Cache telemetry`` section. Keeping
+        ``cache_creation_input_tokens == input_tokens`` is the mutation guard: if the
+        renderer ever re-summed cache, ``in`` would render 3,000 instead of 1,500."""
         event = _make_event(
             llm_call={
+                "input_tokens": 1500,  # inclusive total (all of it was cache-creation)
                 "cache_creation_input_tokens": 1500,
                 "cache_read_input_tokens": 0,
             },
@@ -1064,11 +1200,14 @@ class TestCacheTelemetrySection:
         assert "## Cache telemetry" not in md
         assert "- Tokens: 1,500 in / 0 out" in md
 
-    def test_live_cache_read_folds_into_tokens_line_with_pct(self) -> None:
-        """A live cache-read fold: ``in`` is the total and the cache-read share
-        shows as ``% of input cached`` — no separate section."""
+    def test_cache_read_renders_inclusive_input_with_pct(self) -> None:
+        """The renderer displays the already-inclusive ``input_tokens`` and surfaces the
+        cache-read share as ``% of input cached`` — no render-time folding (#492). Here
+        the full input was a cache hit, so it reads 100% and ``in`` stays 8,062 (not
+        16,124, which is what re-summing the read tier would produce)."""
         event = _make_event(
             llm_call={
+                "input_tokens": 8062,  # inclusive total (all of it was a cache read)
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 8062,
             },
@@ -1193,11 +1332,11 @@ class TestCacheTelemetrySection:
         assert "Cache write: 0 tokens" in md
         assert "Cache read: 0 tokens" in md
 
-    def test_cache_tiers_fold_into_tokens_line_in_batch_item_file(self) -> None:
-        """Batch per-item files reuse the shared metadata helper, so a live
-        cache's tiers land on the item's Tokens line (input total), not in a
-        separate section. Pins the contract against future refactors that move
-        batch-item rendering off the shared helper."""
+    def test_batch_item_renders_inclusive_input_no_section(self) -> None:
+        """Batch per-item files reuse the shared metadata helper, so the item's Tokens
+        line shows the already-inclusive ``input_tokens`` — no render-time cache folding
+        (#492). Pins the contract against refactors that move batch-item rendering off
+        the shared helper."""
         from pflow.core.trace_report import _build_batch_item_file
 
         parent_event = _make_event(node_id="batch-parent", node_type="LLMNode")
@@ -1206,6 +1345,7 @@ class TestCacheTelemetrySection:
             "duration_ms": 50,
             "success": True,
             "llm_call": {
+                "input_tokens": 1500,  # inclusive total (all of it was cache-creation)
                 "cache_creation_input_tokens": 1500,
                 "cache_read_input_tokens": 0,
             },

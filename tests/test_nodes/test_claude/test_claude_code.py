@@ -38,7 +38,7 @@ import pytest
 
 from pflow.core.diagnostic import Severity
 from pflow.core.workflow.validator import WorkflowValidator
-from pflow.nodes.claude.claude_code import ClaudeCodeNode
+from pflow.nodes.claude.claude_code import ClaudeCodeNode, _claude_token_fields
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 # The mock ``claude_agent_sdk`` is installed by this directory's conftest.py (via
@@ -1809,6 +1809,185 @@ def test_schema_retry_records_superseded_attempt_for_cost(claude_node):
     assert agg["output_tokens"] == 30
     assert agg["num_turns"] == 5
     assert agg["cost_usd"] == pytest.approx(0.03)
+
+
+def test_claude_token_fields_sums_cache_into_inclusive_total():
+    """_claude_token_fields folds the SDK's disjoint split into pflow's inclusive total.
+
+    The Claude SDK reports input_tokens as the UNCACHED count; pflow's contract treats
+    it as the cache-inclusive total = uncached + cache_creation + cache_read (#492).
+    """
+    fields = _claude_token_fields({
+        "input_tokens": 1000,
+        "cache_creation_input_tokens": 5000,
+        "cache_read_input_tokens": 20000,
+    })
+    assert fields == {
+        "input_tokens": 26000,  # 1000 + 5000 + 20000
+        "uncached_input_tokens": 1000,
+        "cache_creation_input_tokens": 5000,
+        "cache_read_input_tokens": 20000,
+        "input_token_accounting": "split_cache_fields",
+    }
+
+
+def test_claude_token_fields_defaults_missing_and_none_to_zero():
+    """Empty usage and None-valued fields default to 0; accounting is always split."""
+    assert _claude_token_fields({}) == {
+        "input_tokens": 0,
+        "uncached_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_token_accounting": "split_cache_fields",
+    }
+    # Missing cache keys but present input → input is the inclusive total (no cache).
+    assert _claude_token_fields({"input_tokens": 1500}) == {
+        "input_tokens": 1500,
+        "uncached_input_tokens": 1500,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_token_accounting": "split_cache_fields",
+    }
+    # Explicit None coerces to 0 (the `or 0` guard), so the sum never raises.
+    assert _claude_token_fields({"input_tokens": None, "cache_read_input_tokens": None})["input_tokens"] == 0
+
+
+def test_post_emits_inclusive_input_tokens_with_cache(claude_node):
+    """post() emits pflow's inclusive token contract for a cache-heavy run (#492).
+
+    The SDK reports input_tokens=1000 (uncached only) alongside 5000 cache-creation and
+    20000 cache-read tokens. pflow's llm_usage must headline the inclusive total (26000),
+    keep the uncached slice and cache tiers as a subset breakdown, and tag the accounting.
+    """
+    claude_node.params = {"prompt": "do work"}
+    claude_node.node_id = "agent"
+    shared = {"__warnings__": {}}
+    claude_node.shared = shared
+
+    async def mock_response(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text="done")])
+        yield ResultMessage(
+            result="done",
+            usage={
+                "input_tokens": 1000,
+                "output_tokens": 2000,
+                "cache_creation_input_tokens": 5000,
+                "cache_read_input_tokens": 20000,
+            },
+            total_cost_usd=0.05,
+            num_turns=4,
+            session_id="s1",
+        )
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)
+
+    lu = shared["llm_usage"]
+    assert lu["input_tokens"] == 26000  # inclusive: 1000 + 5000 + 20000
+    assert lu["uncached_input_tokens"] == 1000
+    assert lu["cache_creation_input_tokens"] == 5000
+    assert lu["cache_read_input_tokens"] == 20000
+    assert lu["output_tokens"] == 2000
+    assert lu["total_tokens"] == 28000  # inclusive input + output
+    assert lu["input_token_accounting"] == "split_cache_fields"  # noqa: S105 (not a secret — accounting tag)
+    # Shape guard: claude's llm_usage emits exactly the inclusive token contract plus its
+    # execution metadata — no LLMNode-only fields (has_cache_telemetry, thinking_*, etc.).
+    # No existing test pins claude's producer-shape, so this is the guard (see plan §5).
+    assert set(lu) == {
+        "model",
+        "input_tokens",
+        "uncached_input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "input_token_accounting",
+        "cost_usd",
+        "duration_ms",
+        "num_turns",
+        "session_id",
+    }
+
+
+def test_schema_retry_aggregates_inclusive_input_tokens_with_cache(claude_node):
+    """Retry aggregation sums the INCLUSIVE per-attempt input_tokens (#492).
+
+    The existing cache-zero retry test can't catch a half-fix: with zero cache the SDK's
+    uncached count already equals the inclusive total, so a non-inclusive
+    ``_usage_record_from`` is invisible. Here the main attempt AND the superseded attempt
+    both carry non-zero cache, so the aggregated input_tokens only matches if BOTH producer
+    sites (``post`` and ``_usage_record_from``) emit inclusive values. This is the test the
+    "revert _usage_record_from only" mutation check fails against (plan §5).
+    """
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    schema = {"type": "object", "properties": {"continue": {"type": "boolean"}}, "required": ["continue"]}
+    claude_node.params = {"prompt": "decide", "output_schema": schema, "schema_retries": 1}
+    claude_node.node_id = "review"
+    shared = {"__warnings__": {}}
+    claude_node.shared = shared
+
+    async def attempt1(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text="maybe?")])
+        yield ResultMessage(
+            structured_output={"continue": "maybe"},  # not coercible to bool → retry
+            usage={
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "cache_creation_input_tokens": 200,
+                "cache_read_input_tokens": 300,
+            },
+            total_cost_usd=0.01,
+            num_turns=3,
+            session_id="s1",
+        )
+
+    async def attempt2(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text='{"continue": "true"}')])
+        yield ResultMessage(
+            structured_output={"continue": "true"},  # coerces to True → conforming
+            usage={
+                "input_tokens": 200,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 400,
+                "cache_read_input_tokens": 600,
+            },
+            total_cost_usd=0.02,
+            num_turns=2,
+            session_id="s1",
+        )
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.side_effect = [attempt1(), attempt2()]
+
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)
+
+    lu = shared["llm_usage"]
+    # Main = final attempt, INCLUSIVE: 200 + 400 + 600 = 1200 (not the SDK's bare 200).
+    assert lu["input_tokens"] == 1200
+    assert lu["uncached_input_tokens"] == 200
+    # Superseded attempt recorded INCLUSIVE: 100 + 200 + 300 = 600 (not the SDK's bare 100).
+    assert [r["input_tokens"] for r in lu["retries"]] == [600]
+    assert [r["uncached_input_tokens"] for r in lu["retries"]] == [100]
+
+    agg = WorkflowTraceCollector.aggregate_llm_usage_with_retries(lu)
+    assert agg["input_tokens"] == 1800  # 1200 + 600 (inclusive per-attempt)
+    assert agg["uncached_input_tokens"] == 300  # 200 + 100 (summed across attempts)
+    assert agg["output_tokens"] == 30  # 20 + 10
+    assert agg["cache_creation_input_tokens"] == 600  # 400 + 200
+    assert agg["cache_read_input_tokens"] == 900  # 600 + 300
+    assert agg["total_tokens"] == 1830  # sum(inclusive input) + sum(output)
+    # The aggregator must keep input_tokens == uncached + creation + read on the
+    # aggregated dict (#492): uncached is summed, not carried main-only.
+    assert agg["input_tokens"] == (
+        agg["uncached_input_tokens"] + agg["cache_creation_input_tokens"] + agg["cache_read_input_tokens"]
+    )
 
 
 def test_schema_retries_no_op_without_output_schema(claude_node):

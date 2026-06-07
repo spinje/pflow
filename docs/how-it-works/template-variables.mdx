@@ -258,7 +258,7 @@ Available fields on `${node_id.llm_usage}`:
 | `total_tokens` | int | Input + output |
 | `cache_creation_input_tokens` | int | Tokens used for cache creation |
 | `cache_read_input_tokens` | int | Tokens read from cache |
-| `input_token_accounting` | str | How LiteLLM prompt tokens were normalized (`total_includes_cache` or `split_cache_fields`) |
+| `input_token_accounting` | str | How `input_tokens` was derived. The `llm` node reports `total_includes_cache` or `split_cache_fields` depending on what the provider returned; `claude-code` always reports `split_cache_fields` (the Claude SDK splits cached tokens into separate fields). |
 
 ### Claude Code metadata
 

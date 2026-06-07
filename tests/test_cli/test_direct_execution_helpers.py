@@ -188,17 +188,22 @@ class TestDisplayCostSummary:
         partial_cost_usd: float | None = None,
         unavailable_models_unnamed_count: int = 0,
         total_calls: int = 0,
+        tokens_total: int = 15,
     ) -> dict:
         """Build a synthetic formatted result for cost-display tests.
 
         ``unavailable_models`` uses the F#17-deferred shape
         ``list[{name, calls}]`` consumed by the helper-normalizer in
         ``cli/workflow_output.py::_format_cost_summary_lines``.
+
+        The cost line reads ``metrics.workflow.tokens_total`` (production keeps
+        it equal to ``metrics.total.tokens_total`` — both summed from the same
+        llm_calls). ``tokens_input``/``tokens_output`` are unread display filler.
         """
         total: dict = {
             "tokens_input": 10,
             "tokens_output": 5,
-            "tokens_total": 15,
+            "tokens_total": tokens_total,
             "total_calls": total_calls,
             "cost_usd": None,
         }
@@ -208,7 +213,7 @@ class TestDisplayCostSummary:
             total["unavailable_models_unnamed_count"] = unavailable_models_unnamed_count
             if partial_cost_usd is not None:
                 total["partial_cost_usd"] = partial_cost_usd
-        return {"metrics": {"total": total, "workflow": {"total_tokens": 15}}}
+        return {"metrics": {"total": total, "workflow": {"tokens_total": tokens_total}}}
 
     def test_unknown_model_shows_warning(self) -> None:
         """When LiteLLM has no pricing for the model, show warning with model name."""
@@ -245,6 +250,24 @@ class TestDisplayCostSummary:
         assert "unavailable" not in out.lower()
         # F#17 deferred: priced multi-call line carries the call count
         assert "3 calls" in out
+
+    def test_priced_cost_line_shows_token_count(self) -> None:
+        """The priced cost line surfaces the cache-inclusive total-token count.
+
+        Regression guard: the code read the wrong key (``total_tokens``) while
+        MetricsCollector emits ``tokens_total``, so this detail silently rendered
+        as 0 (never shown) for every run. The fixture now uses the production key.
+        """
+        result = self._make_formatted_result(total_calls=2, tokens_total=28000)
+        out = "\n".join(_format_cost_summary_lines(0.05, result))
+        assert "28,000 tokens" in out
+
+    def test_priced_cost_line_token_count_over_one_million_uses_separators(self) -> None:
+        """Token counts ≥ 1M render with thousands separators, no overflow or
+        abbreviation — matching the trace-report summary convention."""
+        result = self._make_formatted_result(total_calls=9, tokens_total=2137122)
+        out = "\n".join(_format_cost_summary_lines(0.05, result))
+        assert "2,137,122 tokens" in out
 
     def test_known_model_singular_call_uses_singular_noun(self) -> None:
         """F#17 wording lock: single LLM call renders as ``1 call``."""

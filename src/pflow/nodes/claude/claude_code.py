@@ -11,11 +11,13 @@ Interface:
 - Writes: shared["_schema_error"]: str  # Soft-failure message for structured-output mode: set when structured output was unavailable, the SDK reported an error alongside the output, or the schema reference resolved to None (optional)
 - Writes: shared["llm_usage"]: dict  # Token usage and execution metadata (empty dict {} if unavailable)
     - model: str  # Model identifier used
-    - input_tokens: int  # Non-cached input tokens
+    - input_tokens: int  # Total input tokens, including cached prefix
+    - uncached_input_tokens: int  # Input tokens not served from cache
     - output_tokens: int  # Output tokens generated
-    - total_tokens: int  # Total tokens (input + output)
+    - total_tokens: int  # Total tokens (input + output); input includes cache
     - cache_creation_input_tokens: int  # Tokens used for cache creation
     - cache_read_input_tokens: int  # Tokens read from cache
+    - input_token_accounting: str  # How input_tokens was derived (always "split_cache_fields" for claude-code)
     - cost_usd: float  # Cost in USD from Claude Code SDK
     - duration_ms: int  # Execution time in milliseconds
     - num_turns: int  # Number of conversation turns
@@ -50,6 +52,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from pflow.core.node import Node
@@ -135,6 +138,27 @@ _AUTH_ERROR_MARKERS = (
 )
 
 
+def _claude_token_fields(usage: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize Claude SDK usage to pflow's inclusive token contract.
+
+    The Claude SDK reports Anthropic's disjoint model — ``input_tokens`` is the
+    UNCACHED count, with ``cache_creation_input_tokens`` / ``cache_read_input_tokens``
+    as separate addends. pflow's contract (see ``core/llm_usage.py``) treats
+    ``input_tokens`` as the cache-INCLUSIVE total, matching LLMNode. Claude's split is
+    always known, so the total is a deterministic sum (no value-based heuristic).
+    """
+    base_input = usage.get("input_tokens", 0) or 0
+    cache_creation = usage.get("cache_creation_input_tokens", 0) or 0
+    cache_read = usage.get("cache_read_input_tokens", 0) or 0
+    return {
+        "input_tokens": base_input + cache_creation + cache_read,
+        "uncached_input_tokens": base_input,
+        "cache_creation_input_tokens": cache_creation,
+        "cache_read_input_tokens": cache_read,
+        "input_token_accounting": "split_cache_fields",
+    }
+
+
 class ClaudeCodeNode(Node):
     """Claude Code agentic super node for AI-assisted development tasks.
 
@@ -156,11 +180,13 @@ class ClaudeCodeNode(Node):
     - Writes: shared["_schema_error"]: str  # Soft-failure message for structured-output mode: set when structured output was unavailable, the SDK reported an error alongside the output, or the schema reference resolved to None (optional)
     - Writes: shared["llm_usage"]: dict  # Token usage and execution metadata (empty dict {} if unavailable)
         - model: str  # Model identifier used
-        - input_tokens: int  # Non-cached input tokens
+        - input_tokens: int  # Total input tokens, including cached prefix
+        - uncached_input_tokens: int  # Input tokens not served from cache
         - output_tokens: int  # Output tokens generated
-        - total_tokens: int  # Total tokens (input + output)
+        - total_tokens: int  # Total tokens (input + output); input includes cache
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
+        - input_token_accounting: str  # How input_tokens was derived (always "split_cache_fields" for claude-code)
         - cost_usd: float  # Cost in USD from Claude Code SDK
         - duration_ms: int  # Execution time in milliseconds
         - num_turns: int  # Number of conversation turns
@@ -784,11 +810,14 @@ class ClaudeCodeNode(Node):
         usage = metadata.get("usage") or {}
         if not usage:
             return None
+        # Inclusive input_tokens per pflow's contract — REQUIRED here, not just in
+        # post(): the retry aggregator (workflow_trace.aggregate_llm_usage_with_retries)
+        # sums per-attempt input_tokens, so a uncached-only record here would silently
+        # mix inclusive + uncached. total_tokens is intentionally omitted (the
+        # aggregator recomputes it from the summed inputs/outputs).
         return {
-            "input_tokens": usage.get("input_tokens", 0),
+            **_claude_token_fields(usage),
             "output_tokens": usage.get("output_tokens", 0),
-            "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
-            "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0),
             "cost_usd": metadata.get("total_cost_usd"),
             "duration_ms": metadata.get("duration_ms"),
             "num_turns": metadata.get("num_turns"),
@@ -1432,19 +1461,17 @@ class ClaudeCodeNode(Node):
         if metadata:
             usage = metadata.get("usage") or {}
 
-            # Store token counts separately - do NOT aggregate cache tokens into input_tokens
-            base_input = usage.get("input_tokens", 0)
-            cache_creation = usage.get("cache_creation_input_tokens", 0)
-            cache_read = usage.get("cache_read_input_tokens", 0)
+            # Normalize the SDK's disjoint token split into pflow's inclusive
+            # contract (input_tokens = total including cached prefix). See
+            # _claude_token_fields / core/llm_usage.py.
+            token_fields = _claude_token_fields(usage)
             total_output = usage.get("output_tokens", 0)
 
             shared["llm_usage"] = {
                 "model": self.params.get("model", "claude-sonnet-4-5"),
-                "input_tokens": base_input,  # Only non-cached input tokens
+                **token_fields,
                 "output_tokens": total_output,
-                "total_tokens": base_input + total_output,
-                "cache_creation_input_tokens": cache_creation,
-                "cache_read_input_tokens": cache_read,
+                "total_tokens": token_fields["input_tokens"] + total_output,
                 # ClaudeCodeNode mirrors total_cost_usd (Claude SDK convention)
                 # into cost_usd at its producer boundary so the rest of the
                 # pipeline reads a single key (matching LLMNode/LiteLLM output).

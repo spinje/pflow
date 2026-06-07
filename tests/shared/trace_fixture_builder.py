@@ -21,6 +21,11 @@ class TraceFixtureBuilder:
         success: bool = True,
         system: str | list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        """Live (non-cached) LLM event matching production shape.
+
+        ``input_tokens`` is the cache-INCLUSIVE total (it includes any cache tiers),
+        matching pflow's contract for every producer — see ``core/llm_usage.py``.
+        """
         event: dict[str, Any] = {
             "node_id": node_id,
             "node_type": "LLMNode",
@@ -86,6 +91,11 @@ class TraceFixtureBuilder:
         cache record retains the original spend), plus ``cache_source``,
         ``cache_key``, ``cache_age_sec`` augmented at restore.
         ``node_output.llm_usage`` mirrors ``llm_call``.
+
+        ``input_tokens`` is the cache-INCLUSIVE total (it includes
+        ``cache_read_input_tokens`` / ``cache_creation_input_tokens``), matching
+        pflow's contract for every producer — see ``core/llm_usage.py``. The
+        default 1000/950 means "1000 total of which 950 was a cache read".
         """
         llm_call = {
             "model": model,
