@@ -222,7 +222,7 @@ rename (**not** an exporter — build only when a second real consumer appears):
 ### Prereq
 - **Issue #492** (`input_tokens` semantics: LLMNode cache-inclusive vs ClaudeCode uncached) should
   land first, so the unified `llm` event carries consistent token semantics. Cost (`cost_usd`) is
-  unaffected by that bug.
+  unaffected by that bug. (✅ this was just merged to main)
 
 ---
 
