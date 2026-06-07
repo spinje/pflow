@@ -162,7 +162,8 @@ pflow/
 - Create scratch pads in `scratchpads/<conversation-subject>/` for deep thinking
 
 **Utilizing subagents**:
-- Use `pflow-codebase-searcher` for gathering information, research, and verifying assumptions (avoids exhausting context window). **Never use the `Explore` agent**
+- Use `pflow-codebase-searcher` for gathering information, research, and verifying assumptions (avoids exhausting context window). **Never use the `Explore` or general-purpose agents.**
+- Subagents gather and cite; **you** own the conclusions. `pflow-codebase-searcher` is same-model and file-grounded — trust its citations, but check its conclusions follow from them, and confirm directly before anything irreversible or outward-facing.
 - Read files directly with the `Read` tool when the path is known or when the user explicitly asks you to read something.
 - Use `test-writer-fixer` for writing/fixing tests (small tasks, one file at a time, comprehensive context)
 - Use `code-implementer` for small, isolated features/fixes that need no deep codebase knowledge
@@ -281,6 +282,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - Task 113: TypeScript Code Node
 - Task 114: Lightweight Custom Nodes
 - Task 116: Windows Compatibility
+- Task 167: LSP Support for `.pflow.md`
 
 > **Task commands:**
 > ```bash

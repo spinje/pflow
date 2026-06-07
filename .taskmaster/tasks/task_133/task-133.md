@@ -97,8 +97,10 @@ new span (≈free, events are per-visit today); batch items → child spans; LLM
 NEW emit points, not free — be precise about which "retry" is meant**; nested sub-workflows →
 `parent_id` chaining across the workflow boundary. *Recommendation:* per-execution span, batch-items
 and LLM-calls as child spans, retries as attempts within a span.
-- **Two choke points, not one.** Read side: `TraceTree.from_event_log` (reassemble tree from flat
-  log) — one place, most consumers funnel through it. Write side: today **each sub-workflow gets its
+- **Two choke points, not one.** Read side: `TraceTree.from_dict` (today reads *already-nested*
+  structure; flat-log reassembly is the future change — see "verified foundation" below) — one
+  place, most consumers funnel through it. *(Corrected 2026-06-07: `from_event_log` does not exist
+  in code; the real reassembly entry point is `from_dict`.)* Write side: today **each sub-workflow gets its
   own collector** (save/restored around `engine.run`, propagated via `__trace_collector__`);
   one-log-per-run means unifying that into span-context correlation — a collector + `WorkflowExecutor`
   change, not just a format change.
@@ -126,11 +128,113 @@ contract).
 
 ---
 
+## D1/D2/D3 — verified foundation, trust boundary & spikes (2026-06-07)
+
+A verification session pinned the current-state facts this deferred design rests on (against code +
+the OpenTelemetry spec) and the roadmap that now justifies it. **Roadmap (author, 2026-06-07):
+initial UI (React Flow over Task 155's `GraphModel`) → this task (the event stream) → live execution
+overlay (possibly HITL / Task 125 first).** The live overlay is therefore the *next real consumer*
+after this task — which turns the unified "one event source, many renderers" model from a
+hypothetical seam into an earned one. **Build at this task, after the initial UI. The build STARTS
+with the spikes below, not the schema.**
+
+This section is a *design with a verified foundation + a gated spike list* — **NOT a ready-to-code
+spec.** It refines (does not replace) D1/D2/D3 above.
+
+### Trust boundary
+
+**Verified (against code / OTel spec):**
+- Current trace: **no per-event IDs** (only a per-run `execution_id`); **no `parent_id`** (nesting is
+  structural embedding via `batch_items`/`sub_workflow_events`); file written **once at end** (no
+  tailable file today). `trace_io.intern_blobs` writes blobs as a **trailer** (last key), str-only,
+  skips `__`-keys.
+- Per-event time: **one** naive-local `datetime.now().isoformat()` stamped at record (≈end) time;
+  `duration_ms` via `perf_counter`. **Batch-item and warmup events carry no timestamp and no
+  `node_id`** (keyed by `index`; `-1` = warmup sentinel) — a genuinely different event shape.
+- Progress callback (`create_progress_callback`) is a **separate, structured, loosely-coupled** live
+  channel firing at node *start* / batch-item / *completion* — distinct sink (`__progress_callback__`)
+  from the trace collector (`__trace_collector__`), no shared emission point.
+- OTel: spans export **on end only** (`OnStart` is a no-op for the standard processors); **no
+  in-progress export** → OTLP cannot feed a live overlay. **No standard cost attribute**
+  (`gen_ai.usage.*` standardizes only token counts, incl. cache + reasoning).
+
+**Forced (entailed by the above — safe to commit):**
+- Append-only ⇒ cannot embed ⇒ nesting **must** be by `parent_id` reference (replaces today's
+  embedding).
+- Live tailing ⇒ blobs **must** be inline first-occurrence (define-before-use), **not** the current
+  trailer. This is exactly D3's prescription — verified the current code is the *opposite* and must
+  change (`trace_io.resolve_blobs` already carries a TODO for the JSONL reader).
+- Run aggregates unknown at start ⇒ **must** be the D2 `run.complete` trailer.
+- Overlay needs a node-**start** signal and a stable per-event **id** ⇒ both must be synthesized
+  (today absent).
+- Overlay cannot be fed from OTLP ⇒ pflow's own stream is the live source of truth; OTel is at most a
+  post-hoc projection.
+
+**Needs proving (spike before committing — do NOT treat as settled):**
+1. **Migration blast radius (HIGH).** Every current reader breaks on a format change:
+   `TraceTree.from_dict`, `trace_report`, `metrics`, `analyze-cache`, `--only` snapshot restore,
+   `report`. The full reader set + migration cost were NOT mapped this session.
+2. **Unify-vs-parallel + concurrency reconciliation (HIGH).** Folding the progress channel and trace
+   into one emission means reconciling **two concurrency-buffering models** (per-worker progress
+   buffer vs the `shared["_batch_trace"]` accumulator). Assessed "moderate cost," not measured.
+   Fallback if expensive: keep two channels, share only the event *schema*.
+3. **Per-node append+flush performance (MED-HIGH).** D3's single-lock-around-(seq, append, flush)
+   under batch `ThreadPoolExecutor` is an assumption, unmeasured.
+4. **Overlay/HITL actual data needs (MED).** Is the progress callback's payload sufficient, or does
+   the overlay need resolved inputs/outputs (which live in the trace, not the callback)? Resolves as
+   the UI work begins.
+5. **OTel export round-trips as a rename (LOW).** Never prototyped — the "export is cheap later"
+   claim is unproven. (Not building it; field-name alignment only.)
+
+### Refinements to D1/D2/D3 (verification corrections)
+- **D1 read-side name was wrong:** `TraceTree.from_dict`, not `from_event_log` (no such method).
+  Today it reads *already-nested* structure; flat-log reassembly is the future change.
+- **D1 "batch items → child spans" needs promotion:** today batch items are degenerate (no `node_id`,
+  no timestamp). The redesign must promote them to first-class events with real
+  `id`/`parent_id`/timestamps.
+- **D1 "loop → new span (per-visit)" confirmed:** events are per-visit today; `final_events_by_node`
+  (last-occurrence) is the current collapse rule.
+- **D3 confirmed against code:** current interning is a trailer (opposite of D3) — D3's
+  first-occurrence prescription stands and requires the change `trace_io` already flags.
+
+### Proposed event schema (the one contract point; pin *after* spikes pass)
+One typed event per JSONL line; nesting by `parent_id`; OTel-aligned names so a future export is a
+rename (**not** an exporter — build only when a second real consumer appears):
+- **Identity/correlation:** `id` (↔ span_id), `parent_id` (↔ parent_span_id), `run_id` (↔ trace_id),
+  `seq` (monotonic).
+- **Lifecycle:** `kind` (`run.start` / `node` / `llm` / `blob` / `run.complete` / a HITL-escalation
+  kind for Task 125), `start`, `end`, `status`.
+- **Payload:** kind-specific (node: node_id/type/resolved-io/mutations; llm: `gen_ai.usage.*` token
+  names + `cost_usd`; blob: hash + bytes).
+- **Consumers are *renderers* of this one stream:** durable JSONL writer, stderr progress display,
+  live overlay, (future) OTel export. **Whether the existing progress callback folds into this
+  emission or stays parallel is spike #2's outcome, not pre-decided.**
+
+### Cross-cutting insights (carry these; they cost hours to re-derive)
+- **Two jobs, two substrates.** Live overlay ← pflow's own event stream; post-hoc / ecosystem ← OTel
+  export. Never conflate.
+- **Borrow the data model, not the wire envelope.** Align correlation fields with OTel / `gen_ai`;
+  keep clean flat pflow JSONL. OTLP's `resourceSpans` envelope would import complexity and hurt
+  agent-readability.
+- **OTel-liveness reality.** OTel is live for *metrics/logs*; *traces* are completion-reported —
+  pflow's long-running nodes are exactly where that gap bites. Don't expect OTLP to carry liveness.
+
+### Prereq
+- **Issue #492** (`input_tokens` semantics: LLMNode cache-inclusive vs ClaudeCode uncached) should
+  land first, so the unified `llm` event carries consistent token semantics. Cost (`cost_usd`) is
+  unaffected by that bug.
+
+---
+
 ## Trigger conditions
 
 - **Pin D1/D2/D3 + build the span log** when: the live-overlay work begins (after static Task 155;
   alongside Task 164 / Task 125). Record it explicitly as a *liveness bet* — the disk fix alone
   would not require it.
+  - *2026-06-07 roadmap:* sequence is **initial UI → this task → live execution (possibly HITL
+    first)**. The overlay is the next consumer, so the design is grounded (see "verified foundation,
+    trust boundary & spikes") and gated on spikes #1–3 — not on further design. Build still starts
+    with the spikes, not the schema.
 - **Build the global blob store + GC** when: cross-run dedup is *observed* (e.g. `~/.pflow/debug`
   accumulates GB across runs that share content). Until then, per-run scope wins on simplicity +
   portability + reversibility.
@@ -140,6 +244,6 @@ contract).
 - **#382** — the now-work (honest model + per-run interning). The observed disk fix.
 - Full session reasoning + verified findings (with `file:line`): `starting-context/braindump-storage-architecture-session.md`
 - Root-cause measurement: Task 159 `BASELINE-AUDIT.md` L-8
-- Related issues: #370 (typed trace contract → folds into D1), #366 (per-event `workflow_path`), #357 (cache-key vs config-hash filter asymmetry)
+- Related issues: #370 (typed trace contract → folds into D1), #366 (per-event `workflow_path`), #357 (cache-key vs config-hash filter asymmetry), #492 (`input_tokens` semantics inconsistency — prereq for the unified `llm` event)
 - Related tasks: 106 (memo cache — SQLite, `output_hash` hook), 108 (trace — "execution IS a tree", no-truncation), 155 (static GraphModel), 164 (resume), 125 (escalation/HITL)
 - Key source: `src/pflow/runtime/workflow_trace.py`, `src/pflow/runtime/cache.py`, `src/pflow/runtime/engine/instrumentation.py`, `src/pflow/core/trace_tree.py`, `src/pflow/core/trace_report.py`
