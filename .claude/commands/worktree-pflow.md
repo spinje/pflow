@@ -18,6 +18,7 @@ uv run pflow git-worktree-task-creator task_description='$ARGUMENTS'
 - If the user mentions a folder or scratchpad to copy into the worktree, add `copy_folder=<relative-path>` (path relative to repo root, e.g. `copy_folder=scratchpads/my-research`).
 - **If the user asks to start the session with codex instead of Claude Code** (e.g. "use codex", "start with codex"), add `agent=codex`. Defaults to `agent=claude` otherwise. `open_claude` remains the on/off gate for launching the agent regardless of which one is selected.
 - If the user specifically asks NOT to open cursor or the coding agent, add `open_claude=false` and/or `open_cursor=false`.
+- **The workflow refuses to clobber an existing worktree/branch by default.** If it errors that the branch/worktree already exists and the user wants to re-run the **same** task and discard the old one, add `overwrite=true`. Do NOT add it just to make a collision go away for a *different* task — a collision between different tasks signals the branch name wasn't specific enough, so pass a more descriptive `task_description` instead.
 
 Let the user know if the worktree was created successfully and display the path to the worktree.
 
