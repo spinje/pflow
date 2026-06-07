@@ -4,7 +4,9 @@
 Enable pflow to authenticate with remote MCP servers using OAuth 2.1. This allows users to connect pflow to OAuth-protected MCP servers (like Heptabase, GitHub MCP, Sentry, etc.) by running a simple CLI command that triggers a browser-based OAuth flow, stores credentials locally, and uses them transparently for subsequent MCP calls.
 
 ## Status
-not started
+deprecated
+
+> **Deprecated 2026-06-07** — superseded by Task 123 (OAuth Authentication for MCP HTTP Servers), which targets the same direct-OAuth-client approach but is current and verified against the MCP Python SDK's `OAuthClientProvider` (v1.26.0), references the Task 88 fix, and specifies token storage / browser-callback / CLI integration concretely. This task (97) is the earlier, vaguer draft ("investigate what existing pflow patterns exist before starting"). **Priority note:** 97 was `high`, 123 is `medium` — consider bumping 123 to `high` so the signal isn't lost. (MCP-gateway-based auth in Task 65 is a separate, complementary approach, not a duplicate.) Content retained for historical context.
 
 ## Dependencies
 None confirmed. However, the implementation should integrate with:

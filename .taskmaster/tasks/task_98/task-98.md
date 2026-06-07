@@ -1,7 +1,9 @@
 # Task 98: Architectural Refactor - First-Class IR Execution
 
 ## Status
-not started
+deprecated
+
+> **Deprecated 2026-06-07** — superseded by Task 135 (Execution Core Redesign — Orchestration Engine) and Task 140 (Wrapper Chain Refactoring), which shipped this task's own recommended direction ("Option A: First-Class IR Executor"). The 4-wrapper chain described below **no longer exists**: `src/pflow/runtime/engine/engine.py` now walks the node graph directly and handles all runtime concerns (template resolution, namespacing, caching, tracing, batch) in cohesive sibling modules. PocketFlow is absorbed into `src/pflow/core/node.py` (~104 lines) with no external dependency and no imports anywhere in `src/pflow/`. All wrapper files listed under "References" (`node_wrapper.py`, `namespaced_wrapper.py`, `instrumented_wrapper.py`, `batch_wrapper.py`) are gone. Content retained for historical rationale only.
 
 ## Priority
 low (post-v1.0)
