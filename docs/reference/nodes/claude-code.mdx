@@ -106,7 +106,7 @@ The node always returns `default` from `post()` — schema soft-failures and SDK
 
 `cost_usd` is the SDK-reported API-equivalent estimated cost. Actual billing depends on auth method; Claude Pro/Max subscription runs may report an API-equivalent cost without a direct per-call charge.
 
-The `retries` field (optional) contains an array of usage records for schema retry attempts. Token/cost values shown at the top level aggregate the main call and all retries — when reading `llm_usage` for cost tracking, use the top-level fields (they already include retry costs).
+The `retries` field (optional) contains an array of usage records for superseded schema retry attempts. The top-level `llm_usage` fields reflect the **final (successful) attempt only** — the superseded attempts live in `retries[]`. The run's reported cost and token totals (the cost summary and the execution trace) aggregate the main call and all retries; the per-node `llm_usage` you read via `${node.llm_usage}` does not.
 
 ## Authentication
 

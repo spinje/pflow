@@ -1913,6 +1913,41 @@ def test_post_emits_inclusive_input_tokens_with_cache(claude_node):
     }
 
 
+def test_post_coerces_none_output_tokens_to_zero(claude_node):
+    """An explicit ``output_tokens: None`` from the SDK must not crash post().
+
+    ``usage.get("output_tokens", 0)`` returns ``None`` (not 0) when the key is present
+    with a None value, which would TypeError on the ``input_tokens + total_output`` sum.
+    The ``or 0`` guard coerces it, matching _claude_token_fields' None-handling.
+    """
+    claude_node.params = {"prompt": "do work"}
+    claude_node.node_id = "agent"
+    shared = {"__warnings__": {}}
+    claude_node.shared = shared
+
+    async def mock_response(*args, **kwargs):
+        yield AssistantMessage(content=[TextBlock(text="done")])
+        yield ResultMessage(
+            result="done",
+            usage={"input_tokens": 1000, "output_tokens": None},
+            total_cost_usd=0.01,
+            num_turns=1,
+            session_id="s1",
+        )
+
+    with patch("pflow.nodes.claude.claude_code.query") as mock_query:
+        mock_query.return_value = mock_response()
+
+        prep_res = claude_node.prep(shared)
+        result = claude_node.exec(prep_res)
+        claude_node.post(shared, prep_res, result)  # must not raise
+
+    lu = shared["llm_usage"]
+    assert lu["output_tokens"] == 0
+    assert lu["input_tokens"] == 1000
+    assert lu["total_tokens"] == 1000  # 1000 + 0, no TypeError
+
+
 def test_schema_retry_aggregates_inclusive_input_tokens_with_cache(claude_node):
     """Retry aggregation sums the INCLUSIVE per-attempt input_tokens (#492).
 

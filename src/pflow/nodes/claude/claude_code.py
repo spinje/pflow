@@ -817,7 +817,7 @@ class ClaudeCodeNode(Node):
         # aggregator recomputes it from the summed inputs/outputs).
         return {
             **_claude_token_fields(usage),
-            "output_tokens": usage.get("output_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0) or 0,  # None-safe, matching the helper's guards
             "cost_usd": metadata.get("total_cost_usd"),
             "duration_ms": metadata.get("duration_ms"),
             "num_turns": metadata.get("num_turns"),
@@ -1465,7 +1465,10 @@ class ClaudeCodeNode(Node):
             # contract (input_tokens = total including cached prefix). See
             # _claude_token_fields / core/llm_usage.py.
             token_fields = _claude_token_fields(usage)
-            total_output = usage.get("output_tokens", 0)
+            # ``or 0``: an explicit ``output_tokens: None`` from the SDK would slip past
+            # the ``, 0`` default (only absent keys default), then crash the total_tokens
+            # sum below. Coerce to match _claude_token_fields' None-guards.
+            total_output = usage.get("output_tokens", 0) or 0
 
             shared["llm_usage"] = {
                 "model": self.params.get("model", "claude-sonnet-4-5"),
