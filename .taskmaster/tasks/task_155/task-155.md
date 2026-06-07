@@ -11,6 +11,9 @@ Domain vocabulary (`context/CONTEXT.md`): **Graph model**, **IR**, **Container**
 ## Status
 done
 
+## Completed
+2026-06-06
+
 ## Priority
 high
 

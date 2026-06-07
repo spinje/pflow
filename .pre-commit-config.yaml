@@ -33,3 +33,13 @@ repos:
         entry: python3 scripts/check_mdx_fences.py
         language: system
         files: \.mdx$
+
+      # Keeps a task's ## Status within the closed vocabulary the roadmap
+      # tooling understands (not started | in progress | done | deprecated).
+      # An off-vocabulary status is silently dropped from scripts/tasks counts
+      # and listings. See scripts/check_task_status.py.
+      - id: check-task-status
+        name: validate taskmaster Status fields
+        entry: python3 scripts/check_task_status.py
+        language: system
+        files: ^\.taskmaster/tasks/task_\d+/task-\d+\.md$

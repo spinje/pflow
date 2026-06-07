@@ -4,6 +4,12 @@
 
 Add validation that checks literal parameter values against node interface metadata before execution. Currently pflow validates template references (`${node.output}`) but not literal values like `"model": 6` against the expected type (`str`).
 
+> **Sibling checkpoint (cross-ref added 2026-06-07).** This task and **Task 120 (Strict Input Type Validation)** are two halves of the same idea — "type-check a provided value against its declared type before execution, fail fast with an actionable message" — applied at **two different boundaries**:
+> - **This task (112):** *node `params`* (author-written, inside the workflow) checked against *node interface metadata* (registry docstrings / MCP JSON Schema). Lives in the compile/validation pipeline.
+> - **Task 120:** *workflow `## Inputs`* (caller-supplied via CLI/stdin) checked against *declared input types*. Lives in `prepare_inputs()`.
+>
+> They are **not duplicates** (distinct boundary + source of truth) but they **must share one type-compatibility primitive and one error format** — otherwise pflow ends up with two divergent type engines. The compatibility matrix already exists in `src/pflow/runtime/template_validation/type_checker.py` (Task 84: int→float widening, str↔dict/list JSON coercion, `any` universal). **Both checkpoints should call that single primitive** rather than reimplementing it. If 112 and 120 are scheduled together, consider lifting the shared rules into one small home both call. See Task 120's "Sibling checkpoint" note for the symmetric pointer.
+
 ## Status
 not started
 

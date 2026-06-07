@@ -4,7 +4,9 @@
 Update the parameter discovery system in the planner to intelligently map stdin content to appropriate workflow input parameters when users pipe data but don't specify explicit file paths. This enables workflows to seamlessly work with both piped stdin data and file paths without requiring changes to individual nodes, maintaining their atomic nature.
 
 ## Status
-not started
+deprecated
+
+> **Deprecated 2026-06-07** — premise obsolete on two counts. (1) The mechanism this task targets — the planner's parameter-discovery prompt (`src/pflow/planning/prompts/parameter_discovery.md`) — was deleted with the entire planner in Task 92; `src/pflow/planning/` no longer exists. (2) The user-facing need (route piped stdin into a workflow's inputs) shipped via a different, explicit mechanism in Task 115 (Automatic Stdin Routing): an input declares `"stdin": true`. In the agent-first model the authoring agent declares the stdin input rather than a planner inferring it. Content retained for historical context.
 
 ## Dependencies
 - Task 17: Implement Natural Language Planner System - The parameter discovery is part of the planner's meta-workflow

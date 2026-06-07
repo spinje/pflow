@@ -4,6 +4,14 @@
 
 Add strict validation in `prepare_inputs()` that fails fast when CLI-provided values cannot be coerced to their declared types, giving users immediate actionable feedback instead of deferring errors to downstream code nodes.
 
+> **Sibling checkpoint (cross-ref added 2026-06-07).** This task and **Task 112 (Pre-execution Type Validation for Literal Parameters)** are two halves of the same idea — "type-check a provided value against its declared type before execution, fail fast with an actionable message" — applied at **two different boundaries**:
+> - **This task (120):** *workflow `## Inputs`* (caller-supplied via CLI/stdin) checked against *declared input types*. Lives in `prepare_inputs()` (`src/pflow/runtime/compilation/ir_preparation.py`), which already collects errors and has the declared types.
+> - **Task 112:** *node `params`* (author-written, inside the workflow) checked against *node interface metadata*. Lives in the compile/validation pipeline.
+>
+> They are **not duplicates** (distinct boundary + source of truth) but they **must share one type-compatibility primitive and one error format**. The compatibility matrix already exists in `src/pflow/runtime/template_validation/type_checker.py` (Task 84). **Reuse it instead of hand-rolling a second table** (see the corrected Implementation Notes below). See Task 112's "Sibling checkpoint" note for the symmetric pointer.
+
+> **Stale notes corrected 2026-06-07 (post-Task 154).** Task 154 (Type Vocabulary Coherence, done 2026-04-17) shrank the `## Inputs`/`## Outputs` `type:` vocabulary to **seven canonical JSON-Schema names only** (`string`, `integer`, `number`, `boolean`, `object`, `array`, `any`) and **removed the Python aliases** (`str`, `int`, `float`, `dict`, `list`). The original `TYPE_CHECKS` map and `_normalize_type` references below predate 154 and list those deleted aliases — they are illustrative-but-stale. Implement against the canonical-only vocabulary and reuse `type_checker.py` rather than the snippet's bespoke map. (`_normalize_type` does not exist in the codebase.)
+
 ## Status
 not started
 
@@ -48,6 +56,10 @@ None. This builds on the type coercion infrastructure added in the numeric strin
 
 Type checking after coercion:
 ```python
+# ⚠ STALE (pre-Task 154) — see "Stale notes corrected" at top of file.
+# The Python aliases ("str", "int", "float", "dict", "list") were REMOVED from
+# the input vocabulary by Task 154. Use the 7 canonical JSON-Schema names only,
+# and prefer reusing template_validation/type_checker.py over this bespoke map.
 # Map declared types to expected Python types
 TYPE_CHECKS = {
     "string": str, "str": str,
