@@ -73,11 +73,13 @@ The node always returns `default` from `post()` — schema soft-failures and SDK
 ```json
 {
   "model": "claude-sonnet-4-5",
-  "input_tokens": 1500,
+  "input_tokens": 21500,
+  "uncached_input_tokens": 1500,
   "output_tokens": 450,
-  "total_tokens": 1950,
+  "total_tokens": 21950,
   "cache_creation_input_tokens": 0,
-  "cache_read_input_tokens": 0,
+  "cache_read_input_tokens": 20000,
+  "input_token_accounting": "split_cache_fields",
   "cost_usd": 0.0234,
   "duration_ms": 3450,
   "num_turns": 2,
@@ -85,9 +87,11 @@ The node always returns `default` from `post()` — schema soft-failures and SDK
   "retries": [
     {
       "input_tokens": 500,
+      "uncached_input_tokens": 400,
       "output_tokens": 150,
       "cache_creation_input_tokens": 0,
       "cache_read_input_tokens": 100,
+      "input_token_accounting": "split_cache_fields",
       "cost_usd": 0.0078,
       "duration_ms": 1200,
       "num_turns": 1,
@@ -98,9 +102,11 @@ The node always returns `default` from `post()` — schema soft-failures and SDK
 }
 ```
 
+`input_tokens` is the cache-inclusive total — it includes `cache_creation_input_tokens` and `cache_read_input_tokens`. `uncached_input_tokens` is the slice that wasn't served from cache. In the example above, 20,000 of the 21,500 input tokens were read from cache, leaving 1,500 uncached.
+
 `cost_usd` is the SDK-reported API-equivalent estimated cost. Actual billing depends on auth method; Claude Pro/Max subscription runs may report an API-equivalent cost without a direct per-call charge.
 
-The `retries` field (optional) contains an array of usage records for schema retry attempts. Token/cost values shown at the top level aggregate the main call and all retries — when reading `llm_usage` for cost tracking, use the top-level fields (they already include retry costs).
+The `retries` field (optional) contains an array of usage records for superseded schema retry attempts. The top-level `llm_usage` fields reflect the **final (successful) attempt only** — the superseded attempts live in `retries[]`. The run's reported cost and token totals (the cost summary and the execution trace) aggregate the main call and all retries; the per-node `llm_usage` you read via `${node.llm_usage}` does not.
 
 ## Authentication
 

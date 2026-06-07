@@ -315,7 +315,8 @@ class _LLMSummaryAccumulator:
         }
         # Additive within trace 2.x — omitted when zero so older readers and
         # non-caching/non-agent runs stay unchanged. ``total_input_tokens`` is
-        # the UNCACHED slice; renderers add the two cache tiers for the true total.
+        # the cache-inclusive total (every producer emits inclusive input_tokens;
+        # see core/llm_usage.py); the cache tiers are emitted as a subset breakdown.
         if self.total_cache_creation_tokens:
             result["total_cache_creation_tokens"] = self.total_cache_creation_tokens
         if self.total_cache_read_tokens:
@@ -596,6 +597,11 @@ class WorkflowTraceCollector:
         # Sum input/output tokens (None-safe: use `or 0` to coerce explicit None to 0)
         aggregated["input_tokens"] = llm_usage.get("input_tokens") or 0
         aggregated["output_tokens"] = llm_usage.get("output_tokens") or 0
+        # uncached_input_tokens is summed alongside input_tokens so the aggregated dict
+        # keeps the invariant input_tokens == uncached + cache_creation + cache_read for
+        # retried claude-code calls (#492). Producers that omit it (and never retry)
+        # default to 0.
+        aggregated["uncached_input_tokens"] = llm_usage.get("uncached_input_tokens") or 0
 
         # Sum cache tokens (None-safe)
         for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
@@ -619,6 +625,7 @@ class WorkflowTraceCollector:
         # Aggregate retry contributions to tokens (None-safe)
         for retry in retries:
             aggregated["input_tokens"] += retry.get("input_tokens") or 0
+            aggregated["uncached_input_tokens"] += retry.get("uncached_input_tokens") or 0
             aggregated["output_tokens"] += retry.get("output_tokens") or 0
             for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
                 aggregated[cache_key] += retry.get(cache_key) or 0

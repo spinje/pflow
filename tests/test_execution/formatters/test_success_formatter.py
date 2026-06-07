@@ -577,19 +577,24 @@ class TestPricingUnavailableWarning:
         total_cost_usd: float | None = None,
         unavailable_models_unnamed_count: int = 0,
         total_calls: int = 0,
+        tokens_total: int = 10,
     ) -> dict:
         """Build a synthetic result dict for cost-display tests.
 
         ``unavailable_models`` uses the F#17-deferred shape ``list[{name, calls}]``.
         Tests that need to exercise the legacy ``list[str]`` shape pass that
         directly; the renderer's normalizer accepts both for forward-compat.
+
+        The cost line reads ``metrics.workflow.tokens_total`` (production keeps it
+        equal to ``metrics.total.tokens_total`` — both summed from the same
+        llm_calls). ``tokens_input``/``tokens_output`` are unread display filler.
         """
         metrics: dict = {
-            "workflow": {"duration_ms": 100, "nodes_executed": 1, "total_tokens": 10},
+            "workflow": {"duration_ms": 100, "nodes_executed": 1, "tokens_total": tokens_total},
             "total": {
                 "tokens_input": 5,
                 "tokens_output": 5,
-                "tokens_total": 10,
+                "tokens_total": tokens_total,
                 "total_calls": total_calls,
                 "cost_usd": total_cost_usd,
             },
@@ -657,6 +662,21 @@ class TestPricingUnavailableWarning:
         assert "$0.0500" in text
         assert "1 call" in text
         assert "1 calls" not in text
+
+    def test_priced_cost_line_shows_token_count(self):
+        """Parity with the CLI cost line: the priced MCP cost line surfaces the
+        cache-inclusive total-token count. Regression guard for the wrong-key
+        bug (``total_tokens`` vs the emitted ``tokens_total``)."""
+        result_dict = self._make_result_dict(total_cost_usd=0.05, total_calls=2, tokens_total=28000)
+        text = format_success_as_text(result_dict)
+        assert "28,000 tokens" in text
+
+    def test_priced_cost_line_token_count_over_one_million_uses_separators(self):
+        """Token counts ≥ 1M render with thousands separators, no overflow or
+        abbreviation — matching the CLI and trace-report token conventions."""
+        result_dict = self._make_result_dict(total_cost_usd=0.05, total_calls=9, tokens_total=2137122)
+        text = format_success_as_text(result_dict)
+        assert "2,137,122 tokens" in text
 
     def test_unnamed_only_renders_count_phrase(self):
         """When all unpriced calls are genuinely-unrecorded, the rendered

@@ -348,20 +348,16 @@ def _format_cost(cost: float | None) -> str:
 
 
 def _input_token_total(llm_call: dict[str, Any]) -> tuple[int, int]:
-    """Return ``(total_input_tokens, cache_read_tokens)`` for one LLM call.
+    """Return ``(input_tokens, cache_read_tokens)`` for one LLM call.
 
-    LLM input is billed in three tiers that SUM to the true input the model
-    processed: uncached (``input_tokens``) + cache-write
-    (``cache_creation_input_tokens``) + cache-read (``cache_read_input_tokens``).
-    The report headlines that total and surfaces the cache-read share as a
-    cache-hit %, rather than showing the uncached slice alone \u2014 which made
-    cache-heavy agent runs look like ``in`` << ``out`` and divorced the cache
-    numbers from the token line.
+    ``input_tokens`` is pflow's cache-INCLUSIVE input total (see
+    ``core/llm_usage.py``) \u2014 every producer (LLMNode and ClaudeCodeNode) emits it
+    that way, so the report headlines it directly with no render-time cache
+    arithmetic. ``cache_read`` is returned only for the cache-hit % display.
     """
-    uncached = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0)) or 0
-    cache_write = llm_call.get("cache_creation_input_tokens", 0) or 0
+    total_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0)) or 0
     cache_read = llm_call.get("cache_read_input_tokens", 0) or 0
-    return uncached + cache_write + cache_read, cache_read
+    return total_in, cache_read
 
 
 def _format_tokens(total_in: int, tokens_out: int, cache_read: int, *, with_cache_pct: bool) -> str:
@@ -798,10 +794,11 @@ def _build_summary(
                 llm.get("total_num_turns", 0),
             )
         )
-        # `in` is the TRUE total: uncached + cache-write + cache-read (the three
-        # billing tiers). total_input_tokens alone is just the uncached slice.
+        # total_input_tokens is the cache-INCLUSIVE input total (every producer
+        # emits inclusive input_tokens; see core/llm_usage.py). cache_read is read
+        # only for the cache-% suffix, NOT added back into the input total.
         cache_read = llm.get("total_cache_read_tokens", 0)
-        total_in = llm.get("total_input_tokens", 0) + llm.get("total_cache_creation_tokens", 0) + cache_read
+        total_in = llm.get("total_input_tokens", 0)
         tokens_out = llm.get("total_output_tokens", 0)
         if total_in or tokens_out:
             lines.append(f"- Tokens: {_format_tokens(total_in, tokens_out, cache_read, with_cache_pct=True)}")
