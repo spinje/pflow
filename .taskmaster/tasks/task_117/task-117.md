@@ -7,7 +7,7 @@ Make error paths in CLI subcommands (`registry.py`, `registry_run.py`, `workflow
 **Scope narrowed**: Task 137 (Unified CLI Output Pipeline, completed 2026-03-29) fully handled main.py — unified pipeline, `output_error()` infrastructure, exception-based propagation, pre-initialization safety. This task covers only the remaining subcommand modules that Task 137 did not touch.
 
 ## Status
-partially completed (Phases 1-2 done by Task 137, Phase 3 remains)
+in progress
 
 ## Priority
 

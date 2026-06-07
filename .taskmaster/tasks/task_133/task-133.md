@@ -1,10 +1,12 @@
 # Task 133: Trace/Cache Storage Architecture
 
+## Description
+
+Architecture decision record for how pflow stores execution data: how node outputs, prompts, and events are stored across the trace and cache subsystems, why they stay separate, and where each stream of future work lives. The original premise — merging trace and cache into one content-addressed per-node store — was rejected; see "What this task is now" and the Decision below.
+
 ## Status
 
-**Decision recorded — implementation split.** The original premise (merge trace + cache into one
-store) is **rejected**. This task is now the architecture decision record that governs how pflow
-stores execution data, and the index for the three streams that replace the merge.
+in progress
 
 ## Priority
 
