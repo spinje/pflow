@@ -324,6 +324,8 @@ Why this matters: These guidelines aren't about passing linters—they're about 
 
 #### Code Quality
 
+The codebase has been through a sustained consolidation pass — diagnostics, output routing, execution core, exception hierarchy, and validation were each folded behind a smaller interface.  Hold that bar: new code *folds complexity away* rather than adding layers.
+
 - Write code optimized for change: small focused functions with single responsibilities, clear names that explain intent not implementation, and comprehensive tests that document expected behavior
 - Structure code as isolated, testable components that can be understood and changed independently — the only meaningful measure of code quality is how safely and easily it can be modified
 - Prefer boring and obvious: write code a tired developer can understand at 3am.
