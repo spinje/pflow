@@ -4,6 +4,8 @@
 #   ./scripts/tasks              Show summary and pending tasks
 #   ./scripts/tasks -v           Include descriptions
 #   ./scripts/tasks 56 55 65     Show details for specific tasks
+#   ./scripts/tasks --all        Dump every task's compact summary (read all in one command)
+#   ./scripts/tasks --since DATE Compact summary of tasks completed on/after DATE (YYYY-MM-DD)
 #   ./scripts/tasks --done       List completed tasks
 #   ./scripts/tasks --search X   Find tasks mentioning X
 
@@ -107,6 +109,31 @@ get_task_info() {
     elif [ "$status" = "done" ] || [ "$status" = "in progress" ]; then
         echo -e "${YELLOW}⚠ no review/progress found${NC} (unusual for a task marked \"$status\")"
     fi
+}
+
+# Print full detail for a list of task numbers, separated by horizontal rules.
+# Returns 1 if any task was missing (get_task_info prints "not found", returns 1),
+# so callers can propagate a non-zero exit without set -e aborting the loop.
+emit_tasks() {
+    local rc=0
+    local first=1
+    for n in "$@"; do
+        if [ $first -eq 0 ]; then
+            echo ""
+            echo "---"
+            echo ""
+        fi
+        first=0
+        get_task_info "$n" || rc=1
+    done
+    return $rc
+}
+
+# Every task number that exists on disk, in numeric order.
+all_task_numbers() {
+    for dir in "$TASKS_DIR"/task_*/; do
+        basename "$dir" | sed 's/task_//'
+    done | sort -n
 }
 
 # List tasks by status
@@ -278,6 +305,7 @@ show_summary() {
     local in_progress_count=$(count_tasks "in progress")
     local pending_count=$(count_tasks "not started")
     local deprecated_count=$(count_tasks "deprecated")
+    local total_count=$((done_count + in_progress_count + pending_count + deprecated_count))
 
     echo -e "${BOLD}# pflow Tasks${NC}"
     echo ""
@@ -301,12 +329,19 @@ show_summary() {
     echo ""
 
     echo "---"
-    echo -e "📁 Task files: ${BLUE}.taskmaster/tasks/task_N/task-N.md${NC}"
-    echo -e "📁 Version history: ${BLUE}.taskmaster/versions.md${NC}"
-    echo ""
     echo "Commands:"
-    echo "  ./scripts/tasks 104         Show task details"
-    echo "  ./scripts/tasks --search X  Find tasks mentioning X"
+    echo "  ./scripts/tasks N            One task — compact (~100 tokens: status, 5-line desc, doc pointers)"
+    echo "  ./scripts/tasks --all        Dump EVERY task's compact summary in one command"
+    echo "  ./scripts/tasks --since DATE Same, for tasks completed on/after DATE (YYYY-MM-DD)"
+    echo "  ./scripts/tasks --search X   Find tasks mentioning X"
+    echo ""
+    echo -e "${BOLD}▶ Reading tasks:${NC} run the commands above and read the output directly — don't delegate to subagents."
+    echo "  Each task is ~100 tokens (all ${total_count} fit in ~13k), so cost isn't the constraint — relevance is."
+    echo "  These files are historical artifacts, not current reality: the codebase has moved on since they were written."
+    echo "  So prefer --since DATE over --all, read only what you need, and trust recent tasks over old ones."
+    echo ""
+    echo -e "📁 Raw task files ${YELLOW}(full text, heavier — only when a doc pointer says so)${NC}: .taskmaster/tasks/task_N/task-N.md"
+    echo -e "📁 Version history: .taskmaster/versions.md"
 }
 
 # Main
@@ -343,6 +378,47 @@ while [[ $# -gt 0 ]]; do
             list_by_status "deprecated" "$VERBOSE"
             exit 0
             ;;
+        --all)
+            echo -e "${BOLD}# All Tasks${NC} (compact — read directly)"
+            echo ""
+            rc=0
+            emit_tasks $(all_task_numbers) || rc=$?
+            exit $rc
+            ;;
+        --since)
+            shift
+            since="$1"
+            if [ -z "$since" ]; then
+                echo "Error: --since requires a date (YYYY-MM-DD)"
+                exit 1
+            fi
+            if [[ ! "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                echo "Error: --since date must be YYYY-MM-DD (got: $since)"
+                exit 1
+            fi
+            # Collect done tasks completed on/after $since. ISO dates compare
+            # lexicographically, so "on or after" is "not before" ($completed >= $since).
+            matches=""
+            for dir in "$TASKS_DIR"/task_*/; do
+                task_num=$(basename "$dir" | sed 's/task_//')
+                file="$dir/task-$task_num.md"
+                [ -f "$file" ] || continue
+                [ "$(get_section_value "$file" "Status")" = "done" ] || continue
+                completed=$(get_section_value "$file" "Completed")
+                [ -n "$completed" ] && [ "$completed" != "unknown" ] || continue
+                if [[ ! "$completed" < "$since" ]]; then
+                    matches+="$completed|$task_num"$'\n'
+                fi
+            done
+            # Sort by completion date (oldest first), then take the task numbers.
+            sorted_nums=$(printf '%s' "$matches" | grep -v '^$' | sort | cut -d'|' -f2)
+            count=$(echo $sorted_nums | wc -w | tr -d ' ')
+            echo -e "${BOLD}# Tasks completed on or after $since${NC} ($count, compact — read directly)"
+            echo ""
+            rc=0
+            emit_tasks $sorted_nums || rc=$?
+            exit $rc
+            ;;
         --search)
             shift
             if [ -z "$1" ]; then
@@ -359,6 +435,8 @@ while [[ $# -gt 0 ]]; do
             echo "  ./scripts/tasks              Show summary and roadmap"
             echo "  ./scripts/tasks -v           Include descriptions"
             echo "  ./scripts/tasks 56 55 65     Show details for specific tasks"
+            echo "  ./scripts/tasks --all        Dump every task's compact summary"
+            echo "  ./scripts/tasks --since DATE Compact summary of tasks completed on/after DATE"
             echo "  ./scripts/tasks --done       List completed tasks"
             echo "  ./scripts/tasks --in-progress List in-progress tasks"
             echo "  ./scripts/tasks --pending    List pending tasks"
@@ -383,14 +461,7 @@ done
 # tolerate the failure and remember it for the final exit code.
 if [ ${#TASK_NUMS[@]} -gt 0 ]; then
     rc=0
-    for i in "${!TASK_NUMS[@]}"; do
-        if [ $i -gt 0 ]; then
-            echo ""
-            echo "---"
-            echo ""
-        fi
-        get_task_info "${TASK_NUMS[$i]}" || rc=1
-    done
+    emit_tasks "${TASK_NUMS[@]}" || rc=$?
     exit $rc
 fi
 
