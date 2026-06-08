@@ -50,6 +50,12 @@ The server always sends `max_depth=5`; collapse/expand is **client-side** (no
 depth round-trip). The `422` diagnostics are the same structured objects the CLI
 renders (`core/diagnostic.py`).
 
+**Payload size (inline-all):** every param value — including full prompts/code —
+ships inline, so click-to-read needs no second fetch. Batch×depth fan-out is
+bounded by representative-item truncation, but a deep workflow with large prompts
+can still produce a multi-MB payload. Fine for this local single-user server; a
+future remote / multi-client phase may want a by-ref fetch for large values.
+
 ### Static bundle (`/` + assets)
 Build the SPA into `src/pflow/ui/static/` (Vite `build.outDir = "../src/pflow/ui/static"`)
 with `base = "./"` (relative asset paths so it serves from `/`). The server

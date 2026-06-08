@@ -123,6 +123,15 @@ def create_app() -> Starlette:
         routes.append(Mount("/", app=StaticFiles(directory=_STATIC_DIR, html=True)))
     else:
         routes.append(Route("/{path:path}", _frontend_not_built))
+    # SECURITY (load-bearing — do NOT add CORSMiddleware without re-evaluating):
+    # the server binds 127.0.0.1 (cli/commands/ui.py) and sets NO CORS headers.
+    # `/api/graph?workflow=<path>` reads arbitrary filesystem paths, and a
+    # resolution failure returns a 422 whose diagnostics may echo a source line.
+    # With no `Access-Control-Allow-Origin`, a browser blocks any cross-origin
+    # page from READING that response — so a malicious site can't exfiltrate
+    # workflow/file contents via the local user's browser. Every request here is
+    # a read-only GET with no side effect; adding CORS, or any mutating/live-run
+    # endpoint, must revisit this file-content exposure.
     return Starlette(routes=routes)
 
 

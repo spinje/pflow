@@ -115,12 +115,15 @@ class TestGraphEndpoint:
         assert response.status_code == 422
         assert response.json()["errors"]
 
-    def test_build_bug_on_validated_ir_is_loud_500(self, tmp_path: Path) -> None:
-        """A build/render exception on validated IR is a loud 500, never 200-empty.
+    def test_unexpected_pipeline_exception_is_loud_500(self, tmp_path: Path) -> None:
+        """An unexpected (non-validation) pipeline exception is a loud 500.
 
-        Patches the build helper to raise a non-validation error (a producer
-        bug). With ``raise_server_exceptions=False`` the client observes the
-        500 the server would return rather than re-raising.
+        Patches ``resolve_validate_build`` wholesale to raise a ``RuntimeError`` —
+        a stand-in for a producer bug (e.g. a build/render fault on already-
+        validated IR). The endpoint catches only ``WorkflowGraphValidationError``
+        (→ 422); anything else must propagate to a loud 500, never a
+        200-with-empty-graph. With ``raise_server_exceptions=False`` the client
+        observes that 500 rather than re-raising.
         """
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)

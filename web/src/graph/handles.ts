@@ -17,6 +17,10 @@ export const NODE_OUT = "__out"; // source
 const PARAM = "p:"; // param row — TARGET (a node input slot, receives)
 const OUTPUT = "o:"; // output field — SOURCE (a node output, feeds)
 const BRANCH = "b:"; // decision fork outcome — SOURCE (feeds a labeled route)
+// The trailing colons keep these disjoint — "io:" is NOT a prefix of "iot:"
+// (`"iot:x".startsWith("io:")` is false), so handleType's branch order is
+// irrelevant. Don't drop a colon: bare "io" WOULD prefix "iot" and silently
+// mis-type every IO target handle as a source (→ React Flow drops the edge).
 const PORT_SOURCE = "io:"; // workflow IO port — SOURCE (input → consumers, output → parent)
 const PORT_TARGET = "iot:"; // workflow IO port — TARGET (input ← parent, output ← producer)
 
