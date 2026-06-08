@@ -1,9 +1,10 @@
 # Workflow Graph Package
 
 Renderer-agnostic workflow structure for Task 155. This package is the static
-"see" substrate: it carries nodes, edges, containers, loop/batch metadata, and
-source pointers. It must not carry runtime status, outputs, timings, or Mermaid
-syntax.
+"see" substrate: it carries nodes, edges, containers, loop/batch metadata,
+authored params, and source pointers. It must not carry runtime status, outputs,
+timings, or render syntax (Mermaid / React Flow / ELK layout) — that purity is
+mechanized by `tests/test_core/test_graph_model_purity.py`.
 
 ## File Map
 
@@ -15,7 +16,8 @@ graph/
 ├── build.py             # The only IR walk: IR -> GraphModel
 └── renderers/
     ├── __init__.py      # Renderer exports
-    └── mermaid.py       # GraphModel -> Mermaid syntax
+    ├── mermaid.py       # GraphModel -> Mermaid syntax
+    └── react_flow.py    # GraphModel -> React Flow JSON contract (Task 168)
 ```
 
 Renderers consume `GraphModel`; they do not read IR. The legacy
@@ -52,6 +54,11 @@ Renderers consume `GraphModel`; they do not read IR. The legacy
   File-loaded callers should pass `source_file` to `build_graph()` for the root
   workflow; expanded child workflow nodes get their file path from
   `SubWorkflowResult.path`.
+- `Node.params` carries authored param **values** inline (small literals through
+  full prompts/code) — the model's one complete static read-model, for the React
+  Flow renderer's click-to-read. `build.py` fills it with a non-dict guard
+  (unvalidated IR may carry `params: None`/str/list → `{}`). `render_mermaid`
+  ignores it, so Mermaid goldens are unaffected by its presence.
 
 ## Runtime Overlay Join Contract
 
@@ -104,3 +111,14 @@ always preserved; only the role label is lossy in that rare multi-role case.
 labels, batch ellipsis/dots, visual end sinks, and subgraph styling. It may use
 private helpers internally, but callers should use `render_mermaid()` or the
 compatibility `generate_mermaid()` shim.
+
+`renderers/react_flow.py` (Task 168) is the second renderer: `GraphModel ->
+RFGraph`, a typed React-Flow-native JSON contract that `asdict` + `json.dumps`
+round-trips. It mints flat ids **injectively** from the unique `NodeId`
+(`n{i}`/`g{j}`) rather than reusing Mermaid's collision-patched scheme — the two
+renderers deliberately share no helpers. It bakes the derived predicates as facts
+and emits the model's **general** `shadowed()` fact; the frontend picks its own
+visual policy, so do **not** copy Mermaid's narrower render-time shadowing here.
+Representative batch-item truncation lives in this renderer. The wire contract the
+frontend consumes is documented in `src/pflow/ui/CLAUDE.md`; the import-purity
+guard is enforced by the purity test cited in the intro.

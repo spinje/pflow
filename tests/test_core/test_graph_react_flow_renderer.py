@@ -26,7 +26,7 @@ from pflow.core.workflow.graph import (
     build_graph,
     render_react_flow,
 )
-from pflow.core.workflow.graph.renderers.react_flow import RFGraph, RFNode
+from pflow.core.workflow.graph.renderers.react_flow import RFGraph, RFNode, RFRef
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +65,41 @@ def _assert_referential_integrity(rf: RFGraph) -> None:
             assert member in node_ids, f"group {group.id} member {member} unresolved"
 
 
+def _node_identity(node_id: NodeId) -> tuple[object, ...]:
+    return (node_id.node_id, tuple((s.node_id, s.batch_index) for s in node_id.ancestor_path), node_id.port)
+
+
+def _ref_identity(ref: RFRef) -> tuple[object, ...]:
+    return (ref.node_id, tuple((s["node_id"], s["batch_index"]) for s in ref.ancestor_path), ref.port)
+
+
+def _assert_no_dropped_edges(graph: GraphModel, rf: RFGraph) -> None:
+    """Every model edge between two *rendered* nodes must reach the payload.
+
+    Referential integrity only proves the payload is internally consistent — it
+    CANNOT catch a silently dropped edge (a missing edge is still consistent). This
+    matches each model node to its RF node by structural ref, then asserts every model
+    edge whose both endpoints survive is present, across ALL edge kinds. Endpoints
+    hidden by batch truncation are skipped (their re-anchoring is pinned by
+    ``test_truncation_preserves_cross_boundary_dependency_via_host``). This is the
+    "no information loss" guarantee on real workflows: a dropped sequential / branch /
+    error / data_flow edge — invisible to referential integrity — fails here.
+    """
+    rf_id_by_identity = {_ref_identity(node.ref): node.id for node in rf.nodes}
+    rf_pairs = {(edge.source, edge.target, edge.kind) for edge in rf.edges}
+    for edge in graph.edges:
+        src, tgt = _node_identity(edge.source), _node_identity(edge.target)
+        if src not in rf_id_by_identity or tgt not in rf_id_by_identity:
+            continue  # an endpoint is hidden by truncation; re-anchoring is tested separately
+        src_id, tgt_id = rf_id_by_identity[src], rf_id_by_identity[tgt]
+        if src_id == tgt_id:
+            continue
+        assert (src_id, tgt_id, edge.kind.value) in rf_pairs, (
+            f"model edge {edge.source.node_id} -[{edge.kind.value}]-> {edge.target.node_id} "
+            f"(both endpoints rendered) is missing from the payload — silently dropped"
+        )
+
+
 # ── Real workflows: referential integrity + JSON round-trip ───────────────────
 
 
@@ -79,13 +114,14 @@ def _assert_referential_integrity(rf: RFGraph) -> None:
         "agent-orchestration/plan-to-code/run-from-plan.pflow.md",  # Task 163 harness
     ],
 )
-def test_real_workflows_render_with_referential_integrity(workflow_rel: str) -> None:
+def test_real_workflows_render_without_information_loss(workflow_rel: str) -> None:
     path = EXAMPLES_DIR / workflow_rel
     ir = parse_markdown(path.read_text(encoding="utf-8")).ir
     graph = build_graph(ir, resolve_child=resolve_sub_workflow, base_path=path.parent, source_file=path, max_depth=5)
     rf = render_react_flow(graph)
 
     _assert_referential_integrity(rf)
+    _assert_no_dropped_edges(graph, rf)
     # Mirrors the server's serialization (H2): exotic param values can't break it.
     json.dumps(asdict(rf), default=str)
     assert all(isinstance(node.is_decision, bool) and isinstance(node.is_terminal, bool) for node in rf.nodes)
