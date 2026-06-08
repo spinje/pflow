@@ -227,6 +227,43 @@ def test_nodes_carry_param_level_source_refs_for_click_to_read() -> None:
     )
 
 
+def test_nodes_carry_authored_param_values_for_click_to_read() -> None:
+    prompt = "Summarize the report.\n\nFocus on:\n- risks\n- mitigations\n"
+    graph = build_graph({
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"prompt": prompt, "model": "anthropic/claude-sonnet-4-5", "max_tokens": 1024},
+            }
+        ]
+    })
+
+    summarize = _node(graph, NodeId("summarize"))
+
+    # The full multi-line prompt lives inline on the model; the React Flow renderer
+    # owns the inline-vs-truncate policy, not build_graph. Scalars round-trip as-is.
+    assert summarize.params["prompt"] == prompt
+    assert summarize.params["model"] == "anthropic/claude-sonnet-4-5"
+    assert summarize.params["max_tokens"] == 1024
+
+
+def test_node_params_defaults_to_empty_dict_for_non_dict_ir() -> None:
+    # Unvalidated IR may carry `params: None`/str/list; build_graph normalizes to {}
+    # so downstream readers never hit AttributeError. Mirrors every other raw read here.
+    graph = build_graph({
+        "nodes": [
+            {"id": "missing", "type": "code"},
+            {"id": "nulled", "type": "code", "params": None},
+            {"id": "listy", "type": "code", "params": ["not", "a", "dict"]},
+        ]
+    })
+
+    assert _node(graph, NodeId("missing")).params == {}
+    assert _node(graph, NodeId("nulled")).params == {}
+    assert _node(graph, NodeId("listy")).params == {}
+
+
 def test_batch_model_carries_literal_items_without_dots_and_expands_all_subworkflows() -> None:
     ir = _parse("examples/nested/deep-research/deep-research.pflow.md")
     graph = build_graph(

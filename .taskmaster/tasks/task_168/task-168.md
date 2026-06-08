@@ -47,7 +47,8 @@ First increment serves the **static** view only:
   and **input/output ports**.
 - **Template connections** (`${ref}`) drawn as lines between nodes (the GraphModel's `DATA_FLOW`
   edges — one per `${ref}`).
-- **Click-to-read** prompts/params (large values lazy-fetched via their source ref).
+- **Click-to-read** prompts/params (all param values — including full prompts/code — ship inline in the
+  `/graph` payload; the click panel just surfaces them, no on-demand fetch).
 - Interactive **collapse/expand** of containers (sub-workflow / batch / loop) and **focus+context**
   (click a node → reveal just its connections).
 - Two **density modes** over one model: an "advanced" detailed node (ports + param values + wiring)
@@ -75,9 +76,13 @@ holds the wire-contract rationale). The decisions specific to this task:
   Keeps renderers symmetric (`render_react_flow(graph)` like `render_mermaid(graph)` — a renderer
   consumes the model, not the IR), gives one complete static read-model (structure + authored
   config — consistent with `LoopSpec`/`BatchSpec` config already on the model), and is editor-ready.
-  Exercises the per-node extension seam Task 155 explicitly left. **Size discipline:** small literals
-  / template strings inline; **large values (prompts, code) stay as `source_ref` and are lazy-fetched**
-  on click — never inlined into the graph payload (avoids re-creating the 100MB-trace problem).
+  Exercises the per-node extension seam Task 155 explicitly left. **Payload discipline (decided
+  inline-all):** ALL param values inline in `/graph` — including full prompts/code. The server re-parses
+  the small `.pflow.md` per request, so values are already in hand; this retires the entire by-ref
+  machinery (no lazy-fetch endpoint, no file-by-line reader, no `is_large` flag). The `batch×depth`
+  fan-out the old by-ref scheme guarded against is instead bounded by **representative-batch-item
+  truncation** inside `render_react_flow` (mirrors Mermaid's `_visible_batch_indexes`: ≤2 expanded items
+  + the count), while the full per-item descriptors still ride `RFNode.batch.items`.
 - **Predicates baked as facts in Python; visual policy in TS.** `is_decision`/`is_terminal`/`shadowed`
   ship as booleans. The frontend decides treatment — and the React Flow view picks its **own**
   `shadowed` policy (advanced mode *dims* shadowed structural edges; simple mode *hides* them); it
@@ -125,7 +130,10 @@ holds the wire-contract rationale). The decisions specific to this task:
   `kind`; `purpose`; `params: [{name, value|null, is_dynamic, source: {file, line}}]`; ports;
   `loop?`; `batch?`; `parent` (container id); node-level `source`; baked `is_decision` / `is_terminal`;
   `annotations`.
-- `is_dynamic` per param is **derived** (the value contains `${...}`), not a separate stored flag.
+- `is_dynamic` per param is **derived** — run the shared `source_refs_in` extractor over the value's
+  string leaves (the string itself, or a dict's string values; mirrors `build_graph`'s `_params_strings`
+  so it can never disagree with the `DATA_FLOW` edges), **not** a raw `str(value)`/`${` substring check.
+  So a literal operand like `${5}` correctly reads static. Not a separate stored flag.
 - Per **edge**: `{id, source, target, kind, label?, output_field?, input_name?, shadowed}`. One
   `DATA_FLOW` edge per `${ref}`; the frontend joins it to a param row by `input_name` and to the
   source's output by `output_field`. `input_name` is **best-effort** (lossy in rare multi-role cases,
@@ -148,10 +156,11 @@ holds the wire-contract rationale). The decisions specific to this task:
   byte-identical.
 
 ### Server & packaging
-- A local **Starlette** server (`pflow ui <workflow>`): serves the built React bundle, a `/graph`
-  JSON endpoint (the translator's payload), a **click-to-read** endpoint (lazy-fetch a node/param's
-  large source value by `source_ref`), and a **stubbed `/events` SSE** route reserved for the future
-  overlay (not wired to a live stream in this increment).
+- A local **Starlette** server (`pflow ui <workflow>`): serves the built React bundle, a `/api/graph`
+  JSON endpoint (the translator's payload, with all param values inline — so **no** separate
+  click-to-read endpoint), and an `/api/catalog` list. **No `/events` SSE stub** in this increment:
+  overlay-readiness is the structural `ref` in the contract + pluggable frontend data-loading, not a
+  dead route.
 - The server + frontend bundle + web-stack deps ship **only** behind a `pflow[ui]` **extra**. Base
   `pip install pflow` gains **no** new runtime dependency and **no** bundle. `pflow ui` without the
   extra prints a clear `→ pip install pflow[ui]` hint (no runtime download).
@@ -203,8 +212,9 @@ holds the wire-contract rationale). The decisions specific to this task:
 - **Template connections:** a param like `"${a.x} and ${b.y}"` renders as **two** connecting lines
   (one per ref) landing on that param; a pure-ref param renders as a connected port; a pure literal
   shows a value with no line.
-- **Click-to-read:** clicking a node surfaces its prompt/params; large prompts load on demand (not in
-  the initial `/graph` payload).
+- **Click-to-read:** clicking a node surfaces its prompt/params straight from the inline `/api/graph`
+  payload (values are already present — no on-demand fetch). Batch fan-out is bounded by
+  representative-item truncation, so the payload stays small.
 - **Interactivity:** collapse/expand a sub-workflow/batch/loop container re-layouts instantly
   (client-side); focus+context reveals a single node's connections; LR/TD toggle works.
 - **Modes:** the same workflow renders in advanced (ports + params + wiring) and beautiful (compact)

@@ -106,6 +106,7 @@ class _GraphBuilder:
                 batch=_build_batch(raw_node.get("batch")),
                 source=_source_ref(raw_node, source_file),
                 param_sources=_param_source_refs(raw_node, source_file),
+                params=_node_params(raw_node),
             )
             self._add_node(node)
             level_nodes[node_id.node_id] = node
@@ -714,6 +715,18 @@ def _source_ref(raw: dict[str, Any], source_file: Path | None) -> SourceRef | No
     return SourceRef(
         file=str(source_file) if source_file is not None else None, line=line if isinstance(line, int) else None
     )
+
+
+def _node_params(raw_node: dict[str, Any]) -> dict[str, Any]:
+    """Authored param values for click-to-read / the React Flow renderer.
+
+    Stored verbatim (small literals, templates, full prompt/code strings alike);
+    the renderer decides what to inline vs truncate. Guarded like every other
+    ``raw_node`` read in this module: unvalidated IR may carry ``params: None``
+    (or a non-dict), which becomes an empty dict rather than an ``AttributeError``.
+    """
+    params = raw_node.get("params")
+    return params if isinstance(params, dict) else {}
 
 
 def _param_source_refs(raw: dict[str, Any], source_file: Path | None) -> dict[str, SourceRef]:

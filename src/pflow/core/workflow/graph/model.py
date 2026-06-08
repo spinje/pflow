@@ -85,6 +85,7 @@ class Node:
     io: IOPort | None = None
     source: SourceRef | None = None
     param_sources: dict[str, SourceRef] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
     unexpanded: UnexpandedReason | None = None
     annotations: dict[str, Any] = field(default_factory=dict)
 

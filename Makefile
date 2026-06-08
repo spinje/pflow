@@ -51,8 +51,13 @@ test-with-skipped: ## Run tests showing all skipped tests (useful for debugging)
 	@echo "🚀 Testing code: Running all tests (showing skipped)"
 	@uv run python -m pytest --doctest-modules -v | grep -E "PASSED|FAILED|SKIPPED|ERROR"
 
+.PHONY: ui-build
+ui-build: ## Build the web UI bundle into src/pflow/ui/static (requires Node).
+	@echo "🚀 Building pflow UI frontend bundle"
+	@cd web && npm ci && npm run build
+
 .PHONY: build
-build: clean-build ## Build wheel file
+build: clean-build ui-build ## Build wheel file (includes the UI bundle)
 	@echo "🚀 Creating wheel file"
 	@uvx --from build pyproject-build --installer uv
 

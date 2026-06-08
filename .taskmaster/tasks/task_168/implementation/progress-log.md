@@ -125,3 +125,465 @@ design: large prompt/code values are **already inline** in the IR and there is *
 
 _(No implementation entries yet — seeded 2026-06-07. Phase order per the plan: Node.params →
 render_react_flow → pflow ui server + [ui] extra → web/ frontend → docs/purity/E2E.)_
+
+### Phase 1 — `Node.params` model extension (2026-06-07) ✅
+
+Added `Node.params: dict[str, Any]` (model.py, after `param_sources`) and populated it at the single
+body-node construction site (build.py Pass A). Synthetic input/output/end nodes keep the default `{}`.
+
+**Deviation (justified): used a named `_node_params(raw_node)` helper, not the plan's inline
+`raw_node.get("params", {})`.** Two reasons: (1) H3 mandates a non-dict guard (unvalidated IR carries
+`params: None`/str/list), and the inline walrus form H3 sketched
+(`p if isinstance((p := ...), dict) else {}`) reads badly as a kwarg; (2) every other `Node` field here
+is filled by a named helper (`_build_loop`/`_build_batch`/`_source_ref`/`_param_source_refs`) — a
+`_node_params` helper keeps that symmetry and makes the guard named + independently testable. Mirrors the
+existing `_params_strings(Any)→dict` guard shape exactly. Net: simpler final code, not just easier.
+
+**Scope split on H3's test ask:** H3 wants a `params: None` case "routed through `render_react_flow`" —
+deferred to Phase 2 (the renderer doesn't exist yet). Phase 1 covers the guard at the build level
+(`None`/list/missing → `{}`) plus the full-multiline-prompt-inline + scalar-round-trip assertions.
+
+**Verified:** insertion mid-dataclass is positional-safe (audited all `Node(...)` sites in src+tests —
+none construct past `kind` positionally; `mermaid.py` only reads `Node`). Mermaid goldens **byte-identical**
+(`test_mermaid_golden.py` + `test_graph_mermaid_renderer.py` green — params are Mermaid-invisible).
+`test_graph_build.py` 42 passed; ruff + mypy clean on both changed files.
+
+### Phase 2 — `render_react_flow` translator + typed contract (2026-06-07) ✅
+
+New `renderers/react_flow.py` (`RFRef/RFParam/RFNode/RFEdge/RFGroup/RFGraph` frozen dataclasses +
+`render_react_flow`), registered in both `__init__.py`s. Consumes only GraphModel + its derived views;
+loop/batch/io/source emitted as plain dicts via `asdict()` on the frozen model sub-dataclasses (matches the
+contract's `dict | None` typing, DRY). `shadowed` emits the model's **general** `graph.shadowed(edge)` fact,
+never Mermaid's narrower `_edge_shadowed_for_render`. 17 new tests + mypy/ruff clean; Mermaid goldens still
+byte-identical (77 graph tests green).
+
+**Deviation 1 — `is_dynamic` mirrors `_params_strings` EXACTLY (str + dict-of-str leaves; NO list descent),
+not the plan prose's "dict/list" (H5).** The load-bearing invariant is "can never disagree with the
+DATA_FLOW edges", and the edge builder (`_params_strings`, build.py:761) is dict-only. List descent would
+flag `is_dynamic=True` on a list param the edge builder ignores → a chip with no edge. Mirroring exactly
+gives the clean property: `is_dynamic=True` ⟺ a DATA_FLOW edge exists (single-role case). Uses
+`source_refs_in` (not `str(value)`), so literal operands like `${5}` correctly read static. The leaf walk is
+**reimplemented locally**, not imported from build.py, to honor the H12 purity rule (renderer imports only
+`model`/`scope` — verified).
+
+**Deviation 2 — added `is_group_host: bool` to RFNode (mandated by H8(b), absent from the plan's dataclass
+listing).** Defined it to mirror Mermaid's *actual* leaf-vs-group decision — literal batch OR
+(workflow-host AND `unexpanded is None`) — not H8's looser "id ∈ any workflow/batch host". The looser rule
+draws an empty group + suppresses the leaf box for an **unexpanded** dynamic batch (its batch container
+exists but has no body), losing the unexpanded badge. The chosen rule is structural (does the host have an
+expanded body?), not visual policy, so it doesn't violate the "don't copy Mermaid's `shadowed` render
+policy" guard.
+
+**H9 truncation (the one genuinely novel/risky bit) — implemented.** Representative-item truncation in the
+translator: nodes/containers/edges under hidden literal-batch items (index ≥2 when count >4) are dropped,
+mirroring Mermaid's `_visible_batch_indexes`; the full per-item descriptors still ride `RFNode.batch.items`
+and the count via `batch.count`. Confirmed on real workflows: deep-research 41 model nodes → 29 RF (its
+>4-item `reviews` batch collapses to 2 representatives, integrity intact); Task 163 harness 82→82 (no >4
+literal batches), 131 KB payload.
+
+**Fixture note:** the two-ref edge test uses workflow **inputs** (`${a.x} and ${b.y}` → two edges,
+`input_name="prompt"` each), after empirically confirming body-to-body data flow forms via
+inputs/sub-workflow-bindings/output-sources — **not** arbitrary `${node.field}` in a regular leaf param
+(those draw no edge). This is a real property of the model worth knowing for Phase 4 chip rendering.
+
+### Post-Phase-2 review + H13 spec follow-up (2026-06-07) ✅
+
+**H13 closed.** Aligned `task-168.md` with the decided plan (5 edits): "large values lazy-fetched via
+`source_ref`" → **inline-all + representative-batch-item truncation**; dropped the stale `/api` click-to-read
+endpoint and the dead `/events` SSE stub from the Server§; and tightened the `is_dynamic` spec line from the
+loose "value contains `${...}`" (the `str(value)` trap) to the precise `source_refs_in`-over-string-leaves
+derivation actually implemented. Spec and plan now agree.
+
+**Loose-ends pass — added 2 tests pinning the most consequential deviation.** The `is_group_host`
+`unexpanded is None` guard (my Deviation 2) had no direct test. Added `test_unexpanded_node_keeps_its_reason_and_stays_a_leaf`
+and `test_unexpanded_dynamic_batch_host_is_not_a_group` — the latter is the exact differentiator: a dynamic
+batch whose child fails to resolve creates a batch container (host=node) *before* failing, so H8's looser
+"id ∈ any container host" rule would mis-flag it as a group and draw a phantom empty box; the chosen
+expanded-body rule keeps it a leaf with a badge. Now locked.
+
+**Reviewed, judged acceptable (not defects), flag for Phase 4):**
+- *Truncated-batch item↔group mapping is positional-by-`batch_index`, not by list order.* `RFNode.batch.items`
+  keeps all N descriptors but only 2 item groups survive; the frontend must map a group to its item via the
+  member ref's `ancestor_path[].batch_index` (the contract carries it), not by enumerating items. Contract is
+  sufficient; ergonomics are Phase 4's.
+- *`unexpanded_items` annotation keys are ints pre-JSON, strings post-`json.dumps`.* Inherent to JSON; the
+  frontend reads string keys. Asserted on the int form (pre-wire) in the test.
+- *Deeply-nested (>1 level) param refs read `is_dynamic=False`* — but this AGREES with the edge builder
+  (`_params_strings` is also one-level), so the invariant holds; the raw value still shows the `${...}` text.
+
+**Final state:** full `tests/test_core/` green (**3068 passed**); Mermaid goldens byte-identical; mypy + ruff
+clean; renderer import-purity verified (model/scope only). Phases 1–2 are complete and I'm confident in them.
+
+### 3-lens AI review + fixes (2026-06-07) ✅
+
+Ran `review-silent-failures` / `review-simplicity` / `review-test-fidelity` in parallel against the staged
+contract (it's an ideal standalone review unit: pure `GraphModel→RFGraph`, no consumers yet, so contract
+flaws are cheapest to fix now). Simplicity came back **clean** (every increment over the plan's "~10 lines"
+is earned under the deletion test; the `_string_leaves`↔`_params_strings` duplication is purity-forced, not a
+smell). Three real findings, all fixed:
+
+- **W1 (silent-failures) — REAL BUG, fixed.** H9 truncation silently dropped cross-boundary DATA_FLOW edges
+  (kept source → hidden batch item) with no fallback — confirmed on the shipped `deep-research` example
+  (`combine → summary@{2,3,4}`, 3 edges vanished). Mermaid preserves this via its arrow into the `xN` procs
+  box; RF lost the "feeds the rest too" signal → information loss on the acceptance bar. **Fix:** new
+  `_visible_anchor` re-attaches a truncated endpoint to its batch host (the same "degrade to node level,
+  never omit" principle the contract already applies to `input_name=None`); the re-anchored endpoint's role
+  label is cleared (it no longer names a host port), self-loops (both endpoints under one hidden item) drop,
+  and the N identical host-level edges dedupe to one. Consolidated the truncation threshold into one
+  `_is_hidden_index` helper shared by `_path_hidden` + `_visible_anchor`. Non-truncated graphs are byte-for-byte
+  unchanged (dedupe is a no-op there). Pinned by `test_truncation_preserves_cross_boundary_dependency_via_host`.
+- **W1 (test-fidelity) — `is_dynamic` test didn't catch its named trap.** Mutation-tested: swapping in
+  `bool(source_refs_in(str(value)))` still passed. Added a `{"schema": {"deep": "${x}"}}` fixture (ref below
+  the one-level leaf walk) — `str(value)` would false-positive, the leaf walk correctly reads `False`. Now the
+  test pins Deviation 1's dict-only descent.
+- **W2 (test-fidelity) — `RFEdge.shadowed` had ZERO coverage** (constant-folding it to `False` passed all
+  tests). Added `test_shadowed_emits_the_models_general_fact` (hand-built shadowed structural edge → asserts
+  the general `graph.shadowed` fact rides through, and data-flow edges read `False`).
+- **S1 (minor) — added `depth_limit` reason through the renderer** (`max_depth=0`) so >1 unexpanded reason
+  round-trips the contract, not just `unresolved`.
+
+**Consciously deferred (not defects):** the `default=str` 500-vs-stringify boundary is a Phase-3 server concern
+(intentional H2 tradeoff); a 0-item batch renders an empty group (exact Mermaid parity, recoverable via
+`batch.count`) — Phase-4 frontend handles it. **Not done (judged not worth it):** the full `is_dynamic⟺edge`
+biconditional matrix test (the nested-dict fixture already pins the trap); merging the two `unexpanded` tests
+(both cover distinct code paths — the dynamic-batch one is the sole pin for Deviation 2).
+
+**Post-review state:** full `tests/test_core/` green (**3071 passed**, +3); Mermaid goldens byte-identical;
+full-tree mypy clean (231 files); ruff clean. Contract is now reviewed + hardened — ready to freeze for Phase 3.
+
+### Phase 3 — `pflow ui` command + Starlette server + `[ui]` extra (2026-06-08) ✅
+
+New files: `execution/graph_service.py` (the H11 helper), `ui/__init__.py`, `ui/server.py`,
+`cli/commands/ui.py`, `tests/test_cli/test_ui.py` (12 tests). Edited: `cli/main.py` (register `ui_cmd`),
+`pyproject.toml` (`[ui]` extra + dev deps), `.gitignore` (`src/pflow/ui/static/`). Full suite **7794
+passed, 1 skipped**; `make check` clean (pre-commit/mypy/deptry); Mermaid goldens untouched. Real Task 163
+harness renders through `/api/graph`: 82 nodes / 153 edges / 14 groups / 131 KB (matches Phase 2 numbers).
+
+**The load-bearing surprise — starlette + uvicorn are ALREADY base deps (transitive via `mcp[cli]`).**
+`mcp` requires `starlette>=0.27` + `uvicorn>=0.31.1`, both installed in every base env. Consequences: (1)
+the `[ui]` extra adds **no new wheel** in practice — the "base install gains no new runtime dep" intent is
+honored *and then some*; (2) `pflow ui` will actually start the server in any real env, so the
+`pip install pflow[ui]` hint is a **defensive fallback**, not a path users hit. Still declared the extra
+(a feature must own its direct deps, not lean on another's transitive ones — and it survives mcp dropping
+them) and kept the hint. The H4 hint-test therefore can't uninstall starlette; it **simulates** the absent
+extra via `patch.dict(sys.modules, {"uvicorn": None})` (a `None` entry forces `import uvicorn` →
+ImportError). This is the correct robust verification given the dep reality.
+
+**H11 helper placement — `execution/graph_service.py`, not `core/workflow/graph/`.** `resolve_validate_build`
+orchestrates `resolve_workflow` + `WorkflowRunner.validate` (execution layer) + `build_graph` (core). Putting
+it in `core` would invert layering (core → execution); `execution` is the natural orchestration home both
+`cli/visualize`, `cli/ui`, and `ui/server` sit above. It raises `WorkflowGraphValidationError(PflowError)`
+carrying the `Diagnostic` list (overrides `to_diagnostics()`), so a caller renders (CLI exit-1) or serializes
+(server 422) without re-deriving. **`visualize`/`analyze-cache` NOT migrated** to it — deferred, per plan, to
+avoid perturbing Mermaid goldens; `ui` is the sole consumer for now (the point of H11 is that `ui` isn't a
+third literal copy, not that the existing two get rewritten now).
+
+**H2 three failure arms, confirmed in code:** (a) producer bug inside `validate()` genuinely escapes
+(`runner.py:404` `raise` for non-`WorkflowValidationError`/`CompilationError`) → helper's `except Exception`
+wraps it → **422**; (b) `not vresult.valid` → **422**; (c) build/render bug on validated IR → **propagates →
+loud 500** (only `WorkflowGraphValidationError` is caught in the endpoint). Added a 4th arm: missing
+`?workflow=` → **400** (malformed request, distinct from "the named workflow is invalid" = 422). All four
+tested. `_json(data, default=str)` centralizes the exotic-value tolerance.
+
+**Deviation (justified) — conditional static mount + 503 fallback, not the plan's unconditional
+`StaticFiles` mount.** `StaticFiles(directory=...)` raises `RuntimeError` at *construction* when the dir is
+missing, and `src/pflow/ui/static/` is gitignored + unbuilt until Phase 4's `make ui-build`. An unconditional
+mount would crash `create_app()` in **every** Phase-3 env and source checkout. So: mount `StaticFiles` only
+when `static/index.html` exists, else a catch-all route returns a **503 with an agent-actionable hint**
+("build it with `make ui-build`"). This is strictly better than `check_dir=False` (which 404s opaquely) and
+than crashing. The API routes are registered *before* the catch-all so `/api/*` is never shadowed.
+
+**Empirical finding (shaped the `default=str` test):** pflow's markdown param parser keeps an unquoted ISO
+date (`2026-06-08`) as a **string**, not a YAML `datetime.date`; and validation **rejects unknown params**.
+So an exotic non-JSON-native value can't reach `/api/graph` through a real `.pflow.md`. The `default=str`
+guard is still load-bearing defense (nested values, future date-typed params), so I pinned it at the seam
+directly — a `_json(...)` unit test with a `datetime.date` — rather than via an unconstructable end-to-end
+fixture. This guards the exact JSONResponse-swap regression H2 names.
+
+**H4 lazy boundary** verified in-process (pop `pflow.ui.server` + `pflow.cli.commands.ui` from `sys.modules`,
+re-import the command module, assert the server stays unimported) — robust regardless of test order, no
+subprocess needed.
+
+**Deferred to later phases (not skipped):** the `web/` frontend + `make ui-build` target + the H1 CI
+`setup-node`/build step (Phase 4); `ui/CLAUDE.md` + purity guard + docs (Phase 5). Phase 3 is the
+server/CLI/extra/packaging slice only, per the plan's phasing.
+
+### Phase 3 adversarial verification + 3-lens AI review (2026-06-08) ✅
+
+Ran 3 read-only review agents (concurrency / silent-failures / simplicity, scoped to the **unstaged**
+Phase-3 files only) in parallel with hands-on break attempts. Two real fixes landed; final suite **7796
+passed, 1 skipped**, `make check` clean.
+
+**THE last-20% find — cold-registry concurrency race (fixed at server level).** My green suite + an earlier
+*warm* concurrency stress (60 concurrent reqs, all 200, deterministic) both MISSED it because they warmed the
+registry sequentially first. A *cold* attack — empty `$HOME` so every concurrent first request triggers the
+registry's lazy scan+write at once — reproduced a **user-facing failure: 9/16 concurrent first-requests
+returned 422 ("unknown node type") with `Failed to parse registry JSON` torn-read errors and nondeterministic
+payloads.** The browser firing `/api/catalog` + `/api/graph` together on a cold registry (fresh install /
+post-upgrade) is exactly this. The concurrency agent *predicted* the race but rated it "low/self-correcting"
+on the assumption the request reads in-memory scan results, not the torn file — empirically **false** under
+concurrent cold scans. **Fix:** a Starlette `lifespan` warm (`_warm_registry` → `Registry().load()` once,
+single-threaded, before serving) in `create_app()`. Re-running the identical attack → **all 200, 1
+deterministic payload, 0 failures.** Root cause is pre-existing non-atomic registry writes
+(`registry.py:381`); the deeper fix (atomic tempfile+os.replace, the pattern WorkflowManager/SettingsManager
+already use) is a **separate pre-existing-code follow-up**, deliberately NOT pulled into Phase 3 scope —
+flagged for a dedicated change. The startup warm fully closes the observed UI failure (mid-serving re-scan
+needs a source-mtime change during a run — not a realistic single-user path).
+
+**Port-in-use UX bug (found pre-review, fixed).** My `except OSError` around `uvicorn.run` was dead code —
+uvicorn swallows the bind error and `sys.exit(1)`s with its own log line, and "Serving…" printed before the
+doomed bind. Replaced with a `_port_available` pre-bind probe. Now: `Port N is already in use. → try a
+different --port (e.g. --port N+1)`, exit 1, no misleading line. Verified via real subprocess + regression test.
+
+**Silent-failures finding (fixed) — over-broad `except ImportError`.** The hint guard wrapped both `import
+uvicorn` AND `from pflow.ui.server import create_app`, so a genuine ImportError *inside* the server module (a
+future bad import / circular import) would mis-report as "install pflow[ui]" and swallow the real traceback.
+Scoped the guard to the extra's own packages (`starlette`/`uvicorn`); the `create_app` import now sits outside
+it → real bugs surface loudly.
+
+**Other break attempts — all clean:** production bundle path (NEVER tested before; built a fake bundle →
+index+assets serve, `/api/*` not shadowed by the catch-all mount, 404 on missing asset, 405 on POST, HEAD
+200); adversarial `/api/graph?workflow=` inputs (cycle, self-referencing sub-workflow, missing file,
+directory, `/etc/hosts`, path-traversal, name-with-spaces, 8 KB query) — every one a clean 422/200 in <0.1s,
+**no hang, no 500**; real subprocess over a real socket (all prior tests were in-process/in-thread) → up in
+~0.6s, harness renders 131 KB.
+
+**Reviewed, consciously deferred (not defects for Phase 3), each with rationale:**
+- *Broken saved workflows silently absent from `/api/catalog`* (silent-failures, sev 2) — inherited from
+  `list_all()`'s documented skip (parity with `pflow list`); surfacing a `skipped[]` array is a frontend/product
+  decision best made in Phase 4, and forcing it now means either touching `manager.py` (scope creep) or
+  re-implementing the parse loop (the duplication the simplicity review just blessed the absence of).
+- *`_port_available` returns False on ANY OSError* — `--port 80` (EACCES) is mislabeled "in use", but the
+  advice ("try a different --port") stays correct; errno-branching is complexity for a rare path on an 8765-
+  default dev tool.
+- *SPA deep-route 404* — with a bundle present, `/graph/123` 404s (no index.html fallback). Latent **Phase-4**
+  concern once React Router lands (needs an SPA catch-all or hash routing); v1 is single-view at `/`, so not a
+  Phase-3 bug.
+
+**Review verdicts:** simplicity — *clean bill of health, zero findings* (the `resolve_validate_build`
+single-consumer extraction survives the deletion test: it de-duplicates a literal sequence that already exists
+in `visualize.py`+`analyze_cache.py`). concurrency — thread-safe by construction except the one registry race
+(now warmed away at the server boundary). silent-failures — LOW; the 422-never-empty invariant and the
+422/500-never-200 split both traced clean.
+
+### Root-cause fix replaces the workaround: atomic registry write, warm removed (2026-06-08) ✅
+
+Simplicity/no-shortcuts pass. The cold-registry race was being held off by a *server-side warm*
+(`_warm_registry` + lifespan) — a workaround that made the UI server correct but left the actual bug
+(non-atomic registry writes) in place for every other consumer. Fixed the **root cause** instead: extracted
+`Registry._write_atomic` (tempfile + `os.replace`) and routed all **three** duplicated non-atomic writes
+(`save`, `set_metadata`, `_save_with_metadata`) through it. This is the pattern `WorkflowManager`/
+`SettingsManager` already use — so it's *consistency*, not new complexity, and it's a net **simplification**
+(3 duplicated `open(...,"w")+json.dump` blocks → 1 helper).
+
+**Then deleted the warm.** Empirically isolated the two fixes: with the warm DISABLED and only the atomic
+write present, the cold-concurrency attack passed **5/5 then 3/3 rounds** (24 concurrent first requests each,
+all 200, deterministic). So the atomic write fixes the root cause on its own; the warm was redundant. Per the
+deletion test (removing it *eliminates* complexity rather than moving it — correctness now lives at the
+registry layer), removed `_warm_registry`, `_lifespan`, the `lifespan=` wiring, its test, and the `logging`/
+`asynccontextmanager`/`AsyncIterator` imports. `server.py` is back to plain endpoints + `create_app`. For a
+localhost single-user tool, a startup-warm once the registry is atomically safe was exactly the kind of
+"solve it twice" the simplicity steer warns against.
+
+**Regression guard (mutation-checked).** Three behavior tests in `test_registry.py::TestRegistryAtomicWrite`
+pin the property without testing implementation: a *failed* write leaves the previous registry intact and
+leaves no `.tmp` debris (the old truncate-and-write destroys the file mid-write). Mutation check confirmed:
+reverting `_write_atomic` to the old `open(...,"w")` makes the test fail (original not preserved → file
+truncated to `{"nodes": {"bad":`). Full suite **7801 passed**; `make check` clean; 119 registry tests green.
+
+**Net:** the bug is fixed properly for ALL registry consumers (not just `pflow ui`), the server is *simpler*
+than before the bug was found, and the fix is locked by a load-bearing test.
+
+*Consistency pass on the new `_write_atomic`:* dot-prefixed temp file (`.registry.*.tmp`) matching
+settings.py/manager.py (was a visible `tmpXXXX.tmp`); confirmed the registry file mode becomes `0o600`
+(consistent with the rest of `~/.pflow/`, was `0o644`); no fsync (matches the existing pattern — a
+regenerable cache needs none); verified cleanup holds even when `os.replace` itself fails, not just
+`json.dump`; switched the debris assertions from `glob("*.tmp")` to `iterdir()` (glob's dotfile matching
+varies across the 3.10–3.14 range, so the dot-prefix could have made them vacuous).
+
+### Phase 4 handoff: `src/pflow/ui/CLAUDE.md` written (2026-06-08) ✅
+
+A fresh Phase-4 agent sees the plan + `task-168.md` + this log + the code — **not this conversation**. Gaps:
+the API error-envelope shapes / status arms, the `?workflow=` URL param the command opens with, the SPA-404 /
+`base="./"` static behavior, and the contract rendering rules (`input_name=None`, `is_group_host`, batch
+`ancestor_path[].batch_index` mapping) lived only in code or scattered Phase-2 entries; and `graph/CLAUDE.md`
+doesn't yet mention the renderer. Consolidated all of it into **`src/pflow/ui/CLAUDE.md`** — the consumption
+contract Phase 4 codes against (endpoints/statuses/error bodies, the `?workflow=` auto-load, the SPA-routing
+caveat, the load-bearing RFGraph rendering rules with pointers to react_flow.py + the H-items, and the H1 CI
+wiring). Pulled forward from Phase 5 deliberately: it documents the *completed* server Phase 4 consumes;
+`web/CLAUDE.md` (the not-yet-built frontend) rightly stays Phase 5. **Left `graph/CLAUDE.md` untouched** —
+it's a Task-133 coordination touch-point and discoverability is covered by ui/CLAUDE.md's pointer to
+react_flow.py. Passes pre-commit + `tests/test_docs/`.
+
+### Browser-open fixed: poll-until-ready, not a guessed delay (2026-06-08) ✅
+
+Follow-up on a residual the verification round flagged and consciously deferred. The browser was opened by a
+blind `threading.Timer(0.5, ...)` — a guess that races a cold-registry startup (browser opens → "connection
+refused"). Root cause: `uvicorn.run()` blocks, so the lazy pattern fire-and-forgets a timer. Replaced with
+`_open_browser_when_ready`: a daemon thread that polls the port (`connect_ex`) until it accepts, THEN opens.
+Reliable because uvicorn binds the listening socket only *after* lifespan startup (the registry warm)
+completes — so a successful connect means fully-ready-to-serve. Falls back to opening after a 15s timeout so a
+stuck probe never silently skips the browser. 3 deterministic tests (helper waits-then-opens against a real
+late-binding socket; fallback-opens when nothing listens; command wires the readiness thread with the right
+host/port/url — guards against tested-but-unwired). Full suite 7799 passed; `make check` clean.
+
+### Phase 4 — `web/` frontend (Vite + React + React Flow + ELK) (2026-06-08) ✅
+
+New top-level `web/` tree: Vite + React 18 + `@xyflow/react` v12 + `elkjs`, building into `src/pflow/ui/static/`.
+Modules mirror the plan: `types.ts` (hand-mirrored contract) → `api.ts` (the single data-loading seam, overlay-ready)
+→ `flow.ts` (the RFGraph→React Flow transform — the heart) → `layout.ts` (client-side ELK) → `nodes/`
+(Detailed/Compact/Group/End components) → `CatalogView`/`GraphView`/`ReadPanel`/`Toolbar`/`App`. All advertised
+interactions implemented: collapse/expand (re-layout), focus+context (no re-layout), density toggle, LR/TD toggle,
+click-to-read. `npm run build` → 1.79 MB bundle (ELK dominates, as the plan's Risks§ predicted); served + harness
+renders (82 nodes) through the real Phase-3 server. tsc strict clean; 17 frontend tests (15 flow/format + 2 wiring).
+
+**THE load-bearing find — the plan's packaging claim was WRONG; the `[ui]` wheel shipped an EMPTY bundle.** The plan
+(and H1) asserted "No wheel-inclusion change needed: the bundle ships via `packages=["src/pflow"]`". Built a wheel and
+inspected it: `pflow/ui/server.py` present, **`pflow/ui/static/` ABSENT**. Root cause: hatchling honors `.gitignore`
+by default, and `src/pflow/ui/static/` is gitignored — so the on-disk bundle is force-EXCLUDED from the wheel, even
+though `packages=` names its parent. H1 correctly identified the CI-has-no-Node gap but assumed the inclusion
+mechanism worked; it didn't. **Fix:** `[tool.hatch.build.targets.wheel] artifacts = ["src/pflow/ui/static/**/*"]`
+(hatchling's mechanism for force-including VCS-ignored build outputs). Re-inspected: `index.html` + `assets/*` now in
+the wheel. This is the single most consequential Phase-4 correction — without it the entire `pflow[ui]` install path
+ships a 404. (Sdist still lacks the bundle by design — end users install the prebuilt wheel; `pip install pflow[ui]`
+prefers it. Matches "end users never run Node".)
+
+**Brittle Phase-3 test exposed + fixed.** `test_root_without_bundle_returns_503_hint` asserted the static dir is
+absent (`assert not (...static/index.html).exists()`) — true in a clean checkout, but Phase 4's `make ui-build`
+makes the bundle exist locally, so the test became environment-dependent (green in CI, red after a local build).
+Re-pinned it to `patch("pflow.ui.server._STATIC_DIR", tmp_path)` so it tests the fallback regardless of the ambient
+bundle, and ADDED `test_built_bundle_is_served_and_api_is_not_shadowed` (the now-reachable served-bundle arm: `/`
+serves index.html, assets resolve, `/api/*` not shadowed). Both deterministic.
+
+**Key transform decisions (`flow.ts` — where the H-item rules live):**
+- *Split structural build from focus.* `buildFlow(graph, {density,direction,collapsed})` feeds ELK; `applyFocus(nodes,
+  edges, focus)` is a separate cheap pass returning NEW arrays (so React re-renders) — focus/selection never re-run
+  layout (plan: focus is "the same data + an interaction"); collapse/density/direction do.
+- *Groups become React Flow group nodes; `is_group_host` leaves are suppressed* (H8). Edges into a suppressed host
+  re-anchor to its OUTERMOST group (a host is not 1:1 with a group — dynamic-batch-of-subworkflow has two). A single
+  `renderAnchor()` maps any contract node id → its on-canvas representative (itself / its group / the outermost
+  collapsed ancestor), so EVERY edge is additive — `input_name=None`, collapse-hidden, and host-suppressed endpoints
+  all degrade to a node/group-level connection, never dropped (H6/W1). All edge handle ids are guaranteed to exist on
+  the rendered node (param handle only when a matching param row exists, else `NODE_IN`), so React Flow never floats an
+  edge to a missing handle.
+- *Per-row connection handles.* DetailedNode renders a left target handle per param row inside `position:relative`
+  rows (React Flow measures DOM rects — no pixel math), so a `${ref}` line lands on its exact row; output fields become
+  right-side source ports. Verified by behavior tests, incl. `${a.x} and ${b.y}` → two edges onto one `prompt` handle.
+
+**Build wiring (H1):** `make ui-build` (`cd web && npm ci && npm run build`); `make build` now depends on it so local
+wheels include the bundle; the release CI (`on-release-main.yml` publish job) gains `actions/setup-node@v4` + `make
+ui-build` BEFORE `uv build`. `web/package-lock.json` committed (npm ci needs it); `node_modules`/`dist` gitignored.
+
+**Bundle size (1.79 MB / 555 KB gzip):** ELK is ~80% of it. Acceptable in the base wheel (disk, not runtime — plan
+Risks§). Left as-is for v1; if it bites, lazy-load elkjs as an async chunk or drop to dagre — isolated to `layout.ts`.
+
+**Deliberately NOT done (Phase 5, per the stop-after-4 instruction):** `web/CLAUDE.md`, the model-purity guard test,
+the CLAUDE.md updates, and the full `make check`/`make test` final gate. Everything is staged for them.
+
+### Phase 4 review (4 agents) + fixes + frontend restructure (2026-06-08) ✅
+
+Ran 4 review agents in parallel (simplicity / silent-failures / feature-interactions / test-fidelity) scoped to the
+unstaged Phase-4 files, with hands-on verification alongside. Simplicity returned a near-clean bill (one dedup). The
+other three surfaced real, fixable gaps — all addressed. Final: web **24 tests** (4 files) + Python **17 ui tests**
+green; tsc strict + production build clean; wheel still bundles `index.html`+`assets/`.
+
+**Silent-failures (the consequential ones — "never crash / never a silent blank canvas"):**
+- *C1 — unhandled `layoutGraph()` rejection → permanent "Laying out…".* The ELK effect had no `.catch`; an ELK throw
+  hung the canvas forever on a successfully-fetched workflow. Fixed: the layout promise now `.catch`es into the error
+  banner (status `"error"`), and a successful re-layout clears a stale layout error. Pinned by a GraphView test that
+  mocks `layoutGraph` to reject and asserts the banner (not "Laying out…").
+- *C2 — no Error Boundary + unchecked 200 cast → white screen.* Added `ErrorBoundary` around `<App>` (catch-all → banner,
+  not a blank page), and `fetchGraph` now validates the 200 is the contract shape (`isRFGraph`) and throws an `ApiError`
+  instead of casting a lie that `buildFlow` would crash on mid-render. Both pinned (`api/client.test.ts` malformed-200).
+- *observability warns* — `flow.ts` warns (not silently drops) if an edge has no on-canvas anchor; `layout.ts` warns if
+  ELK omits a node; degenerate 0-node graph shows "no visible structure" instead of a silent void.
+
+**Test-fidelity (all real coverage gaps, not wrong assertions):** added the missing-handle fallback test (`input_name`
+naming a non-existent param → `NODE_IN`, the literal guard that prevents a floated/dropped edge); the two-group-host
+outer-selection test (the H8 dynamic-batch-of-subworkflow case — both groups at the same depth, so the parent-filter,
+not depth, picks the outer; this is the exact logic I'd verified against real `run-cycle.pflow.md`); the `applyFocus`
+dimmed-edge branch; strengthened the collapse test with a re-anchored-handle assertion; `GraphView` now rejects with the
+**real** `ApiError` (was a hand-rolled stub testing a fiction); `test_ui.py` served-bundle test asserts `api.json()==[]`
+(proves `/api/*` returns catalog JSON, not a shadowing `index.html`).
+
+**Feature-interactions:** the headline packaging interaction was confirmed handled (wheel bundles, sdist omits by design,
+CI builds before `uv build`). Two residuals fixed: (W1) added a CI `test -f .../static/index.html` guard so a missing
+bundle fails LOUDLY instead of `uv build` silently shipping empty (hatchling treats a zero-match `artifacts` glob as a
+no-op — the only guard is this assertion + CI ordering); (W2) corrected the stale `ui/CLAUDE.md` line that still claimed
+"no wheel-config change needed" — it now documents that `artifacts` is load-bearing and must not be removed.
+
+**Simplicity:** consolidated the whitespace-collapse/truncate logic duplicated in `DetailedNode` into the shared
+`utils/format` (`collapseWhitespace`/`truncate`) — the one real cross-file duplication. Reviewer otherwise judged the
+`flow.ts` transform, the node-component split, and the abstractions all earned (pass the deletion test).
+
+**Frontend restructure → role-slot layout (user-driven).** The flat `src/` (~25 loose files) became role folders, after
+aligning on the principle *folders are conventions future agents follow* (a one-file `hooks/` is good — it's where the
+overlay's event hook lands without the agent deciding). Final:
+`api/` (client; `events.ts` plugs in here for the overlay) · `graph/` (pure transform: flow/layout/handles, React-free
+so its tests run node-env) · `hooks/` (useWorkflowGraph) · `utils/` (format) · `views/` (CatalogView/GraphView — the
+screens `App` switches between) · `components/` (Toolbar/ReadPanel/ErrorBoundary/nodes — reusable pieces) · `test/`
+(rf-jsdom) · root: shell + `types.ts` (the single cohesive contract). The data pipeline was extracted from `GraphView`
+into `useWorkflowGraph` — GraphView is now pure presentation + interaction; the hook owns fetch→build→layout→focus and is
+where C1/empty-status live. types.ts stays a single root file (folder-with-one-file there is just indirection on the
+most-imported module).
+
+**Staging note (for whoever commits):** the entire `web/` tree is currently untracked — it must be `git add`ed *with
+`web/package-lock.json`* (npm ci in CI needs the lock); `node_modules`/`dist`/`src/pflow/ui/static` stay gitignored.
+
+### Visual iteration: loop arcs + density-governed edges (2026-06-08, user-driven)
+
+Two design changes after a user review of the running UI. Both are **pure frontend visual policy — zero contract change.** web **30 tests** (+6); tsc + build clean.
+
+**Loops were only a text badge — now a synthesized loop-back arc.** A loop is a `LoopSpec` on a node, not an edge, so `flow.ts` synthesizes a self-loop edge per looped node, anchored to the node — or to its **group** when it's a looped sub-workflow host (the arc wraps the container). A new `LoopEdge` custom edge draws a smooth amber arc (bulge perpendicular to the source→target chord, so it reads in both LR and TD) labeled `↻ while/until <condition> ≤ cap`. Self-loops are filtered out of ELK (`layout.ts`) — ELK never routes them; LoopEdge owns the path. The redundant loop *badge* was removed (the arc + read-panel carry it). Skips a loop whose node is hidden inside a *collapsed ancestor* (only draws on the box that actually loops). Chosen over a loop-frame/stacked-deck after putting the options to the user (mockups) — arc won as the most universally legible.
+
+**Density now governs EDGE density, with progressive disclosure (the key user insight).** Beautiful mode was drawing all the green `${ref}` data-flow lines — incoherent, since the data wiring is literally the ports/chips of the *advanced* node. Fix: data-flow edges are **built but `hidden` in beautiful** (control-flow skeleton only — slate/blue), and `applyFocus` **reveals just the focused node's** data lines on click (hidden elsewhere). The elegant bit: no density flag in `applyFocus` — it reveals any *default-hidden* edge incident to the focus, and only buildFlow (which knows density) sets the default. Hidden data-flow is also excluded from ELK so the beautiful layout stays tight; revealed-on-focus edges route best-effort through it (fine for an on-demand reveal). Shadow-dimming now only applies in advanced (beautiful's control edges show full-strength since the data lines that shadowed them are hidden). Sequential edges got a clearer stroke so the skeleton reads as one coherent flow. Pinned by tests: beautiful hides data-flow / advanced shows it; focusing a node reveals only its incident data line; clearing focus re-hides.
+
+### Visual iteration 2: readability batch — spacing, color, forks, IO pills (2026-06-08, user-driven)
+
+After the user reviewed the running UI on the harness (everything cramped on one line, blending together, forks unclear). Diagnosis: the "line" is honest (a linear pipeline IS a line) — the real bugs were **tight spacing + monochrome nodes + IO-card bloat**. User chose (via mockups) the readability batch, keep LR, defer gradient edges. web **34 tests** (+4); tsc + build clean. All visual policy — **zero contract change.**
+
+- **Spacing doubled** (`layout.ts`): `nodeNodeBetweenLayers` 64→130, `nodeNode` 36→64, + `NETWORK_SIMPLEX` placement. A cramped pipeline reads as a smear; this gives it air.
+- **Color nodes by type** (`utils/format.kindColor` + a `--kind` CSS var on each node): the node's identity color (shell=emerald, http=sky, llm/claude=violet, code=amber, …) on the left border + glyph. **Control edges take their source node's type color** (inline `style.stroke` + matching arrowhead) — the stepping stone to the deferred source→target gradient. error/end/data/loop keep semantic colors. This is what kills "blends together."
+- **IO nodes → compact port pills** (new `port` node type + `PortNode`): the single biggest declutter — the harness's **53 IO nodes** (43 input + 10 output) were full-size cards bloating every sub-workflow box; now small pills. A `flow.ts` handle guard routes every edge to/from an IO node to node-level handles (port pills have no per-field handles, so nothing floats).
+- **Forks = labeled border handles** (n8n-Switch style; `BranchPorts`, `branchHandle`): a decision node's branch outcomes (`fix-tests`/`push`/…) render as one labeled source handle per outcome on the right border, each line leaving its own named handle — clear which value goes where. **Shown in BOTH densities** (a fork is structure, not advanced data detail), so `CompactNode` became a small card (header + branch rows) instead of a pill. Branch labels no longer ride the edge mid-line. Sized into `leafSize` (branch rows in both densities).
+- **Smooth edges**: all edges now bezier (`type: "default"`) — the curvy look.
+
+Pinned by tests: branch edges use `branchHandle(label)` and the node carries `branchLabels` (both densities); IO nodes emit type `port`; a control edge is stroked with its source node's `kindColor`. **Deferred (next visual step):** source→target **gradient** edges (per-edge SVG `<linearGradient>` + custom edge — not a React Flow built-in; the user opted to ship this batch first). *(Superseded below: the `port`-pill rendering was replaced by the consolidated ports node.)*
+
+### Visual iteration 4: IO ports → one consolidated "table" node (2026-06-08, user-driven, planned)
+
+User insight: the clutter wasn't *that* inputs are shown, it's that **each input was its own node**. Fix (the React Flow table-node pattern): `input_wrapper`/`output_wrapper` → ONE **Inputs**/**Outputs** node with a **row + handle per port**, shown in **both** densities; row-level focus preserves "click an input → see its connections." Planned first (the user approved the plan), then built. web **37 tests**; tsc + build clean. Pure frontend — zero contract change.
+
+- **flow.ts:** `ioWrappers` → one `type:"ports"` node per wrapper (id reuses the wrapper's `g*` id; rows = its member IO nodes). IO member nodes are no longer emitted; `ioNodeToPort` maps each to `(portsNodeId, portHandle(id))`. `renderAnchor` resolves an IO node to its ports node; the handle functions return the **row handle** when the edge reaches the ports node (else node-level, for a collapsed-past re-anchor). The whole `showIO`/hide-IO-in-beautiful/drop-IO-edges machinery is **deleted** — IO is always shown; its edges are ordinary data-flow (hidden-in-beautiful, revealed on focus).
+- **Row-level focus (the one new mechanic):** every edge now carries `data.from`/`data.to` (its *original* contract endpoints). `applyFocus` matches incidence via `edgeTouchesFocus` = flow endpoints **OR** `data.from`/`to` — so focus can be a node id, the ports-node id, or a **single port id** (a row), and a port reveals just its own lines even though its edges re-anchor onto the shared ports node. The ports node highlights its `focusedPortId` row. Clicking a row drives this via a small `InteractionContext` (`focusPort`) — keeps node `data` callback-free.
+- **Components:** new `PortsNode` (header + clickable rows + per-row handle), `PortNode` deleted, `ports` registered (drop `port`). CSS swapped pill → table.
+- **Net effect:** one tidy Inputs box per level instead of N floating pills; no floating (one node, ELK-positioned near consumers via data-flow-in-layout); click a row → that input's line(s) + consumer(s) light up; click a consumer → all its input lines reveal; advanced shows everything. Removes more code than it adds.
+
+**Follow-up fix — every port row needs BOTH handles (the missing binding edges).** First cut gave each row only a *source* handle (feed-out). But a port bridges two scopes: an **input** RECEIVES from the parent (binding) AND feeds consumers; an **output** RECEIVES from a producer AND feeds the parent. The contract has these "receive" edges (verified: 30 into input ports like `repo_dir→repo_dir`, 11 into output ports like `check-validate→ok`) — but they targeted the row's source-type handle, so React Flow couldn't attach them and they silently didn't draw (the user spotted the missing lines). Fix: each row now renders a **target** handle (`portTargetHandle`, left/top — receives) AND a **source** handle (`portHandle`, right/bottom — feeds); `targetHandleFor` routes an IO target to `portTargetHandle`. Pinned by an assertion that a binding edge lands on the target handle.
+
+### Visual iteration 3: IO-in-beautiful + layout philosophy resolved (2026-06-08, user-driven)
+
+Reviewing the running UI, the user hit two layout problems, both now resolved. web **35 tests**; tsc + build clean.
+
+- **IO ports float in beautiful + sub-workflows look empty.** Root cause: IO nodes connect ONLY via data-flow, which beautiful hid AND `layout.ts` excluded from ELK → disconnected islands ELK parked off to the side. Fix (two parts): (1) **hide IO ports + their wrapper groups in beautiful** (shown in advanced, where they read fine — the user's call; IO-touching edges are dropped silently, before `renderAnchor`, so it's not mistaken for a broken-anchor warn); (2) **feed data-flow edges to ELK for layout even when they render hidden** — layout reflects ALL structure so a data-only node never floats; density decides only what's *drawn*. Pinned by a test (advanced shows the IO pill + wrapper; beautiful hides port + wrapper + its edge, body still renders).
+
+- **"Everything on a thin line" — chased, then resolved as a non-problem.** Tried ELK `wrapping` (fold the chain into rows). Verified it works (1 row → 3, at root AND — after applying the options to every composite, not just root — inside nested groups). But the user correctly rejected it: wrapping cuts at an arbitrary **width** threshold and sweeps the inter-row edge back to the far left (a "carriage return"), which isn't how n8n works. **The real finding (verified against the contract):** the harness's `check-groups` "branches" reconverge into a forward chain (`review-round → simplify → verify`; `check-groups → simplify` feeds the same chain), so they're *sequential*, not independent — ELK correctly lines them up horizontally. **This workflow is structurally a pipeline; a pipeline IS a line (n8n would draw it the same).** The fork is shown via the labeled border handles, not by spreading. **Decision: no wrapping.** The honest n8n model — sequence flows one direction; a *genuinely* independent fork fans down on its own (verified: a Switch→3-independent-targets lays them in one column, y-spread 280). Don't re-litigate "make the pipeline 2D" — it's 1D by structure.
+
+### Small feature: beautiful labels its revealed data lines (2026-06-08)
+
+User clicked `fetch-data` in beautiful and asked where `stdout` went. Cause: output/input field *names* are advanced-only (node rows); a compact node shows only its name, so a revealed data line had nowhere to surface the field. Fix: in beautiful, a data-flow edge is labeled with what flows (`output_field → input_name`, e.g. `stdout → data`); advanced stays unlabeled (the rows already say it). Pinned by a test. (Also confirmed `conditional-branching` genuinely has 0 inputs — `fetch-data` makes its own data — so the absent Inputs node is correct, not a bug.)
+
+### Docs + requirements persisted (2026-06-08)
+
+- New **`visualization-requirements.md`** (task folder) — a one-page checklist of the **hard requirements** (handles land exactly; no info-loss in advanced; consolidated dual-handle ports nodes; row-level focus; beautiful = control skeleton + click-to-reveal; explicit fork handles), **decided principles** (a linear pipeline IS a line; layout reflects all structure even when hidden; focus never re-layouts), **implemented**, **wanted/deferred** (gradient edges; smart edge-router), and the deferred increments (overlay, editing). The *what*, complementing this log's *why* and the CLAUDE.md *how*.
+- **`web/CLAUDE.md`** (already existed) got the consolidated-ports + dual-handle + row-level-focus concepts and the jsdom/handle-type finding below. **`ui/CLAUDE.md`** stale path fixed (`api.ts` → `api/client.ts`). Left `execution/`, `registry/`, `graph/` CLAUDE.mds alone (Phase-1–3 / Task-133 coordination, not this session's authored work).
+
+### Finalize verification + a real test-quality pass (2026-06-08)
+
+**Ran the full gates** (hadn't since Phase 3): `make test` **7802 passed / 1 skipped**; `make check` clean (lock, pre-commit, mypy 235 files, deptry). *Gotcha surfaced:* once `web/` is staged, pre-commit's `pretty-format-json` reformats `web/` JSON (it expanded `tsconfig.json`'s inline arrays); it auto-fixes on first run, then converges. `package.json`/`package-lock.json` were already compliant.
+
+**Test-quality pass (the bar is "passing the *right* thing", not "passing").** A probe revealed the load-bearing fact: **React Flow renders ZERO edge DOM under jsdom** and logs no handle error — so the existing GraphView "no edge/handle errors" assertion was **theater** (passed because no edges exist, not because they're correct). Acted:
+- **Removed** that theater assertion (kept the mount test's real parts: pipeline mounts, nodes + `${ref}` chip render) and **removed** a tautological "edges take the source color" change-detector.
+- **Added the HANDLE-TYPE INVARIANT** — the recurring bug was always a handle-*type* mismatch (a `sourceHandle` that's secretly target-type → React Flow silently drops the edge; it bit us twice). Made `handleType` authoritative in `handles.ts` (each id scheme → "source"/"target", throws on unknown); a pure `flow.test.ts` test asserts every edge's `sourceHandle` is source-type and `targetHandle` is target-type across a graph exercising all schemes (ports/branch/param/output/node-level). **Mutation-verified:** reverting the port-binding fix makes it fail. This is the only reliable catch for the silent-drop class — jsdom can't, so edge integrity is a pure test, never a render test.
+
+**Honest residual (stated, not hidden):** built blind (no canvas) — a *component* rendering the wrong handle type, or visual/layout ugliness, still rests on the user's eyes; the *build-side* logic where the real bugs lived is now locked. Known-deferred: the **smart edge-router** (skip/loop edges overlap nodes in dense graphs — biggest quality gap) and **gradient edges**. Final: web **38 tests**, tsc strict + build clean; Python **7802** + `make check` clean.

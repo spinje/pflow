@@ -188,3 +188,6 @@ scratchpads/
 # Demo recordings
 assets/demo.cast
 assets/README.md
+
+# Built web UI bundle (Task 168 — built by `make ui-build`, shipped in release wheels)
+src/pflow/ui/static/
