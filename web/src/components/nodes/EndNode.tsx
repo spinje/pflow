@@ -2,6 +2,7 @@
 // nodes + kind="end" edges into one visual sink per level (H10): every level's
 // `next: end` routes land here as a single small terminator.
 
+import { memo } from "react";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
@@ -9,7 +10,7 @@ import { NODE_IN } from "../../graph/handles";
 
 type EndNodeType = Extract<FlowNode, { type: "end" }>;
 
-export function EndNode({ data }: NodeProps<EndNodeType>): JSX.Element {
+export const EndNode = memo(function EndNode({ data }: NodeProps<EndNodeType>): JSX.Element {
   const { direction, dimmed, focused } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const classes = ["node", "end"];
@@ -22,4 +23,4 @@ export function EndNode({ data }: NodeProps<EndNodeType>): JSX.Element {
       <span className="end-glyph">■</span>
     </div>
   );
-}
+});

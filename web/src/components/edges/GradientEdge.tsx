@@ -8,11 +8,12 @@
 // A label is rendered only when present — in practice TD fork edges (a branch's
 // outcome rides the edge there; in LR it rides the node's border handle instead).
 
+import { memo } from "react";
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
 
-export function GradientEdge({
+export const GradientEdge = memo(function GradientEdge({
   id,
   sourceX,
   sourceY,
@@ -46,4 +47,4 @@ export function GradientEdge({
       )}
     </>
   );
-}
+});

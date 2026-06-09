@@ -3,6 +3,7 @@
 // and is individually clickable (click a row → focus just that port's connections).
 // Replaces the old one-node-per-port pills.
 
+import { memo } from "react";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
@@ -11,7 +12,7 @@ import { useInteraction } from "../interaction";
 
 type PortsNodeType = Extract<FlowNode, { type: "ports" }>;
 
-export function PortsNode({ data }: NodeProps<PortsNodeType>): JSX.Element {
+export const PortsNode = memo(function PortsNode({ data }: NodeProps<PortsNodeType>): JSX.Element {
   const { kind, ports, direction, focusedPortId, dimmed, focused } = data;
   // Every port bridges two scopes, so each row carries BOTH handles: a TARGET that
   // RECEIVES (left/top — an input bound from the parent, an output written by a
@@ -48,4 +49,4 @@ export function PortsNode({ data }: NodeProps<PortsNodeType>): JSX.Element {
       </div>
     </div>
   );
-}
+});

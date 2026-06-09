@@ -4,6 +4,7 @@
 // title. Clicking a group toggles collapse (wired in GraphView's onNodeClick); the
 // chevron is the affordance.
 
+import { memo } from "react";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
@@ -30,7 +31,7 @@ function warningCount(annotations: Record<string, unknown>): number {
   return Array.isArray(warnings) ? warnings.length : 0;
 }
 
-export function GroupNode({ data }: NodeProps<GroupNodeType>): JSX.Element {
+export const GroupNode = memo(function GroupNode({ data }: NodeProps<GroupNodeType>): JSX.Element {
   const { group, hostNode, collapsed, showTitle, direction, dimmed, focused } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
@@ -65,4 +66,4 @@ export function GroupNode({ data }: NodeProps<GroupNodeType>): JSX.Element {
       </div>
     </div>
   );
-}
+});

@@ -8,7 +8,7 @@
 // Per-row handles sit inside position:relative rows; React Flow measures their DOM
 // rects for edge routing, so a ${ref} line lands on its exact row with no pixel math.
 
-import { type CSSProperties, useEffect } from "react";
+import { type CSSProperties, memo, useEffect } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
@@ -100,7 +100,7 @@ function Connector({ side }: { side: "top" | "bottom" }): JSX.Element {
   );
 }
 
-export function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Element {
+export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Element {
   const { node, density, direction, outputFields, branchLabels, hasIncoming, hasOutgoing, dimmed, focused } = data;
   const detailed = density === "detailed";
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
@@ -189,4 +189,4 @@ export function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Ele
       <BranchPorts labels={branchLabels} direction={direction} />
     </div>
   );
-}
+});

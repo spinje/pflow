@@ -4,6 +4,7 @@
 // perpendicular to the source->target handle line, so it reads correctly in both
 // LR (over the top) and TD (around the side) layouts.
 
+import { memo } from "react";
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
@@ -11,7 +12,7 @@ import { truncate } from "../../utils/format";
 
 const BULGE = 80;
 
-export function LoopEdge({
+export const LoopEdge = memo(function LoopEdge({
   id,
   sourceX,
   sourceY,
@@ -54,4 +55,4 @@ export function LoopEdge({
       )}
     </>
   );
-}
+});

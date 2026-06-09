@@ -935,3 +935,67 @@ base overlapping the border, tip + edge + tile all centered on the icon column; 
 this session (a `:root` palette re-theme; nudging the base positioning to `+3px` = exact touch). **Before
 commit:** run the gate (tsc/vitest + `make check`) and update any Phase-A test that asserted the old
 connector-owns-a-handle structure (the `Connector` no longer renders a `<Handle>`).
+
+### Connector flare SOLVED — the paint ≠ the box (viewBox/element mismatch) (2026-06-09) ✅
+
+> Landed in `dc419be4` ("improvements to shape"). Closes the flare saga above.
+
+**The user's two remaining symptoms — "an angle going into the border" and "the stem is ~1px thinner
+than the edge" — were ONE bug.** The path was authored in `viewBox="0 0 14 13"` but the element was
+14×9px. An SVG with no `preserveAspectRatio` defaults to `xMidYMid meet`: scale = min(14/14, 9/13) ≈ 0.69
+→ the browser painted a **69%-size copy** of the designed flare (≈9.7×9), horizontally centered with
+~2.2px dead margins. So the tip rendered 3×0.69 ≈ **2.08px** against the 3px edge (the "1px too small"),
+and the cove's flat tangent landing compressed into ~3 antialiased px (the "angle"). **Crucially this is
+invisible to rect measurement** — the user had verified the bounding box was correct, and it WAS; the
+mis-scaled paint inside it is what no `getBoundingClientRect` can see. *Discipline note for the tooling:
+`inspect` verifies BOXES; paint-vs-box bugs still need the zoomed screenshot (`sips` crop + upscale).*
+
+**Fix — structural, so the class can't recur (not pixel-nudging):**
+- **One `CONN` constant set** (WorkflowNode.tsx) drives the path, the viewBox, AND the element's inline
+  width/height. CSS no longer carries any connector geometry — the TS↔CSS dual-source is exactly what
+  drifted (cf. the stale "18×13" comment three edits behind the code).
+- **Elliptical-arc fillets (`A`)** replace the eyeballed cubics: tangent exactly vertical at the 3px stem,
+  exactly horizontal at the base — flat landing by construction, not by tuning.
+- **Overlap aprons baked into the path:** a 2px stem rides under the edge terminus (same width + color,
+  collinear → invisible), the base sinks 2px INTO the 3px tile border (anchor `+3px` exact-touch →
+  `+1px`; within the border, never past it). Sub-pixel alignment now matters at NEITHER end.
+
+**Verified in the real browser:** `inspect` — box 14×11 CSS px, base 2px inside the border, centered on
+the handle; zoomed crops of both junctions — full-width stem, smooth flat landing, no notch. User: *"Great!
+This is much better!"*
+
+### Fresh-eyes frontend review → ranked leverage list (2026-06-09)
+
+User asked for a structure/best-practices pass over `web/` before continuing UI work. Read the whole tree
+(~3.1k lines). **Verdict: healthy** — the RF traps are all avoided (module-level `nodeTypes`/`edgeTypes`,
+callbacks kept out of node `data` via `InteractionContext`, identity-preserving `applyFocus`, pure
+node-env transform, status machine + ErrorBoundary). Real findings, ranked by leverage (agreed with user):
+
+1. **Geometry dual-sourced TS↔CSS, synced only by comment strings — THE recurring bug class** of this
+   feature's history (`HEADER_HEIGHT`/`ROW_HEIGHT`/tile 56/border 3/edge-stroke 3/handle `left:34`…; it
+   produced the tile-drift, the viewBox drift, every stale-comment round). Plan: a `metrics.ts` exporting
+   the layout-coupled constants, injected once as CSS custom properties (the `--kind` mechanism, proven).
+2. **ELK sizing is open-loop** — `leafSize` predicts heights, components stretch to fit, nothing detects
+   drift → silent overlaps. Plan: dev-mode tripwire (warn when `offsetHeight` ≠ assigned height); the full
+   measure-then-layout loop only if the tripwire ever fires.
+3. **`applyFocus` reads `e.hidden` as "default-hidden" AND writes it** — correct only because the hook
+   always re-applies focus to the pristine `laid` snapshot; the invariant is structural, not typed. Plan:
+   explicit `defaultHidden` on `EdgeData`, set once in `buildFlow`.
+4. Registered components not `memo`'d (fixed below). 5. ELK statically imported — ~80% of the 1.79 MB
+   bundle; `layoutGraph` is already async so a dynamic import is nearly free. 6. Stringly class names
+   (`edge-${kind}`, `kind-${node.kind}`) defeat grep — plan: construction-site comments in `index.css`.
+
+**Judged fine, do NOT churn:** the single CSS sheet at this size; no Tailwind/CSS-in-JS/state-lib/router;
+React 18; per-edge `<defs>` in GradientEdge; the TD/LR fork-policy spread (direction is a real axis — an
+abstraction would just hide the branching).
+
+### Best-practices batch 1 — memoize all registered RF components (2026-06-09) ✅
+
+All six (`WorkflowNode`/`PortsNode`/`GroupNode`/`EndNode`/`GradientEdge`/`LoopEdge`) wrapped as
+`memo(function Name …)` (named, so devtools keep the name), and the constraint documented in BOTH type
+registries ("every registered component must be memo()'d"). This is the RF-documented practice that
+*composes* with `applyFocus`'s identity preservation — which was previously wasted: every store churn
+(pan/zoom/any focus click) re-rendered all nodes; now only nodes whose data identity changed render.
+Behavior-neutral by construction; gates green (vitest 53, tsc strict + build); real-browser screenshot of
+`conditional-branching` TD/beautiful identical. Remaining batch (in order): lazy-ELK dynamic import →
+class-name grep comments → `metrics.ts` consolidation → `defaultHidden`.

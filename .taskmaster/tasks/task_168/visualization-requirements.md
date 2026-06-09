@@ -58,11 +58,11 @@
 - **Fork handles** (labeled, both densities).
 - IO hidden-data-flow revealed on click (progressive disclosure).
 
-### Phase A — Tines/n8n visual aesthetic (frontend-only, zero contract change; uncommitted)
+### Phase A — Tines/n8n visual aesthetic (frontend-only, zero contract change; committed)
 
 > Full journey + critical learnings: `implementation/progress-log.md` → "Phase A — Visual Redesign …
-> HANDOFF". Design/Flowise teardown: `research/visual-redesign-knowledge.md`. One piece (the connector
-> stub) is **WIP** — see below.
+> HANDOFF" and the 2026-06-09 entries. Design/Flowise teardown: `research/visual-redesign-knowledge.md`.
+> The connector flare is **done** (see Wanted/planned for the load-bearing geometry rule).
 
 - **One leaf component** `WorkflowNode` (RF `type:"node"`, density in `data`) — replaced the
   Detailed/Compact split. Card = category(type) + description(`purpose`||`node_id`, 2-line clamp);
@@ -82,18 +82,16 @@
 
 ## Wanted / planned (NOT yet built)
 
-- **🚧 Icon connector stub (ACTIVE WIP — start here).** In TD+beautiful a control edge should
-  **flow into the icon tile** via a small rounded kind-colored stub: two per node (**top** iff
-  `hasIncoming`, **bottom** iff `hasOutgoing`), **same size**, anchored to the tile's top/bottom
-  border, ending in a short straight tip that pokes a few px **outside** the node to meet the edge;
-  **flat (90°) caps** at both ends. Lives in `WorkflowNode.tsx` (`Connector` + `CONNECTOR_TOP/BOTTOM`
-  paths) + `index.css .node-connector*`. **Three unsolved issues** (the next agent's task): (1) gap
-  between the stub tip and the edge (top+bottom); (2) gap between the stub base and the tile border;
-  (3) flare needs more X-spread, less Y. The model says no gaps but the user sees them → **debug in a
-  REAL browser (devtools), not on paper** — the implementer was blind. Strong hypothesis + concrete
-  debug steps + fallback strategies are in the progress-log HANDOFF section. The shape is a 1-line
-  path swap once gaps are solved (ask the user for the exact Tines SVG path — they offered it).
+- **Icon connector flare** — ✅ DONE (2026-06-09, user-accepted). In TD+beautiful a control edge flows
+  into the icon tile via an arc-fillet flare: handle on the node BORDER (reliable RF measurement), flare
+  pure decoration anchored to the tile, overlap aprons at both ends so sub-pixel alignment never matters.
+  ONE `CONN` constant set in `WorkflowNode.tsx` drives path + viewBox + element size — a viewBox/box
+  mismatch silently rescales the paint inside a correctly-placed box (the final gap/angle bug; invisible
+  to rect measurement). Don't reintroduce geometry into CSS. Journey: progress-log 2026-06-09 entries.
 - **Gradient edges** — ✅ DONE in Phase A (`GradientEdge`, `userSpaceOnUse`). Kept here for history.
+- **Frontend hygiene batch** (from the 2026-06-09 fresh-eyes review; memo ✅ done): lazy-ELK dynamic
+  import (~80% of the bundle); `metrics.ts` single-sourcing of layout-coupled geometry → CSS vars;
+  explicit `defaultHidden` on EdgeData; class-name construction-site comments; ELK-size dev tripwire.
 - **Smart edge-router** — pathfind edges around nodes, handle-to-handle, so **skip edges**
   (a dependency jumping over intermediate nodes) and **backward/loop edges** don't draw
   through boxes or U-turn. React Flow has no node-avoidance (edges are endpoint-only); needs
@@ -116,9 +114,9 @@
   nodes. Fix = the smart edge-router above.
 - The harness (`plan-to-code`) is an unusually hard case (deep nesting + loops + ~124 data
   edges); most workflows are far simpler and render clean today.
-- **The visual layer cannot be verified without a real browser.** This session was built blind
-  (screenshot review only); geometry that calc'd correctly on paper rendered wrong. The connector
-  stub gaps are the unfinished consequence — debug them in devtools.
+- **The visual layer cannot be verified without a real browser.** Use the real-browser loop
+  (`.claude/skills/screenshot-pflow-web-ui`): `inspect` for boxes/geometry, zoomed screenshot crops for
+  paint (a paint-vs-box bug — e.g. a viewBox mismatch rescaling the drawing — is invisible to rects).
 
 ## Deferred increments (from task-168 — architected-for, not built)
 
