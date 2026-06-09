@@ -1,68 +1,92 @@
 ---
 name: screenshot-pflow-web-ui
-description: Screenshot the running pflow web UI (the React Flow canvas; web/ → src/pflow/ui) to verify frontend changes. Frames the whole graph or one node for a close-up. Use after changing web/ UI code and needing to SEE the rendered canvas.
+description: Screenshot or measure the running pflow web UI (the React Flow canvas; web/ → src/pflow/ui) to verify frontend changes. Use after changing web/ UI code.
 ---
 
-# screenshot-pflow-web-ui
+# pflow web UI: screenshot + inspect
 
-Take a settled screenshot of a pflow web UI URL — optionally framed on a single node.
-The workflow lives at `examples/real-workflows/screenshot-pflow-web-ui/workflow.pflow.md`
-(how and why it settles before capturing is in its description + node descriptions).
+Two workflows. Both drive the chrome-devtools MCP Chrome and **wait until the React Flow
+canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
 
-## The URL
+- **`screenshot.pflow.md`** → a settled full-page PNG. Eyeball the rendered canvas.
+- **`inspect.pflow.md`** → JSON geometry: every node's box/tile/connector/handle rect +
+  every edge's path rect + the viewport `scale`. Measure exact pixels (e.g. does an edge
+  endpoint land on its target handle? is a connector flush with the tile?).
 
-You pass a full UI URL. Base: `http://127.0.0.1:<port>/` (default port **8765**). Query
-params — source of truth: `web/src/utils/viewParams.ts`:
+## URL params
+
+Base `http://127.0.0.1:<port>/` (default port 8765). Source: `web/src/utils/viewParams.ts`.
 
 | param | values | default | meaning |
 |---|---|---|---|
-| `workflow` | a saved name, or a `.pflow.md` path relative to where the server runs | — (required) | which workflow to render |
-| `direction` | `LR` \| `TD` | `LR` | layout direction (left-right / top-down) |
-| `density` | `beautiful` \| `advanced` | `beautiful` | node density (compact / detailed cards) |
-| `node` | a `node_id` (or flat id) | — (fit whole graph) | frame the camera on one node — a close-up, essential for small geometry (a connector, a handle) |
-
-Example:
-```
-http://127.0.0.1:8765/?workflow=examples/core/conditional-branching.pflow.md&direction=TD&density=beautiful&node=classify
-```
+| `workflow` | saved name, or `.pflow.md` path relative to the server's cwd | required | which workflow |
+| `direction` | `LR` \| `TD` | `LR` | layout direction |
+| `density` | `beautiful` \| `advanced` | `beautiful` | node density |
+| `node` | a `node_id` (or flat id) | whole graph | frame the camera on one node — needed for small geometry (a connector/handle) |
 
 ## Before running
 
-1. **Ensure a server** on the URL's port (default 8765) — reuse one if it's already up,
-   else start it and wait until ready (so the first screenshot doesn't race a cold start):
+1. Server on the URL's port (reuse if up, else start and wait — safe to re-run):
    ```bash
    curl -sf http://127.0.0.1:8765/api/catalog >/dev/null 2>&1 \
      || { uv run pflow ui --no-open --port 8765 & \
           for i in $(seq 1 20); do curl -sf http://127.0.0.1:8765/api/catalog >/dev/null 2>&1 && break; sleep 0.3; done; }
    ```
-   The `||` is the check: the probe runs first, and the server starts **only if** it
-   fails — so this is safe to re-run and never double-starts.
-2. **Rebuild after ANY `web/` change** (the server serves the built bundle, not source):
+2. Rebuild after ANY `web/` change (the server serves the built bundle, not source):
    ```bash
    make ui-build
    ```
 
 ## Run
 
+Single-quote the URL so the shell doesn't split on `&`.
+
+Screenshot — stdout is the PNG path; then `Read` it:
 ```bash
-uv run pflow examples/real-workflows/screenshot-pflow-web-ui/workflow.pflow.md \
+uv run pflow examples/real-workflows/screenshot-pflow-web-ui/screenshot.pflow.md \
   url='http://127.0.0.1:8765/?workflow=<name|path>&direction=TD&density=beautiful&node=<node_id>' \
   [out_dir=/tmp/pflow-shots]
 ```
 
-Stdout = the saved PNG path → then `Read` it. (Single-quote the URL so the shell doesn't
-split on `&`.)
+Inspect — stdout is the geometry JSON; pipe to `jq`:
+`-p -o geometry` prints just the JSON (no progress, no header) → pipe straight to `jq`:
+```bash
+uv run pflow examples/real-workflows/screenshot-pflow-web-ui/inspect.pflow.md \
+  url='http://127.0.0.1:8765/?workflow=<name|path>&direction=TD&density=beautiful&node=<node_id>' \
+  -p -o geometry | jq '<filter>'
+```
 
-## Don't use for
+Both reuse `shared/open-and-settle.pflow.md` (open + poll-until-settled).
 
-- General URLs (a static site, docs) → use the `shoot` skill instead.
-- States that need clicks first (collapse a group, focus a node) → drive the
-  chrome-devtools MCP tools (`click`, `evaluate_script`) directly.
+## inspect output
+
+~1K tokens for a small graph, ~11K for a big one in advanced — so **filter with `jq`
+in-shell**, never read it whole. Every `rect` is `{top,bottom,left,right,w,h}` in screen
+px (= CSS px × `scale`); `null` when the element is absent:
+
+```
+{ scale,
+  nodes: [{ dataId, nodeId, kind, offsetHeight,
+            nodeRect, tile, connTop, connBottom,           // rects (connTop/Bottom: the TD connector stubs)
+            handles: [{ type: "source"|"target", rect }] }],
+  edges: [{ id, pathRect }] }                              // pathRect = where the edge actually draws
+```
+
+```bash
+… -p -o geometry | jq '.nodes[] | select(.nodeId=="classify")'   # one node
+… -p -o geometry | jq '[.nodes[] | select(.nodeRect.left < 0)]'  # assert: any node off-canvas?
+```
+
+`nodeId` isn't unique across sub-workflows (the same step invoked twice → two nodes with
+the same `nodeId`) — disambiguate with the flat `dataId` (`n6` vs `n9`); the URL `node=`
+also accepts a flat id.
+
+A connector gap = the edge's `pathRect` end vs the node's `connTop`/`connBottom` tip vs
+its `tile` edge. **Before/after a fix:** save each run (`… -p -o geometry > /tmp/before.json`),
+then `diff` (or `jq`) the rects to prove the gap closed.
 
 ## Troubleshooting
 
-- **"MCP tool not registered"** (or any `mcp-chrome-devtools-*` node error) → the
-  chrome-devtools MCP isn't synced: `pflow mcp sync chrome-devtools`.
-- **`viewport` output is the default `translate(0px, 0px) scale(1)`** → nothing fit:
-  the graph is empty, or `node=` named a node that isn't rendered (check the id).
-- **Stale UI in the shot** → you didn't rebuild after a `web/` change: `make ui-build`.
+- `mcp-chrome-devtools-*` node error ("MCP tool not registered") → `pflow mcp sync chrome-devtools`.
+- `viewport` = the default `translate(0px, 0px) scale(1)` → nothing fit: empty graph, or `node=` named a node that isn't rendered.
+- Stale output → you didn't rebuild after a `web/` change: `make ui-build`.

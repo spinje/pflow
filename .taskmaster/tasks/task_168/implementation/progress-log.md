@@ -800,3 +800,83 @@ gets wrong. That would put the *edge endpoint* somewhere other than the *rendere
 - **Read next:** `../research/visual-redesign-knowledge.md` (Phase A design + Flowise teardown),
   `implementation/phase-a-plan.md` (the plan + simplicity decisions), `web/CLAUDE.md` (updated
   component/edge/connector notes), this section, then the code.
+
+---
+
+## Closing the "built blind" gap — a real-browser feedback loop (2026-06-09)
+
+> Every prior agent on this feature built **blind** (the phrase recurs through this log and
+> `visualization-requirements.md`): screenshot-review only, no DOM, no measurement. The connector
+> stub stalled for exactly that reason — the geometry *calc'd right on paper but rendered wrong*, and
+> nobody could see where. This session built the missing feedback loop, then used it to **measure** the
+> connector bug instead of theorizing it. No production `web/` code changed yet — this is tooling +
+> diagnosis; the fix is teed up below.
+
+### The way of working (HOW lives in the skill — this is WHEN/WHY)
+
+> Usage (commands, params, output shape, jq, troubleshooting): `.claude/skills/screenshot-pflow-web-ui/SKILL.md`.
+> **Do not restate it here.** Three tools, each for a different question — pick by what you're verifying:
+
+- **Shape (a curve, a flare, an icon) → `shoot` a standalone SVG/HTML.** Render the candidate in a
+  throwaway `.html`, `shoot` the `file://`, Read the PNG. ~3s, **no app build**, fully isolated from
+  React/ELK. Used it to compare three flare paths in `/tmp/flare-lab.html` (kept) against the Tines
+  reference. This is the right loop for *aesthetics* — the app is too slow and too noisy to iterate a
+  curve in.
+- **Geometry / gaps / positioning → `inspect.pflow.md`.** Reads real `getBoundingClientRect` rects for
+  every node box / tile / connector / handle + every edge path, as JSON. This is the thing the codebase
+  kept saying it lacked ("jsdom can't see edges"): a real-browser geometry **verifier**. Use it to
+  quantify a gap, assert edges land on handles, find off-canvas nodes, or **diff before/after a fix**.
+- **Holistic look → `screenshot.pflow.md`.** Eyeball the whole settled canvas.
+
+The split that matters: **`inspect` answers "does it sit right" (numbers); `shoot`/`screenshot` answer
+"does it look right" (eyes).** `inspect` can't judge a curve; a screenshot can't give you a 5px gap.
+
+### Tooling decisions (the journey the skill doesn't carry)
+
+- **Shared `open + settle` core as a nested sub-workflow** (`shared/open-and-settle.pflow.md`), reused by
+  both `screenshot` and `inspect` — the load-bearing async-settle poll lives in **one** place. The open
+  feasibility question was *does the MCP Chrome page survive the sub-workflow boundary?* — **verified yes**
+  (open happens inside the sub-workflow; the parent's `shot`/`measure` act on that same page). Picked this
+  over duplicating the poll; the user chose the nested approach explicitly.
+- **Renamed `workflow.pflow.md` → `screenshot.pflow.md`** (the folder now hosts two tools + `shared/`).
+- **`inspect` emits clean, pipeable JSON**: a `clean` code node strips the chrome-devtools
+  `Script ran on page and returned …` wrapper, and `pflow … -p -o geometry` strips pflow's own progress/
+  header — so it pipes straight to `jq`. **Filter in-shell** (the dump is ~1K tokens small / ~11K large in
+  advanced — too big to read whole; jq before it hits context). Added `nodeId` per node so you select by
+  the author-known id.
+- **`examples/real-workflows/` is now excluded wholesale from `test_example_validation.py`** (like
+  `invalid/`/`legacy/`). Cause: adding a `type: workflow` node made the validator **recurse** into the
+  mcp-laden sub-workflow and fail — the skip heuristic only pre-scans *top-level* node types (a latent gap
+  the test docstring had already flagged). User's call: exclude the dir. `test_ir_examples` was never at
+  risk (schema-only, no recursion). Both green.
+- **Nested-node caveat (found by testing `document-processor`, which invokes a sub-workflow twice):** a
+  node inside a sub-workflow renders + measures fine (correct screen-space rects at any depth, groups
+  default-expanded), but **`node_id` is NOT unique across sub-workflows** — disambiguate by the flat
+  `dataId`. (Bonus: a sub-workflow's internal node may show `connTop/Bottom: null` — *correct*; connector
+  stubs are **control**-flow-gated and a single-node sub-workflow has only data flow.)
+
+### The connector bug — now MEASURED, not theorized (hand-off ready)
+
+Ran `inspect` on `conditional-branching` framed on `classify` (TD/beautiful, viewport scale 1.5):
+- incoming edge ends at **y=538**; flare tip at **543** → **~5px gap** (gap #1, symmetric on the bottom).
+- flare base at **564**; tile top at **566** → **~2px gap** (gap #2).
+- flare box **16×14** — nearly square → the pinched/hourglass look (gap #3).
+- **Root cause CONFIRMED (was the handoff's hypothesis):** the `<Handle>` lives *inside* the transformed,
+  outside-the-box `.node-connector` div, and React Flow draws the edge endpoint ~5px **outside** where the
+  handle element actually renders. Measured, not guessed.
+
+**The fix (designed, not yet written) — make the gaps structurally impossible, not pixel-tuned:**
+1. Move `NODE_IN`/`NODE_OUT` onto the node **border** at the icon column (the reliable RF measurement —
+   the existing `fallbackHandleStyle` path); **drop the `<Handle>` from `Connector`**.
+2. Make the flare a pure **opaque decoration** layered edge < flare(z1) < tile(z2). The edge ends under
+   the opaque flare → its terminus is *hidden* → gaps #1/#2 **cannot exist** (works for any endpoint under
+   the flare; no sub-pixel agreement needed). This is why it'll be verifiable by screenshot, not blind math.
+3. Swap the path for the real Tines shape (wider/shorter — eyeball start = variant **B** in the lab; the
+   user offered the exact path). `/tmp/flare-lab.html` already renders the **zero-gap ideal** as the visual
+   target.
+4. **Verify:** `inspect` before/after — assert the edge `pathRect` end is now *inside* the `connTop`/
+   `connBottom` rect, and the flare base meets the `tile` edge. Screenshot to confirm the shape.
+
+**State:** all tooling uncommitted (working tree). Connector fix **not started** — waiting on go-ahead
+and (optionally) the Tines path. Diagnosis is done; the next step is purely the `WorkflowNode.tsx` +
+`index.css` edits above.

@@ -83,46 +83,17 @@ folder.mkdir(parents=True, exist_ok=True)
 result: str = str(folder / f"{slug}-{timestamp}.png")
 ```
 
-### open
+### prepare
 
-Open the URL in a fresh tab in the MCP-managed Chrome. This is a REAL rendering Chrome
-(unlike `chrome --headless --screenshot`), so ResizeObserver / fitView run.
+Open the URL and poll until the canvas has settled — the shared `open + settle` core
+(`shared/open-and-settle.pflow.md`), reused by the inspect tool too. It leaves the MCP
+Chrome on the opened, settled page; `shot` below then captures that same page (the page
+persists across the sub-workflow boundary in the shared MCP browser).
 
-- type: mcp-chrome-devtools-new_page
-- url: ${url}
-
-### settle
-
-Poll the React Flow viewport transform until it is non-default AND stable across
-consecutive reads (the `fitView` animation has finished) — or give up after 8s. This
-is the load-bearing step: it waits out the async `fetch → ELK → measure → fit` chain so
-the capture is deterministic instead of a race. Returns the final transform + how long
-it waited (a non-default transform is proof the fit applied).
-
-- type: mcp-chrome-devtools-evaluate_script
-- function: |
-    async () => {
-      const start = Date.now();
-      const deadline = start + 8000;
-      const DEFAULT = "translate(0px, 0px) scale(1)";
-      const read = () => {
-        const vp = document.querySelector(".react-flow__viewport");
-        return vp ? vp.style.transform : "";
-      };
-      let prev = null, stable = 0, t = "";
-      while (Date.now() < deadline) {
-        t = read();
-        if (t && t !== DEFAULT && t === prev) {
-          stable++;
-          if (stable >= 2) break;
-        } else {
-          stable = 0;
-        }
-        prev = t;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      return { transform: t, waited_ms: Date.now() - start };
-    }
+- type: workflow
+- workflow: ./shared/open-and-settle.pflow.md
+- inputs:
+    url: ${url}
 
 ### shot
 
@@ -147,4 +118,4 @@ Absolute path of the saved screenshot.
 The settled viewport transform + wait time (non-default transform = fit applied;
 default `translate(0px, 0px) scale(1)` = nothing fit — empty graph or node not found).
 
-- source: ${settle.result}
+- source: ${prepare.transform}
