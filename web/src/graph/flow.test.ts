@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyFocus, buildFlow, type BuildOptions } from "./flow";
+import { applyFocus, buildFlow, type BuildOptions, expandTargets } from "./flow";
 import {
   branchHandle,
   handleType,
@@ -557,5 +557,97 @@ describe("edge types — every control kind is gradient-stroked (the component o
     const err = edges.find((e) => e.id === "err");
     expect(err?.data?.sourceColor).toBeTruthy();
     expect(err?.data?.targetColor).toBeTruthy();
+  });
+});
+
+describe("focus-expansion — beautiful cards expand to rows (decided 2026-06-09)", () => {
+  // a --seq--> b --data(stdout→data)--> c ; d is a control-only neighbor of c.
+  const graph: RFGraph = {
+    nodes: [
+      node("a"),
+      node("b"),
+      node("c", { params: [{ name: "data", value: "${b.stdout}", is_dynamic: true, source: null }] }),
+      node("d"),
+      node("end0", { kind: "end" }),
+    ],
+    edges: [
+      edge("seq", "a", "b", "sequential"),
+      edge("df", "b", "c", "data_flow", { output_field: "stdout", input_name: "data" }),
+      edge("seq2", "c", "d", "sequential"),
+      edge("fin", "d", "end0", "end"),
+    ],
+    groups: [],
+  };
+
+  it("expandTargets: the focused leaf + its data-flow endpoints; control-only neighbors stay compact", () => {
+    const targets = expandTargets(graph, "c");
+    expect(targets.has("c")).toBe(true); // the clicked node itself
+    expect(targets.has("b")).toBe(true); // data-flow endpoint
+    expect(targets.has("d")).toBe(false); // control-only neighbor
+    expect(targets.has("a")).toBe(false);
+    expect(expandTargets(graph, null).size).toBe(0);
+  });
+
+  it("expandTargets: end sinks never expand", () => {
+    expect(expandTargets(graph, "d").has("end0")).toBe(false);
+  });
+
+  it("an expanded card is flagged and takes the advanced box", () => {
+    const expanded = expandTargets(graph, "c");
+    const { nodes } = buildFlow(graph, { ...COMPACT, expanded });
+    const c = nodes.find((n) => n.id === "c");
+    const a = nodes.find((n) => n.id === "a");
+    expect(c?.type === "node" && c.data.expanded).toBe(true);
+    expect(a?.type === "node" && a.data.expanded).toBe(false);
+    // advanced box: wider than compact, taller than the fixed header
+    expect(c?.width).toBeGreaterThan(a?.width ?? 0);
+    expect(c?.height).toBeGreaterThan(a?.height ?? 0);
+  });
+
+  it("a data line between two expanded cards lands row-to-row and drops its label", () => {
+    const expanded = expandTargets(graph, "c");
+    const { edges } = buildFlow(graph, { ...COMPACT, expanded });
+    const df = edges.find((e) => e.id === "df");
+    expect(df?.sourceHandle).toBe(outputHandle("stdout"));
+    expect(df?.targetHandle).toBe(paramHandle("data"));
+    expect(df?.label).toBeUndefined(); // the rows themselves name the fields
+    // handle types stay correct (the silent-drop class)
+    expect(handleType(df!.sourceHandle!)).toBe("source");
+    expect(handleType(df!.targetHandle!)).toBe("target");
+    // still default-hidden — applyFocus reveals it (it is incident to the focus)
+    expect(df?.hidden).toBe(true);
+    const revealed = applyFocus(buildFlow(graph, { ...COMPACT, expanded }).nodes, edges, "c");
+    expect(revealed.edges.find((e) => e.id === "df")?.hidden).toBe(false);
+  });
+
+  it("a half-expanded data line keeps the node-level end AND its label", () => {
+    // expand only the TARGET (c): the source side has no visible output row.
+    const { edges } = buildFlow(graph, { ...COMPACT, expanded: new Set(["c"]) });
+    const df = edges.find((e) => e.id === "df");
+    expect(df?.sourceHandle).toBe(NODE_OUT);
+    expect(df?.targetHandle).toBe(paramHandle("data"));
+    expect(df?.label).toBe("stdout → data");
+  });
+
+  it("expansion is ignored in advanced density (everything already shows rows)", () => {
+    const { nodes } = buildFlow(graph, { ...DETAILED, expanded: new Set(["c"]) });
+    const c = nodes.find((n) => n.id === "c");
+    expect(c?.type === "node" && c.data.expanded).toBe(false);
+  });
+
+  it("expandTargets: focusing a ports node expands the consumers of all its member ports", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("in1", { kind: "input", io: { data_type: null, required: true }, parent: "gw" }),
+        node("c1", { params: [{ name: "p", value: "${in1}", is_dynamic: true, source: null }] }),
+      ],
+      edges: [edge("df", "in1", "c1", "data_flow", { input_name: "p" })],
+      groups: [group("gw", { kind: "input_wrapper", members: ["in1"] })],
+    };
+    const viaPortsNode = expandTargets(g, "gw");
+    expect(viaPortsNode.has("c1")).toBe(true); // the consumer card expands…
+    expect(viaPortsNode.has("in1")).toBe(false); // …the port itself is already a row
+    const viaSinglePort = expandTargets(g, "in1");
+    expect(viaSinglePort.has("c1")).toBe(true);
   });
 });

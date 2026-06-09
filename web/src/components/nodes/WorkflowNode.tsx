@@ -108,16 +108,18 @@ function Connector({ side }: { side: "top" | "bottom" }): JSX.Element {
 }
 
 export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Element {
-  const { node, density, direction, outputFields, branchLabels, hasIncoming, hasOutgoing, dimmed, focused } = data;
+  const { node, density, direction, outputFields, branchLabels, hasIncoming, hasOutgoing, expanded, dimmed, focused } = data;
   const detailed = density === "detailed";
+  // Focus-expansion (beautiful only): the card renders its full advanced body in place.
+  const showBody = detailed || expanded;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
-  // TD/beautiful: a control edge flows into the icon via a connector STUB that owns its
-  // handle — but only the side that actually HAS an edge gets a stub. The other side
-  // (and the whole LR / advanced / loop case) falls back to a node handle, on the icon
-  // column in TD so the trunk still lines up.
+  // TD/beautiful: a control edge flows into the icon via the connector flare — but only
+  // the side that actually HAS an edge gets one. An EXPANDED card keeps the TOP flare
+  // (the tile still abuts the top border) but drops the BOTTOM one: the body grew below
+  // the tile, so a tile-anchored flare would sit mid-card, away from the outgoing edge.
   const topConnector = direction === "TD" && !detailed && hasIncoming;
-  const bottomConnector = direction === "TD" && !detailed && hasOutgoing;
+  const bottomConnector = direction === "TD" && !detailed && !expanded && hasOutgoing;
   // In TD the control handles sit on the icon column (left:34 = tile center) and are
   // pulled INWARD toward the tile (top/bottom offset) so the edge terminates closer to
   // the tile — letting the connector flare be short instead of bridging the full header
@@ -125,13 +127,13 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   const topHandleStyle = direction === "TD" ? { left: 34, top: 5 } : undefined;
   const bottomHandleStyle = direction === "TD" ? { left: 34, bottom: 5 } : undefined;
 
-  // React Flow caches handle positions; moving them (LR↔TD flips the border handles from
-  // the sides to the icon column) needs a re-measure or edges use stale coords and fly to
-  // the origin.
+  // React Flow caches handle positions; moving them (LR↔TD flips the border handles
+  // from the sides to the icon column; focus-expansion adds/removes the per-row
+  // handles) needs a re-measure or edges use stale coords and fly to the origin.
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, direction, density, updateNodeInternals]);
+  }, [id, direction, density, expanded, updateNodeInternals]);
 
   // Dev tripwire for the open-loop ELK sizing: leafSize PREDICTS this box and React
   // Flow pins the node to it, so offsetHeight always "agrees" — the drift signal is
@@ -140,7 +142,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   // (clientHeight 0); compiled out of production builds.
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!import.meta.env.DEV || !detailed) return;
+    if (!import.meta.env.DEV || !showBody) return;
     const el = rootRef.current;
     if (el && el.clientHeight > 0 && el.scrollHeight > el.clientHeight + 1) {
       console.warn(
@@ -153,12 +155,13 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   // (examples/real-workflows/screenshot-pflow-web-ui/inspect.pflow.md) reads the node
   // kind off the classList. Removing it breaks `inspect` with no test failing.
   const classes = ["node", detailed ? "detailed" : "compact", `kind-${node.kind}`];
+  if (expanded) classes.push("expanded"); // focus-expanded beautiful card (shares the body styling)
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
   if (node.is_terminal) classes.push("terminal");
   if (node.unexpanded) classes.push("unexpanded");
   const kindStyle = { "--kind": kindColor(node.kind) } as CSSProperties;
-  const hasBody = detailed && (node.params.length > 0 || outputFields.length > 0);
+  const hasBody = showBody && (node.params.length > 0 || outputFields.length > 0);
 
   return (
     <div ref={rootRef} className={classes.join(" ")} style={kindStyle}>

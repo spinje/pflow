@@ -8,12 +8,18 @@ describe("readViewParams", () => {
     expect(readViewParams("")).toEqual(DEFAULT_VIEW);
   });
 
-  it("parses all three params, mapping user-facing density words inward", () => {
-    expect(readViewParams("?direction=TD&density=advanced&node=fetch-data")).toEqual({
+  it("parses all view params, mapping user-facing density words inward", () => {
+    expect(readViewParams("?direction=TD&density=advanced&node=fetch-data&focus=classify")).toEqual({
       direction: "TD",
       density: "detailed",
       node: "fetch-data",
+      focus: "classify",
     });
+  });
+
+  it("treats a blank focus as null", () => {
+    expect(readViewParams("?focus=").focus).toBeNull();
+    expect(readViewParams("").focus).toBeNull();
   });
 
   it("maps density=beautiful -> compact", () => {

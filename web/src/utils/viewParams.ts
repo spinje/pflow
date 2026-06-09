@@ -15,9 +15,15 @@ export interface ViewParams {
   // A node to frame the camera on (a node_id, or a flat id as a fallback). null = fit
   // the whole graph. Read-only: a load-time camera instruction, never written back.
   node: string | null;
+  // A node (or IO port) to FOCUS on load (a node_id, or a flat id as a fallback) — the
+  // same state a click produces: dim non-incident, reveal data lines, and (beautiful)
+  // expand the card + its data-flow endpoints. Read-only, like `node` — focus is
+  // transient interaction state, never written back. Combine with `node=` to also
+  // frame the camera on it.
+  focus: string | null;
 }
 
-export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null };
+export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null };
 
 // The URL uses the USER-FACING density words (advanced/beautiful); the code uses the
 // internal density (detailed/compact). Keep the mapping in one place so they can't drift.
@@ -31,10 +37,12 @@ export function readViewParams(search: string): ViewParams {
   const dir = p.get("direction");
   const den = p.get("density");
   const node = p.get("node");
+  const focus = p.get("focus");
   return {
     direction: dir === "TD" || dir === "LR" ? dir : DEFAULT_VIEW.direction,
     density: (den !== null && PARAM_TO_DENSITY[den]) || DEFAULT_VIEW.density,
     node: node !== null && node.trim() !== "" ? node : null,
+    focus: focus !== null && focus.trim() !== "" ? focus : null,
   };
 }
 

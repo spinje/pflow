@@ -1073,3 +1073,64 @@ server.
 lazy ELK, metrics, defaultHidden, tripwire, grep comments); the consciously-rejected items (CSS Modules
 migration, Tailwind, state lib/router, React 19 churn, a11y for a localhost tool) are recorded in the
 review entry — don't re-litigate without a new trigger.
+
+### Connector ROOT CAUSE found (paint ≠ box) + click-to-expand feature (2026-06-09) ✅ (uncommitted)
+
+> A fresh-model session. The user reported two "separate" connector residuals — an angle cutting into
+> the tile border and the stem ~1px thinner than the edge — having already verified the flare's
+> bounding box was correctly placed. Both were ONE bug, and the box being correct is exactly why it
+> survived: **the SVG viewBox (14×13) didn't match the element box (14×9), and `preserveAspectRatio`'s
+> default (`xMidYMid meet`) silently scaled the PAINT to 9/13 ≈ 69% and centered it** — tip 3→2.08px
+> (the "1px too thin"), cove compressed until its flat tangent landing read as a diagonal (the
+> "angle"). Rect measurement (inspect/devtools) cannot see mis-scaled paint inside a correct box; the
+> numbers had drifted across hand-edits because the geometry lived in three places (path constants /
+> viewBox / CSS). **Lesson for this canvas: when a shape "looks wrong but measures right," diff the
+> painted geometry against the box — check the viewBox.**
+
+- **Fix (structural):** one `CONN` constant set derives the path, the viewBox, AND the element's
+  inline size (the same drift-kill move metrics.ts then generalized); paths rebuilt as **elliptical
+  arcs** (`A`) so tangency — vertical at the stem, horizontal at the base — holds by construction,
+  not by eyeballed cubics; overlap **aprons** at both ends (stem slides under the edge terminus,
+  base sinks into the tile border) make sub-pixel alignment irrelevant.
+- **Jag follow-up (user spotted):** landing the cove EXACTLY on the border's outer edge puts the
+  silhouette's 90° corner on the color boundary → a 1px AA jag. Added `baseSink: 1` — the landing
+  line sits 1px INSIDE the border, the curve crosses the edge while still sloped, no corner on the
+  silhouette. (`baseSink + baseApron` must stay < the 3px border.) Verified by zoomed screenshot
+  crops (sips crop+upscale of the `screenshot` output — a useful trick the tooling docs don't name).
+- **Focus ring** → `var(--kind, var(--accent))` (user ask).
+
+**Click-to-expand in beautiful (new feature, user-driven).** Clicking a node expands it in place to
+the full advanced body — and its DATA-FLOW endpoints expand with it, so the revealed lines land
+row-to-row (output row → param row) and the floating `stdout → data` label drops when they do (rows
+name the fields; the label STAYS when an end falls back to node level, e.g. `input_name` naming a
+dict KEY inside a param rather than a param — conditional-branching's `data` is this case, matching
+advanced exactly). Control-only neighbors stay compact. Design decisions, in order:
+- **Re-layout on expansion — the user overturned my no-re-layout recommendation, and was right.**
+  I'd proposed z-elevated overlap (the "focus never re-layouts" principle); the user chose re-layout
+  for TD. In TD a card grows ALONG the flow axis straight into the node below — and an expanding
+  neighbor ABOVE the focus must push everything down — so re-layout is near-mandatory, not merely
+  worth it. One code path both directions (LR gets it free). The principle is now scoped: *focus
+  dim/reveal never re-layouts; focus-EXPANSION does (beautiful only — in advanced the expansion set
+  is a stable EMPTY constant, so clicks there still never re-layout).*
+- **Camera anchoring is what makes re-layout feel acceptable:** the hook records the focused node's
+  absolute position across the re-layout and pans the viewport by the delta IN THE SAME EFFECT that
+  pushes the new positions — the graph reflows around a stationary clicked node. Anchoring applies
+  only when the SAME view (graph/density/direction/collapsed identity-compared via a ref) re-laid
+  out, i.e. only expansion changed; workflow/direction/density changes keep their own fit semantics.
+- **`expanded` is a per-node FLAG, not a density override** (`LeafData.expanded`): density stays
+  "compact" so the TOP flare survives on an expanded card while the body renders; the BOTTOM flare is
+  dropped (tile no longer abuts the bottom border — it would float mid-card). Handle resolution went
+  per-ENDPOINT (`rowsVisible(id) = detailed || expanded.has(id)`), so a half-expanded line lands on
+  the row only where the row actually renders (the silent-drop rule), keeping its label.
+- **`?focus=` URL param** (read-only, resolved like `node=`): deep-links the click state AND is the
+  only way the screenshot/inspect tooling can capture the focused/expanded state (it can't click).
+  *Gotcha hit:* applying it at `status==="ready"` raced React Flow's store (empty `getNodes()` burned
+  the one-shot flag, silently no-op) — gate on `useNodesInitialized`, same as the fit effect.
+
+Verified in the real browser both TD and LR via `focus=` screenshots (expansion, row-landing, label
+rules, anchoring, flares, dimming, kind ring). web **68 tests** (+8: expandTargets/expanded-build/
+row-to-row+label/half-expanded/advanced-ignores/ports-focus + 2 viewParams); tsc strict + build clean.
+Files: `flow.ts` (expandTargets, BuildOptions.expanded, per-endpoint handles, label rule),
+`WorkflowNode.tsx`, `useWorkflowGraph.ts` (expansion derivation + anchoring), `GraphView.tsx` +
+`viewParams.ts` (focus=), `index.css`, `web/CLAUDE.md`, SKILL.md (focus param), this doc +
+visualization-requirements.md. Zero contract/Python change.

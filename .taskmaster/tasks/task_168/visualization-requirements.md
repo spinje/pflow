@@ -57,6 +57,13 @@
 - Consolidated **Inputs/Outputs ports nodes** (rows, dual handles, row-level focus).
 - **Fork handles** (labeled, both densities).
 - IO hidden-data-flow revealed on click (progressive disclosure).
+- **Click-to-expand in beautiful (2026-06-09):** focusing a node expands it + its data-flow
+  endpoints to the full advanced body in place; revealed lines land **row-to-row** (output row →
+  param row) and drop the floating `stdout → data` label when they do (the rows name the fields);
+  control-only neighbors stay compact. The ONE focus action that re-layouts (expansion changes
+  sizes); the viewport pans so the clicked node never moves (camera anchoring). Expanded cards keep
+  the top flare, drop the bottom one. Selection ring = the node's kind color. Deep-linkable via
+  `?focus=<node_id>` (read-only, like `node=`) — also how agents screenshot the state.
 
 ### Phase A — Tines/n8n visual aesthetic (frontend-only, zero contract change; committed)
 

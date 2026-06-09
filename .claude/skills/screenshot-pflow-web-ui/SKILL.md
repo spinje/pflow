@@ -23,6 +23,7 @@ Base `http://127.0.0.1:<port>/` (default port 8765). Source: `web/src/utils/view
 | `direction` | `LR` \| `TD` | `LR` | layout direction |
 | `density` | `beautiful` \| `advanced` | `beautiful` | node density |
 | `node` | a `node_id` (or flat id) | whole graph | frame the camera on one node — needed for small geometry (a connector/handle) |
+| `focus` | a `node_id` (or flat id) | none | apply the click-focus state on load: dim non-incident, reveal data lines, (beautiful) expand the card + its data-flow endpoints to rows — the only way to capture the focused/expanded state without driving the UI |
 
 ## Before running
 

@@ -77,6 +77,25 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const graphRef = useRef(graph);
   graphRef.current = graph;
 
+  // Apply a focus= deep link once the graph is rendered — the exact state a click
+  // produces (dim + reveal + beautiful expansion), resolved like node= (node_id
+  // first, flat id fallback). Read-once: later clicks own the focus from there.
+  const focusParam = initialView.focus;
+  const focusParamApplied = useRef(false);
+  useEffect(() => {
+    // Wait for React Flow to have MEASURED nodes (same race as the fit effect):
+    // at status "ready" the store can still be empty, which would resolve to null
+    // and burn the one-shot flag.
+    if (focusParamApplied.current || !focusParam || status !== "ready" || !nodesInitialized) return;
+    focusParamApplied.current = true;
+    const rendered = new Set(getNodes().map((n) => n.id));
+    const flatId = resolveNodeFlatId(graphRef.current, rendered, focusParam);
+    if (flatId) {
+      setFocus(flatId);
+      setSelectedId(flatId);
+    }
+  }, [status, focusParam, nodesInitialized, getNodes]);
+
   // Refit on a new workflow, a direction flip, or a node= deep link (layout shape
   // changes wholesale); keep the user's viewport for collapse/density tweaks. With a
   // resolvable node=, frame just that node (a close-up); else fit the whole graph.

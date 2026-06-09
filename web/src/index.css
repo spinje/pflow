@@ -266,7 +266,8 @@ button.active {
   padding: 6px;
   min-height: var(--node-header-h);
 }
-.node.detailed .node-header {
+.node.detailed .node-header,
+.node.expanded .node-header {
   border-bottom: 1px solid color-mix(in srgb, var(--kind) 20%, var(--border));
 }
 /* connector flare — a kind-colored cove so a control edge appears to flow into the icon

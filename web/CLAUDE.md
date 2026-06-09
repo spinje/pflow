@@ -85,6 +85,20 @@ Tests sit beside their subject.
   ones are also excluded from ELK so the layout stays tight). `applyFocus` reveals any
   default-hidden edge incident to the focus, so it needs no density flag — only
   `buildFlow` sets the default.
+- **Focus-expansion (beautiful): clicking a node expands it — and this is the ONE focus
+  action that re-layouts.** The focused leaf + its data-flow endpoints (`expandTargets`)
+  render their full advanced body in place (`LeafData.expanded`; `expanded` is a
+  *flag*, not a density override). Handle resolution is per-ENDPOINT (`rowsVisible`):
+  a revealed data line lands on the source's output row / target's param row wherever
+  that row actually renders — and when BOTH ends land on rows the `stdout → data` edge
+  label drops (the rows already name the fields, like advanced). Expansion changes node
+  sizes, so it flows through build → ELK (decided 2026-06-09: a card growing along the
+  TD flow axis would otherwise collide with the node below); `useWorkflowGraph` pans
+  the viewport by the focused node's layout delta so the clicked node never moves on
+  screen (camera anchoring — applied in the same effect that pushes the new positions).
+  An expanded card keeps its TOP connector flare but drops the BOTTOM one (the body
+  grew below the tile). In advanced the expansion set stays the stable EMPTY constant —
+  focus there remains a pure restyle, no re-layout. Selection ring = `var(--kind)`.
 - **Control edges are gradients; no arrowheads; forks differ by direction.**
   ALL four control kinds (sequential/branch/error/end) get `type: "gradient"`
   (`components/edges/GradientEdge.tsx`) — a `userSpaceOnUse` SVG gradient along the true

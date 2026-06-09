@@ -21,13 +21,19 @@ import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../ty
 export type Density = "detailed" | "compact";
 export type Direction = "LR" | "TD";
 
-// What the structural build (and therefore ELK layout) depends on. Focus is
-// deliberately NOT here: focus+context is a cheap styling pass (applyFocus) over
-// already-laid-out nodes, so clicking a node never re-runs layout.
+// What the structural build (and therefore ELK layout) depends on. Focus itself is
+// NOT here (applyFocus is a cheap styling pass) — but `expanded` (derived FROM focus
+// by expandTargets) is: expanding a card to its advanced body changes its size, so
+// it must flow through build → ELK. In beautiful, clicking a node therefore DOES
+// re-layout (decided 2026-06-09: a card growing along the TD flow axis collides with
+// the node below it otherwise); the hook keeps the clicked node visually anchored.
 export interface BuildOptions {
   density: Density;
   direction: Direction;
   collapsed: ReadonlySet<string>;
+  // Leaf nodes that render their advanced body while the global density stays
+  // beautiful (the focused node + its data-flow endpoints). Ignored in advanced.
+  expanded?: ReadonlySet<string>;
 }
 
 // `type` (not `interface`) so each satisfies React Flow's `data extends
@@ -43,6 +49,11 @@ export type LeafData = {
   // something flows out). Computed in buildFlow from the control edges.
   hasIncoming: boolean;
   hasOutgoing: boolean;
+  // Focus-expansion: render the advanced body while density stays beautiful. The
+  // card keeps its TOP flare (the tile still abuts the top border) but drops the
+  // BOTTOM one (the body grew below the tile, so a tile-anchored flare would float
+  // mid-card away from the outgoing edge).
+  expanded: boolean;
   dimmed: boolean;
   focused: boolean;
 };
@@ -132,15 +143,18 @@ function leafSize(
   direction: Direction,
   outputFields: string[],
   branchLabels: string[],
+  expanded: boolean,
 ): { width: number; height: number } {
   // Fork rows show only in LR (the n8n-style labeled border handles). In TD the forks
   // fan from the icon column and their labels ride the edges, so no rows are drawn.
   const branchRows = direction === "LR" ? branchLabels.length : 0;
-  const width = density === "compact" ? COMPACT_WIDTH : DETAILED_WIDTH;
+  // A focus-expanded card renders the full advanced body, so it takes the advanced box.
+  const showsBody = density === "detailed" || expanded;
+  const width = showsBody ? DETAILED_WIDTH : COMPACT_WIDTH;
   // The 56px icon tile is taller than even a 2-line description, so it dominates the
   // header height — keep it a fixed HEADER_HEIGHT. That also keeps the tile vertically
   // CENTERED (equal inset top/bottom), which the connector stubs depend on.
-  if (density === "compact") {
+  if (!showsBody) {
     return { width, height: HEADER_HEIGHT + branchRows * ROW_HEIGHT };
   }
   const rows = node.params.length + outputFields.length + branchRows;
@@ -152,9 +166,43 @@ function leafSize(
 // self-arc — neither implies a trunk in/out.
 const CONTROL_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["sequential", "branch", "error", "end"]);
 
+const NO_EXPANSION: ReadonlySet<string> = new Set();
+
+// The expansion set for a focus in beautiful mode: the focused leaf plus every leaf
+// on the other end of one of its DATA-FLOW lines. Those cards render their advanced
+// body so the revealed lines land on actual rows (source's output row → target's
+// param row) instead of carrying a floating "stdout → data" label. Control-flow
+// neighbors stay compact — their connection already reads fine at node level.
+// `focus` may be a leaf id, an individual IO port id, or a ports-node id (the
+// consolidated Inputs/Outputs box reuses its wrapper group's id → all member ports).
+export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet<string> {
+  if (!focus) return NO_EXPANSION;
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const wrapper = graph.groups.find(
+    (g) => g.id === focus && (g.kind === "input_wrapper" || g.kind === "output_wrapper"),
+  );
+  const foci = new Set<string>(wrapper ? wrapper.members : [focus]);
+  // Only a leaf card can expand: IO ports always show rows, a group host has no card,
+  // and an end sink has no body.
+  const expandable = (id: string): boolean => {
+    const n = nodeById.get(id);
+    return n != null && n.io === null && !n.is_group_host && n.kind !== "end";
+  };
+  const out = new Set<string>();
+  for (const id of foci) if (expandable(id)) out.add(id);
+  for (const e of graph.edges) {
+    if (e.kind !== "data_flow") continue;
+    if (!foci.has(e.source) && !foci.has(e.target)) continue;
+    if (expandable(e.source)) out.add(e.source);
+    if (expandable(e.target)) out.add(e.target);
+  }
+  return out;
+}
+
 export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const groupById = new Map(graph.groups.map((g) => [g.id, g]));
+  const expandedSet = view.expanded ?? NO_EXPANSION;
 
   // Which nodes have a control edge flowing IN / OUT — drives the connector stubs.
   const incomingControl = new Set<string>();
@@ -290,7 +338,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     } else {
       const outputFields = [...(outputFieldsByNode.get(n.id) ?? [])];
       const branchLabels = branchLabelsByNode.get(n.id) ?? [];
-      const size = leafSize(n, view.density, view.direction, outputFields, branchLabels);
+      const isExpanded = view.density === "compact" && expandedSet.has(n.id);
+      const size = leafSize(n, view.density, view.direction, outputFields, branchLabels, isExpanded);
       flowNodes.push({
         id: n.id,
         type: "node", // one leaf component at two densities; density rides in data
@@ -307,6 +356,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
           branchLabels,
           hasIncoming: incomingControl.has(n.id),
           hasOutgoing: outgoingControl.has(n.id),
+          expanded: isExpanded,
           dimmed: false,
           focused: false,
         },
@@ -371,6 +421,10 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   };
 
   const detailed = view.density === "detailed";
+  // Rows are visible on an endpoint when the whole view is advanced OR that node is
+  // focus-expanded — handle resolution is per-ENDPOINT, so a data line lands on a row
+  // wherever the row actually renders (and only there — the silent-drop rule).
+  const rowsVisible = (id: string): boolean => detailed || expandedSet.has(id);
   const flowEdges: FlowEdge[] = [];
   const seen = new Set<string>();
   for (const e of graph.edges) {
@@ -386,8 +440,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     }
     if (source === target) continue; // collapsed/host self-loop — a correct drop
 
-    const sourceHandle = sourceHandleFor(e, source, detailed, view.direction, outputFieldsByNode, nodeById, ioNodeToPortsNode);
-    const targetHandle = targetHandleFor(e, target, detailed, nodeById, ioNodeToPortsNode);
+    const sourceHandle = sourceHandleFor(e, source, rowsVisible(e.source), view.direction, outputFieldsByNode, nodeById, ioNodeToPortsNode);
+    const targetHandle = targetHandleFor(e, target, rowsVisible(e.target), nodeById, ioNodeToPortsNode);
 
     const key = `${source}->${target}|${e.kind}|${e.label ?? ""}|${sourceHandle}|${targetHandle}`;
     if (seen.has(key)) continue;
@@ -434,7 +488,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
 function sourceHandleFor(
   edge: RFEdge,
   source: string,
-  detailed: boolean,
+  rowsVisible: boolean, // the source node renders its body rows (advanced, or focus-expanded)
   direction: Direction,
   outputFieldsByNode: Map<string, Set<string>>,
   nodeById: Map<string, RFNode>,
@@ -452,7 +506,7 @@ function sourceHandleFor(
   if (isRealSource && edge.kind === "branch" && edge.label && direction === "LR") {
     return branchHandle(edge.label);
   }
-  if (detailed && isRealSource && edge.kind === "data_flow" && edge.output_field) {
+  if (rowsVisible && isRealSource && edge.kind === "data_flow" && edge.output_field) {
     if (outputFieldsByNode.get(edge.source)?.has(edge.output_field)) {
       return outputHandle(edge.output_field);
     }
@@ -463,7 +517,7 @@ function sourceHandleFor(
 function targetHandleFor(
   edge: RFEdge,
   target: string,
-  detailed: boolean,
+  rowsVisible: boolean, // the target node renders its body rows (advanced, or focus-expanded)
   nodeById: Map<string, RFNode>,
   ioNodeToPortsNode: Map<string, string>,
 ): string {
@@ -474,7 +528,7 @@ function targetHandleFor(
     return target === ioNodeToPortsNode.get(edge.target) ? portTargetHandle(edge.target) : NODE_IN;
   }
   const isRealTarget = target === edge.target;
-  if (detailed && isRealTarget && edge.kind === "data_flow" && edge.input_name) {
+  if (rowsVisible && isRealTarget && edge.kind === "data_flow" && edge.input_name) {
     if (node?.params.some((p) => p.name === edge.input_name)) {
       return paramHandle(edge.input_name);
     }
@@ -515,13 +569,16 @@ function toFlowEdge(
   if (edge.shadowed && detailed) classes.push("edge-shadowed");
   // Branch labels ride the border handle in LR (BranchPorts), so the edge is
   // unlabeled there; in TD the forks fan from the icon column, so the label rides the
-  // edge. A beautiful data line is labeled with what it carries; else the raw label.
+  // edge. A beautiful data line is labeled with what it carries — UNLESS both of its
+  // ends land on visible rows (focus-expanded cards / IO port rows), where the rows
+  // themselves already name the fields, exactly like advanced mode.
+  const rowToRow = sourceHandle !== NODE_OUT && targetHandle !== NODE_IN;
   const label =
     edge.kind === "branch"
       ? direction === "TD"
         ? (edge.label ?? undefined)
         : undefined
-      : isData && !detailed
+      : isData && !detailed && !rowToRow
         ? dataFlowLabel(edge)
         : (edge.label ?? undefined);
   // No arrowheads — clean lines flow straight into the node borders (the seamless
