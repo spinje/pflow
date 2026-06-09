@@ -16,7 +16,7 @@
 // A label is rendered only when present — in practice TD fork edges (a branch's
 // outcome rides the edge there; in LR it rides the node's border handle instead).
 
-import { memo } from "react";
+import { memo, type CSSProperties } from "react";
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
@@ -85,7 +85,18 @@ export const GradientEdge = memo(function GradientEdge({
       <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: selected ? METRICS.edgeStroke + 1 : METRICS.edgeStroke }} />
       {label && (
         <EdgeLabelRenderer>
-          <div className="edge-label nodrag nopan" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
+          {/* The pill takes its EDGE's color (tinted fill + faint hairline; text stays
+              white): error = the semantic red, otherwise the target node's color (the
+              line's color where it arrives). CSS reads --label-c. */}
+          <div
+            className="edge-label nodrag nopan"
+            style={
+              {
+                transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+                "--label-c": data?.kind === "error" ? "var(--danger)" : to,
+              } as CSSProperties
+            }
+          >
             {label}
           </div>
         </EdgeLabelRenderer>

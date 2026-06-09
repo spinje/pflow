@@ -687,13 +687,19 @@ button.active {
    full-width block that ignores the transform (the "full-width bar" bug). */
 .edge-label {
   position: absolute;
-  background: var(--bg-raised);
-  color: var(--decision);
-  border: 1px solid color-mix(in srgb, var(--decision) 40%, var(--border));
-  border-radius: 4px;
-  padding: 1px 6px;
+  /* Edge-colored pill (user-chosen "B0", 2026-06-09): --label-c is set per edge by
+     GradientEdge (error = --danger, else the target node's color). Tinted fill + a
+     faint same-color hairline; the text stays white — the tint, not the text, ties
+     the label to its line. */
+  --label-c: var(--decision);
+  background: color-mix(in srgb, var(--label-c) 11%, var(--bg));
+  color: #f5f7fa;
+  border: 1px solid color-mix(in srgb, var(--label-c) 16%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 9px;
+  letter-spacing: 0.02em;
   white-space: nowrap;
   pointer-events: all;
 }
