@@ -527,3 +527,35 @@ describe("layoutGraph — produces positions (ELK smoke)", () => {
     }
   });
 });
+
+describe("edge types — every control kind is gradient-stroked (the component owns its color)", () => {
+  // error/end included: they fade into the node's type color at the node ends
+  // (GradientEdge). If one regressed to "default", CSS would have no stroke for it
+  // and the edge would render invisibly.
+  const graph: RFGraph = {
+    nodes: [node("a", { is_decision: true }), node("b"), node("end0", { kind: "end" })],
+    edges: [
+      edge("seq", "a", "b", "sequential"),
+      edge("br", "a", "b", "branch", { label: "ok" }),
+      edge("err", "a", "b", "error"),
+      edge("fin", "b", "end0", "end"),
+      edge("df", "a", "b", "data_flow"),
+    ],
+    groups: [],
+  };
+
+  it("sequential/branch/error/end → gradient; data_flow → default", () => {
+    const { edges } = buildFlow(graph, DETAILED);
+    for (const id of ["seq", "br", "err", "fin"]) {
+      expect(edges.find((e) => e.id === id)?.type).toBe("gradient");
+    }
+    expect(edges.find((e) => e.id === "df")?.type).toBe("default");
+  });
+
+  it("error/end edges carry both endpoint colors for the fade", () => {
+    const { edges } = buildFlow(graph, DETAILED);
+    const err = edges.find((e) => e.id === "err");
+    expect(err?.data?.sourceColor).toBeTruthy();
+    expect(err?.data?.targetColor).toBeTruthy();
+  });
+});

@@ -999,3 +999,33 @@ registries ("every registered component must be memo()'d"). This is the RF-docum
 Behavior-neutral by construction; gates green (vitest 53, tsc strict + build); real-browser screenshot of
 `conditional-branching` TD/beautiful identical. Remaining batch (in order): lazy-ELK dynamic import →
 class-name grep comments → `metrics.ts` consolidation → `defaultHidden`.
+
+### Endpoint fades: error/end edges blend into their nodes (2026-06-09, user-driven) ✅
+
+User request from a screenshot: the solid-red error edge slams into the amber source and the green
+target connector; wanted the line to take each node's type color for the last ~20–30px ("a small fade
+… from both nodes at either side"), and the same for the grey end edge but only at the node end.
+
+**Implementation — one stops-builder, not a new edge component.** All four control kinds
+(`sequential`/`branch`/`error`/`end`) now route through `GradientEdge` (`flow.ts toFlowEdge`:
+`isControl = CONTROL_KINDS.has(...)`); the exported pure `gradientStops(kind, from, to, chordLen)`
+decides the stop list: sequential/branch keep the full-length source→target blend (unchanged);
+**error** = node color → red at `FADE_PX` (26px) → red → target color at both ends; **end** = node
+color → faint grey at the source only (the end-sink side stays grey). Offsets are `FADE_PX` as a
+fraction of the source→target chord (the `userSpaceOnUse` gradient axis), clamped to 0.4 so the two
+fades can't cross on short edges; degenerate zero chords fall back to the clamp. CSS strokes for
+`.edge-error`/`.edge-end` were REMOVED (the component owns color now — same rule as
+sequential/branch); the end edge's dot pattern stays in CSS.
+
+**Two decisions worth keeping:** (1) semantic colors are `var(--danger)`/`var(--text-faint)` set via
+the stop's `style` (a CSS context, so `var()` resolves) — the user manually re-themes `:root`, so a TS
+mirror would drift; (2) extending `GradientEdge` beat a separate `FadeEdge` under the deletion test
+(path/label/gradient scaffolding would be duplicated for a 20-line stop-list difference).
+
+**Side effect (accepted):** the error label now renders as the bordered `.edge-label` chip (it rides
+the custom edge), consistent with TD branch labels.
+
+**Verified:** 60 web tests (5 new pin the stop geometry; a flow test pins all-control-kinds→gradient —
+a regression to `"default"` would render INVISIBLY since CSS no longer strokes those kinds); tsc
+strict + build clean; real-browser screenshots confirm red→green landing on the error handler's
+connector and the green→grey dotted exit. `FADE_PX = 26` is the tuning knob.

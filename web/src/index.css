@@ -623,9 +623,10 @@ button.active {
 .react-flow__edge .react-flow__edge-path {
   stroke-width: 3;
 }
-/* Control edges (sequential/branch) are stroked by the GradientEdge component (a
-   source→target gradient) — do NOT set their `stroke` here or CSS would override the
-   gradient. Branch is DASHED; stroke-dasharray is a separate property, safe in CSS. */
+/* ALL control edges (sequential/branch/error/end) are stroked by the GradientEdge
+   component (source→target blend; error/end get a node-color fade at the node ends) —
+   do NOT set their `stroke` here or CSS would override the gradient. Dash patterns
+   are separate properties, safe in CSS. */
 .react-flow__edge.edge-branch .react-flow__edge-path {
   stroke-dasharray: 6 4;
 }
@@ -637,11 +638,7 @@ button.active {
   fill: var(--data-edge);
   font-family: var(--mono);
 }
-.react-flow__edge.edge-error .react-flow__edge-path {
-  stroke: var(--danger);
-}
 .react-flow__edge.edge-end .react-flow__edge-path {
-  stroke: var(--text-faint);
   stroke-dasharray: 2 3;
 }
 .react-flow__edge.edge-shadowed .react-flow__edge-path {

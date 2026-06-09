@@ -497,11 +497,12 @@ function toFlowEdge(
   targetColor: string,
 ): FlowEdge {
   const isData = edge.kind === "data_flow";
-  // Control flow (sequential/branch) draws as a source→target gradient via the
-  // custom "gradient" edge; data/error/end stay React Flow's "default" edge, stroked
-  // by CSS (green dashed / red / faint). Branch dash + shadow opacity are CSS too,
-  // via the className — only the gradient COLOR is owned by the component.
-  const isControl = edge.kind === "sequential" || edge.kind === "branch";
+  // ALL control flow draws via the custom "gradient" edge, which owns the stroke
+  // COLOR: sequential/branch blend source→target; error/end keep their semantic
+  // color with a short node-color fade at the node ends (see GradientEdge). Only
+  // data-flow stays React Flow's "default" edge, stroked by CSS. Dash patterns +
+  // shadow opacity are CSS, via the className.
+  const isControl = CONTROL_KINDS.has(edge.kind);
   const classes = [`edge-${edge.kind}`];
   // Advanced DIMS a control edge a data line already covers; beautiful hides the
   // data lines, so its control edges show full-strength (not shadow-dimmed).
