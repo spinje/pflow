@@ -11,12 +11,14 @@ import {
   type Node,
   ReactFlow,
   ReactFlowProvider,
+  useNodesInitialized,
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
 import type { Density, Direction, FlowEdge, FlowNode } from "../graph/flow";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
+import { readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
 import type { RFNode } from "../types";
 import { edgeTypes } from "../components/edges";
 import { InteractionProvider } from "../components/interaction";
@@ -38,8 +40,14 @@ export function GraphView(props: GraphViewProps): JSX.Element {
 }
 
 function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
-  const [density, setDensity] = useState<Density>("compact"); // beautiful by default
-  const [direction, setDirection] = useState<Direction>("LR");
+  // The view (LR/TD, beautiful/advanced, and an optional node to frame) is seeded from
+  // the URL so a deep link renders the exact state — and an agent can screenshot it
+  // without driving the UI. Toggles write back to the URL (replaceState); `node` is a
+  // load-time camera instruction (read once, never written).
+  const initialView = useMemo(() => readViewParams(window.location.search), []);
+  const [density, setDensity] = useState<Density>(initialView.density);
+  const [direction, setDirection] = useState<Direction>(initialView.direction);
+  const nodeParam = initialView.node;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -51,20 +59,43 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     focus,
   });
 
-  const { fitView } = useReactFlow();
+  const { fitView, getNodes } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
 
-  // Refit the viewport on a new workflow or a direction flip (layout shape changes
-  // wholesale); keep the user's viewport for collapse/density tweaks.
-  const fitKey = `${workflow}|${direction}`;
+  // Mirror a density/direction toggle into the URL (replaceState so flips don't spam
+  // the back button), preserving every other param (workflow, node).
+  const syncUrl = useCallback((patch: { direction?: Direction; density?: Density }) => {
+    const url = new URL(window.location.href);
+    url.search = writeViewParams(window.location.search, patch);
+    window.history.replaceState({}, "", url);
+  }, []);
+  const changeDensity = useCallback((d: Density) => { setDensity(d); syncUrl({ density: d }); }, [syncUrl]);
+  const changeDirection = useCallback((d: Direction) => { setDirection(d); syncUrl({ direction: d }); }, [syncUrl]);
+
+  // Read the contract via a ref so the fit effect doesn't re-run (and cancel its rAF)
+  // when focus restyles `nodes` — it must fire only on workflow/direction/node.
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
+
+  // Refit on a new workflow, a direction flip, or a node= deep link (layout shape
+  // changes wholesale); keep the user's viewport for collapse/density tweaks. With a
+  // resolvable node=, frame just that node (a close-up); else fit the whole graph.
+  const fitKey = `${workflow}|${direction}|${nodeParam ?? ""}`;
   const lastFit = useRef<string>("");
   useEffect(() => {
-    if (status !== "ready") return;
+    // Fit only once React Flow has MEASURED the laid-out nodes (real positions + sizes).
+    // A raw rAF after "ready" races the layout→store sync, so a single-node fit lands on
+    // a stale near-origin position (the whole-graph fit hid it; one node exposes it).
+    // useNodesInitialized is RF's "all nodes measured" signal — it re-arms after a
+    // re-layout (direction flip); the lastFit guard keeps it to one fit per view.
+    if (status !== "ready" || !nodesInitialized) return;
     if (lastFit.current === fitKey) return;
     lastFit.current = fitKey;
-    // rAF so React Flow has the new nodes measured before fitting.
-    const handle = requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
-    return () => cancelAnimationFrame(handle);
-  }, [status, fitKey, fitView]);
+    const rendered = new Set(getNodes().map((n) => n.id));
+    const flatId = nodeParam ? resolveNodeFlatId(graphRef.current, rendered, nodeParam) : null;
+    if (flatId) fitView({ nodes: [{ id: flatId }], padding: 0.5, maxZoom: 1.5, duration: 200 });
+    else fitView({ padding: 0.2, duration: 200 });
+  }, [status, fitKey, fitView, nodeParam, nodesInitialized, getNodes]);
 
   const onNodeClick = useCallback((_: unknown, node: Node) => {
     if (node.type === "group") {
@@ -104,8 +135,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       direction={direction}
       hasCollapsed={collapsed.size > 0}
       focused={focus !== null}
-      onDensity={setDensity}
-      onDirection={setDirection}
+      onDensity={changeDensity}
+      onDirection={changeDirection}
       onExpandAll={() => setCollapsed(new Set())}
       onClearFocus={() => setFocus(null)}
       onBack={onBack}
