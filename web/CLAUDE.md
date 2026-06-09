@@ -17,14 +17,18 @@ Each folder is one role; add code to the slot that matches it.
 src/
   main.tsx           entry — <ErrorBoundary> wraps <App>
   App.tsx            shell: ?workflow= URL param → <GraphView>, else <CatalogView>
-  index.css          all styles (one sheet; CSS vars at :root)
+  index.css          all styles (one sheet; theme vars at :root — geometry vars are
+                     INJECTED from graph/metrics.ts, never hardcoded here)
   types.ts           the wire contract (mirrors react_flow.py) — imported everywhere
   api/               server communication (client.ts: fetch + ApiError; a live /events
                      subscription would go here)
   graph/             PURE contract → React Flow transform; NO React (tests run node-env)
     flow.ts          buildFlow (nodes/edges) + applyFocus; size constants
-    layout.ts        ELK positioning (the only async step)
+    layout.ts        ELK positioning (the only async step; lazy-loads elkjs as its own chunk)
     handles.ts       handle-id scheme
+    metrics.ts       layout-coupled geometry constants — the single source for flow.ts
+                     sizes, the connector/edge geometry, and the :root CSS vars main.tsx
+                     injects before first paint
   hooks/             useWorkflowGraph: fetch → build → layout → focus → RF state + status
   utils/             pure helpers — format.ts (${ref} parsing, value previews, kind
                      colors, category label); icons.ts (node-kind/provider → SVG URL)
@@ -66,10 +70,12 @@ Tests sit beside their subject.
   (`detailed`) adds the body (param rows with per-row target handles + output ports).
   Fork outcomes show as labeled border handles in **LR** (both densities) or fan from the
   icon column in **TD** (see the control-edge note). Toggling density re-renders the one
-  component (no node-type swap). Beautiful node height is a FIXED `HEADER_HEIGHT` (68px) —
-  the 56px tile dominates any 2-line description, so the tile stays vertically **centered**
-  (the connector stubs anchor to that via `calc(50% ± Npx)` — don't let the header grow);
-  advanced adds body rows. Keep `leafSize` in step with the DOM or ELK overlaps. Icons come
+  component (no node-type swap). Beautiful node height is a FIXED `HEADER_HEIGHT` —
+  the tile dominates any 2-line description, so the tile stays vertically **centered**;
+  advanced adds body rows. (The connector flare anchors to the TILE itself, so header
+  growth no longer breaks it — but `leafSize` must stay in step with the DOM or ELK
+  overlaps; a dev-only tripwire in `WorkflowNode` warns when detailed content overflows
+  the pinned box.) Icons come
   from `utils/icons.ts`: one map keys a node `kind` →
   SVG; `llm` resolves from its `model` param's `provider/` prefix (default: a sparkle).
   Add a node-kind icon in that one file.
@@ -80,28 +86,41 @@ Tests sit beside their subject.
   default-hidden edge incident to the focus, so it needs no density flag — only
   `buildFlow` sets the default.
 - **Control edges are gradients; no arrowheads; forks differ by direction.**
-  Sequential/branch edges get `type: "gradient"` (`components/edges/GradientEdge.tsx`) —
-  a `userSpaceOnUse` SVG gradient blending the **source** → **target** node color along
-  the true edge direction (both colors in `edge.data`; **3px** to match the node border,
-  so a line flows seamlessly into the same-color rounded border). **No arrowheads** (clean
-  lines into the borders). Data/error/end stay React Flow's `"default"` edge, stroked by
-  CSS. **Never set `stroke` in CSS for `edge-sequential`/`edge-branch`** — the component
-  owns it; CSS would override the gradient. Dash (branch) + shadow/dim opacity ARE CSS
-  (separate properties). **Forks:** in **LR** a branch leaves a labeled border handle
+  ALL four control kinds (sequential/branch/error/end) get `type: "gradient"`
+  (`components/edges/GradientEdge.tsx`) — a `userSpaceOnUse` SVG gradient along the true
+  edge direction; the pure `gradientStops()` decides the blend per kind: sequential/branch =
+  full **source → target** node-color blend; **error** = node color fading to red over
+  ~26px at each end; **end** = node color fading to faint grey at the source. Stroke width
+  comes from `metrics.ts` (== the tile border, so a line flows seamlessly into the
+  same-color border). **No arrowheads** (clean lines into the borders). Only `data_flow`
+  stays React Flow's `"default"` edge, stroked by CSS. **Never set a control kind's
+  `stroke` in CSS** — the component owns color, and CSS no longer strokes those kinds, so
+  a regression to `"default"` renders INVISIBLY (pinned by a flow test). Dash (branch),
+  the end edge's dot pattern, and shadow/dim opacity ARE CSS (separate properties). **Forks:** in **LR** a branch leaves a labeled border handle
   (`BranchPorts`, n8n-style). In **TD** the control handles (`NODE_IN`/`NODE_OUT`) AND the
   forks all align to the **icon column** (`WorkflowNode` offsets them ~36px from the left),
   so the trunk + forks flow through the icon; a fork's label then rides its edge
   (GradientEdge renders it) instead of a border row, and `BranchPorts` draws nothing.
-- **🚧 Icon connector stub (UNFINISHED — see the progress-log HANDOFF).** In TD+beautiful a
-  kind-colored SVG stub (`Connector` in `WorkflowNode`; `CONNECTOR_TOP/BOTTOM` paths; CSS
-  `.node-connector*`) should bridge the control edge **into the icon tile** — one per side, only
-  if `hasIncoming`/`hasOutgoing` (computed in `flow.ts buildFlow`). The stub OWNS its `Handle` (at
-  the tip) so the edge meets it. **Known constraint:** React Flow draws edges *behind* nodes, so
-  the line-into-the-icon must be our geometry, never a stock edge. **Still broken:** gaps between
-  the stub↔edge and stub↔tile, and the flare proportions — **debug in a real browser** (the model
-  calc'd right but renders wrong; likely a RF handle-measurement issue for a handle nested in a
-  transformed container that extends outside the node box). Fallbacks: put the handle back on the
-  border + stub bridges inside; or elevate the edge `zIndex`.
+- **Icon connector flare (TD+beautiful).** A kind-colored SVG cove (`Connector` in
+  `WorkflowNode`, anchored as a child of `.node-tile`) makes a control edge appear to flow
+  **into the icon tile** — drawn only on sides that have a control edge (`hasIncoming`/
+  `hasOutgoing`, computed in `flow.ts buildFlow`). Three rules keep it gap-free; breaking any
+  one re-opens the historical gaps:
+  1. The control `Handle`s stay on the node BORDER as direct, untransformed children — the
+     only placement React Flow measures reliably. (A handle nested inside the transformed,
+     outside-the-box connector div is mis-measured ~5px → a visible edge↔stub gap. Measured,
+     not theorized.)
+  2. The flare is PURE DECORATION (owns no handle), opaque, drawn ON TOP, and OVERLAPS both
+     ends — the stem slides under the edge terminus (same width + color), the base sinks into
+     the tile's 3px border (within it; past it = a dark notch). Sub-pixel alignment can never
+     open a gap.
+  3. ONE constant set (`CONN`, fed by `graph/metrics.ts`) derives the SVG path, the viewBox,
+     AND the element's inline size. If viewBox and box disagree, the browser silently rescales
+     the paint inside a correctly-placed box — invisible to rect measurement (the "1px-thin
+     tip / angular cove" bug). Paths use elliptical arcs, so tangency (vertical at the stem,
+     horizontal at the base) holds by construction.
+  Underlying constraint that forced all this: React Flow draws edges *behind* nodes, so any
+  line-into-the-icon must be our geometry, never a stock edge.
 - **A loop is drawn, not in the contract.** A loop is a `LoopSpec` on a node;
   `flow.ts` synthesizes a self-loop edge (`type:"loop"`) anchored to the node or its
   group, and `components/edges/LoopEdge.tsx` draws the arc + label. Self-loops are

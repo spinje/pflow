@@ -231,8 +231,10 @@ button.active {
   opacity: 0.18;
   transition: opacity 0.15s;
 }
+/* selection ring takes the node's own type color (--kind is set inline per node;
+   nodes without one — end sink — fall back to the accent) */
 .node.focused {
-  box-shadow: 0 0 0 2px var(--accent);
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
 }
 
 /* card shell — colored BY TYPE: the kind color in the border + a faint kind-tinted

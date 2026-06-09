@@ -35,12 +35,18 @@ const CONN = {
   tipW: METRICS.edgeStroke, // the stem must continue the edge at exactly its width
   stemH: 2, // straight stem run; slides under the edge terminus (same width+color → seamless)
   coveH: 7, // fillet height: vertical tangent at the stem → horizontal at the tile
-  baseApron: 2, // sinks into the tile border — within it; past it = a dark notch
+  // The landing line sits baseSink px INSIDE the tile border: landing exactly ON the
+  // outer edge puts the silhouette's 90° corner right on the color boundary, which
+  // antialiases into a 1px jag. Sunk inside, the cove crosses the edge while still
+  // sloped — no corner on the silhouette. The apron continues past the landing line;
+  // baseSink + baseApron must stay WITHIN the tile border (past it = a dark notch).
+  baseSink: 1,
+  baseApron: 1,
 };
 const CONN_H = CONN.stemH + CONN.coveH + CONN.baseApron;
 const TIP_L = (CONN.w - CONN.tipW) / 2;
 const TIP_R = TIP_L + CONN.tipW;
-const BASE_Y = CONN.stemH + CONN.coveH; // where the cove lands flat (the tile's outer edge)
+const BASE_Y = CONN.stemH + CONN.coveH; // where the cove lands flat (baseSink px inside the border)
 const CONNECTOR_TOP = [
   `M${TIP_L},0 L${TIP_R},0 L${TIP_R},${CONN.stemH}`,
   `A${TIP_L},${CONN.coveH} 0 0 0 ${CONN.w},${BASE_Y}`,
@@ -54,9 +60,10 @@ const CONNECTOR_BOTTOM = [
   `A${TIP_L},${CONN.coveH} 0 0 1 ${TIP_L},${CONN_H - CONN.stemH} Z`,
 ].join(" ");
 // Anchor offset from the tile's padding box (the containing block for an absolutely
-// positioned child): +tileBorder would put the base at the border's OUTER edge (exact
-// touch → anti-aliasing seam); subtracting the apron sinks it into the border instead.
-const CONN_ANCHOR = `calc(100% + ${METRICS.tileBorder - CONN.baseApron}px)`;
+// positioned child): +tileBorder would put the element's end at the border's OUTER
+// edge; subtracting sink+apron drops the landing line baseSink px inside the border
+// and keeps the apron's far end (sink+apron) px in — clear of the dark face.
+const CONN_ANCHOR = `calc(100% + ${METRICS.tileBorder - CONN.baseSink - CONN.baseApron}px)`;
 
 function ParamValue({ param }: { param: RFParam }): JSX.Element {
   if (param.is_dynamic && typeof param.value === "string") {
@@ -142,6 +149,9 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     }
   });
 
+  // `kind-*` has NO CSS rules but is NOT dead: the real-browser inspect tooling
+  // (examples/real-workflows/screenshot-pflow-web-ui/inspect.pflow.md) reads the node
+  // kind off the classList. Removing it breaks `inspect` with no test failing.
   const classes = ["node", detailed ? "detailed" : "compact", `kind-${node.kind}`];
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");

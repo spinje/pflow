@@ -62,7 +62,7 @@
 
 > Full journey + critical learnings: `implementation/progress-log.md` → "Phase A — Visual Redesign …
 > HANDOFF" and the 2026-06-09 entries. Design/Flowise teardown: `research/visual-redesign-knowledge.md`.
-> The connector flare is **done** (see Wanted/planned for the load-bearing geometry rule).
+> The connector flare is **done** (geometry rules: `web/CLAUDE.md` → "Icon connector flare").
 
 - **One leaf component** `WorkflowNode` (RF `type:"node"`, density in `data`) — replaced the
   Detailed/Compact split. Card = category(type) + description(`purpose`||`node_id`, 2-line clamp);
@@ -71,7 +71,8 @@
   `llm` resolved from its `model` `provider/` prefix, default sparkle). *(Tile is NOT solid-color —
   user-chosen; don't re-litigate.)*
 - **Gradient control edges** (`GradientEdge`, `userSpaceOnUse` source→target blend) at 3px, **no
-  arrowheads**; data/error/end CSS-stroked; branch dashed.
+  arrowheads**; branch dashed. ALL four control kinds route through it (error/end via the endpoint
+  fades below); only data-flow stays CSS-stroked.
 - **Type-colored card border + faint kind-tinted bg**; softened palette (neon green → calm teal).
   **Tile (image) border = full `--kind` 3px** (matches the edge); **node CARD border stays subtle —
   do not thicken/recolor it.**
@@ -79,26 +80,28 @@
 - **TD "through the icon":** control trunk + forks routed through the icon column; forks fan from
   `NODE_OUT` with the label on the edge (`BranchPorts` is **LR-only**). `hasIncoming`/`hasOutgoing`
   computed per node to drive connectors.
+- **Icon connector flare** (TD/beautiful) — ✅ DONE: a control edge flows into the icon tile via a
+  kind-colored cove, gap-free *by construction* (handle on the node border; flare = pure opaque
+  decoration overlapping both ends; path/viewBox/box derived from ONE constant set). The rules that
+  keep it gap-free: `web/CLAUDE.md` → "Icon connector flare".
+- **Endpoint fades** — ✅ DONE: error/end edges blend into their endpoint node colors over ~26px
+  (`gradientStops` in `GradientEdge`; all four control kinds now route through it).
+- **Geometry single-source** — ✅ DONE: layout-coupled constants live in `web/src/graph/metrics.ts`
+  and are injected as `:root` CSS vars; CSS never hardcodes them (kills the TS↔CSS drift bug class).
+- **Frontend hygiene batch** — ✅ DONE (2026-06-09): memo'd RF components; lazy-ELK dynamic import
+  (initial bundle 1.79 MB → 372 KB); explicit `defaultHidden` on EdgeData; class-name
+  construction-site comments in CSS; ELK-size dev tripwire (scrollHeight, detailed-only).
 
 ## Wanted / planned (NOT yet built)
 
-- **Icon connector flare** — ✅ DONE (2026-06-09, user-accepted). In TD+beautiful a control edge flows
-  into the icon tile via an arc-fillet flare: handle on the node BORDER (reliable RF measurement), flare
-  pure decoration anchored to the tile, overlap aprons at both ends so sub-pixel alignment never matters.
-  ONE `CONN` constant set in `WorkflowNode.tsx` drives path + viewBox + element size — a viewBox/box
-  mismatch silently rescales the paint inside a correctly-placed box (the final gap/angle bug; invisible
-  to rect measurement). Don't reintroduce geometry into CSS. Journey: progress-log 2026-06-09 entries.
-- **Gradient edges** — ✅ DONE in Phase A (`GradientEdge`, `userSpaceOnUse`). Kept here for history.
-- **Frontend hygiene batch** — ✅ ALL DONE (2026-06-09): memo'd RF components; lazy-ELK dynamic import
-  (initial bundle 1.79 MB → 372 KB); `graph/metrics.ts` single-sources all layout-coupled geometry →
-  injected CSS vars (never hardcode those numbers in CSS again); explicit `defaultHidden` on EdgeData;
-  class-name construction-site comments; ELK-size dev tripwire (scrollHeight, detailed-only).
 - **Smart edge-router** — pathfind edges around nodes, handle-to-handle, so **skip edges**
   (a dependency jumping over intermediate nodes) and **backward/loop edges** don't draw
   through boxes or U-turn. React Flow has no node-avoidance (edges are endpoint-only); needs
   custom A*/orthogonal routing (or `react-flow-smart-edge`). Only needed for the *gnarly tail*
   (dense agentic harnesses); clean branchy/linear workflows already render fine.
-- Visual polish: tune palette/spacing; possibly a TD-default for branchy flows.
+- Visual polish: tune palette/spacing; possibly a TD-default for branchy flows; dashed (branch)
+  edges can show a small dash-phase gap right at the connector stem tip (first dash starts a few px
+  into the path — tune with `strokeDashoffset` if it bothers).
 - (Considered, currently covered by the read panel + consolidated ports) on-canvas
   "expand a node to advanced detail on click."
 
