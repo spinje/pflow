@@ -89,9 +89,10 @@
   mismatch silently rescales the paint inside a correctly-placed box (the final gap/angle bug; invisible
   to rect measurement). Don't reintroduce geometry into CSS. Journey: progress-log 2026-06-09 entries.
 - **Gradient edges** — ✅ DONE in Phase A (`GradientEdge`, `userSpaceOnUse`). Kept here for history.
-- **Frontend hygiene batch** (from the 2026-06-09 fresh-eyes review; memo ✅ done): lazy-ELK dynamic
-  import (~80% of the bundle); `metrics.ts` single-sourcing of layout-coupled geometry → CSS vars;
-  explicit `defaultHidden` on EdgeData; class-name construction-site comments; ELK-size dev tripwire.
+- **Frontend hygiene batch** — ✅ ALL DONE (2026-06-09): memo'd RF components; lazy-ELK dynamic import
+  (initial bundle 1.79 MB → 372 KB); `graph/metrics.ts` single-sources all layout-coupled geometry →
+  injected CSS vars (never hardcode those numbers in CSS again); explicit `defaultHidden` on EdgeData;
+  class-name construction-site comments; ELK-size dev tripwire (scrollHeight, detailed-only).
 - **Smart edge-router** — pathfind edges around nodes, handle-to-handle, so **skip edges**
   (a dependency jumping over intermediate nodes) and **backward/loop edges** don't draw
   through boxes or U-turn. React Flow has no node-avoidance (edges are endpoint-only); needs

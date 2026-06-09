@@ -20,6 +20,7 @@ import { memo } from "react";
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
+import { METRICS } from "../../graph/metrics";
 
 // How far the node-color fade reaches into an error/end edge, in px. The gradient
 // runs along the straight source→target chord, so offsets are FADE_PX as a fraction
@@ -81,7 +82,7 @@ export const GradientEdge = memo(function GradientEdge({
           ))}
         </linearGradient>
       </defs>
-      <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: selected ? 4 : 3 }} />
+      <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: selected ? METRICS.edgeStroke + 1 : METRICS.edgeStroke }} />
       {label && (
         <EdgeLabelRenderer>
           <div className="edge-label nodrag nopan" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>

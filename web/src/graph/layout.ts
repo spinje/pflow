@@ -6,22 +6,30 @@
 // dagre is the documented fallback if ELK's bundle ever bites (plan §Risks); it
 // would be isolated to this module.
 
-import ELK, { type ElkExtendedEdge, type ElkNode } from "elkjs/lib/elk.bundled.js";
+import type { ELK, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk.bundled.js";
 
 import type { Direction, FlowEdge, FlowNode } from "./flow";
+import { METRICS } from "./metrics";
 
-const elk = new ELK();
+// ELK is ~80% of the app bundle, and layoutGraph is already async — so it loads as
+// its own chunk on first layout instead of blocking the initial page. Cached: one
+// load per session. A failed chunk load rejects layoutGraph, which the hook already
+// surfaces as the error banner (never a stuck "Laying out…").
+let elkLoad: Promise<ELK> | null = null;
+const loadElk = (): Promise<ELK> => (elkLoad ??= import("elkjs/lib/elk.bundled.js").then((m) => new m.default()));
 
 const ELK_DIRECTION: Record<Direction, string> = { LR: "RIGHT", TD: "DOWN" };
 
-// Top padding leaves room for the group header the GroupNode component draws.
-const GROUP_PADDING = "[top=46,left=16,bottom=16,right=16]";
+// Top padding leaves room for the group header the GroupNode component draws
+// (header height from METRICS + 8px breathing room below it).
+const GROUP_PADDING = `[top=${METRICS.groupHeaderH + 8},left=16,bottom=16,right=16]`;
 
 /** Run ELK over the flow nodes/edges and return them with positions + final box
  *  sizes. Child positions come back relative to their parent — exactly React
  *  Flow's parentId convention. */
 export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], direction: Direction): Promise<FlowNode[]> {
   if (nodes.length === 0) return nodes;
+  const elk = await loadElk();
 
   const childrenByParent = new Map<string | undefined, FlowNode[]>();
   for (const node of nodes) {

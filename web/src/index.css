@@ -1,3 +1,7 @@
+/* Geometry vars (--node-header-h, --row-h, --ports-header-h, --tile-size,
+   --tile-border, --edge-stroke, --group-header-h) are NOT declared here — they are
+   injected on :root at startup from graph/metrics.ts (the single source shared with
+   ELK sizing and the connector/edge geometry). Never hardcode those numbers in CSS. */
 :root {
   --bg: #0f1117;
   --bg-raised: #171a23;
@@ -258,7 +262,7 @@ button.active {
   align-items: center;
   gap: 12px;
   padding: 6px;
-  min-height: 68px;
+  min-height: var(--node-header-h);
 }
 .node.detailed .node-header {
   border-bottom: 1px solid color-mix(in srgb, var(--kind) 20%, var(--border));
@@ -291,15 +295,15 @@ button.active {
 .node-tile {
   position: relative; /* positioning context for the connector flares (its children) */
   flex: 0 0 auto;
-  width: 56px;
-  height: 56px;
+  width: var(--tile-size);
+  height: var(--tile-size);
   border-radius: 14px;
   display: grid;
   place-items: center;
   background: var(--bg-node);
-  /* the IMAGE border matches the edge: 3px AND the full kind color (the edge/connector
+  /* the IMAGE border matches the edge width AND the full kind color (the edge/connector
      are full --kind too). The node CARD border stays subtle and untouched. */
-  border: 3px solid var(--kind);
+  border: var(--tile-border) solid var(--kind);
 }
 .node-icon-img {
   width: 32px;
@@ -339,7 +343,7 @@ button.active {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 26px;
+  height: var(--row-h);
   padding: 0 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
@@ -401,7 +405,7 @@ button.active {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  height: 26px;
+  height: var(--row-h);
   padding: 0 12px 0 10px;
 }
 .branch-label {
@@ -440,7 +444,7 @@ button.active {
   box-shadow: 0 0 0 2px var(--accent);
 }
 .ports-header {
-  height: 30px;
+  height: var(--ports-header-h);
   display: flex;
   align-items: center;
   padding: 0 12px;
@@ -461,7 +465,7 @@ button.active {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: var(--row-h);
   padding: 0 12px;
   cursor: pointer;
 }
@@ -499,6 +503,8 @@ button.active {
 }
 
 /* ---------- groups ---------- */
+/* the `group-*` kind classes are CONSTRUCTED in GroupNode.tsx as `group-${group.kind}`
+   (workflow | batch | input_wrapper | output_wrapper) — grep that site, not the literal. */
 .group {
   background: rgba(110, 168, 254, 0.04);
   border: 1px dashed var(--border-strong);
@@ -527,7 +533,7 @@ button.active {
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 38px;
+  height: var(--group-header-h); /* ELK's group top padding clears this (layout.ts) */
   padding: 0 12px;
   font-size: 12px;
   color: var(--text-muted);
@@ -620,8 +626,12 @@ button.active {
 }
 
 /* ---------- edges ---------- */
+/* the `edge-*` classes are CONSTRUCTED, so grep the sites not the literals:
+   `edge-${kind}` in flow.ts toFlowEdge (sequential | branch | data_flow | error | end),
+   literal `edge-loop` on the synthesized loop arcs (flow.ts buildFlow),
+   `edge-shadowed` in toFlowEdge, `edge-dimmed` added/stripped by applyFocus. */
 .react-flow__edge .react-flow__edge-path {
-  stroke-width: 3;
+  stroke-width: var(--edge-stroke);
 }
 /* ALL control edges (sequential/branch/error/end) are stroked by the GradientEdge
    component (source→target blend; error/end get a node-color fade at the node ends) —

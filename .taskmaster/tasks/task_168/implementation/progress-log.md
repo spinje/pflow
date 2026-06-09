@@ -1029,3 +1029,47 @@ the custom edge), consistent with TD branch labels.
 a regression to `"default"` would render INVISIBLY since CSS no longer strokes those kinds); tsc
 strict + build clean; real-browser screenshots confirm red→green landing on the error handler's
 connector and the green→grey dotted exit. `FADE_PX = 26` is the tuning knob.
+
+### Best-practices batch 2 — lazy ELK + metrics single-source + defaultHidden + tripwire (2026-06-09) ✅
+
+The rest of the fresh-eyes review's leverage list, in one pass. Gates green throughout (vitest **60**,
+tsc strict + build); geometry verified **pixel-identical** via `inspect` after the CSS-var migration
+(tile 84×84, connector 21×17, same coordinates); both densities screenshot correctly through the real
+server.
+
+- **Lazy ELK (`layout.ts`).** Initial bundle **1.79 MB → 372 KB** (121 KB gzip); ELK is its own
+  1.44 MB chunk loaded on FIRST layout via a memoized `loadElk()` (dynamic import inside the
+  already-async `layoutGraph` — callers unchanged). A failed chunk load rejects `layoutGraph` → the
+  hook's existing error-banner path; no new failure mode. *Gotcha:* elkjs's instance type is the
+  named `ELK` interface, NOT the default export (that's the constructor object). *Load-bearing
+  check:* the relative dynamic import resolves through the Python `StaticFiles` server under
+  `base:"./"` — verified by rendering through the real server. The wheel's `artifacts` glob already
+  covers the new chunk file; Vite's >500 KB warning now refers to the *async* ELK chunk — harmless.
+- **`graph/metrics.ts` — geometry single-sourced (kills THE recurring bug class).** Seven
+  layout-coupled constants (node-header 68, row 26, ports-header 30, tile 56, tile-border 3,
+  edge-stroke 3, group-header 38) live in ONE module: `flow.ts` sizes (same exported names — no
+  caller churn), `layout.ts` group padding (derived `groupHeaderH + 8`, was a magic 46),
+  `WorkflowNode` (`CONN.tipW` + the anchor's border term — the "keep equal to index.css" comment
+  contracts are gone), `GradientEdge` stroke width. `main.tsx` injects them as CSS custom properties
+  on `:root` BEFORE first paint; **9 CSS rules** now read the vars, with a `:root` note that CSS must
+  never hardcode these numbers again. `metricsCssVars()` is a pure map (no DOM) so `graph/` stays
+  node-env testable; the DOM loop lives in main.tsx.
+- **`defaultHidden` on `EdgeData`.** Set once by the build (`toFlowEdge` / loop arcs); `applyFocus`
+  now reads the data fact, not the mutable `hidden` flag it also writes. The implicit "applyFocus
+  must only ever see the pristine `laid` snapshot" invariant is no longer load-bearing —
+  re-processing decorated output is safe (matters for the overlay's future incremental updates).
+- **ELK-size dev tripwire (`WorkflowNode`) — with the twist that makes the naive version useless:**
+  React Flow PINS the node box to the predicted size (`.node` fills 100%), so `offsetHeight` always
+  "agrees" with `leafSize` — drift shows up as content OVERFLOWING the pinned box. The tripwire
+  compares `scrollHeight > clientHeight` on **detailed** nodes only (compact is fixed-height and its
+  connector flare legitimately overflows below the box → false positives). Dev-only
+  (`import.meta.env.DEV`, compiled out of prod), inert under jsdom (`clientHeight 0` guard).
+- **Grep-ability comments:** the constructed class families now name their construction sites at
+  their CSS rule blocks — `edge-${kind}` (flow.ts toFlowEdge) + literal `edge-loop`/`edge-shadowed`/
+  `edge-dimmed` (applyFocus), and `group-${kind}` (GroupNode). `kind-*`/`ports-*` have no CSS rules →
+  nothing to annotate.
+
+**The best-practices list is complete.** Everything actionable from the fresh-eyes pass is done (memo,
+lazy ELK, metrics, defaultHidden, tripwire, grep comments); the consciously-rejected items (CSS Modules
+migration, Tailwind, state lib/router, React 19 churn, a11y for a localhost tool) are recorded in the
+review entry — don't re-litigate without a new trigger.

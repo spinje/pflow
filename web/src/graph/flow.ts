@@ -14,6 +14,7 @@
 import type { Edge, Node } from "@xyflow/react";
 
 import { branchHandle, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
+import { METRICS } from "./metrics";
 import { kindColor } from "../utils/format";
 import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
@@ -90,6 +91,11 @@ export type EdgeData = {
   // node OR an individual IO port (whose edges re-anchor onto a shared ports node).
   from: string;
   to: string;
+  // Set ONCE by the build: "this edge renders hidden unless revealed by focus"
+  // (beautiful mode's data-flow lines). applyFocus must read THIS, never the mutable
+  // `hidden` flag it also writes — otherwise re-processing its own output would
+  // misread a revealed edge as default-visible and pin it shown forever.
+  defaultHidden: boolean;
   // Source/target node colors for the gradient control edge (sequential/branch).
   // Optional: data/error/end/loop edges don't read them.
   sourceColor?: string;
@@ -106,17 +112,17 @@ export type FlowEdge = Edge<EdgeData>;
 
 // Size estimates feed ELK and are applied as the node's rendered box, so they
 // must match what the components draw (the components fill width/height: 100%).
-// Both densities show a category line + the description (node name), which wraps to
-// a 2nd line when long (so a card is taller for long descriptions); advanced adds
-// the param/output body. Re-tune live against the real DOM if it drifts.
+// Heights shared with CSS rules come from METRICS (single source — the stylesheet
+// reads the same values as injected CSS vars); the widths/paddings below are
+// TS-only (CSS doesn't pin them). Re-tune live against the real DOM if it drifts.
 export const DETAILED_WIDTH = 320;
 export const COMPACT_WIDTH = 230;
-export const HEADER_HEIGHT = 68; // 56px tile + small padding (both densities)
-export const ROW_HEIGHT = 26;
+export const HEADER_HEIGHT = METRICS.nodeHeaderH; // tile + small padding (both densities)
+export const ROW_HEIGHT = METRICS.rowH;
 export const ROW_PADDING = 14;
 export const END_SIZE = 46;
 export const PORTS_WIDTH = 200;
-export const PORTS_HEADER_HEIGHT = 30;
+export const PORTS_HEADER_HEIGHT = METRICS.portsHeaderH;
 export const COLLAPSED_GROUP_WIDTH = 240;
 export const COLLAPSED_GROUP_HEIGHT = 84;
 
@@ -417,7 +423,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       targetHandle: NODE_IN,
       type: "loop",
       className: "edge-loop",
-      data: { kind: "loop", shadowed: false, from: n.id, to: n.id, loop: n.loop },
+      data: { kind: "loop", shadowed: false, from: n.id, to: n.id, defaultHidden: false, loop: n.loop },
       zIndex: 20,
     });
   }
@@ -518,6 +524,10 @@ function toFlowEdge(
       : isData && !detailed
         ? dataFlowLabel(edge)
         : (edge.label ?? undefined);
+  // No arrowheads — clean lines flow straight into the node borders (the seamless
+  // look). Beautiful = control skeleton: data-flow edges are built but hidden, and
+  // applyFocus reveals just the ones touching the clicked node. Advanced shows them.
+  const defaultHidden = isData && !detailed;
   return {
     id: edge.id,
     source,
@@ -527,11 +537,8 @@ function toFlowEdge(
     type: isControl ? "gradient" : "default",
     label,
     className: classes.join(" "),
-    data: { kind: edge.kind, shadowed: edge.shadowed, from: edge.source, to: edge.target, sourceColor, targetColor },
-    // No arrowheads — clean lines flow straight into the node borders (the seamless
-    // look). Beautiful = control skeleton: data-flow edges are built but hidden, and
-    // applyFocus reveals just the ones touching the clicked node. Advanced shows them.
-    hidden: isData && !detailed,
+    data: { kind: edge.kind, shadowed: edge.shadowed, from: edge.source, to: edge.target, defaultHidden, sourceColor, targetColor },
+    hidden: defaultHidden,
   };
 }
 
@@ -591,7 +598,9 @@ export function applyFocus(
     // A default-hidden edge (beautiful mode's data-flow lines) is revealed when it
     // touches the focus — "show me this node's / port's data wiring." Edges hidden
     // by the build stay hidden otherwise; control edges are never default-hidden.
-    const defaultHidden = e.hidden === true;
+    // Read the build-time fact from data, NOT the mutable `hidden` flag this pass
+    // writes — so re-processing decorated output can't misread a revealed edge.
+    const defaultHidden = e.data?.defaultHidden === true;
     const hidden = defaultHidden && !incident;
     const base = stripDim(e.className);
     const dim = focus != null && !incident;

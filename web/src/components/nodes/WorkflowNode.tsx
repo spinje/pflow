@@ -8,11 +8,12 @@
 // Per-row handles sit inside position:relative rows; React Flow measures their DOM
 // rects for edge routing, so a ${ref} line lands on its exact row with no pixel math.
 
-import { type CSSProperties, memo, useEffect } from "react";
+import { type CSSProperties, memo, useEffect, useRef } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
 import { NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
+import { METRICS } from "../../graph/metrics";
 import { categoryLabel, collapseWhitespace, kindColor, parseTemplate, previewValue, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
 import type { RFParam } from "../../types";
@@ -31,12 +32,11 @@ type WorkflowNodeType = Extract<FlowNode, { type: "node" }>;
 // exactly horizontal at the base, so the landing is flat by construction.
 const CONN = {
   w: 14, // base span == element width
-  tipW: 3, // MUST equal the control-edge stroke width (index.css .react-flow__edge-path)
-  stemH: 2, // straight 3px run; slides under the edge terminus (same width+color → seamless)
+  tipW: METRICS.edgeStroke, // the stem must continue the edge at exactly its width
+  stemH: 2, // straight stem run; slides under the edge terminus (same width+color → seamless)
   coveH: 7, // fillet height: vertical tangent at the stem → horizontal at the tile
-  baseApron: 2, // sinks into the tile's 3px border — within it; past it = a dark notch
+  baseApron: 2, // sinks into the tile border — within it; past it = a dark notch
 };
-const TILE_BORDER = 3; // keep equal to index.css .node-tile border-width
 const CONN_H = CONN.stemH + CONN.coveH + CONN.baseApron;
 const TIP_L = (CONN.w - CONN.tipW) / 2;
 const TIP_R = TIP_L + CONN.tipW;
@@ -54,9 +54,9 @@ const CONNECTOR_BOTTOM = [
   `A${TIP_L},${CONN.coveH} 0 0 1 ${TIP_L},${CONN_H - CONN.stemH} Z`,
 ].join(" ");
 // Anchor offset from the tile's padding box (the containing block for an absolutely
-// positioned child): +TILE_BORDER would put the base at the border's OUTER edge (exact
+// positioned child): +tileBorder would put the base at the border's OUTER edge (exact
 // touch → anti-aliasing seam); subtracting the apron sinks it into the border instead.
-const CONN_ANCHOR = `calc(100% + ${TILE_BORDER - CONN.baseApron}px)`;
+const CONN_ANCHOR = `calc(100% + ${METRICS.tileBorder - CONN.baseApron}px)`;
 
 function ParamValue({ param }: { param: RFParam }): JSX.Element {
   if (param.is_dynamic && typeof param.value === "string") {
@@ -126,6 +126,22 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     updateNodeInternals(id);
   }, [id, direction, density, updateNodeInternals]);
 
+  // Dev tripwire for the open-loop ELK sizing: leafSize PREDICTS this box and React
+  // Flow pins the node to it, so offsetHeight always "agrees" — the drift signal is
+  // content overflowing the pinned box (scrollHeight). Detailed only: compact is
+  // fixed-height and its connector flare legitimately overflows. Skips jsdom
+  // (clientHeight 0); compiled out of production builds.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!import.meta.env.DEV || !detailed) return;
+    const el = rootRef.current;
+    if (el && el.clientHeight > 0 && el.scrollHeight > el.clientHeight + 1) {
+      console.warn(
+        `pflow UI: node ${id} content is ${el.scrollHeight}px but leafSize predicted ${el.clientHeight}px — update METRICS / leafSize (flow.ts) or ELK lays out on a lie`,
+      );
+    }
+  });
+
   const classes = ["node", detailed ? "detailed" : "compact", `kind-${node.kind}`];
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
@@ -135,7 +151,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   const hasBody = detailed && (node.params.length > 0 || outputFields.length > 0);
 
   return (
-    <div className={classes.join(" ")} style={kindStyle}>
+    <div ref={rootRef} className={classes.join(" ")} style={kindStyle}>
       {/* Control handles ALWAYS sit on the node border (in TD, on the icon column via
           fallbackHandleStyle) — the reliable RF measurement. The flare is additive
           decoration anchored to the tile; the edge ends at the border handle, hidden
