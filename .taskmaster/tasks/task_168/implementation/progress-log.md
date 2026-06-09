@@ -880,3 +880,58 @@ Ran `inspect` on `conditional-branching` framed on `classify` (TD/beautiful, vie
 **State:** all tooling uncommitted (working tree). Connector fix **not started** — waiting on go-ahead
 and (optionally) the Tines path. Diagnosis is done; the next step is purely the `WorkflowNode.tsx` +
 `index.css` edits above.
+
+### Connector flare — implemented + tuned live in a real browser (2026-06-09) ✅ (uncommitted)
+
+> The fix designed above is now BUILT and then tuned across a long live-iteration session with the user.
+> **All in `web/` — zero contract/Python change.** Worked entirely through the real-browser loop:
+> `inspect` for geometry (real `getBoundingClientRect`), a throwaway `shoot`-able SVG lab for *shape*,
+> `screenshot` for the whole canvas. First time the connector was tuned against MEASURED DOM, not blind.
+
+**Build v1 — handle off the flare, flare on top (closed the 5px gap by construction).** Two structural
+changes, not pixel-matching: (1) `NODE_IN`/`NODE_OUT` moved onto the node **border** (a direct,
+untransformed child → RF measures it reliably); `Connector` became **pure decoration** (no handle).
+(2) The flare is **opaque, on top, same `--kind` color**, and the edge ends at the border handle *under*
+it — so the terminus is hidden and a gap is impossible regardless of sub-pixel alignment. **Root cause of
+the original gap, confirmed:** a `<Handle>` nested in the `transform: translateX(-50%)`, outside-the-box
+`.node-connector` div is mis-measured by RF — the edge endpoint diverges ~5px from where the handle renders.
+
+**TOUCH not THROUGH — the user's diagnosis that finally unstuck it.** A long shape detour (flat-hug coves,
+5 escalating widths, an interactive slider tuner) kept missing because I treated it as a *curve* problem.
+The user reframed: the flare must **touch the tile border's OUTER edge**, not **go through** it into the
+dark face. A `touch` vs `through` lab made it obvious — penetrating the border leaves a dark **notch** where
+the concave sides meet the face; landing on the outer edge flows cleanly into the top border. *That was the
+real bug, not the cove shape.*
+
+**Angle confusion (logged so it isn't repeated).** I twice flipped the base-landing angle the wrong way.
+"Round → flat" = the cove turns **horizontal (tangent)** as it meets the tile (flat landing), NOT
+vertical/perpendicular (90°). Flat was right from the start; the "90°" variants were the regression.
+
+**Architecture pivot (user's idea): anchor to the TILE, not the node.** The flare was positioned with
+`calc(50% ± px)` magic tied to node height + header padding — fragile per-node. Made `Connector` a **child
+of `.node-tile`** (`position: relative` on the tile; `.node-connector-top { bottom: calc(100% + Npx) }`).
+Now the base is **always** at the tile edge regardless of node height — no node-height math. The load-bearing
+structural win; strictly simpler.
+
+**Gotchas, all measured not guessed:**
+- **Exact touch leaves a ~1px anti-aliasing seam** → **overlap** the base into the border. But overlap must
+  stay **within** the 3px border (same color → invisible); past it into the face = the notch again. Overlap ∈ (0, border).
+- **An absolutely-positioned child's containing block is the ancestor's PADDING box** (inside its 3px border),
+  so `bottom: calc(100%)` lands at the *inner* border edge — `+Npx` is needed to push the base out to the
+  right place. (Cost a "base overshot into the face" round.)
+- **The tip MUST equal the edge stroke width (3px).** To resize the cove, keep the **tip units fixed** and the
+  **div width == SVG viewBox width** (1 unit = 1px); scaling the box uniformly shrinks the tip too.
+- **Flare height is bounded below by the tile→edge distance** (edge ends on the node border; tile is inset by
+  the header padding). To shorten it, **pull the handles toward the tile** (`top`/`bottom` offset on the border
+  handle) so the edge terminates closer in — then the cove shrinks without re-opening a gap.
+- **The SVG `shoot` lab is great for SHAPE but DIVERGES from the live render for sub-pixel / same-color-contact**
+  questions (e.g. behind-vs-on-top looked identical in the lab because flare and tile border share `--kind`) —
+  use `inspect` for those.
+
+**Final geometry (verified via `inspect`):** flare 14px wide (3px tip) × 9px tall, anchored to the tile,
+base overlapping the border, tip + edge + tile all centered on the icon column; both ends covered, no gap, no notch.
+
+**State / next:** built in `WorkflowNode.tsx` + `index.css`; **uncommitted**. The user also made manual edits
+this session (a `:root` palette re-theme; nudging the base positioning to `+3px` = exact touch). **Before
+commit:** run the gate (tsc/vitest + `make check`) and update any Phase-A test that asserted the old
+connector-owns-a-handle structure (the `Connector` no longer renders a `<Handle>`).

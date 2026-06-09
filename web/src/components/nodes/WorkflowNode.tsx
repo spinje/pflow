@@ -21,12 +21,42 @@ import { BranchPorts } from "./BranchPorts";
 
 type WorkflowNodeType = Extract<FlowNode, { type: "node" }>;
 
-// The connector stub (viewBox 16×14): a small flat tip (≈ edge width) flowing with
-// concave sides onto a flat base on the tile border — FLAT (90°) at both ends. TOP has
-// the tip at the top (y=0); BOTTOM is the exact vertical mirror (tip at the bottom) so
-// neither needs a CSS flip (a flip would also throw off the handle's measured position).
-const CONNECTOR_TOP = "M6.5,0 L9.5,0 C9.5,9 11,14 14,14 L2,14 C5,14 6.5,9 6.5,0 Z";
-const CONNECTOR_BOTTOM = "M6.5,14 L9.5,14 C9.5,5 11,0 14,0 L2,0 C5,0 6.5,5 6.5,14 Z";
+// The connector flare: a 3px stem (== the control-edge stroke width) flowing via
+// concave elliptical-arc fillets onto a wide flat base that sinks into the tile's
+// 3px border. ONE set of constants drives the path, the viewBox, AND the element's
+// inline size — if viewBox and box ever disagree, the browser silently rescales and
+// centers the paint inside the (correctly placed) box, which bounding-box measurement
+// cannot see: the tip renders thinner than the edge and the cove reads angular.
+// Arcs (`A`), not eyeballed cubics: tangent is exactly vertical at the stem and
+// exactly horizontal at the base, so the landing is flat by construction.
+const CONN = {
+  w: 14, // base span == element width
+  tipW: 3, // MUST equal the control-edge stroke width (index.css .react-flow__edge-path)
+  stemH: 2, // straight 3px run; slides under the edge terminus (same width+color → seamless)
+  coveH: 7, // fillet height: vertical tangent at the stem → horizontal at the tile
+  baseApron: 2, // sinks into the tile's 3px border — within it; past it = a dark notch
+};
+const TILE_BORDER = 3; // keep equal to index.css .node-tile border-width
+const CONN_H = CONN.stemH + CONN.coveH + CONN.baseApron;
+const TIP_L = (CONN.w - CONN.tipW) / 2;
+const TIP_R = TIP_L + CONN.tipW;
+const BASE_Y = CONN.stemH + CONN.coveH; // where the cove lands flat (the tile's outer edge)
+const CONNECTOR_TOP = [
+  `M${TIP_L},0 L${TIP_R},0 L${TIP_R},${CONN.stemH}`,
+  `A${TIP_L},${CONN.coveH} 0 0 0 ${CONN.w},${BASE_Y}`,
+  `L${CONN.w},${CONN_H} L0,${CONN_H} L0,${BASE_Y}`,
+  `A${TIP_L},${CONN.coveH} 0 0 0 ${TIP_L},${CONN.stemH} Z`,
+].join(" ");
+const CONNECTOR_BOTTOM = [
+  `M${TIP_L},${CONN_H} L${TIP_R},${CONN_H} L${TIP_R},${CONN_H - CONN.stemH}`,
+  `A${TIP_L},${CONN.coveH} 0 0 1 ${CONN.w},${CONN.baseApron}`,
+  `L${CONN.w},0 L0,0 L0,${CONN.baseApron}`,
+  `A${TIP_L},${CONN.coveH} 0 0 1 ${TIP_L},${CONN_H - CONN.stemH} Z`,
+].join(" ");
+// Anchor offset from the tile's padding box (the containing block for an absolutely
+// positioned child): +TILE_BORDER would put the base at the border's OUTER edge (exact
+// touch → anti-aliasing seam); subtracting the apron sinks it into the border instead.
+const CONN_ANCHOR = `calc(100% + ${TILE_BORDER - CONN.baseApron}px)`;
 
 function ParamValue({ param }: { param: RFParam }): JSX.Element {
   if (param.is_dynamic && typeof param.value === "string") {
@@ -50,19 +80,22 @@ function ParamValue({ param }: { param: RFParam }): JSX.Element {
   return <span className="lit">{previewValue(param.value)}</span>;
 }
 
-// A kind-colored connector stub that bridges the edge into the icon. It OWNS its control
-// handle, placed at the stub's outer TIP, so the edge meets the stub exactly — there is
-// no second element with separate math to drift out of sync (that was the visible gap).
-function Connector({ side, handleId, handleType }: { side: "top" | "bottom"; handleId: string; handleType: "source" | "target" }): JSX.Element {
-  const position = side === "top" ? Position.Top : Position.Bottom;
-  // The handle sits at the stub's tip: the top of the top stub / the bottom of the bottom.
-  const tipStyle: CSSProperties = side === "top" ? { top: 0, left: "50%" } : { top: "auto", bottom: 0, left: "50%" };
+// A kind-colored connector flare bridging the edge into the icon tile. PURE DECORATION —
+// it owns NO handle. The control handle lives on the node BORDER (reliable RF measurement);
+// the edge ends there, hidden UNDER this opaque flare, so it appears to flow into the tile.
+// Decoupling the handle from the flare is what closed the gap (a handle nested in this
+// transformed, outside-the-box element was mis-measured by React Flow). TD/beautiful only.
+function Connector({ side }: { side: "top" | "bottom" }): JSX.Element {
+  const anchor: CSSProperties = side === "top" ? { bottom: CONN_ANCHOR } : { top: CONN_ANCHOR };
   return (
-    <div className={`node-connector node-connector-${side}`}>
-      <svg viewBox="0 0 16 14" aria-hidden="true">
+    <div
+      className={`node-connector node-connector-${side}`}
+      style={{ width: CONN.w, height: CONN_H, ...anchor }}
+      aria-hidden="true"
+    >
+      <svg viewBox={`0 0 ${CONN.w} ${CONN_H}`}>
         <path d={side === "top" ? CONNECTOR_TOP : CONNECTOR_BOTTOM} />
       </svg>
-      <Handle id={handleId} type={handleType} position={position} className="handle node-handle" style={tipStyle} />
     </div>
   );
 }
@@ -78,14 +111,20 @@ export function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Ele
   // column in TD so the trunk still lines up.
   const topConnector = direction === "TD" && !detailed && hasIncoming;
   const bottomConnector = direction === "TD" && !detailed && hasOutgoing;
-  const fallbackHandleStyle = direction === "TD" ? { left: 36 } : undefined;
+  // In TD the control handles sit on the icon column (left:34 = tile center) and are
+  // pulled INWARD toward the tile (top/bottom offset) so the edge terminates closer to
+  // the tile — letting the connector flare be short instead of bridging the full header
+  // padding. NODE_IN is Position.Top (offset down), NODE_OUT is Position.Bottom (offset up).
+  const topHandleStyle = direction === "TD" ? { left: 34, top: 5 } : undefined;
+  const bottomHandleStyle = direction === "TD" ? { left: 34, bottom: 5 } : undefined;
 
-  // React Flow caches handle positions; moving them (LR↔TD, or a stub appearing) needs a
-  // re-measure or edges use stale coords and fly to the origin.
+  // React Flow caches handle positions; moving them (LR↔TD flips the border handles from
+  // the sides to the icon column) needs a re-measure or edges use stale coords and fly to
+  // the origin.
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, direction, density, hasIncoming, hasOutgoing, updateNodeInternals]);
+  }, [id, direction, density, updateNodeInternals]);
 
   const classes = ["node", detailed ? "detailed" : "compact", `kind-${node.kind}`];
   if (dimmed) classes.push("dimmed");
@@ -97,20 +136,18 @@ export function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Ele
 
   return (
     <div className={classes.join(" ")} style={kindStyle}>
-      {topConnector ? (
-        <Connector side="top" handleId={NODE_IN} handleType="target" />
-      ) : (
-        <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={fallbackHandleStyle} />
-      )}
-      {bottomConnector ? (
-        <Connector side="bottom" handleId={NODE_OUT} handleType="source" />
-      ) : (
-        <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={fallbackHandleStyle} />
-      )}
+      {/* Control handles ALWAYS sit on the node border (in TD, on the icon column via
+          fallbackHandleStyle) — the reliable RF measurement. The flare is additive
+          decoration anchored to the tile; the edge ends at the border handle, hidden
+          under the flare. */}
+      <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
+      <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
 
       <div className="node-header">
         <div className="node-tile">
           <img className="node-icon-img" src={iconFor(node)} alt="" />
+          {topConnector && <Connector side="top" />}
+          {bottomConnector && <Connector side="bottom" />}
         </div>
         <div className="node-titles">
           {/* Type line + description, in BOTH densities. The description (purpose, or

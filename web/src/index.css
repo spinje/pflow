@@ -253,7 +253,7 @@ button.active {
    to ≤2 lines). Shown in BOTH densities; advanced adds the body below + a divider. */
 .node-header {
   position: relative;
-  z-index: 2; /* above the connector stubs, so the flare tucks behind the tile */
+  z-index: 2; /* keeps the header above the card background */
   display: flex;
   align-items: center;
   gap: 12px;
@@ -263,16 +263,18 @@ button.active {
 .node.detailed .node-header {
   border-bottom: 1px solid color-mix(in srgb, var(--kind) 20%, var(--border));
 }
-/* connector stubs — a kind-colored flare filling the gap between the node border and
-   the icon, so a control edge appears to flow into the icon. Centered on the icon
-   column; stretches to the (vertically-centered) tile's inset. TD/beautiful only. */
+/* connector flare — a kind-colored cove so a control edge appears to flow into the icon
+   tile. A CHILD of the tile, anchored to its edge (so the base is always at the tile
+   regardless of node height — no node-height magic), drawn ON TOP, centered on the tile.
+   TD/beautiful only. */
 .node-connector {
   position: absolute;
-  left: 36px;
-  width: 16px;
-  height: 14px;
+  left: 50%;
+  /* width/height/anchor are INLINE, derived from the same constants as the SVG path +
+     viewBox (WorkflowNode.tsx CONN) — keeping them here invited the drift that silently
+     rescaled the paint inside the box. */
   transform: translateX(-50%);
-  z-index: 1;
+  z-index: 3;
 }
 .node-connector svg {
   display: block;
@@ -283,16 +285,11 @@ button.active {
 .node-connector path {
   fill: var(--kind);
 }
-.node-connector-top {
-  top: calc(50% - 42px); /* tip ~8px above the node; base on the tile's top border (−28) */
-}
-.node-connector-bottom {
-  top: calc(50% + 28px); /* base on the tile's bottom border (+28); tip ~8px below the node */
-}
 
 /* big tile, close to the node edges (small inset) — the icon is the node's anchor;
    the control edge flows into it (image #11). */
 .node-tile {
+  position: relative; /* positioning context for the connector flares (its children) */
   flex: 0 0 auto;
   width: 56px;
   height: 56px;
