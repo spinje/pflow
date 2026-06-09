@@ -58,11 +58,42 @@
 - **Fork handles** (labeled, both densities).
 - IO hidden-data-flow revealed on click (progressive disclosure).
 
+### Phase A — Tines/n8n visual aesthetic (frontend-only, zero contract change; uncommitted)
+
+> Full journey + critical learnings: `implementation/progress-log.md` → "Phase A — Visual Redesign …
+> HANDOFF". Design/Flowise teardown: `research/visual-redesign-knowledge.md`. One piece (the connector
+> stub) is **WIP** — see below.
+
+- **One leaf component** `WorkflowNode` (RF `type:"node"`, density in `data`) — replaced the
+  Detailed/Compact split. Card = category(type) + description(`purpose`||`node_id`, 2-line clamp);
+  `node_id` on tooltip + read panel.
+- **Option B node iconography:** neutral tile + brand/native-color icon (registry in `utils/icons.ts`;
+  `llm` resolved from its `model` `provider/` prefix, default sparkle). *(Tile is NOT solid-color —
+  user-chosen; don't re-litigate.)*
+- **Gradient control edges** (`GradientEdge`, `userSpaceOnUse` source→target blend) at 3px, **no
+  arrowheads**; data/error/end CSS-stroked; branch dashed.
+- **Type-colored card border + faint kind-tinted bg**; softened palette (neon green → calm teal).
+  **Tile (image) border = full `--kind` 3px** (matches the edge); **node CARD border stays subtle —
+  do not thicken/recolor it.**
+- **Beautiful is the default density**; canvas `#0D0D0D`, dots `#272727`.
+- **TD "through the icon":** control trunk + forks routed through the icon column; forks fan from
+  `NODE_OUT` with the label on the edge (`BranchPorts` is **LR-only**). `hasIncoming`/`hasOutgoing`
+  computed per node to drive connectors.
+
 ## Wanted / planned (NOT yet built)
 
-- **Gradient edges** — stroke blends source-node-color → target-node-color (per-edge SVG
-  `<linearGradient>` + custom edge; NOT a React Flow built-in). ~1h. The last cosmetic gap
-  to match the n8n look.
+- **🚧 Icon connector stub (ACTIVE WIP — start here).** In TD+beautiful a control edge should
+  **flow into the icon tile** via a small rounded kind-colored stub: two per node (**top** iff
+  `hasIncoming`, **bottom** iff `hasOutgoing`), **same size**, anchored to the tile's top/bottom
+  border, ending in a short straight tip that pokes a few px **outside** the node to meet the edge;
+  **flat (90°) caps** at both ends. Lives in `WorkflowNode.tsx` (`Connector` + `CONNECTOR_TOP/BOTTOM`
+  paths) + `index.css .node-connector*`. **Three unsolved issues** (the next agent's task): (1) gap
+  between the stub tip and the edge (top+bottom); (2) gap between the stub base and the tile border;
+  (3) flare needs more X-spread, less Y. The model says no gaps but the user sees them → **debug in a
+  REAL browser (devtools), not on paper** — the implementer was blind. Strong hypothesis + concrete
+  debug steps + fallback strategies are in the progress-log HANDOFF section. The shape is a 1-line
+  path swap once gaps are solved (ask the user for the exact Tines SVG path — they offered it).
+- **Gradient edges** — ✅ DONE in Phase A (`GradientEdge`, `userSpaceOnUse`). Kept here for history.
 - **Smart edge-router** — pathfind edges around nodes, handle-to-handle, so **skip edges**
   (a dependency jumping over intermediate nodes) and **backward/loop edges** don't draw
   through boxes or U-turn. React Flow has no node-avoidance (edges are endpoint-only); needs
@@ -74,10 +105,20 @@
 
 ## Known limitations / honest constraints
 
+- **React Flow renders ALL edges BEHIND nodes (one SVG layer).** This is the load-bearing
+  constraint for the whole "edge flows *into* the icon" aesthetic: a stock edge is painted over at
+  the node's box edge, so the line-into-the-icon must be **our own geometry** (the connector stub, or
+  an elevated-zIndex edge, or a transparent card). Don't expect a built-in to do it.
+- **`useUpdateNodeInternals` is mandatory when handles move** (LR↔TD, stub appear/disappear) or
+  edges/labels render from stale coords and fly to the origin. **`EdgeLabelRenderer` children need
+  `position:absolute`** or they render as full-width bars. (Both were real bugs this session.)
 - **Edge routing:** straight-ish beziers; in *dense* graphs, skip/back edges can overlap
   nodes. Fix = the smart edge-router above.
 - The harness (`plan-to-code`) is an unusually hard case (deep nesting + loops + ~124 data
   edges); most workflows are far simpler and render clean today.
+- **The visual layer cannot be verified without a real browser.** This session was built blind
+  (screenshot review only); geometry that calc'd correctly on paper rendered wrong. The connector
+  stub gaps are the unfinished consequence — debug them in devtools.
 
 ## Deferred increments (from task-168 — architected-for, not built)
 

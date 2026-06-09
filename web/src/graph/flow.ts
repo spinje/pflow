@@ -12,15 +12,10 @@
 //     else degrade to a node-level connection (input_name=None is common — H6).
 
 import type { Edge, Node } from "@xyflow/react";
-import { MarkerType } from "@xyflow/react";
 
 import { branchHandle, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
 import { kindColor } from "../utils/format";
 import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
-
-// Loop-back arcs are drawn amber; the marker color must be a literal (React Flow
-// renders the SVG marker, not via CSS).
-const LOOP_COLOR = "#f0b86c";
 
 export type Density = "detailed" | "compact";
 export type Direction = "LR" | "TD";
@@ -42,6 +37,11 @@ export type LeafData = {
   direction: Direction;
   outputFields: string[];
   branchLabels: string[]; // decision fork outcomes — labeled handles on the border
+  // Whether the node has an incoming / outgoing CONTROL edge — drives the icon
+  // connector stubs (a top stub only if something flows in, a bottom stub only if
+  // something flows out). Computed in buildFlow from the control edges.
+  hasIncoming: boolean;
+  hasOutgoing: boolean;
   dimmed: boolean;
   focused: boolean;
 };
@@ -90,12 +90,15 @@ export type EdgeData = {
   // node OR an individual IO port (whose edges re-anchor onto a shared ports node).
   from: string;
   to: string;
+  // Source/target node colors for the gradient control edge (sequential/branch).
+  // Optional: data/error/end/loop edges don't read them.
+  sourceColor?: string;
+  targetColor?: string;
   loop?: LoopSpec; // present only on synthesized loop-back arcs
 };
 
 export type FlowNode =
-  | Node<LeafData, "detailed">
-  | Node<LeafData, "compact">
+  | Node<LeafData, "node">
   | Node<PortsData, "ports">
   | Node<GroupData, "group">
   | Node<EndData, "end">;
@@ -103,10 +106,12 @@ export type FlowEdge = Edge<EdgeData>;
 
 // Size estimates feed ELK and are applied as the node's rendered box, so they
 // must match what the components draw (the components fill width/height: 100%).
-export const DETAILED_WIDTH = 300;
-export const COMPACT_WIDTH = 210;
-export const COMPACT_HEIGHT = 58;
-export const HEADER_HEIGHT = 56;
+// Both densities show a category line + the description (node name), which wraps to
+// a 2nd line when long (so a card is taller for long descriptions); advanced adds
+// the param/output body. Re-tune live against the real DOM if it drifts.
+export const DETAILED_WIDTH = 320;
+export const COMPACT_WIDTH = 230;
+export const HEADER_HEIGHT = 68; // 56px tile + small padding (both densities)
 export const ROW_HEIGHT = 26;
 export const ROW_PADDING = 14;
 export const END_SIZE = 46;
@@ -118,21 +123,41 @@ export const COLLAPSED_GROUP_HEIGHT = 84;
 function leafSize(
   node: RFNode,
   density: Density,
+  direction: Direction,
   outputFields: string[],
   branchLabels: string[],
 ): { width: number; height: number } {
-  // Branch (fork) rows show in BOTH densities — they're structure, not detail.
-  const branchRows = branchLabels.length;
+  // Fork rows show only in LR (the n8n-style labeled border handles). In TD the forks
+  // fan from the icon column and their labels ride the edges, so no rows are drawn.
+  const branchRows = direction === "LR" ? branchLabels.length : 0;
+  const width = density === "compact" ? COMPACT_WIDTH : DETAILED_WIDTH;
+  // The 56px icon tile is taller than even a 2-line description, so it dominates the
+  // header height — keep it a fixed HEADER_HEIGHT. That also keeps the tile vertically
+  // CENTERED (equal inset top/bottom), which the connector stubs depend on.
   if (density === "compact") {
-    return { width: COMPACT_WIDTH, height: COMPACT_HEIGHT + branchRows * ROW_HEIGHT };
+    return { width, height: HEADER_HEIGHT + branchRows * ROW_HEIGHT };
   }
   const rows = node.params.length + outputFields.length + branchRows;
-  return { width: DETAILED_WIDTH, height: HEADER_HEIGHT + rows * ROW_HEIGHT + ROW_PADDING };
+  return { width, height: HEADER_HEIGHT + rows * ROW_HEIGHT + ROW_PADDING };
 }
+
+// Control-flow edge kinds — these connect at a node's NODE_IN/NODE_OUT (the trunk),
+// so they drive the icon connector stubs. data_flow lands on param rows; loop is a
+// self-arc — neither implies a trunk in/out.
+const CONTROL_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["sequential", "branch", "error", "end"]);
 
 export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const groupById = new Map(graph.groups.map((g) => [g.id, g]));
+
+  // Which nodes have a control edge flowing IN / OUT — drives the connector stubs.
+  const incomingControl = new Set<string>();
+  const outgoingControl = new Set<string>();
+  for (const e of graph.edges) {
+    if (!CONTROL_KINDS.has(e.kind)) continue;
+    incomingControl.add(e.target);
+    outgoingControl.add(e.source);
+  }
 
   // A host node may back several groups (a dynamic-batch-of-subworkflow hosts
   // both a batch and a workflow group — H8). Edges into the suppressed host land
@@ -259,10 +284,10 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     } else {
       const outputFields = [...(outputFieldsByNode.get(n.id) ?? [])];
       const branchLabels = branchLabelsByNode.get(n.id) ?? [];
-      const size = leafSize(n, view.density, outputFields, branchLabels);
+      const size = leafSize(n, view.density, view.direction, outputFields, branchLabels);
       flowNodes.push({
         id: n.id,
-        type: view.density,
+        type: "node", // one leaf component at two densities; density rides in data
         position: { x: 0, y: 0 },
         parentId,
         extent,
@@ -274,6 +299,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
           direction: view.direction,
           outputFields,
           branchLabels,
+          hasIncoming: incomingControl.has(n.id),
+          hasOutgoing: outgoingControl.has(n.id),
           dimmed: false,
           focused: false,
         },
@@ -353,17 +380,19 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     }
     if (source === target) continue; // collapsed/host self-loop — a correct drop
 
-    const sourceHandle = sourceHandleFor(e, source, detailed, outputFieldsByNode, nodeById, ioNodeToPortsNode);
+    const sourceHandle = sourceHandleFor(e, source, detailed, view.direction, outputFieldsByNode, nodeById, ioNodeToPortsNode);
     const targetHandle = targetHandleFor(e, target, detailed, nodeById, ioNodeToPortsNode);
 
     const key = `${source}->${target}|${e.kind}|${e.label ?? ""}|${sourceHandle}|${targetHandle}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    // Control edges take their source node's type color (sequential/branch); a
-    // stepping stone to the deferred source→target gradient. error/end/data keep
-    // their semantic colors (see toFlowEdge / CSS).
+    // Control edges (sequential/branch) draw as a source-node-color → target-node-
+    // color gradient (the GradientEdge custom edge). Colors come from the ORIGINAL
+    // endpoints' kinds (the real producer→consumer), even when re-anchored. error/
+    // end/data keep their semantic colors (see toFlowEdge / CSS).
     const sourceColor = kindColor(nodeById.get(e.source)?.kind ?? "");
-    flowEdges.push(toFlowEdge(e, source, target, sourceHandle, targetHandle, detailed, sourceColor));
+    const targetColor = kindColor(nodeById.get(e.target)?.kind ?? "");
+    flowEdges.push(toFlowEdge(e, source, target, sourceHandle, targetHandle, detailed, view.direction, sourceColor, targetColor));
   }
 
   // Synthesize a loop-back arc for each looped node, drawn on the node — or on its
@@ -389,7 +418,6 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       type: "loop",
       className: "edge-loop",
       data: { kind: "loop", shadowed: false, from: n.id, to: n.id, loop: n.loop },
-      markerEnd: { type: MarkerType.ArrowClosed, color: LOOP_COLOR },
       zIndex: 20,
     });
   }
@@ -401,6 +429,7 @@ function sourceHandleFor(
   edge: RFEdge,
   source: string,
   detailed: boolean,
+  direction: Direction,
   outputFieldsByNode: Map<string, Set<string>>,
   nodeById: Map<string, RFNode>,
   ioNodeToPortsNode: Map<string, string>,
@@ -411,9 +440,10 @@ function sourceHandleFor(
     return source === ioNodeToPortsNode.get(edge.source) ? portHandle(edge.source) : NODE_OUT;
   }
   const isRealSource = source === edge.source;
-  // A fork leaves its own labeled border handle (both densities) — that's how a
-  // decision's outcomes are made legible (which value goes where).
-  if (isRealSource && edge.kind === "branch" && edge.label) {
+  // LR: a fork leaves its own labeled border handle (n8n-style — which value goes
+  // where). TD: forks fan from the icon column, so a branch leaves NODE_OUT (below
+  // the icon) and its label rides the edge instead (toFlowEdge), like the references.
+  if (isRealSource && edge.kind === "branch" && edge.label && direction === "LR") {
     return branchHandle(edge.label);
   }
   if (detailed && isRealSource && edge.kind === "data_flow" && edge.output_field) {
@@ -462,21 +492,28 @@ function toFlowEdge(
   sourceHandle: string,
   targetHandle: string,
   detailed: boolean,
+  direction: Direction,
   sourceColor: string,
+  targetColor: string,
 ): FlowEdge {
   const isData = edge.kind === "data_flow";
-  // sequential/branch take the source node's type color; error/end/data keep their
-  // semantic CSS colors (red / faint / green dashed).
-  const typeColored = edge.kind === "sequential" || edge.kind === "branch";
+  // Control flow (sequential/branch) draws as a source→target gradient via the
+  // custom "gradient" edge; data/error/end stay React Flow's "default" edge, stroked
+  // by CSS (green dashed / red / faint). Branch dash + shadow opacity are CSS too,
+  // via the className — only the gradient COLOR is owned by the component.
+  const isControl = edge.kind === "sequential" || edge.kind === "branch";
   const classes = [`edge-${edge.kind}`];
   // Advanced DIMS a control edge a data line already covers; beautiful hides the
   // data lines, so its control edges show full-strength (not shadow-dimmed).
   if (edge.shadowed && detailed) classes.push("edge-shadowed");
-  // Branch labels ride the border handle; a beautiful data line is labeled with what
-  // it carries (the node rows that would show it are collapsed); else the raw label.
+  // Branch labels ride the border handle in LR (BranchPorts), so the edge is
+  // unlabeled there; in TD the forks fan from the icon column, so the label rides the
+  // edge. A beautiful data line is labeled with what it carries; else the raw label.
   const label =
     edge.kind === "branch"
-      ? undefined
+      ? direction === "TD"
+        ? (edge.label ?? undefined)
+        : undefined
       : isData && !detailed
         ? dataFlowLabel(edge)
         : (edge.label ?? undefined);
@@ -486,15 +523,13 @@ function toFlowEdge(
     target,
     sourceHandle,
     targetHandle,
-    type: "default", // smooth bezier for every edge (the curvy look)
+    type: isControl ? "gradient" : "default",
     label,
     className: classes.join(" "),
-    data: { kind: edge.kind, shadowed: edge.shadowed, from: edge.source, to: edge.target },
-    markerEnd: isData ? undefined : { type: MarkerType.ArrowClosed, color: typeColored ? sourceColor : undefined },
-    ...(typeColored ? { style: { stroke: sourceColor } } : {}),
-    // Beautiful = control skeleton: data-flow edges are built but hidden, and
-    // applyFocus reveals just the ones touching the clicked node (progressive
-    // disclosure). Advanced shows them all.
+    data: { kind: edge.kind, shadowed: edge.shadowed, from: edge.source, to: edge.target, sourceColor, targetColor },
+    // No arrowheads — clean lines flow straight into the node borders (the seamless
+    // look). Beautiful = control skeleton: data-flow edges are built but hidden, and
+    // applyFocus reveals just the ones touching the clicked node. Advanced shows them.
     hidden: isData && !detailed,
   };
 }

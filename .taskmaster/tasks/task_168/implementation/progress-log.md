@@ -640,3 +640,163 @@ Wrote `task-review.md` (the knowledge-transfer doc for future agents: deviations
 Evaluated an external code review of PR #496 (4 findings, no criticals). The headline: the **one item flagged "fix before merge" was a false positive.** Reviewer claimed `handles.ts`'s `PORT_SOURCE = "io:"` is a strict prefix of `PORT_TARGET = "iot:"`, making `handleType` order-dependent (reorder → IO targets mis-typed as source → React Flow silently drops the edge). **Disputed:** the trailing colon breaks it — `"iot:x".startsWith("io:")` is `false`, so the two are already disjoint and no string starts with both; reordering the branches is a no-op. Verified empirically + exhaustively across every prefix pair. Also disproved the secondary claim (the HANDLE-TYPE invariant fixture *does* exercise an `iot:` handle in a target slot, so a genuine type bug fails it). Left a defensive comment instead of the proposed rename — neutralizes the misread (and the real footgun: dropping a colon would make bare `"io"` prefix `"iot"`) without churning correct, well-tested constants.
 
 The other three were valid low-priority polish, applied (all non-behavioral): (a) **no-CORS security tripwire** comment in `server.py::create_app` — the absent `Access-Control-Allow-Origin` is load-bearing (binds 127.0.0.1, read-only GET, so a cross-origin page can't read the 422 body that may echo a source line); a future `CORSMiddleware`/mutating endpoint must revisit the file-content exposure; (b) **inline-all payload-size** forward-compat note in `ui/CLAUDE.md` (multi-MB payloads are fine local single-user; remote/multi-client may want a by-ref fetch); (c) renamed `test_build_bug_on_validated_ir_is_loud_500` → `test_unexpected_pipeline_exception_is_loud_500` (it patches `resolve_validate_build` wholesale, so the name overstated the validate/build boundary). 4 files, +28/−6. `test_ui.py` 17 passed; ruff + mypy clean. Uncommitted.
+
+---
+
+# Phase A — Visual Redesign (Tines/n8n aesthetic) — HANDOFF (2026-06-09)
+
+> **What this is.** A *user-driven, frontend-only* restyle of the `pflow ui` canvas to the
+> Tines/n8n/Flowise look — done across one long iterative session, **building blind** (the
+> implementing agent has no canvas; the user reviewed each iteration via screenshots). Spec/
+> design for Phase A: `../research/visual-redesign-knowledge.md` (the KB — Flowise teardown,
+> gradient technique, gotchas) + `implementation/phase-a-plan.md`. **All Phase A work is
+> uncommitted** (per the standing "never commit unless told" rule) and sits on top of the
+> committed Task-168 static viewer. **One piece is UNFINISHED** (the icon *connector stub*) —
+> see "THE OPEN PROBLEM" below; that's where the next agent picks up.
+
+## What Phase A changed (all in `web/`, zero contract/Python change)
+
+The contract (`render_react_flow`) and the Python server are **untouched**. Everything is
+frontend visual policy. Files: `utils/format.ts`, new `utils/icons.ts`, new `assets/icons/*.svg`,
+new `public/favicon.ico`, new `vite-env.d.ts`, new `components/nodes/WorkflowNode.tsx` (replaces
+the deleted `DetailedNode`+`CompactNode`), `components/nodes/index.ts`, new
+`components/edges/GradientEdge.tsx`, `components/edges/index.ts`, `components/nodes/BranchPorts.tsx`,
+`graph/flow.ts`, `views/GraphView.tsx`, `index.css` (heavily), `index.html`, the two `.test.ts(x)`,
+`web/CLAUDE.md`.
+
+1. **Node card → Option B (neutral tile + native-color icon).** Icon registry in `utils/icons.ts`
+   (one `KIND_ICON` map; `llm` is resolved from its `model` param's `provider/` prefix → brand
+   icon, default sparkle). Vendored SVGs from `pflow-cloud/public/`. (http/file are placeholders;
+   `code` reuses python.)
+2. **ONE leaf component** `WorkflowNode` (React Flow `type:"node"`; density rides in `data`) —
+   collapsed the old Detailed/Compact split. Card shows category (type) + description (`purpose`,
+   else `node_id`, 2-line clamp); `node_id` is on the tooltip + read panel.
+3. **Gradient control edges** (`GradientEdge`, `userSpaceOnUse` source→target blend) for
+   sequential/branch; data/error/end stay CSS-stroked. **No arrowheads** (removed). Edge width 3px.
+4. **Type-colored card border + faint kind-tinted bg.** Softened the whole palette (the harsh
+   neon green → calmer teal `--data-edge`/`--ref`).
+5. **Beautiful is the default density.** Background `#0D0D0D`, dots `#272727`
+   (`<Background bgColor color>` on `GraphView`).
+6. **TD "through the icon".** In TD the control handles align to the icon column; **forks fan from
+   `NODE_OUT`** (the icon) with their label riding the edge (`BranchPorts` renders only in **LR**).
+   Computed `hasIncoming`/`hasOutgoing` per node in `buildFlow` (from `CONTROL_KINDS` edges) →
+   `LeafData`, to drive the connector stubs.
+7. **Favicon** wired.
+
+Gates after every step: **`tsc --noEmit` clean, `vitest` 39 passing, `npm run build` clean.** The
+mount test (`GraphView.test.tsx`) and `flow.test.ts` (incl. a new TD-fork test + the HANDLE-TYPE
+invariant) are green.
+
+## Critical learnings & insights (the GOLD — read before touching the canvas)
+
+1. **React Flow renders ALL edges in one SVG layer BEHIND the nodes.** This is the single most
+   important constraint and the root of the whole "edge flows *into* the icon" saga. A stock edge
+   *cannot* be drawn on top of / inside an opaque node — it's painted over at the node's box edge.
+   Any "line into the icon with a rounded junction" (the Tines look) must be drawn by **our own
+   geometry** (a per-node connector stub, an elevated edge, or a transparent card). We chose the
+   per-node stub. (Options enumerated in the KB §9 and in the chat: transparent-card, elevated-
+   zIndex, full-height-tile — all still on the table if the stub proves too fiddly.)
+2. **`useUpdateNodeInternals(id)` is MANDATORY when handle positions move** (e.g. an LR↔TD flip, or
+   a stub appearing/disappearing). React Flow caches handle bounds at mount; without a re-measure,
+   edges (and their `EdgeLabelRenderer` labels) compute from **stale** coordinates and **fly to the
+   canvas origin**. This was the "fork labels as full-width bars at the far-left" bug #1.
+   `WorkflowNode` calls it in a `useEffect` keyed on `[id, direction, density, hasIncoming, hasOutgoing]`.
+3. **`EdgeLabelRenderer` children MUST be `position: absolute`.** Without it the label `<div>` is a
+   normal block that stretches to the full container width and ignores its transform → a full-width
+   bar. This was fork-label bug #2 (`.edge-label` was missing `position:absolute`; `.loop-edge-label`
+   had it, which is why loop labels always worked).
+4. **The tile dominates the header height — so beautiful nodes are a FIXED 68px.** The 56px icon
+   tile is taller than any 2-line description, so adding height for a 2nd line (the old `DESC_LINE`)
+   made the box taller than the content → the tile drifted off-center → **unequal connector stubs**.
+   Removed `DESC_LINE`; `leafSize` returns `HEADER_HEIGHT` (68) for compact. The connector stubs
+   ANCHOR to the vertically-centered tile via `calc(50% ± Npx)` — they DEPEND on the tile being
+   centered. If you ever let the header grow, re-derive the stub `top`.
+5. **Building blind is the core difficulty.** The geometry repeatedly *calc'd correctly on paper but
+   rendered wrong*. The visual layer needs a **real browser with devtools** — see the OPEN PROBLEM.
+6. **Vite `.svg` imports need `web/src/vite-env.d.ts`** (`/// <reference types="vite/client" />`)
+   for tsc; isolated to `utils/icons.ts` so the heavily-imported `format.ts` stays asset-free.
+7. **`color-mix(in srgb, var(--kind) N%, …)`** is used everywhere for type-tinting — modern-browser-
+   only, fine for a localhost dev tool. The **tile (image) border = full `var(--kind)` 3px** to match
+   the edge color; the **node CARD border stays subtle (1.5px, 55%) — do NOT thicken/recolor it**
+   (explicit user instruction).
+8. **Forks-through-icon split LR vs TD:** LR keeps the n8n labeled border handles (`BranchPorts`);
+   TD routes branches through `NODE_OUT` with the label on the edge. `BranchPorts` returns `null` in
+   TD; `sourceHandleFor`/`toFlowEdge`/`leafSize` are all `direction`-aware. Don't "unify" this away
+   without re-checking both modes.
+
+## THE OPEN PROBLEM — the icon connector stub (UNFINISHED — start here)
+
+**Goal (the Tines look, image #11/#14/#17 in the chat):** in **TD + beautiful**, a control edge
+should appear to **flow into the icon tile** with a small, rounded, kind-colored **connector stub**
+bridging the edge to the tile. Two stubs per node — **top** (rendered only if `hasIncoming`) and
+**bottom** (only if `hasOutgoing`), **same size**, anchored to the tile's top/bottom border, each
+ending in a short **straight tip** that pokes a few px **outside** the node to meet the edge.
+
+**Where it lives:** `WorkflowNode.tsx` — the `Connector` component (owns its `Handle` at the stub
+tip) + the `CONNECTOR_TOP`/`CONNECTOR_BOTTOM` SVG path constants; `index.css` `.node-connector*`
+rules; `.node.compact { overflow: visible }` (so the stub can extend outside); `LeafData.hasIncoming/
+hasOutgoing` (computed in `flow.ts buildFlow`). The stub **owns its handle** (the `Handle` sits at
+the stub's tip *inside the connector `<div>`*) — done specifically so the edge endpoint and the
+shape can't drift apart.
+
+**Three issues the user reports STILL present (after the owns-its-handle rewrite):**
+1. **Gap between the stub TIP and the edge line** — top AND bottom. The edge connects *further out*
+   than where the stub ends.
+2. **Small gap between the stub BASE and the tile (image) border** — the base floats above the tile
+   instead of touching it.
+3. **Shape proportions** — the flare needs to **stretch further in X** (wider) and **a bit less in
+   Y** (shorter). Tune the two path constants (`viewBox 0 0 16 14`) + `.node-connector` width/height.
+
+**Why I could not fix #1/#2 (and what I now believe):** my geometric model says the stub tip (the
+`<div>`'s `top: calc(50% - 42px)` ⇒ −8px on a 68px node) and the handle (at the `<div>`'s `top:0`)
+COINCIDE, and the stub base (`+14px` ⇒ 6px) equals the tile-top (also 6px). On paper: no gaps. But
+the user sees gaps on every side, **so my model of the rendered positions is wrong** — and I'm blind,
+so I can't see where. **Strong hypothesis:** React Flow mis-measures a `Handle` that lives **inside a
+nested, `transform`ed, absolutely-positioned container that extends OUTSIDE the node's box**. RF
+computes handle bounds relative to the node; a handle whose box is above/below the node bounds (the
+"outside" extension) and under an extra `translateX(-50%)` is exactly the kind of case RF's measurement
+gets wrong. That would put the *edge endpoint* somewhere other than the *rendered stub tip* → the gap.
+
+**HOW TO DEBUG IT (do this first — with a real browser, which I never had):**
+- Run `uv run pflow ui`, open `conditional-branching`, toggle **TD** + **beautiful**, open devtools.
+- Measure the **actual** rendered numbers and compare to the model: (a) the node's `offsetHeight`
+  (is it really 68?); (b) the `.node-tile`'s `getBoundingClientRect` top/bottom; (c) the
+  `.node-connector`'s rect; (d) the edge `<path d>` endpoint coords (in the `.react-flow__edges` SVG);
+  (e) what React Flow stored for the handle position (`useStore(s => s.nodeLookup.get(id))` →
+  `internals.handleBounds`). **The discrepancy between (d) the edge endpoint and (c) the stub tip is
+  the bug.** I was reasoning from the model; the next agent should reason from the DOM.
+
+**If the nested-handle hypothesis holds, the likely fixes (in order of preference):**
+- **Stop extending the handle outside the node.** Put `NODE_IN`/`NODE_OUT` back on the node's
+  **border** (the most reliable RF position — a plain `Position.Top`/`Bottom` at the icon column),
+  and let the connector stub bridge **border→tile** *inside* the node (purely decorative, drawn on
+  top of the card, no handle of its own). The edge connects at the border (reliable); the stub covers
+  the small border→tile gap. You lose the "tip pokes outside" detail, but you gain a rock-solid edge
+  join. (The user wanted the tip outside *because* there was a gap; if the border join is seamless,
+  the desire for "outside" may evaporate.)
+- **Or** keep the owns-its-handle idea but render the `Handle` as a **direct child of `.node`** (not
+  nested in the transformed connector `<div>`), positioned with the SAME `calc` as the stub tip, and
+  call `useUpdateNodeInternals` (already wired). Then verify in the browser that RF's stored handle
+  position equals the stub tip.
+- **Or** abandon the stub and switch to one of the other "edge-into-icon" strategies (KB §9 / chat):
+  transparent card + handle on the tile + **elevated edge `zIndex`** (edge drawn ON TOP, so it's
+  visibly inside the icon) — simplest conceptually, but elevated edges can paint over *other* nodes
+  in dense graphs, so scope it.
+
+**The shape (#3) is a trivial swap once the gaps are solved:** edit `CONNECTOR_TOP`/`CONNECTOR_BOTTOM`
+(viewBox `0 0 16 14`; flat tip = the ≈3px end, flat base = the wide end on the tile) + the
+`.node-connector` `width`/`height`. The user OFFERED to provide the exact Tines SVG path but hasn't —
+**ask for it**; it's a one-line drop-in and removes all the guessing.
+
+## State at handoff
+- **Uncommitted.** All Phase A work is on the `feat/workflow-visualization-static-viewer` branch,
+  working tree only (the committed history ends at Phase 5 / PR #496). The next agent should treat
+  the connector as WIP; everything *else* in Phase A (cards, icons, gradient edges, palette, TD
+  trunk+forks, labels) is in good shape and the user has accepted it through iteration.
+- **Gates green** (`tsc`, `vitest` 39, `build`). The bundle is rebuilt into `src/pflow/ui/static/`.
+- **Reference images** (the aesthetic target) are in the chat: Tines nodes = solid-ish tile + edge
+  flowing into the icon with a rounded connector + flat (90°) caps. We are on **Option B** (neutral
+  tile + brand icons) per an explicit user choice — do NOT re-litigate the tile to solid color.
+- **Read next:** `../research/visual-redesign-knowledge.md` (Phase A design + Flowise teardown),
+  `implementation/phase-a-plan.md` (the plan + simplicity decisions), `web/CLAUDE.md` (updated
+  component/edge/connector notes), this section, then the code.

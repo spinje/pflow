@@ -56,6 +56,7 @@ function edge(id: string, source: string, target: string, kind: EdgeKind, over: 
 
 const DETAILED: BuildOptions = { density: "detailed", direction: "LR", collapsed: new Set() };
 const COMPACT: BuildOptions = { density: "compact", direction: "LR", collapsed: new Set() };
+const TD: BuildOptions = { density: "compact", direction: "TD", collapsed: new Set() };
 
 // ---- tests --------------------------------------------------------------
 
@@ -297,13 +298,22 @@ describe("buildFlow — decision forks: labeled border handles (both densities)"
     expect(edges.find((e) => e.id === "e0")?.sourceHandle).toBe(branchHandle("yes"));
     expect(edges.find((e) => e.id === "e1")?.sourceHandle).toBe(branchHandle("no"));
     const dec = nodes.find((n) => n.id === "dec");
-    expect(dec?.type).toBe("detailed");
-    expect(dec?.type === "detailed" ? dec.data.branchLabels : null).toEqual(["yes", "no"]);
+    expect(dec?.type).toBe("node");
+    expect(dec?.type === "node" ? dec.data.branchLabels : null).toEqual(["yes", "no"]);
   });
 
   it("forks stay on their labeled handles in beautiful mode too", () => {
     const { edges } = buildFlow(graph, COMPACT);
     expect(edges.find((e) => e.id === "e0")?.sourceHandle).toBe(branchHandle("yes"));
+  });
+
+  it("TD: forks fan from the icon (NODE_OUT) with the outcome label on the edge", () => {
+    const { edges } = buildFlow(graph, TD);
+    const e0 = edges.find((e) => e.id === "e0");
+    expect(e0?.sourceHandle).toBe(NODE_OUT); // through the icon column, not a border handle
+    expect(e0?.label).toBe("yes"); // the label rides the edge in TD (no BranchPorts rows)
+    // still a source-type handle — the invariant holds
+    expect(handleType(e0?.sourceHandle ?? "")).toBe("source");
   });
 });
 

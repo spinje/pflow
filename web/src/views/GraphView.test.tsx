@@ -7,7 +7,7 @@
 // determinism; real ELK layout is covered in graph/flow.test.ts.
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { installReactFlowJsdomMocks } from "../test/rf-jsdom";
 import type { FlowNode } from "../graph/flow";
@@ -90,7 +90,7 @@ beforeEach(() => {
 });
 
 describe("GraphView mount", () => {
-  it("mounts the full pipeline and renders nodes + the ${ref} chip", async () => {
+  it("mounts the full pipeline and renders nodes; advanced reveals the ${ref} chip", async () => {
     // What jsdom CAN verify: the fetch→build→layout→render pipeline mounts and the
     // node components draw. (jsdom renders no edge DOM, so edge/handle integrity is
     // NOT testable here — it's covered by the handle-type invariant in flow.test.ts.)
@@ -100,11 +100,14 @@ describe("GraphView mount", () => {
     // Toolbar title is available before the graph resolves.
     expect(screen.getByText("demo")).toBeTruthy();
 
-    // After fetch + layout, the node titles render on the canvas.
-    await waitFor(() => expect(screen.getByText("greet")).toBeTruthy());
+    // Both densities show the description: n0's purpose ("say hi"), and n1 falls back
+    // to its node_id ("done") since it has no purpose.
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
     expect(screen.getByText("done")).toBeTruthy();
-    // A dynamic param renders its ref as a connection chip.
-    expect(screen.getByText("greet.stdout")).toBeTruthy();
+
+    // Advanced adds the body: the dynamic param's ${ref} connection chip.
+    fireEvent.click(screen.getByText("advanced"));
+    await waitFor(() => expect(screen.getByText("greet.stdout")).toBeTruthy());
   });
 
   it("shows a structured banner on a real ApiError, not a blank canvas", async () => {

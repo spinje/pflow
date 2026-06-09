@@ -58,40 +58,22 @@ export function fullValue(value: unknown): string {
   return String(value);
 }
 
-const KIND_GLYPHS: Record<string, string> = {
-  shell: "$_",
-  http: "🌐",
-  llm: "✦",
-  file: "📄",
-  mcp: "🔌",
-  python: "🐍",
-  code: "{ }",
-  "claude-code": "◆",
-  workflow: "▣",
-  input: "▸",
-  output: "◂",
-  end: "■",
-};
-
-export function kindGlyph(kind: string): string {
-  return KIND_GLYPHS[kind] ?? "●";
-}
-
-// One cohesive color per node type — the node's identity. Edges take their source
-// node's color (a stepping stone to the deferred source→target gradient). Tuned
-// for the dark theme: saturated enough to differentiate, calm enough not to shout.
+// One cohesive color per node type — the node's identity. With Option B (neutral
+// tile + native-color icon), the kind color drives the category label, the card's
+// left accent, and the source→target edge gradient. Softened for the dark theme:
+// pastel enough to read as identity, calm enough not to shout (the "neon green" fix).
 const KIND_COLORS: Record<string, string> = {
-  shell: "#34d399",
-  http: "#38bdf8",
-  llm: "#a78bfa",
-  "claude-code": "#818cf8",
-  code: "#fbbf24",
-  python: "#fbbf24",
-  file: "#2dd4bf",
-  mcp: "#f472b6",
-  workflow: "#60a5fa",
+  shell: "#7ee787",
+  http: "#7fb4f5",
+  llm: "#8fa6f0",
+  "claude-code": "#9c89b8",
+  code: "#ffd479",
+  python: "#ffd479",
+  file: "#5ec8b0",
+  mcp: "#ff8fab",
+  workflow: "#a3b18a",
   input: "#94a3b8",
-  output: "#fb7185",
+  output: "#ff9eaa",
   end: "#6b7280",
 };
 
@@ -99,4 +81,10 @@ const DEFAULT_KIND_COLOR = "#9aa3b5";
 
 export function kindColor(kind: string): string {
   return KIND_COLORS[kind] ?? DEFAULT_KIND_COLOR;
+}
+
+// The small category line on a node card (the kind, e.g. "CLAUDE CODE"). Title-ish
+// uppercase; the human description (purpose) is the bold line below it.
+export function categoryLabel(node: { kind: string }): string {
+  return node.kind.replace(/-/g, " ").toUpperCase();
 }

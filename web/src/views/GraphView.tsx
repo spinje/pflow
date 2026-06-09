@@ -38,7 +38,7 @@ export function GraphView(props: GraphViewProps): JSX.Element {
 }
 
 function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
-  const [density, setDensity] = useState<Density>("detailed");
+  const [density, setDensity] = useState<Density>("compact"); // beautiful by default
   const [direction, setDirection] = useState<Direction>("LR");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
@@ -151,7 +151,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             minZoom={0.1}
             proOptions={{ hideAttribution: false }}
           >
-            <Background />
+            <Background bgColor="#0D0D0D" color="#272727" />
             <Controls showInteractive={false} />
             <MiniMap pannable zoomable />
           </ReactFlow>

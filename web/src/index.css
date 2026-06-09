@@ -10,14 +10,14 @@
   --text-faint: #6b7280;
   --accent: #6ea8fe;
   --accent-soft: #2a3a5a;
-  --ref: #8be9c0;
+  --ref: #6fbfa8;
   --ref-bg: #16302a;
   --loop: #f0b86c;
   --batch: #c79bf0;
   --decision: #6ea8fe;
   --warn: #f0a07a;
   --danger: #ff6b6b;
-  --data-edge: #8be9c0;
+  --data-edge: #6fbfa8;
   --radius: 8px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -231,69 +231,107 @@ button.active {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-.kind-glyph {
-  font-family: var(--mono);
-  color: var(--kind, var(--accent));
-  flex: 0 0 auto;
-}
-.node-title {
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.kind-tag {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--text-faint);
-  text-transform: lowercase;
-}
-
-/* compact density — a small card colored by type */
-.node.compact {
+/* card shell — colored BY TYPE: the kind color in the border + a faint kind-tinted
+   bg (the same color the node's edges use). Option B keeps the tile/icon native, so
+   the type color lives in the border. One visual language at both densities. */
+.node.compact,
+.node.detailed {
   display: flex;
   flex-direction: column;
-  background: var(--bg-node);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--kind);
-  border-radius: 10px;
+  background: color-mix(in srgb, var(--kind) 9%, var(--bg-node));
+  /* subtle kind-colored border (the edge flows into the icon TILE, not the border). */
+  border: 1.5px solid color-mix(in srgb, var(--kind) 55%, transparent);
+  border-radius: 12px;
   overflow: hidden;
 }
-.node.compact .compact-header {
+/* beautiful: let the connector stubs extend past the border to meet the edge */
+.node.compact {
+  overflow: visible;
+}
+
+/* header — neutral tile + native-color icon, then the type line + description (wraps
+   to ≤2 lines). Shown in BOTH densities; advanced adds the body below + a divider. */
+.node-header {
+  position: relative;
+  z-index: 2; /* above the connector stubs, so the flare tucks behind the tile */
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 58px;
-  padding: 0 12px;
-}
-.node.compact .node-title {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* detailed density */
-.node.detailed {
-  background: var(--bg-node);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--kind);
-  border-radius: var(--radius);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  gap: 12px;
+  padding: 6px;
+  min-height: 68px;
 }
 .node.detailed .node-header {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 56px;
-  padding: 6px 10px;
-  background: var(--bg-node-header);
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
+  border-bottom: 1px solid color-mix(in srgb, var(--kind) 20%, var(--border));
 }
-.node.detailed .node-header .node-title {
-  flex: 1 1 auto;
+/* connector stubs — a kind-colored flare filling the gap between the node border and
+   the icon, so a control edge appears to flow into the icon. Centered on the icon
+   column; stretches to the (vertically-centered) tile's inset. TD/beautiful only. */
+.node-connector {
+  position: absolute;
+  left: 36px;
+  width: 16px;
+  height: 14px;
+  transform: translateX(-50%);
+  z-index: 1;
+}
+.node-connector svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.node-connector path {
+  fill: var(--kind);
+}
+.node-connector-top {
+  top: calc(50% - 42px); /* tip ~8px above the node; base on the tile's top border (−28) */
+}
+.node-connector-bottom {
+  top: calc(50% + 28px); /* base on the tile's bottom border (+28); tip ~8px below the node */
+}
+
+/* big tile, close to the node edges (small inset) — the icon is the node's anchor;
+   the control edge flows into it (image #11). */
+.node-tile {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  /* the IMAGE border matches the edge: 3px AND the full kind color (the edge/connector
+     are full --kind too). The node CARD border stays subtle and untouched. */
+  border: 3px solid var(--kind);
+}
+.node-icon-img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+.node-titles {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  gap: 2px;
+  flex: 1 1 auto;
+}
+.node-category {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--kind);
+}
+/* the description (node name) — wraps to at most 2 lines; full text in the read panel */
+.node-name {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .param-rows {
   display: flex;
@@ -577,16 +615,23 @@ button.active {
 .react-flow__handle.out-handle {
   background: var(--data-edge);
 }
+/* control handles are invisible — the edge flows straight into the node/tile with no
+   dot (nodesConnectable is off, so the handle only needs to be a connection point). */
 .react-flow__handle.node-handle {
-  background: var(--text-faint);
+  background: transparent;
+  border: none;
 }
 
 /* ---------- edges ---------- */
 .react-flow__edge .react-flow__edge-path {
-  stroke-width: 1.5;
+  stroke-width: 3;
 }
-/* sequential + branch take their source node's type color (inline style); only the
-   semantic kinds are colored here. */
+/* Control edges (sequential/branch) are stroked by the GradientEdge component (a
+   source→target gradient) — do NOT set their `stroke` here or CSS would override the
+   gradient. Branch is DASHED; stroke-dasharray is a separate property, safe in CSS. */
+.react-flow__edge.edge-branch .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+}
 .react-flow__edge.edge-data_flow .react-flow__edge-path {
   stroke: var(--data-edge);
   stroke-dasharray: 4 3;
@@ -629,6 +674,21 @@ button.active {
 }
 .react-flow__edge-textbg {
   fill: var(--bg);
+}
+/* custom-edge label (GradientEdge) — e.g. a TD fork outcome riding its edge.
+   position:absolute is REQUIRED inside EdgeLabelRenderer — without it the div is a
+   full-width block that ignores the transform (the "full-width bar" bug). */
+.edge-label {
+  position: absolute;
+  background: var(--bg-raised);
+  color: var(--decision);
+  border: 1px solid color-mix(in srgb, var(--decision) 40%, var(--border));
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: all;
 }
 
 /* ---------- read panel ---------- */
