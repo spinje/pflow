@@ -19,7 +19,7 @@ import {
   portTargetHandle,
   portTargetHandleRight,
 } from "./handles";
-import { assignDataRails, assignFacingSides } from "./portSides";
+import { assignDataRails, assignFacingSides, assignLoopRails } from "./portSides";
 
 function portsNode(id: string, x: number, opts: { parentId?: string; y?: number; height?: number } = {}): FlowNode {
   return {
@@ -131,5 +131,44 @@ describe("assignDataRails — wrap rails center in the clear gap between endpoin
     expect(edge!.data?.railY).toBeUndefined();
     const ctrl = { id: "c", source: "src", target: "dst", data: { kind: "sequential" } } as FlowEdge;
     expect(assignDataRails(nodes, [ctrl])[0]).toBe(ctrl);
+  });
+});
+
+
+describe("assignLoopRails — the loop-back U gets a rail OUTSIDE its box", () => {
+  // Without the rail, a self-loop's smoothstep midpoint == the handle axis → the
+  // line runs straight back THROUGH the node. The rail is load-bearing.
+  const loopEdge = (id: string, anchor: string): FlowEdge =>
+    ({
+      id,
+      source: anchor,
+      target: anchor,
+      data: { kind: "loop", shadowed: false, from: anchor, to: anchor, defaultHidden: false },
+    }) as FlowEdge;
+
+  it("TD: railX sits right of the box; railY unset", () => {
+    // box: x 100..200 (width 100)
+    const [edge] = assignLoopRails([portsNode("a", 100)], [loopEdge("l", "a")], "TD");
+    expect(edge!.data!.railX).toBeGreaterThan(200);
+    expect(edge!.data!.railY).toBeUndefined();
+  });
+
+  it("LR: railY sits above the box; railX unset", () => {
+    const [edge] = assignLoopRails([portsNode("a", 100, { y: 50 })], [loopEdge("l", "a")], "LR");
+    expect(edge!.data!.railY).toBeLessThan(50);
+    expect(edge!.data!.railX).toBeUndefined();
+  });
+
+  it("uses the ABSOLUTE box of a nested anchor (parent offsets applied)", () => {
+    const parent = portsNode("p", 500, { y: 300 });
+    const child = portsNode("a", 100, { parentId: "p" }); // absolute right edge = 500+100+100
+    const [edge] = assignLoopRails([parent, child], [loopEdge("l", "a")], "TD");
+    expect(edge!.data!.railX).toBeGreaterThan(700);
+  });
+
+  it("non-loop edges are untouched, identity preserved", () => {
+    const seq = { id: "s", source: "a", target: "b", data: { kind: "sequential" } } as FlowEdge;
+    const [out] = assignLoopRails([portsNode("a", 100), portsNode("b", 300)], [seq], "TD");
+    expect(out).toBe(seq);
   });
 });

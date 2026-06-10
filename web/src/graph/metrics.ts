@@ -19,8 +19,11 @@ export const METRICS = {
   tileBorder: 3,
   /** control-edge stroke width == the connector flare's tip width (CONN.tipW). */
   edgeStroke: 3,
-  /** .group-header height; ELK's group top padding must clear it (layout.ts). */
-  groupHeaderH: 38,
+  /** .group-header height; ELK's group top padding must clear it (layout.ts).
+   *  MUST equal nodeHeaderH: the expanded region's header is the leaf card's
+   *  `.node-header` verbatim (user requirement 2026-06-10 — the icon/name must
+   *  not move when a container opens), so it is exactly one card-header tall. */
+  groupHeaderH: 68,
   /** .node-header padding — the tile's inset from the node edge (ICON_COL_X math). */
   headerPad: 6,
   /** corner radius of the rounded-orthogonal edges (GradientEdge + DataEdge — ONE

@@ -81,6 +81,22 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
     return !!kinds && kinds.has("error") && !kinds.has("sequential") && !kinds.has("branch");
   };
 
+  // A fork's targets order by their BRANCH-EDGE order — the code's if/elif/else
+  // chain order, carried by contract edge order — so the FIRST condition lands
+  // leftmost (TD) / topmost (LR). Steps-declaration order is irrelevant to how a
+  // fork reads (user-decided 2026-06-10); the spatial ordinal labels then match
+  // the code's reading order by construction. First branch in-edge wins per target.
+  const branchOrder = new Map<string, { source: string; rank: number }>();
+  {
+    const rankBySource = new Map<string, number>();
+    for (const e of edges) {
+      if (e.source === e.target || e.data?.kind !== "branch") continue;
+      const rank = rankBySource.get(e.source) ?? 0;
+      rankBySource.set(e.source, rank + 1);
+      if (!branchOrder.has(e.target)) branchOrder.set(e.target, { source: e.source, rank });
+    }
+  }
+
   const childrenByParent = new Map<string | undefined, FlowNode[]>();
   for (const node of nodes) {
     const key = node.parentId ?? undefined;
@@ -89,7 +105,8 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
     childrenByParent.set(key, list);
   }
   for (const [key, list] of childrenByParent) {
-    childrenByParent.set(key, [...list.filter((n) => !isErrorOnly(n.id)), ...list.filter((n) => isErrorOnly(n.id))]);
+    const sorted = orderForkSiblings(list, branchOrder);
+    childrenByParent.set(key, [...sorted.filter((n) => !isErrorOnly(n.id)), ...sorted.filter((n) => isErrorOnly(n.id))]);
   }
 
   // The layered + wrapping + spacing options. Applied to root AND to EVERY composite
@@ -129,7 +146,18 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   // which matches ELK's default anchors — no ports needed there.
   const portable = new Set<string>();
   if (direction === "TD") {
-    for (const node of nodes) if (node.type === "node") portable.add(node.id);
+    for (const node of nodes) {
+      // Leaves AND collapsed groups: a collapsed group renders the same card
+      // anatomy (GroupNode), handles on the icon column — without its ports the
+      // trunk jogs at every collapsed sub-workflow. EXPANDED groups render their
+      // handles at the icon column too (the trunk flows into the region's tile),
+      // but get NO ELK port: a port on a COMPOUND node crashes elkjs under
+      // INCLUDE_CHILDREN when an edge references it ("NEdge must have a source
+      // and target NNode specified" — found in-browser 2026-06-10, same crash
+      // family as considerModelOrder). ELK anchors region edges at the border
+      // default; smoothstep absorbs the offset to the rendered handle.
+      if (node.type === "node" || (node.type === "group" && node.data.collapsed)) portable.add(node.id);
+    }
   }
 
   const toElk = (node: FlowNode): ElkNode => {
@@ -212,4 +240,23 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
       style: { ...node.style, width: box.width, height: box.height },
     };
   });
+}
+
+/** Reorder a sibling list so each fork's targets follow their branch-edge order
+ *  (the code's if/elif/else chain order). Targets of one fork CLUSTER at the
+ *  position of their first occurrence in the list, internally sorted by rank;
+ *  every other sibling keeps its model-order position. Pure — unit-tested. */
+export function orderForkSiblings(list: FlowNode[], branchOrder: Map<string, { source: string; rank: number }>): FlowNode[] {
+  const anchor = new Map<string, number>();
+  list.forEach((node, i) => {
+    const branch = branchOrder.get(node.id);
+    if (branch && !anchor.has(branch.source)) anchor.set(branch.source, i);
+  });
+  return list
+    .map((node, i) => {
+      const branch = branchOrder.get(node.id);
+      return { node, primary: branch ? anchor.get(branch.source)! : i, secondary: branch ? branch.rank : 0, stable: i };
+    })
+    .sort((a, b) => a.primary - b.primary || a.secondary - b.secondary || a.stable - b.stable)
+    .map((entry) => entry.node);
 }

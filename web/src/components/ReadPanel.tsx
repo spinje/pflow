@@ -4,7 +4,7 @@
 // param values, source file:line, loop/batch/io config.
 
 import { fullValue } from "../utils/format";
-import type { RFNode, SourceRef } from "../types";
+import type { RFEdge, RFNode, SourceRef } from "../types";
 
 function sourceLabel(source: SourceRef | null): string | null {
   if (!source?.file) return null;
@@ -37,7 +37,17 @@ function StructuralFacts({ node }: { node: RFNode }): JSX.Element | null {
   );
 }
 
-export function ReadPanel({ node, onClose }: { node: RFNode; onClose: () => void }): JSX.Element {
+export function ReadPanel({
+  node,
+  branches = [],
+  onClose,
+}: {
+  node: RFNode;
+  // The node's outgoing branch edges (GraphView filters the contract) — the
+  // untruncated home of the outcome → condition table on a condition node.
+  branches?: RFEdge[];
+  onClose: () => void;
+}): JSX.Element {
   const src = sourceLabel(node.source);
   return (
     <aside className="read-panel">
@@ -57,6 +67,17 @@ export function ReadPanel({ node, onClose }: { node: RFNode; onClose: () => void
       {src && <p className="read-panel-source" title={node.source?.file ?? ""}>{src}</p>}
 
       <StructuralFacts node={node} />
+
+      {branches.length > 0 && (
+        <dl className="facts">
+          {branches.map((edge) => (
+            <div className="fact" key={edge.id}>
+              <dt>→ {edge.label}</dt>
+              <dd>{edge.condition ?? "—"}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       {node.params.length > 0 && (
         <section className="read-panel-params">

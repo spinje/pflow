@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { applyFocus, buildFlow, type BuildOptions, expandTargets } from "./flow";
+import {
+  applyFocus,
+  buildFlow,
+  type BuildOptions,
+  COLLAPSED_GROUP_HEIGHT,
+  COLLAPSED_GROUP_WIDTH,
+  expandTargets,
+  HEADER_HEIGHT,
+} from "./flow";
 import {
   branchHandle,
   handleType,
+  LOOP_ROW,
   NODE_IN,
   NODE_OUT,
   outputHandle,
@@ -52,7 +61,7 @@ function group(id: string, over: Partial<RFGroup> = {}): RFGroup {
 }
 
 function edge(id: string, source: string, target: string, kind: EdgeKind, over: Partial<RFEdge> = {}): RFEdge {
-  return { id, source, target, kind, label: null, output_field: null, input_name: null, shadowed: false, ...over };
+  return { id, source, target, kind, label: null, output_field: null, input_name: null, shadowed: false, condition: null, ...over };
 }
 
 const DETAILED: BuildOptions = { density: "detailed", direction: "LR", collapsed: new Set() };
@@ -89,11 +98,13 @@ describe("buildFlow — host suppression (H8)", () => {
   });
 });
 
-describe("buildFlow — a multi-group host re-anchors to its OUTERMOST group (H8)", () => {
-  // A dynamic-batch-of-subworkflow host backs TWO groups with the same host: a
-  // batch container (outer) and a workflow container (inner, nested in the batch).
-  // Both can sit at the same nesting_depth, so outer-selection must use the
-  // parent-relationship, not depth alone. An edge into the host lands on the batch.
+describe("buildFlow — a batched sub-workflow IS a sub-workflow WITH batch (H8 + shell skip)", () => {
+  // A dynamic-batch-of-subworkflow host backs TWO groups: a batch container with NO
+  // direct members (a decorator SHELL) wrapping the workflow container. The shell is
+  // never rendered (user decision 2026-06-10: batch is a modifier — deck + ×N badge —
+  // not a box to travel through): the workflow group reparents past it, becomes the
+  // host's representative (edges/title), and clicking the collapsed card opens the
+  // sub-workflow body directly.
   const graph: RFGraph = {
     nodes: [
       node("ext"),
@@ -111,16 +122,35 @@ describe("buildFlow — a multi-group host re-anchors to its OUTERMOST group (H8
     ],
   };
 
-  it("lands the edge on the batch group and titles only the outer group", () => {
+  it("skips the shell, reparents the workflow group, and re-anchors host edges onto it", () => {
     const { nodes, edges } = buildFlow(graph, DETAILED);
-    expect(edges.find((e) => e.id === "e0")?.target).toBe("g_batch");
-    const batch = nodes.find((n) => n.id === "g_batch");
+    expect(nodes.find((n) => n.id === "g_batch")).toBeUndefined(); // shell never renders
+    expect(edges.find((e) => e.id === "e0")?.target).toBe("g_wf");
     const wf = nodes.find((n) => n.id === "g_wf");
-    expect(batch?.type).toBe("group");
     expect(wf?.type).toBe("group");
-    // Only the outermost group of a multi-group host shows the host title/badges.
-    expect(batch?.type === "group" && batch.data.showTitle).toBe(true);
-    expect(wf?.type === "group" && wf.data.showTitle).toBe(false);
+    if (wf?.type !== "group") return;
+    expect(wf.parentId).toBeUndefined(); // reparented past the shell
+    expect(wf.data.showTitle).toBe(true); // the workflow group carries title + batch badge
+  });
+
+  it("an empty batch shell around a plain leaf never renders — the leaf is the node", () => {
+    // The contract shape for a dynamic batch of a simple node: the leaf renders
+    // (not a host), the batch group is empty decoration ("▸ 0 nodes" card bug).
+    const plain: RFGraph = {
+      nodes: [
+        node("a"),
+        node("b", {
+          batch: { parallel: true, dynamic: true, as_name: "f", source_ref: "${files}", count: null, items: null },
+        }),
+      ],
+      edges: [edge("e0", "a", "b", "sequential")],
+      groups: [group("gb", { kind: "batch", host: "b", nesting_depth: 1 })],
+    };
+    const { nodes, edges } = buildFlow(plain, COMPACT);
+    expect(nodes.find((n) => n.id === "gb")).toBeUndefined();
+    const leaf = nodes.find((n) => n.id === "b");
+    expect(leaf?.type).toBe("node"); // a normal, selectable node — batch rides as deck/badge
+    expect(edges.find((e) => e.id === "e0")?.target).toBe("b");
   });
 });
 
@@ -147,6 +177,70 @@ describe("buildFlow — collapse re-anchors, never drops (H6/W1)", () => {
   it("expands again with no collapsed set", () => {
     const { nodes } = buildFlow(graph, DETAILED);
     expect(nodes.find((n) => n.id === "n1")).toBeDefined();
+  });
+});
+
+describe("buildFlow — collapsed group is a CARD (leaf anatomy, 2026-06-10 redesign)", () => {
+  // n0 → host(g0) → n2; g0 nests g1; an IO port and the host itself must not count
+  // as steps. The internal edge (inner → deep) re-anchors to g0 on both ends and is
+  // dropped — it must NOT light the card's connector flares.
+  const graph: RFGraph = {
+    nodes: [
+      node("n0"),
+      node("host", { kind: "workflow", is_group_host: true }),
+      node("inner", { parent: "g0" }),
+      node("deep", { parent: "g1" }),
+      node("io1", { kind: "input", io: { data_type: null, required: true }, parent: "g0" }),
+      node("n2"),
+      node("iso"),
+    ],
+    edges: [
+      edge("e_in", "n0", "host", "sequential"),
+      edge("e_out", "host", "n2", "sequential"),
+      edge("e_internal", "inner", "deep", "sequential"),
+    ],
+    groups: [
+      group("g0", { host: "host", members: ["inner", "io1"] }),
+      group("g1", { parent: "g0", members: ["deep"], nesting_depth: 1 }),
+    ],
+  };
+  const collapsedTD: BuildOptions = { ...TD, collapsed: new Set(["g0"]) };
+
+  it("sizes the card and carries flow-edge control incidence + recursive step count", () => {
+    const { nodes } = buildFlow(graph, collapsedTD);
+    const g = nodes.find((n) => n.id === "g0");
+    expect(g?.type).toBe("group");
+    if (g?.type !== "group") return;
+    expect(g.width).toBe(COLLAPSED_GROUP_WIDTH);
+    expect(g.height).toBe(COLLAPSED_GROUP_HEIGHT);
+    expect(g.data.hasIncoming).toBe(true); // n0 → host re-anchors onto the card
+    expect(g.data.hasOutgoing).toBe(true); // host → n2 leaves the card
+    // inner + deep; the IO port and the suppressed host are not "steps".
+    expect(g.data.memberCount).toBe(2);
+  });
+
+  it("a purely-internal edge lights no flare", () => {
+    const internalOnly: RFGraph = {
+      ...graph,
+      edges: [edge("e_internal", "inner", "deep", "sequential")],
+    };
+    const { nodes } = buildFlow(internalOnly, collapsedTD);
+    const g = nodes.find((n) => n.id === "g0");
+    if (g?.type !== "group") throw new Error("g0 missing");
+    expect(g.data.hasIncoming).toBe(false);
+    expect(g.data.hasOutgoing).toBe(false);
+  });
+
+  it("focus dims a collapsed card like a leaf, but never an expanded region", () => {
+    const collapsedBuild = buildFlow(graph, collapsedTD);
+    const dimmedCard = applyFocus(collapsedBuild.nodes, collapsedBuild.edges, "iso").nodes.find((n) => n.id === "g0");
+    if (dimmedCard?.type !== "group") throw new Error("g0 missing");
+    expect(dimmedCard.data.dimmed).toBe(true);
+
+    const expandedBuild = buildFlow(graph, TD);
+    const region = applyFocus(expandedBuild.nodes, expandedBuild.edges, "iso").nodes.find((n) => n.id === "g0");
+    if (region?.type !== "group") throw new Error("g0 missing");
+    expect(region.data.dimmed).toBe(false);
   });
 });
 
@@ -317,6 +411,28 @@ describe("buildFlow — decision forks: labeled border handles (both densities)"
     expect(handleType(e0?.sourceHandle ?? "")).toBe("source");
   });
 
+
+  it("the branch CONDITION rides EdgeData in advanced, and in beautiful only while the source is expanded", () => {
+    const withCondition: RFGraph = {
+      nodes: [node("dec", { is_decision: true, kind: "code" }), node("a"), node("b")],
+      edges: [
+        edge("e0", "dec", "a", "branch", { label: "big", condition: "if len(items) > 5" }),
+        edge("e1", "dec", "b", "branch", { label: "small", condition: "else" }),
+      ],
+      groups: [],
+    };
+    // advanced: always shown
+    const adv = buildFlow(withCondition, DETAILED);
+    expect(adv.edges.find((e) => e.id === "e0")?.data?.condition).toBe("if len(items) > 5");
+    // beautiful: hidden by default...
+    const plain = buildFlow(withCondition, TD);
+    expect(plain.edges.find((e) => e.id === "e0")?.data?.condition).toBeUndefined();
+    // ...and shown while the condition node is focus-expanded (expansion re-runs build)
+    const expanded = buildFlow(withCondition, { ...TD, expanded: new Set(["dec"]) });
+    expect(expanded.edges.find((e) => e.id === "e0")?.data?.condition).toBe("if len(items) > 5");
+    expect(expanded.edges.find((e) => e.id === "e1")?.data?.condition).toBe("else");
+  });
+
   it("a decision CODE node's fan-out leaves in the condition color, not code yellow", () => {
     const conditionGraph: RFGraph = {
       nodes: [node("route", { kind: "code", is_decision: true }), node("a", { kind: "code" })],
@@ -458,7 +574,9 @@ describe("buildFlow — loop arc synthesized from LoopSpec", () => {
       const loop = buildFlow(graph, view).edges.find((e) => e.type === "loop");
       expect(loop?.source).toBe("n0");
       expect(loop?.target).toBe("n0");
-      expect(loop?.data?.loop?.condition).toBe("${x.go}");
+      // data.loop is the LABEL switch (loop-row design) — a LEAF edge never carries
+      // it; the ↻ row / read panel hold the condition. See the loop-U describe.
+      expect(loop?.data?.kind).toBe("loop");
     }
   });
 
@@ -522,6 +640,57 @@ describe("applyFocus — dims non-neighbors, no re-layout", () => {
   });
 });
 
+describe("loop U — row landing + label policy (2026-06-10 loop-row design)", () => {
+  const LOOP = { polarity: "while" as const, condition: "${a.go}", cap: 5, carry: {} };
+  const leafGraph: RFGraph = {
+    nodes: [node("a", { loop: LOOP })],
+    edges: [],
+    groups: [],
+  };
+  const groupGraph: RFGraph = {
+    nodes: [node("host", { kind: "workflow", is_group_host: true, loop: LOOP }), node("body", { parent: "g0" })],
+    edges: [],
+    groups: [group("g0", { host: "host", members: ["body"] })],
+  };
+  const loopEdge = (edges: { id: string }[]): (typeof edges)[number] | undefined =>
+    edges.find((e) => e.id.startsWith("loop:"));
+
+  it("advanced leaf: the U lands ON the ↻ loop-rule row, with no floating label", () => {
+    const { nodes, edges } = buildFlow(leafGraph, DETAILED);
+    const e = loopEdge(edges) as ReturnType<typeof buildFlow>["edges"][number] | undefined;
+    expect(e?.targetHandle).toBe(LOOP_ROW);
+    expect(handleType(LOOP_ROW)).toBe("target"); // the silent-drop class
+    expect(e?.data?.loop).toBeUndefined(); // the row carries the rule — no pill
+    // leafSize counts the loop row: one row, no params/outputs.
+    const leaf = nodes.find((n) => n.id === "a");
+    expect(leaf?.height).toBeGreaterThan(HEADER_HEIGHT); // body grew for the row
+  });
+
+  it("beautiful leaf: a bare U into NODE_IN — the skeleton stays quiet", () => {
+    const { nodes, edges } = buildFlow(leafGraph, COMPACT);
+    const e = loopEdge(edges) as ReturnType<typeof buildFlow>["edges"][number] | undefined;
+    expect(e?.targetHandle).toBe(NODE_IN);
+    expect(e?.data?.loop).toBeUndefined();
+    expect(nodes.find((n) => n.id === "a")?.height).toBe(HEADER_HEIGHT); // no row in compact
+  });
+
+  it("focus-expanded leaf (beautiful) lands on the row like advanced", () => {
+    const { edges } = buildFlow(leafGraph, { ...COMPACT, expanded: new Set(["a"]) });
+    expect((loopEdge(edges) as { targetHandle?: string } | undefined)?.targetHandle).toBe(LOOP_ROW);
+  });
+
+  it("group anchor: floating label in advanced only (regions have no rows)", () => {
+    const adv = buildFlow(groupGraph, DETAILED);
+    const eAdv = loopEdge(adv.edges) as ReturnType<typeof buildFlow>["edges"][number] | undefined;
+    expect(eAdv?.targetHandle).toBe(NODE_IN);
+    expect(eAdv?.data?.loop).toEqual(LOOP); // label shows in advanced
+
+    const beau = buildFlow(groupGraph, COMPACT);
+    const eBeau = loopEdge(beau.edges) as ReturnType<typeof buildFlow>["edges"][number] | undefined;
+    expect(eBeau?.data?.loop).toBeUndefined(); // hidden in beautiful
+  });
+});
+
 describe("layoutGraph — produces positions (ELK smoke)", () => {
   it("lays out a small nested graph without throwing", async () => {
     const graph: RFGraph = {
@@ -537,6 +706,29 @@ describe("layoutGraph — produces positions (ELK smoke)", () => {
       expect(Number.isFinite(n.position.x)).toBe(true);
       expect(Number.isFinite(n.position.y)).toBe(true);
       expect((n.width ?? 0) > 0).toBe(true);
+    }
+  });
+
+  it("TD: an edge INTO an expanded group lays out (elkjs crashes on compound ports)", async () => {
+    // Regression pin: declaring an ELK port on a COMPOUND node and routing an edge
+    // to it throws "NEdge must have a source and target NNode specified" under
+    // INCLUDE_CHILDREN (found in-browser 2026-06-10 — the in-process smoke above
+    // missed it because its group had no incoming edge). Expanded groups must stay
+    // port-less; only leaves and collapsed groups join the `portable` set.
+    const graph: RFGraph = {
+      nodes: [
+        node("ext"),
+        node("host", { kind: "workflow", is_group_host: true }),
+        node("body", { parent: "g0" }),
+      ],
+      edges: [edge("e0", "ext", "host", "sequential")],
+      groups: [group("g0", { host: "host", members: ["body"] })],
+    };
+    const { nodes, edges } = buildFlow(graph, TD); // expanded (nothing collapsed)
+    const laidOut = await layoutGraph(nodes, edges, "TD");
+    expect(laidOut).toHaveLength(nodes.length);
+    for (const n of laidOut) {
+      expect(Number.isFinite(n.position.x)).toBe(true);
     }
   });
 });

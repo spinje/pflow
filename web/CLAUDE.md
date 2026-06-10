@@ -152,6 +152,18 @@ Tests sit beside their subject.
   layout.ts declares to ELK as fixed ports, see next bullet), so the trunk + forks flow
   through the icon; a fork's label then rides its edge
   (GradientEdge renders it) instead of a border row, and `BranchPorts` draws nothing.
+  A TD outcome label is BARE TEXT (shadow halo, no pill) anchored at the TARGET's
+  entry — left edge just right of the node's left border (`labelAnchor` +
+  `LABEL_NUDGE_X`). Error pills stay mid-path. Fork TARGETS lay out in the code's
+  chain order (`orderForkSiblings` in layout.ts — first `if` leftmost; Steps
+  order is irrelevant to a fork's reading order). **Branch CONDITIONS**
+  (`EdgeData.condition`, from the contract's fail-closed AST extraction) render
+  as an orange-tinted `.edge-label` pill on a LONE segment (`conditionAnchor`:
+  the edge's own rail run, or the final descent for the straight child — never
+  the shared rail crossing) — set in `data` only when visible (advanced always;
+  beautiful while the condition node is focus-expanded — safe as build-time
+  state since expansion re-runs the build); the read panel shows the untruncated
+  outcome → condition table (GraphView passes the node's branch edges).
 - **Layout is told where the handles are (layout.ts).** TD leaf nodes declare ELK
   `FIXED_POS` ports at `ICON_COL_X` — without them ELK aligns box CENTERS while the
   handles render at the icon column, jogging every "straight" connection. Port-aware
@@ -183,8 +195,68 @@ Tests sit beside their subject.
   line-into-the-icon must be our geometry, never a stock edge.
 - **A loop is drawn, not in the contract.** A loop is a `LoopSpec` on a node;
   `flow.ts` synthesizes a self-loop edge (`type:"loop"`) anchored to the node or its
-  group, and `components/edges/LoopEdge.tsx` draws the arc + label. Self-loops are
-  filtered out of ELK.
+  group, and `components/edges/LoopEdge.tsx` draws it as a rounded-orthogonal **U**
+  wrapping AROUND the box: `getSmoothStepPath` + a wrap rail from the post-layout
+  `assignLoopRails` pass (portSides.ts — TD: rail right of the box via `centerX`,
+  LR: above via `centerY`). The rail is LOAD-BEARING, not polish: a self-loop's
+  endpoints share an axis, so the default smoothstep midpoint runs the line straight
+  back THROUGH the node. **Where the U lands and what it says (the loop-row
+  design, user-decided 2026-06-10):** a LEAF whose body rows render (advanced /
+  focus-expanded) grows ↻ loop-rule rowS (WorkflowNode; amber, right-aligned —
+  it's authored LOOP config, deliberately NOT presented as a data param; leafSize
+  counts them): the CONDITION row + the cap `≤ ${…}` on its OWN row (one row
+  truncated both operands). The category line carries an amber ↻ mark in ALL
+  states (`.loop-mark` — a compact looped leaf otherwise says nothing about
+  looping). The U's arrow lands ON the condition row (`LOOP_ROW` handle, target-type)
+  — "iteration re-enters under this rule"; the edge then carries NO floating
+  label (the row holds the condition, like data lines dropping their label on
+  row-landing). A compact leaf shows a BARE U into NODE_IN — beautiful stays
+  quiet; click to expand and see why. A GROUP anchor has no rows: the floating
+  label (bottom run in TD — the top run is contested by trunk/branch labels;
+  LR: top rail) renders in ADVANCED only, gated by `data.loop`'s presence (the
+  edge's only use of it; the read panel always has the full spec from the node).
+  The pill needs an OPAQUE bg (it sits on the line), and the loop edge must NOT
+  set zIndex — an elevated edge paints above the EdgeLabelRenderer layer and
+  strikes through its own pill. The U carries the app's ONE arrowhead at the
+  re-entry (own `<polygon>`, CSS `--loop` fill — RF marker objects only take
+  literal colors): a loop is the only edge whose direction the layout doesn't
+  imply. Self-loops are filtered out of ELK.
+- **A container is ONE object in two states (GroupNode, 2026-06-10 redesign) — and
+  NOTHING in its header moves across the fold (user requirement).** Both states
+  render the IDENTICAL header markup (one JSX block): the leaf `.node-header` with
+  the full-size tile + `.node-titles` (category + purpose||node_id), in leaf
+  positions/typography. `METRICS.groupHeaderH` MUST equal `nodeHeaderH` (ELK's
+  region padding is derived from it). The member-count pill (`.group-pill`, ▸/▾ +
+  recursive step count `memberCount` — `group.members` only sees direct children)
+  is ABSOLUTE on the top-right border in both states. COLLAPSED → leaf classes
+  (`.node.compact.group-card`): card CSS, focus ring, dimming come wholesale;
+  icon-column ELK ports (TD `portable` set, layout.ts) + top AND bottom connector
+  flares. EXPANDED → kind-tinted region (`--kind` inline: workflow magenta
+  `#e26ad8`, batch purple = `BATCH_COLOR` == CSS `--batch`); handles STILL at the
+  icon column (the trunk flows into the region's tile) with the TOP flare only
+  (the tile sits at the region's top, far from the bottom exit) — but NO ELK port:
+  **a port on a COMPOUND node crashes elkjs under INCLUDE_CHILDREN when an edge
+  references it** ("NEdge must have a source and target NNode"; pinned by a layout
+  test). Flare incidence comes from a control-incidence POST-pass over the FLOW
+  edges for ALL groups (contract edges never name a group; purely-internal edges
+  must not count). Collapsed cards dim under focus like leaves; expanded regions
+  never dim. Icon from `groupIconFor` (host's icon; a LOOPED sub-workflow swaps to
+  the amber loop glyph — the category line still says SUB-WORKFLOW; leaf kinds
+  never swap). React Flow's default `node-group` wrapper styling is neutralized in
+  index.css **including its `text-align: center`** — GroupNode owns the visual.
+  Batch cards (and `.batched` leaves — unexpanded dynamic batches) draw a stacked
+  DECK via pseudo-elements (the Tines stacked-copies look).
+- **A SHELL batch group (no direct members) is never rendered.** The contract models
+  "batched X" as batch-wrapping-X, but presentationally batch is a MODIFIER (deck +
+  ×N badge), not a box to travel through (user decision 2026-06-10): a batched LEAF
+  renders as a normal selectable node (its shell was the "▸ 0 nodes" card bug); a
+  batched SUB-WORKFLOW is a sub-workflow WITH batch — the workflow group reparents
+  past the shell (`effectiveParent`), becomes the host's representative
+  (`groupsByHost` skips shells → edges/title/loop land on it), gets the deck from
+  `hostNode.batch`, and clicking its collapsed card opens the sub-workflow body
+  directly. Literal batches (real item-copy members) keep their container.
+  `collapse.ts collapsibleGroupIds` excludes shells (they can't be toggled and must
+  not inflate the N/M count).
 - **IO is ONE node, with row-level focus.** An `input_wrapper`/`output_wrapper` group
   becomes a single Inputs/Outputs `ports` node (`PortsNode`) — a row per port, the IO
   member nodes are NOT emitted. Each row carries BOTH handles: a *target* (`portTargetHandle`

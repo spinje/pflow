@@ -12,6 +12,10 @@
 
 export const NODE_IN = "__in"; // target
 export const NODE_OUT = "__out"; // source
+// The ↻ loop-rule row on a looped leaf's expanded body — TARGET: the loop-back U's
+// arrow lands here when the row renders ("iteration re-enters under this rule"),
+// instead of NODE_IN. One row per node, so a constant id suffices.
+export const LOOP_ROW = "loop:row";
 
 // Prefixes — kept as constants so the constructors and `handleType` can't drift.
 const PARAM = "p:"; // param row — TARGET (a node input slot, receives)
@@ -67,6 +71,7 @@ export const mirrorPortSource = (h: string): string => PORT_SOURCE_L + h.slice(P
 export function handleType(handleId: string): "source" | "target" {
   if (
     handleId === NODE_IN ||
+    handleId === LOOP_ROW ||
     handleId.startsWith(PARAM) ||
     handleId.startsWith(PORT_TARGET) ||
     handleId.startsWith(PORT_TARGET_R)

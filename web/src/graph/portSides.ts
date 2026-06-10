@@ -20,10 +20,17 @@
 //    endpoint nodes have a clear gap on an axis gets a rail hint CENTERED in that
 //    gap (data.railX/railY); DataEdge uses the hint instead of the midpoint.
 //
+// 3. assignLoopRails — the synthesized loop-back U (LoopEdge) must wrap AROUND
+//    its box, but the edge component only sees handle coordinates (a self-loop's
+//    default smoothstep midpoint runs straight back THROUGH the node). With boxes
+//    known post-layout, each loop edge gets its rail: TD → a vertical rail just
+//    RIGHT of the box (railX); LR → a horizontal rail just ABOVE it (railY).
+//    LoopEdge feeds the rail to getSmoothStepPath as centerX/centerY.
+//
 // Deliberately NOT a router: full crossing/node avoidance (vs OTHER nodes) remains
 // the deferred smart edge-router (visualization-requirements.md).
 
-import type { FlowEdge, FlowNode } from "./flow";
+import type { Direction, FlowEdge, FlowNode } from "./flow";
 import { isPortSource, isPortTarget, mirrorPortSource, mirrorPortTarget } from "./handles";
 
 // Flip only when the peer is CLEARLY past the row's node — no flip-flopping on
@@ -94,6 +101,24 @@ export function assignDataRails(nodes: FlowNode[], edges: FlowEdge[]): FlowEdge[
     const railX =
       sBox.right < tBox.left ? (sBox.right + tBox.left) / 2 : tBox.right < sBox.left ? (tBox.right + sBox.left) / 2 : undefined;
     if (railX === undefined && railY === undefined) return edge;
+    if (edge.data.railX === railX && edge.data.railY === railY) return edge;
+    return { ...edge, data: { ...edge.data, railX, railY } };
+  });
+}
+
+// Far enough from the box that the U's two corners render at full radius
+// (smoothstep clamps a bend to half its adjoining segment), close enough to
+// read as wrapping THIS box.
+const LOOP_RAIL_OFFSET = 36;
+
+export function assignLoopRails(nodes: FlowNode[], edges: FlowEdge[], direction: Direction): FlowEdge[] {
+  const boxOf = boxes(nodes);
+  return edges.map((edge) => {
+    if (edge.data?.kind !== "loop") return edge;
+    const box = boxOf(edge.source); // a loop edge's source === target === the looped box
+    if (!box) return edge;
+    const railX = direction === "TD" ? box.right + LOOP_RAIL_OFFSET : undefined;
+    const railY = direction === "TD" ? undefined : box.top - LOOP_RAIL_OFFSET;
     if (edge.data.railX === railX && edge.data.railY === railY) return edge;
     return { ...edge, data: { ...edge.data, railX, railY } };
   });

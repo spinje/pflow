@@ -97,6 +97,13 @@ item / progress-log entry — read those before rendering chips/groups/batches):
 - **`RFEdge.input_name=None` is COMMON, not rare** (output-`source:` edges,
   batch-`items:` edges, multi-role dedup). → attach the data-flow line at
   **node level**, never drop it. (H6.)
+- **`RFEdge.condition`** (branch edges only): the source-code condition that
+  selects this outcome (`"if len(items) > 5"` / `"else"`), AST-extracted
+  **fail-closed** from the decision node's `code` param (`_branch_conditions`
+  in react_flow.py — supported shapes documented there; anything else ships
+  `None`, absent beats wrong). The frontend shows it mid-edge (advanced
+  always; beautiful only while the condition node is focus-expanded) and in
+  the read panel's outcome table.
 - **`RFNode.is_group_host=True`** → the node is materialized as a group (a
   literal batch, or an expanded sub-workflow host). **Suppress its leaf box**;
   read its loop badge off the host node. A host is NOT 1:1 with a group — a

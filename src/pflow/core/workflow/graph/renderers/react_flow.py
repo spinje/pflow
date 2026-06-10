@@ -17,12 +17,14 @@ Mermaid's narrower render-time shadowing rule.
 
 from __future__ import annotations
 
+import ast
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from pflow.core.workflow.graph.model import (
     AncestorStep,
     Container,
+    EdgeKind,
     GraphModel,
     Node,
     NodeId,
@@ -82,6 +84,11 @@ class RFEdge:
     output_field: str | None
     input_name: str | None
     shadowed: bool
+    # The source-code condition that selects this branch outcome (e.g.
+    # "if len(items) > 5", "else"), extracted fail-closed from the decision
+    # node's code by ``_branch_conditions``. ``None`` on non-branch edges and
+    # whenever extraction could not be done SAFELY — absent beats wrong.
+    condition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +136,9 @@ class _ReactFlowRenderer:
         ]
         self._node_id_map: dict[NodeId, str] = {node.id: f"n{i}" for i, node in enumerate(self._kept_nodes)}
         self._group_id_map: dict[str, str] = {c.id: f"g{j}" for j, c in enumerate(self._kept_containers)}
+        # Per-decision-node memo for fail-closed condition extraction (one AST
+        # parse per decision node, not per branch edge).
+        self._conditions_by_node: dict[NodeId, dict[str, str]] = {}
 
     def render(self) -> RFGraph:
         return RFGraph(
@@ -210,9 +220,25 @@ class _ReactFlowRenderer:
                     output_field=output_field,
                     input_name=input_name,
                     shadowed=self.graph.shadowed(edge),
+                    condition=self._branch_condition(edge.source, edge.kind, edge.label),
                 )
             )
         return resolved
+
+    def _branch_condition(self, source: NodeId, kind: EdgeKind, label: str | None) -> str | None:
+        """The source-code condition selecting this branch outcome, or None.
+
+        Keyed off the edge's ORIGINAL source (a re-anchored branch edge still
+        describes the same decision). Only decision code nodes are analyzed; the
+        kind gate is defensive (multi-way routing is code-only today).
+        """
+        if kind != EdgeKind.BRANCH or label is None:
+            return None
+        if source not in self._conditions_by_node:
+            node = self.nodes_by_id.get(source)
+            code = node.params.get("code") if node is not None and node.kind == "code" else None
+            self._conditions_by_node[source] = _branch_conditions(code) if isinstance(code, str) else {}
+        return self._conditions_by_node[source].get(label)
 
     def _group(self, container: Container) -> RFGroup:
         return RFGroup(
@@ -309,3 +335,191 @@ def _string_leaves(value: Any) -> list[str]:
     if isinstance(value, dict):
         return [leaf for leaf in value.values() if isinstance(leaf, str)]
     return []
+
+
+# ── Branch-condition extraction (fail-closed) ─────────────────────────────────
+#
+# A decision code node selects its outcome by assigning `next` — the condition
+# that picks each outcome exists only inside that Python code (unlike loops,
+# whose condition is declared on LoopSpec). We recover it by AST analysis,
+# FAIL-CLOSED: anything not provably one of the supported shapes yields {} and
+# the edge ships condition=None — absent labels beat wrong labels.
+#
+# Supported shapes (validated against the full example corpus, 2026-06-10):
+#   - one if/elif/else chain whose arms assign `next` a string literal
+#   - an unconditional default before the chain (the uncovered outcome → "else")
+#   - ternaries, normalized into chain arms:
+#       top level / else slot:  next = "a" if t else "b"  →  if t: a / else: b
+#       inside an arm (kw test): → "kw test and t" / "kw test and <negated t>"
+#   - the same outcome in ADJACENT plain arms, joined: "if t1 or t2" (adjacency
+#     keeps the elif guard semantics exact; non-adjacent duplicates bail)
+
+_COMPARE_FLIPS: dict[type[ast.cmpop], str] = {
+    ast.Eq: "!=",
+    ast.NotEq: "==",
+    ast.Lt: ">=",
+    ast.Gt: "<=",
+    ast.LtE: ">",
+    ast.GtE: "<",
+}
+
+
+class _ConditionBail(Exception):
+    """The code is not provably one of the supported shapes — emit no conditions."""
+
+
+def _assigned_next(stmt: ast.AST) -> ast.expr | None:
+    """The value expression if ``stmt`` assigns the name ``next``, else None."""
+    targets: list[ast.expr]
+    value: ast.expr | None
+    if isinstance(stmt, ast.Assign):
+        targets, value = stmt.targets, stmt.value
+    elif isinstance(stmt, ast.AnnAssign):
+        targets, value = [stmt.target], stmt.value
+    else:
+        return None
+    if value is not None and any(isinstance(t, ast.Name) and t.id == "next" for t in targets):
+        return value
+    return None
+
+
+def _str_const(expr: ast.expr) -> str | None:
+    return expr.value if isinstance(expr, ast.Constant) and isinstance(expr.value, str) else None
+
+
+def _negated(test: ast.expr) -> str:
+    """Readable negation: flip a single simple comparison, else ``not (...)``."""
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and type(test.ops[0]) in _COMPARE_FLIPS:
+        op = _COMPARE_FLIPS[type(test.ops[0])]
+        return f"{ast.unparse(test.left)} {op} {ast.unparse(test.comparators[0])}"
+    return f"not ({ast.unparse(test)})"
+
+
+# One normalized chain arm: (test_source | None for the else arm, outcome).
+_Arm = tuple[str | None, str]
+
+
+def _expand_arm(value: ast.expr, arm_test: str | None) -> list[_Arm]:
+    """Normalize one ``next = ...`` value into arms, composed with the arm's test."""
+    if isinstance(value, ast.IfExp):
+        body, orelse = _str_const(value.body), _str_const(value.orelse)
+        if body is None or orelse is None or body == orelse:
+            raise _ConditionBail("non-literal or degenerate ternary")
+        test = ast.unparse(value.test)
+        if arm_test is None:  # else slot (or top level): the ternary EXTENDS the chain
+            return [(test, body), (None, orelse)]
+        return [(f"{arm_test} and {test}", body), (f"{arm_test} and {_negated(value.test)}", orelse)]
+    literal = _str_const(value)
+    if literal is None:
+        raise _ConditionBail("non-literal next")
+    return [(arm_test, literal)]
+
+
+def _sole_assignment(body: list[ast.stmt]) -> ast.expr:
+    """The arm's single top-level ``next`` assignment; bail on 0, >1, or nested."""
+    top = [v for s in body for v in [_assigned_next(s)] if v is not None]
+    deep = [n for s in body for n in ast.walk(s) if _assigned_next(n) is not None]
+    if len(top) != 1 or len(deep) != 1:
+        raise _ConditionBail("arm needs exactly one top-level next assignment")
+    return top[0]
+
+
+def _branch_conditions(code: str) -> dict[str, str]:
+    """Outcome -> condition text (e.g. ``"if len(items) > 5"``); {} when unsafe."""
+    try:
+        return _extract_conditions(code)
+    except (_ConditionBail, SyntaxError):
+        return {}
+
+
+def _extract_conditions(code: str) -> dict[str, str]:
+    tree = ast.parse(code)
+    total = sum(1 for n in ast.walk(tree) if _assigned_next(n) is not None)
+    if total == 0:
+        raise _ConditionBail("no next assignment")
+    arms, default, modeled = _collect_arms(tree)
+    if modeled != total:
+        raise _ConditionBail("unaccounted next assignments")
+    return _render_conditions(arms, default)
+
+
+def _collect_arms(tree: ast.Module) -> tuple[list[_Arm], str | None, int]:
+    """Walk the module body into normalized chain arms + an optional default.
+
+    Returns ``(arms, default, modeled)`` where ``modeled`` counts the
+    next-assignments structurally understood — the caller checks it against the
+    whole-tree total so an assignment hiding anywhere unexpected bails.
+    """
+    arms: list[_Arm] = []
+    default: str | None = None
+    modeled = 0
+    for stmt in tree.body:
+        value = _assigned_next(stmt)
+        if value is not None:
+            if arms or default is not None:
+                raise _ConditionBail("second default / assignment after the chain")
+            modeled += 1
+            if isinstance(value, ast.IfExp):
+                arms.extend(_expand_arm(value, None))  # a top-level ternary IS the chain
+            else:
+                literal = _str_const(value)
+                if literal is None:
+                    raise _ConditionBail("non-literal next")
+                default = literal
+        elif isinstance(stmt, ast.If) and any(_assigned_next(n) is not None for n in ast.walk(stmt)):
+            if arms:
+                raise _ConditionBail("two chains")
+            chain_arms, chain_count = _walk_chain(stmt)
+            arms.extend(chain_arms)
+            modeled += chain_count
+        elif any(_assigned_next(n) is not None for n in ast.walk(stmt)):
+            raise _ConditionBail("next assigned inside another block")
+    return arms, default, modeled
+
+
+def _walk_chain(stmt: ast.If) -> tuple[list[_Arm], int]:
+    """Normalize one if/elif/else chain into arms; count its next-assignments."""
+    arms: list[_Arm] = []
+    count = 0
+    cursor: ast.stmt | None = stmt
+    while isinstance(cursor, ast.If):
+        arms.extend(_expand_arm(_sole_assignment(cursor.body), ast.unparse(cursor.test)))
+        count += 1
+        if len(cursor.orelse) == 1 and isinstance(cursor.orelse[0], ast.If):
+            cursor = cursor.orelse[0]  # elif
+        elif cursor.orelse:
+            arms.extend(_expand_arm(_sole_assignment(cursor.orelse), None))
+            count += 1
+            cursor = None
+        else:
+            cursor = None
+    return arms, count
+
+
+def _render_conditions(arms: list[_Arm], default: str | None) -> dict[str, str]:
+    by_outcome: dict[str, list[int]] = {}
+    for i, (_, outcome) in enumerate(arms):
+        by_outcome.setdefault(outcome, []).append(i)
+
+    mapping: dict[str, str] = {}
+    for outcome, positions in by_outcome.items():
+        if len(positions) == 1:
+            test = arms[positions[0]][0]
+            keyword = "if" if positions[0] == 0 else "elif"
+            mapping[outcome] = "else" if test is None else f"{keyword} {test}"
+            continue
+        # Duplicate outcome: join only ADJACENT plain arms (no else / and-composed),
+        # where the elif guard semantics make a plain `or` join exact.
+        if positions != list(range(positions[0], positions[0] + len(positions))):
+            raise _ConditionBail("duplicate outcome in non-adjacent arms")
+        tests = [arms[i][0] for i in positions]
+        if any(t is None or " and " in t for t in tests):
+            raise _ConditionBail("duplicate outcome with else/composed arm")
+        keyword = "if" if positions[0] == 0 else "elif"
+        mapping[outcome] = f"{keyword} " + " or ".join(t for t in tests if t is not None)
+
+    # The default survives only when no else arm always overrides it; with an
+    # else arm the default is dead code — omit it, don't guess.
+    if default is not None and default not in mapping and all(test is not None for test, _ in arms):
+        mapping[default] = "else"
+    return mapping

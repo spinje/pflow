@@ -76,6 +76,7 @@ const GRAPH: RFGraph = {
       output_field: "stdout",
       input_name: "command",
       shadowed: false,
+      condition: null,
     },
   ],
   groups: [],

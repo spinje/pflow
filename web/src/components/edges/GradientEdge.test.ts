@@ -6,7 +6,8 @@
 import { Position } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 
-import { gradientStops, railCenter } from "./GradientEdge";
+import { ICON_COL_X } from "../../graph/metrics";
+import { conditionAnchor, gradientStops, labelAnchor, railCenter } from "./GradientEdge";
 
 describe("gradientStops", () => {
   it("sequential/branch blend source→target across the whole edge", () => {
@@ -66,5 +67,60 @@ describe("railCenter — LR branch lanes fan out; TD keeps the shared trunk rail
   it("LR: the staggered rail still clamps to the halfway point on short hops", () => {
     const close = railCenter({ ...base, targetX: 160, sourcePosition: Position.Right, lane: 5 });
     expect(close.centerX).toBe(100 + (160 - 100) / 2);
+  });
+});
+
+describe("labelAnchor — the pill sits at the target's entry, just off the node", () => {
+  const path = { pathX: 250, pathY: 200 };
+
+  it("TD (top entry): left edge just right of the node's left border, fully above it", () => {
+    const a = labelAnchor({ targetX: 300, targetY: 400, targetPosition: Position.Top, ...path });
+    // handle sits at the icon column → node left edge, +4px user-tuned nudge
+    expect(a.x).toBe(300 - ICON_COL_X + 4);
+    expect(a.y).toBeLessThan(400); // a gap above the node, never on it
+    expect(a.selfTranslate).toBe("translate(0, -100%)"); // left+bottom edges at the anchor
+  });
+
+  it("LR (left entry): sits fully left of the node border, centered on the line", () => {
+    const a = labelAnchor({ targetX: 300, targetY: 400, targetPosition: Position.Left, ...path });
+    expect(a.x).toBeLessThan(300);
+    expect(a.y).toBe(400);
+    expect(a.selfTranslate).toBe("translate(-100%, -50%)");
+  });
+
+  it("unusual entry side falls back to the path center", () => {
+    const a = labelAnchor({ targetX: 300, targetY: 400, targetPosition: Position.Bottom, ...path });
+    expect(a).toEqual({ x: 250, y: 200, selfTranslate: "translate(-50%, -50%)" });
+  });
+});
+
+describe("conditionAnchor — the condition pill sits on a LONE segment, never the rail crossing", () => {
+  const path = { pathX: 250, pathY: 140 };
+
+  it("TD straight child (no rail run of its own): centers on the final descent", () => {
+    // source bottom y=100, target top y=200 → rail at 100+40=140 (2×radius=40).
+    // The path midpoint (140) IS the rail crossing; the pill must sit below it.
+    const a = conditionAnchor({ sourceX: 300, sourceY: 100, targetX: 300, targetY: 200, targetPosition: Position.Top, ...path });
+    expect(a.x).toBe(300); // on the descent into the target
+    expect(a.y).toBeGreaterThan(140); // below the shared fork rail
+    expect(a.y).toBeLessThan(200 - 16); // above the outcome label zone
+  });
+
+  it("TD side branch (real horizontal run): keeps the midpoint — the run is its own lone segment", () => {
+    const a = conditionAnchor({ sourceX: 100, sourceY: 100, targetX: 400, targetY: 200, targetPosition: Position.Top, ...path });
+    expect(a).toEqual({ x: 250, y: 140 }); // mid-run, user-preferred over the cramped descent
+  });
+
+  it("TD short hop: rail clamps to halfway, pill still strictly between rail and entry", () => {
+    const a = conditionAnchor({ sourceX: 300, sourceY: 100, targetX: 300, targetY: 160, targetPosition: Position.Top, ...path });
+    expect(a.y).toBeGreaterThan(130); // rail clamped to (160-100)/2 → 130
+    expect(a.y).toBeLessThan(160);
+  });
+
+  it("LR / backward edges keep the path midpoint", () => {
+    const lr = conditionAnchor({ sourceX: 100, sourceY: 100, targetX: 300, targetY: 100, targetPosition: Position.Left, ...path });
+    expect(lr).toEqual({ x: 250, y: 140 });
+    const backward = conditionAnchor({ sourceX: 300, sourceY: 300, targetX: 300, targetY: 200, targetPosition: Position.Top, ...path });
+    expect(backward).toEqual({ x: 250, y: 140 });
   });
 });

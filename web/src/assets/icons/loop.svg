@@ -1,0 +1,10 @@
+<!-- Loop glyph: circular arrow. Replaces the sub-workflow icon on a LOOPED
+     sub-workflow card (user decision 2026-06-10): the category line still says
+     SUB-WORKFLOW, so the tile is free to telegraph the behavior. Loop amber:
+     keep equal to the CSS loop var #f0b86c (the LoopEdge / loop-back U color)
+     so icon and arc read as one feature. NOTE: no double hyphen in this comment,
+     it is illegal XML and breaks the whole file. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <path d="M16 5 a11 11 0 1 0 11 11" fill="none" stroke="#f0b86c" stroke-width="3" stroke-linecap="round"/>
+  <path d="M22.5 5.5 L16.5 2.2 L16.8 9.0 Z" fill="#f0b86c"/>
+</svg>

@@ -252,7 +252,13 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             <MiniMap pannable zoomable nodeColor={minimapNodeColor} nodeStrokeColor="transparent" nodeBorderRadius={3} />
           </ReactFlow>
           </div>
-          {selectedNode && <ReadPanel node={selectedNode} onClose={() => setSelectedId(null)} />}
+          {selectedNode && (
+            <ReadPanel
+              node={selectedNode}
+              branches={graph?.edges.filter((e) => e.kind === "branch" && e.source === selectedNode.id) ?? []}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
         </div>
       </div>
     </InteractionProvider>

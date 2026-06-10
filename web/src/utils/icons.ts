@@ -11,13 +11,14 @@ import anthropic from "../assets/icons/anthropic.svg";
 import bash from "../assets/icons/bash.svg";
 import claude from "../assets/icons/claude.svg";
 import gemini from "../assets/icons/gemini.svg";
-import markdown from "../assets/icons/markdown.svg";
 import mcp from "../assets/icons/mcp.svg";
 import ollama from "../assets/icons/ollama.svg";
 import openai from "../assets/icons/openai.svg";
 import condition from "../assets/icons/condition.svg";
+import loop from "../assets/icons/loop.svg";
 import placeholder from "../assets/icons/placeholder.svg";
 import python from "../assets/icons/python.svg";
+import subworkflow from "../assets/icons/subworkflow.svg";
 import { isCondition } from "./format";
 import type { RFNode } from "../types";
 
@@ -38,16 +39,20 @@ const KIND_ICON: Record<string, string> = {
   python,
   code: python,
   "claude-code": claude,
-  workflow: markdown,
+  workflow: subworkflow,
   http: placeholder,
   file: placeholder,
 };
 
 /** The icon URL for a node. Role precedes kind: a decision code node presents as
- *  CONDITION (fork glyph). For `llm`, match the provider in its `model` param
- *  (`provider/model`); fall back to a sparkle for dynamic/missing/unknown models. */
+ *  CONDITION (fork glyph); a LOOPED sub-workflow presents the loop glyph (its
+ *  category line still says SUB-WORKFLOW, so the tile telegraphs behavior at no
+ *  identity cost — leaf kinds keep their type icon, the loop U alone marks them).
+ *  For `llm`, match the provider in its `model` param (`provider/model`); fall
+ *  back to a sparkle for dynamic/missing/unknown models. */
 export function iconFor(node: RFNode): string {
   if (isCondition(node)) return condition;
+  if (node.kind === "workflow" && node.loop) return loop;
   if (node.kind === "llm") {
     const model = node.params.find((p) => p.name === "model")?.value;
     if (typeof model === "string") {
@@ -57,4 +62,11 @@ export function iconFor(node: RFNode): string {
     return aiLlm;
   }
   return KIND_ICON[node.kind] ?? placeholder;
+}
+
+/** Container-card icon (collapsed group / region header): the host node's icon —
+ *  so a batch-of-shell shows the shell glyph, a looped sub-workflow the loop glyph —
+ *  falling back to the sub-workflow frame when the group has no host node. */
+export function groupIconFor(hostNode: RFNode | null): string {
+  return hostNode ? iconFor(hostNode) : subworkflow;
 }

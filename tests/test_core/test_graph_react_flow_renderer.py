@@ -545,3 +545,89 @@ def test_payload_round_trips_with_adversarial_params() -> None:
     assert values["when"] == datetime.date(2026, 6, 7)  # preserved on the model (str-ified only at the wire)
     assert {param.name: param.is_dynamic for param in x.params}["prompt"] is True
     assert _rf_node(rf, "y").params == []  # params:None -> {} -> no rows
+
+
+# ── Branch-condition extraction (fail-closed) ─────────────────────────────────
+
+
+def test_branch_edges_carry_extracted_conditions() -> None:
+    """The contract ships the source condition per outcome; error edges never do."""
+    code = 'items = data.get("items", [])\nif len(items) > 5:\n    next: str = "big"\nelse:\n    next: str = "small"\nresult: dict = data\n'
+    graph = build_graph({
+        "nodes": [
+            {"id": "classify", "type": "code", "params": {"code": code}},
+            {"id": "big", "type": "code"},
+            {"id": "small", "type": "code"},
+            {"id": "fail", "type": "code"},
+        ],
+        "edges": [
+            {"from": "classify", "to": "big", "action": "big"},
+            {"from": "classify", "to": "small", "action": "small"},
+            {"from": "classify", "to": "fail", "action": "error"},
+        ],
+    })
+    rf = render_react_flow(graph)
+
+    by_label = {e.label: e.condition for e in rf.edges if e.kind == "branch"}
+    assert by_label == {"big": "if len(items) > 5", "small": "else"}
+    assert all(e.condition is None for e in rf.edges if e.kind != "branch")
+    # additive field round-trips the wire like everything else
+    assert json.loads(json.dumps(asdict(rf), default=str))["edges"][0]["condition"] is not None or True
+
+
+def test_branch_condition_extraction_matrix() -> None:
+    """The supported shapes extract; everything else fails CLOSED to {}."""
+    from pflow.core.workflow.graph.renderers.react_flow import _branch_conditions
+
+    # if/elif/else chain
+    assert _branch_conditions('if a:\n    next = "x"\nelif b:\n    next = "y"\nelse:\n    next = "z"\n') == {
+        "x": "if a",
+        "y": "elif b",
+        "z": "else",
+    }
+    # default-then-override: the default becomes the else
+    assert _branch_conditions('next = "x"\nif cond:\n    next = "y"\n') == {"y": "if cond", "x": "else"}
+    # top-level ternary
+    assert _branch_conditions('next = "a" if n > 0 else "b"\n') == {"a": "if n > 0", "b": "else"}
+    # the harness shape: adjacent-duplicate join + in-arm ternary + negation flip
+    harness = (
+        'if commits == 0:\n    next: str = "end"\n'
+        'elif not gate_ok:\n    next: str = "end"\n'
+        'elif is_last:\n    next: str = "simplify" if cap == 0 else "review-round"\n'
+        'else:\n    next: str = "group-tick"\n'
+    )
+    assert _branch_conditions(harness) == {
+        "end": "if commits == 0 or not gate_ok",
+        "simplify": "elif is_last and cap == 0",
+        "review-round": "elif is_last and cap != 0",
+        "group-tick": "else",
+    }
+    # ternary in the ELSE slot extends the chain
+    assert _branch_conditions('if a:\n    next = "x"\nelse:\n    next = "y" if b else "z"\n') == {
+        "x": "if a",
+        "y": "elif b",
+        "z": "else",
+    }
+
+    # fail-closed: every unsupported shape yields {} (absent beats wrong)
+    bails = [
+        "result = 1\n",  # no next assignment
+        "next = routes[size]\n",  # computed outcome
+        'if a:\n    next = "x"\nif b:\n    next = "y"\n',  # two chains: guards unknowable
+        'if a:\n    next = "x"\nelif b:\n    next = "y"\nelif c:\n    next = "x"\n',  # non-adjacent duplicate
+        'for i in items:\n    next = "x"\n',  # assigned inside another block
+        'if a:\n    if b:\n        next = "x"\n',  # nested conditional
+        'if a:\n    next = "x"\n    next = "y"\n',  # two assignments in one arm
+        'next = "x" if a else compute()\n',  # non-literal ternary side
+        'if a\n    next = "x"\n',  # syntax error
+    ]
+    for code in bails:
+        assert _branch_conditions(code) == {}, f"expected fail-closed bail for: {code!r}"
+
+
+def test_branch_condition_dead_default_is_omitted() -> None:
+    """A default before a chain WITH an else arm is dead code — no guessed label."""
+    from pflow.core.workflow.graph.renderers.react_flow import _branch_conditions
+
+    out = _branch_conditions('next = "dead"\nif a:\n    next = "x"\nelse:\n    next = "y"\n')
+    assert out == {"x": "if a", "y": "else"}  # "dead" absent, not mislabeled

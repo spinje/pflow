@@ -24,6 +24,10 @@
   (progressive disclosure). Advanced shows them all.
 - **Forks are explicit:** a decision node shows one **labeled** source handle per outcome
   on its border (n8n-Switch style), each line to its target — in **both** densities.
+- **Branch conditions are extracted FAIL-CLOSED, never guessed.** `RFEdge.condition`
+  ("if len(items) > 5" / "else") comes from AST analysis of the decision node's code
+  (`_branch_conditions`, react_flow.py); unsupported shapes ship `None` and the UI
+  shows nothing — an absent label beats a wrong one.
 - **Two density modes from one model:** advanced (detailed cards + ports + params + wiring)
   and beautiful (compact, type-colored). Same data, different detail — not two apps.
 - **Packaging:** base `pip install pflow` gains no bundle; `pflow[ui]` serves it offline;
@@ -70,6 +74,16 @@
 - Color-by-type nodes + source-colored edges; roomy spacing.
 - Consolidated **Inputs/Outputs ports nodes** (rows, dual handles, row-level focus).
 - **Fork handles** (labeled, both densities).
+- **Branch labels at the target entry (2026-06-10):** in TD the outcome label sits on the
+  edge just above its target's left side (bare text, shadow halo, +4px nudge); error pills
+  stay mid-edge. Fork targets LAY OUT in the code's chain order (`orderForkSiblings`,
+  layout.ts — first `if` leftmost; Steps-declaration order is irrelevant to a fork).
+  *(Ordinal number prefixes were tried and removed same day.)*
+- **Branch CONDITIONS on the edge (2026-06-10):** `RFEdge.condition` (AST-extracted,
+  fail-closed) renders as an orange-tinted white-text pill — on the edge's lone rail run,
+  or the final descent for the straight child (`conditionAnchor`, never on the rail
+  crossing) — advanced always, beautiful while the condition node is focus-expanded; the
+  read panel shows the full outcome → condition table.
 - IO hidden-data-flow revealed on click (progressive disclosure).
 - **Click-to-expand in beautiful (2026-06-09):** focusing a node expands it + its data-flow
   endpoints to the full advanced body in place; revealed lines land **row-to-row** (output row →
@@ -143,12 +157,53 @@
   fading a hint — `FADE_TO = 0.45` — toward the far end; replaces the rejected lane-tints and
   node-color gradients, judged confusing). CSS strokes NO edge kind — components own color; a
   regression to a built-in type renders invisibly (test-pinned).
+- **Sub-workflow/batch container redesign** — ✅ DONE (2026-06-10, user-picked via shoot-lab):
+  ONE object in two states. COLLAPSED = a real node card (leaf anatomy via `.node.compact`
+  classes: tile + frame + icon, kind category, name, count pill `▸ N nodes` = recursive STEP
+  count, not `members.length`); EXPANDED = a region whose header is the card's identity shrunk
+  (mini-tile + icon + kind category + title + right-aligned count pill), kind-tinted border.
+  Sub-workflow kind color = **magenta `#e26ad8`** (clear of mcp salmon-pink / claude-code violet);
+  batch keeps `--batch` purple. New `subworkflow.svg` (frame + mini-graph) + `loop.svg` glyphs; a
+  **LOOPED sub-workflow swaps its tile icon to the amber loop glyph** (category still says
+  SUB-WORKFLOW — behavior telegraphed at zero identity cost; leaf kinds never swap). Collapsed
+  cards join the TD machinery: ELK icon-column ports (straight trunks — they jogged before) +
+  connector flares (incidence computed over FLOW edges post-re-anchoring; internal edges don't
+  count) + focus-dimming like a leaf (expanded regions still never dim). **Batch cards get a
+  stacked DECK** (two kind-tinted layers peeking below; also on `.batched` leaves = unexpanded
+  dynamic batches). React Flow's default `node-group` wrapper styling is neutralized in CSS.
+  **Header parity across the fold (follow-up, same day, user requirement):** opening a container
+  changes NOTHING in its header — both states render the SAME `.node-header` markup (full-size
+  tile, leaf typography/positions, left-aligned — RF's group wrapper centers text, neutralized);
+  `groupHeaderH == nodeHeaderH`; the count pill is ABSOLUTE on the top-right border (▸/▾) in both
+  states; the expanded region's handles stay on the icon column with the TOP flare, so the trunk
+  flows into the region's tile like any node (no bottom flare — the tile is at the top; no ELK
+  port — a compound port crashes elkjs under INCLUDE_CHILDREN, test-pinned).
+  **Batch is a MODIFIER, not a box to travel through** (follow-up, same day): a batch group
+  with NO direct members is a decorator SHELL and never renders — a batched leaf is a normal
+  selectable node (deck + ×N badge; the shell was the "▸ 0 nodes" card), and a batched
+  sub-workflow IS a sub-workflow WITH batch (the workflow group reparents past the shell,
+  takes edges/title/deck, and its collapsed card opens the sub-workflow body in one click).
+  Literal batches (real item copies) keep their container.
+- **Loop arcs → orthogonal U** — ✅ DONE (2026-06-10): `LoopEdge` is `getSmoothStepPath` with a
+  wrap rail from the post-layout `assignLoopRails` pass (portSides.ts; TD → rail right of the
+  box, LR → above; the rail is LOAD-BEARING — a self-loop's smoothstep midpoint runs straight
+  back through the node). Full `--edge-stroke` weight; the U carries the app's ONE arrowhead
+  (own `<polygon>`, CSS `--loop` fill — RF markers can't take CSS vars) at the re-entry point —
+  a loop is the only edge whose direction layout doesn't imply.
+- **The ↻ LOOP-RULE ROWS** — ✅ DONE (2026-06-10, user-designed): a looped LEAF whose body rows
+  render (advanced / focus-expanded) grows amber loop-rule rows — its authored loop config
+  presented as rows, deliberately NOT a fake data param (it parameterizes the loop mechanism):
+  the CONDITION row (the U's arrow lands on it — "iteration re-enters under this rule") + the
+  CAP (`≤ ${max_…}`) on its OWN row (one row truncated both operands; user-caught). The floating
+  label drops (the rows hold it, like data lines on row-landing). Beautiful unexpanded = a BARE
+  quiet U into NODE_IN, no label — but the card's category line carries an amber **↻ mark**
+  (`CLAUDE CODE ↻`) so a looped leaf telegraphs in any state (leaves keep their kind icon; only
+  sub-workflows swap to the loop glyph). GROUP anchors (no rows) keep the floating pill in
+  advanced only (bottom run TD / top rail LR; opaque bg; never zIndex-elevate the loop edge —
+  it would paint over its own label). The read panel always carries the full spec.
 
 ## Wanted / planned (NOT yet built)
 
-- **Loop arcs → orthogonal U** (agreed next step): `LoopEdge`'s amber bezier arc should speak the
-  same rounded-orthogonal language (the Tines backward-edge U — the harness's validate→decide
-  cycle already renders this way as a regular control edge).
 - **LR merge alignment residual:** the merge target sits ~8px off the straight row in LR (no LR
   ports; side-centered handles *mostly* match ELK's center anchors). Add LR ports if it bothers.
 - **Smart edge-router** — pathfind edges around nodes, handle-to-handle, so **skip edges**

@@ -12,7 +12,7 @@ import { type CSSProperties, memo, useEffect, useRef } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
-import { NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
+import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
 import { ICON_COL_X, METRICS } from "../../graph/metrics";
 import { categoryLabel, collapseWhitespace, nodeColor, parseTemplate, previewValue, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
@@ -93,7 +93,9 @@ function ParamValue({ param }: { param: RFParam }): JSX.Element {
 // the edge ends there, hidden UNDER this opaque flare, so it appears to flow into the tile.
 // Decoupling the handle from the flare is what closed the gap (a handle nested in this
 // transformed, outside-the-box element was mis-measured by React Flow). TD/beautiful only.
-function Connector({ side }: { side: "top" | "bottom" }): JSX.Element {
+// Exported for GroupNode: a COLLAPSED group renders the same card anatomy (tile +
+// flares), so edges flow into its icon exactly like a leaf's.
+export function Connector({ side }: { side: "top" | "bottom" }): JSX.Element {
   const anchor: CSSProperties = side === "top" ? { bottom: CONN_ANCHOR } : { top: CONN_ANCHOR };
   return (
     <div
@@ -163,8 +165,9 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (focused) classes.push("focused");
   if (node.is_terminal) classes.push("terminal");
   if (node.unexpanded) classes.push("unexpanded");
+  if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
   const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
-  const hasBody = showBody && (node.params.length > 0 || outputFields.length > 0);
+  const hasBody = showBody && (node.params.length > 0 || outputFields.length > 0 || node.loop != null);
 
   return (
     <div ref={rootRef} className={classes.join(" ")} style={kindStyle}>
@@ -185,7 +188,19 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
           {/* Type line + description, in BOTH densities. The description (purpose, or
               node_id when absent) wraps to ≤2 lines; node_id (the ${ref} key) is on
               the tooltip + in the read panel. */}
-          <span className="node-category">{categoryLabel(node)}</span>
+          <span className="node-category">
+            {categoryLabel(node)}
+            {/* Amber ↻ behavior mark for a looped leaf (user ask 2026-06-10):
+                compact cards otherwise say nothing about looping — the U alone
+                made the user ask "is this a loop?". Leaves keep their kind icon
+                (only sub-workflows swap to the loop glyph), so the mark rides
+                the meta line: identity in kind color, behavior in loop amber. */}
+            {node.loop && (
+              <span className="loop-mark" title="loops">
+                ↻
+              </span>
+            )}
+          </span>
           <span className="node-name" title={node.ref.node_id}>
             {node.purpose || node.ref.node_id}
           </span>
@@ -219,6 +234,28 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
               <Handle id={outputHandle(field)} type="source" position={Position.Right} className="handle out-handle" />
             </div>
           ))}
+          {/* The ↻ loop-rule rows — the node's authored loop config as rows, styled
+              as a LOOP RULE (amber), not a data param (it parameterizes the loop
+              mechanism, not the node's inputs). The CONDITION row carries the
+              loop-back U's landing handle ("iteration re-enters under this rule" —
+              the rail already runs on the right); the CAP gets its own row below
+              (one row truncated both operands into mush — user-caught). leafSize
+              counts both. */}
+          {node.loop && (
+            <div className="param-row loop-row">
+              <span className="loop-rule" title={`${node.loop.polarity} ${node.loop.condition}`}>
+                ↻ {node.loop.polarity} {truncate(collapseWhitespace(node.loop.condition), 34)}
+              </span>
+              <Handle id={LOOP_ROW} type="target" position={Position.Right} className="handle loop-row-handle" />
+            </div>
+          )}
+          {node.loop && node.loop.cap != null && (
+            <div className="param-row loop-row">
+              <span className="loop-rule" title={`at most ${node.loop.cap} iterations`}>
+                ≤ {truncate(String(node.loop.cap), 34)}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

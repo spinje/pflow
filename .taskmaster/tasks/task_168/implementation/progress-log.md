@@ -527,9 +527,6 @@ into `useWorkflowGraph` — GraphView is now pure presentation + interaction; th
 where C1/empty-status live. types.ts stays a single root file (folder-with-one-file there is just indirection on the
 most-imported module).
 
-**Staging note (for whoever commits):** the entire `web/` tree is currently untracked — it must be `git add`ed *with
-`web/package-lock.json`* (npm ci in CI needs the lock); `node_modules`/`dist`/`src/pflow/ui/static` stay gitignored.
-
 ### Visual iteration: loop arcs + density-governed edges (2026-06-08, user-driven)
 
 Two design changes after a user review of the running UI. Both are **pure frontend visual policy — zero contract change.** web **30 tests** (+6); tsc + build clean.
@@ -544,11 +541,11 @@ After the user reviewed the running UI on the harness (everything cramped on one
 
 - **Spacing doubled** (`layout.ts`): `nodeNodeBetweenLayers` 64→130, `nodeNode` 36→64, + `NETWORK_SIMPLEX` placement. A cramped pipeline reads as a smear; this gives it air.
 - **Color nodes by type** (`utils/format.kindColor` + a `--kind` CSS var on each node): the node's identity color (shell=emerald, http=sky, llm/claude=violet, code=amber, …) on the left border + glyph. **Control edges take their source node's type color** (inline `style.stroke` + matching arrowhead) — the stepping stone to the deferred source→target gradient. error/end/data/loop keep semantic colors. This is what kills "blends together."
-- **IO nodes → compact port pills** (new `port` node type + `PortNode`): the single biggest declutter — the harness's **53 IO nodes** (43 input + 10 output) were full-size cards bloating every sub-workflow box; now small pills. A `flow.ts` handle guard routes every edge to/from an IO node to node-level handles (port pills have no per-field handles, so nothing floats).
+- **IO nodes → compact port pills** — the single biggest declutter: the harness's **53 IO nodes** (43 input + 10 output) were full-size cards bloating every sub-workflow box. *(Superseded same day: iteration 4 replaced the pills wholesale with the consolidated ports node — mechanism there.)*
 - **Forks = labeled border handles** (n8n-Switch style; `BranchPorts`, `branchHandle`): a decision node's branch outcomes (`fix-tests`/`push`/…) render as one labeled source handle per outcome on the right border, each line leaving its own named handle — clear which value goes where. **Shown in BOTH densities** (a fork is structure, not advanced data detail), so `CompactNode` became a small card (header + branch rows) instead of a pill. Branch labels no longer ride the edge mid-line. Sized into `leafSize` (branch rows in both densities).
 - **Smooth edges**: all edges now bezier (`type: "default"`) — the curvy look.
 
-Pinned by tests: branch edges use `branchHandle(label)` and the node carries `branchLabels` (both densities); IO nodes emit type `port`; a control edge is stroked with its source node's `kindColor`. **Deferred (next visual step):** source→target **gradient** edges (per-edge SVG `<linearGradient>` + custom edge — not a React Flow built-in; the user opted to ship this batch first). *(Superseded below: the `port`-pill rendering was replaced by the consolidated ports node.)*
+Pinned by tests: branch edges use `branchHandle(label)` and the node carries `branchLabels` (both densities); a control edge is stroked with its source node's `kindColor`. **Deferred (next visual step):** source→target **gradient** edges (per-edge SVG `<linearGradient>` + custom edge — not a React Flow built-in; the user opted to ship this batch first).
 
 ### Visual iteration 4: IO ports → one consolidated "table" node (2026-06-08, user-driven, planned)
 
@@ -604,7 +601,7 @@ User clicked `fetch-data` in beautiful and asked where `stdout` went. Cause: out
 
 **Not re-run (stated, not skipped):** the browser E2E (plan steps 3–5: `pflow ui` renders the harness + six patterns) and `make ui-build` were verified by the Phase-4 agent (the 131 KB harness render, the empty-wheel `artifacts` fix). Phase 5 changed zero runtime/frontend code, so those outcomes can't have regressed; re-driving a browser here adds no signal — the one genuinely un-re-verified item is the *visual* "no information loss" bar, which rests on the user's eyes (the build-side contract logic is locked by tests).
 
-**Staging correction:** earlier Phase-4 log entries flagged `web/` as untracked-needs-`git add` — that was true when written but is now **stale**: `web/` (38 files incl. `package-lock.json`) was committed in `38fd6fe0` ("phase 4 implemented"). The only uncommitted Phase-5 work is the 2 CLAUDE.md edits + the new purity test + this log; a normal `git add` of the new test is all that's needed.
+**Staging:** `web/` (38 files incl. `package-lock.json` — npm ci needs the lock; `node_modules`/`dist`/`src/pflow/ui/static` gitignored) was committed in `38fd6fe0` ("phase 4 implemented"); the only uncommitted Phase-5 work was the 2 CLAUDE.md edits + the purity test + this log.
 
 ### Adversarial verification pass — whole feature, in a REAL browser (2026-06-08) ✅
 
@@ -708,9 +705,10 @@ invariant) are green.
 4. **The tile dominates the header height — so beautiful nodes are a FIXED 68px.** The 56px icon
    tile is taller than any 2-line description, so adding height for a 2nd line (the old `DESC_LINE`)
    made the box taller than the content → the tile drifted off-center → **unequal connector stubs**.
-   Removed `DESC_LINE`; `leafSize` returns `HEADER_HEIGHT` (68) for compact. The connector stubs
-   ANCHOR to the vertically-centered tile via `calc(50% ± Npx)` — they DEPEND on the tile being
-   centered. If you ever let the header grow, re-derive the stub `top`.
+   Removed `DESC_LINE`; `leafSize` returns `HEADER_HEIGHT` (68) for compact. *(The second half of
+   this learning is SUPERSEDED, 2026-06-09: the flare now anchors to the TILE itself — a child of
+   `.node-tile` — so it's height-independent and no stub `top` re-derivation exists. The
+   fixed-68px compact height still holds.)*
 5. **Building blind is the core difficulty.** The geometry repeatedly *calc'd correctly on paper but
    rendered wrong*. The visual layer needs a **real browser with devtools** — see the OPEN PROBLEM.
 6. **Vite `.svg` imports need `web/src/vite-env.d.ts`** (`/// <reference types="vite/client" />`)
@@ -801,7 +799,7 @@ outside-the-box `.node-connector` div makes React Flow draw the edge endpoint ~5
 handle renders. The structural fix (handle on the node border; flare as pure opaque decoration
 overlapping both ends, so gaps CANNOT exist) was designed here and built in the next entry.
 
-### Connector flare — implemented + tuned live in a real browser (2026-06-09) ✅ (uncommitted)
+### Connector flare — implemented + tuned live in a real browser (2026-06-09) ✅
 
 > The fix designed above is now BUILT and then tuned across a long live-iteration session with the user.
 > **All in `web/` — zero contract/Python change.** Worked entirely through the real-browser loop:
@@ -851,10 +849,9 @@ structural win; strictly simpler.
 **Final geometry (verified via `inspect`):** flare 14px wide (3px tip) × 9px tall, anchored to the tile,
 base overlapping the border, tip + edge + tile all centered on the icon column; both ends covered, no gap, no notch.
 
-**State / next:** built in `WorkflowNode.tsx` + `index.css`; **uncommitted**. The user also made manual edits
-this session (a `:root` palette re-theme; nudging the base positioning to `+3px` = exact touch). **Before
-commit:** run the gate (tsc/vitest + `make check`) and update any Phase-A test that asserted the old
-connector-owns-a-handle structure (the `Connector` no longer renders a `<Handle>`).
+*(The user also made manual edits this session — a `:root` palette re-theme; base anchor nudged to
+`+3px` exact-touch. Built in `WorkflowNode.tsx` + `index.css`; landed in `dc419be4` with the
+remaining two symptoms resolved in the next entry.)*
 
 ### Connector flare SOLVED — the paint ≠ the box (viewBox/element mismatch) (2026-06-09) ✅
 
@@ -994,7 +991,7 @@ lazy ELK, metrics, defaultHidden, tripwire, grep comments); the consciously-reje
 migration, Tailwind, state lib/router, React 19 churn, a11y for a localhost tool) are recorded in the
 review entry — don't re-litigate without a new trigger.
 
-### Connector jag follow-up + click-to-expand feature (2026-06-09) ✅ (uncommitted)
+### Connector jag follow-up + click-to-expand feature (2026-06-09) ✅
 
 *(The paint≠box root cause this session found is the canonical "Connector flare SOLVED" entry
 above — not retold here.)* Two residual touches:
@@ -1042,10 +1039,7 @@ Files: `flow.ts` (expandTargets, BuildOptions.expanded, per-endpoint handles, la
 `viewParams.ts` (focus=), `index.css`, `web/CLAUDE.md`, SKILL.md (focus param), this doc +
 visualization-requirements.md. Zero contract/Python change.
 
-### CONDITION pseudo-kind (2026-06-09, user-driven) ✅ (uncommitted)
-
-*(This session's other half — the connector viewBox/paint≠box root cause — is the canonical
-"Connector flare SOLVED" entry above; this was a parallel write-up of the same find, deduplicated.)*
+### CONDITION pseudo-kind (2026-06-09, user-driven) ✅
 
 **CONDITION: a decision code node now presents as its ROLE, not its kind** (label `CONDITION`, generated
 fork-dots icon, hot orange `#ffa657`) — replacing the incoherent blue "decision" pill (three identity
@@ -1067,7 +1061,7 @@ through `nodeColor`); icon is a data-URI SVG generated from `CONDITION_COLOR` (c
 future where branching extends. +4 pins (condition presentation ×3, condition edge color);
 tsc + build clean; verified on canvas (conditional-branching TD/beautiful screenshot).
 
-### Tines edge language: rounded-orthogonal paths + ELK ports (2026-06-09, user-driven) ✅ (uncommitted)
+### Tines edge language: rounded-orthogonal paths + ELK ports (2026-06-09, user-driven) ✅
 
 > User goal: edge paths like the Tines references (axis-aligned runs, generous rounded turns, the
 > trunk splitting just below the source, straight columns into targets). Two rounds: the path swap,
@@ -1125,7 +1119,7 @@ point (== stock midpoint, so the old "enough room" threshold is deleted, not tun
 dict-key row landing. Verified on canvas (advanced: stdout line lands on the `inputs` row;
 beautiful: merge corner now full-radius).
 
-### Condition icon finalized via shoot-lab iteration (2026-06-09) ✅ (uncommitted)
+### Condition icon finalized via shoot-lab iteration (2026-06-09) ✅
 
 Iterated the condition glyph in a `/tmp/condition-icon-lab.html` shoot-lab (9 color variants × both
 render sizes, mock tiles) instead of rebuilding the app per attempt — the right loop for shape/color
@@ -1143,7 +1137,7 @@ orange→white (the icon does in miniature what GradientEdge does on the canvas)
   white). Lesson reconfirmed: a blend hidden under an opaque overlay reads as no blend — set stops
   to the visible run, not the geometric one.
 
-### Ports-node rows connect SIDEWAYS in both directions (2026-06-09, user-caught) ✅ (uncommitted)
+### Ports-node rows connect SIDEWAYS in both directions (2026-06-09, user-caught) ✅
 
 In TD the
 Inputs/Outputs row handles were `Position.Top/Bottom` — each row's dot rendered floating at its
@@ -1156,7 +1150,7 @@ LR↔TD flip (PortsNode has no `useUpdateNodeInternals`, so the old direction-de
 were also a stale-measurement trap). Verified via `inspect` (row handles at the node's left/right
 edges, per-row y) + a zoomed crop: all six output bindings land exactly on their row dots.
 
-### Ports-edge follow-ups: facing sides + data-edge lanes (2026-06-09) ✅ (uncommitted)
+### Ports-edge follow-ups: facing sides + data-edge lanes (2026-06-09) ✅
 
 **Ports-row edges attach on the side FACING their peer (user-caught crossings, same session).**
 Binding edges between two ports nodes (parent INPUTS → sub-workflow INPUTS) left the source's
@@ -1187,7 +1181,7 @@ key), so the fixture needs real param rows for parallel lines to exist at all. V
 harness seg-gate (zoomed crop): distinct parallel lanes, each into its own row. Remaining
 crossings between unrelated lanes = the deferred smart edge-router.
 
-### Perf: layout cache + ELK in a Web Worker (2026-06-09, user-driven) ✅ (uncommitted)
+### Perf: layout cache + ELK in a Web Worker (2026-06-09, user-driven) ✅
 
 User asked about re-layout cost when clicking a node on large workflows. **Measured first** (temp
 vitest probe on the real 128-node lyrics-generator contract): buildFlow 0.4ms, **ELK ~120–170ms per
@@ -1225,7 +1219,7 @@ clicks no longer flash the stale decoration either; with the worker there's no f
 wait). Focus-only changes (advanced mode) keep the same key, so pure restyles stay instant.
 Focused-state render verified via `focus=` screenshot.
 
-### Animated expansion transitions — store interpolation, size-gated (2026-06-10, user-driven) ✅ (uncommitted)
+### Animated expansion transitions — store interpolation, size-gated (2026-06-10, user-driven) ✅
 
 The user chose to test the animation previously rejected-on-paper — with the agreed guard: small
 flows only. Built the CORRECT variant (the one the rejection note priced): positions interpolate
@@ -1267,7 +1261,7 @@ teal=data semantic dies. Verified on the harness seg-gate crop: lanes parallel a
 question parked for later: is `ANIMATE_MAX_NODES = 60` the right cap, or can the per-frame cost
 comfortably carry 100+? Measure before raising.
 
-### Dark themed minimap (2026-06-10) ✅ (uncommitted)
+### Dark themed minimap (2026-06-10) ✅
 
 The stock white `<MiniMap>` was the last unthemed surface — a white hole in the dark canvas on
 every screenshot. Now: dark rounded container + border + out-of-viewport mask in `index.css`
@@ -1325,7 +1319,7 @@ layer spacing or custom bend math, not a knob). The dotted-vs-solid "different r
 control-side clamping + data wrap-arounds CHAINING two bends into one extra-round sweep. The
 constant's own comment records the history and both effects.
 
-### Collapse controls + big workflows open as an overview (2026-06-10, user-driven) ✅ (uncommitted)
+### Collapse controls + big workflows open as an overview (2026-06-10, user-driven) ✅
 
 The "big workflows open readable" batch (minimap theming was done separately just before). UI for
 the toolbar control was decided via AskUserQuestion mockups — **buttons + count won**
@@ -1345,7 +1339,7 @@ no containers). Implementation:
   chain expanded ("2/23 open") and frames the node; small workflows (no groups) show no control.
   +9 pins (7 collapse policy, 2 viewParams); tsc + build clean.
 
-### Row-side semantics settled: strict param/output sides + gap-centered wrap rails (2026-06-10) ✅ (uncommitted)
+### Row-side semantics settled: strict param/output sides + gap-centered wrap rails (2026-06-10) ✅
 
 **The detour (same day, reverted within hours — kept for its two surviving insights):** the
 stdout→inputs data line wrapped around the condition node with its midpoint rail hugging the card's
@@ -1386,17 +1380,256 @@ interleave both authors, and each side's work references the other's (CONN reads
 ride DataEdge; portSides + the layout cache wire into the same hook). Commit as one
 visual-milestone batch.
 
-**Pre-commit gate (re-run on the FINAL tree):** `cd web && npx vitest run` (last green: **95
-tests**) + `npm run build`, then full `make check` + `make test`. Remember: `git add` any UNTRACKED
-files (`web/src/graph/collapse.ts` + `collapse.test.ts` were untracked at last check — re-verify
-with `git status`); pre-commit's `pretty-format-json` may reformat web JSON on first run; the
-bundle in `src/pflow/ui/static/` stays gitignored (the wheel ships it via `artifacts` — it now also
-carries the ELK worker chunk alongside the main-thread fallback, ~+1.4MB disk).
+*(Executed: the batch landed as `ec67c273` "alot of ui improvements" — gates ran, untracked files
+added. Disk note that outlives it: the wheel's `artifacts` glob now also ships the ELK worker chunk
+alongside the main-thread fallback, ~+1.4MB.)*
 
-**Open threads for a next session (not blockers):** loop arcs → orthogonal U (`LoopEdge` is the
-last bezier); LR merge ~8px residual (no LR ELK ports); smart edge-router (deferred, dense-graph
-tail — `assignDataRails` clears endpoint nodes only, not third parties);
+**Open threads for a next session (not blockers):** loop arcs → orthogonal U *(done — see the
+loop-U / loop-rule-row entries below)*; LR merge ~8px residual (no LR ELK ports); smart edge-router
+(deferred, dense-graph tail — `assignDataRails` clears endpoint nodes only, not third parties);
 `ANIMATE_MAX_NODES`/`AUTO_COLLAPSE_NODE_BUDGET` both = 60 by guess — measure before raising; TD
 adjacent-layer corner clamp (~17px regardless of `edgeRadius` — needs layer spacing or custom bend
 math, not a knob). Bigger arcs: search/jump-to-node (⌘K); the live-run observability overlay
 (Task 133 events onto `RFRef` — the next real increment).
+
+### Sub-workflow node redesign + loop orthogonal U + batch deck (2026-06-10, user-driven) ✅ (uncommitted)
+
+> Planned as "loop arcs → orthogonal U", but the user re-sequenced it correctly: *design the
+> sub-workflow node FIRST* (both states) — the U wraps the box, so the box defines the loop's
+> geometry. All `web/` — zero contract/Python change. Decisions made via a shoot-lab
+> (`/tmp/subwf-lab/index.html`, three sections) + AskUserQuestion; all three recommendations
+> accepted. web **109 tests** (+7); tsc + build clean; verified in the real browser on the
+> tournament (TD expanded/collapsed, LR), run-cycle (batch deck), orchestrate (nested + the U
+> around a whole region).
+
+**The design (user-picked):** a container is ONE OBJECT IN TWO STATES. Collapsed = a real node
+card (exact leaf anatomy — tile + frame + icon, category, name, count pill); expanded = a region
+whose header is the card's identity shrunk (mini-tile + icon + category + title + count pill),
+kind-tinted border. Sub-workflow kind color = **magenta `#e26ad8`** (lab compared candidates
+AGAINST palette neighbors: hot pink collides with mcp `#ff8fab`, violet with claude-code/batch).
+**Looped sub-workflow swaps its tile icon to the amber loop glyph** (user's idea) — safe because
+the category line still says SUB-WORKFLOW; leaf kinds never swap (their icon IS their identity).
+Mid-build the user added the **batch deck** (Tines stacked-copies reference image) — shipped as
+pure CSS pseudo-elements on `.group-card.group-batch` + `.node.batched` (unexpanded dynamic
+batches).
+
+**Structural payoff of leaf-anatomy reuse (the argument that won option 1a):** collapsed groups
+joined the TD machinery for ~free — ELK icon-column ports (`layout.ts` portable set; trunks ran
+through collapsed groups with a jog before) + connector flares (exported `Connector` from
+WorkflowNode) + focus-dimming via the existing `.node.dimmed` rule (`applyFocus` updated: a
+collapsed group dims like a leaf; expanded regions keep the deliberate never-dim).
+
+**Gotchas (each cost a round):**
+- **`--` inside an XML comment is ILLEGAL and breaks the whole SVG** — `loop.svg`'s comment said
+  "the CSS `--loop` var" → Chrome's torn-image glyph. Both new icons now carry a no-double-hyphen
+  note.
+- **React Flow's base stylesheet styles `node-group` wrappers itself** (grey bg/border/padding) —
+  invisible until our own group CSS stopped covering it. Neutralized in index.css; GroupNode owns
+  the visual.
+- **`group.members.length` is the WRONG count** for "what's in this box": direct children only
+  (undercounts nesting) and counts IO ports/hosts a reader wouldn't. `memberCount` = recursive
+  step count (excludes io/end/hosts), computed in buildFlow.
+- **Card control-incidence must come from FLOW edges, post-re-anchoring** (a group is never a
+  contract endpoint; an internal edge re-anchors to source==target and is dropped — it must not
+  light a flare). Post-pass in buildFlow, after the edge loop.
+
+**Loop U (the original goal, now trivial against the settled box):** `assignLoopRails` joined the
+post-layout decoration chain (4th pass in portSides.ts) — TD: `railX` = box right + 36, LR:
+`railY` = box top − 36; `LoopEdge` feeds the rail to `getSmoothStepPath` as `centerX`/`centerY`.
+**The rail is load-bearing**: a self-loop's endpoints share an axis, so the default midpoint runs
+the line straight back through the node. Stroke went 1.5 → full `--edge-stroke`. Label moved off
+the smoothstep path-center (mid-rail — pokes past the rightmost node, fitView clips it) onto the
+U's TOP RUN, and its pill bg became OPAQUE (translucent bg let the line strike through the text).
+*(Label placement was superseded TWICE the same day — top run → bottom run → no floating label on
+leaves at all; final policy in the "↻ loop-rule row" entry below.)*
+**The U carries the app's ONE arrowhead** (user ask): an own `<polygon>` at the re-entry, CSS
+`--loop` fill — RF marker objects take only literal colors, and a loop is the only edge whose
+direction the layout doesn't imply. Old perpendicular-bulge bezier deleted — it cut straight
+through any box taller than its fixed 80px bulge (every screenshot this session showed it).
+
+**Parallel-agent note:** another agent worked the same tree this session (branch ordinals /
+palette re-theme in index.css + portSides.ts); edits were re-read before writing and their
+`assignBranchOrdinals` pass was left untouched — `assignLoopRails` chains after it in the hook.
+
+**Residual polish (not blockers):** mid-chain loops share NODE_IN with the sequential trunk —
+the arrow can sit near a top flare (check when a real case shows); deck + bottom flare on a
+looped *batch* card untested (rare combo); expanded-region handles stay border-centered (the U
+wraps the region fine).
+
+### Shell batch groups never render — batch is a modifier, not a box (2026-06-10, user-caught) ✅ (uncommitted)
+
+User caught two presentation bugs the redesign surfaced: a batched LEAF rendered as a "▸ 0 nodes"
+BATCH card (an empty container — nothing to reveal), and a batched SUB-WORKFLOW required clicking
+*through* a batch box to reach the sub-workflow. Their framing — *"it should be handled as a
+subworkflow WITH batch, not a subworkflow inside a batch"* — matched the contract shapes exactly,
+inspected before coding: a dynamic batch emits a batch group with **zero direct members** (empty
+for a batched leaf — the leaf renders beside it; or holding only the workflow group for a batched
+sub-workflow). **Rule: a memberless batch group is a decorator SHELL and never renders.** Literal
+batches (real item-copy members) keep their container — there are actual items to reveal.
+
+Implementation (flow.ts): `shellBatch` set + `effectiveParent` (reparents children past shells);
+`groupsByHost` skips shells → `primaryGroupForHost`/`renderAnchor` land host edges, title, badges,
+loop anchor, and the deck (`hostNode.batch` → `.batched` class on the collapsed card) on the
+WORKFLOW group; `collapse.ts collapsibleGroupIds` excludes shells (untogglable, and they inflated
+the N/M count — run-cycle went 0/2 → 0/1 open). The OLD H8 test pinned the old policy (edge lands
+on the outermost = batch shell) — rewritten to the new one (shell absent, edge → workflow group,
+title on it) + 2 new pins (batched-leaf shell never renders; collapse excludes shells). web **111
+tests**; tsc + build clean. Verified in browser: batch-test (leaf with deck + ×N badge, no empty
+box), run-cycle collapsed (magenta SUB-WORKFLOW card + deck, one click into the body) and expanded
+(ONE region, batch badge in its header — no nested batch box).
+
+### Branch labels: entry-anchored + spatial ordinals (2026-06-10, user-driven) ✅
+
+TD fork pills moved from the mid-rail strip to the TARGET's entry (bare text + dark shadow halo —
+iterated pill → backdrop-box → halo with the user; left edge at the node's left border `+4px`,
+`labelAnchor`/`LABEL_NUDGE_X` in GradientEdge), prefixed with a condition-orange ordinal; error
+labels stay mid-edge, unnumbered. **The surprise that shaped it: declared order does NOT survive
+layout.** The leftmost-stays-straight policy keeps the trunk child centered under the source, so
+siblings don't land in declared order — caught live on conditional-branching (process-large declared
+first, laid out center). Numbering is therefore POST-LAYOUT (`assignBranchOrdinals`, third pass in
+portSides.ts: TD left→right by target box, LR top→bottom); buildFlow's declared-order value is only
+the seed/marker. **LR row numbering consciously deferred:** BranchPorts rows render in declared
+order, which can disagree with the spatial numbers — two different numbers for one outcome across a
+direction toggle is worse than none.
+
+### Branch CONDITIONS on the edge (2026-06-10, planned + built) ✅
+
+The user's ask: expanding a condition node should show WHY each branch fires ("if len(items) > 5",
+"else"). The structural fact: unlike loops (declared `LoopSpec.condition`), branch conditions exist
+ONLY inside the decision node's Python — so this is AST extraction, and the design rule is
+**fail-closed: absent beats wrong** (comprehension UI must never mis-attribute a condition).
+
+- **Phase 0 sweep first** (scratchpads/condition-labels/): all 66 example files + lyrics-generator →
+  only **3 decision nodes exist in the whole corpus** (lyrics has none). The initial pattern set
+  bailed on the harness's `check-groups`; two extensions made it 3/3 FULL: **adjacent-duplicate arms
+  join with `or`** (`if commits == 0 or not gate_ok` — adjacency keeps elif-guard semantics exact;
+  non-adjacent still bails) and **in-arm ternaries compose** (`elif is_last and cap == 0` /
+  `cap != 0` via a compare-flip negation prettifier; an else-slot ternary just extends the chain).
+- **Python:** `RFEdge.condition: str | None` (additive, default None) + `_branch_conditions` in
+  react_flow.py (stdlib `ast` — fine: the purity guard restricts only graph-package imports).
+  Memoized per decision node; keyed off the edge's ORIGINAL source so re-anchored branch edges keep
+  their condition. Accounting check: every `next` assignment in the file must be structurally
+  modeled or the whole node bails (the two-separate-ifs last-write-wins trap). A default before a
+  chain WITH an else arm is dead code — omitted, not guessed. 3 new tests incl. a 9-case bail matrix.
+- **Frontend:** display contract decided with the user — outcome label stays at the target entry,
+  condition rides MID-PATH (smoothstep's labelX/Y), orange + halo, truncated 40 (full text on title
+  + the read panel's new outcome→condition table, fed by GraphView from contract edges). Visibility
+  baked at BUILD time into `EdgeData.condition` (advanced always; beautiful when
+  `rowsVisible(e.source)` — expansion already re-runs the build, so no new mechanism).
+- **Verified:** wire (curl: conditions on branch edges, None on error), browser all three states
+  (beautiful hidden / focus=classify reveals + panel table / advanced always) + the harness's
+  4-outcome check-groups. Gates: 104 Python (goldens byte-identical, purity green), 112 web, tsc.
+
+### Container header parity across the fold (2026-06-10, user-driven) ✅ (uncommitted)
+
+User requirement, three parts: (1) opening a sub-workflow/batch must change NOTHING in its
+header — icon size/placement/border, name + description, all identical to the collapsed card and
+positioned like a normal node's; (2) the count pill goes ABSOLUTE on the top-right border (both
+states, so it doesn't move either); (3) the trunk flows INTO the expanded region's tile (flare
+and all) like any node. Implementation: GroupNode renders ONE shared `.node-header` block for
+both states (the mini-tile identity header is gone); `groupHeaderH` 44 → **68 == nodeHeaderH**
+(ELK region padding derives from it); `.group-pill` absolute at top −9px / right 14px (opaque bg
+masks the border under it); expanded TD handles moved to the icon column with the TOP flare
+(bottom stays collapsed-only — the region's tile is at its top); the flare-incidence post-pass
+now fills ALL groups, not just collapsed.
+
+**Two gotchas found in-browser (each invisible to the suite):**
+- **RF's base stylesheet sets `text-align: center` on `node-group` wrappers** — the region
+  header text rendered centered while the card's was left-aligned. Added to the wrapper
+  neutralizer (the same rule that kills RF's grey group chrome).
+- **An ELK port on a COMPOUND node crashes elkjs under INCLUDE_CHILDREN when an edge references
+  it** ("NEdge must have a source and target NNode") — same crash family as considerModelOrder.
+  The in-process smoke test missed it (its group had no in-edge); run-cycle in the browser hit it
+  immediately. Expanded groups therefore get NO ELK port (rendered handles still at the icon
+  column; smoothstep absorbs the offset) — pinned by a new TD layout test with an edge into an
+  expanded group.
+
+Also fixed: the loop edge's `zIndex: 20` (a relic of the bezier arc that had to paint above the
+boxes it crossed) lifted the U above the EdgeLabelRenderer layer and struck through its own label
+pill — removed; the U wraps OUTSIDE its box so elevation serves nothing. The pill bg also went
+opaque (`color-mix` over `--bg`). web **113 tests**; tsc + build clean; verified in browser:
+tournament expanded/collapsed are pixel-parallel (same tile/text/pill, arrow into the tile in
+both), run-cycle's region takes the branch trunk into its tile with the `parallel batch ×N`
+badge in the header.
+
+### Branch label/condition placement settled + ordinals removed (2026-06-10, user-driven) ✅
+
+Three rounds against screenshots: (1) **fork targets now lay out in the code's chain order**
+(`orderForkSiblings`, layout.ts) — the first `if`'s target lands leftmost; the prior order came from
+Steps declaration, which is irrelevant to a fork's reading order. (2) **Condition pills sit on a
+LONE segment** (`conditionAnchor`): the path midpoint when the edge owns a real rail run (side
+branches), the final descent (+5px user-tuned) for the straight child whose midpoint IS the shared
+rail crossing — first cut put ALL pills on the descent, user caught that it wasted the side branch's
+clean mid-run spot. (3) **Ordinal numbers removed** same-day after trying them — with code-order
+layout they were redundant. The whole spatial-ordinal machinery went with them (deletion test:
+`EdgeData.branchIndex`, the buildFlow seed, `assignBranchOrdinals` + 4 tests, `.edge-label-num`
+CSS); the branch-pill marker is now just `kind === "branch" && label != null`. Condition pills are
+standard `.edge-label` pills (white text, orange tint via `--label-c`). Net: 117 web tests, docs synced.
+
+### Session close — branch-label + condition-label batch (2026-06-10)
+
+**Everything from "Branch labels: entry-anchored…" down is ONE UNCOMMITTED batch, again interleaved
+with the second agent's parallel work** (their loop-arc→orthogonal-U + collapsed-group-card arc:
+LoopEdge, GroupNode, loop/subworkflow icons, collapse.ts, assignLoopRails — shared files: flow.ts,
+layout.ts, portSides.ts, useWorkflowGraph.ts, index.css, web/CLAUDE.md). A per-author split is again
+impractical; commit as one batch after a joint gate run.
+
+**This agent's slice, net:** (1) TD outcome labels entry-anchored (bare text + halo, `labelAnchor`,
++4px nudge; error pills mid-edge); (2) fork targets lay out in CODE order (`orderForkSiblings`,
+layout.ts + 4 tests — first `if` leftmost); (3) the branch-CONDITION feature end-to-end:
+`RFEdge.condition` (additive contract field) + fail-closed `_branch_conditions` AST extraction in
+react_flow.py (+3 Python tests incl. the 9-case bail matrix; goldens byte-identical; purity green),
+frontend pills on lone segments (`conditionAnchor` + 4 tests: mid-run for side branches, final
+descent +5px for the straight child), visibility = advanced always / beautiful on focus-expansion
+(build-time `EdgeData.condition`), ReadPanel outcome→condition table; (4) ordinals tried + removed
+same day (machinery deleted per the deletion test). Phase-0 evidence: `scratchpads/condition-labels/`
+(corpus sweep — only 3 decision nodes exist; 3/3 extract FULL).
+
+**Pre-commit gate (re-run on the FINAL merged tree):** `cd web && npx vitest run` (last green at
+this slice: **117**) + `npm run build`; `uv run pytest tests/test_core/test_graph_react_flow_renderer.py
+test_graph_model_purity.py test_mermaid_golden.py tests/test_cli/test_ui.py` (last green: 104) then
+full `make check` + `make test`. **`git add` untracked:** `web/src/graph/layout.test.ts`,
+`scratchpads/condition-labels/` (keep — Phase-0 evidence the extraction patterns cite).
+
+**Open threads (not blockers):** TD branches going the SAME direction share collinear rails —
+condition pills would sit on overlapping segments (no corpus case yet; revisit with the smart
+router); `LONE_RUN_MIN=60` / `OUTCOME_CLEAR=26` are eyeballed knobs; extraction v1 skips `match`
+statements (fail-closed, documented in react_flow.py); LR outcome labels stay on BranchPorts rows
+(conditions there ride the read panel + mid-path pill when visible).
+
+### The ↻ loop-rule row: the U lands on the rule (2026-06-10, user-designed) ✅ (uncommitted)
+
+The user, looking at the harness's looped `review-round` leaf, asked the right semantic question:
+*"what if we show an additional 'input param' — max_review_rounds — and end the loop with an arrow
+into this input?"* Answer worked through together: semantically YES with one framing fix — the
+loop config is authored NODE config (like params), so a row is honest, but it must present as a
+**LOOP RULE** (amber ↻ row), not a data param (`max_review_rounds` parameterizes the loop
+mechanism, not the node's inputs — a fake param row would lie against the file). Full design
+(user approved via AskUserQuestion):
+
+- **Leaf with rows visible** (advanced / focus-expanded): the card grows a `↻ while <cond> ≤ cap`
+  row (leafSize +1; `LOOP_ROW` target handle, right side — the rail's side); the U's arrow lands
+  ON it; the floating label DROPS (the row holds the rule — the same convention as data lines
+  dropping `stdout → data` on row-landing).
+- **Beautiful, unexpanded leaf:** a BARE U into NODE_IN, **no label at all** (the user's "hide
+  this in beautiful" — the skeleton stays quiet; the loop reads as shape, click to see why).
+- **Group anchors** (regions have no rows): floating pill in ADVANCED only, gated by
+  `data.loop`'s presence (its only consumer is the LoopEdge label).
+
+This also CLOSED the label-collision saga properly: an interim same-day bottom-run move (a
+micro-step between the loop-U and header-parity entries, not separately logged) ends up mattering
+for the group-advanced case only; leaves never float a label again. The earlier
+strike-through the user kept seeing was their browser's stale-cache bundle (no `Cache-Control` —
+the known gotcha), not a regression. Pinned by 4 new flow tests (row landing advanced/expanded,
+bare-U beautiful, group label policy) + the legacy loop pin updated (data.loop is now the label
+switch, never on leaf edges). web **121 tests**; tsc + build clean; verified on execute-plan in
+the browser: quiet bare U unfocused; focus-expanded card shows the amber rule row at the body's
+end with the U's arrow landing on it; ReadPanel carries the full spec as before.
+
+**Same-session refinements (user-driven):** (1) the rule SPLIT into two rows — condition (the
+U's landing) + the cap `≤ ${max_…}` on its own row; one row truncated both operands into mush
+(`${review-round.result.continu… ≤ ${max_r…`); leafSize counts 2 when a cap exists. (2) An amber
+**↻ mark on the category line** (`CLAUDE CODE ↻`, `.loop-mark`) — a compact looped leaf said
+nothing about looping (the U alone made the user ask "is this a loop?"); identity stays in kind
+color, behavior in loop amber. Verified on execute-plan: both rows legible, arrow on the
+condition row, mark visible at compact size.

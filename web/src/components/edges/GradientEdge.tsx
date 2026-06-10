@@ -21,7 +21,46 @@ import { memo, type CSSProperties } from "react";
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, Position, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
-import { METRICS } from "../../graph/metrics";
+import { ICON_COL_X, METRICS } from "../../graph/metrics";
+import { truncate } from "../../utils/format";
+
+// Mid-path condition labels can be whole expressions — clamp them; the full text
+// rides the title tooltip and the read panel's outcome table.
+const CONDITION_MAX = 40;
+
+// Vertical zone the outcome label occupies at the target entry (pill height +
+// gaps) — the condition pill centers in the descent ABOVE it.
+const OUTCOME_CLEAR = 26;
+
+// A TD branch with less horizontal travel than this has no lone rail run worth
+// labeling — its midpoint would sit in the shared rail-crossing zone.
+const LONE_RUN_MIN = 60;
+
+/** Where the CONDITION pill sits. The path midpoint is the right home when the
+ *  edge owns a real horizontal rail run (a side branch — the run belongs to
+ *  this edge alone, and smoothstep's label point is its center). The STRAIGHT
+ *  child has no run: its midpoint lands ON the crossing of every sibling's
+ *  rail (user-caught), so it falls back to the FINAL DESCENT — centered between
+ *  the rail and the outcome-label zone at the target entry, a segment owned by
+ *  this edge by construction. Other shapes (LR, backward) keep the midpoint. */
+export function conditionAnchor(args: {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  targetPosition: Position;
+  pathX: number;
+  pathY: number;
+}): { x: number; y: number } {
+  const { sourceX, sourceY, targetX, targetY, targetPosition, pathX, pathY } = args;
+  const noLoneRun = Math.abs(targetX - sourceX) < LONE_RUN_MIN;
+  if (targetPosition === Position.Top && targetY > sourceY && noLoneRun) {
+    const railY = sourceY + Math.min(RAIL_OFFSET, (targetY - sourceY) / 2);
+    // +5: user-tuned — clears the rail corner the centered point still kissed.
+    return { x: targetX, y: (railY + targetY - OUTCOME_CLEAR) / 2 + 5 };
+  }
+  return { x: pathX, y: pathY };
+}
 
 // How far the node-color fade reaches into an error/end edge, in px. The gradient
 // runs along the straight source→target chord, so offsets are FADE_PX as a fraction
@@ -63,6 +102,39 @@ export function railCenter(args: {
     return { centerX: sourceX + Math.min(RAIL_OFFSET + stagger, (targetX - sourceX) / 2) };
   }
   return {};
+}
+
+// BRANCH pills sit at the TARGET's entry point, on the edge's final run just before
+// it enters the node (user-chosen 2026-06-10 over the old mid-rail row: with the
+// pills mid-rail, a fork's outcomes read as one detached strip; at the entry they
+// label the node they pick). Error/other labels stay at the PATH CENTER — an error
+// handler isn't an outcome you pick, so its pill rides the edge like before. TD:
+// the line enters the top at the icon column (ICON_COL_X from the node's left
+// edge), and the pill's LEFT edge aligns with the node's left border (user-chosen
+// over centering on the line); LR: the line enters the left border, so the pill
+// sits just left of it. The self-translate aligns the pill's nearest EDGE
+// (left+bottom / right) to the anchor, so pill size never overlaps the node.
+const LABEL_GAP = 6;
+// Nudge the TD branch label right of the node's left border (user-tuned: the bare
+// text starting flush with the border read as part of the card outline).
+const LABEL_NUDGE_X = 4;
+
+export function labelAnchor(args: {
+  targetX: number;
+  targetY: number;
+  targetPosition: Position;
+  pathX: number;
+  pathY: number;
+}): { x: number; y: number; selfTranslate: string } {
+  const { targetX, targetY, targetPosition, pathX, pathY } = args;
+  if (targetPosition === Position.Top) {
+    return { x: targetX - ICON_COL_X + LABEL_NUDGE_X, y: targetY - LABEL_GAP, selfTranslate: "translate(0, -100%)" };
+  }
+  if (targetPosition === Position.Left) {
+    return { x: targetX - LABEL_GAP, y: targetY, selfTranslate: "translate(-100%, -50%)" };
+  }
+  // Unusual entry side (re-anchored/backward cases) — fall back to the path center.
+  return { x: pathX, y: pathY, selfTranslate: "translate(-50%, -50%)" };
 }
 
 export type GradientStop = { offset: number; color: string };
@@ -118,6 +190,10 @@ export const GradientEdge = memo(function GradientEdge({
   const to = data?.targetColor ?? "var(--accent)";
   const chordLen = Math.hypot(targetX - sourceX, targetY - sourceY);
   const stops = gradientStops(data?.kind, from, to, chordLen);
+  const isBranchPill = data?.kind === "branch" && label != null;
+  const anchor = isBranchPill
+    ? labelAnchor({ targetX, targetY, targetPosition, pathX: labelX, pathY: labelY })
+    : { x: labelX, y: labelY, selfTranslate: "translate(-50%, -50%)" };
   return (
     <>
       <defs>
@@ -128,22 +204,50 @@ export const GradientEdge = memo(function GradientEdge({
         </linearGradient>
       </defs>
       <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: selected ? METRICS.edgeStroke + 1 : METRICS.edgeStroke }} />
-      {label && (
+      {(label || data?.condition) && (
         <EdgeLabelRenderer>
-          {/* The pill takes its EDGE's color (tinted fill + faint hairline; text stays
-              white): error = the semantic red, otherwise the target node's color (the
-              line's color where it arrives). CSS reads --label-c. */}
-          <div
-            className="edge-label nodrag nopan"
-            style={
-              {
-                transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-                "--label-c": data?.kind === "error" ? "var(--danger)" : to,
-              } as CSSProperties
-            }
-          >
-            {label}
-          </div>
+          {/* The pill's FILL takes its edge's color via --label-c (error = the semantic
+              red, else the target node's color — the line's color where it arrives);
+              text stays white. A BRANCH pill additionally gets the `branch` class:
+              its ordinal number + border speak the condition orange (--decision — the
+              fork is the condition node's act) while the fill stays node-colored. */}
+          {label && (
+            <div
+              className={`edge-label nodrag nopan${isBranchPill ? " branch" : ""}`}
+              style={
+                {
+                  transform: `${anchor.selfTranslate} translate(${anchor.x}px, ${anchor.y}px)`,
+                  "--label-c": data?.kind === "error" ? "var(--danger)" : to,
+                } as CSSProperties
+              }
+            >
+              {label}
+            </div>
+          )}
+          {/* The CONDITION that selects this outcome ("if len(items) > 5" / "else"),
+              extracted from the decision node's code (RFEdge.condition). It rides
+              MID-PATH — the outcome label stays at the target entry — as a standard
+              edge pill (white text) tinted condition orange, and is only in `data`
+              when it should render (advanced, or the condition node is
+              focus-expanded; see EdgeData.condition in flow.ts). */}
+          {data?.condition &&
+            (() => {
+              const at = conditionAnchor({ sourceX, sourceY, targetX, targetY, targetPosition, pathX: labelX, pathY: labelY });
+              return (
+                <div
+                  className="edge-label nodrag nopan"
+                  title={data.condition}
+                  style={
+                    {
+                      transform: `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)`,
+                      "--label-c": "var(--decision)",
+                    } as CSSProperties
+                  }
+                >
+                  {truncate(data.condition, CONDITION_MAX)}
+                </div>
+              );
+            })()}
         </EdgeLabelRenderer>
       )}
     </>

@@ -418,6 +418,26 @@ button.active {
   color: var(--data-edge);
   margin-left: auto;
 }
+/* the ↻ loop-rule rows (WorkflowNode) — authored loop config as rows (condition,
+   then the cap on its own row), amber so it reads "loop RULE", not a data param;
+   the loop-back U's arrow lands on the condition row's right-side handle.
+   Right-aligned like outputs: it belongs to the exit side. */
+.loop-rule {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--loop);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the looped-leaf behavior mark on the category line (WorkflowNode) — identity in
+   kind color, behavior in loop amber */
+.loop-mark {
+  color: var(--loop);
+  margin-left: 5px;
+  font-size: 11px;
+}
 .param-value {
   flex: 1 1 auto;
   min-width: 0;
@@ -559,57 +579,97 @@ button.active {
 
 /* ---------- groups ---------- */
 /* the `group-*` kind classes are CONSTRUCTED in GroupNode.tsx as `group-${group.kind}`
-   (workflow | batch | input_wrapper | output_wrapper) — grep that site, not the literal. */
+   (workflow | batch) — grep that site, not the literal. IO wrappers render as ports
+   nodes, never as groups; a COLLAPSED group renders the leaf card classes
+   (.node.compact.group-card), so the rules below style the EXPANDED region only.
+   --kind is set inline per group (workflow magenta / batch purple), same mechanism
+   as the leaf card — one tint rule serves both kinds. */
+/* React Flow's base stylesheet paints node type "group" itself (grey bg + border
+   + padding + CENTERED text) — neutralize the wrapper; GroupNode draws the entire
+   visual, and its header must read exactly like a leaf card's (left-aligned). */
+.react-flow__node-group {
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+}
 .group {
-  background: rgba(110, 168, 254, 0.04);
-  border: 1px dashed var(--border-strong);
+  background: color-mix(in srgb, var(--kind) 4%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--kind) 30%, transparent);
   border-radius: 10px;
 }
-.group.group-batch {
-  background: rgba(199, 155, 240, 0.05);
-  border-color: #5a4a72;
-}
-.group.group-input_wrapper,
-.group.group-output_wrapper {
-  background: rgba(255, 255, 255, 0.02);
-}
-.group.collapsed {
-  background: var(--bg-node);
-  border-style: solid;
-}
 .group.focused {
-  box-shadow: 0 0 0 2px var(--accent);
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
 }
+/* The expanded region's header is the leaf `.node-header` VERBATIM (one shared
+   markup in GroupNode — user requirement: the tile/name must not move when a
+   container opens). This class only adds what the region needs: the header is an
+   absolute OVERLAY at the region's top (member nodes are ELK-positioned below —
+   --group-header-h == --node-header-h keeps the padding honest) + the click
+   affordance. Typography/layout all come from the .node-header rules. */
 .group-header {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: var(--group-header-h); /* ELK's group top padding clears this (layout.ts) */
-  padding: 0 12px;
-  font-size: 12px;
-  color: var(--text-muted);
   cursor: pointer;
 }
-.chevron {
-  color: var(--text-faint);
-}
-.group-kind {
+/* member-count pill — the collapse affordance (▸ closed / ▾ open). ABSOLUTE on the
+   top-right border in BOTH states so it doesn't move across the fold; opaque bg
+   masks the border line under it. */
+.count-pill {
   font-family: var(--mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 9px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--kind) 10%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--kind) 25%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
 }
-.group-title {
-  font-weight: 600;
-  color: var(--text);
+.count-pill .chev {
+  color: var(--kind);
+  margin-right: 3px;
 }
-.group-collapsed-count {
-  color: var(--text-faint);
-  font-size: 11px;
+.group-pill {
+  position: absolute;
+  top: -9px;
+  right: 14px;
+  z-index: 3;
+}
+/* the collapsed card (leaf anatomy via .node.compact) — only the click affordance
+   differs from a real leaf */
+.group-card {
+  cursor: pointer;
+}
+
+/* batch DECK (Tines-style, user-requested 2026-06-10): a batch card reads as a
+   stack of item copies — two kind-tinted layers peeking below the card, slightly
+   narrower (scaled from the bottom-center). Applies to a collapsed batch group
+   card AND a leaf carrying a batch spec (`.batched`, WorkflowNode). Pure
+   decoration: pseudo-elements at z -1 (behind the card, over the edge layer —
+   the edge passes behind the deck and re-emerges, like the Tines reference). */
+.group-card.group-batch::before,
+.group-card.group-batch::after,
+.node.batched::before,
+.node.batched::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--kind) 7%, var(--bg-node));
+  border: 1.5px solid color-mix(in srgb, var(--kind) 40%, transparent);
+  z-index: -1;
+  transform-origin: 50% 100%;
+}
+.group-card.group-batch::before,
+.node.batched::before {
+  transform: translateY(7px) scaleX(0.955);
+}
+.group-card.group-batch::after,
+.node.batched::after {
+  transform: translateY(13px) scaleX(0.9);
+  opacity: 0.65;
 }
 
 /* ---------- badges ---------- */
@@ -668,6 +728,10 @@ button.active {
 .react-flow__handle.out-handle {
   background: var(--data-edge);
 }
+/* the ↻ loop-rule row's landing dot — amber, the loop language */
+.react-flow__handle.loop-row-handle {
+  background: var(--loop);
+}
 /* control handles are invisible — the edge flows straight into the node/tile with no
    dot (nodesConnectable is off, so the handle only needs to be a connection point). */
 .react-flow__handle.node-handle {
@@ -700,14 +764,22 @@ button.active {
   opacity: 0.35;
 }
 
-/* loop-back arc (synthesized from LoopSpec) */
+/* loop-back U (synthesized from LoopSpec; rail from assignLoopRails) — full edge
+   weight: it speaks the same rounded-orthogonal language as the control edges */
 .react-flow__edge.edge-loop .react-flow__edge-path {
   stroke: var(--loop);
-  stroke-width: 1.5;
+  stroke-width: var(--edge-stroke);
+}
+/* the U's re-entry arrowhead (LoopEdge `arrowPoints`) — the app's ONE arrowhead:
+   a loop's direction is the only one the layout doesn't imply */
+.loop-arrow {
+  fill: var(--loop);
 }
 .loop-edge-label {
   position: absolute;
-  background: rgba(240, 184, 108, 0.16);
+  /* OPAQUE tint (mix over --bg, like .edge-label) — the pill rides ON the U's top
+     run, so a translucent bg lets the line strike through the text */
+  background: color-mix(in srgb, var(--loop) 14%, var(--bg));
   color: var(--loop);
   border: 1px solid #5a4524;
   border-radius: 4px;
@@ -745,6 +817,28 @@ button.active {
   white-space: nowrap;
   pointer-events: all;
 }
+/* Branch-outcome label (GradientEdge adds `.branch` on labeled branch edges).
+   Bare text, no chrome — a dark text-shadow halo lifts the glyphs off the edge
+   line behind them (user-chosen over a backdrop box; ordinals removed 2026-06-10). */
+.edge-label.branch {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 10px;
+  text-shadow:
+    0 0 3px rgb(0 0 0 / 0.95),
+    0 0 6px rgb(0 0 0 / 0.8);
+  z-index: 1; /* above the edge paths, never under a line */
+}
+.edge-label-num {
+  color: var(--decision);
+  font-weight: 700;
+  margin-right: 5px;
+}
+/* The mid-path branch CONDITION ("if len(items) > 5" / "else") renders as a
+   standard .edge-label pill tinted by --label-c = --decision (GradientEdge sets
+   it inline) — white text, orange tint, like the error pill but condition-colored. */
+
 
 /* ---------- read panel ---------- */
 .read-panel {

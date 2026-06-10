@@ -13,7 +13,7 @@
 
 import type { Edge, Node } from "@xyflow/react";
 
-import { branchHandle, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
+import { branchHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
 import { METRICS } from "./metrics";
 import { kindColor, nodeColor } from "../utils/format";
 import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
@@ -84,6 +84,17 @@ export type GroupData = {
   collapsed: boolean;
   showTitle: boolean;
   direction: Direction;
+  // Control-edge incidence (drives the connector flares, same as LeafData): the
+  // collapsed card draws top+bottom; the expanded region draws its TOP flare (the
+  // trunk enters through the region's tile like any node's). Computed in a
+  // post-pass over the FLOW edges (not the contract edges): a group is never a
+  // contract endpoint — edges re-anchor onto it — and a purely-internal edge
+  // (both ends inside) must not count.
+  hasIncoming: boolean;
+  hasOutgoing: boolean;
+  // Recursive workflow-step count (the count pill) — NOT group.members.length,
+  // which only sees direct children and counts IO ports/hosts.
+  memberCount: number;
   dimmed: boolean;
   focused: boolean;
 };
@@ -122,6 +133,12 @@ export type EdgeData = {
   // Set by applyFocus on incident data edges: which end the clicked node is on.
   // DataEdge draws the line solid at that end, fading a hint toward the other.
   focusEnd?: "source" | "target";
+  // The source condition selecting this outcome ("if len(items) > 5" / "else"),
+  // from the contract (RFEdge.condition). Set ONLY when it should RENDER:
+  // advanced always, beautiful while the condition node is focus-expanded —
+  // safe as build-time state because expansion already re-runs the build.
+  // GradientEdge draws it mid-path; the outcome pill stays at the target entry.
+  condition?: string;
   loop?: LoopSpec; // present only on synthesized loop-back arcs
 };
 
@@ -145,8 +162,10 @@ export const ROW_PADDING = 14;
 export const END_SIZE = 46;
 export const PORTS_WIDTH = 200;
 export const PORTS_HEADER_HEIGHT = METRICS.portsHeaderH;
-export const COLLAPSED_GROUP_WIDTH = 240;
-export const COLLAPSED_GROUP_HEIGHT = 84;
+// The collapsed group renders as a leaf-anatomy CARD (GroupNode): compact height,
+// slightly wider than a leaf so the count pill fits beside the titles.
+export const COLLAPSED_GROUP_WIDTH = 260;
+export const COLLAPSED_GROUP_HEIGHT = HEADER_HEIGHT;
 
 function leafSize(
   node: RFNode,
@@ -168,7 +187,10 @@ function leafSize(
   if (!showsBody) {
     return { width, height: HEADER_HEIGHT + branchRows * ROW_HEIGHT };
   }
-  const rows = node.params.length + outputFields.length + branchRows;
+  // The ↻ loop-rule rows a looped leaf renders in its body (WorkflowNode): the
+  // condition row (the U's landing) + a cap row when one is set.
+  const loopRows = node.loop ? (node.loop.cap != null ? 2 : 1) : 0;
+  const rows = node.params.length + outputFields.length + branchRows + loopRows;
   return { width, height: HEADER_HEIGHT + rows * ROW_HEIGHT + ROW_PADDING };
 }
 
@@ -216,6 +238,22 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   const groupById = new Map(graph.groups.map((g) => [g.id, g]));
   const expandedSet = view.expanded ?? NO_EXPANSION;
 
+  // A batch group with NO direct members is a decorator SHELL (the contract models
+  // "batched X" as batch-wrapping-X): empty for a batched leaf, or holding only the
+  // workflow group of a batched sub-workflow. Presentationally, batch is a MODIFIER
+  // on the thing itself — the deck + ×N badge — not a box to travel through (user
+  // decision 2026-06-10): shells are never rendered, their child reparents past
+  // them, and a suppressed host's representative skips them (a batched sub-workflow
+  // IS a sub-workflow WITH batch). Literal batches (real item-copy members) keep
+  // their container — there are actual items to reveal.
+  const shellBatch = new Set(
+    graph.groups.filter((g) => g.kind === "batch" && g.members.length === 0).map((g) => g.id),
+  );
+  const effectiveParent = (parent: string | null): string | null => {
+    while (parent && shellBatch.has(parent)) parent = groupById.get(parent)?.parent ?? null;
+    return parent;
+  };
+
   // Which nodes have a control edge flowing IN / OUT — drives the connector stubs.
   const incomingControl = new Set<string>();
   const outgoingControl = new Set<string>();
@@ -225,12 +263,26 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     outgoingControl.add(e.source);
   }
 
+  // Workflow STEPS inside each container, recursively — what a user would call
+  // "what's in this box" (the count pill). group.members only lists DIRECT children,
+  // which undercounts nested structure and counts IO ports/hosts a reader wouldn't.
+  const stepCountByGroup = new Map<string, number>();
+  for (const n of graph.nodes) {
+    if (n.io !== null || n.kind === "end" || n.is_group_host) continue;
+    let g: string | null = n.parent;
+    while (g) {
+      stepCountByGroup.set(g, (stepCountByGroup.get(g) ?? 0) + 1);
+      g = groupById.get(g)?.parent ?? null;
+    }
+  }
+
   // A host node may back several groups (a dynamic-batch-of-subworkflow hosts
   // both a batch and a workflow group — H8). Edges into the suppressed host land
-  // on the OUTERMOST of them; the rest nest inside.
+  // on the OUTERMOST of them; the rest nest inside. Shell batch groups are not
+  // rendered, so they can't be anyone's representative.
   const groupsByHost = new Map<string, RFGroup[]>();
   for (const g of graph.groups) {
-    if (g.host) {
+    if (g.host && !shellBatch.has(g.id)) {
       const list = groupsByHost.get(g.host) ?? [];
       list.push(g);
       groupsByHost.set(g.host, list);
@@ -306,22 +358,29 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   // requires a parent node to precede its children in the array.
   for (const g of [...graph.groups].sort((a, b) => a.nesting_depth - b.nesting_depth)) {
     if (g.kind === "input_wrapper" || g.kind === "output_wrapper") continue; // → a ports node, emitted below
+    if (shellBatch.has(g.id)) continue; // decorator shell — batch rides what it wraps
     if (outermostCollapsed(g.parent, true)) continue; // inside a collapsed ancestor
     const isCollapsed = collapsed.has(g.id);
     const hostNode = g.host ? (nodeById.get(g.host) ?? null) : null;
     const showTitle = g.host != null && primaryGroupForHost.get(g.host) === g.id;
+    const parentId = effectiveParent(g.parent);
     flowNodes.push({
       id: g.id,
       type: "group",
       position: { x: 0, y: 0 },
-      parentId: g.parent ?? undefined,
-      extent: g.parent ? "parent" : undefined,
+      parentId: parentId ?? undefined,
+      extent: parentId ? "parent" : undefined,
       data: {
         group: g,
         hostNode,
         collapsed: isCollapsed,
         showTitle,
         direction: view.direction,
+        // Filled by the control-incidence post-pass below (needs the flow edges,
+        // which don't exist yet — re-anchoring decides what touches this group).
+        hasIncoming: false,
+        hasOutgoing: false,
+        memberCount: stepCountByGroup.get(g.id) ?? 0,
         dimmed: false,
         focused: false,
       },
@@ -334,8 +393,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     if (n.is_group_host) continue; // represented by its group box
     if (n.io !== null) continue; // IO nodes are rows on a ports node (emitted below)
     if (outermostCollapsed(n.parent, true)) continue; // inside a collapsed group
-    const parentId = n.parent ?? undefined;
-    const extent = n.parent ? ("parent" as const) : undefined;
+    const parentId = effectiveParent(n.parent) ?? undefined;
+    const extent = parentId ? ("parent" as const) : undefined;
     if (n.kind === "end") {
       flowNodes.push({
         id: n.id,
@@ -387,12 +446,13 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       .filter((m): m is RFNode => m != null && m.io != null)
       .map((m) => ({ id: m.id, name: m.ref.node_id, dataType: m.io!.data_type, required: m.io!.required }));
     if (ports.length === 0) continue;
+    const wrapperParent = effectiveParent(wrapper.parent);
     flowNodes.push({
       id: wrapper.id,
       type: "ports",
       position: { x: 0, y: 0 },
-      parentId: wrapper.parent ?? undefined,
-      extent: wrapper.parent ? "parent" : undefined,
+      parentId: wrapperParent ?? undefined,
+      extent: wrapperParent ? "parent" : undefined,
       width: PORTS_WIDTH,
       height: PORTS_HEADER_HEIGHT + ports.length * ROW_HEIGHT + 8,
       data: {
@@ -467,34 +527,81 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     const targetNode = nodeById.get(e.target);
     const sourceColor = sourceNode ? nodeColor(sourceNode) : kindColor("");
     const targetColor = targetNode ? nodeColor(targetNode) : kindColor("");
-    flowEdges.push(toFlowEdge(e, source, target, sourceHandle, targetHandle, detailed, view.direction, sourceColor, targetColor));
+    flowEdges.push(
+      toFlowEdge(e, source, target, sourceHandle, targetHandle, detailed, view.direction, sourceColor, targetColor, rowsVisible(e.source)),
+    );
   }
 
-  // Synthesize a loop-back arc for each looped node, drawn on the node — or on its
+  // Synthesize a loop-back U for each looped node, drawn on the node — or on its
   // GROUP when it's a looped sub-workflow host. It is NOT a contract edge; we build
   // it from the LoopSpec (pure visual policy). Self-loops are dropped from ELK
   // (layout.ts) and rendered by the custom LoopEdge. Skip a loop whose node is
   // hidden inside a *collapsed ancestor* (the loop is hidden with it) — only draw
   // on the box that actually loops.
+  //
+  // Where the U LANDS and what it SAYS (user-decided 2026-06-10, "loop row"):
+  //   - A LEAF whose body rows render (advanced / focus-expanded) grows a ↻
+  //     loop-rule row (WorkflowNode); the U's arrow lands ON that row (LOOP_ROW
+  //     handle) — "iteration re-enters under this rule" — and the edge carries NO
+  //     floating label (the row holds the condition, like data lines dropping
+  //     their label when both ends land on rows).
+  //   - A compact leaf (beautiful, unexpanded) keeps a BARE U into NODE_IN — the
+  //     skeleton stays quiet; click to expand and see why.
+  //   - A GROUP anchor has no rows: the floating label renders in advanced only
+  //     (data.loop is the label's presence switch — LoopEdge reads nothing else
+  //     from it; the read panel always has the full spec from the NODE).
   const loopAnchors = new Set<string>();
   for (const n of graph.nodes) {
     if (!n.loop) continue;
     const anchor = renderAnchor(n.id);
     if (!anchor || loopAnchors.has(anchor)) continue;
-    const ownsAnchor = anchor === n.id || anchor === primaryGroupForHost.get(n.id);
+    const isLeafAnchor = anchor === n.id;
+    const ownsAnchor = isLeafAnchor || anchor === primaryGroupForHost.get(n.id);
     if (!ownsAnchor) continue;
     loopAnchors.add(anchor);
+    const ontoRow = isLeafAnchor && rowsVisible(n.id);
+    const showLabel = !isLeafAnchor && detailed;
     flowEdges.push({
       id: `loop:${anchor}`,
       source: anchor,
       target: anchor,
       sourceHandle: NODE_OUT,
-      targetHandle: NODE_IN,
+      targetHandle: ontoRow ? LOOP_ROW : NODE_IN,
       type: "loop",
       className: "edge-loop",
-      data: { kind: "loop", shadowed: false, from: n.id, to: n.id, defaultHidden: false, loop: n.loop },
-      zIndex: 20,
+      // No zIndex elevation: the old bezier ARC needed to paint above the group box
+      // it crossed; the U wraps OUTSIDE its box, and an elevated edge renders above
+      // the EdgeLabelRenderer layer — striking through its own label pill.
+      data: {
+        kind: "loop",
+        shadowed: false,
+        from: n.id,
+        to: n.id,
+        defaultHidden: false,
+        ...(showLabel ? { loop: n.loop } : {}),
+      },
     });
+  }
+
+  // Control-incidence for group nodes (their connector flares: the collapsed card
+  // draws top+bottom, the expanded region its TOP — the trunk enters through the
+  // region's tile like any node's). Must run over the FLOW edges: contract edges
+  // never name a group — re-anchoring decides what actually touches it — and the
+  // self-loop drop above already removed purely-internal edges (both ends inside
+  // the same collapsed group).
+  const inControlFlow = new Set<string>();
+  const outControlFlow = new Set<string>();
+  for (const e of flowEdges) {
+    const kind = e.data?.kind;
+    if (!kind || kind === "loop" || !CONTROL_KINDS.has(kind)) continue;
+    inControlFlow.add(e.target);
+    outControlFlow.add(e.source);
+  }
+  for (const n of flowNodes) {
+    if (n.type === "group") {
+      n.data.hasIncoming = inControlFlow.has(n.id);
+      n.data.hasOutgoing = outControlFlow.has(n.id);
+    }
   }
 
   assignEdgeLanes(flowEdges);
@@ -613,6 +720,7 @@ function toFlowEdge(
   direction: Direction,
   sourceColor: string,
   targetColor: string,
+  conditionShown = false,
 ): FlowEdge {
   const isData = edge.kind === "data_flow";
   // ALL control flow draws via the custom "gradient" edge, which owns the stroke
@@ -657,7 +765,16 @@ function toFlowEdge(
     type: isControl ? "gradient" : "data",
     label,
     className: classes.join(" "),
-    data: { kind: edge.kind, shadowed: edge.shadowed, from: edge.source, to: edge.target, defaultHidden, sourceColor, targetColor },
+    data: {
+      kind: edge.kind,
+      shadowed: edge.shadowed,
+      from: edge.source,
+      to: edge.target,
+      defaultHidden,
+      sourceColor,
+      targetColor,
+      condition: conditionShown ? (edge.condition ?? undefined) : undefined,
+    },
     hidden: defaultHidden,
   };
 }
@@ -701,7 +818,9 @@ export function applyFocus(
   }
   const outNodes = nodes.map((n) => {
     const focused = focus != null && n.id === focus;
-    const dimmed = focus != null && n.type !== "group" && !connected.has(n.id);
+    // Expanded groups never dim (the region must stay readable around its lit
+    // children) — but a COLLAPSED group is a card in the flow and dims like a leaf.
+    const dimmed = focus != null && (n.type !== "group" || n.data.collapsed) && !connected.has(n.id);
     if (n.type === "ports") {
       // Highlight the focused row when an individual port is the focus.
       const focusedPortId = focus != null && n.data.ports.some((p) => p.id === focus) ? focus : null;

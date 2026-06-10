@@ -71,7 +71,9 @@ const KIND_COLORS: Record<string, string> = {
   python: "#ffd479",
   file: "#5ec8b0",
   mcp: "#ff8fab",
-  workflow: "#a3b18a",
+  // Sub-workflow magenta (user-picked via shoot-lab, 2026-06-10): vivid enough to
+  // mark structure, clearly apart from mcp's salmon-pink and claude-code's violet.
+  workflow: "#e26ad8",
   input: "#94a3b8",
   output: "#ff9eaa",
   end: "#6b7280",
@@ -90,6 +92,11 @@ export function kindColor(kind: string): string {
 // = the router; distinct from loop amber #f0b86c and warn #f0a07a. Keep equal to
 // the CSS `--decision` var (index.css), which branch handles/labels tint from.
 export const CONDITION_COLOR = "#ffa657";
+
+// Batch container purple — keep equal to the CSS `--batch` var (index.css), which
+// batch badges/group tints read. Used where a component needs the literal color
+// (inline --kind on a collapsed batch card; CSS var() doesn't resolve there pre-mount).
+export const BATCH_COLOR = "#c79bf0";
 
 export function isCondition(node: { kind: string; is_decision: boolean }): boolean {
   // The kind gate is defensive: should branching ever extend beyond code nodes,

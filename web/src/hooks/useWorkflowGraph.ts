@@ -18,7 +18,7 @@ import { type OnEdgesChange, type OnNodesChange, useEdgesState, useNodesState, u
 import { ApiError, fetchGraph } from "../api/client";
 import { applyFocus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode } from "../graph/flow";
 import { layoutGraph } from "../graph/layout";
-import { assignDataRails, assignFacingSides } from "../graph/portSides";
+import { assignDataRails, assignFacingSides, assignLoopRails } from "../graph/portSides";
 import type { ApiErrorEntry, RFGraph } from "../types";
 
 export type GraphStatus = "loading" | "ready" | "empty" | "error";
@@ -188,8 +188,15 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
       lastLayoutRef.current = { graph, density, direction, collapsed, nodes: laidOut };
       setErrors(null); // a successful re-layout clears any stale layout error
       // Now that positions exist, point each ports-row edge at the side facing
-      // its peer (graph/portSides.ts) — buildFlow could only assign default sides.
-      setLaid({ nodes: laidOut, edges: assignDataRails(laidOut, assignFacingSides(laidOut, built.edges)), key: layoutKey });
+      // its peer, center wrap rails, number fork outcomes by spatial order, and
+      // give each loop-back U its wrap rail (graph/portSides.ts) — buildFlow
+      // could only assign defaults.
+      const decorated = assignLoopRails(
+        laidOut,
+        assignDataRails(laidOut, assignFacingSides(laidOut, built.edges)),
+        direction,
+      );
+      setLaid({ nodes: laidOut, edges: decorated, key: layoutKey });
     };
     const cached = layoutCacheRef.current.get(layoutKey);
     if (cached) {

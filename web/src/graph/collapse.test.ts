@@ -37,11 +37,19 @@ describe("collapsibleGroupIds — workflow/batch collapse, IO wrappers never", (
   it("excludes input/output wrappers (they render as ports nodes, not boxes)", () => {
     const g = graphWith(3, [
       group("gw"),
-      group("gb", { kind: "batch" }),
+      group("gb", { kind: "batch", members: ["m1"] }), // literal batch — real items inside
       group("gi", { kind: "input_wrapper" }),
       group("go", { kind: "output_wrapper" }),
     ]);
     expect(collapsibleGroupIds(g)).toEqual(["gw", "gb"]);
+  });
+
+  it("excludes SHELL batch groups (no direct members — buildFlow never renders them)", () => {
+    const g = graphWith(3, [
+      group("gw"),
+      group("g_shell", { kind: "batch" }), // a batched leaf/sub-workflow's decorator
+    ]);
+    expect(collapsibleGroupIds(g)).toEqual(["gw"]);
   });
 });
 

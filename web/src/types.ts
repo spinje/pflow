@@ -80,6 +80,10 @@ export interface RFEdge {
   output_field: string | null;
   input_name: string | null;
   shadowed: boolean;
+  // Source condition selecting this branch outcome ("if len(items) > 5" / "else"),
+  // extracted fail-closed in Python (react_flow.py). null on non-branch edges and
+  // whenever extraction couldn't be done safely.
+  condition: string | null;
 }
 
 export type ContainerKind = "workflow" | "batch" | "input_wrapper" | "output_wrapper";

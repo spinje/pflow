@@ -1,16 +1,42 @@
-// A container box (sub-workflow / batch / IO wrapper). Its header shows the host
-// node's title + badges when this is the host's primary (outermost) group — a host
-// is NOT 1:1 with a group (H8), so only one group of a multi-group host draws the
-// title. Clicking a group toggles collapse (wired in GraphView's onNodeClick); the
-// chevron is the affordance.
+// A container (sub-workflow / batch) in its two states — ONE object that folds
+// (user-driven redesign, 2026-06-10, picked via shoot-lab mockups):
+//
+//   COLLAPSED → a real node card with the leaf card's exact anatomy (tile + frame
+//     + icon, kind-colored category, name). It IS a node in the parent flow, so it
+//     speaks the leaf language: same classes (.node.compact), icon-column handles +
+//     connector flares in TD (layout.ts declares matching ELK ports, so trunks run
+//     straight through collapsed groups instead of jogging).
+//
+//   EXPANDED → a region that grows AROUND that same header. The header markup is
+//     IDENTICAL in both states (user requirement: icon size/placement/border and
+//     the name/description must not move when you open — the region header is the
+//     leaf `.node-header`, not a shrunken copy; METRICS.groupHeaderH == nodeHeaderH
+//     keeps ELK's content padding in step). Only the wrapper differs (card classes
+//     vs region classes) and the TD connector flares are collapsed-only (an
+//     expanded region's edges enter at the border center, not the icon column).
+//
+//   The member-count pill is ABSOLUTE on the top-right border in BOTH states
+//   (straddling it like a badge) so it, too, stays put across the fold; its
+//   chevron is the collapse affordance (▸ closed / ▾ open).
+//
+// The icon comes from the HOST node via groupIconFor: a looped sub-workflow shows
+// the loop glyph (amber — the LoopEdge color), a batch shows its batched node's
+// kind icon. The category line still names the container kind, so the swap costs
+// no identity. A host is NOT 1:1 with a group (H8) — only the host's primary
+// (outermost) group draws the title/badges. Clicking a group toggles collapse
+// (wired in GraphView's onNodeClick).
 
-import { memo } from "react";
-import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { type CSSProperties, memo, useEffect } from "react";
+import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
 import { NODE_IN, NODE_OUT } from "../../graph/handles";
+import { ICON_COL_X } from "../../graph/metrics";
+import { BATCH_COLOR, kindColor } from "../../utils/format";
+import { groupIconFor } from "../../utils/icons";
 import type { ContainerKind } from "../../types";
 import { NodeBadges } from "./Badges";
+import { Connector } from "./WorkflowNode";
 
 type GroupNodeType = Extract<FlowNode, { type: "group" }>;
 
@@ -20,6 +46,13 @@ const KIND_LABEL: Record<ContainerKind, string> = {
   input_wrapper: "inputs",
   output_wrapper: "outputs",
 };
+
+// The container's identity color (inline --kind, same mechanism as the leaf card).
+// Batch purple must equal the CSS --batch var; workflow magenta comes from the kind
+// palette so card, edges, and icon stay one color.
+function groupColor(kind: ContainerKind): string {
+  return kind === "batch" ? BATCH_COLOR : kindColor("workflow");
+}
 
 function unexpandedItemCount(annotations: Record<string, unknown>): number {
   const items = annotations["unexpanded_items"];
@@ -31,39 +64,80 @@ function warningCount(annotations: Record<string, unknown>): number {
   return Array.isArray(warnings) ? warnings.length : 0;
 }
 
-export const GroupNode = memo(function GroupNode({ data }: NodeProps<GroupNodeType>): JSX.Element {
-  const { group, hostNode, collapsed, showTitle, direction, dimmed, focused } = data;
+export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNodeType>): JSX.Element {
+  const { group, hostNode, collapsed, showTitle, direction, hasIncoming, hasOutgoing, memberCount, dimmed, focused } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
-  const classes = ["group", `group-${group.kind}`];
-  if (collapsed) classes.push("collapsed");
+
+  // Collapse toggles move the control handles (region border-center ↔ card icon
+  // column); without a re-measure React Flow keeps stale handle coords and the
+  // re-anchored edges fly to the origin.
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, collapsed, direction, updateNodeInternals]);
+
+  const kindStyle = { "--kind": groupColor(group.kind) } as CSSProperties;
+  const unexpanded = unexpandedItemCount(group.annotations);
+  const warnings = warningCount(group.annotations);
+  const icon = groupIconFor(hostNode);
+  const title = hostNode?.ref.node_id ?? KIND_LABEL[group.kind];
+  const countLabel = `${memberCount} node${memberCount === 1 ? "" : "s"}`;
+
+  // TD control handles sit on the icon column in BOTH states (user requirement:
+  // the trunk flows through the tile whether the container is open or closed) —
+  // layout.ts declares matching ELK ports so the column aligns icon-to-icon.
+  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : undefined;
+  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : undefined;
+
+  // The IDENTICAL header for both states. The TOP flare draws in both (the edge
+  // flows INTO the tile, open or closed); the BOTTOM flare is collapsed-only — an
+  // expanded region's tile sits at its top, far from the bottom exit (the same
+  // rule as a focus-expanded leaf card). `group-header` adds the absolute-overlay
+  // positioning the region needs; on the card the header is the whole card.
+  const header = (
+    <div className={collapsed ? "node-header" : "node-header group-header"}>
+      <div className="node-tile">
+        <img className="node-icon-img" src={icon} alt="" />
+        {direction === "TD" && hasIncoming && <Connector side="top" />}
+        {collapsed && direction === "TD" && hasOutgoing && <Connector side="bottom" />}
+      </div>
+      <div className="node-titles">
+        <span className="node-category">{KIND_LABEL[group.kind]}</span>
+        <span className="node-name" title={title}>
+          {hostNode?.purpose || title}
+        </span>
+      </div>
+      {showTitle && hostNode && <NodeBadges node={hostNode} max={1} />}
+      {unexpanded > 0 && (
+        <span className="badge badge-unexpanded" title="literal batch items that failed to expand">
+          {unexpanded} unexpanded
+        </span>
+      )}
+      {warnings > 0 && (
+        <span className="badge badge-warning" title="child warnings">
+          {warnings} warning{warnings === 1 ? "" : "s"}
+        </span>
+      )}
+    </div>
+  );
+
+  const classes = collapsed ? ["node", "compact", "group-card", `group-${group.kind}`] : ["group", `group-${group.kind}`];
+  // A batched sub-workflow presents as a SUB-WORKFLOW with batch (its shell batch
+  // group is never rendered) — the host's batch spec lights the card's deck.
+  if (collapsed && hostNode?.batch) classes.push("batched");
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
 
-  const unexpanded = unexpandedItemCount(group.annotations);
-  const warnings = warningCount(group.annotations);
-
   return (
-    <div className={classes.join(" ")}>
-      <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" />
-      <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" />
-      <div className="group-header">
-        <span className="chevron">{collapsed ? "▸" : "▾"}</span>
-        <span className="group-kind">{KIND_LABEL[group.kind]}</span>
-        {showTitle && hostNode && <span className="group-title">{hostNode.ref.node_id}</span>}
-        {showTitle && hostNode && <NodeBadges node={hostNode} />}
-        {collapsed && <span className="group-collapsed-count">{group.members.length} hidden</span>}
-        {unexpanded > 0 && (
-          <span className="badge badge-unexpanded" title="literal batch items that failed to expand">
-            {unexpanded} unexpanded
-          </span>
-        )}
-        {warnings > 0 && (
-          <span className="badge badge-warning" title="child warnings">
-            {warnings} warning{warnings === 1 ? "" : "s"}
-          </span>
-        )}
-      </div>
+    <div className={classes.join(" ")} style={kindStyle}>
+      <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
+      <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
+      {header}
+      <span className="count-pill group-pill">
+        <span className="chev">{collapsed ? "▸" : "▾"}</span>
+        {countLabel}
+      </span>
     </div>
   );
 });
