@@ -183,7 +183,7 @@ Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading doc
 
 MVP feature-complete. Published to PyPI (initial release v0.8.0; current version per `pyproject.toml`).
 
-**What's implemented**: shell/http/llm/file/mcp/python/claude-code nodes, template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
+**What's implemented**: shell/http/llm/mcp/`code` (Python)/claude-code nodes plus five file-op nodes (read/write/copy/move/delete-file) — registry names, not directory names; template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
 
 **Recently Completed:**
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access

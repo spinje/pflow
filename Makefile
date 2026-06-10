@@ -33,7 +33,7 @@ test-debug: ## Test the code with pytest sequentially for debugging
 .PHONY: test-llm
 test-llm: ## Run LLM integration tests with real API calls (requires API keys)
 	@echo "🚀 Testing LLM with real API calls"
-	@echo "📝 Note: Requires 'llm keys set openai' (or 'llm keys set anthropic' with llm-anthropic plugin)"
+	@echo "📝 Note: Requires OPENAI_API_KEY in the environment (or ~/.pflow/settings.json env section)"
 	@RUN_LLM_TESTS=1 uv run python -m pytest tests/test_nodes/test_llm/test_llm_integration.py -v
 
 .PHONY: test-all

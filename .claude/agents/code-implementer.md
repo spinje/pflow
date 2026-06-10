@@ -1,7 +1,8 @@
 ---
 name: code-implementer
 description: "Implement small, focused tasks in the pflow project: new functions/files, bug fixes, refactoring, or component integration. Caller MUST provide comprehensive context (requirements, file paths, patterns to follow, definition of done). Bigger tasks need bigger context. Do NOT use for: entire features, tasks requiring deep node/engine knowledge, or primary test writing (use test-writer-fixer instead)."
-model: opus
+model: fable
+effort: medium
 color: green
 ---
 
@@ -60,7 +61,7 @@ Write tests alongside your code:
 Run these commands and fix any failures before reporting:
 
 ```bash
-make check    # Lint (ruff) + type check (mypy)
+make check    # Lockfile check (uv lock --locked) + pre-commit incl. ruff + mypy + deptry
 make test     # Full test suite
 ```
 
@@ -88,7 +89,7 @@ uv pip install <package>                     # Install dependency
 uv run <command>                             # Run in project environment
 
 # Quality checks
-make check                                   # ruff (lint) + mypy (type check)
+make check                                   # uv lock --locked + pre-commit (ruff) + mypy + deptry
 make test                                    # Full pytest suite
 
 # Manual testing
@@ -107,7 +108,7 @@ Canonical reference: root `CLAUDE.md` ("Implementation Guidelines" section) for 
 
 ## Local CLAUDE.md Files
 
-Read the relevant one before working in any directory:
+Read the relevant one before working in any directory. This table is NOT exhaustive — deeper directories (`runtime/engine/`, `runtime/compilation/`, `core/workflow/`, `registry/`, `mcp/`, `guide/`, …) have their own CLAUDE.md; always check the directory you're editing:
 
 | Directory | Covers |
 |-----------|--------|
@@ -134,6 +135,6 @@ One well-implemented feature beats three half-finished ones.
 Your task is complete when:
 1. Code is implemented per requirements
 2. Tests are written and passing (`make test`)
-3. `make check` passes (no lint or type errors)
+3. `make check` passes (no lockfile, lint, type, or dependency errors)
 4. No unrelated changes were made
 5. You've reported what was done with decisions and limitations

@@ -30,8 +30,10 @@ The snapshot needs the last full run's output for **every** upstream node, as a 
 3. **Debug trace** (chosen). Already records `node_output` for *every* executed node regardless
    of `cache_enabled`, as one coherent per-run record, with no TTL and at zero new write cost.
    Selection scaffolding (~80%) already exists in `prompt_cache_analysis/trace_loading.py`;
-   per-node extraction is `final_events_by_node(trace["nodes"])`. Nested `--only a.b.c` recurses
-   through the trace's `sub_workflow_events`, mirroring the workflow's own nesting.
+   per-node extraction is `final_events_by_node(trace["nodes"])`. Nested `--only a.b.c` is
+   designed to recurse through the trace's `sub_workflow_events`, mirroring the workflow's own
+   nesting — **deferred, not built**: v1 is flat-only (see Limitations) and dotted targets are
+   rejected at validation (`engine.py:_validate_only_target`); the dotted plumbing exists dormant.
 
 ## Consequences
 
@@ -42,7 +44,8 @@ The snapshot needs the last full run's output for **every** upstream node, as a 
   silent re-fire — which was the entire point of #443.
 - **`--only` runs must not poison the snapshot.** An `--only` run's trace contains only the
   target, so the trace records `only_node` and the snapshot loader selects only full runs
-  (`only_node is None`, `final_status == "success"`).
+  (`only_node is None`; status `success` or `degraded` — never `failed`; a degraded source
+  emits the loud advisory described in Limitations).
 - **Binary upstream outputs degrade.** Trace sanitization replaces `bytes` with a
   `"<binary data: N bytes>"` placeholder, so a target consuming binary upstream gets the
   placeholder. Rare; documented. The memo cache and a dedicated store would not have this loss —

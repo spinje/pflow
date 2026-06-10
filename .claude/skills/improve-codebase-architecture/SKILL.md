@@ -32,7 +32,7 @@ Prioritize simplicity of the final code, not how easy it is to get there.
 
 ### 1. Explore
 
-Read `context/CONTEXT.md` (always) and any ADRs in `context/adr/` related to the area you're examining.
+Read `context/CONTEXT.md` (always), [PFLOW.md](PFLOW.md) (repo constraints that carry ADR weight — enforced invariants, testing doctrine, deliberate shapes), and any ADRs in `context/adr/` related to the area you're examining.
 
 If the area overlaps with previously completed tasks, use subagents to examine relevant `.taskmaster/tasks/task_<id>/task-review.md` files and ADR files for prior decisions and context. Do not read these yourself — delegate to `pflow-codebase-searcher` subagents and explicitly ask them to return only information clearly relevant to the architectural question, not a summary of the file contents.
 
@@ -85,7 +85,7 @@ Side effects happen inline as decisions crystallize:
 - **Sharpening a fuzzy term during the conversation?** Update `context/CONTEXT.md` right there.
 - **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. Use the format in [ADR-FORMAT.md](context/adr/ADR-FORMAT.md).
 - **Want to explore alternative interfaces for the deepened module?** See [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md).
-- **Design agreed and ready for execution?** Ask the user if they want to proceed with `/refactor` to execute the structural change. Never invoke it automatically — the user decides when the design is complete and all unknowns are resolved.
+- **Design agreed and ready for execution?** Ask the user which path: capture it as a task (`/create-task-spec` → spec in `.taskmaster/tasks/task_N/`, picked up later via `/start-work`) or plan the implementation directly in-session (the `plan-breakdown` skill splits large plans across agents). Never start automatically — the user decides when the design is complete and all unknowns are resolved.
 
 ## Context directory
 
