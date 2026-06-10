@@ -37,6 +37,7 @@ async function createElk(): Promise<ELK> {
       ]);
       const elk = new ElkApi({ workerFactory: () => new ElkWorker() }) as ELK;
       await elk.layout({ id: "probe", children: [{ id: "p", width: 1, height: 1 }], edges: [] });
+      console.log("[dbg] elk engine: worker");
       return elk;
     } catch (err) {
       console.warn("pflow UI: ELK worker unavailable — layouts will run on the main thread", err);
@@ -48,9 +49,19 @@ async function createElk(): Promise<ELK> {
 
 const ELK_DIRECTION: Record<Direction, string> = { LR: "RIGHT", TD: "DOWN" };
 
-// Top padding leaves room for the group header the GroupNode component draws
-// (header height from METRICS + 8px breathing room below it).
-const GROUP_PADDING = `[top=${METRICS.groupHeaderH + 8},left=16,bottom=16,right=16]`;
+// Region padding reserves room for the chrome GroupNode draws around the body:
+// the header (always), the inputs SIDEBAR on the left and the outputs strip at the
+// bottom (when the group renders its IO rows) — so the body's first layer lays out
+// BESIDE the sidebar, not below it, and nothing overlaps the strip.
+function groupPadding(node: FlowNode): string {
+  let left = 16;
+  let bottom = 16;
+  if (node.type === "group" && node.data.ioRowsVisible) {
+    if (node.data.inputs.length > 0) left = METRICS.ioSidebarW + 28;
+    if (node.data.outputs.length > 0) bottom = METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + 28;
+  }
+  return `[top=${METRICS.groupHeaderH + 16},left=${left},bottom=${bottom},right=16]`;
+}
 
 // Port ids for the TD icon-column ports (one pair per leaf node). Only minted
 // inside this module — ELK-internal, never rendered.
@@ -172,7 +183,20 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
     }
     if (children.length > 0) {
       elkNode.children = children.map(toElk);
-      elkNode.layoutOptions = { ...layeredOptions, "elk.padding": GROUP_PADDING };
+      elkNode.layoutOptions = { ...layeredOptions, "elk.padding": groupPadding(node) };
+      // A region whose inputs sidebar is taller than its body would overflow —
+      // clamp the region to fit the sidebar. GOTCHA (measured 2026-06-10): under
+      // direction DOWN, elkjs applies nodeSize.minimum in its INTERNAL (transposed)
+      // coordinates — pass (minH, minW) in TD, (minW, minH) in LR.
+      if (node.type === "group" && node.data.ioRowsVisible && node.data.inputs.length > 0) {
+        const minW = METRICS.ioSidebarW + 28 + 230 + 16;
+        const minH =
+          METRICS.groupHeaderH + 16 + METRICS.ioLabelH + node.data.inputs.length * METRICS.rowH + 16 +
+          (node.data.outputs.length > 0 ? METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + 28 : 16);
+        elkNode.layoutOptions["elk.nodeSize.constraints"] = "MINIMUM_SIZE";
+        elkNode.layoutOptions["elk.nodeSize.minimum"] =
+          direction === "TD" ? `(${minH}, ${minW})` : `(${minW}, ${minH})`;
+      }
     }
     return elkNode;
   };
@@ -198,7 +222,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   // drawn by LoopEdge) are excluded; ELK must not route a node to itself.
   // An endpoint whose rendered handle is the icon-column trunk (NODE_IN/NODE_OUT on a
   // ported leaf) connects to the matching ELK port; row-level handles (advanced data
-  // lines, ports-node rows) stay node-level — same anchor approximation as before.
+  // lines, IO rows) stay node-level — same anchor approximation as before.
   const elkEdges: ElkExtendedEdge[] = edges
     .filter((edge) => edge.source !== edge.target)
     .map((edge) => ({
@@ -215,7 +239,17 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
     edges: elkEdges,
   };
 
-  const laidOut = await elk.layout(root);
+  console.log("[dbg] elk.layout call", root.children?.length ?? 0, "children");
+  const g = globalThis as { __roots?: unknown[] };
+  g.__roots = (g.__roots ?? []).concat(JSON.parse(JSON.stringify(root)));
+  let laidOut;
+  try {
+    laidOut = await elk.layout(root);
+  } catch (e) {
+    console.log("[dbg] elk.layout THREW", String(e));
+    throw e;
+  }
+  console.log("[dbg] elk.layout done");
 
   const boxes = new Map<string, { x: number; y: number; width: number; height: number }>();
   const collect = (node: ElkNode): void => {

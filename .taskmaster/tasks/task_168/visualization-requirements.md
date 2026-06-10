@@ -12,13 +12,27 @@
   (This is why we route edges ourselves, not via ELK's edge routing.)
 - **No information loss in advanced mode.** Every node, edge, container, loop, batch,
   and `${ref}` is reconstructable. (Beautiful is a deliberate *projection* — less is OK.)
-- **Inputs/outputs = one consolidated "ports" node per level** (a row + handles per
-  port — the table-node pattern), NOT one node per port. Shown in **both** densities.
-- **Every port row has BOTH handles** — a *target* (receives: input bound from parent,
-  output written by a producer) and a *source* (feeds: input → consumers, output → parent).
-  A port bridges two scopes; both roles must connect.
+- **Inputs/outputs = ROWS on the workflow's OWN node, never a floating table**
+  (supersedes the consolidated "ports" node, 2026-06-10): a ROOT wrapper is a standalone
+  IO *card* (node anatomy: tile + INPUTS/OUTPUTS + workflow name + `"14 inputs"` pill;
+  compact in beautiful, rows in advanced/focus-expanded — the leaf showBody rule); a
+  NESTED wrapper's rows live on the workflow GROUP — collapsed card: two-column area
+  (inputs left, outputs right staggered ONE row down, ALWAYS — the in→out diagonal IS
+  the information; rows in advanced/focus-expanded); expanded region: inputs = LEFT
+  SIDEBAR (the body lays out BESIDE it, via ELK left padding), outputs = bottom-right
+  strip, full-width dividers — shown WHENEVER the region is open, both densities (an
+  open container hiding its inputs reads as "has none"; beautiful hides only the data
+  LINES). The root IO card CLICK TOGGLES its rows (expansion = its open state). Rejected:
+  "last node beside the outputs strip" (multiple endings; collides with branch fan-out).
+- **IO rows are STRICT-sided like param/output rows** — receive LEFT, feed RIGHT
+  (no side-flipping; `assignFacingSides` + the mirrored handles died with the table).
+  A region row bridges two scopes (outer = parent, inner = body) so it carries both
+  handles; BOTH always render (a named-but-missing handle silently drops the edge) with
+  the role-less side's dot hidden. Rows hidden (beautiful) → IO edges land node-level,
+  never a handle that doesn't render.
 - **Row-level focus:** clicking a single input/output **row** reveals just *that* port's
-  connections + highlights the row (not the whole node).
+  connections + highlights the row (not the whole node). Focusing a consumer expands the
+  IO owner so revealed lines land row-to-row (`expandTargets` is owner-aware).
 - **Beautiful = control skeleton; data wiring is on-demand.** `${ref}` data-flow lines are
   hidden by default in beautiful; clicking a node/port/consumer reveals just its lines
   (progressive disclosure). Advanced shows them all.
@@ -55,13 +69,14 @@
 - **ELK must know where the handles are.** TD control handles sit on the ICON COLUMN, not the node
   center — layout declares fixed ports at `ICON_COL_X` so columns align icon-to-icon. Without
   ports, "straight" chains render with a jog ELK can't see.
-- **A table row connects SIDEWAYS** — direction moves the trunk, never a row's anchor. PORTS rows
-  (scope bridges, dual-handled) pick their side post-layout to FACE the peer; PARAM/OUTPUT rows are
-  STRICT (inputs left, outputs right — the convention beats the shortest path; user decision
-  2026-06-10). A wrap-around to reach a strict row is fine: its rail centers in the clear gap
-  between the endpoint nodes (`assignDataRails`), never hugging a border. **Parallel edges at a
-  node ride LANES** (distinct stubs + rails) — EXCEPT a TD fork, whose branches leave one point
-  and share the trunk rail by design. Data lines: flat teal; solid-at-click hint-fade when focused.
+- **A table row connects SIDEWAYS** — direction moves the trunk, never a row's anchor. ALL rows
+  are STRICT-sided (receive left, feed right — the convention beats the shortest path; user
+  decision 2026-06-10; the old ports-table's post-layout facing-sides flip died with the table —
+  IO rows on the boundary have structural sides). A wrap-around to reach a strict row is fine:
+  its rail centers in the clear gap between the endpoint nodes (`assignDataRails`), never hugging
+  a border. **Parallel edges at a node ride LANES** (distinct stubs + rails) — EXCEPT a TD fork,
+  whose branches leave one point and share the trunk rail by design. Data lines: flat teal;
+  solid-at-click hint-fade when focused.
 
 ## Implemented
 
@@ -72,18 +87,33 @@
 - Loop-back **arc** synthesized from `LoopSpec` (amber, condition+cap label; wraps a looped
   sub-workflow's container).
 - Color-by-type nodes + source-colored edges; roomy spacing.
-- Consolidated **Inputs/Outputs ports nodes** (rows, dual handles, row-level focus).
+- **IO rows on the workflow node (2026-06-10)** — replaced the consolidated ports
+  table wholesale: root IO cards (compact-in-beautiful — kills the floating 14-row
+  table on input-heavy workflows), collapsed-card two-column IO, region sidebar +
+  outputs strip (ELK per-group padding + `nodeSize.minimum`, TD-transposed gotcha
+  pinned). Deleted: `PortsNode`, `assignFacingSides`, the `iotr:`/`iol:` mirror
+  handles. Shared `PortRows` renderer; row-level focus preserved.
 - **Fork handles** (labeled, both densities).
 - **Branch labels at the target entry (2026-06-10):** in TD the outcome label sits on the
   edge just above its target's left side (bare text, shadow halo, +4px nudge); error pills
   stay mid-edge. Fork targets LAY OUT in the code's chain order (`orderForkSiblings`,
   layout.ts — first `if` leftmost; Steps-declaration order is irrelevant to a fork).
   *(Ordinal number prefixes were tried and removed same day.)*
-- **Branch CONDITIONS on the edge (2026-06-10):** `RFEdge.condition` (AST-extracted,
-  fail-closed) renders as an orange-tinted white-text pill — on the edge's lone rail run,
-  or the final descent for the straight child (`conditionAnchor`, never on the rail
-  crossing) — advanced always, beautiful while the condition node is focus-expanded; the
-  read panel shows the full outcome → condition table.
+- **Branch CONDITIONS (2026-06-10):** `RFEdge.condition` (AST-extracted, fail-closed)
+  renders where the outcome lives, advanced always / beautiful while the condition node
+  is focus-expanded — and clicking a branch TARGET reveals just its own condition
+  ("why was I reached?": TD → the edge pill above the target; LR → on the source's
+  BranchPorts row — an entry pill overlapped the clicked card); the read panel shows
+  the full outcome → condition table. **TD:** an
+  edge-colored white-text pill (target node's color, the standard pill rule) on the
+  FINAL APPROACH into its target, stacked above the outcome label (`conditionAnchor` —
+  one pill per target entry; path-midpoint anchors collided on shared rails,
+  measured). **LR:** quiet text ON the BranchPorts row beside its
+  outcome pill (`LeafData.branchConditions`) — mid-path pills clipped under cards /
+  floated on backward wraps (user-caught); a re-anchored branch (collapsed source, no
+  rows) keeps the edge pill. When the source's rows show, LR targets also get their
+  outcome name at their entry (TD-style bare text, above the line) so a row's line
+  is findable without tracing it.
 - IO hidden-data-flow revealed on click (progressive disclosure).
 - **Click-to-expand in beautiful (2026-06-09):** focusing a node expands it + its data-flow
   endpoints to the full advanced body in place; revealed lines land **row-to-row** (output row →
@@ -145,10 +175,11 @@
   OPEN fully collapsed — overview-first AND a faster first ELK run; `collapse=all|none` URL
   override; `node=`/`focus=` deep-link targets keep their ancestor chain expanded; collapse-all
   clears focus. Policy is pure + tested: `graph/collapse.ts`.
-- **Edge disambiguation batch** — ✅ DONE (2026-06-10, all user-caught): ports rows connect
-  **sideways in both directions** (TD top/bottom row dots floated between rows) with FOUR
-  handles/row + the post-layout `assignFacingSides` pass picking the side FACING the peer (PORTS rows only — param/output rows stay strict-sided; wrap rails center in the node gap via `assignDataRails`) (no more
-  wrap-arounds — they were the crossing tangle); **LANES** for data/branch/error edges
+- **Edge disambiguation batch** — ✅ DONE (2026-06-10, all user-caught): rows connect
+  **sideways** (TD top/bottom row dots floated between rows — fixed) *(the four-handle +
+  `assignFacingSides` facing-side machinery from this batch was DELETED same day with the
+  ports table — IO rows on the workflow node are strict-sided; wrap rails center in the
+  node gap via `assignDataRails`)*; **LANES** for data/branch/error edges
   (`assignEdgeLanes` + `DataEdge` geometry: distinct stubs AND middle rails, so parallel bindings
   fan apart instead of overlapping pixel-exactly; LR fork rails stagger per lane — TD trunk rail
   stays shared by design); dict-key `input_name` lands on the **containing param's row** (was the
@@ -184,6 +215,14 @@
   sub-workflow IS a sub-workflow WITH batch (the workflow group reparents past the shell,
   takes edges/title/deck, and its collapsed card opens the sub-workflow body in one click).
   Literal batches (real item copies) keep their container.
+- **Backward branch/error edges ride a BACK RAIL** — ✅ DONE (2026-06-10, user-caught):
+  a loop-back to an earlier node used smoothstep's stock wrap, U-turning at the ~20px
+  stub right at the source handle — sibling loop-backs knotted into curls (check-groups,
+  LR). `assignBackRails` (portSides.ts, 4th post-layout pass) routes them around both
+  endpoint boxes — LR below (the loop U owns above), TD left (the loop rail owns the
+  right) — lane-staggered; GradientEdge prefers the rail over its railCenter default.
+  Sequential edges deliberately untouched. Third-party node avoidance stays the smart
+  edge-router's job.
 - **Loop arcs → orthogonal U** — ✅ DONE (2026-06-10): `LoopEdge` is `getSmoothStepPath` with a
   wrap rail from the post-layout `assignLoopRails` pass (portSides.ts; TD → rail right of the
   box, LR → above; the rail is LOAD-BEARING — a self-loop's smoothstep midpoint runs straight

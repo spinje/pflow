@@ -81,11 +81,11 @@ describe("labelAnchor — the pill sits at the target's entry, just off the node
     expect(a.selfTranslate).toBe("translate(0, -100%)"); // left+bottom edges at the anchor
   });
 
-  it("LR (left entry): sits fully left of the node border, centered on the line", () => {
+  it("LR (left entry): fully left of the node border, ABOVE the line (on-line struck the text)", () => {
     const a = labelAnchor({ targetX: 300, targetY: 400, targetPosition: Position.Left, ...path });
     expect(a.x).toBeLessThan(300);
-    expect(a.y).toBe(400);
-    expect(a.selfTranslate).toBe("translate(-100%, -50%)");
+    expect(a.y).toBeLessThan(400); // lifted off the approach line
+    expect(a.selfTranslate).toBe("translate(-100%, -100%)"); // right+bottom edges at the anchor
   });
 
   it("unusual entry side falls back to the path center", () => {
@@ -94,33 +94,48 @@ describe("labelAnchor — the pill sits at the target's entry, just off the node
   });
 });
 
-describe("conditionAnchor — the condition pill sits on a LONE segment, never the rail crossing", () => {
+describe("conditionAnchor — ONE pill per target entry, on the final approach", () => {
+  // The old path-midpoint rule collided: TD same-direction siblings share the rail Y
+  // (measured: two pills at a pixel-identical rect on check-groups), and a back-railed
+  // loop-back's midpoint sat on its wrap. The target entry is collision-free.
   const path = { pathX: 250, pathY: 140 };
 
-  it("TD straight child (no rail run of its own): centers on the final descent", () => {
+  it("TD forward: centers on the final descent into ITS target", () => {
     // source bottom y=100, target top y=200 → rail at 100+40=140 (2×radius=40).
-    // The path midpoint (140) IS the rail crossing; the pill must sit below it.
-    const a = conditionAnchor({ sourceX: 300, sourceY: 100, targetX: 300, targetY: 200, targetPosition: Position.Top, ...path });
+    const a = conditionAnchor({ sourceY: 100, targetX: 300, targetY: 200, targetPosition: Position.Top, ...path });
     expect(a.x).toBe(300); // on the descent into the target
     expect(a.y).toBeGreaterThan(140); // below the shared fork rail
     expect(a.y).toBeLessThan(200 - 16); // above the outcome label zone
   });
 
-  it("TD side branch (real horizontal run): keeps the midpoint — the run is its own lone segment", () => {
-    const a = conditionAnchor({ sourceX: 100, sourceY: 100, targetX: 400, targetY: 200, targetPosition: Position.Top, ...path });
-    expect(a).toEqual({ x: 250, y: 140 }); // mid-run, user-preferred over the cramped descent
+  it("TD siblings: distinct targets → distinct anchors (the collision fix)", () => {
+    const a = conditionAnchor({ sourceY: 100, targetX: 200, targetY: 300, targetPosition: Position.Top, ...path });
+    const b = conditionAnchor({ sourceY: 100, targetX: 500, targetY: 300, targetPosition: Position.Top, ...path });
+    expect(a.x).not.toBe(b.x); // each pill above its own target column
   });
 
   it("TD short hop: rail clamps to halfway, pill still strictly between rail and entry", () => {
-    const a = conditionAnchor({ sourceX: 300, sourceY: 100, targetX: 300, targetY: 160, targetPosition: Position.Top, ...path });
+    const a = conditionAnchor({ sourceY: 100, targetX: 300, targetY: 160, targetPosition: Position.Top, ...path });
     expect(a.y).toBeGreaterThan(130); // rail clamped to (160-100)/2 → 130
     expect(a.y).toBeLessThan(160);
   });
 
-  it("LR / backward edges keep the path midpoint", () => {
-    const lr = conditionAnchor({ sourceX: 100, sourceY: 100, targetX: 300, targetY: 100, targetPosition: Position.Left, ...path });
-    expect(lr).toEqual({ x: 250, y: 140 });
-    const backward = conditionAnchor({ sourceX: 300, sourceY: 300, targetX: 300, targetY: 200, targetPosition: Position.Top, ...path });
-    expect(backward).toEqual({ x: 250, y: 140 });
+  it("TD backward (back-railed loop-back): pill sits in the approach zone above its target", () => {
+    const a = conditionAnchor({ sourceY: 300, targetX: 300, targetY: 200, targetPosition: Position.Top, ...path });
+    expect(a.x).toBe(300); // the target's entry column, not the wrap midpoint
+    expect(a.y).toBeLessThan(200 - 16); // above the outcome label zone
+    expect(a.y).toBeGreaterThan(200 - 2 * 26 - 16); // near the entry, not lost on the rail
+  });
+
+  it("LR (re-anchored fallback — rows hold the rest): right-aligned ABOVE the outcome label", () => {
+    const lr = conditionAnchor({ sourceY: 100, targetX: 300, targetY: 100, targetPosition: Position.Left, ...path });
+    expect(lr.x).toBeLessThan(300); // left of the entry
+    expect(lr.y).toBeLessThan(100); // above the line — never ON the clicked card
+    expect(lr.selfTranslate).toBe("translate(-100%, -100%)");
+  });
+
+  it("unusual entry side falls back to the path midpoint", () => {
+    const odd = conditionAnchor({ sourceY: 100, targetX: 300, targetY: 200, targetPosition: Position.Bottom, ...path });
+    expect(odd).toEqual({ x: 250, y: 140, selfTranslate: "translate(-50%, -50%)" });
   });
 });

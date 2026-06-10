@@ -18,7 +18,7 @@ import { type OnEdgesChange, type OnNodesChange, useEdgesState, useNodesState, u
 import { ApiError, fetchGraph } from "../api/client";
 import { applyFocus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode } from "../graph/flow";
 import { layoutGraph } from "../graph/layout";
-import { assignDataRails, assignFacingSides, assignLoopRails } from "../graph/portSides";
+import { assignBackRails, assignDataRails, assignLoopRails } from "../graph/portSides";
 import type { ApiErrorEntry, RFGraph } from "../types";
 
 export type GraphStatus = "loading" | "ready" | "empty" | "error";
@@ -71,7 +71,7 @@ function absolutePosition(nodes: FlowNode[], id: string): { x: number; y: number
 }
 
 export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): WorkflowGraphResult {
-  const { density, direction, collapsed, focus } = view;
+  const { density, direction, collapsed, focus, workflowName } = view;
 
   const [graph, setGraph] = useState<RFGraph | null>(null);
   const [errors, setErrors] = useState<ApiErrorEntry[] | null>(null);
@@ -125,8 +125,8 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
   // 2. Structural build (no positions). Re-runs only on layout-affecting state
   //    (which, in beautiful, includes the focus-derived expansion set).
   const built = useMemo(
-    () => (graph ? buildFlow(graph, { density, direction, collapsed, expanded }) : { nodes: [], edges: [] }),
-    [graph, density, direction, collapsed, expanded],
+    () => (graph ? buildFlow(graph, { density, direction, collapsed, expanded, workflowName }) : { nodes: [], edges: [] }),
+    [graph, density, direction, collapsed, expanded, workflowName],
   );
 
   // The current layout-affecting state as a string — the layout cache key AND the
@@ -187,17 +187,18 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
       }
       lastLayoutRef.current = { graph, density, direction, collapsed, nodes: laidOut };
       setErrors(null); // a successful re-layout clears any stale layout error
-      // Now that positions exist, point each ports-row edge at the side facing
-      // its peer, center wrap rails, number fork outcomes by spatial order, and
-      // give each loop-back U its wrap rail (graph/portSides.ts) — buildFlow
-      // could only assign defaults.
+      // Now that positions exist, center wrap rails, route backward branch/error
+      // edges around their boxes, and give each loop-back U its wrap rail
+      // (graph/portSides.ts) — buildFlow could only assign defaults.
       const decorated = assignLoopRails(
         laidOut,
-        assignDataRails(laidOut, assignFacingSides(laidOut, built.edges)),
+        assignBackRails(laidOut, assignDataRails(laidOut, built.edges), direction),
         direction,
       );
+      console.log("[dbg] layout landed", layoutKey);
       setLaid({ nodes: laidOut, edges: decorated, key: layoutKey });
     };
+    console.log("[dbg] layout start", layoutKey);
     const cached = layoutCacheRef.current.get(layoutKey);
     if (cached) {
       // Synchronous: an already-seen state (un-focus, re-click) lands in one paint —
@@ -239,6 +240,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
   // lands, never on a focus-only re-decoration of the same one.
   const paintedRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[]; key: string } | null>(null);
   useEffect(() => {
+    console.log("[dbg] decorate?", JSON.stringify({ laidKey: laid?.key ?? null, layoutKey, focus }));
     if (laid === null || laid.key !== layoutKey) return;
     if (animRef.current !== null) {
       cancelAnimationFrame(animRef.current);

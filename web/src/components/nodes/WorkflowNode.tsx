@@ -111,7 +111,20 @@ export function Connector({ side }: { side: "top" | "bottom" }): JSX.Element {
 }
 
 export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Element {
-  const { node, density, direction, outputFields, branchLabels, hasIncoming, hasOutgoing, expanded, dimmed, focused } = data;
+  const {
+    node,
+    density,
+    direction,
+    outputFields,
+    branchLabels,
+    branchConditions,
+    revealedConditions,
+    hasIncoming,
+    hasOutgoing,
+    expanded,
+    dimmed,
+    focused,
+  } = data;
   const detailed = density === "detailed";
   // Focus-expansion (beautiful only): the card renders its full advanced body in place.
   const showBody = detailed || expanded;
@@ -259,7 +272,13 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
         </div>
       )}
 
-      <BranchPorts labels={branchLabels} direction={direction} />
+      {/* Focus-revealed conditions (a clicked branch TARGET, LR) merge over the
+          build-time set — the row is the condition's LR home in both cases. */}
+      <BranchPorts
+        labels={branchLabels}
+        conditions={revealedConditions ? { ...branchConditions, ...revealedConditions } : branchConditions}
+        direction={direction}
+      />
     </div>
   );
 });

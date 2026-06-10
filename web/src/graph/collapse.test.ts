@@ -34,7 +34,7 @@ function graphWith(nodeCount: number, groups: RFGroup[], nodes: RFNode[] = []): 
 }
 
 describe("collapsibleGroupIds — workflow/batch collapse, IO wrappers never", () => {
-  it("excludes input/output wrappers (they render as ports nodes, not boxes)", () => {
+  it("excludes input/output wrappers (they render as IO rows, not boxes)", () => {
     const g = graphWith(3, [
       group("gw"),
       group("gb", { kind: "batch", members: ["m1"] }), // literal batch — real items inside

@@ -37,16 +37,16 @@ interface GraphViewProps {
 // nodes as SVG fill attributes, where var() does not resolve. Leaves take their
 // identity color through the nodeColor seam (CONDITION-aware — never raw kindColor);
 // groups stay a faint wash so containers read as regions without drowning the leaf
-// dots; ports/end stay neutral. The dark container/mask styling lives in index.css
-// (.react-flow__minimap*).
+// dots; the root IO cards take a quiet wash of their teal; end stays neutral. The
+// dark container/mask styling lives in index.css (.react-flow__minimap*).
 function minimapNodeColor(n: FlowNode): string {
   switch (n.type) {
     case "node":
       return nodeColor(n.data.node);
     case "group":
       return "rgba(255, 255, 255, 0.05)";
-    case "ports":
-      return "rgba(255, 255, 255, 0.22)";
+    case "io":
+      return "rgba(111, 191, 168, 0.45)"; // IO_COLOR at minimap strength
     default:
       return "rgba(255, 255, 255, 0.12)"; // end sink
   }
@@ -73,11 +73,16 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // The root IO cards' title line: the workflow's display name (basename, no
+  // extension — the toolbar keeps the full path).
+  const workflowName = useMemo(() => workflow.split("/").pop()?.replace(/\.pflow\.md$/, "") ?? workflow, [workflow]);
+
   const { nodes, edges, onNodesChange, onEdgesChange, status, errors, graph } = useWorkflowGraph(workflow, {
     density,
     direction,
     collapsed,
     focus,
+    workflowName,
   });
 
   const { fitView, getNodes } = useReactFlow();
@@ -159,6 +164,13 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       });
       return;
     }
+    if (node.type === "io") {
+      // The root IO card TOGGLES like a container (its focus-expansion is its open
+      // state, so a second click must close it — user-caught 2026-06-10).
+      setFocus((prev) => (prev === node.id ? null : node.id));
+      setSelectedId((prev) => (prev === node.id ? null : node.id));
+      return;
+    }
     setFocus(node.id);
     setSelectedId(node.id);
   }, []);
@@ -168,8 +180,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setSelectedId(null);
   }, []);
 
-  // Clicking a single port ROW (inside a ports node) focuses just that port — its
-  // connections reveal, the row highlights. No read panel (a port has no params).
+  // Clicking a single IO ROW (on a root IO card or a group's row area) focuses just
+  // that port — its connections reveal, the row highlights. No read panel (a port
+  // has no params).
   const interaction = useMemo(
     () => ({ focusPort: (portId: string) => setFocus(portId) }),
     [],

@@ -9,10 +9,14 @@
 export const METRICS = {
   /** .node-header min-height == the compact node's fixed height (leafSize). */
   nodeHeaderH: 68,
-  /** one row: param / branch-port / ports-row (leafSize row math + 3 CSS rules). */
+  /** one row: param / branch-port / io-row (leafSize row math + 3 CSS rules). */
   rowH: 26,
-  /** .ports-header height (leafSize for ports nodes). */
-  portsHeaderH: 30,
+  /** .io-col-label height — the small INPUTS/OUTPUTS column caption above IO rows
+   *  (collapsed group card + expanded region; sizing math counts it once). */
+  ioLabelH: 18,
+  /** .group-io-in sidebar width — the expanded region's inputs column. layout.ts
+   *  reserves it as ELK left padding so the body lays out BESIDE the sidebar. */
+  ioSidebarW: 200,
   /** .node-tile box — the icon tile leafSize assumes dominates the header. */
   tileSize: 56,
   /** .node-tile border width; the flare's base apron must stay WITHIN it. */
@@ -45,7 +49,8 @@ export function metricsCssVars(): Record<string, string> {
   return {
     "--node-header-h": `${METRICS.nodeHeaderH}px`,
     "--row-h": `${METRICS.rowH}px`,
-    "--ports-header-h": `${METRICS.portsHeaderH}px`,
+    "--io-label-h": `${METRICS.ioLabelH}px`,
+    "--io-sidebar-w": `${METRICS.ioSidebarW}px`,
     "--tile-size": `${METRICS.tileSize}px`,
     "--tile-border": `${METRICS.tileBorder}px`,
     "--edge-stroke": `${METRICS.edgeStroke}px`,

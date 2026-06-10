@@ -19,7 +19,7 @@ import loop from "../assets/icons/loop.svg";
 import placeholder from "../assets/icons/placeholder.svg";
 import python from "../assets/icons/python.svg";
 import subworkflow from "../assets/icons/subworkflow.svg";
-import { isCondition } from "./format";
+import { IO_COLOR, isCondition } from "./format";
 import type { RFNode } from "../types";
 
 // condition.svg: three hollow rings joined by tapering legs, one in / two out — a
@@ -69,4 +69,25 @@ export function iconFor(node: RFNode): string {
  *  falling back to the sub-workflow frame when the group has no host node. */
 export function groupIconFor(hostNode: RFNode | null): string {
   return hostNode ? iconFor(hostNode) : subworkflow;
+}
+
+// The root IO cards' glyphs: an arrow flowing INTO a wall (inputs arrive) / OUT of
+// one (outputs leave), stroked in IO_COLOR. Generated data-URIs (like the condition
+// icon's color, the glyph can't drift from the identity color in format.ts).
+function ioGlyph(kind: "input" | "output"): string {
+  const arrow =
+    kind === "input"
+      ? '<path d="M3 12h11M10 7l5 5-5 5"/><path d="M19 5v14"/>'
+      : '<path d="M5 5v14"/><path d="M9 12h11M15 7l5 5-5 5"/>';
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ` +
+    `stroke="${IO_COLOR}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${arrow}</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+const IO_ICON = { input: ioGlyph("input"), output: ioGlyph("output") } as const;
+
+/** The root Inputs/Outputs card's tile icon. */
+export function ioCardIcon(kind: "input" | "output"): string {
+  return IO_ICON[kind];
 }

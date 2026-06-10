@@ -1,4 +1,4 @@
-/* Geometry vars (--node-header-h, --row-h, --ports-header-h, --tile-size,
+/* Geometry vars (--node-header-h, --row-h, --io-label-h, --io-sidebar-w, --tile-size,
    --tile-border, --edge-stroke, --group-header-h) are NOT declared here — they are
    injected on :root at startup from graph/metrics.ts (the single source shared with
    ELK sizing and the connector/edge geometry). Never hardcode those numbers in CSS. */
@@ -483,6 +483,20 @@ button.active {
   height: var(--row-h);
   padding: 0 12px 0 10px;
 }
+/* The outcome's CONDITION on its row ("if len(items) > 5") — the condition's home
+   in LR (BranchPorts; flow.ts populates it in advanced / focus-expanded only).
+   Quiet muted text so the orange outcome pill stays the row's anchor; full text
+   on the title + the read panel's table. */
+.branch-cond {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 8px;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .branch-label {
   font-family: var(--mono);
   font-size: 11px;
@@ -491,6 +505,7 @@ button.active {
   border: 1px solid color-mix(in srgb, var(--decision) 28%, transparent);
   border-radius: 4px;
   padding: 0 6px;
+  flex-shrink: 0; /* the outcome pill wins the row; the condition text ellipsizes first */
   max-width: 88%;
   white-space: nowrap;
   overflow: hidden;
@@ -500,68 +515,119 @@ button.active {
   background: var(--decision);
 }
 
-/* Inputs/Outputs node — one row + handle per port */
-.ports {
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  background: var(--bg-node);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  font-size: 12px;
+/* IO rows — a workflow's inputs/outputs as rows on its OWN node, never a floating
+   table. `io-*` classes are constructed in PortRows.tsx (rows/columns), IOCardNode.tsx
+   (the root Inputs/Outputs cards, .io-card) and GroupNode.tsx (.io-rows areas,
+   .group-io-in sidebar / .group-io-out strip). */
+.io-rows {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding: 6px 6px 4px;
 }
-.ports.dimmed {
-  opacity: 0.18;
-  transition: opacity 0.15s;
+.io-rows-cols {
+  display: flex;
+  gap: 16px;
 }
-.ports.focused {
-  box-shadow: 0 0 0 2px var(--accent);
+.io-rows-cols .io-col {
+  flex: 1 1 0;
+  min-width: 0;
 }
-.ports-header {
-  height: var(--ports-header-h);
+/* outputs sit one row LOWER than inputs (the in→out diagonal; flow.ts ioRowsCount
+   counts the extra row) */
+.io-col.stagger {
+  margin-top: var(--row-h);
+}
+.io-col-label {
+  height: var(--io-label-h);
   display: flex;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 8px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--text-faint);
-  background: var(--bg-node-header);
-  border-bottom: 1px solid var(--border);
 }
-.ports-rows {
-  display: flex;
-  flex-direction: column;
+.io-col-output .io-col-label {
+  justify-content: flex-end;
 }
-.ports-row {
+.io-row {
   position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   height: var(--row-h);
-  padding: 0 12px;
+  padding: 0 8px;
   cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
 }
-.ports-row:hover {
+.io-row:hover {
   background: rgba(255, 255, 255, 0.04);
 }
-.ports-row.focused {
+.io-row.focused {
   background: var(--accent-soft);
 }
-.ports-name {
-  flex: 1 1 auto;
-  font-family: var(--mono);
+.io-row-out {
+  justify-content: flex-end;
+}
+.io-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ports-required {
+.io-required {
   color: var(--warn);
+}
+.io-type {
+  color: var(--text-faint);
+  font-size: 10px;
 }
 .react-flow__handle.port-handle {
   background: var(--data-edge);
+}
+/* a row's role-less side: the handle stays (React Flow drops an edge whose named
+   handle is missing — the silent-drop bug class) but shows no dot */
+.react-flow__handle.port-handle.quiet {
+  opacity: 0;
+}
+
+/* Expanded region IO: the inputs SIDEBAR (ELK reserves the column as left padding —
+   layout.ts groupPadding — so the body lays out beside it) and the outputs strip at
+   the bottom; both dividers run the FULL region width, touching the border. */
+.group.has-io > .node-header.group-header {
+  border-bottom: 1px solid color-mix(in srgb, var(--kind) 22%, var(--border));
+}
+.group-io-in {
+  position: absolute;
+  top: calc(var(--group-header-h) + 10px);
+  left: 10px;
+  width: var(--io-sidebar-w);
+}
+.group-io-out {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-top: 1px solid color-mix(in srgb, var(--kind) 22%, var(--border));
+  padding: 4px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+/* strip rows HUG their content: a full-width row with right-aligned text leaves the
+   left (receive) dot floating mid-strip, far from its label — the producer line
+   looked like it landed on nothing (user-caught 2026-06-10). Fit-content puts the
+   receive dot directly beside the text: `• segments •`. */
+.group-io-out .io-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 100%;
+}
+.group-io-out .io-row {
+  width: fit-content;
 }
 
 /* end sink */
@@ -579,8 +645,8 @@ button.active {
 
 /* ---------- groups ---------- */
 /* the `group-*` kind classes are CONSTRUCTED in GroupNode.tsx as `group-${group.kind}`
-   (workflow | batch) — grep that site, not the literal. IO wrappers render as ports
-   nodes, never as groups; a COLLAPSED group renders the leaf card classes
+   (workflow | batch) — grep that site, not the literal. IO wrappers render as rows on
+   their owner node, never as groups; a COLLAPSED group renders the leaf card classes
    (.node.compact.group-card), so the rules below style the EXPANDED region only.
    --kind is set inline per group (workflow magenta / batch purple), same mechanism
    as the leaf card — one tint rule serves both kinds. */

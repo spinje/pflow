@@ -32,34 +32,41 @@ const CONDITION_MAX = 40;
 // gaps) — the condition pill centers in the descent ABOVE it.
 const OUTCOME_CLEAR = 26;
 
-// A TD branch with less horizontal travel than this has no lone rail run worth
-// labeling — its midpoint would sit in the shared rail-crossing zone.
-const LONE_RUN_MIN = 60;
-
-/** Where the CONDITION pill sits. The path midpoint is the right home when the
- *  edge owns a real horizontal rail run (a side branch — the run belongs to
- *  this edge alone, and smoothstep's label point is its center). The STRAIGHT
- *  child has no run: its midpoint lands ON the crossing of every sibling's
- *  rail (user-caught), so it falls back to the FINAL DESCENT — centered between
- *  the rail and the outcome-label zone at the target entry, a segment owned by
- *  this edge by construction. Other shapes (LR, backward) keep the midpoint. */
+/** Where the CONDITION pill sits: on the FINAL APPROACH into its target, just
+ *  past the outcome-label zone — ONE pill per target entry. The old rule (path
+ *  midpoint, descent only for the straight child) collided on real forks: in TD
+ *  every sibling shares the rail Y, so same-direction siblings' midpoints land
+ *  in the same crossing zone (measured: two pills at a pixel-identical rect on
+ *  check-groups), and a back-railed loop-back's midpoint sits on its wrap. The
+ *  target entry is collision-free by construction (one branch per target) and
+ *  puts the condition next to the outcome name it explains. TD: centered on the
+ *  descent between the rail (or a fixed approach zone for a backward edge) and
+ *  the outcome label. LR: right-aligned ABOVE the outcome label at the entry —
+ *  the LR stack mirrors TD's (condition over outcome over the line; an on-line
+ *  pill overlapped the clicked card, user-caught). Only re-anchored branches
+ *  carry LR pills — the BranchPorts rows hold the rest. Unusual entry sides
+ *  keep the path midpoint. */
 export function conditionAnchor(args: {
-  sourceX: number;
   sourceY: number;
   targetX: number;
   targetY: number;
   targetPosition: Position;
   pathX: number;
   pathY: number;
-}): { x: number; y: number } {
-  const { sourceX, sourceY, targetX, targetY, targetPosition, pathX, pathY } = args;
-  const noLoneRun = Math.abs(targetX - sourceX) < LONE_RUN_MIN;
-  if (targetPosition === Position.Top && targetY > sourceY && noLoneRun) {
-    const railY = sourceY + Math.min(RAIL_OFFSET, (targetY - sourceY) / 2);
+}): { x: number; y: number; selfTranslate: string } {
+  const { sourceY, targetX, targetY, targetPosition, pathX, pathY } = args;
+  if (targetPosition === Position.Top) {
+    const approachTop =
+      targetY > sourceY
+        ? sourceY + Math.min(RAIL_OFFSET, (targetY - sourceY) / 2) // the fork rail
+        : targetY - 2 * OUTCOME_CLEAR; // backward wrap — fixed approach zone
     // +5: user-tuned — clears the rail corner the centered point still kissed.
-    return { x: targetX, y: (railY + targetY - OUTCOME_CLEAR) / 2 + 5 };
+    return { x: targetX, y: (approachTop + targetY - OUTCOME_CLEAR) / 2 + 5, selfTranslate: "translate(-50%, -50%)" };
   }
-  return { x: pathX, y: pathY };
+  if (targetPosition === Position.Left) {
+    return { x: targetX - LABEL_GAP, y: targetY - OUTCOME_CLEAR, selfTranslate: "translate(-100%, -100%)" };
+  }
+  return { x: pathX, y: pathY, selfTranslate: "translate(-50%, -50%)" };
 }
 
 // How far the node-color fade reaches into an error/end edge, in px. The gradient
@@ -131,7 +138,9 @@ export function labelAnchor(args: {
     return { x: targetX - ICON_COL_X + LABEL_NUDGE_X, y: targetY - LABEL_GAP, selfTranslate: "translate(0, -100%)" };
   }
   if (targetPosition === Position.Left) {
-    return { x: targetX - LABEL_GAP, y: targetY, selfTranslate: "translate(-100%, -50%)" };
+    // Above the line, right-aligned toward the entry (the on-line position struck
+    // the text through with the edge; the LR stack mirrors TD's label-above-entry).
+    return { x: targetX - LABEL_GAP, y: targetY - LABEL_GAP, selfTranslate: "translate(-100%, -100%)" };
   }
   // Unusual entry side (re-anchored/backward cases) — fall back to the path center.
   return { x: pathX, y: pathY, selfTranslate: "translate(-50%, -50%)" };
@@ -175,6 +184,11 @@ export const GradientEdge = memo(function GradientEdge({
   selected,
   label,
 }: EdgeProps<FlowEdge>): JSX.Element {
+  // A post-layout back rail (assignBackRails — a backward branch/error edge routed
+  // around both boxes) wins over the near-source railCenter default.
+  const rc = railCenter({ sourceX, sourceY, targetX, targetY, sourcePosition, lane: data?.lane });
+  const centerX = data?.railX ?? rc.centerX;
+  const centerY = data?.railY ?? rc.centerY;
   const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -183,7 +197,8 @@ export const GradientEdge = memo(function GradientEdge({
     targetY,
     targetPosition,
     borderRadius: CORNER_RADIUS,
-    ...railCenter({ sourceX, sourceY, targetX, targetY, sourcePosition, lane: data?.lane }),
+    ...(centerX !== undefined ? { centerX } : {}),
+    ...(centerY !== undefined ? { centerY } : {}),
   });
   const gradientId = `grad-${id}`;
   const from = data?.sourceColor ?? "var(--accent)";
@@ -194,6 +209,9 @@ export const GradientEdge = memo(function GradientEdge({
   const anchor = isBranchPill
     ? labelAnchor({ targetX, targetY, targetPosition, pathX: labelX, pathY: labelY })
     : { x: labelX, y: labelY, selfTranslate: "translate(-50%, -50%)" };
+  // The pill renders when the build says so (advanced / source focus-expanded) OR
+  // when focus revealed it (the branch's TARGET was clicked — applyFocus).
+  const showCondition = data?.condition != null && (data.conditionShown || data.conditionRevealed);
   return (
     <>
       <defs>
@@ -204,7 +222,7 @@ export const GradientEdge = memo(function GradientEdge({
         </linearGradient>
       </defs>
       <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: selected ? METRICS.edgeStroke + 1 : METRICS.edgeStroke }} />
-      {(label || data?.condition) && (
+      {(label || showCondition) && (
         <EdgeLabelRenderer>
           {/* The pill's FILL takes its edge's color via --label-c (error = the semantic
               red, else the target node's color — the line's color where it arrives);
@@ -225,22 +243,25 @@ export const GradientEdge = memo(function GradientEdge({
             </div>
           )}
           {/* The CONDITION that selects this outcome ("if len(items) > 5" / "else"),
-              extracted from the decision node's code (RFEdge.condition). It rides
-              MID-PATH — the outcome label stays at the target entry — as a standard
-              edge pill (white text) tinted condition orange, and is only in `data`
-              when it should render (advanced, or the condition node is
-              focus-expanded; see EdgeData.condition in flow.ts). */}
-          {data?.condition &&
+              extracted from the decision node's code (RFEdge.condition). It sits on
+              the FINAL APPROACH into its target (conditionAnchor) — stacked above
+              the outcome label — as a standard edge pill (white text) tinted with
+              its EDGE's color (the target node's color, same rule as the other
+              pills — user-chosen 2026-06-10 over the earlier condition orange), and
+              is only in `data` when it should render (advanced, or the condition
+              node is focus-expanded; see EdgeData.condition in flow.ts). */}
+          {showCondition &&
+            data?.condition &&
             (() => {
-              const at = conditionAnchor({ sourceX, sourceY, targetX, targetY, targetPosition, pathX: labelX, pathY: labelY });
+              const at = conditionAnchor({ sourceY, targetX, targetY, targetPosition, pathX: labelX, pathY: labelY });
               return (
                 <div
                   className="edge-label nodrag nopan"
                   title={data.condition}
                   style={
                     {
-                      transform: `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)`,
-                      "--label-c": "var(--decision)",
+                      transform: `${at.selfTranslate} translate(${at.x}px, ${at.y}px)`,
+                      "--label-c": to,
                     } as CSSProperties
                   }
                 >

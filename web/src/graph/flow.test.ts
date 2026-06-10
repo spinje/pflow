@@ -7,6 +7,7 @@ import {
   COLLAPSED_GROUP_HEIGHT,
   COLLAPSED_GROUP_WIDTH,
   expandTargets,
+  type FlowNode,
   HEADER_HEIGHT,
 } from "./flow";
 import {
@@ -21,6 +22,7 @@ import {
   portTargetHandle,
 } from "./handles";
 import { layoutGraph } from "./layout";
+import { METRICS } from "./metrics";
 import { CONDITION_COLOR, kindColor } from "../utils/format";
 import type { EdgeKind, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
@@ -412,7 +414,7 @@ describe("buildFlow — decision forks: labeled border handles (both densities)"
   });
 
 
-  it("the branch CONDITION rides EdgeData in advanced, and in beautiful only while the source is expanded", () => {
+  it("the branch CONDITION rides the edge in TD and the BranchPorts row in LR — advanced or focus-expanded only", () => {
     const withCondition: RFGraph = {
       nodes: [node("dec", { is_decision: true, kind: "code" }), node("a"), node("b")],
       edges: [
@@ -421,16 +423,78 @@ describe("buildFlow — decision forks: labeled border handles (both densities)"
       ],
       groups: [],
     };
-    // advanced: always shown
-    const adv = buildFlow(withCondition, DETAILED);
-    expect(adv.edges.find((e) => e.id === "e0")?.data?.condition).toBe("if len(items) > 5");
-    // beautiful: hidden by default...
+    const leafConditions = (built: { nodes: FlowNode[] }, id: string): Record<string, string> | null => {
+      const n = built.nodes.find((fn) => fn.id === id);
+      return n?.type === "node" ? n.data.branchConditions : null;
+    };
+    const pillShown = (built: { edges: { id: string; data?: { conditionShown?: boolean } }[] }, id: string): boolean =>
+      built.edges.find((e) => e.id === id)?.data?.conditionShown === true;
+    // The raw condition ALWAYS rides the edge (so focus can reveal it later)...
     const plain = buildFlow(withCondition, TD);
-    expect(plain.edges.find((e) => e.id === "e0")?.data?.condition).toBeUndefined();
+    expect(plain.edges.find((e) => e.id === "e0")?.data?.condition).toBe("if len(items) > 5");
+    // ...but the pill is hidden by default in beautiful (conditionShown false)
+    expect(pillShown(plain, "e0")).toBe(false);
+    // TD advanced: no rows in TD — the pill shows on the edge
+    const tdAdv = buildFlow(withCondition, { density: "detailed", direction: "TD", collapsed: new Set() });
+    expect(pillShown(tdAdv, "e0")).toBe(true);
+    // LR advanced: the BranchPorts ROW is the condition's home — the edge shows no pill
+    // (mid-path pills clipped under cards / floated on backward wraps; user-caught)
+    const adv = buildFlow(withCondition, DETAILED);
+    expect(pillShown(adv, "e0")).toBe(false);
+    expect(leafConditions(adv, "dec")).toEqual({ big: "if len(items) > 5", small: "else" });
+    expect(leafConditions(buildFlow(withCondition, COMPACT), "dec")).toEqual({});
     // ...and shown while the condition node is focus-expanded (expansion re-runs build)
     const expanded = buildFlow(withCondition, { ...TD, expanded: new Set(["dec"]) });
-    expect(expanded.edges.find((e) => e.id === "e0")?.data?.condition).toBe("if len(items) > 5");
-    expect(expanded.edges.find((e) => e.id === "e1")?.data?.condition).toBe("else");
+    expect(pillShown(expanded, "e0")).toBe(true);
+    expect(pillShown(expanded, "e1")).toBe(true);
+    const expandedLR = buildFlow(withCondition, { ...COMPACT, expanded: new Set(["dec"]) });
+    expect(leafConditions(expandedLR, "dec")).toEqual({ big: "if len(items) > 5", small: "else" });
+    expect(pillShown(expandedLR, "e0")).toBe(false);
+  });
+
+  it("LR target entries get their outcome label whenever the source's rows show", () => {
+    const withCondition: RFGraph = {
+      nodes: [node("dec", { is_decision: true, kind: "code" }), node("a"), node("b")],
+      edges: [edge("e0", "dec", "a", "branch", { label: "big", condition: "if len(items) > 5" })],
+      groups: [],
+    };
+    // beautiful unfocused: the skeleton stays quiet — no label on the LR edge
+    expect(buildFlow(withCondition, COMPACT).edges.find((e) => e.id === "e0")?.label).toBeUndefined();
+    // rows showing (advanced / source focus-expanded): the target is labeled, TD-style
+    expect(buildFlow(withCondition, DETAILED).edges.find((e) => e.id === "e0")?.label).toBe("big");
+    const expanded = buildFlow(withCondition, { ...COMPACT, expanded: new Set(["dec"]) });
+    expect(expanded.edges.find((e) => e.id === "e0")?.label).toBe("big");
+  });
+
+  it("clicking a branch TARGET reveals its condition — TD on the edge, LR on the source's row (applyFocus)", () => {
+    const withCondition: RFGraph = {
+      nodes: [node("dec", { is_decision: true, kind: "code" }), node("a"), node("b")],
+      edges: [
+        edge("e0", "dec", "a", "branch", { label: "big", condition: "if len(items) > 5" }),
+        edge("e1", "dec", "b", "branch", { label: "small", condition: "else" }),
+      ],
+      groups: [],
+    };
+    // TD: the edge pill above the clicked target
+    const built = buildFlow(withCondition, TD);
+    const focused = applyFocus(built.nodes, built.edges, "a");
+    // the clicked target's own pill reveals; the sibling's does not
+    expect(focused.edges.find((e) => e.id === "e0")?.data?.conditionRevealed).toBe(true);
+    expect(focused.edges.find((e) => e.id === "e1")?.data?.conditionRevealed).toBeUndefined();
+    // clearing focus re-hides it
+    const cleared = applyFocus(focused.nodes, focused.edges, null);
+    expect(cleared.edges.find((e) => e.id === "e0")?.data?.conditionRevealed).toBeUndefined();
+
+    // LR: the reveal lands on the SOURCE's BranchPorts row instead — an edge pill
+    // at the target entry overlapped the clicked card (user-caught)
+    const lr = buildFlow(withCondition, COMPACT);
+    const lrFocused = applyFocus(lr.nodes, lr.edges, "a");
+    expect(lrFocused.edges.find((e) => e.id === "e0")?.data?.conditionRevealed).toBeUndefined();
+    const dec = lrFocused.nodes.find((n) => n.id === "dec");
+    expect(dec?.type === "node" ? dec.data.revealedConditions : null).toEqual({ big: "if len(items) > 5" });
+    const lrCleared = applyFocus(lrFocused.nodes, lrFocused.edges, null);
+    const decCleared = lrCleared.nodes.find((n) => n.id === "dec");
+    expect(decCleared?.type === "node" ? decCleared.data.revealedConditions : null).toBeUndefined();
   });
 
   it("a decision CODE node's fan-out leaves in the condition color, not code yellow", () => {
@@ -446,7 +510,7 @@ describe("buildFlow — decision forks: labeled border handles (both densities)"
   });
 });
 
-describe("buildFlow — IO ports consolidate into one Inputs node with rows", () => {
+describe("buildFlow — IO ports are rows on their OWNER node (group / root IO card)", () => {
   function ioInput(id: string, name: string, required = false): RFNode {
     return node(id, {
       kind: "input",
@@ -455,6 +519,8 @@ describe("buildFlow — IO ports consolidate into one Inputs node with rows", ()
       ref: { node_id: name, ancestor_path: [], port: "in" },
     });
   }
+  // A NESTED workflow's wrapper (parent = the workflow group): its rows live on
+  // the GROUP node — no separate table node exists.
   const graph: RFGraph = {
     nodes: [
       node("feeder"), // a parent node that binds a value into the input port
@@ -470,47 +536,157 @@ describe("buildFlow — IO ports consolidate into one Inputs node with rows", ()
     groups: [group("g_wf", { kind: "workflow" }), group("g_in", { kind: "input_wrapper", parent: "g_wf", members: ["inA", "inB"] })],
   };
 
-  it("emits ONE ports node (rows = the ports), no per-port nodes, no wrapper group — both densities", () => {
+  it("a nested wrapper's ports ride the GROUP node's data; no per-port nodes, no table node", () => {
     for (const view of [DETAILED, COMPACT]) {
       const { nodes } = buildFlow(graph, view);
-      const ports = nodes.find((n) => n.id === "g_in");
-      expect(ports?.type).toBe("ports");
-      expect(ports?.type === "ports" ? ports.data.ports.map((p) => p.name) : []).toEqual(["repo_dir", "plan"]);
+      expect(nodes.find((n) => n.id === "g_in")).toBeUndefined(); // no table node
       expect(nodes.find((n) => n.id === "inA")).toBeUndefined(); // not a separate node
+      const wf = nodes.find((n) => n.id === "g_wf");
+      expect(wf?.type === "group" ? wf.data.inputs.map((p) => p.name) : []).toEqual(["repo_dir", "plan"]);
+      // an OPEN region always shows its rows — BOTH densities (an open container
+      // hiding its inputs reads as "has none"; beautiful hides only the EDGES)
+      expect(wf?.type === "group" ? wf.data.ioRowsVisible : null).toBe(true);
     }
   });
 
-  it("re-anchors each port's edge onto its OWN row handle, preserving the original endpoints", () => {
+  it("a COLLAPSED card keeps the leaf showBody rule: rows in advanced / focus-expanded only", () => {
+    const collapsed = new Set(["g_wf"]);
+    const beau = buildFlow(graph, { ...COMPACT, collapsed });
+    const card = beau.nodes.find((n) => n.id === "g_wf");
+    expect(card?.type === "group" ? card.data.ioRowsVisible : null).toBe(false);
+    const adv = buildFlow(graph, { ...DETAILED, collapsed });
+    const advCard = adv.nodes.find((n) => n.id === "g_wf");
+    expect(advCard?.type === "group" ? advCard.data.ioRowsVisible : null).toBe(true);
+  });
+
+  it("advanced: re-anchors each port's edge onto its OWN row handle on the group, keeping original endpoints", () => {
     const { edges } = buildFlow(graph, DETAILED);
-    // input FEEDS a consumer → its row's source handle
+    // input FEEDS a consumer → its row's source handle (a group -> own-child edge)
     const e0 = edges.find((e) => e.id === "e0");
-    expect(e0?.source).toBe("g_in");
+    expect(e0?.source).toBe("g_wf");
     expect(e0?.sourceHandle).toBe(portHandle("inA"));
     expect(e0?.data?.from).toBe("inA"); // original endpoint kept for focus
     expect(e0?.data?.to).toBe("body");
-    // a binding RECEIVES into the same input → its row's TARGET handle (the edges
-    // that were missing before — a port has both a feed-out and a receive-in handle)
+    // a binding RECEIVES into the same input → its row's TARGET handle
     const bind = edges.find((e) => e.id === "bind");
-    expect(bind?.target).toBe("g_in");
+    expect(bind?.target).toBe("g_wf");
     expect(bind?.targetHandle).toBe(portTargetHandle("inA"));
   });
 
-  it("beautiful: clicking ONE port reveals only its line + highlights its row", () => {
-    const built = buildFlow(graph, COMPACT);
-    expect(built.edges.filter((e) => e.data?.kind === "data_flow").every((e) => e.hidden)).toBe(true);
+  it("rows hidden (collapsed card, beautiful) → IO edges land node-level; focus-expanded → row", () => {
+    // An OPEN region shows rows in both densities, so the hidden case is the
+    // COLLAPSED card in beautiful: the binding lands on the card's node handle —
+    // never a handle that doesn't render.
+    const collapsed = new Set(["g_wf"]);
+    const beau = buildFlow(graph, { ...COMPACT, collapsed });
+    expect(beau.edges.find((e) => e.id === "bind")?.targetHandle).toBe(NODE_IN);
+    // ...and rows visible per-OWNER when the collapsed card is focus-expanded
+    const expanded = buildFlow(graph, { ...COMPACT, collapsed, expanded: new Set(["g_wf"]) });
+    expect(expanded.edges.find((e) => e.id === "bind")?.targetHandle).toBe(portTargetHandle("inA"));
+    // beautiful OPEN region: rows render and the binding lands on the row — but the
+    // line itself stays default-hidden (the skeleton rule governs LINES, not rows)
+    const open = buildFlow(graph, COMPACT);
+    expect(open.edges.find((e) => e.id === "bind")?.targetHandle).toBe(portTargetHandle("inA"));
+    expect(open.edges.find((e) => e.id === "bind")?.hidden).toBe(true);
+  });
 
+  it("beautiful: clicking ONE port reveals only its line + highlights its row on the group", () => {
+    expect(buildFlow(graph, COMPACT).edges.filter((e) => e.data?.kind === "data_flow").every((e) => e.hidden)).toBe(true);
+
+    // The real pipeline: focus derives the expansion set (the hook), the build
+    // re-runs with it (rows render, parallel bindings keep distinct row handles),
+    // THEN applyFocus decorates — never applyFocus on an unexpanded build.
+    const built = buildFlow(graph, { ...COMPACT, expanded: expandTargets(graph, "inA") });
     const focused = applyFocus(built.nodes, built.edges, "inA");
     expect(focused.edges.find((e) => e.id === "e0")?.hidden).toBe(false); // repo_dir's line revealed
     expect(focused.edges.find((e) => e.id === "e1")?.hidden).toBe(true); // plan's stays hidden
-    const ports = focused.nodes.find((n) => n.id === "g_in");
-    expect(ports?.type === "ports" ? ports.data.focusedPortId : null).toBe("inA");
+    const wf = focused.nodes.find((n) => n.id === "g_wf");
+    expect(wf?.type === "group" ? wf.data.focusedPortId : null).toBe("inA");
   });
 
   it("focusing the consumer reveals all of its input lines", () => {
-    const built = buildFlow(graph, COMPACT);
+    const built = buildFlow(graph, { ...COMPACT, expanded: expandTargets(graph, "body") });
     const focused = applyFocus(built.nodes, built.edges, "body");
     expect(focused.edges.find((e) => e.id === "e0")?.hidden).toBe(false);
     expect(focused.edges.find((e) => e.id === "e1")?.hidden).toBe(false);
+  });
+
+  it("expandTargets: an IO endpoint expands its OWNER so the line can land on the row", () => {
+    // focusing the consumer pulls the group (the rows' owner) into the set
+    expect(expandTargets(graph, "body")).toEqual(new Set(["body", "g_wf"]));
+    // focusing a single port expands the owner + the consumer on the far end
+    expect(expandTargets(graph, "inA")).toEqual(new Set(["g_wf", "body", "feeder"]));
+  });
+});
+
+describe("buildFlow — ROOT IO wrappers become standalone IO cards", () => {
+  function rootInput(id: string, name: string, required = false): RFNode {
+    return node(id, {
+      kind: "input",
+      io: { data_type: "string", required },
+      parent: "g_in",
+      ref: { node_id: name, ancestor_path: [], port: "in" },
+    });
+  }
+  function rootOutput(id: string, name: string, description = ""): RFNode {
+    return node(id, {
+      kind: "output",
+      io: { data_type: null, required: false },
+      parent: "g_out",
+      purpose: description,
+      ref: { node_id: name, ancestor_path: [], port: "out" },
+    });
+  }
+  const graph: RFGraph = {
+    nodes: [
+      rootInput("inA", "repo_dir", true),
+      rootInput("inB", "plan"),
+      node("worker", { params: [{ name: "x", value: "${repo_dir}", is_dynamic: true, source: null }] }),
+      rootOutput("outA", "result", "the final result"),
+    ],
+    edges: [
+      edge("e0", "inA", "worker", "data_flow", { input_name: "x" }),
+      edge("e1", "worker", "outA", "data_flow", { output_field: "stdout" }),
+    ],
+    groups: [
+      group("g_in", { kind: "input_wrapper", members: ["inA", "inB"] }),
+      group("g_out", { kind: "output_wrapper", members: ["outA"] }),
+    ],
+  };
+
+  it("emits one IO card per root wrapper (wrapper id kept), rows visible per the showBody rule", () => {
+    const adv = buildFlow(graph, { ...DETAILED, workflowName: "my-flow" });
+    const card = adv.nodes.find((n) => n.id === "g_in");
+    expect(card?.type).toBe("io");
+    if (card?.type !== "io") throw new Error("expected io card");
+    expect(card.data.kind).toBe("input");
+    expect(card.data.workflowName).toBe("my-flow");
+    expect(card.data.ports.map((p) => p.name)).toEqual(["repo_dir", "plan"]);
+    expect(card.data.rowsVisible).toBe(true);
+    // outputs surface their authored description (purpose) on the port
+    const out = adv.nodes.find((n) => n.id === "g_out");
+    expect(out?.type === "io" ? out.data.ports[0]?.description : null).toBe("the final result");
+
+    // beautiful: a quiet compact card — no rows, smaller box
+    const beau = buildFlow(graph, COMPACT);
+    const compactCard = beau.nodes.find((n) => n.id === "g_in");
+    expect(compactCard?.type === "io" ? compactCard.data.rowsVisible : null).toBe(false);
+    expect(compactCard?.height).toBeLessThan(card.height ?? 0);
+  });
+
+  it("advanced: IO edges land on the card's row handles; beautiful: node-level until focus-expanded", () => {
+    const adv = buildFlow(graph, DETAILED);
+    expect(adv.edges.find((e) => e.id === "e0")?.source).toBe("g_in");
+    expect(adv.edges.find((e) => e.id === "e0")?.sourceHandle).toBe(portHandle("inA"));
+    expect(adv.edges.find((e) => e.id === "e1")?.target).toBe("g_out");
+    expect(adv.edges.find((e) => e.id === "e1")?.targetHandle).toBe(portTargetHandle("outA"));
+
+    const beau = buildFlow(graph, COMPACT);
+    expect(beau.edges.find((e) => e.id === "e0")?.sourceHandle).toBe(NODE_OUT);
+    // clicking the card (its wrapper id) expands it AND its consumers
+    expect(expandTargets(graph, "g_in")).toEqual(new Set(["g_in", "worker"]));
+    const expanded = buildFlow(graph, { ...COMPACT, expanded: expandTargets(graph, "g_in") });
+    expect(expanded.edges.find((e) => e.id === "e0")?.sourceHandle).toBe(portHandle("inA"));
   });
 });
 
@@ -731,6 +907,40 @@ describe("layoutGraph — produces positions (ELK smoke)", () => {
       expect(Number.isFinite(n.position.x)).toBe(true);
     }
   });
+
+  it("advanced region: the inputs SIDEBAR reserves left padding — the body lays out beside it", async () => {
+    // The sidebar is ELK left padding (layout.ts groupPadding): the body's first
+    // layer starts BESIDE the inputs column, not below it. Also exercises the new
+    // hierarchical IO edge shapes (group -> own child, parent node -> group row)
+    // against the real option set — the elkjs crash family is option-dependent.
+    const graph: RFGraph = {
+      nodes: [
+        node("feeder"),
+        node("host", { kind: "workflow", is_group_host: true }),
+        node("inA", {
+          kind: "input",
+          io: { data_type: null, required: true },
+          parent: "g_in",
+          ref: { node_id: "x", ancestor_path: [], port: "in" },
+        }),
+        node("body", { parent: "g_wf", params: [{ name: "p", value: "${x}", is_dynamic: true, source: null }] }),
+      ],
+      edges: [
+        edge("seq", "feeder", "host", "sequential"),
+        edge("bind", "feeder", "inA", "data_flow"),
+        edge("consume", "inA", "body", "data_flow", { input_name: "p" }),
+      ],
+      groups: [
+        group("g_wf", { kind: "workflow", host: "host", members: ["body"] }),
+        group("g_in", { kind: "input_wrapper", parent: "g_wf", members: ["inA"] }),
+      ],
+    };
+    const { nodes, edges } = buildFlow(graph, { ...DETAILED, direction: "TD" });
+    const laidOut = await layoutGraph(nodes, edges, "TD");
+    const body = laidOut.find((n) => n.id === "body");
+    // child positions are parent-relative: the body clears the reserved sidebar
+    expect((body?.position.x ?? 0) >= METRICS.ioSidebarW).toBe(true);
+  });
 });
 
 describe("edge types — every control kind is gradient-stroked (the component owns its color)", () => {
@@ -916,7 +1126,7 @@ describe("focus-expansion — beautiful cards expand to rows (decided 2026-06-09
     expect(c?.type === "node" && c.data.expanded).toBe(false);
   });
 
-  it("expandTargets: focusing a ports node expands the consumers of all its member ports", () => {
+  it("expandTargets: focusing an IO card (wrapper id) expands the consumers of all its member ports", () => {
     const g: RFGraph = {
       nodes: [
         node("in1", { kind: "input", io: { data_type: null, required: true }, parent: "gw" }),

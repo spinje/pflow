@@ -19,7 +19,7 @@ export const AUTO_COLLAPSE_NODE_BUDGET = 60;
 export type CollapseMode = "all" | "none" | null;
 
 /** Every group id that can collapse on the canvas: workflow/batch containers. IO
- *  wrappers are excluded — they render as consolidated ports nodes, not group boxes.
+ *  wrappers are excluded — they render as IO rows on their owner node, not group boxes.
  *  Shell batch groups (no direct members — a batched leaf's empty decorator, or the
  *  wrapper around a batched sub-workflow's workflow group) are excluded too: buildFlow
  *  never renders them, so they can't be toggled and must not inflate the N/M count. */

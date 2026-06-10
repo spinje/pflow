@@ -156,14 +156,37 @@ Tests sit beside their subject.
   entry — left edge just right of the node's left border (`labelAnchor` +
   `LABEL_NUDGE_X`). Error pills stay mid-path. Fork TARGETS lay out in the code's
   chain order (`orderForkSiblings` in layout.ts — first `if` leftmost; Steps
-  order is irrelevant to a fork's reading order). **Branch CONDITIONS**
-  (`EdgeData.condition`, from the contract's fail-closed AST extraction) render
-  as an orange-tinted `.edge-label` pill on a LONE segment (`conditionAnchor`:
-  the edge's own rail run, or the final descent for the straight child — never
-  the shared rail crossing) — set in `data` only when visible (advanced always;
-  beautiful while the condition node is focus-expanded — safe as build-time
-  state since expansion re-runs the build); the read panel shows the untruncated
+  order is irrelevant to a fork's reading order). **Branch CONDITIONS** (from the
+  contract's fail-closed AST extraction) render where the outcome lives, visible in
+  advanced always / beautiful while the condition node is focus-expanded (the
+  build-time `conditionShown` default; safe as build-time state since expansion
+  re-runs the build) — PLUS clicking a branch TARGET reveals just its own condition
+  ("why was I reached?"): TD (or an LR branch re-anchored onto a group — no rows)
+  → the edge pill (`conditionRevealed`, applyFocus); a labeled LR branch from a
+  leaf → the SOURCE's BranchPorts row (`LeafData.revealedConditions`, merged over
+  `branchConditions` in WorkflowNode — an edge pill at the target entry overlapped
+  the clicked card). The raw `condition` + `outcome` always ride EdgeData so the
+  restyle pass has them. In LR, whenever the source's rows show, each target ALSO
+  gets its outcome name at its entry — TD-style bare text ABOVE the line
+  (`labelAnchor` Left arm; on-line struck the text) — so a reader finds where each
+  row's line lands without tracing it. The read panel shows the untruncated
   outcome → condition table (GraphView passes the node's branch edges).
+  **TD** (no rows): an edge-colored `.edge-label` pill (target node's color, the
+  standard pill rule — user-chosen 2026-06-10 over condition orange) rides
+  `EdgeData.condition` on the FINAL APPROACH into its target, stacked above the
+  outcome label (`conditionAnchor` — ONE pill per target entry; the old
+  path-midpoint anchor collided: TD siblings share the rail Y, so same-direction
+  pills landed pixel-identical — measured on check-groups — and a back-railed
+  loop-back's midpoint sat on its wrap). **LR**: the BranchPorts ROW is the condition's home — quiet text
+  beside its outcome pill (`LeafData.branchConditions`; mid-path pills clipped
+  under cards / floated on backward wraps, user-caught 2026-06-10); a re-anchored
+  branch (collapsed source — no rows) keeps the edge pill. **BACKWARD branch/error
+  edges** (loop-backs to an earlier node) get a post-layout BACK RAIL
+  (`assignBackRails`, portSides.ts — LR routes below both endpoint boxes, TD left
+  of them; lane-staggered): smoothstep's stock wrap U-turned at the ~20px stub
+  right at the source handle, knotting sibling loop-backs. GradientEdge prefers
+  `data.railX/railY` over its `railCenter` default; sequential edges are
+  deliberately untouched (their backward cycle already renders clean).
 - **Layout is told where the handles are (layout.ts).** TD leaf nodes declare ELK
   `FIXED_POS` ports at `ICON_COL_X` — without them ELK aligns box CENTERS while the
   handles render at the icon column, jogging every "straight" connection. Port-aware
@@ -257,30 +280,49 @@ Tests sit beside their subject.
   directly. Literal batches (real item-copy members) keep their container.
   `collapse.ts collapsibleGroupIds` excludes shells (they can't be toggled and must
   not inflate the N/M count).
-- **IO is ONE node, with row-level focus.** An `input_wrapper`/`output_wrapper` group
-  becomes a single Inputs/Outputs `ports` node (`PortsNode`) — a row per port, the IO
-  member nodes are NOT emitted. Each row carries BOTH handles: a *target* (`portTargetHandle`
-  — receives: input bound from parent, output written by a producer) and a *source*
-  (`portHandle` — feeds: input → consumers, output → parent). A port bridges two scopes,
-  so dropping either side silently loses the binding edges. Rows connect **SIDEWAYS in
-  BOTH directions** (a row in a vertical table has no top/bottom anchor — the old TD
-  top/bottom handles floated dots BETWEEN rows and edges dove into the stack). Each row
-  actually renders FOUR handles: the base pair plus a mirrored pair (`iotr:`/`iol:`)
-  stacked invisibly on the same dots; the post-layout `assignFacingSides` pass
-  (`graph/portSides.ts`, wired in `useWorkflowGraph` after ELK) flips an edge to the
-  side FACING its peer so a binding never wraps around the node — sibling
-  wrap-arounds were the crossing tangle. The pass compares the HANDLE x
-  (a row source exits the node's RIGHT edge), not node centers — a vertically-stacked
-  pair still counts as "peer to the east". PARAM/OUTPUT rows are deliberately NOT
-  flipped (user decision 2026-06-10): inputs-left/outputs-right is the node-graph
-  convention and beats the shortest path; their wrap-arounds instead get a RAIL HINT
-  (`assignDataRails`, same file): the data edge's middle segment centers in the clear
-  gap between the endpoint boxes (data.railX/railY → DataEdge) so a wrap never hugs
-  a node border (the blind handle-midpoint did). **Every edge carries its
-  original endpoints (`data.from`/`data.to`)**, so `applyFocus` can reveal a *single*
-  port's lines even though its edges re-anchor onto the shared ports node; clicking a row
-  focuses that port id via the `InteractionContext`. Decision forks render as labeled
-  border handles (`branchHandle`) in both densities; in beautiful, a revealed data line is
+- **IO is ROWS on the workflow's OWN node — never a floating table (2026-06-10
+  redesign).** An `input_wrapper`/`output_wrapper` group's ports render via the shared
+  `PortRows` component on their OWNER; the IO member nodes are NOT emitted. Three
+  locations, one anatomy: (1) a ROOT wrapper becomes a standalone **IO card**
+  (`IOCardNode`, RF type `"io"`, id = the wrapper's group id — focus/deep-link ids
+  stay stable): tile + INPUTS/OUTPUTS category + the workflow name + a `"14 inputs"`
+  pill; compact in beautiful, rows under the leaf `showBody` rule (advanced /
+  focus-expanded) — and clicking the card TOGGLES (its expansion is its open
+  state, so a second click closes it; GraphView onNodeClick). The card class is
+  ALWAYS `compact` (the card shell lives on `.node.compact/.detailed`; adding
+  `expanded` doubles the divider — both were real bugs). (2) a NESTED wrapper
+  puts its rows on the workflow GROUP
+  (`GroupData.inputs/outputs`): the COLLAPSED card grows a two-column area — inputs
+  left, outputs right staggered ONE row down, ALWAYS, even at equal counts (the
+  in→out diagonal IS the information; `ioRowsCount` in flow.ts); the EXPANDED region
+  renders inputs as the LEFT SIDEBAR and outputs as the bottom-right strip —
+  ALWAYS shown while the region is OPEN, in BOTH densities (an open container
+  hiding its inputs reads as "has none"; beautiful hides only the data LINES,
+  which still reveal on focus) — with full-width dividers — `layout.ts groupPadding` reserves the sidebar as ELK LEFT
+  padding (the body's first layer lays out BESIDE it) and the strip as bottom
+  padding, plus `nodeSize.minimum` so a tall sidebar can't overflow a short body
+  (GOTCHA: under direction DOWN elkjs applies the minimum TRANSPOSED — pass
+  `(minH, minW)` in TD; measured, test-pinned). Rows follow the STRICT side
+  convention (same as param/output rows): receive (`portTargetHandle`) LEFT, feed
+  (`portHandle`) RIGHT — sides are structural now, so the old mirrored handles
+  (`iotr:`/`iol:`) and the `assignFacingSides` pass are GONE. Both handles always
+  render (an edge naming a missing handle is silently dropped — the recurring bug
+  class); the role-less side's dot is hidden via `.port-handle.quiet`. Edge handle
+  resolution is owner-aware (`ioNodeToOwner` + `rowsVisible(owner)`): rows hidden →
+  node-level, never a handle that doesn't render. `expandTargets` pulls an IO
+  endpoint's OWNER into the expansion set, so focusing a consumer expands the owner
+  and the revealed line lands row-to-row. **Every edge carries its original
+  endpoints (`data.from`/`data.to`)**, so `applyFocus` can reveal a *single* port's
+  lines even though its edges re-anchor onto the owner; clicking a row focuses that
+  port id via the `InteractionContext` (`focusedPortId` highlights the row).
+  NOTE: with rows hidden (beautiful), parallel bindings between the same pair
+  DEDUPE to one node-level line — correct, because any focus that could reveal
+  them re-runs the build with the owner expanded, where each binding keeps its own
+  row handle. Wrap-arounds to reach a strict-side row get the RAIL HINT
+  (`assignDataRails`): the data edge's middle segment centers in the clear gap
+  between the endpoint boxes (data.railX/railY → DataEdge) so a wrap never hugs a
+  node border. Decision forks render as labeled border handles (`branchHandle`) in
+  both densities; in beautiful, a revealed data line is
   labeled with what flows (`output_field → input_name`).
 - **Errors never blank the canvas.** `useWorkflowGraph`'s `status`
   (`loading`/`ready`/`empty`/`error`) drives a banner; a malformed 200 throws from

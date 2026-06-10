@@ -36,6 +36,7 @@ import { BATCH_COLOR, kindColor } from "../../utils/format";
 import { groupIconFor } from "../../utils/icons";
 import type { ContainerKind } from "../../types";
 import { NodeBadges } from "./Badges";
+import { PortRows } from "./PortRows";
 import { Connector } from "./WorkflowNode";
 
 type GroupNodeType = Extract<FlowNode, { type: "group" }>;
@@ -65,17 +66,33 @@ function warningCount(annotations: Record<string, unknown>): number {
 }
 
 export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNodeType>): JSX.Element {
-  const { group, hostNode, collapsed, showTitle, direction, hasIncoming, hasOutgoing, memberCount, dimmed, focused } = data;
+  const {
+    group,
+    hostNode,
+    collapsed,
+    showTitle,
+    direction,
+    hasIncoming,
+    hasOutgoing,
+    memberCount,
+    inputs,
+    outputs,
+    ioRowsVisible,
+    focusedPortId,
+    dimmed,
+    focused,
+  } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
 
   // Collapse toggles move the control handles (region border-center ↔ card icon
-  // column); without a re-measure React Flow keeps stale handle coords and the
-  // re-anchored edges fly to the origin.
+  // column), and IO rows appearing/disappearing adds/removes per-row handles;
+  // without a re-measure React Flow keeps stale handle coords and the re-anchored
+  // edges fly to the origin.
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, collapsed, direction, updateNodeInternals]);
+  }, [id, collapsed, direction, ioRowsVisible, updateNodeInternals]);
 
   const kindStyle = { "--kind": groupColor(group.kind) } as CSSProperties;
   const unexpanded = unexpandedItemCount(group.annotations);
@@ -126,6 +143,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   // A batched sub-workflow presents as a SUB-WORKFLOW with batch (its shell batch
   // group is never rendered) — the host's batch spec lights the card's deck.
   if (collapsed && hostNode?.batch) classes.push("batched");
+  if (ioRowsVisible) classes.push("has-io"); // full-width dividers + row areas
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
 
@@ -138,6 +156,42 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
         <span className="chev">{collapsed ? "▸" : "▾"}</span>
         {countLabel}
       </span>
+      {/* The workflow's declared IO as rows (PortRows — the leaf-row anatomy).
+          COLLAPSED: a two-column area under the header — inputs left, outputs right
+          staggered one row down (the in→out diagonal, user-decided 2026-06-10).
+          Only the OUTER scope can carry edges here (internal edges self-loop-drop),
+          so input rows are receive-only and output rows feed-only.
+          EXPANDED: inputs become the LEFT SIDEBAR (layout.ts reserves the column as
+          ELK left padding, so the body's first layer starts BESIDE it) and outputs
+          the bottom-right strip — the collapsed diagonal stretched around the body.
+          Region rows bridge both scopes (outer = parent, inner = body) → "both". */}
+      {ioRowsVisible && collapsed && (
+        <div className="io-rows io-rows-cols">
+          {inputs.length > 0 && (
+            <PortRows ports={inputs} kind="input" handles="receive" focusedPortId={focusedPortId} label="INPUTS" />
+          )}
+          {outputs.length > 0 && (
+            <PortRows
+              ports={outputs}
+              kind="output"
+              handles="feed"
+              focusedPortId={focusedPortId}
+              label="OUTPUTS"
+              stagger={inputs.length > 0}
+            />
+          )}
+        </div>
+      )}
+      {ioRowsVisible && !collapsed && inputs.length > 0 && (
+        <div className="group-io-in">
+          <PortRows ports={inputs} kind="input" handles="both" focusedPortId={focusedPortId} label="INPUTS" />
+        </div>
+      )}
+      {ioRowsVisible && !collapsed && outputs.length > 0 && (
+        <div className="group-io-out">
+          <PortRows ports={outputs} kind="output" handles="both" focusedPortId={focusedPortId} label="OUTPUTS" />
+        </div>
+      )}
     </div>
   );
 });

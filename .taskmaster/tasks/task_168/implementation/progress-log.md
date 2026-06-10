@@ -1645,3 +1645,224 @@ CLI focus/frame commands broadcast to open windows + a user-event ring buffer �
 event schema. Settled in the spec: delivery reports carry per-window visibility; open-if-absent
 is an explicit flag; force-focusing an existing background tab is impossible by web platform
 design (recorded so nobody tries).
+
+### Condition pills edge-colored + the LR settlement: row conditions + back rails (2026-06-10, user-driven) ✅ (uncommitted)
+
+Three changes from one review session, all `web/` — zero contract/Python change. web **125 tests** (+4);
+tsc + build clean; verified in the real browser (conditional-branching advanced crop; execute-plan
+check-groups LR advanced + beautiful focus-expanded).
+
+**1. Condition pills take their EDGE's color** (user accepted my observation against their n8n/Tines
+references): GradientEdge's condition pill `--label-c` went `var(--decision)` → `to` — the target
+node's color, the exact rule the outcome/error pills already follow ("the line's color where it
+arrives"). Bare-text outcome labels stay as-is (user choice). One line + doc sync.
+
+**2. LR conditions move ONTO the BranchPorts rows; mid-path pills die in LR.** The user's screenshot
+(check-groups focus-expanded, LR) showed the two failure modes at once: a condition pill CLIPPED
+under the node card (nodes paint above the EdgeLabelRenderer layer) and another floating in dead
+space — root cause: `conditionAnchor` only has a real placement rule for TD; LR fell back to the
+path midpoint, and two of check-groups' four outcomes route BACKWARD (loop-backs), so their wrapped
+midpoints land anywhere. Settlement (the same convention as loop-rule rows and data labels dropping
+on row-landing — the row is the condition's home): `LeafData.branchConditions` (label → condition,
+populated only when the rows show it: advanced / focus-expanded), BranchPorts renders quiet muted
+text beside each outcome pill (`.branch-cond`, CSS-ellipsized; pill `flex-shrink: 0` wins the row;
+full text on title + read panel). The edge pill is suppressed for a labeled LR branch whose flow
+source IS the decision node — a re-anchored branch (collapsed source, no rows) keeps it; TD keeps
+pills everywhere. The old flow test pinned LR-advanced-pill-on-edge as desired — rewritten to the
+new policy (the "interrogate what a green test asserts" lesson again).
+
+**3. Backward branch/error edges get a BACK RAIL (`assignBackRails`, 4th post-layout pass).** The
+knots beside the rows: `railCenter` only shapes FORWARD targets; a backward edge kept smoothstep's
+stock wrap, U-turning at the default ~20px stub right at the source handle — four branch rows
+emitting at nearly the same point curled into spaghetti. The pass (portSides.ts, the
+assignLoopRails pattern) gives each backward branch/error edge a rail in the clear zone PAST both
+endpoint boxes — LR below (the loop U owns above), TD left (the loop rail owns the right) —
+staggered by the edge's existing lane; GradientEdge now prefers `data.railX/railY` over its
+railCenter default (conditionally spread — an explicit `centerX: undefined` is not the same as
+absent to smoothstep). **Sequential deliberately excluded** — the harness's backward cycle already
+renders the clean orthogonal U; don't perturb what works. Third-party node avoidance remains the
+deferred smart router. Verified: the group-tick loop-back now travels ONE clean dashed rail below
+the whole node row (the n8n return-path look); knots gone.
+
+### TD condition pills → the target's final approach (2026-06-10, user-driven) ✅ (uncommitted)
+
+Follow-up: the user's TD screenshot showed condition pills "behind the edges" / colliding. Two
+false leads dismissed BY MEASUREMENT (throwaway evaluate_script probes, since deleted — synthetic
+clicks don't trigger RF selection, so a probe that needs the clicked state must dispatch the click
+itself): (a) **no z-order bug exists** — `elementsFromPoint` at every pill center puts the label
+div first, edges below; no edge svg carries a zIndex and `elevateEdgesOnSelect` is RF's default
+false; (b) the "connected nodes not expanding" report was a false flag (user confirmed —
+data-flow neighbors expand; the screenshot's neighbors were sub-workflow CARDS and a control-only
+claude node, neither expandable by design). **The real finding: two sibling pills rendered at a
+PIXEL-IDENTICAL rect** (597,706 — measured) — in TD every fork sibling shares the rail Y, so
+same-direction siblings' path midpoints land in the same crossing zone; back-railed loop-backs'
+midpoints sit on their wraps. conditional-branching "worked" only because its two anchors happened
+to separate.
+
+**Fix — ONE rule: a condition pill sits on the FINAL APPROACH into its target**, stacked above the
+bare-text outcome label (`conditionAnchor` rewritten: descent-centering for ALL TD branches —
+forward uses the fork rail, backward a fixed approach zone; LR re-anchored fallbacks anchor just
+left of the target entry; rows hold all other LR conditions). Collision-free by construction (one
+branch per target entry); the old "straight child only" descent gate + `LONE_RUN_MIN` deleted —
+the side branch's "clean mid-run" preference didn't survive 4-outcome forks. T3 (condition rows on
+TD cards) was considered and REJECTED with the user: TD forks fan from the icon column, so a row
+would be a routing row no wire touches (the loop CAP row is annotation, but routing rows invite
+edge-matching), and it would duplicate the target-entry outcome label. web **127 tests** (+2:
+sibling-distinct-anchors, backward-approach; the old midpoint pins rewritten); tsc + build clean;
+verified on check-groups TD: each pill stacks above its own target (`elif is_last and cap != 0` →
+`review-round` → node).
+
+**Residual (stated):** two branches re-anchoring to the SAME collapsed target would stack their
+pills again (same entry, by construction) — no offset-by-index until a real case shows.
+
+### Click a branch target → its condition reveals (2026-06-10, user-driven) ✅ (uncommitted)
+
+Small follow-up the new anchor made natural: in beautiful, clicking a branch TARGET now reveals
+the condition pill on ITS incoming branch edge ("why was I reached?") — just that one, not the
+fork's siblings. Mechanism fits the existing focus-reveal pattern: `EdgeData.condition` is now
+ALWAYS carried (was set-only-when-shown — nothing for a click to reveal), the old visibility rule
+became the build-time `conditionShown` flag, and `applyFocus` sets a transient `conditionRevealed`
+on branch edges whose target / `data.to` is the focus (identity-checked like `focusEnd`, so
+unfocus restores object identity). GradientEdge renders on `conditionShown || conditionRevealed`.
+With the final-approach anchor the revealed pill lands stacked above the clicked node's outcome
+label — exactly where the eye is. Works in both directions (in LR the source's rows aren't visible
+when only the target is clicked, so the edge pill is the only honest home). web **128 tests** (+1
+reveal pin; the build pins moved from condition-presence to `conditionShown`); tsc + build clean;
+verified in the browser (`focus=process-large`: pill above the clicked node, dimmed sibling bare).
+
+### IO rows on the workflow node — the ports table dies (2026-06-10, user-driven) ✅ (uncommitted)
+
+> Plan: `implementation/io-rows-plan.md` (locked design + deletions inventory). Spec deltas
+> folded into `visualization-requirements.md`; the how into `web/CLAUDE.md` → "IO is ROWS…".
+> Triggered by the execute-plan screenshot: a 14-row floating INPUTS table, visibly connected
+> to nothing in beautiful. Frame that won: a leaf already renders its inputs as rows ON the
+> node — a workflow's declared IO is the same kind of thing, so the separate table was a
+> modeling inconsistency, not a styling problem. Design settled via shoot-lab mockups
+> (`/tmp/io-rows-lab/`, v4 + 8px padding). Zero Python change (verified pre-plan by a
+> contract-mapping searcher: names/levels/required/types/binding-edges all on the wire;
+> output descriptions were already there on `purpose`, never surfaced — now a row tooltip).
+
+**The shape:** one `PortRows` renderer, three locations. Root wrapper → standalone IO CARD
+(type `"io"`, id = wrapper id so focus/deep-links/`expandTargets` survive; compact in
+beautiful with a `"14 inputs"` pill — the motivating fix; rows under the leaf showBody rule).
+Nested wrapper → rows on the workflow GROUP: collapsed card grows a two-column area (inputs
+left; outputs right, staggered ONE row down ALWAYS — `ioRowsCount`, the in→out diagonal is
+the information, user-decided incl. equal counts); expanded region renders inputs as the
+LEFT SIDEBAR + outputs as a bottom-right strip with full-width dividers — the collapsed
+diagonal stretched around the body. The sidebar is ELK LEFT PADDING (`groupPadding`,
+layout.ts), so the body's first layer lays out BESIDE it with no per-node forcing — the
+user's "first node next to the inputs" ask, generalized. Rejected: last-node-beside-outputs
+(multiple endings, collides with branch fan-out, tiny win).
+
+**Deleted (the simplicity payoff):** `PortsNode.tsx` + the `ports` node type + all `.ports*`
+CSS + `portsHeaderH`; `assignFacingSides` + `HYSTERESIS` + the `iotr:`/`iol:` mirror handles
++ their 6 tests — the side-flip problem CEASED TO EXIST (rows on the boundary have
+structural sides: receive left, feed right, the strict param/output convention) rather than
+being solved. `io:`/`iot:` handle ids, `data.from`/`to` row-focus, and the ELK island rule
+carried over untouched.
+
+**Phase-0 experiments that de-risked it (all in /tmp, pre-implementation):**
+- group↔own-child hierarchical edges (the new region-row shapes) survive elkjs under the
+  REAL option set (INCLUDE_CHILDREN + NETWORK_SIMPLEX + forceNodeModelOrder + fixed leaf
+  ports + straightness) — the crash family is option-dependent, so the minimal-option test
+  alone wasn't evidence.
+- **`elk.nodeSize.minimum` needs `nodeSize.constraints: MINIMUM_SIZE` AND is applied in
+  ELK's internal coordinates — TRANSPOSED under direction DOWN** (asked (560,540), got
+  540×560; RIGHT is unswapped). TD passes `(minH, minW)`. Measured, comment-pinned in
+  layout.ts. Used to clamp a region whose inputs sidebar is taller than its body.
+
+**Two correctness calls made during the build:**
+- `PortRows` renders BOTH handles on every row, role-less side visually `quiet` (opacity 0)
+  — an edge naming a missing handle is React Flow's silent-drop class; attachment must not
+  depend on per-location reasoning (the synthetic invariant fixture immediately proved the
+  point: it binds INTO a root input, impossible in real contracts but must still attach).
+- With rows hidden (beautiful), parallel bindings between one pair DEDUPE to one node-level
+  line — correct by construction, because any focus that could reveal them re-runs the build
+  with the OWNER in the expansion set (`expandTargets` is owner-aware now), where each
+  binding has its own row handle. The two focus tests were rewritten to mirror the real
+  hook pipeline (build-with-expansion THEN applyFocus) instead of decorating an unexpanded
+  build — the first drafts encoded the bypass and failed honestly.
+
+**Verified:** web 127 tests (incl. new pins: nested-wrapper rows on group data + row
+handles + per-owner visibility; root IO cards + description surfacing + expansion path;
+owner-aware expandTargets; sidebar-padding layout test) + tsc strict + build; real browser:
+execute-plan beautiful (quiet 13-inputs card heading the chain — the before/after of the
+motivating screenshot), focus=g0 (card expands to 13 rows, lane-staggered teal lines fan to
+consumers), run-cycle advanced (region sidebar + body beside it + bottom strip;
+batched-sub-workflow collapsed card shows the two-column diagonal with binding lines on row
+dots — the shell-batch reparenting composed with groupIO via `effectiveParent` untouched),
+conditional-branching beautiful (zero-IO control: pixel-identical to before).
+
+**Parallel-agent note:** built alongside the LR outcome-label agent in the same files
+(flow.ts/CLAUDE.md); reconciled by adding the `EdgeData.outcome` declaration their in-flight
+code referenced. Open follow-ups (not blockers): LR region strip placement reads fine but
+only TD was deeply verified; ReadPanel for io-card clicks (port list) parked as an open knob.
+
+### LR outcome labels at target entries + target-click reveal moves to the source row (2026-06-10, user-driven) ✅ (uncommitted)
+
+Two LR fixes from the user's screenshots, closing the condition-presentation arc. All `web/`;
+built in parallel with the IO-rows agent in the same files (their `outcome` reconciliation note
+above is this work's field).
+
+**1. LR targets get their outcome name whenever the source's rows show.** The rows say
+`else → group-tick` but finding WHICH box group-tick is meant tracing the dashed line. Now a
+labeled LR branch carries its outcome label under the same visibility as the row conditions
+(`lrOutcomeLabel = rowsVisible(source)`, toFlowEdge) — rows + target labels appear together
+(advanced / source focus-expanded), beautiful's skeleton stays quiet. The `labelAnchor` Left
+arm moved ABOVE the line (right+bottom-aligned at the entry) — the old on-line position struck
+the text with its own edge.
+
+**2. The LR target-click reveal lands on the SOURCE's row, not an edge pill (user-caught: the
+entry pill sat ON the clicked card —- targetY is the LR entry's vertical center).** applyFocus
+is now the one place that knows WHERE a reveal lives: a labeled LR branch whose flow source is
+a leaf → `LeafData.revealedConditions` on the source (merged over `branchConditions` in
+WorkflowNode — the row is the condition's LR home in both the build-time and the revealed
+case); TD, or an LR branch re-anchored onto a group (no rows) → the edge pill
+(`conditionRevealed`, as before). `EdgeData.outcome` (always carried) keys the row. The
+residual LR pill's `conditionAnchor` arm also moved above the entry (stacked over the outcome
+label, mirroring TD's stack); conditionAnchor now returns `selfTranslate` like labelAnchor.
+
+**Debug discipline note (cost an hour, worth recording):** the live verification on
+execute-plan kept failing while the pure pipeline passed — a scratch vitest run of
+buildFlow→applyFocus against the REAL `/api/graph` contract proved the logic correct, and a
+DOM probe then showed the simplify card neither expanded nor focused: **execute-plan's
+`?focus=` deep-link stopped applying to the canvas entirely** (it worked in this session's
+11:15 screenshots; the read panel still opens, which masks it). Verified NOT this work:
+`conditional-branching`'s deep-link reveals correctly through the same code. Likely the
+parallel GraphView/useWorkflowGraph rework or an auto-collapse interaction — **flagged as an
+open thread for the IO-rows agent's territory, not chased into their in-flight files.**
+
+**Verified:** web 128 tests (LR-labels pin; the reveal test now covers both arms — TD edge
+pill, LR row + clearing restores; labelAnchor/conditionAnchor pins updated to the above-line
+anchors) + tsc + build clean; real browser: execute-plan LR focus=check-groups (bare-text
+`review-round` above its target's entry), conditional-branching LR focus=process-large (the
+condition appears on the source's row beside the outcome pill; clicked card expands; DOM probe
+confirms exactly one `.branch-cond`).
+
+**Same-day follow-ups (user-caught, 2026-06-10):** (1) an open region's IO rows were gated on
+the showBody rule, so in beautiful a sub-workflow's inputs/outputs were INVISIBLE unless some
+focus incidentally expanded the owner — an open container hiding its interface reads as "has
+none". Rule refined: an OPEN region always shows its rows, both densities; beautiful still
+hides the LINES (skeleton rule untouched, no new toggle needed — `ioRowsShown` is now the
+single render-truth set edge resolution reads, so row handles exist exactly where rows do).
+Collapsed cards keep the showBody rule. (2) the expanded root IO card was missing the card
+shell entirely — its class list said `node expanded` but the shell (radius/bg/border) lives
+on `.node.compact/.detailed`, and `.node.expanded` stacked a second divider on the
+`.io-rows` one. Fix: the io card is ALWAYS `compact`. (3) clicking an open io card now
+TOGGLES it closed (GraphView treats `type:"io"` like a container — focus IS its open state).
+web 129 tests; verified in browser (run-cycle beautiful: sidebar + strip visible, no lines;
+execute-plan focus=g0: rounded shell, single divider).
+
+**Strip-row hug + the "wrong handle" non-bug (user-raised, 2026-06-10):** the outputs strip's
+full-width right-aligned rows left the LEFT (receive) dot floating mid-strip, far from its
+label — a producer line looked like it landed on nothing / "the wrong one". CSS fix: strip
+rows are `fit-content` (right-aligned column), so the receive dot sits directly beside the
+text. The semantic question it raised was verified against the SOURCE FILES, not the render:
+`execute-plan` outputs pr_url/summary/segments; `run-from-plan` consumes `${execute-plan.pr_url}`
++ `${execute-plan.summary}` but nothing reads `segments` — so "line in, bare feed dot out" on
+the segments row is the truth (an unconsumed output), not a rendering bug.
+
+**Harness doc note (2026-06-10):** annotated `execute-plan.pflow.md` → `### segments` as
+deliberately unconsumed (diagnostic surface; `run-from-plan` reads only pr_url + summary) —
+the viewer surfaced it, the user asked for the note. IR-safe (description prose); re-validated
+through `/api/graph` (64 nodes, unchanged).

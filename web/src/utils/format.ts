@@ -98,6 +98,11 @@ export const CONDITION_COLOR = "#ffa657";
 // (inline --kind on a collapsed batch card; CSS var() doesn't resolve there pre-mount).
 export const BATCH_COLOR = "#c79bf0";
 
+// IO teal — the root Inputs/Outputs cards' identity. Keep equal to the CSS
+// `--data-edge` var: a workflow's IO is pure data plumbing, so the cards wear the
+// data-line color. Literal (not var()) for the same minimap/inline-style reasons.
+export const IO_COLOR = "#6fbfa8";
+
 export function isCondition(node: { kind: string; is_decision: boolean }): boolean {
   // The kind gate is defensive: should branching ever extend beyond code nodes,
   // an llm/shell decider keeps its kind identity instead of lying.
