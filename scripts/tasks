@@ -12,7 +12,6 @@
 set -e
 
 TASKS_DIR=".taskmaster/tasks"
-VERSIONS_FILE=".taskmaster/versions.md"
 
 # Colors (disabled if not terminal)
 if [ -t 1 ]; then
@@ -341,7 +340,6 @@ show_summary() {
     echo "  So prefer --since DATE over --all, read only what you need, and trust recent tasks over old ones."
     echo ""
     echo -e "📁 Raw task files ${YELLOW}(full text, heavier — only when a doc pointer says so)${NC}: .taskmaster/tasks/task_N/task-N.md"
-    echo -e "📁 Version history: .taskmaster/versions.md"
 }
 
 # Main

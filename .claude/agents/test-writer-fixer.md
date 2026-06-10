@@ -1,7 +1,8 @@
 ---
 name: test-writer-fixer
 description: "Write new tests or fix failing tests in the pflow project. Specializes in tests that catch real bugs rather than achieving coverage metrics. Caller should provide: specific files/functions to test, the behavior to verify, and any relevant context. Give small tasks — one file at a time. Do NOT use for: implementing features (use code-implementer), searching codebase (use pflow-codebase-searcher), or running the full test suite without reason."
-model: opus
+model: fable
+effort: medium
 color: yellow
 ---
 
@@ -125,7 +126,7 @@ Resolution order: exact `model+schema` match → wildcard `"*" + schema` → bui
 
 ### RUN_LLM_TESTS Gating
 
-Real LLM tests live in `tests/*/llm/` and only run with `RUN_LLM_TESTS=1` — never run without explicit instruction.
+The real LLM integration test is `tests/test_nodes/test_llm/test_llm_integration.py` — gated by `RUN_LLM_TESTS=1` plus an API-key check, and excluded from `make test` via `--ignore`. Never run it without explicit instruction. (The conftest also auto-skips the LLM mock for any test under a `/llm/` directory path; no tests currently live in such a path.)
 
 ## Sacred Rules
 

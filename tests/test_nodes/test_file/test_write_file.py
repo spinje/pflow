@@ -94,53 +94,43 @@ class TestWriteFileNode:
             with open(expected_path) as f:
                 assert f.read() == "Once upon a time, there was a clever cat..."
 
-    def test_append_mode(self):
+    def test_append_mode(self, tmp_path):
         """Test appending to existing file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("Initial content\n")
-            temp_path = f.name
+        target = tmp_path / "append.txt"
+        target.write_text("Initial content\n")
 
-        try:
-            node = WriteFileNode()
-            node.set_params({"append": True, "content": "Appended content", "file_path": temp_path})
-            shared = {}
+        node = WriteFileNode()
+        node.set_params({"append": True, "content": "Appended content", "file_path": str(target)})
+        shared = {}
 
-            prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
+        prep_res = node.prep(shared)
+        exec_res = node.exec(prep_res)
+        action = node.post(shared, prep_res, exec_res)
 
-            assert action == "default"
-            # Check semantic meaning rather than exact string
-            success_msg = shared["written"]
-            assert "append" in success_msg.lower()
-            assert temp_path in success_msg  # Shows actual file path
+        assert action == "default"
+        # Check semantic meaning rather than exact string
+        success_msg = shared["written"]
+        assert "append" in success_msg.lower()
+        assert str(target) in success_msg  # Shows actual file path
 
-            with open(temp_path) as f:
-                assert f.read() == "Initial content\nAppended content"
-        finally:
-            os.unlink(temp_path)
+        assert target.read_text() == "Initial content\nAppended content"
 
-    def test_overwrite_existing(self):
+    def test_overwrite_existing(self, tmp_path):
         """Test overwriting existing file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("Old content")
-            temp_path = f.name
+        target = tmp_path / "overwrite.txt"
+        target.write_text("Old content")
 
-        try:
-            node = WriteFileNode()
-            node.set_params({"content": "New content", "file_path": temp_path})
-            shared = {}
+        node = WriteFileNode()
+        node.set_params({"content": "New content", "file_path": str(target)})
+        shared = {}
 
-            prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            action = node.post(shared, prep_res, exec_res)
+        prep_res = node.prep(shared)
+        exec_res = node.exec(prep_res)
+        action = node.post(shared, prep_res, exec_res)
 
-            assert action == "default"
+        assert action == "default"
 
-            with open(temp_path) as f:
-                assert f.read() == "New content"
-        finally:
-            os.unlink(temp_path)
+        assert target.read_text() == "New content"
 
     def test_empty_content(self):
         """Test writing empty content."""

@@ -97,7 +97,7 @@ Pattern 3's cost is fixture drift: someone edits a fixture "to fix a typo" and s
 ## Autouse Fixtures (tests/conftest.py)
 
 These run automatically for every test — you do NOT need to set them up:
-- **`mock_llm_client`**: Patches `pflow.core.llm_client.complete` (and each consumer module's `complete` binding) with `MockLLMClient`. Returns `AdapterResponse` instances. **Skips** tests in `/llm/` directories (they use real APIs when `RUN_LLM_TESTS=1`).
+- **`mock_llm_client`**: Patches `pflow.core.llm_client.complete` (and each consumer module's `complete` binding) with `MockLLMClient`. Returns `AdapterResponse` instances. **Skips** tests whose path contains `/llm/` — a hook for real-API test dirs; no tests currently live in such a path. The actual real-API test is `tests/test_nodes/test_llm/test_llm_integration.py` (dir `test_llm`, NOT matched by the skip), gated by its own `RUN_LLM_TESTS=1` skipif plus `--ignore` in the Makefile targets.
 - **`isolate_pflow_config`**: Creates isolated `tmp_path/.pflow/` dir, redirects `Registry`, `SettingsManager`, `MCPServerManager`, and `WorkflowManager` to temp paths. Default `Registry()` loads precomputed core nodes from memory to avoid per-test registry JSON writes.
 - **`disable_trace_file_writes_by_default`**: Makes `WorkflowTraceCollector.save_to_file()` a no-op unless the test is marked `trace_files`. In-memory `ExecutionResult.trace` still exists; only disk writes to `.pflow/debug` are suppressed.
 

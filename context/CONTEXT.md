@@ -5,6 +5,11 @@ CLI-first system where AI agents author Markdown workflows (`.pflow.md`) chainin
 
 ## Language
 
+**Step** — one authored unit of work in a `.pflow.md` (a `### name` heading under `## Steps`);
+the authoring-surface noun. Each Step compiles to a *node* — a registered type instance the
+engine executes. Same concept, two surfaces: agent-facing text says step, code/IR/registry say
+node. _Avoid_: task, stage, action.
+
 **Batch** — a step run once per element of a *known* collection (fan-out). Count fixed
 before start; runs independent, may be parallel. _Avoid_: loop, map.
 
@@ -36,7 +41,7 @@ not retried. A retry that eventually succeeds leaves no trace — the run is a c
 _Avoid_: loop (advances across iterations), fallback, recursion.
 
 **Backoff** — the growing wait between Retry attempts, either *fixed* (constant) or
-*exponential* (doubling), clamped to a ceiling. _Avoid_: delay, sleep, cooldown.
+*exponential* (doubling, clamped to a ceiling). _Avoid_: delay, sleep, cooldown.
 
 **Fallback (on-error)** — routing to a *different* step when one fails, instead of re-running
 it. The original step genuinely failed, so the run is Degraded (data may be lost) — distinct
@@ -53,9 +58,13 @@ Degraded (an empty batch, a Loop hitting its cap, a section typo parsed around).
 with a degrading warning. _Avoid_: note, hint, info.
 
 **Snapshot** — the frozen prior-run state that `--only <step>` runs a single step against:
-every *other* step's output reused from the most recent full run, so only the target
+every *prior* step's output reused from the most recent full run, so only the target
 re-executes and upstream side effects never re-fire. Requires a prior full run.
 _Avoid_: replay, restore, checkpoint.
+
+**Prompt cache** — provider-side reuse of a static prompt *prefix* across LLM calls, declared
+in a workflow's `## Cache` block (or per-step `prompt_cache:`). Discounts input tokens; the
+step still executes and calls the provider every time. _Avoid_: cache (unqualified), KV cache.
 
 **Graph model** — the renderer-agnostic semantic structure of a workflow: its nodes, edges,
 and Containers as pure data, carrying no rendering syntax. Built once from the IR by a single
@@ -67,8 +76,8 @@ the Graph model is for showing. _Avoid_: AST, graph model.
 
 **Container** — a named grouping of nodes in the Graph model: a sub-workflow, a Batch fan-out,
 an input/output wrapper, or (future) a detected cycle. One record type for every grouping kind,
-carrying its members, nesting depth, parent, and optional Loop. _Avoid_: subgraph, cluster,
-box, group.
+carrying its members, nesting depth, and parent. A Loop is metadata on its node, not a
+Container. _Avoid_: subgraph, cluster, box, group.
 
 ## Ambiguity
 
@@ -82,6 +91,10 @@ each building on the last, until a condition goes falsy.
 **Retry vs Fallback** — both are failure responses. Retry re-runs the *same* step hoping it
 succeeds (→ Success). Fallback routes to a *different* step because the original failed
 (→ Degraded).
+
+**Cache vs Prompt cache** — both cut cost on repeat work. Discriminator: a (memoization) Cache
+hit skips executing the step entirely, reusing its prior output; a Prompt cache hit still runs
+the step and calls the provider — only the static prefix's input tokens are discounted.
 
 **Snapshot vs Cache** — both reuse prior output. Cache reuses a step's *own* output when
 its declared inputs are unchanged (correctness-gated, per-step, can still re-run the step).
