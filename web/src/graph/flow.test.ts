@@ -23,7 +23,7 @@ import {
 } from "./handles";
 import { layoutGraph } from "./layout";
 import { METRICS } from "./metrics";
-import { CONDITION_COLOR, kindColor } from "../utils/format";
+import { CONDITION_COLOR, IO_COLOR, kindColor } from "../utils/format";
 import type { EdgeKind, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
 // ---- fixture builders ---------------------------------------------------
@@ -687,6 +687,87 @@ describe("buildFlow — ROOT IO wrappers become standalone IO cards", () => {
     expect(expandTargets(graph, "g_in")).toEqual(new Set(["g_in", "worker"]));
     const expanded = buildFlow(graph, { ...COMPACT, expanded: expandTargets(graph, "g_in") });
     expect(expanded.edges.find((e) => e.id === "e0")?.sourceHandle).toBe(portHandle("inA"));
+  });
+});
+
+describe("buildFlow — root IO cards join the control SKELETON (io-flow edges)", () => {
+  // The Inputs card heads the flow (a control-style edge into each entry step) and
+  // every terminal's representative runs into the Outputs card — the cards behave
+  // like nodes: ELK lays them into the spine and their tiles grow connector flares
+  // (incidence flags). NOT contract edges — pure visual policy, drawn in BOTH
+  // densities (structure, like forks).
+  function rootIO(id: string, wrapper: string, kind: "input" | "output"): RFNode {
+    return node(id, { kind, io: { data_type: null, required: false }, parent: wrapper });
+  }
+  const chain: RFGraph = {
+    nodes: [rootIO("inA", "g_in", "input"), node("first"), node("last", { is_terminal: true }), rootIO("outA", "g_out", "output")],
+    edges: [edge("e0", "first", "last", "sequential")],
+    groups: [
+      group("g_in", { kind: "input_wrapper", members: ["inA"] }),
+      group("g_out", { kind: "output_wrapper", members: ["outA"] }),
+    ],
+  };
+
+  it("Inputs → entry step and terminal → Outputs, as control edges in both densities", () => {
+    for (const opts of [COMPACT, DETAILED]) {
+      const { nodes: ns, edges: es } = buildFlow(chain, opts);
+      const inEdge = es.find((e) => e.id === "io-flow:g_in->first");
+      expect(inEdge).toBeDefined();
+      expect(inEdge?.type).toBe("gradient");
+      expect(inEdge?.hidden).toBeFalsy();
+      expect(inEdge?.sourceHandle).toBe(NODE_OUT);
+      expect(inEdge?.targetHandle).toBe(NODE_IN);
+      expect(inEdge?.data?.kind).toBe("sequential");
+      expect(inEdge?.data?.sourceColor).toBe(IO_COLOR);
+      const outEdge = es.find((e) => e.id === "io-flow:last->g_out");
+      expect(outEdge?.data?.targetColor).toBe(IO_COLOR);
+
+      // Incidence flags drive the flares: the cards AND the entry/terminal steps.
+      const flag = (id: string) => {
+        const n = ns.find((x) => x.id === id);
+        return n && n.type !== "end" ? { in: n.data.hasIncoming, out: n.data.hasOutgoing } : null;
+      };
+      expect(flag("g_in")).toEqual({ in: false, out: true });
+      expect(flag("g_out")).toEqual({ in: true, out: false });
+      expect(flag("first")).toEqual({ in: true, out: true });
+    }
+  });
+
+  it("a terminal sub-workflow host anchors the Outputs edge on its GROUP", () => {
+    const g: RFGraph = {
+      nodes: [
+        rootIO("inA", "g_in", "input"),
+        node("host", { kind: "workflow", is_group_host: true, is_terminal: true }),
+        node("body", { parent: "g_wf" }),
+        rootIO("outA", "g_out", "output"),
+      ],
+      edges: [],
+      groups: [
+        group("g_in", { kind: "input_wrapper", members: ["inA"] }),
+        group("g_wf", { kind: "workflow", host: "host", members: ["body"] }),
+        group("g_out", { kind: "output_wrapper", members: ["outA"] }),
+      ],
+    };
+    const { edges: es } = buildFlow(g, COMPACT);
+    expect(es.find((e) => e.id === "io-flow:g_wf->g_out")).toBeDefined();
+    // host is also the sole entry — the Inputs edge re-anchors onto the group too
+    expect(es.find((e) => e.id === "io-flow:g_in->g_wf")).toBeDefined();
+  });
+
+  it("a root cycle (no entry) falls back to the FIRST root step", () => {
+    const g: RFGraph = {
+      nodes: [rootIO("inA", "g_in", "input"), node("a"), node("b")],
+      edges: [edge("e0", "a", "b", "sequential"), edge("e1", "b", "a", "branch", { label: "retry" })],
+      groups: [group("g_in", { kind: "input_wrapper", members: ["inA"] })],
+    };
+    const { edges: es } = buildFlow(g, COMPACT);
+    expect(es.find((e) => e.id === "io-flow:g_in->a")).toBeDefined();
+    expect(es.filter((e) => e.id.startsWith("io-flow:")).length).toBe(1);
+  });
+
+  it("no root wrappers → no io-flow edges (zero-IO workflows unchanged)", () => {
+    const g: RFGraph = { nodes: [node("a"), node("b")], edges: [edge("e0", "a", "b", "sequential")], groups: [] };
+    expect(buildFlow(g, COMPACT).edges.some((e) => e.id.startsWith("io-flow:"))).toBe(false);
   });
 });
 

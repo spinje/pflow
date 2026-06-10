@@ -114,7 +114,11 @@ Tests sit beside their subject.
   `layoutKey` (density|direction|collapsed|expanded — focus itself is not
   layout-affecting), so un-click/re-click never re-run ELK; ELK itself runs in a WEB
   WORKER (`layout.ts loadElk`, main-thread bundled build as fallback — a browser
-  fallback warns, never silent); the decoration effect paints ONLY a laid snapshot
+  fallback warns, never silent) guarded by a WATCHDOG (`layoutWithWatchdog`): a
+  worker layout silent for 10s warns, re-runs on the main-thread build, and demotes
+  the session to main-thread layouts — a silent worker (observed once, environmental,
+  see the task-168 hang handoff doc) can stall one layout but never hang the canvas;
+  the decoration effect paints ONLY a laid snapshot
   whose key matches the current state (stale-paint guard — without it every cached
   click "shakes": one frame of new-focus-on-old-layout). Small graphs
   (≤ `ANIMATE_MAX_NODES`) ANIMATE expansion re-layouts: positions interpolate
@@ -290,11 +294,26 @@ Tests sit beside their subject.
   focus-expanded) — and clicking the card TOGGLES (its expansion is its open
   state, so a second click closes it; GraphView onNodeClick). The card class is
   ALWAYS `compact` (the card shell lives on `.node.compact/.detailed`; adding
-  `expanded` doubles the divider — both were real bugs). (2) a NESTED wrapper
+  `expanded` doubles the divider — both were real bugs). **Root IO cards JOIN THE
+  CONTROL SKELETON (2026-06-10):** `buildFlow` synthesizes `io-flow:` control edges
+  — Inputs card → each root ENTRY step (no incoming control edge; falls back to
+  the FIRST root step, where pflow starts execution, on a root cycle) and each
+  terminal step's representative → Outputs card. NOT contract edges (pflow has no
+  io→node control flow) — visual policy that makes the cards behave like nodes:
+  drawn in BOTH densities, gradient blends IO teal ↔ the step's kind color, ELK
+  lays the cards into the spine (they were data-only islands parked beside it),
+  and the cards carry the full leaf flare anatomy (TD icon-column handles + ELK
+  ports via layout.ts's `portable` set; an expanded card drops its BOTTOM flare,
+  the leaf rule). Control-incidence (`hasIncoming`/`hasOutgoing`) for ALL
+  flare-bearing types (leaves, groups, io cards) comes from ONE post-pass over the
+  FLOW edges, so the synthesized edges count. (2) a NESTED wrapper
   puts its rows on the workflow GROUP
   (`GroupData.inputs/outputs`): the COLLAPSED card grows a two-column area — inputs
-  left, outputs right staggered ONE row down, ALWAYS, even at equal counts (the
-  in→out diagonal IS the information; `ioRowsCount` in flow.ts); the EXPANDED region
+  left, outputs right BOTTOM-ANCHORED (`PortRows staggerRows = ioRowsCount − nOut`,
+  always ≥ 1 row below the inputs' start: the in→out diagonal IS the information;
+  identical to the original one-row stagger at balanced counts, the bottom-right
+  corner when inputs dominate — a 13-in/3-out card left outputs hugging the top);
+  the EXPANDED region
   renders inputs as the LEFT SIDEBAR and outputs as the bottom-right strip —
   ALWAYS shown while the region is OPEN, in BOTH densities (an open container
   hiding its inputs reads as "has none"; beautiful hides only the data LINES,

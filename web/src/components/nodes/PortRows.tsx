@@ -35,22 +35,26 @@ export function PortRows({
   handles,
   focusedPortId,
   label,
-  stagger = false,
+  staggerRows = 0,
 }: {
   ports: Port[];
   kind: "input" | "output";
   handles: PortRowHandles;
   focusedPortId: string | null;
   label?: string; // the small INPUTS/OUTPUTS column caption (two-column areas)
-  // Outputs sit one row LOWER than inputs in a two-column area — ALWAYS, even at
-  // equal counts (user decision 2026-06-10: the in→out diagonal IS the information).
-  stagger?: boolean;
+  // Rows to push this column DOWN in a two-column area: outputs are BOTTOM-ANCHORED
+  // (ioRowsCount − nOut, always ≥ 1 beside inputs — user decision 2026-06-10: the
+  // top-left → bottom-right in→out diagonal IS the information; a fixed one-row
+  // stagger left a 3-output column hugging the top of a 13-input card).
+  staggerRows?: number;
 }): JSX.Element {
   const { focusPort } = useInteraction();
   const classes = ["io-col", `io-col-${kind}`];
-  if (stagger) classes.push("stagger");
   return (
-    <div className={classes.join(" ")}>
+    <div
+      className={classes.join(" ")}
+      style={staggerRows > 0 ? { marginTop: `calc(${staggerRows} * var(--row-h))` } : undefined}
+    >
       {label && <div className="io-col-label">{label}</div>}
       {ports.map((port) => (
         <div

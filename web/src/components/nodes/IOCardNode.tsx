@@ -12,16 +12,29 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 
 import type { FlowNode } from "../../graph/flow";
 import { NODE_IN, NODE_OUT } from "../../graph/handles";
+import { ICON_COL_X } from "../../graph/metrics";
 import { IO_COLOR } from "../../utils/format";
 import { ioCardIcon } from "../../utils/icons";
 import { PortRows } from "./PortRows";
+import { Connector } from "./WorkflowNode";
 
 type IOCardNodeType = Extract<FlowNode, { type: "io" }>;
 
 export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCardNodeType>): JSX.Element {
-  const { kind, ports, workflowName, direction, rowsVisible, focusedPortId, dimmed, focused } = data;
+  const { kind, ports, workflowName, density, direction, rowsVisible, focusedPortId, hasIncoming, hasOutgoing, dimmed, focused } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
+  // The cards are part of the control SKELETON (the synthesized io-flow edges), so
+  // they carry the full leaf flare anatomy: TD/beautiful only, per-side incidence,
+  // and an expanded card (rows visible) keeps the TOP flare but drops the BOTTOM
+  // one — the rows grew below the tile, same rule as a focus-expanded leaf.
+  const detailed = density === "detailed";
+  const topConnector = direction === "TD" && !detailed && hasIncoming;
+  const bottomConnector = direction === "TD" && !detailed && !rowsVisible && hasOutgoing;
+  // TD control handles sit on the icon column, pulled inward toward the tile —
+  // the same geometry as WorkflowNode (and the ELK port layout.ts declares).
+  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : undefined;
+  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : undefined;
 
   // Rows appearing/disappearing adds/removes per-row handles; without a re-measure
   // React Flow keeps stale handle coords and edges fly to the origin.
@@ -42,15 +55,17 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
 
   return (
     <div className={classes.join(" ")} style={kindStyle}>
-      {/* Node-level handles: data edges land here whenever the rows don't render
-          (beautiful unfocused). IO cards carry no control edges, so no icon-column
-          offset / connector flares — the data lines connect sideways. */}
-      <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" />
-      <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" />
+      {/* Node-level handles: the io-flow skeleton edges land here (and data edges,
+          whenever the rows don't render). In TD they sit on the icon column like
+          every node's, so the trunk flows into the tile under the flare. */}
+      <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
+      <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
 
       <div className="node-header">
         <div className="node-tile">
           <img className="node-icon-img" src={ioCardIcon(kind)} alt="" />
+          {topConnector && <Connector side="top" />}
+          {bottomConnector && <Connector side="bottom" />}
         </div>
         <div className="node-titles">
           <span className="node-category">{kind === "input" ? "INPUTS" : "OUTPUTS"}</span>

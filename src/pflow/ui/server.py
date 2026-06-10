@@ -98,6 +98,26 @@ def graph(request: Request) -> Response:
     return _json(asdict(render_react_flow(model)))
 
 
+class _BundleFiles(StaticFiles):
+    """StaticFiles that makes ``index.html`` revalidate on every load.
+
+    Vite's assets are content-hashed (immutable — heuristic caching is fine),
+    but the HTML entry is not: with no ``Cache-Control`` header browsers
+    heuristically reuse a stale ``index.html`` whose asset URLs point at the
+    PREVIOUS build — serving a mixed old/new bundle after every rebuild (a
+    recurring debugging trap; see web/CLAUDE.md). ``no-cache`` still allows
+    conditional requests (304 via ``ETag``/``Last-Modified``), so reloads stay
+    cheap — it forbids only *unvalidated* reuse.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        full_path = args[0] if args else kwargs.get("full_path", "")
+        if Path(str(full_path)).name == "index.html":
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def _frontend_not_built(request: Request) -> Response:
     """Fallback for any non-API path when the bundle is absent."""
     return PlainTextResponse(
@@ -120,7 +140,7 @@ def create_app() -> Starlette:
         Route("/api/graph", graph),
     ]
     if (_STATIC_DIR / "index.html").exists():
-        routes.append(Mount("/", app=StaticFiles(directory=_STATIC_DIR, html=True)))
+        routes.append(Mount("/", app=_BundleFiles(directory=_STATIC_DIR, html=True)))
     else:
         routes.append(Route("/{path:path}", _frontend_not_built))
     # SECURITY (load-bearing — do NOT add CORSMiddleware without re-evaluating):

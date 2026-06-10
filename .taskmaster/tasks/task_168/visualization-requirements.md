@@ -17,8 +17,10 @@
   IO *card* (node anatomy: tile + INPUTS/OUTPUTS + workflow name + `"14 inputs"` pill;
   compact in beautiful, rows in advanced/focus-expanded — the leaf showBody rule); a
   NESTED wrapper's rows live on the workflow GROUP — collapsed card: two-column area
-  (inputs left, outputs right staggered ONE row down, ALWAYS — the in→out diagonal IS
-  the information; rows in advanced/focus-expanded); expanded region: inputs = LEFT
+  (inputs left, outputs right BOTTOM-ANCHORED, always ≥ 1 row below the inputs' start —
+  the in→out diagonal IS the information; equals the original one-row stagger at
+  balanced counts, ends at the bottom-right corner when inputs dominate; rows in
+  advanced/focus-expanded); expanded region: inputs = LEFT
   SIDEBAR (the body lays out BESIDE it, via ELK left padding), outputs = bottom-right
   strip, full-width dividers — shown WHENEVER the region is open, both densities (an
   open container hiding its inputs reads as "has none"; beautiful hides only the data
@@ -93,6 +95,12 @@
   outputs strip (ELK per-group padding + `nodeSize.minimum`, TD-transposed gotcha
   pinned). Deleted: `PortsNode`, `assignFacingSides`, the `iotr:`/`iol:` mirror
   handles. Shared `PortRows` renderer; row-level focus preserved.
+- **Root IO cards join the control skeleton (2026-06-10):** synthesized `io-flow:`
+  control edges — Inputs card → entry step(s) (no incoming control; first-root-step
+  fallback on a cycle), terminal step(s) → Outputs card — in BOTH densities. The
+  cards behave like nodes: ELK lays them into the spine, TD icon-column ports +
+  connector flares, gradient blends IO teal ↔ the step's kind color. Pure visual
+  policy, not contract edges; the per-port data lines are unchanged.
 - **Fork handles** (labeled, both densities).
 - **Branch labels at the target entry (2026-06-10):** in TD the outcome label sits on the
   edge just above its target's left side (bare text, shadow halo, +4px nudge); error pills

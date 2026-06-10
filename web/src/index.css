@@ -532,11 +532,8 @@ button.active {
   flex: 1 1 0;
   min-width: 0;
 }
-/* outputs sit one row LOWER than inputs (the in→out diagonal; flow.ts ioRowsCount
-   counts the extra row) */
-.io-col.stagger {
-  margin-top: var(--row-h);
-}
+/* the outputs column is BOTTOM-ANCHORED via an inline margin-top (PortRows
+   staggerRows × --row-h; flow.ts ioRowsCount reserves the rows) */
 .io-col-label {
   height: var(--io-label-h);
   display: flex;

@@ -1866,3 +1866,130 @@ the segments row is the truth (an unconsumed output), not a rendering bug.
 deliberately unconsumed (diagnostic surface; `run-from-plan` reads only pr_url + summary) —
 the viewer surfaced it, the user asked for the note. IR-safe (description prose); re-validated
 through `/api/graph` (64 nodes, unchanged).
+
+### `?focus=` deep-link freeze: investigated to the worker boundary — HANDED OFF (2026-06-10)
+
+The deep-link regression flagged earlier was bisected layer by layer (focus state ✓ set; build/
+applyFocus/expandTargets ✓ correct on the real contract in node; ELK input ✓ lays out on main
+thread AND in a standalone raw worker, even as the exact 3-call sequence): **the app's ELK
+worker goes silent on the focus-expansion layout** — message sent, no reply, no error event —
+and elk-api has no `worker.onerror`, so the promise (and the canvas) hang forever. Real clicks
+work everywhere; only the deep-link path on execute-plan freezes (worked at 11:15 — a same-day
+regression). Remaining delta: the Vite-bundled worker chunk vs the raw artifact, transport
+timing, or a send-side elk-api issue. **Full findings, repro kit, next 3 experiments, the
+left-in-place `[dbg]` instrumentation (strip before commit!), and a ship-regardless watchdog
+workaround: `implementation/handoff-focus-deeplink-worker-hang.md`.**
+
+### Root IO cards join the control skeleton (2026-06-10, user-driven) ✅ (uncommitted)
+
+User showed run-from-plan TD: the Inputs/Outputs cards floated beside the spine, flare-less and
+visibly connected to nothing (their only edges are data-flow, hidden in beautiful). Ask: *"inputs
+should behave just like nodes — the 'shapes' [connector flares] going out from inputs and an edge
+into the first node; same for outputs but reversed."* All `web/`; zero contract/Python change.
+
+- **Synthesized `io-flow:` control edges (flow.ts):** Inputs card → each root ENTRY step (no
+  incoming control edge; **falls back to the FIRST root step on a root cycle** — semantically
+  honest, pflow starts execution at the first step) and each root `is_terminal` step's
+  representative (via `renderAnchor` — a terminal sub-workflow host anchors on its GROUP card/
+  region) → Outputs card. `kind: "sequential"` / `type: "gradient"` so every downstream policy
+  (incidence, gradient, focus dim, lanes-exempt) treats them as the control trunk they visually
+  are; colors blend IO teal ↔ the step's `nodeColor`. Drawn in BOTH densities (structure, like
+  forks). NOT contract edges — visual policy only; the per-port data lines are untouched.
+- **Incidence unified into ONE post-pass.** Leaf `hasIncoming`/`hasOutgoing` came from
+  contract-edge sets at construction while groups used the flow-edge post-pass; the synthesized
+  edges only exist at flow level, so the post-pass now fills ALL flare-bearing types (node/group/
+  io) and construction sets `false`. The contract-level sets remain solely for entry detection.
+- **IO cards got the full leaf flare anatomy** (IOCardNode): TD icon-column handles (same
+  geometry as WorkflowNode), per-side `Connector` flares, expanded card drops the BOTTOM flare
+  (the leaf rule); joined layout.ts's TD `portable` ELK-port set so the trunk runs dead straight
+  through the io tiles.
+- **Bug caught by the new test, worth the lesson:** the gradient direction was keyed off
+  `from === source` — true for BOTH the in-edge (from=card=source) and the out-edge
+  (from=step=source), so the Outputs blend ran backwards. Made the direction an explicit
+  `end: "in" | "out"` param. An implicit discriminator that happens to correlate is not a
+  discriminator.
+
+web **133 tests** (+4: skeleton edges both densities + incidence flags; terminal-host anchors on
+group; cycle fallback; zero-IO unchanged); tsc strict + build clean. Verified in the real browser
+on run-from-plan: TD beautiful (cards head/tail the spine, teal flare out of INPUTS into
+resolve-repo's top flare, magenta→teal into OUTPUTS), LR (clean horizontal pipeline), TD advanced
+(skeleton edge lands on the icon column among the data lines). Docs synced: `web/CLAUDE.md` (IO
+bullet), `visualization-requirements.md` (Implemented). *(Parallel-agent note: built alongside
+the focus-deeplink worker-hang investigation — their `[dbg]` instrumentation in layout.ts
+createElk was left untouched; my layout.ts edit is the `portable` set only.)*
+
+**Collapsed-card outputs BOTTOM-ANCHORED (2026-06-10, user-caught) ✅ (uncommitted).** The
+execute-plan card (13 inputs / 3 outputs) showed the outputs hugging the TOP-right — the
+"staggered ONE row down" rule was designed against balanced counts, where one-row-down IS the
+bottom. Fix is a strict generalization, not a re-litigation: `PortRows.stagger` (boolean class)
+→ `staggerRows` (a count, inline `margin-top: calc(n × var(--row-h))`), with GroupNode passing
+`ioRowsCount − nOut` — pixel-identical wherever `nOut + 1 ≥ nIn` (every balanced case, incl.
+equals), and the card's bottom-right corner when inputs dominate. `ioRowsCount`/ELK sizing
+unchanged → zero layout drift; the `.io-col.stagger` CSS rule deleted. Matches the expanded
+region's design (outputs strip at the bottom-right — "the collapsed diagonal stretched around
+the body"). 133 web tests, tsc + build clean; verified via zoomed crop on run-from-plan
+(collapse=all, advanced TD): outputs end at the last row, lines exit at the corner toward the
+OUTPUTS card.
+
+### Focus-deep-link worker hang: CLOSED — defended, root cause environmental (2026-06-10) ✅ (uncommitted)
+
+Continued `handoff-focus-deeplink-worker-hang.md` (full verdict written into its status header —
+not restated here). The short of it: completed the evidence matrix the handoff left open — the
+**Vite-built worker chunk is innocent** (driven headlessly in plain node against the captured
+message sequence: terminates fine; the esbuild re-minify + `"use strict"` wrap changes nothing),
+the live root is **capture-faithful** (zero non-finite values — killed the NaN-laundering theory),
+the message **is posted** (send-side wrap), and `messageerror` (the never-checked event) stays
+silent. Then the decisive non-result: **the hang stopped reproducing everywhere** — 13+ trials,
+including the exact commit (`a13d93ac`) rebuilt in an isolated worktree, with and without CPU
+load. Every historical sighting lived in the day-old, focus-stolen, tab-accumulating MCP Chrome;
+after its restart, nothing reproduces. Conclusion: environmental (that Chrome instance), not a
+code path — the user's "the screenshot window steals focus while I type" observation is the
+plausible mechanism class (occluded/backgrounded long-lived instance), unproven.
+
+**Shipped instead of a ghost-hunt:**
+- **`layoutWithWatchdog` (`layout.ts`)** — the handoff's recommended defense: 10s of worker
+  silence → `console.warn` fingerprint, re-run on the bundled main-thread ELK, terminate the
+  silent worker, DEMOTE the session to main-thread layouts (bounded badness: one stall max,
+  never a dead canvas; a blocked main thread can't falsely trip the timer — its result settles
+  the race before the timer callback runs). 3 new pins in `layout.test.ts` (pass-through /
+  rejection propagates / silent-engine rescue + terminate). The bundled build moved to a shared
+  memoized `loadBundledElk` (fallback + rescue, one loader).
+- **`Cache-Control: no-cache` on index.html** (`_BundleFiles(StaticFiles)` in `ui/server.py`) —
+  the stale-bundle trap that repeatedly polluted this feature's debugging (and observations in
+  this very investigation). Hashed assets stay heuristically cacheable; only the HTML entry must
+  revalidate. Pinned in `test_ui.py`.
+- **chrome-devtools MCP → `--headless=true`** (`~/.pflow/mcp-servers.json`): kills the
+  focus-stealing annoyance AND removes the occlusion-interference class from future sessions;
+  verified the screenshot/inspect tooling works headless (focus deep-link applies, 12 dimmed).
+- **All `[dbg]` instrumentation stripped** (layout.ts, useWorkflowGraph.ts) per the handoff's
+  cleanup note; repro worktree removed.
+
+Gates: web **136 passed** (tsc strict + build clean), `test_ui.py` 18 passed, mypy/ruff clean on
+touched files. Deep-link verified live on the final cleaned build (execute-plan, LR/beautiful,
+focus=simplify → expanded card + 12 dimmed). *(Parallel-agent note: built alongside the io-flow
+skeleton agent in layout.ts/web-CLAUDE.md — their `portable` io-card change untouched.)*
+
+### Headless MCP Chrome made the STANDING default — verified identical for the agent (2026-06-10, user-decided) ✅
+
+Follow-up to the hang closure above, after the user confirmed the direction: the screenshot/
+inspect Chrome window was pure annoyance ("usually just a flicker for a couple of seconds" that
+steals focus mid-typing) — so **headless is now the standing default, headed is an explicit
+opt-in** (only when the user asks to watch; flag flipped back after). The user's one condition —
+*"make sure it works identical for you as AI agent"* — was verified on both axes the tooling has,
+not assumed:
+
+- **Paint** (`screenshot.pflow.md`, conditional-branching TD/beautiful): gradient edges, the
+  CONDITION card + fork icon, connector flares, dashed branch edges + labels, error pill, dotted
+  end edge, themed minimap — all render pixel-faithful to the headed known-goods (PNG read).
+- **Measure** (`inspect.pflow.md`, `node=classify`): geometry lands at the documented metrics
+  exactly — compact leaf 230×68 CSS px, tile 56×56, both TD connector stubs measured, `node=`
+  camera framing works, **all 7 edges carry pathRects** (the thing jsdom can't see — the loop's
+  reason to exist). Headless output is authoritative.
+
+Made durable in `SKILL.md` (the manual every agent reads before driving the browser): a
+"Headless by default" section records the default + the verification + the exact opt-in/revert
+steps (remove `--headless=true` from `~/.pflow/mcp-servers.json`, pkill the profile, re-add when
+done — never leave headed on); the stale-cache troubleshooting note updated for the new
+`Cache-Control: no-cache` index.html header (only hashed `assets/*` may still need a `&v=` bust).
+Side benefit restated: no occluded agent-browser windows = the suspected environmental condition
+for the worker hang can no longer form.

@@ -187,6 +187,25 @@ class TestFrontendFallback:
         assert api.status_code == 200
         assert api.json() == []  # isolated empty registry — proves real catalog content
 
+    def test_index_html_revalidates_but_hashed_assets_may_cache(self, tmp_path: Path) -> None:
+        """index.html sends Cache-Control: no-cache; hashed assets do not.
+
+        Without it, browsers heuristically reuse a stale index.html whose asset
+        URLs point at the PREVIOUS build — a mixed old/new bundle after every
+        rebuild (the recurring stale-canvas debugging trap).
+        """
+        (tmp_path / "assets").mkdir()
+        (tmp_path / "index.html").write_text("<!doctype html><div id=root></div>")
+        (tmp_path / "assets" / "app-CAFE1234.js").write_text("console.log('hi')")
+
+        with patch("pflow.ui.server._STATIC_DIR", tmp_path):
+            client = TestClient(create_app())
+            root = client.get("/")
+            asset = client.get("/assets/app-CAFE1234.js")
+
+        assert root.headers.get("cache-control") == "no-cache"
+        assert asset.headers.get("cache-control") != "no-cache"
+
 
 class TestBrowserOpen:
     def test_waits_then_opens_when_the_server_becomes_ready(self) -> None:

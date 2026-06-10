@@ -195,10 +195,8 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
         assignBackRails(laidOut, assignDataRails(laidOut, built.edges), direction),
         direction,
       );
-      console.log("[dbg] layout landed", layoutKey);
       setLaid({ nodes: laidOut, edges: decorated, key: layoutKey });
     };
-    console.log("[dbg] layout start", layoutKey);
     const cached = layoutCacheRef.current.get(layoutKey);
     if (cached) {
       // Synchronous: an already-seen state (un-focus, re-click) lands in one paint —
@@ -240,7 +238,6 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
   // lands, never on a focus-only re-decoration of the same one.
   const paintedRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[]; key: string } | null>(null);
   useEffect(() => {
-    console.log("[dbg] decorate?", JSON.stringify({ laidKey: laid?.key ?? null, layoutKey, focus }));
     if (laid === null || laid.key !== layoutKey) return;
     if (animRef.current !== null) {
       cancelAnimationFrame(animRef.current);

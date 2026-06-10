@@ -87,11 +87,26 @@ A connector gap = the edge's `pathRect` end vs the node's `connTop`/`connBottom`
 its `tile` edge. **Before/after a fix:** save each run (`… -p -o geometry > /tmp/before.json`),
 then `diff` (or `jq`) the rects to prove the gap closed.
 
+## Headless by default (user decision 2026-06-10)
+
+The MCP Chrome runs with `--headless=true` (`~/.pflow/mcp-servers.json`, `chrome-devtools`
+entry): no window appears, nothing steals the user's focus, and the occluded-window
+interference class (suspected in the 2026-06-10 ELK-worker hang) is gone. **Verified
+identical to headed** for both tools: `screenshot` paints the full canvas (gradient edges,
+flares, condition icon, minimap), and `inspect` returns the same CSS-px geometry (compact
+leaf 230×68, tile 56×56, all edges carry pathRects). Treat headless output as authoritative.
+
+**Opt-in headed mode** — ONLY if the user explicitly asks to watch the browser: remove
+`"--headless=true"` from the `chrome-devtools` args and kill the running headless instance
+(`pkill -f "chrome-devtools-mcp/chrome-profile"`) so the next run relaunches with a window.
+Re-add the flag when done — headless is the standing default; do not leave headed on.
+
 ## Troubleshooting
 
 - `mcp-chrome-devtools-*` node error ("MCP tool not registered") → `pflow mcp sync chrome-devtools`.
 - `viewport` = the default `translate(0px, 0px) scale(1)` → nothing fit: empty graph, or `node=` named a node that isn't rendered.
 - Stale output → you didn't rebuild after a `web/` change: `make ui-build`.
 - Stale output DESPITE a rebuild (old layout/styles, even mixed old+new) → the MCP Chrome's
-  **HTTP cache** heuristically reused old files (the server sends no `Cache-Control`). Add a
-  throwaway query param to bust it: `&v=<anything-new>` (unknown params are ignored by the app).
+  **HTTP cache** heuristically reused old `assets/*` (index.html itself now sends
+  `Cache-Control: no-cache`). Add a throwaway query param to bust it: `&v=<anything-new>`
+  (unknown params are ignored by the app).

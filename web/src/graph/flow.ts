@@ -15,7 +15,7 @@ import type { Edge, Node } from "@xyflow/react";
 
 import { branchHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
 import { METRICS } from "./metrics";
-import { kindColor, nodeColor } from "../utils/format";
+import { IO_COLOR, kindColor, nodeColor } from "../utils/format";
 import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
 export type Density = "detailed" | "compact";
@@ -101,6 +101,12 @@ export type IOCardData = {
   direction: Direction;
   rowsVisible: boolean; // advanced, or focus-expanded (the leaf showBody rule)
   focusedPortId: string | null; // the row to highlight when an individual port is focused
+  // Control-edge incidence (the connector flares, same as LeafData): the cards join
+  // the control SKELETON via the synthesized io-flow edges (Inputs → entry step,
+  // terminal step → Outputs), so they behave like nodes — flares included. Filled
+  // by the control-incidence post-pass over the FLOW edges.
+  hasIncoming: boolean;
+  hasOutgoing: boolean;
   dimmed: boolean;
   focused: boolean;
 };
@@ -125,7 +131,7 @@ export type GroupData = {
   // The workflow's declared IO, rendered as rows on this node (from the child
   // level's input_wrapper/output_wrapper groups, whose parent is this group).
   // Collapsed card: a two-column area under the header (inputs left, outputs
-  // right staggered one row down — the in→out diagonal). Expanded region: inputs
+  // right BOTTOM-ANCHORED — the in→out diagonal). Expanded region: inputs
   // as the LEFT SIDEBAR (the body lays out beside it via ELK left padding),
   // outputs as the bottom-right strip.
   inputs: Port[];
@@ -223,9 +229,13 @@ export const GROUP_IO_WIDTH = 380;
 export const COLLAPSED_GROUP_WIDTH = 260;
 export const COLLAPSED_GROUP_HEIGHT = HEADER_HEIGHT;
 
-/** Row count of a two-column IO area. Outputs sit one row LOWER than inputs —
- *  ALWAYS, even at equal counts (user decision 2026-06-10): the top-left → bottom-
- *  right diagonal IS the information (in flows to out), worth one row of height. */
+/** Row count of a two-column IO area. Outputs are BOTTOM-ANCHORED, at least one
+ *  row below the inputs' start — even at equal counts (user decision 2026-06-10):
+ *  the top-left → bottom-right diagonal IS the information (in flows to out).
+ *  GroupNode pushes the outputs column down by `ioRowsCount − nOut` rows — the
+ *  original fixed one-row stagger whenever counts are balanced (nOut + 1 ≥ nIn),
+ *  and the card's bottom-right corner when inputs dominate (a 13-in/3-out card
+ *  left the outputs hugging the top). */
 export function ioRowsCount(nIn: number, nOut: number): number {
   if (nIn > 0 && nOut > 0) return Math.max(nIn, nOut + 1);
   return Math.max(nIn, nOut);
@@ -341,7 +351,9 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     return parent;
   };
 
-  // Which nodes have a control edge flowing IN / OUT — drives the connector stubs.
+  // CONTRACT-level control incidence. Render-time incidence (the connector flares)
+  // comes from a post-pass over the FLOW edges — these sets exist to find the root
+  // ENTRY steps (no incoming control edge) for the synthesized io-flow skeleton.
   const incomingControl = new Set<string>();
   const outgoingControl = new Set<string>();
   for (const e of graph.edges) {
@@ -573,8 +585,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
           outputFields,
           branchLabels,
           branchConditions,
-          hasIncoming: incomingControl.has(n.id),
-          hasOutgoing: outgoingControl.has(n.id),
+          hasIncoming: false, // filled by the control-incidence post-pass (flow edges)
+          hasOutgoing: false,
           expanded: isExpanded,
           dimmed: false,
           focused: false,
@@ -585,16 +597,20 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   }
 
   // The ROOT workflow's IO: two standalone IO CARDS (Inputs at the flow's start,
-  // Outputs at its end — ELK positions them via their data edges, which feed
-  // layout even when hidden). Node anatomy like every other card; rows render
+  // Outputs at its end — anchored into the spine by the synthesized io-flow
+  // control edges below). Node anatomy like every other card; rows render
   // under the leaf showBody rule (advanced / focus-expanded), so beautiful shows
   // one quiet compact card instead of a floating table of N rows.
+  let rootInputCard: string | null = null;
+  let rootOutputCard: string | null = null;
   for (const wrapper of ioWrappers) {
     if (wrapper.parent) continue; // nested → rows on the workflow group (above)
     const ports = wrapperPorts(wrapper);
     if (ports.length === 0) continue;
     const rowsVisible = view.density === "detailed" || expandedSet.has(wrapper.id);
     if (rowsVisible) ioRowsShown.add(wrapper.id);
+    if (wrapper.kind === "input_wrapper") rootInputCard = wrapper.id;
+    else rootOutputCard = wrapper.id;
     flowNodes.push({
       id: wrapper.id,
       type: "io",
@@ -609,6 +625,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
         direction: view.direction,
         rowsVisible,
         focusedPortId: null,
+        hasIncoming: false, // filled by the control-incidence post-pass (flow edges)
+        hasOutgoing: false,
         dimmed: false,
         focused: false,
       },
@@ -707,6 +725,60 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     );
   }
 
+  // The root IO cards JOIN THE CONTROL SKELETON (user-decided 2026-06-10): the
+  // Inputs card heads the flow — a control-style edge into each root ENTRY step
+  // (no incoming control edge; falls back to the FIRST root step, where pflow
+  // starts execution, when a root cycle leaves no entry) — and every terminal
+  // step's representative runs into the Outputs card. These are NOT contract
+  // edges (pflow has no io→node control flow); they are visual policy that makes
+  // the cards behave like nodes: ELK lays them into the spine (instead of parking
+  // data-only islands beside it) and their tiles grow connector flares like any
+  // leaf's. The per-port data lines are unchanged (hidden in beautiful, revealed
+  // on focus). Drawn in BOTH densities — like forks, this is structure.
+  if (rootInputCard || rootOutputCard) {
+    const rootSteps = graph.nodes.filter(
+      (n) => effectiveParent(n.parent) === null && n.io === null && n.kind !== "end",
+    );
+    // `end`: which endpoint is the IO card — colors blend IO teal into the step's
+    // kind color (in) or the step's color into teal (out), the standard gradient rule.
+    const ioFlowEdge = (end: "in" | "out", source: string, target: string, step: RFNode): FlowEdge => ({
+      id: `io-flow:${source}->${target}`,
+      source,
+      target,
+      sourceHandle: NODE_OUT,
+      targetHandle: NODE_IN,
+      type: "gradient",
+      className: "edge-sequential",
+      data: {
+        kind: "sequential",
+        shadowed: false,
+        from: end === "in" ? source : step.id,
+        to: end === "in" ? step.id : target,
+        defaultHidden: false,
+        sourceColor: end === "in" ? IO_COLOR : nodeColor(step),
+        targetColor: end === "in" ? nodeColor(step) : IO_COLOR,
+      },
+    });
+    const anchored = new Set<string>();
+    if (rootInputCard) {
+      const entries = rootSteps.filter((n) => !incomingControl.has(n.id));
+      for (const n of entries.length > 0 ? entries : rootSteps.slice(0, 1)) {
+        const anchor = renderAnchor(n.id);
+        if (!anchor || anchor === rootInputCard || anchored.has(`in:${anchor}`)) continue;
+        anchored.add(`in:${anchor}`);
+        flowEdges.push(ioFlowEdge("in", rootInputCard, anchor, n));
+      }
+    }
+    if (rootOutputCard) {
+      for (const n of rootSteps.filter((s) => s.is_terminal)) {
+        const anchor = renderAnchor(n.id);
+        if (!anchor || anchor === rootOutputCard || anchored.has(`out:${anchor}`)) continue;
+        anchored.add(`out:${anchor}`);
+        flowEdges.push(ioFlowEdge("out", anchor, rootOutputCard, n));
+      }
+    }
+  }
+
   // Synthesize a loop-back U for each looped node, drawn on the node — or on its
   // GROUP when it's a looped sub-workflow host. It is NOT a contract edge; we build
   // it from the LoopSpec (pure visual policy). Self-loops are dropped from ELK
@@ -758,12 +830,13 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     });
   }
 
-  // Control-incidence for group nodes (their connector flares: the collapsed card
-  // draws top+bottom, the expanded region its TOP — the trunk enters through the
-  // region's tile like any node's). Must run over the FLOW edges: contract edges
-  // never name a group — re-anchoring decides what actually touches it — and the
-  // self-loop drop above already removed purely-internal edges (both ends inside
-  // the same collapsed group).
+  // Control-incidence for every flare-bearing node (leaves, groups, IO cards):
+  // the collapsed card draws top+bottom flares, the expanded region its TOP — the
+  // trunk enters through the tile like any node's. Must run over the FLOW edges:
+  // contract edges never name a group — re-anchoring decides what actually touches
+  // it — the self-loop drop above already removed purely-internal edges (both ends
+  // inside the same collapsed group), and the synthesized io-flow skeleton edges
+  // (not in the contract) must count for the IO cards and the entry/terminal steps.
   const inControlFlow = new Set<string>();
   const outControlFlow = new Set<string>();
   for (const e of flowEdges) {
@@ -773,7 +846,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     outControlFlow.add(e.source);
   }
   for (const n of flowNodes) {
-    if (n.type === "group") {
+    if (n.type === "node" || n.type === "group" || n.type === "io") {
       n.data.hasIncoming = inControlFlow.has(n.id);
       n.data.hasOutgoing = outControlFlow.has(n.id);
     }

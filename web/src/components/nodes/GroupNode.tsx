@@ -29,7 +29,7 @@
 import { type CSSProperties, memo, useEffect } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
-import type { FlowNode } from "../../graph/flow";
+import { type FlowNode, ioRowsCount } from "../../graph/flow";
 import { NODE_IN, NODE_OUT } from "../../graph/handles";
 import { ICON_COL_X } from "../../graph/metrics";
 import { BATCH_COLOR, kindColor } from "../../utils/format";
@@ -158,7 +158,9 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
       </span>
       {/* The workflow's declared IO as rows (PortRows — the leaf-row anatomy).
           COLLAPSED: a two-column area under the header — inputs left, outputs right
-          staggered one row down (the in→out diagonal, user-decided 2026-06-10).
+          BOTTOM-ANCHORED (ending at the last row: the in→out diagonal, user-decided
+          2026-06-10; equals the original one-row stagger whenever counts are
+          balanced, and keeps a lopsided card's outputs at its bottom-right corner).
           Only the OUTER scope can carry edges here (internal edges self-loop-drop),
           so input rows are receive-only and output rows feed-only.
           EXPANDED: inputs become the LEFT SIDEBAR (layout.ts reserves the column as
@@ -177,7 +179,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
               handles="feed"
               focusedPortId={focusedPortId}
               label="OUTPUTS"
-              stagger={inputs.length > 0}
+              staggerRows={ioRowsCount(inputs.length, outputs.length) - outputs.length}
             />
           )}
         </div>

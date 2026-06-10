@@ -28,6 +28,12 @@ import { ICON_COL_X, METRICS } from "./metrics";
 let elkLoad: Promise<ELK> | null = null;
 const loadElk = (): Promise<ELK> => (elkLoad ??= createElk());
 
+// The bundled main-thread build, memoized separately: it is both the no-Worker
+// fallback and the watchdog's rescue engine for a silent worker (below).
+let bundledLoad: Promise<ELK> | null = null;
+const loadBundledElk = (): Promise<ELK> =>
+  (bundledLoad ??= import("elkjs/lib/elk.bundled.js").then((m) => new m.default()));
+
 async function createElk(): Promise<ELK> {
   if (typeof Worker !== "undefined") {
     try {
@@ -37,14 +43,47 @@ async function createElk(): Promise<ELK> {
       ]);
       const elk = new ElkApi({ workerFactory: () => new ElkWorker() }) as ELK;
       await elk.layout({ id: "probe", children: [{ id: "p", width: 1, height: 1 }], edges: [] });
-      console.log("[dbg] elk engine: worker");
       return elk;
     } catch (err) {
       console.warn("pflow UI: ELK worker unavailable — layouts will run on the main thread", err);
     }
   }
-  const m = await import("elkjs/lib/elk.bundled.js");
-  return new m.default();
+  return loadBundledElk();
+}
+
+// WATCHDOG: a worker layout that never answers must not hang the canvas. The
+// elk-api PromisedWorker keeps its promise pending forever on an unanswered
+// message, and a worker-side failure can be COMPLETELY silent (no reply, no
+// `error`, no `messageerror` — observed in the wild on the 2026-06-10
+// focus-deep-link hang; root cause environmental, never pinned — see
+// task_168/implementation/handoff-focus-deeplink-worker-hang.md). After
+// WORKER_TIMEOUT_MS of silence the layout re-runs on the bundled main-thread
+// ELK (which provably handles real workflow graphs), the silent worker is
+// terminated, and the session is DEMOTED to main-thread layouts — bounded
+// badness: at most one stall per session, never a dead canvas. A main-thread
+// layout cannot falsely trip the timer: while it computes, the main thread is
+// blocked, so its result settles the race before the timer callback can run.
+export const WORKER_TIMEOUT_MS = 10_000;
+
+export async function layoutWithWatchdog(elk: ELK, root: ElkNode): Promise<ElkNode> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), WORKER_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([elk.layout(root), timedOut]);
+    if (result !== "timeout") return result;
+  } finally {
+    clearTimeout(timer);
+  }
+  console.warn(
+    `pflow UI: ELK worker did not answer within ${WORKER_TIMEOUT_MS / 1000}s — ` +
+      "re-running this layout on the main thread (worker demoted for this session)",
+  );
+  (elk as { terminateWorker?: () => void }).terminateWorker?.();
+  elkLoad = loadBundledElk(); // demote: later layouts skip the silent worker
+  const bundled = await elkLoad;
+  return bundled.layout(root);
 }
 
 const ELK_DIRECTION: Record<Direction, string> = { LR: "RIGHT", TD: "DOWN" };
@@ -158,16 +197,17 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   const portable = new Set<string>();
   if (direction === "TD") {
     for (const node of nodes) {
-      // Leaves AND collapsed groups: a collapsed group renders the same card
-      // anatomy (GroupNode), handles on the icon column — without its ports the
-      // trunk jogs at every collapsed sub-workflow. EXPANDED groups render their
+      // Leaves, IO cards AND collapsed groups: all three render the same card
+      // anatomy with handles on the icon column (an IO card joins the control
+      // skeleton via the io-flow edges) — without their ports the trunk jogs at
+      // every collapsed sub-workflow / IO card. EXPANDED groups render their
       // handles at the icon column too (the trunk flows into the region's tile),
       // but get NO ELK port: a port on a COMPOUND node crashes elkjs under
       // INCLUDE_CHILDREN when an edge references it ("NEdge must have a source
       // and target NNode specified" — found in-browser 2026-06-10, same crash
       // family as considerModelOrder). ELK anchors region edges at the border
       // default; smoothstep absorbs the offset to the rendered handle.
-      if (node.type === "node" || (node.type === "group" && node.data.collapsed)) portable.add(node.id);
+      if (node.type === "node" || node.type === "io" || (node.type === "group" && node.data.collapsed)) portable.add(node.id);
     }
   }
 
@@ -239,17 +279,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
     edges: elkEdges,
   };
 
-  console.log("[dbg] elk.layout call", root.children?.length ?? 0, "children");
-  const g = globalThis as { __roots?: unknown[] };
-  g.__roots = (g.__roots ?? []).concat(JSON.parse(JSON.stringify(root)));
-  let laidOut;
-  try {
-    laidOut = await elk.layout(root);
-  } catch (e) {
-    console.log("[dbg] elk.layout THREW", String(e));
-    throw e;
-  }
-  console.log("[dbg] elk.layout done");
+  const laidOut = await layoutWithWatchdog(elk, root);
 
   const boxes = new Map<string, { x: number; y: number; width: number; height: number }>();
   const collect = (node: ElkNode): void => {
