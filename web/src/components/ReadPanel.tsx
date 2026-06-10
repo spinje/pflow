@@ -43,7 +43,9 @@ export function ReadPanel({ node, onClose }: { node: RFNode; onClose: () => void
     <aside className="read-panel">
       <header className="read-panel-header">
         <div>
-          <span className="read-panel-kind">{node.kind}</span>
+          {/* The authored truth: the canvas presents a decision code node as
+              CONDITION, so the panel is where `type: code` stays mappable. */}
+          <span className="read-panel-kind">{node.is_decision ? `${node.kind} · condition` : node.kind}</span>
           <h2>{node.ref.node_id}</h2>
         </div>
         <button className="icon-button" onClick={onClose} title="Close">

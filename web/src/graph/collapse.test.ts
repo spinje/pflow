@@ -1,0 +1,93 @@
+import { describe, expect, it } from "vitest";
+
+import { AUTO_COLLAPSE_NODE_BUDGET, collapsibleGroupIds, initialCollapsed } from "./collapse";
+import type { RFGraph, RFGroup, RFNode } from "../types";
+
+function node(id: string, over: Partial<RFNode> = {}): RFNode {
+  return {
+    id,
+    ref: { node_id: id, ancestor_path: [], port: null },
+    kind: "shell",
+    purpose: "",
+    params: [],
+    io: null,
+    loop: null,
+    batch: null,
+    parent: null,
+    source: null,
+    is_decision: false,
+    is_terminal: false,
+    is_group_host: false,
+    unexpanded: null,
+    annotations: {},
+    ...over,
+  };
+}
+
+function group(id: string, over: Partial<RFGroup> = {}): RFGroup {
+  return { id, kind: "workflow", parent: null, host: null, members: [], nesting_depth: 0, annotations: {}, ...over };
+}
+
+function graphWith(nodeCount: number, groups: RFGroup[], nodes: RFNode[] = []): RFGraph {
+  const filler = Array.from({ length: nodeCount - nodes.length }, (_, i) => node(`f${i}`));
+  return { nodes: [...nodes, ...filler], edges: [], groups };
+}
+
+describe("collapsibleGroupIds — workflow/batch collapse, IO wrappers never", () => {
+  it("excludes input/output wrappers (they render as ports nodes, not boxes)", () => {
+    const g = graphWith(3, [
+      group("gw"),
+      group("gb", { kind: "batch" }),
+      group("gi", { kind: "input_wrapper" }),
+      group("go", { kind: "output_wrapper" }),
+    ]);
+    expect(collapsibleGroupIds(g)).toEqual(["gw", "gb"]);
+  });
+});
+
+describe("initialCollapsed — big workflows open as an overview", () => {
+  const groups = [group("g0"), group("g1", { parent: "g0", nesting_depth: 1 })];
+
+  it("under the budget: opens fully expanded (auto)", () => {
+    const g = graphWith(AUTO_COLLAPSE_NODE_BUDGET, groups);
+    expect(initialCollapsed(g, null, []).size).toBe(0);
+  });
+
+  it("over the budget: opens fully collapsed (auto)", () => {
+    const g = graphWith(AUTO_COLLAPSE_NODE_BUDGET + 1, groups);
+    expect([...initialCollapsed(g, null, [])].sort()).toEqual(["g0", "g1"]);
+  });
+
+  it("collapse=none overrides auto on a big workflow", () => {
+    const g = graphWith(AUTO_COLLAPSE_NODE_BUDGET + 1, groups);
+    expect(initialCollapsed(g, "none", []).size).toBe(0);
+  });
+
+  it("collapse=all overrides auto on a small workflow", () => {
+    const g = graphWith(3, groups);
+    expect([...initialCollapsed(g, "all", [])].sort()).toEqual(["g0", "g1"]);
+  });
+
+  it("a deep-link target's WHOLE ancestor chain stays expanded; siblings stay collapsed", () => {
+    // target sits two groups deep (g0 > g1 > target); g2 is an unrelated sibling.
+    const g = graphWith(
+      AUTO_COLLAPSE_NODE_BUDGET + 1,
+      [group("g0"), group("g1", { parent: "g0", nesting_depth: 1 }), group("g2")],
+      [node("target", { parent: "g1" })],
+    );
+    const collapsed = initialCollapsed(g, null, ["target"]);
+    expect(collapsed.has("g0")).toBe(false);
+    expect(collapsed.has("g1")).toBe(false);
+    expect(collapsed.has("g2")).toBe(true);
+  });
+
+  it("a deep link by FLAT id protects too, and unresolvable targets are ignored", () => {
+    const g = graphWith(
+      AUTO_COLLAPSE_NODE_BUDGET + 1,
+      [group("g0")],
+      [node("n9", { ref: { node_id: "named", ancestor_path: [], port: null }, parent: "g0" })],
+    );
+    expect(initialCollapsed(g, null, ["n9"]).has("g0")).toBe(false);
+    expect(initialCollapsed(g, null, ["ghost", null]).has("g0")).toBe(true);
+  });
+});

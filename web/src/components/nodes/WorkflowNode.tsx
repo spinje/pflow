@@ -13,8 +13,8 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 
 import type { FlowNode } from "../../graph/flow";
 import { NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
-import { METRICS } from "../../graph/metrics";
-import { categoryLabel, collapseWhitespace, kindColor, parseTemplate, previewValue, truncate } from "../../utils/format";
+import { ICON_COL_X, METRICS } from "../../graph/metrics";
+import { categoryLabel, collapseWhitespace, nodeColor, parseTemplate, previewValue, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
 import type { RFParam } from "../../types";
 import { NodeBadges } from "./Badges";
@@ -35,12 +35,13 @@ const CONN = {
   tipW: METRICS.edgeStroke, // the stem must continue the edge at exactly its width
   stemH: 2, // straight stem run; slides under the edge terminus (same width+color → seamless)
   coveH: 7, // fillet height: vertical tangent at the stem → horizontal at the tile
-  // The landing line sits baseSink px INSIDE the tile border: landing exactly ON the
-  // outer edge puts the silhouette's 90° corner right on the color boundary, which
-  // antialiases into a 1px jag. Sunk inside, the cove crosses the edge while still
-  // sloped — no corner on the silhouette. The apron continues past the landing line;
-  // baseSink + baseApron must stay WITHIN the tile border (past it = a dark notch).
-  baseSink: 1,
+  // The landing line sits baseSink px inside the tile border; the apron continues
+  // past it. baseSink + baseApron must stay WITHIN the tile border (past it = a dark
+  // notch). History: baseSink was 1 (landing exactly ON the outer edge antialiased a
+  // 1px jag under the OLD palette); user re-tuned to 0 (anchor +1 → +2, 2026-06-10)
+  // — if a jag reappears at the landing, restore baseSink 1 and drop baseApron to 0
+  // instead (same +2 anchor, sunken landing).
+  baseSink: 0,
   baseApron: 1,
 };
 const CONN_H = CONN.stemH + CONN.coveH + CONN.baseApron;
@@ -120,12 +121,14 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   // the tile, so a tile-anchored flare would sit mid-card, away from the outgoing edge.
   const topConnector = direction === "TD" && !detailed && hasIncoming;
   const bottomConnector = direction === "TD" && !detailed && !expanded && hasOutgoing;
-  // In TD the control handles sit on the icon column (left:34 = tile center) and are
-  // pulled INWARD toward the tile (top/bottom offset) so the edge terminates closer to
-  // the tile — letting the connector flare be short instead of bridging the full header
-  // padding. NODE_IN is Position.Top (offset down), NODE_OUT is Position.Bottom (offset up).
-  const topHandleStyle = direction === "TD" ? { left: 34, top: 5 } : undefined;
-  const bottomHandleStyle = direction === "TD" ? { left: 34, bottom: 5 } : undefined;
+  // In TD the control handles sit on the icon column (ICON_COL_X = tile center — the
+  // SAME x layout.ts declares to ELK as the node's ports, so columns align icon-to-icon)
+  // and are pulled INWARD toward the tile (top/bottom offset) so the edge terminates
+  // closer to the tile — letting the connector flare be short instead of bridging the
+  // full header padding. NODE_IN is Position.Top (offset down), NODE_OUT is
+  // Position.Bottom (offset up).
+  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : undefined;
+  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : undefined;
 
   // React Flow caches handle positions; moving them (LR↔TD flips the border handles
   // from the sides to the icon column; focus-expansion adds/removes the per-row
@@ -160,7 +163,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (focused) classes.push("focused");
   if (node.is_terminal) classes.push("terminal");
   if (node.unexpanded) classes.push("unexpanded");
-  const kindStyle = { "--kind": kindColor(node.kind) } as CSSProperties;
+  const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
   const hasBody = showBody && (node.params.length > 0 || outputFields.length > 0);
 
   return (
@@ -192,6 +195,10 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
 
       {hasBody && (
         <div className="param-rows">
+          {/* Param/output rows are STRICT-sided — inputs receive on the LEFT, outputs
+              feed from the RIGHT (the node-graph convention; user decision over
+              shortest-path sides). A line from the "wrong" side wraps around the
+              card; its rail clears the nodes via the data-rail hint (DataEdge). */}
           {node.params.map((param) => (
             <div className="param-row" key={param.name}>
               <Handle

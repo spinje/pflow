@@ -83,8 +83,31 @@ export function kindColor(kind: string): string {
   return KIND_COLORS[kind] ?? DEFAULT_KIND_COLOR;
 }
 
+// CONDITION — a presented pseudo-kind, not a contract kind. Multi-way routing
+// (`next: str = ...`) is a code-node-only capability, so `is_decision ⟹ kind=code`
+// and presenting the router AS a condition hides nothing (the read panel still says
+// `code · condition`). Hot orange: same warm family as code (it IS code) but hotter
+// = the router; distinct from loop amber #f0b86c and warn #f0a07a. Keep equal to
+// the CSS `--decision` var (index.css), which branch handles/labels tint from.
+export const CONDITION_COLOR = "#ffa657";
+
+export function isCondition(node: { kind: string; is_decision: boolean }): boolean {
+  // The kind gate is defensive: should branching ever extend beyond code nodes,
+  // an llm/shell decider keeps its kind identity instead of lying.
+  return node.is_decision && node.kind === "code";
+}
+
+/** The node's identity color: its kind color, or the condition color for a
+ *  decision code node. Drives the card border/tile/category AND the edge
+ *  gradients — keep every caller on this, not on raw kindColor(kind). */
+export function nodeColor(node: { kind: string; is_decision: boolean }): string {
+  return isCondition(node) ? CONDITION_COLOR : kindColor(node.kind);
+}
+
 // The small category line on a node card (the kind, e.g. "CLAUDE CODE"). Title-ish
-// uppercase; the human description (purpose) is the bold line below it.
-export function categoryLabel(node: { kind: string }): string {
+// uppercase; the human description (purpose) is the bold line below it. A decision
+// code node presents as CONDITION (role replaces kind — the Tines/n8n model).
+export function categoryLabel(node: { kind: string; is_decision: boolean }): string {
+  if (isCondition(node)) return "CONDITION";
   return node.kind.replace(/-/g, " ").toUpperCase();
 }

@@ -21,9 +21,13 @@ export interface ViewParams {
   // transient interaction state, never written back. Combine with `node=` to also
   // frame the camera on it.
   focus: string | null;
+  // Initial collapse state: "all" opens as an overview, "none" fully expanded.
+  // Absent = AUTO (big workflows open collapsed — see graph/collapse.ts). Read-only,
+  // like `node` — collapse is transient interaction state, never written back.
+  collapse: "all" | "none" | null;
 }
 
-export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null };
+export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null, collapse: null };
 
 // The URL uses the USER-FACING density words (advanced/beautiful); the code uses the
 // internal density (detailed/compact). Keep the mapping in one place so they can't drift.
@@ -38,11 +42,13 @@ export function readViewParams(search: string): ViewParams {
   const den = p.get("density");
   const node = p.get("node");
   const focus = p.get("focus");
+  const collapse = p.get("collapse");
   return {
     direction: dir === "TD" || dir === "LR" ? dir : DEFAULT_VIEW.direction,
     density: (den !== null && PARAM_TO_DENSITY[den]) || DEFAULT_VIEW.density,
     node: node !== null && node.trim() !== "" ? node : null,
     focus: focus !== null && focus.trim() !== "" ? focus : null,
+    collapse: collapse === "all" || collapse === "none" ? collapse : null,
   };
 }
 

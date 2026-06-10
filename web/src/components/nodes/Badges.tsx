@@ -1,7 +1,7 @@
-// Small status pills derived from a node's structural facts (loop / batch /
-// decision / unexpanded). Visual policy lives here, not in the contract — the
-// payload ships these as plain facts (task-168.md "predicates baked in Python,
-// visual policy in TS").
+// Small status pills derived from a node's structural facts (batch / unexpanded).
+// Visual policy lives here, not in the contract — the payload ships these as plain
+// facts (task-168.md "predicates baked in Python, visual policy in TS"). A badge
+// earns its place only when NOTHING else on the canvas shows the fact.
 
 import type { RFNode } from "../../types";
 
@@ -25,9 +25,9 @@ function badgesFor(node: RFNode): Badge[] {
       title: `over ${where}`,
     });
   }
-  if (node.is_decision) {
-    badges.push({ label: "decision", cls: "badge-decision" });
-  }
+  // No decision badge (same reasoning as the loop badge): a decision presents as
+  // the CONDITION pseudo-kind (label/icon/color — utils/format isCondition) and its
+  // labeled branch edges draw the fork. The read panel carries `code · condition`.
   if (node.unexpanded) {
     badges.push({
       label: node.unexpanded.replace(/_/g, " "),

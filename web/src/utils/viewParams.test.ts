@@ -9,12 +9,19 @@ describe("readViewParams", () => {
   });
 
   it("parses all view params, mapping user-facing density words inward", () => {
-    expect(readViewParams("?direction=TD&density=advanced&node=fetch-data&focus=classify")).toEqual({
+    expect(readViewParams("?direction=TD&density=advanced&node=fetch-data&focus=classify&collapse=all")).toEqual({
       direction: "TD",
       density: "detailed",
       node: "fetch-data",
       focus: "classify",
+      collapse: "all",
     });
+  });
+
+  it("collapse= accepts only all/none; anything else means AUTO (null)", () => {
+    expect(readViewParams("?collapse=none").collapse).toBe("none");
+    expect(readViewParams("?collapse=maybe").collapse).toBeNull();
+    expect(readViewParams("").collapse).toBeNull();
   });
 
   it("treats a blank focus as null", () => {

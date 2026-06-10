@@ -4,10 +4,14 @@ interface ToolbarProps {
   title: string;
   density: Density;
   direction: Direction;
-  hasCollapsed: boolean;
+  // Collapse control (user-chosen design 2026-06-10: buttons + count). groupCount is
+  // the COLLAPSIBLE group total; the whole control hides when a workflow has none.
+  groupCount: number;
+  openCount: number;
   focused: boolean;
   onDensity: (d: Density) => void;
   onDirection: (d: Direction) => void;
+  onCollapseAll: () => void;
   onExpandAll: () => void;
   onClearFocus: () => void;
   onBack: () => void;
@@ -41,10 +45,22 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
         </button>
       </div>
 
-      {props.hasCollapsed && (
-        <button className="link-button" onClick={props.onExpandAll}>
-          expand all
-        </button>
+      {/* The disabled states carry the extremes (fully open / fully closed); the count
+          disambiguates every mixed state in between. */}
+      {props.groupCount > 0 && (
+        <>
+          <div className="toolbar-group" role="group" aria-label="groups">
+            <button title="Collapse all groups" disabled={props.openCount === 0} onClick={props.onCollapseAll}>
+              ⊟
+            </button>
+            <button title="Expand all groups" disabled={props.openCount === props.groupCount} onClick={props.onExpandAll}>
+              ⊞
+            </button>
+          </div>
+          <span className="toolbar-count" title="Expanded groups">
+            {props.openCount}/{props.groupCount} open
+          </span>
+        </>
       )}
       {props.focused && (
         <button className="link-button" onClick={props.onClearFocus}>

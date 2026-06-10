@@ -1,0 +1,19 @@
+<svg viewBox="0 -12 192 187" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Condition glyph: one hollow ring in (orange), two hollow rings out (white),
+       legs blending orange -> white (the same source->target idea as the canvas's
+       gradient edges). The flip is BAKED into the path coords (no transform) so the
+       objectBoundingBox gradient axis reads naturally; cores are true evenodd HOLES
+       (transparent - the tile bg shows through, nothing hardcoded). The enlarged top
+       ring is a stroked circle (r32 +/- 8 = outer 40 / inner 24, matching the r24
+       hole). Legs are visible from y~72 (under the r40 ring) to y=111: the gradient
+       stops (0.41 -> 0.62 of the 175-tall path bbox) span exactly that run, so the
+       out-rings stay pure white. Orange = CONDITION_COLOR (utils/format.ts). -->
+  <defs>
+    <linearGradient id="leg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.41" stop-color="#ffa657"/>
+      <stop offset="0.62" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+  <path fill-rule="evenodd" fill="url(#leg)" d="M160 175C177.673 175 192 160.6731 192 143C192 125.3269 177.673 111 160 111C154.905 111 149.674 109.0744 147.129 104.661L126.143 68.264C121.588 60.363 123.682 50.478 126.472 41.796C127.464 38.709 128 35.417 128 32C128 14.327 113.673 0 96 0C78.3269 0 64 14.327 64 32C64 35.417 64.5357 38.709 65.5277 41.796C68.3175 50.478 70.4113 60.363 65.8562 68.263L44.8696 104.6618C42.3251 109.0748 37.094 111 32 111C14.3269 111 0 125.3269 0 143C0 160.6731 14.3269 175 32 175C49.6731 175 64 160.6731 64 143C64 139.5832 63.4642 136.2918 62.4721 133.2049C59.6818 124.523 57.5877 114.6378 62.1428 106.7376L83.129 70.34C85.6737 65.926 90.9055 64 96 64C101.094 64 106.325 65.926 108.869 70.339L129.856 106.7379C134.411 114.6379 132.318 124.5231 129.528 133.205C128.536 136.2919 128 139.5833 128 143C128 160.6731 142.327 175 160 175ZM120 32A24 24 0 1 0 72 32A24 24 0 1 0 120 32ZM50 143A18 18 0 1 0 14 143A18 18 0 1 0 50 143ZM178 143A18 18 0 1 0 142 143A18 18 0 1 0 178 143Z"/>
+  <circle cx="96" cy="32" r="32" fill="none" stroke="#ffa657" stroke-width="16"/>
+</svg>

@@ -79,6 +79,17 @@ Tests sit beside their subject.
   from `utils/icons.ts`: one map keys a node `kind` →
   SVG; `llm` resolves from its `model` param's `provider/` prefix (default: a sparkle).
   Add a node-kind icon in that one file.
+- **CONDITION is a presented pseudo-kind, not a contract kind.** A decision **code** node
+  (`is_decision && kind === "code"` — `isCondition` in `utils/format.ts`) presents as
+  label `CONDITION`, a fork icon (`assets/icons/condition.svg`: hollow orange ring in,
+  hollow white rings out, legs blending orange→white — see the comment in the file for
+  the baked-flip/evenodd-hole/gradient-stop geometry), and the condition orange
+  (`#ffa657` == the CSS `--decision` var; keep them equal). `nodeColor(node)` is the single seam — card border, tile,
+  category AND edge gradients all go through it; never call raw `kindColor(kind)` for a
+  node's identity. Safe because multi-way routing (`next: str = ...`) is code-only, so
+  the presentation hides no other kind; the kind gate is defensive. No decision badge
+  (same reasoning as the deleted loop badge); the read panel shows `code · condition`
+  so the canvas stays mappable to `type: code` in the file.
 - **Density controls edges, not just node detail.** *Advanced* shows every edge.
   *Beautiful* shows only the control-flow skeleton: data-flow (`${ref}`) edges are built
   but `hidden`, and `applyFocus` reveals just the clicked node's data lines (hidden
@@ -99,22 +110,57 @@ Tests sit beside their subject.
   An expanded card keeps its TOP connector flare but drops the BOTTOM one (the body
   grew below the tile). In advanced the expansion set stays the stable EMPTY constant —
   focus there remains a pure restyle, no re-layout. Selection ring = `var(--kind)`.
-- **Control edges are gradients; no arrowheads; forks differ by direction.**
-  ALL four control kinds (sequential/branch/error/end) get `type: "gradient"`
+  **Click performance + motion (all in `useWorkflowGraph`):** layouts are CACHED by
+  `layoutKey` (density|direction|collapsed|expanded — focus itself is not
+  layout-affecting), so un-click/re-click never re-run ELK; ELK itself runs in a WEB
+  WORKER (`layout.ts loadElk`, main-thread bundled build as fallback — a browser
+  fallback warns, never silent); the decoration effect paints ONLY a laid snapshot
+  whose key matches the current state (stale-paint guard — without it every cached
+  click "shakes": one frame of new-focus-on-old-layout). Small graphs
+  (≤ `ANIMATE_MAX_NODES`) ANIMATE expansion re-layouts: positions interpolate
+  through the RF store per frame so edge paths follow (a CSS transform transition
+  detaches edges from gliding nodes — rejected, measured reasoning in the progress
+  log); the anchoring pan eases in sync; only moved nodes change identity per frame;
+  large flows snap; `prefers-reduced-motion` snaps.
+- **All edges are ROUNDED-ORTHOGONAL (the Tines language); the components own the
+  stroke; no arrowheads; forks differ by direction.** Paths come from
+  `getSmoothStepPath` + `railCenter` (GradientEdge): the first turn sits
+  2×`METRICS.edgeRadius` past the source (shorter STARVES the corners — smoothstep
+  clamps each bend to half its segment). ALL four control kinds
+  (sequential/branch/error/end) get `type: "gradient"`
   (`components/edges/GradientEdge.tsx`) — a `userSpaceOnUse` SVG gradient along the true
   edge direction; the pure `gradientStops()` decides the blend per kind: sequential/branch =
   full **source → target** node-color blend; **error** = node color fading to red over
-  ~26px at each end; **end** = node color fading to faint grey at the source. Stroke width
-  comes from `metrics.ts` (== the tile border, so a line flows seamlessly into the
-  same-color border). **No arrowheads** (clean lines into the borders). Only `data_flow`
-  stays React Flow's `"default"` edge, stroked by CSS. **Never set a control kind's
-  `stroke` in CSS** — the component owns color, and CSS no longer strokes those kinds, so
-  a regression to `"default"` renders INVISIBLY (pinned by a flow test). Dash (branch),
-  the end edge's dot pattern, and shadow/dim opacity ARE CSS (separate properties). **Forks:** in **LR** a branch leaves a labeled border handle
+  ~26px at each end; **end** = node color fading to faint grey at the source.
+  `data_flow` gets the custom `type: "data"` (`DataEdge.tsx`): the same path language
+  plus per-LANE geometry — `EdgeData.lane` (assigned by `assignEdgeLanes` in flow.ts)
+  gives each parallel binding at a node a distinct stub length AND middle-rail offset,
+  so bundles fan apart instead of overlapping pixel-exactly. Data lines are flat
+  `--data-edge` teal EXCEPT a focused line, which draws SOLID at the clicked end and
+  fades a hint toward the far end (`EdgeData.focusEnd`, set by `applyFocus`).
+  Branch/error edges carry lanes too: in **LR** (own row handles) `railCenter`
+  staggers their rails apart; in **TD** the lane is IGNORED — branches leave ONE point
+  (the icon column), so the shared rail IS the trunk-split look, by design. Stroke
+  width comes from `metrics.ts` (== the tile border, so a line flows seamlessly into
+  the same-color border). **No arrowheads** (clean lines into the borders). **Never
+  set ANY edge kind's `stroke` in CSS** — the components own color and CSS strokes
+  nothing, so a regression to a built-in edge type renders INVISIBLY (pinned by flow
+  tests). Dash (branch), the data/end dot patterns, and shadow/dim opacity ARE CSS
+  (separate properties). **Forks:** in **LR** a branch leaves a labeled border handle
   (`BranchPorts`, n8n-style). In **TD** the control handles (`NODE_IN`/`NODE_OUT`) AND the
-  forks all align to the **icon column** (`WorkflowNode` offsets them ~36px from the left),
-  so the trunk + forks flow through the icon; a fork's label then rides its edge
+  forks all align to the **icon column** (`ICON_COL_X` from metrics.ts — the SAME x
+  layout.ts declares to ELK as fixed ports, see next bullet), so the trunk + forks flow
+  through the icon; a fork's label then rides its edge
   (GradientEdge renders it) instead of a border row, and `BranchPorts` draws nothing.
+- **Layout is told where the handles are (layout.ts).** TD leaf nodes declare ELK
+  `FIXED_POS` ports at `ICON_COL_X` — without them ELK aligns box CENTERS while the
+  handles render at the icon column, jogging every "straight" connection. Port-aware
+  NETWORK_SIMPLEX aligns columns icon-to-icon; each target's FIRST non-error control
+  in-edge gets a straightness priority (the LEFTMOST sibling keeps the straight trunk
+  through forks AND merges, user-decided); error-only targets order LAST among
+  siblings (rightmost TD / bottom LR) via `forceNodeModelOrder` — the ONLY model-order
+  option that survives `INCLUDE_CHILDREN` (every `considerModelOrder.strategy` value
+  crashes elkjs on a cross-hierarchy edge; bisected 2026-06-09).
 - **Icon connector flare (TD+beautiful).** A kind-colored SVG cove (`Connector` in
   `WorkflowNode`, anchored as a child of `.node-tile`) makes a control edge appear to flow
   **into the icon tile** — drawn only on sides that have a control edge (`hasIncoming`/
@@ -144,7 +190,21 @@ Tests sit beside their subject.
   member nodes are NOT emitted. Each row carries BOTH handles: a *target* (`portTargetHandle`
   — receives: input bound from parent, output written by a producer) and a *source*
   (`portHandle` — feeds: input → consumers, output → parent). A port bridges two scopes,
-  so dropping either side silently loses the binding edges. **Every edge carries its
+  so dropping either side silently loses the binding edges. Rows connect **SIDEWAYS in
+  BOTH directions** (a row in a vertical table has no top/bottom anchor — the old TD
+  top/bottom handles floated dots BETWEEN rows and edges dove into the stack). Each row
+  actually renders FOUR handles: the base pair plus a mirrored pair (`iotr:`/`iol:`)
+  stacked invisibly on the same dots; the post-layout `assignFacingSides` pass
+  (`graph/portSides.ts`, wired in `useWorkflowGraph` after ELK) flips an edge to the
+  side FACING its peer so a binding never wraps around the node — sibling
+  wrap-arounds were the crossing tangle. The pass compares the HANDLE x
+  (a row source exits the node's RIGHT edge), not node centers — a vertically-stacked
+  pair still counts as "peer to the east". PARAM/OUTPUT rows are deliberately NOT
+  flipped (user decision 2026-06-10): inputs-left/outputs-right is the node-graph
+  convention and beats the shortest path; their wrap-arounds instead get a RAIL HINT
+  (`assignDataRails`, same file): the data edge's middle segment centers in the clear
+  gap between the endpoint boxes (data.railX/railY → DataEdge) so a wrap never hugs
+  a node border (the blind handle-midpoint did). **Every edge carries its
   original endpoints (`data.from`/`data.to`)**, so `applyFocus` can reveal a *single*
   port's lines even though its edges re-anchor onto the shared ports node; clicking a row
   focuses that port id via the `InteractionContext`. Decision forks render as labeled

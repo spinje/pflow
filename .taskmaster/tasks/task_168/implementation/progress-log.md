@@ -649,10 +649,10 @@ The other three were valid low-priority polish, applied (all non-behavioral): (a
 > Tines/n8n/Flowise look — done across one long iterative session, **building blind** (the
 > implementing agent has no canvas; the user reviewed each iteration via screenshots). Spec/
 > design for Phase A: `../research/visual-redesign-knowledge.md` (the KB — Flowise teardown,
-> gradient technique, gotchas) + `implementation/phase-a-plan.md`. **All Phase A work is
-> uncommitted** (per the standing "never commit unless told" rule) and sits on top of the
-> committed Task-168 static viewer. **One piece is UNFINISHED** (the icon *connector stub*) —
-> see "THE OPEN PROBLEM" below; that's where the next agent picks up.
+> gradient technique, gotchas) + `implementation/phase-a-plan.md`. At handoff time all Phase A
+> work was uncommitted and one piece — the icon *connector stub* — was unfinished; it was SOLVED
+> in the 2026-06-09 entries below (the handoff's problem statement is kept, compressed, for the
+> confirmed-hypothesis history).
 
 ## What Phase A changed (all in `web/`, zero contract/Python change)
 
@@ -724,82 +724,19 @@ invariant) are green.
    TD; `sourceHandleFor`/`toFlowEdge`/`leafSize` are all `direction`-aware. Don't "unify" this away
    without re-checking both modes.
 
-## THE OPEN PROBLEM — the icon connector stub (UNFINISHED — start here)
+## The open problem at handoff — the icon connector stub (SINCE SOLVED — history only)
 
-**Goal (the Tines look, image #11/#14/#17 in the chat):** in **TD + beautiful**, a control edge
-should appear to **flow into the icon tile** with a small, rounded, kind-colored **connector stub**
-bridging the edge to the tile. Two stubs per node — **top** (rendered only if `hasIncoming`) and
-**bottom** (only if `hasOutgoing`), **same size**, anchored to the tile's top/bottom border, each
-ending in a short **straight tip** that pokes a few px **outside** the node to meet the edge.
-
-**Where it lives:** `WorkflowNode.tsx` — the `Connector` component (owns its `Handle` at the stub
-tip) + the `CONNECTOR_TOP`/`CONNECTOR_BOTTOM` SVG path constants; `index.css` `.node-connector*`
-rules; `.node.compact { overflow: visible }` (so the stub can extend outside); `LeafData.hasIncoming/
-hasOutgoing` (computed in `flow.ts buildFlow`). The stub **owns its handle** (the `Handle` sits at
-the stub's tip *inside the connector `<div>`*) — done specifically so the edge endpoint and the
-shape can't drift apart.
-
-**Three issues the user reports STILL present (after the owns-its-handle rewrite):**
-1. **Gap between the stub TIP and the edge line** — top AND bottom. The edge connects *further out*
-   than where the stub ends.
-2. **Small gap between the stub BASE and the tile (image) border** — the base floats above the tile
-   instead of touching it.
-3. **Shape proportions** — the flare needs to **stretch further in X** (wider) and **a bit less in
-   Y** (shorter). Tune the two path constants (`viewBox 0 0 16 14`) + `.node-connector` width/height.
-
-**Why I could not fix #1/#2 (and what I now believe):** my geometric model says the stub tip (the
-`<div>`'s `top: calc(50% - 42px)` ⇒ −8px on a 68px node) and the handle (at the `<div>`'s `top:0`)
-COINCIDE, and the stub base (`+14px` ⇒ 6px) equals the tile-top (also 6px). On paper: no gaps. But
-the user sees gaps on every side, **so my model of the rendered positions is wrong** — and I'm blind,
-so I can't see where. **Strong hypothesis:** React Flow mis-measures a `Handle` that lives **inside a
-nested, `transform`ed, absolutely-positioned container that extends OUTSIDE the node's box**. RF
-computes handle bounds relative to the node; a handle whose box is above/below the node bounds (the
-"outside" extension) and under an extra `translateX(-50%)` is exactly the kind of case RF's measurement
-gets wrong. That would put the *edge endpoint* somewhere other than the *rendered stub tip* → the gap.
-
-**HOW TO DEBUG IT (do this first — with a real browser, which I never had):**
-- Run `uv run pflow ui`, open `conditional-branching`, toggle **TD** + **beautiful**, open devtools.
-- Measure the **actual** rendered numbers and compare to the model: (a) the node's `offsetHeight`
-  (is it really 68?); (b) the `.node-tile`'s `getBoundingClientRect` top/bottom; (c) the
-  `.node-connector`'s rect; (d) the edge `<path d>` endpoint coords (in the `.react-flow__edges` SVG);
-  (e) what React Flow stored for the handle position (`useStore(s => s.nodeLookup.get(id))` →
-  `internals.handleBounds`). **The discrepancy between (d) the edge endpoint and (c) the stub tip is
-  the bug.** I was reasoning from the model; the next agent should reason from the DOM.
-
-**If the nested-handle hypothesis holds, the likely fixes (in order of preference):**
-- **Stop extending the handle outside the node.** Put `NODE_IN`/`NODE_OUT` back on the node's
-  **border** (the most reliable RF position — a plain `Position.Top`/`Bottom` at the icon column),
-  and let the connector stub bridge **border→tile** *inside* the node (purely decorative, drawn on
-  top of the card, no handle of its own). The edge connects at the border (reliable); the stub covers
-  the small border→tile gap. You lose the "tip pokes outside" detail, but you gain a rock-solid edge
-  join. (The user wanted the tip outside *because* there was a gap; if the border join is seamless,
-  the desire for "outside" may evaporate.)
-- **Or** keep the owns-its-handle idea but render the `Handle` as a **direct child of `.node`** (not
-  nested in the transformed connector `<div>`), positioned with the SAME `calc` as the stub tip, and
-  call `useUpdateNodeInternals` (already wired). Then verify in the browser that RF's stored handle
-  position equals the stub tip.
-- **Or** abandon the stub and switch to one of the other "edge-into-icon" strategies (KB §9 / chat):
-  transparent card + handle on the tile + **elevated edge `zIndex`** (edge drawn ON TOP, so it's
-  visibly inside the icon) — simplest conceptually, but elevated edges can paint over *other* nodes
-  in dense graphs, so scope it.
-
-**The shape (#3) is a trivial swap once the gaps are solved:** edit `CONNECTOR_TOP`/`CONNECTOR_BOTTOM`
-(viewBox `0 0 16 14`; flat tip = the ≈3px end, flat base = the wide end on the tile) + the
-`.node-connector` `width`/`height`. The user OFFERED to provide the exact Tines SVG path but hasn't —
-**ask for it**; it's a one-line drop-in and removes all the guessing.
-
-## State at handoff
-- **Uncommitted.** All Phase A work is on the `feat/workflow-visualization-static-viewer` branch,
-  working tree only (the committed history ends at Phase 5 / PR #496). The next agent should treat
-  the connector as WIP; everything *else* in Phase A (cards, icons, gradient edges, palette, TD
-  trunk+forks, labels) is in good shape and the user has accepted it through iteration.
-- **Gates green** (`tsc`, `vitest` 39, `build`). The bundle is rebuilt into `src/pflow/ui/static/`.
-- **Reference images** (the aesthetic target) are in the chat: Tines nodes = solid-ish tile + edge
-  flowing into the icon with a rounded connector + flat (90°) caps. We are on **Option B** (neutral
-  tile + brand icons) per an explicit user choice — do NOT re-litigate the tile to solid color.
-- **Read next:** `../research/visual-redesign-knowledge.md` (Phase A design + Flowise teardown),
-  `implementation/phase-a-plan.md` (the plan + simplicity decisions), `web/CLAUDE.md` (updated
-  component/edge/connector notes), this section, then the code.
+At handoff the connector stub (a kind-colored flare bridging a control edge into the icon tile,
+TD+beautiful) was UNFINISHED: a visible gap between stub tip and edge, a gap at the tile base, and
+wrong proportions — the implementing agent was blind (no browser) and its on-paper geometry kept
+disagreeing with the render. The handoff's central hypothesis — **React Flow mis-measures a
+`Handle` nested inside a transformed, absolutely-positioned container extending OUTSIDE the node's
+box** — was later MEASURED and confirmed (~5px endpoint divergence), and its preferred fix shipped:
+handle on the node border, flare as pure decoration. The full resolution story lives in the
+2026-06-09 entries below ("real-browser feedback loop" → "implemented + tuned" → "SOLVED — the
+paint ≠ the box"); the current geometry rules live in `web/CLAUDE.md` → "Icon connector flare".
+*(Standing user choices from this phase: Option B tile — neutral + brand icon, NOT solid-color;
+subtle card border. Don't re-litigate.)*
 
 ---
 
@@ -855,31 +792,14 @@ The split that matters: **`inspect` answers "does it sit right" (numbers); `shoo
   `dataId`. (Bonus: a sub-workflow's internal node may show `connTop/Bottom: null` — *correct*; connector
   stubs are **control**-flow-gated and a single-node sub-workflow has only data flow.)
 
-### The connector bug — now MEASURED, not theorized (hand-off ready)
+### The connector bug — MEASURED, not theorized
 
-Ran `inspect` on `conditional-branching` framed on `classify` (TD/beautiful, viewport scale 1.5):
-- incoming edge ends at **y=538**; flare tip at **543** → **~5px gap** (gap #1, symmetric on the bottom).
-- flare base at **564**; tile top at **566** → **~2px gap** (gap #2).
-- flare box **16×14** — nearly square → the pinched/hourglass look (gap #3).
-- **Root cause CONFIRMED (was the handoff's hypothesis):** the `<Handle>` lives *inside* the transformed,
-  outside-the-box `.node-connector` div, and React Flow draws the edge endpoint ~5px **outside** where the
-  handle element actually renders. Measured, not guessed.
-
-**The fix (designed, not yet written) — make the gaps structurally impossible, not pixel-tuned:**
-1. Move `NODE_IN`/`NODE_OUT` onto the node **border** at the icon column (the reliable RF measurement —
-   the existing `fallbackHandleStyle` path); **drop the `<Handle>` from `Connector`**.
-2. Make the flare a pure **opaque decoration** layered edge < flare(z1) < tile(z2). The edge ends under
-   the opaque flare → its terminus is *hidden* → gaps #1/#2 **cannot exist** (works for any endpoint under
-   the flare; no sub-pixel agreement needed). This is why it'll be verifiable by screenshot, not blind math.
-3. Swap the path for the real Tines shape (wider/shorter — eyeball start = variant **B** in the lab; the
-   user offered the exact path). `/tmp/flare-lab.html` already renders the **zero-gap ideal** as the visual
-   target.
-4. **Verify:** `inspect` before/after — assert the edge `pathRect` end is now *inside* the `connTop`/
-   `connBottom` rect, and the flare base meets the `tile` edge. Screenshot to confirm the shape.
-
-**State:** all tooling uncommitted (working tree). Connector fix **not started** — waiting on go-ahead
-and (optionally) the Tines path. Diagnosis is done; the next step is purely the `WorkflowNode.tsx` +
-`index.css` edits above.
+First use of the new loop: `inspect` on `conditional-branching` framed on `classify` quantified all
+three reported gaps (edge endpoint vs flare tip **~5px**; flare base vs tile **~2px**; box 16×14 →
+the hourglass look) and **confirmed the handoff hypothesis**: the `<Handle>` inside the transformed,
+outside-the-box `.node-connector` div makes React Flow draw the edge endpoint ~5px from where the
+handle renders. The structural fix (handle on the node border; flare as pure opaque decoration
+overlapping both ends, so gaps CANNOT exist) was designed here and built in the next entry.
 
 ### Connector flare — implemented + tuned live in a real browser (2026-06-09) ✅ (uncommitted)
 
@@ -1074,29 +994,16 @@ lazy ELK, metrics, defaultHidden, tripwire, grep comments); the consciously-reje
 migration, Tailwind, state lib/router, React 19 churn, a11y for a localhost tool) are recorded in the
 review entry — don't re-litigate without a new trigger.
 
-### Connector ROOT CAUSE found (paint ≠ box) + click-to-expand feature (2026-06-09) ✅ (uncommitted)
+### Connector jag follow-up + click-to-expand feature (2026-06-09) ✅ (uncommitted)
 
-> A fresh-model session. The user reported two "separate" connector residuals — an angle cutting into
-> the tile border and the stem ~1px thinner than the edge — having already verified the flare's
-> bounding box was correctly placed. Both were ONE bug, and the box being correct is exactly why it
-> survived: **the SVG viewBox (14×13) didn't match the element box (14×9), and `preserveAspectRatio`'s
-> default (`xMidYMid meet`) silently scaled the PAINT to 9/13 ≈ 69% and centered it** — tip 3→2.08px
-> (the "1px too thin"), cove compressed until its flat tangent landing read as a diagonal (the
-> "angle"). Rect measurement (inspect/devtools) cannot see mis-scaled paint inside a correct box; the
-> numbers had drifted across hand-edits because the geometry lived in three places (path constants /
-> viewBox / CSS). **Lesson for this canvas: when a shape "looks wrong but measures right," diff the
-> painted geometry against the box — check the viewBox.**
-
-- **Fix (structural):** one `CONN` constant set derives the path, the viewBox, AND the element's
-  inline size (the same drift-kill move metrics.ts then generalized); paths rebuilt as **elliptical
-  arcs** (`A`) so tangency — vertical at the stem, horizontal at the base — holds by construction,
-  not by eyeballed cubics; overlap **aprons** at both ends (stem slides under the edge terminus,
-  base sinks into the tile border) make sub-pixel alignment irrelevant.
+*(The paint≠box root cause this session found is the canonical "Connector flare SOLVED" entry
+above — not retold here.)* Two residual touches:
 - **Jag follow-up (user spotted):** landing the cove EXACTLY on the border's outer edge puts the
   silhouette's 90° corner on the color boundary → a 1px AA jag. Added `baseSink: 1` — the landing
   line sits 1px INSIDE the border, the curve crosses the edge while still sloped, no corner on the
   silhouette. (`baseSink + baseApron` must stay < the 3px border.) Verified by zoomed screenshot
   crops (sips crop+upscale of the `screenshot` output — a useful trick the tooling docs don't name).
+  *(Later re-tuned: baseSink → 0, anchor +2, 2026-06-10 — under the new palette no jag reproduces.)*
 - **Focus ring** → `var(--kind, var(--accent))` (user ask).
 
 **Click-to-expand in beautiful (new feature, user-driven).** Clicking a node expands it in place to
@@ -1128,9 +1035,368 @@ advanced exactly). Control-only neighbors stay compact. Design decisions, in ord
   the one-shot flag, silently no-op) — gate on `useNodesInitialized`, same as the fit effect.
 
 Verified in the real browser both TD and LR via `focus=` screenshots (expansion, row-landing, label
-rules, anchoring, flares, dimming, kind ring). web **68 tests** (+8: expandTargets/expanded-build/
+rules, anchoring, flares, dimming, kind ring). +8 pins (expandTargets/expanded-build/
 row-to-row+label/half-expanded/advanced-ignores/ports-focus + 2 viewParams); tsc strict + build clean.
 Files: `flow.ts` (expandTargets, BuildOptions.expanded, per-endpoint handles, label rule),
 `WorkflowNode.tsx`, `useWorkflowGraph.ts` (expansion derivation + anchoring), `GraphView.tsx` +
 `viewParams.ts` (focus=), `index.css`, `web/CLAUDE.md`, SKILL.md (focus param), this doc +
 visualization-requirements.md. Zero contract/Python change.
+
+### CONDITION pseudo-kind (2026-06-09, user-driven) ✅ (uncommitted)
+
+*(This session's other half — the connector viewBox/paint≠box root cause — is the canonical
+"Connector flare SOLVED" entry above; this was a parallel write-up of the same find, deduplicated.)*
+
+**CONDITION: a decision code node now presents as its ROLE, not its kind** (label `CONDITION`, generated
+fork-dots icon, hot orange `#ffa657`) — replacing the incoherent blue "decision" pill (three identity
+voices on one card: python tile, amber CODE, blue pill; hierarchy inverted — the structural headline was
+the smallest element). The fork that made it safe: the user challenged "can a shell node even be a
+condition?" → verified NO — dynamic `next` routing is **code-only** (guide/features/branching.md), so
+`is_decision ⟹ kind == code` (confirmed empirically: corpus sweep of all buildable examples — every
+decision node is code). Tines' role-as-type model therefore applies cleanly; my earlier "worker-decider"
+objection (a shell node that runs checks AND branches) is impossible by construction. Decisions, all
+user-made: label = full replacement (not "CODE · CONDITION"); color = NEW orange, code keeps `#ffd479`
+(blue rejected — llm/http/accent already own blue; recoloring code would churn the commonest kind and
+collide with loop/warn ambers); icon = upside-down share/fork dots (one in, two out — a mini node-graph;
+user-picked over split-arrows/lightning/diamond). Implementation: `isCondition`/`nodeColor`/
+`CONDITION_COLOR` in `utils/format.ts` are THE seam (card + tile + category + edge gradients all route
+through `nodeColor`); icon is a data-URI SVG generated from `CONDITION_COLOR` (can't drift); CSS
+`--decision` repointed blue→orange so branch handles/labels match the node (hardcoded blue tints in
+`.branch-label` → color-mix on the var); decision badge deleted (loop-badge precedent); ReadPanel shows
+`code · condition` (canvas↔`type: code` mappability). Kind gate (`kind === "code"`) is defensive for a
+future where branching extends. +4 pins (condition presentation ×3, condition edge color);
+tsc + build clean; verified on canvas (conditional-branching TD/beautiful screenshot).
+
+### Tines edge language: rounded-orthogonal paths + ELK ports (2026-06-09, user-driven) ✅ (uncommitted)
+
+> User goal: edge paths like the Tines references (axis-aligned runs, generous rounded turns, the
+> trunk splitting just below the source, straight columns into targets). Two rounds: the path swap,
+> then a 4-issue review against screenshots. **All `web/` — zero contract/Python change.**
+
+**Round 1 — path generator swap.** Picked via a `shoot` SVG lab (3 variants side by side): bezier vs
+midpoint-rail smoothstep vs **near-source rail** (the Tines signature) — user confirmed direction.
+`GradientEdge`: `getBezierPath` → `getSmoothStepPath` with `borderRadius` and a `railCenter()` helper
+(`centerY = sourceY + 24` when the target is far enough ahead; mirror for LR; stock midpoint/wrap
+routing otherwise — short hops, backward edges). Gradient/fades/labels untouched (the path is just
+`d` under the same stroke).
+
+**Round 2 — the user's 4 issues, and the unifying root cause.** (1) end-dot edge jogged for no
+reason; (2) S-jog with two hard turns into a merge target; (3) fan-out children too far + the
+image-12 pattern (primary child continues the parent's column straight); (4) data edges (still
+bezier) swooping across node bodies. **Issues 1–3 were ONE bug: ELK aligns node CENTERS but every TD
+control handle renders at the ICON COLUMN (x=34)** — every "straight" connection carried a ~100px
+handle offset that beziers had hidden and orthogonal exposed honestly. Fixes:
+- **ELK fixed ports (TD only, `layout.ts`):** every leaf declares `FIXED_POS` ports at `ICON_COL_X`
+  (top/bottom); edges whose endpoint handle is `NODE_IN`/`NODE_OUT` connect port-to-port. Port-aware
+  NETWORK_SIMPLEX aligns columns icon-to-icon: chains + end sinks dead straight, exactly one branch
+  continues the trunk. LR stays portless (side-centered handles already match ELK's center anchors).
+- **Leftmost-stays-straight (user decision):** each target's FIRST non-error control in-edge (model
+  order) gets `elk.layered.priority.straightness=10` — the leftmost sibling keeps the straight
+  column through forks AND merges.
+- **Error branches order LAST (user decision):** nodes whose only control in-edges are `error` are
+  partitioned to the end of their sibling list; with model order forced, error handlers fan out
+  rightmost (TD) / bottom (LR).
+- **GOTCHA (bisected with a standalone elkjs script, /tmp/elk-bisect.mjs):** EVERY
+  `considerModelOrder.strategy` value CRASHES elkjs under `INCLUDE_CHILDREN` with a cross-hierarchy
+  edge ("Cannot read properties of undefined (reading 'a')").
+  `crossingMinimization.forceNodeModelOrder` is the survivor and does what we need. The vitest ELK
+  smoke test caught this pre-browser.
+- **TD layer spacing 140 → 80** (direction-aware; LR keeps 140) — the Tines proximity.
+- **Data edges → built-in `smoothstep`** (`pathOptions.borderRadius`), dotted styling intact — kills
+  the issue-4 bezier swoop; full node-avoidance stays the deferred smart-router.
+- **Geometry single-sourced:** `METRICS.headerPad`/`edgeRadius` + derived `ICON_COL_X` (was a
+  hardcoded `left:34` in WorkflowNode and a number ELK never knew); `--header-pad` CSS var.
+
+**Verified:** tests (type-pin updated: data_flow → smoothstep + radius) + tsc + build
+clean; screenshots TD/LR/advanced/harness; `inspect` proves alignment numerically — trunk column
+x=506/506/506, merge 141→141, end dot 871→870 (1px = dot-center rounding). The harness's backward
+cycle edge (validate→decide) now draws as the clean orthogonal U from the Tines reference. **Known
+residuals:** LR merge target sits ~8px off the straight row (no LR ports yet); loop arcs (LoopEdge)
+still the old amber bezier arc — restyling to the orthogonal U is the agreed next step.
+
+**Follow-up round (user-caught, same session):** (a) *data edge landed on the node TOP instead of the
+`inputs` row* — `input_name` was a dict KEY (`inputs: {data: ${...}}`), and row-matching only knew
+param NAMES; `targetHandleFor` now lands on the param row CONTAINING the key, gated on that key's
+value being a `${...}` string (the exact condition that created the edge — degrade, never
+mis-attribute). (b) *rail corners noticeably tighter than the rest* — smoothstep clamps every bend to
+HALF its adjoining segment, so the 24px rail offset starved its corners to ~12px vs 18 everywhere
+else; `RAIL_OFFSET` is now derived `2×CORNER_RADIUS` (36) with closer targets getting the halfway
+point (== stock midpoint, so the old "enough room" threshold is deleted, not tuned). +1 pin:
+dict-key row landing. Verified on canvas (advanced: stdout line lands on the `inputs` row;
+beautiful: merge corner now full-radius).
+
+### Condition icon finalized via shoot-lab iteration (2026-06-09) ✅ (uncommitted)
+
+Iterated the condition glyph in a `/tmp/condition-icon-lab.html` shoot-lab (9 color variants × both
+render sizes, mock tiles) instead of rebuilding the app per attempt — the right loop for shape/color
+taste. User picked **all-hollow + leg gradient**: orange in-ring, white out-rings, legs blending
+orange→white (the icon does in miniature what GradientEdge does on the canvas). Final
+`assets/icons/condition.svg` is built to make the lab's two gotchas structurally impossible:
+- **objectBoundingBox gradients apply in the path's LOCAL space, BEFORE its transform** — a flipped
+  path flips its gradient (cost one "looks identical to 8" round + one upside-down round). Fixed by
+  BAKING the flip into the path coordinates (scripted y→175−y, no transform in the file) so the
+  gradient axis reads naturally.
+- **Ring cores are true `evenodd` HOLES (transparent), not tile-colored circles** — the tile bg shows
+  through with nothing hardcoded, so a future tile re-theme can't strand the icon. The enlarged top
+  ring is a stroked circle (outer 40/inner 24) matching the r24 hole; gradient stops 0.41→0.62 span
+  exactly the legs' VISIBLE run (they emerge from under the r40 ring at y≈72; out-rings stay pure
+  white). Lesson reconfirmed: a blend hidden under an opaque overlay reads as no blend — set stops
+  to the visible run, not the geometric one.
+
+### Ports-node rows connect SIDEWAYS in both directions (2026-06-09, user-caught) ✅ (uncommitted)
+
+In TD the
+Inputs/Outputs row handles were `Position.Top/Bottom` — each row's dot rendered floating at its
+bottom-center BETWEEN rows, and binding edges dove into the middle of the stack (visually
+disconnected; reproduced on the real lyrics-generator workflow). A row in a vertical table always
+connects on its left/right sides — the same rule the advanced param/output rows already follow;
+direction moves the trunk, not a table row's connection point. `PortsNode` now uses constant
+`Position.Left`(target)/`Position.Right`(source); a side bonus is the handles no longer move on an
+LR↔TD flip (PortsNode has no `useUpdateNodeInternals`, so the old direction-dependent positions
+were also a stale-measurement trap). Verified via `inspect` (row handles at the node's left/right
+edges, per-row y) + a zoomed crop: all six output bindings land exactly on their row dots.
+
+### Ports-edge follow-ups: facing sides + data-edge lanes (2026-06-09) ✅ (uncommitted)
+
+**Ports-row edges attach on the side FACING their peer (user-caught crossings, same session).**
+Binding edges between two ports nodes (parent INPUTS → sub-workflow INPUTS) left the source's
+right side and wrapped all the way around to the target's left side — and sibling wrap-arounds
+crossed each other. Root cause: handle sides are fixed at BUILD time (target=left, source=right),
+but which side faces the peer is only knowable AFTER layout. Fix: each ports row now renders all
+FOUR handles (base pair + mirrored `iotr:`/`iol:` pair stacked on the same dots — zero visual
+change), and a new post-layout pure pass `graph/portSides.ts::assignPortSides` (wired in
+useWorkflowGraph after ELK) flips an edge's port handle to the mirrored side when its peer's
+absolute center is clearly (>24px hysteresis) on the other side. One comparison serves both ends:
+s−t > H ⇒ target receives on its right AND source feeds from its left — facing each other, no
+wrap. Prefix discipline held (`iotr:`/`iol:` disjoint from `iot:`/`io:` via trailing colons;
+handleType extended). +4 pins (incl. the parent-relative absolute-center case). *(The center
+comparison was later upgraded to HANDLE-X — see the row-side settlement entry.)* Verified on
+lyrics-generator via zoomed crop: the OUTPUTS→INPUTS binding now lands directly on the
+facing row dot. NOT a router — full crossing avoidance stays the deferred smart edge-router.
+
+**Data-edge LANES: parallel bindings no longer overlap pixel-exactly (user-caught, same session).**
+All data edges at a node turned at smoothstep's default 20px stub, so a 6-row Inputs node's
+bindings shared ONE vertical lane (and the consumer side shared another) — visually a single
+ambiguous line. `assignDataEdgeLanes` (flow.ts, build-time — it's lane multiplexing, not geometry)
+greedily gives each data edge the smallest stub-offset bucket unused at EITHER endpoint node
+(offset = 16 + 8·lane, 6 buckets then wrap), so shared verticals fan apart on both sides. Control
+edges exempt — a fork/merge sharing its rail IS the trunk look. `FlowEdge` type now carries
+`pathOptions` explicitly (RF's Edge union only types it on the smoothstep variant). Gotcha that
+shaped the test: two parallel NODE_IN-landing data edges between the same pair DEDUPE (the `seen`
+key), so the fixture needs real param rows for parallel lines to exist at all. Verified on the
+harness seg-gate (zoomed crop): distinct parallel lanes, each into its own row. Remaining
+crossings between unrelated lanes = the deferred smart edge-router.
+
+### Perf: layout cache + ELK in a Web Worker (2026-06-09, user-driven) ✅ (uncommitted)
+
+User asked about re-layout cost when clicking a node on large workflows. **Measured first** (temp
+vitest probe on the real 128-node lyrics-generator contract): buildFlow 0.4ms, **ELK ~120–170ms per
+layout, on the main thread** — the whole cost, and it ran TWICE per click-cycle (expansion + the
+un-focus recompute of the already-seen base layout). Two fixes, both in the established seams:
+
+- **Layout cache (`useWorkflowGraph`):** Map keyed by the full layout-affecting state
+  (`density|direction|collapsed|expanded` — focus itself is NOT layout-affecting, only its derived
+  expansion set), insertion-order eviction at 24, cleared per workflow fetch. A cache hit applies
+  SYNCHRONOUSLY — un-focusing and re-clicking land in one paint, no ELK, no async gap. Camera
+  anchoring still applies (the pan is a delta between layouts, cached or not).
+- **ELK in a Web Worker (`layout.ts loadElk`):** `elk-api` shell + Vite `?worker` import of
+  `elk-worker.min.js`; first-click layouts still take ~150ms but no longer freeze the canvas. A
+  load-time probe layout fails fast; fallback to the bundled main-thread ELK — silent under
+  node/vitest (no `Worker`), `console.warn` in a browser (a silent fallback is an invisible perf
+  regression). **Verified through the real Python server** (resource-timing probe via a throwaway
+  evaluate_script workflow): worker chunk fetched, bundled chunk NOT fetched. Wheel disk note: both
+  chunks now ship (~+1.4MB) — the fallback is never fetched at runtime unless needed.
+- **Also diagnosed (user observation):** the "instantly expands then everything moves" two-phase
+  look = the instant focus pass (ring/dim/reveal on the OLD layout) + the ELK result landing ~150ms
+  later with the camera-anchoring pan. Cache collapses the gap to ~0 for seen states. A CSS
+  `transform` transition on nodes was considered and REJECTED: RF computes edge paths from store
+  positions (updated once), so nodes would glide while edges snap — detached lines; the correct
+  per-frame store interpolation is the genuinely costly option. Don't revisit without measuring.
+
+Tests green (the ELK smoke test exercises the node fallback path); tsc + build clean.
+
+**Cache-click "shake" fixed (user-caught): the stale-paint guard.** On a cached click the two
+effects fire in the same commit, and the decoration effect ran FIRST with the new focus against the
+OLD laid snapshot — one frame of ring/dim/reveal at stale positions, then the cached layout + pan:
+a visible shake (the same mechanism as the original two-phase look, compressed to one frame). Fix:
+the laid snapshot carries the `layoutKey` it was computed for, and the decoration effect paints
+ONLY a matching snapshot — every click is now exactly one visible change, cached or not (uncached
+clicks no longer flash the stale decoration either; with the worker there's no freeze during the
+wait). Focus-only changes (advanced mode) keep the same key, so pure restyles stay instant.
+Focused-state render verified via `focus=` screenshot.
+
+### Animated expansion transitions — store interpolation, size-gated (2026-06-10, user-driven) ✅ (uncommitted)
+
+The user chose to test the animation previously rejected-on-paper — with the agreed guard: small
+flows only. Built the CORRECT variant (the one the rejection note priced): positions interpolate
+THROUGH the React Flow store per frame so edge paths follow the nodes — a CSS transform transition
+would glide nodes while edges (computed from store positions, updated once) snap: detached lines.
+In `useWorkflowGraph` effect 4:
+- Start positions (`pendingFromRef`) captured under the SAME condition as the camera-anchoring pan
+  (expansion-only re-layout of the same view) — direction/density/collapse changes keep their snap
+  + fit semantics; focus-only re-decorations never animate (`paintedRef` identity check).
+- 200ms easeOutCubic; the anchoring pan eases WITH the positions so the clicked node stays
+  stationary through the whole glide, not just at the endpoints.
+- **Per frame, only MOVED nodes get new object identity** — memo'd unmoved nodes skip re-render;
+  the final frame sets the exact decorated snapshot so identities settle.
+- **Gates:** `ANIMATE_MAX_NODES = 60` flow nodes (per-frame edge recompute is the real cost — the
+  128-node lyrics-generator snaps as before; conditional-branching glides), `prefers-reduced-motion`
+  → snap, mid-glide interruption (view change/unmount) lands on the final state in cleanup.
+Tuning knobs: `ANIMATE_MAX_NODES` / `ANIMATE_MS` (hook top). Gates green; end-state verified
+pixel-identical via the `focus=` screenshot (that load path exercises the
+animation: base layout → focus applied → animated expansion → settle). *(Two transient flow-test
+failures during this round were the OTHER agent's in-flight smoothstep→DataEdge-lanes conversion —
+resolved by them before this entry; not animation-related.)*
+
+**DataEdge born: per-lane geometry for the middle rails (2026-06-10) — its FIRST color treatment
+was a same-day detour, superseded by the focus-fade correction below.** Lane stubs alone left the
+MIDDLE rails overlapping (each edge's mid-segment sits at its own source→target midpoint —
+near-identical for same-stack bundles). The built-in smoothstep exposes no centerX/centerY, hence
+the custom `components/edges/DataEdge.tsx` (type "data"): lane → stub AND mid-rail offset; the
+component owns the stroke, so `.edge-data_flow` CSS keeps ONLY the dash — a regression to a
+built-in edge type renders INVISIBLY (type-test pinned). Lane rides `EdgeData.lane`
+(pathOptions removed). Colors were explored via an extended shoot-lab (5 panels) and first shipped
+as lane-tinted bodies + endpoint node-color fades — reverted within hours (user: confusing). The
+lab finding that SURVIVES: **full node-color gradients on data lines are rejected WITH EVIDENCE** —
+same-endpoint bundles get IDENTICAL gradients exactly where disambiguation is needed, and the
+teal=data semantic dies. Verified on the harness seg-gate crop: lanes parallel and traceable.
+
+**User verdict: animation KEPT** ("this looks great"). Recorded as accepted in
+`visualization-requirements.md` (Implemented → "Click perf + motion") and `web/CLAUDE.md`
+(focus-expansion bullet now carries the cache/worker/guard/animation rules). Open calibration
+question parked for later: is `ANIMATE_MAX_NODES = 60` the right cap, or can the per-frame cost
+comfortably carry 100+? Measure before raising.
+
+### Dark themed minimap (2026-06-10) ✅ (uncommitted)
+
+The stock white `<MiniMap>` was the last unthemed surface — a white hole in the dark canvas on
+every screenshot. Now: dark rounded container + border + out-of-viewport mask in `index.css`
+(`.react-flow__minimap*`), and per-node fills via `minimapNodeColor` (GraphView): leaves take
+their kind color through the `nodeColor` seam (CONDITION-aware), groups a faint white wash so
+containers read as regions, ports/end neutral. **Gotcha: minimap node fills must be REAL color
+strings, not CSS vars** — React Flow paints them as SVG fill attributes, where `var()` does not
+resolve (the container/mask are CSS, so vars are fine there). Verified via zoomed crop on the
+lyrics-generator: kind-colored dots, region washes, visible viewport window.
+
+**Color correction (user clarified, 2026-06-10): focus-directional fade, NOT lane tints / node fades.**
+The C+D treatments (lane-tinted bodies + endpoint node-color fades) read as confusing — what the user
+actually wanted: a revealed line draws SOLID at the CLICKED node and fades a hint toward its far end
+(direction-from-the-click). Reverted both color treatments (lane GEOMETRY — stubs + rail spread —
+stays); `applyFocus` now marks incident data edges with `EdgeData.focusEnd` ("source"/"target" = the
+end the focus is on; identity check extended so unfocusing restores object identity); `DataEdge`
+draws unfocused lines flat `--data-edge`, focused ones as a same-color opacity gradient 1 → FADE_TO
+(0.45, the tuning knob) oriented from the clicked end. The detour's lane-tint vars deleted
+(deletion test). +1 pin (focusEnd ends/clearing/control-exempt); verified via `focus=classify`
+screenshot.
+
+**Zoom controls themed too (user-caught) + a tooling gotcha.** Same dark treatment as the minimap
+for `.react-flow__controls*` (raised bg, border, `fill: currentColor` so the +/−/fit glyphs follow
+the text color). While verifying, a screenshot came back with the OLD bundle (bezier edges, white
+minimap) despite a fresh build — **the MCP Chrome's HTTP cache heuristically reuses assets because
+StaticFiles sends no `Cache-Control`**; source-vs-render check confirmed the tree was fine. Pinned
+in the skill's troubleshooting: cache-bust with a throwaway `&v=` param. (Consider a real fix
+later: `Cache-Control: no-cache` on index.html in `ui/server.py` — content-hashed assets are safe
+to cache, the HTML entry is not.)
+
+**LR branch fan-outs get lanes too (user-caught, 2026-06-10).** In LR a fork's outcomes leave their
+OWN labeled row handles, yet railCenter funneled them all onto ONE shared vertical rail — distinct
+lines collapsed into one segment. The TD shared rail is the trunk-split look and stays; the asymmetry
+is structural: TD branches leave ONE point (the icon column), LR branches leave DIFFERENT rows.
+`assignDataEdgeLanes` → `assignEdgeLanes` (now covers data_flow + branch + error; sequential exempt —
+one out per node, merge rails already differ by source); `railCenter` takes a `lane` and staggers
+centerX by 8px/lane in LR ONLY (TD ignores lane, pinned by test). +3 pins (railCenter: LR distinct
+rails / TD shared / short-hop clamp). Verified on conditional-branching LR crop: three
+distinct rails where there was one.
+
+### Docs synced + corner radius tuned 18 → 24 → 20 (2026-06-10)
+
+The edge-language arc was user-accepted ("great work"); synced the two sibling docs that had gone
+stale: `web/CLAUDE.md` (the edges bullet — was still claiming data_flow is a CSS-stroked built-in,
+which is now an INVISIBLE-regression trap — + a new layout-policy bullet + the ports-node
+sideways rules) and `visualization-requirements.md` (edge-disambiguation batch under Implemented;
+sideways-rows/lanes principles).
+
+**Corner radius — user-tuned twice, settled at 20.** `METRICS.edgeRadius` 18 → 24 → **20** (one
+constant, both edge components); DataEdge `STUB_BASE` 16 → 24. The honest answer to "are all
+corners equally round?": NO by construction — the radius is a MAX; smoothstep clamps every bend to
+HALF its adjoining segment, so cramped spots render tighter (data stubs were the worst at 8px, now
+12px min; TD adjacent-layer hops cap ~17px regardless of the constant — raising THOSE needs more
+layer spacing or custom bend math, not a knob). The dotted-vs-solid "different radius" perception =
+control-side clamping + data wrap-arounds CHAINING two bends into one extra-round sweep. The
+constant's own comment records the history and both effects.
+
+### Collapse controls + big workflows open as an overview (2026-06-10, user-driven) ✅ (uncommitted)
+
+The "big workflows open readable" batch (minimap theming was done separately just before). UI for
+the toolbar control was decided via AskUserQuestion mockups — **buttons + count won**
+(`[⊟|⊞] 4/12 open`; disabled states carry the extremes; the whole control hides when a workflow has
+no containers). Implementation:
+- **`graph/collapse.ts` (pure, node-env tested):** `collapsibleGroupIds` (workflow/batch only — IO
+  wrappers are ports nodes, not boxes) + `initialCollapsed(graph, mode, protect)`:
+  over-`AUTO_COLLAPSE_NODE_BUDGET` (60) workflows open fully collapsed; `collapse=all|none` URL
+  param overrides both ways; a `node=`/`focus=` deep-link target's whole ancestor chain stays
+  expanded (the link must always show its target). Budget doubles as a first-paint win: the first
+  ELK run on the 128-node lyrics flow now lays out ~20 boxes instead of 100+.
+- **GraphView:** one-shot per-workflow effect applies the initial set when the contract arrives;
+  collapse-all clears focus (a ring on a hidden node is meaningless), expand-all keeps it. Toolbar
+  gets `groupCount`/`openCount` (replaced the old conditional "expand all" link-button).
+- **Verified in the browser:** lyrics-generator opens as a ~17-box pipeline ("0/23 open",
+  collapse-all disabled); `node=fetch-youtube` deep link opens with exactly its 2-group ancestor
+  chain expanded ("2/23 open") and frames the node; small workflows (no groups) show no control.
+  +9 pins (7 collapse policy, 2 viewParams); tsc + build clean.
+
+### Row-side semantics settled: strict param/output sides + gap-centered wrap rails (2026-06-10) ✅ (uncommitted)
+
+**The detour (same day, reverted within hours — kept for its two surviving insights):** the
+stdout→inputs data line wrapped around the condition node with its midpoint rail hugging the card's
+top border. The first fix generalized facing-sides to param/output rows (mirrored handles) — and
+the user immediately caught the cost: it trades away the **in-left/out-right convention**
+("shouldn't we be consistent?"). What SURVIVED the revert: (a) the side comparison must use the
+**HANDLE x**, not node centers — a row source exits its node's RIGHT edge, so a vertically stacked
+pair (centers equal) still reads "peer to the east"; (b) the old near-vertical test had pinned the
+bug as desired behavior — interrogate what a green test actually asserts before trusting it.
+
+**The settlement (user decision):** ONLY ports rows switch sides (a ports row is a scope BRIDGE —
+both directions ARE its semantics, dots on both sides by hard requirement); param/output rows are
+STRICT-sided (the param/output mirrors were deleted, not parked). The ORIGINAL complaint — the rail
+hugging the border — got its proper fix instead: new **`assignDataRails`** post-layout pass — a
+data edge whose endpoint boxes have a clear gap on an axis gets `data.railX/railY` centered IN that
+gap; DataEdge uses the hint over the blind handle-midpoint (which is what landed 10px above the
+card). Post-layout edge decoration is now TWO passes chained in the hook
+(`graph/portSides.ts`): `assignFacingSides` (ports rows, handle-x comparison) → `assignDataRails`
+(rail hints; clears ENDPOINT nodes only — third-party nodes remain the smart-router's job). Pins:
+param-never-flips + 3 assignDataRails cases. Verified: stdout→inputs wraps to the LEFT handle with
+its rail mid-gap, ~55px clear of both nodes. Final row-side model recorded in
+`visualization-requirements.md` → Design principles.
+
+### Session close (THE close — earlier per-arc closes were merged here) (2026-06-10)
+
+**Everything from "Connector aspect-ratio root cause" (2026-06-09) down is ONE UNCOMMITTED batch**
+from two agents working the same files in parallel. Contents, by arc: the connector aspect-ratio
+fix + CONDITION pseudo-kind + condition.svg; the full Tines edge language (rounded-orthogonal
+GradientEdge rail, ELK fixed ports + leftmost-straight + error-last, dict-key row landing, sideways
++ facing ports-row handles, data/branch lanes, radius 18→24→**20**, focus-directional fade); the
+row-side settlement (strict param/output sides + `assignDataRails` gap rails); the perf round
+(layout cache, ELK Web Worker, stale-paint guard); animated expansion transitions (store
+interpolation, ≤60-node gate); the dark minimap + themed zoom controls; collapse controls + the
+>60-node overview-open default (`graph/collapse.ts`, `collapse=` param, deep-link ancestor
+protection); metrics single-sourcing + the palette re-theme. **A per-author split was evaluated and
+rejected** — WorkflowNode/index.css/flow.ts/flow.test.ts/useWorkflowGraph.ts/web/CLAUDE.md
+interleave both authors, and each side's work references the other's (CONN reads METRICS; lanes
+ride DataEdge; portSides + the layout cache wire into the same hook). Commit as one
+visual-milestone batch.
+
+**Pre-commit gate (re-run on the FINAL tree):** `cd web && npx vitest run` (last green: **95
+tests**) + `npm run build`, then full `make check` + `make test`. Remember: `git add` any UNTRACKED
+files (`web/src/graph/collapse.ts` + `collapse.test.ts` were untracked at last check — re-verify
+with `git status`); pre-commit's `pretty-format-json` may reformat web JSON on first run; the
+bundle in `src/pflow/ui/static/` stays gitignored (the wheel ships it via `artifacts` — it now also
+carries the ELK worker chunk alongside the main-thread fallback, ~+1.4MB disk).
+
+**Open threads for a next session (not blockers):** loop arcs → orthogonal U (`LoopEdge` is the
+last bezier); LR merge ~8px residual (no LR ELK ports); smart edge-router (deferred, dense-graph
+tail — `assignDataRails` clears endpoint nodes only, not third parties);
+`ANIMATE_MAX_NODES`/`AUTO_COLLAPSE_NODE_BUDGET` both = 60 by guess — measure before raising; TD
+adjacent-layer corner clamp (~17px regardless of `edgeRadius` — needs layer spacing or custom bend
+math, not a knob). Bigger arcs: search/jump-to-node (⌘K); the live-run observability overlay
+(Task 133 events onto `RFRef` — the next real increment).

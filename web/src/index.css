@@ -18,7 +18,10 @@
   --ref-bg: #16302a;
   --loop: #f0b86c;
   --batch: #c79bf0;
-  --decision: #6ea8fe;
+  /* fork accent — equals CONDITION_COLOR in utils/format.ts (the condition node's
+     identity); branch handles/labels tint from this so node + fork speak one color.
+     Deliberately NOT blue: blue belongs to llm/http kinds + --accent UI chrome. */
+  --decision: #ffa657;
   --warn: #f0a07a;
   --danger: #ff6b6b;
   --data-edge: #6fbfa8;
@@ -172,6 +175,19 @@ button.active {
   border-radius: 0 6px 6px 0;
   border-right-width: 1px;
 }
+.toolbar-group button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.toolbar-group button:disabled:hover {
+  border-color: var(--border);
+}
+/* "N/M open" beside the collapse/expand-all buttons (Toolbar.tsx) — state, not action */
+.toolbar-count {
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 .graph-body {
   flex: 1 1 auto;
@@ -215,6 +231,42 @@ button.active {
 .react-flow__attribution {
   background: transparent;
   color: var(--text-faint);
+}
+
+/* minimap — dark to match the canvas (the stock white box read as a hole in the
+   theme). Node fills are set in TS (GraphView minimapNodeColor: kind colors — SVG
+   fill attributes can't resolve var()); the container + viewport mask theme here. */
+.react-flow__minimap {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.react-flow__minimap-mask {
+  fill: rgb(13 13 13 / 0.62); /* dims the out-of-viewport region; the visible window stays clear */
+}
+
+/* zoom/fit controls — same dark treatment as the minimap (the stock buttons are white) */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow__controls-button:hover {
+  background: var(--bg-node-header);
+  color: var(--text);
+}
+.react-flow__controls-button svg {
+  fill: currentColor; /* the +/−/fit glyphs follow the text color, not a baked black */
 }
 
 /* ---------- nodes (shared) ---------- */
@@ -263,7 +315,7 @@ button.active {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px;
+  padding: var(--header-pad);
   min-height: var(--node-header-h);
 }
 .node.detailed .node-header,
@@ -415,8 +467,8 @@ button.active {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--decision);
-  background: rgba(110, 168, 254, 0.12);
-  border: 1px solid #2a3a5a;
+  background: color-mix(in srgb, var(--decision) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--decision) 28%, transparent);
   border-radius: 4px;
   padding: 0 6px;
   max-width: 88%;
@@ -584,11 +636,6 @@ button.active {
   color: var(--batch);
   border-color: #4a3a5e;
 }
-.badge-decision {
-  background: rgba(110, 168, 254, 0.14);
-  color: var(--decision);
-  border-color: #2a3a5a;
-}
 .badge-unexpanded {
   background: rgba(240, 160, 122, 0.14);
   color: var(--warn);
@@ -636,20 +683,15 @@ button.active {
 .react-flow__edge .react-flow__edge-path {
   stroke-width: var(--edge-stroke);
 }
-/* ALL control edges (sequential/branch/error/end) are stroked by the GradientEdge
-   component (source→target blend; error/end get a node-color fade at the node ends) —
-   do NOT set their `stroke` here or CSS would override the gradient. Dash patterns
-   are separate properties, safe in CSS. */
+/* ALL control edges (GradientEdge: sequential/branch/error/end) AND data edges
+   (DataEdge: lane tint + endpoint fades) are stroked by their components — do NOT
+   set `stroke` here or CSS would override the gradients. Dash patterns are separate
+   properties, safe in CSS. */
 .react-flow__edge.edge-branch .react-flow__edge-path {
   stroke-dasharray: 6 4;
 }
 .react-flow__edge.edge-data_flow .react-flow__edge-path {
-  stroke: var(--data-edge);
   stroke-dasharray: 4 3;
-}
-.react-flow__edge.edge-data_flow .react-flow__edge-text {
-  fill: var(--data-edge);
-  font-family: var(--mono);
 }
 .react-flow__edge.edge-end .react-flow__edge-path {
   stroke-dasharray: 2 3;

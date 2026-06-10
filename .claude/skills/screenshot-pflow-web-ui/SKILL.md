@@ -91,3 +91,6 @@ then `diff` (or `jq`) the rects to prove the gap closed.
 - `mcp-chrome-devtools-*` node error ("MCP tool not registered") → `pflow mcp sync chrome-devtools`.
 - `viewport` = the default `translate(0px, 0px) scale(1)` → nothing fit: empty graph, or `node=` named a node that isn't rendered.
 - Stale output → you didn't rebuild after a `web/` change: `make ui-build`.
+- Stale output DESPITE a rebuild (old layout/styles, even mixed old+new) → the MCP Chrome's
+  **HTTP cache** heuristically reused old files (the server sends no `Cache-Control`). Add a
+  throwaway query param to bust it: `&v=<anything-new>` (unknown params are ignored by the app).

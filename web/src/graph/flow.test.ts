@@ -12,6 +12,7 @@ import {
   portTargetHandle,
 } from "./handles";
 import { layoutGraph } from "./layout";
+import { CONDITION_COLOR, kindColor } from "../utils/format";
 import type { EdgeKind, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
 // ---- fixture builders ---------------------------------------------------
@@ -315,6 +316,18 @@ describe("buildFlow — decision forks: labeled border handles (both densities)"
     // still a source-type handle — the invariant holds
     expect(handleType(e0?.sourceHandle ?? "")).toBe("source");
   });
+
+  it("a decision CODE node's fan-out leaves in the condition color, not code yellow", () => {
+    const conditionGraph: RFGraph = {
+      nodes: [node("route", { kind: "code", is_decision: true }), node("a", { kind: "code" })],
+      edges: [edge("e0", "route", "a", "branch", { label: "go" })],
+      groups: [],
+    };
+    const { edges } = buildFlow(conditionGraph, COMPACT);
+    const e0 = edges.find((e) => e.id === "e0");
+    expect(e0?.data?.sourceColor).toBe(CONDITION_COLOR);
+    expect(e0?.data?.targetColor).toBe(kindColor("code")); // plain code target stays yellow
+  });
 });
 
 describe("buildFlow — IO ports consolidate into one Inputs node with rows", () => {
@@ -544,12 +557,17 @@ describe("edge types — every control kind is gradient-stroked (the component o
     groups: [],
   };
 
-  it("sequential/branch/error/end → gradient; data_flow → default", () => {
+  it("sequential/branch/error/end → gradient; data_flow → the custom data edge", () => {
     const { edges } = buildFlow(graph, DETAILED);
     for (const id of ["seq", "br", "err", "fin"]) {
       expect(edges.find((e) => e.id === id)?.type).toBe("gradient");
     }
-    expect(edges.find((e) => e.id === "df")?.type).toBe("default");
+    // DataEdge (not a built-in): it owns the rounded-orthogonal lane geometry AND
+    // the stroke. CSS strokes nothing for data_flow anymore, so a regression to a
+    // built-in type would render INVISIBLY — this pin is the guard.
+    const df = edges.find((e) => e.id === "df");
+    expect(df?.type).toBe("data");
+    expect(df?.data?.lane).toBeGreaterThanOrEqual(0);
   });
 
   it("error/end edges carry both endpoint colors for the fade", () => {
@@ -627,6 +645,77 @@ describe("focus-expansion — beautiful cards expand to rows (decided 2026-06-09
     expect(df?.sourceHandle).toBe(NODE_OUT);
     expect(df?.targetHandle).toBe(paramHandle("data"));
     expect(df?.label).toBe("stdout → data");
+  });
+
+  it("focus marks which END of a revealed data line the clicked node is on", () => {
+    const built = buildFlow(graph, DETAILED);
+    // focus the TARGET (c): line solid at c, fading back toward b
+    const atTarget = applyFocus(built.nodes, built.edges, "c").edges.find((e) => e.id === "df");
+    expect(atTarget?.data?.focusEnd).toBe("target");
+    // focus the SOURCE (b): solid at b, fading toward c
+    const atSource = applyFocus(built.nodes, built.edges, "b").edges.find((e) => e.id === "df");
+    expect(atSource?.data?.focusEnd).toBe("source");
+    // clearing focus clears the mark; control edges never carry one
+    const cleared = applyFocus(built.nodes, built.edges, null).edges.find((e) => e.id === "df");
+    expect(cleared?.data?.focusEnd).toBeUndefined();
+    const ctrl = applyFocus(built.nodes, built.edges, "b").edges.find((e) => e.id === "seq");
+    expect(ctrl?.data?.focusEnd).toBeUndefined();
+  });
+
+  it("parallel data edges at one node get DISTINCT lane offsets; control edges get none", () => {
+    // Three bindings out of one node (and two into one consumer) used to share the
+    // default 20px stub → pixel-exact overlap into one ambiguous line. The consumer
+    // has real param rows so the two parallel lines land on distinct rows (same
+    // shape as an Inputs node feeding one consumer's params).
+    const g: RFGraph = {
+      nodes: [
+        node("src"),
+        node("c1", {
+          params: [
+            { name: "a", value: "${src.x}", is_dynamic: true, source: null },
+            { name: "b", value: "${src.y}", is_dynamic: true, source: null },
+          ],
+        }),
+        node("c2"),
+      ],
+      edges: [
+        edge("d1", "src", "c1", "data_flow", { input_name: "a" }),
+        edge("d2", "src", "c1", "data_flow", { input_name: "b" }),
+        edge("d3", "src", "c2", "data_flow", { input_name: "c" }),
+        edge("s1", "src", "c1", "sequential"),
+      ],
+      groups: [],
+    };
+    const { edges } = buildFlow(g, DETAILED);
+    const lanes = ["d1", "d2", "d3"].map((id) => edges.find((e) => e.id === id)?.data?.lane);
+    // all assigned, and all distinct (they share the source node)
+    expect(lanes.every((l) => typeof l === "number")).toBe(true);
+    expect(new Set(lanes).size).toBe(3);
+    expect(edges.find((e) => e.id === "s1")?.data?.lane).toBeUndefined();
+  });
+
+  it("input_name that is a dict KEY lands on the row of the param containing it", () => {
+    // A code node's `inputs: {data: ${b.stdout}}`: the edge builder walks dict-of-
+    // string leaves, so input_name is the KEY ("data"), not the param ("inputs").
+    // The line must land on the inputs ROW (user-caught: it fell back to the node
+    // top). A key whose value is NOT a ${...} string stays node-level (never guess).
+    const g: RFGraph = {
+      nodes: [
+        node("b"),
+        node("c", {
+          params: [
+            { name: "static", value: { data: 42 }, is_dynamic: false, source: null },
+            { name: "inputs", value: { data: "${b.stdout}" }, is_dynamic: true, source: null },
+          ],
+        }),
+      ],
+      edges: [edge("df", "b", "c", "data_flow", { output_field: "stdout", input_name: "data" })],
+      groups: [],
+    };
+    const { edges } = buildFlow(g, DETAILED);
+    const df = edges.find((e) => e.id === "df");
+    expect(df?.targetHandle).toBe(paramHandle("inputs"));
+    expect(handleType(df!.targetHandle!)).toBe("target");
   });
 
   it("expansion is ignored in advanced density (everything already shows rows)", () => {

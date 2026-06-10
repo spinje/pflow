@@ -3,9 +3,10 @@
 // node-env — rendering the gradient itself is a real-browser concern (jsdom paints
 // no SVG), so the geometry of the stop list is what we pin.
 
+import { Position } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 
-import { gradientStops } from "./GradientEdge";
+import { gradientStops, railCenter } from "./GradientEdge";
 
 describe("gradientStops", () => {
   it("sequential/branch blend source→target across the whole edge", () => {
@@ -44,5 +45,26 @@ describe("gradientStops", () => {
     const stops = gradientStops("error", "#111", "#222", 0);
     const offsets = stops.map((s) => s.offset);
     expect([...offsets].sort((a, b) => a - b)).toEqual(offsets);
+  });
+});
+
+describe("railCenter — LR branch lanes fan out; TD keeps the shared trunk rail", () => {
+  const base = { sourceX: 100, sourceY: 100, targetX: 400, targetY: 300 };
+
+  it("LR: each lane turns at its own x (distinct rails — user-caught overlap)", () => {
+    const xs = [0, 1, 2].map((lane) => railCenter({ ...base, sourcePosition: Position.Right, lane }).centerX);
+    expect(new Set(xs).size).toBe(3);
+    expect(xs[1]! - xs[0]!).toBeGreaterThan(0);
+  });
+
+  it("TD: lane is ignored — a fork's branches share the trunk rail by design", () => {
+    const a = railCenter({ ...base, sourcePosition: Position.Bottom, lane: 0 }).centerY;
+    const b = railCenter({ ...base, sourcePosition: Position.Bottom, lane: 3 }).centerY;
+    expect(a).toBe(b);
+  });
+
+  it("LR: the staggered rail still clamps to the halfway point on short hops", () => {
+    const close = railCenter({ ...base, targetX: 160, sourcePosition: Position.Right, lane: 5 });
+    expect(close.centerX).toBe(100 + (160 - 100) / 2);
   });
 });

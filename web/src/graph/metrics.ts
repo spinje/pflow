@@ -21,7 +21,20 @@ export const METRICS = {
   edgeStroke: 3,
   /** .group-header height; ELK's group top padding must clear it (layout.ts). */
   groupHeaderH: 38,
+  /** .node-header padding — the tile's inset from the node edge (ICON_COL_X math). */
+  headerPad: 6,
+  /** corner radius of the rounded-orthogonal edges (GradientEdge + DataEdge — ONE
+   *  constant for both, user-tuned 18 → 24 → 20). This is a MAX — smoothstep clamps
+   *  each bend to HALF its adjoining segment, so cramped spots (short stubs,
+   *  adjacent-layer hops) render tighter; a wrap-around chains two bends and reads
+   *  rounder. */
+  edgeRadius: 20,
 } as const;
+
+/** The icon-column center x: in TD every control handle sits HERE, not at the node
+ *  center — so ELK must be told (fixed ports, layout.ts) or it aligns box centers
+ *  and a "straight" chain renders with a jog at every node. */
+export const ICON_COL_X = METRICS.headerPad + METRICS.tileSize / 2;
 
 /** The CSS custom properties main.tsx injects on :root — the stylesheet's view of
  *  METRICS. A pure map (no DOM access) so graph/ stays node-env testable. */
@@ -34,5 +47,6 @@ export function metricsCssVars(): Record<string, string> {
     "--tile-border": `${METRICS.tileBorder}px`,
     "--edge-stroke": `${METRICS.edgeStroke}px`,
     "--group-header-h": `${METRICS.groupHeaderH}px`,
+    "--header-pad": `${METRICS.headerPad}px`,
   };
 }

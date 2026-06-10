@@ -1,6 +1,29 @@
 import { describe, expect, it } from "vitest";
 
-import { parseTemplate, previewValue } from "./format";
+import { CONDITION_COLOR, categoryLabel, kindColor, nodeColor, parseTemplate, previewValue } from "./format";
+
+describe("condition presentation (decision code node = CONDITION pseudo-kind)", () => {
+  it("a decision code node presents as CONDITION in the condition color", () => {
+    const node = { kind: "code", is_decision: true };
+    expect(categoryLabel(node)).toBe("CONDITION");
+    expect(nodeColor(node)).toBe(CONDITION_COLOR);
+  });
+
+  it("a non-decision code node keeps the code identity", () => {
+    const node = { kind: "code", is_decision: false };
+    expect(categoryLabel(node)).toBe("CODE");
+    expect(nodeColor(node)).toBe(kindColor("code"));
+  });
+
+  it("the kind gate is defensive: a non-code decider keeps its kind identity", () => {
+    // is_decision ⟹ code today (dynamic `next` is code-only) — but if branching
+    // ever extends, an llm/shell decider must not present as CONDITION and hide
+    // what it runs.
+    const node = { kind: "shell", is_decision: true };
+    expect(categoryLabel(node)).toBe("SHELL");
+    expect(nodeColor(node)).toBe(kindColor("shell"));
+  });
+});
 
 describe("parseTemplate", () => {
   it("splits a multi-ref string into literal + ref segments", () => {

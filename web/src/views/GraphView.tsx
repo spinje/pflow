@@ -16,8 +16,10 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
 import type { Density, Direction, FlowEdge, FlowNode } from "../graph/flow";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
+import { nodeColor } from "../utils/format";
 import { readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
 import type { RFNode } from "../types";
 import { edgeTypes } from "../components/edges";
@@ -29,6 +31,25 @@ import { Toolbar } from "../components/Toolbar";
 interface GraphViewProps {
   workflow: string;
   onBack: () => void;
+}
+
+// MiniMap node fills — REAL color strings, not CSS vars: React Flow paints minimap
+// nodes as SVG fill attributes, where var() does not resolve. Leaves take their
+// identity color through the nodeColor seam (CONDITION-aware — never raw kindColor);
+// groups stay a faint wash so containers read as regions without drowning the leaf
+// dots; ports/end stay neutral. The dark container/mask styling lives in index.css
+// (.react-flow__minimap*).
+function minimapNodeColor(n: FlowNode): string {
+  switch (n.type) {
+    case "node":
+      return nodeColor(n.data.node);
+    case "group":
+      return "rgba(255, 255, 255, 0.05)";
+    case "ports":
+      return "rgba(255, 255, 255, 0.22)";
+    default:
+      return "rgba(255, 255, 255, 0.12)"; // end sink
+  }
 }
 
 export function GraphView(props: GraphViewProps): JSX.Element {
@@ -76,6 +97,18 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // when focus restyles `nodes` — it must fire only on workflow/direction/node.
   const graphRef = useRef(graph);
   graphRef.current = graph;
+
+  // Initial collapse state, applied ONCE per workflow when its contract arrives: big
+  // workflows open as an overview (everything collapsed), small ones fully expanded;
+  // an explicit `collapse=` param overrides, and a node=/focus= deep-link target's
+  // ancestor chain stays expanded so the link always shows it (graph/collapse.ts).
+  const autoCollapsedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!graph || autoCollapsedFor.current === workflow) return;
+    autoCollapsedFor.current = workflow;
+    const initial = initialCollapsed(graph, initialView.collapse, [initialView.node, initialView.focus]);
+    if (initial.size > 0) setCollapsed(initial);
+  }, [graph, workflow, initialView]);
 
   // Apply a focus= deep link once the graph is rendered — the exact state a click
   // produces (dim + reveal + beautiful expansion), resolved like node= (node_id
@@ -147,16 +180,29 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     [graph, selectedId],
   );
 
+  // Collapse-all folds every collapsible container and clears focus (the focused
+  // node is about to disappear into a box — a ring on a hidden node is meaningless).
+  // Expand-all only opens; focus survives.
+  const collapsibleIds = useMemo(() => (graph ? collapsibleGroupIds(graph) : []), [graph]);
+  const onCollapseAll = useCallback(() => {
+    setCollapsed(new Set(collapsibleIds));
+    setFocus(null);
+    setSelectedId(null);
+  }, [collapsibleIds]);
+  const onExpandAll = useCallback(() => setCollapsed(new Set()), []);
+
   const toolbar = (
     <Toolbar
       title={workflow}
       density={density}
       direction={direction}
-      hasCollapsed={collapsed.size > 0}
+      groupCount={collapsibleIds.length}
+      openCount={collapsibleIds.length - collapsed.size}
       focused={focus !== null}
       onDensity={changeDensity}
       onDirection={changeDirection}
-      onExpandAll={() => setCollapsed(new Set())}
+      onCollapseAll={onCollapseAll}
+      onExpandAll={onExpandAll}
       onClearFocus={() => setFocus(null)}
       onBack={onBack}
     />
@@ -203,7 +249,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           >
             <Background bgColor="#0D0D0D" color="#272727" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable />
+            <MiniMap pannable zoomable nodeColor={minimapNodeColor} nodeStrokeColor="transparent" nodeBorderRadius={3} />
           </ReactFlow>
           </div>
           {selectedNode && <ReadPanel node={selectedNode} onClose={() => setSelectedId(null)} />}

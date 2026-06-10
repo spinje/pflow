@@ -1,9 +1,10 @@
-// A smooth bezier control edge whose stroke blends sourceColor -> targetColor along
-// the TRUE edge direction. We use a `userSpaceOnUse` gradient positioned by the
-// actual source/target coords, so the blend follows direction in any orientation
-// (LR/TD, backward, re-anchored) with no degenerate-bbox bug (the objectBoundingBox
-// artifact, xyflow #4822). Pure styling — handles/anchoring are untouched. No
-// arrowhead: the line flows straight into the node's (same-color) border.
+// A rounded-orthogonal control edge (the Tines look: axis-aligned runs, generously
+// rounded turns) whose stroke blends sourceColor -> targetColor along the TRUE edge
+// direction. We use a `userSpaceOnUse` gradient positioned by the actual source/target
+// coords, so the blend follows direction in any orientation (LR/TD, backward,
+// re-anchored) with no degenerate-bbox bug (the objectBoundingBox artifact, xyflow
+// #4822). Pure styling — handles/anchoring are untouched. No arrowhead: the line flows
+// straight into the node's (same-color) border.
 //
 // The stop list depends on the edge KIND:
 //   sequential/branch — blend source→target across the whole length.
@@ -17,7 +18,7 @@
 // outcome rides the edge there; in LR it rides the node's border handle instead).
 
 import { memo, type CSSProperties } from "react";
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, Position, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
 import { METRICS } from "../../graph/metrics";
@@ -28,6 +29,41 @@ import { METRICS } from "../../graph/metrics";
 // the curve well. Semantic colors come from the CSS vars (set via style, where
 // var() resolves) so a palette re-theme can't drift from them.
 const FADE_PX = 26;
+
+// Rounded-orthogonal geometry. RAIL_OFFSET puts the first turn just past the source
+// (the Tines "trunk splits, then long straight columns into the targets" signature)
+// instead of smoothstep's default midpoint turn. It is 2×radius because smoothstep
+// clamps every bend to HALF its adjoining segment — a shorter offset STARVES the rail
+// corners (they rendered ~12px against the 18px everywhere else; user-caught). Closer
+// targets get the halfway point, which IS the stock midpoint — graceful degradation,
+// no special threshold. Backward edges keep smoothstep's default wrap routing.
+//
+// LANE (LR only): in LR a fork's outcomes leave their OWN labeled row handles, so
+// funneling them onto one shared rail collapsed distinct lines into one segment
+// (user-caught) — each lane turns at its own x. In TD the branches leave ONE point
+// (the icon column), so the SHARED rail is the trunk-split look — lane ignored.
+const CORNER_RADIUS = METRICS.edgeRadius;
+const RAIL_OFFSET = 2 * CORNER_RADIUS;
+const LANE_STEP = 8;
+
+export function railCenter(args: {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  sourcePosition: Position;
+  lane?: number;
+}): { centerX?: number; centerY?: number } {
+  const { sourceX, sourceY, targetX, targetY, sourcePosition } = args;
+  if (sourcePosition === Position.Bottom && targetY > sourceY) {
+    return { centerY: sourceY + Math.min(RAIL_OFFSET, (targetY - sourceY) / 2) };
+  }
+  if (sourcePosition === Position.Right && targetX > sourceX) {
+    const stagger = (args.lane ?? 0) * LANE_STEP;
+    return { centerX: sourceX + Math.min(RAIL_OFFSET + stagger, (targetX - sourceX) / 2) };
+  }
+  return {};
+}
 
 export type GradientStop = { offset: number; color: string };
 
@@ -67,7 +103,16 @@ export const GradientEdge = memo(function GradientEdge({
   selected,
   label,
 }: EdgeProps<FlowEdge>): JSX.Element {
-  const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: CORNER_RADIUS,
+    ...railCenter({ sourceX, sourceY, targetX, targetY, sourcePosition, lane: data?.lane }),
+  });
   const gradientId = `grad-${id}`;
   const from = data?.sourceColor ?? "var(--accent)";
   const to = data?.targetColor ?? "var(--accent)";

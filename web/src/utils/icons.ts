@@ -15,9 +15,17 @@ import markdown from "../assets/icons/markdown.svg";
 import mcp from "../assets/icons/mcp.svg";
 import ollama from "../assets/icons/ollama.svg";
 import openai from "../assets/icons/openai.svg";
+import condition from "../assets/icons/condition.svg";
 import placeholder from "../assets/icons/placeholder.svg";
 import python from "../assets/icons/python.svg";
+import { isCondition } from "./format";
 import type { RFNode } from "../types";
+
+// condition.svg: three hollow rings joined by tapering legs, one in / two out — a
+// mini node-graph of what a condition does to the flow. The in-ring is orange
+// (CONDITION_COLOR), the out-rings white, and the legs blend orange → white — the
+// same source→target idea as the canvas's gradient edges. Cores are transparent
+// (evenodd holes), so the tile bg shows through with nothing hardcoded.
 
 // LLM provider (the `provider/model` prefix) → brand icon. Unknown → sparkle.
 const PROVIDER_ICON: Record<string, string> = { anthropic, openai, gemini, ollama };
@@ -35,9 +43,11 @@ const KIND_ICON: Record<string, string> = {
   file: placeholder,
 };
 
-/** The icon URL for a node. For `llm`, match the provider in its `model` param
+/** The icon URL for a node. Role precedes kind: a decision code node presents as
+ *  CONDITION (fork glyph). For `llm`, match the provider in its `model` param
  *  (`provider/model`); fall back to a sparkle for dynamic/missing/unknown models. */
 export function iconFor(node: RFNode): string {
+  if (isCondition(node)) return condition;
   if (node.kind === "llm") {
     const model = node.params.find((p) => p.name === "model")?.value;
     if (typeof model === "string") {

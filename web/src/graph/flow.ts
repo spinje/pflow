@@ -15,7 +15,7 @@ import type { Edge, Node } from "@xyflow/react";
 
 import { branchHandle, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
 import { METRICS } from "./metrics";
-import { kindColor } from "../utils/format";
+import { kindColor, nodeColor } from "../utils/format";
 import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
 export type Density = "detailed" | "compact";
@@ -111,6 +111,17 @@ export type EdgeData = {
   // Optional: data/error/end/loop edges don't read them.
   sourceColor?: string;
   targetColor?: string;
+  // The data edge's LANE (assignEdgeLanes): distinct stub lengths + rail offsets
+  // per parallel binding at a node. DataEdge reads it; absent elsewhere.
+  lane?: number;
+  // Post-layout rail hints (assignDataRails): the middle segment centered in the
+  // clear gap between the endpoint nodes' boxes, so a wrap-around never hugs a
+  // node border. Absent when the boxes overlap on that axis (midpoint fallback).
+  railX?: number;
+  railY?: number;
+  // Set by applyFocus on incident data edges: which end the clicked node is on.
+  // DataEdge draws the line solid at that end, fading a hint toward the other.
+  focusEnd?: "source" | "target";
   loop?: LoopSpec; // present only on synthesized loop-back arcs
 };
 
@@ -163,8 +174,9 @@ function leafSize(
 
 // Control-flow edge kinds — these connect at a node's NODE_IN/NODE_OUT (the trunk),
 // so they drive the icon connector stubs. data_flow lands on param rows; loop is a
-// self-arc — neither implies a trunk in/out.
-const CONTROL_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["sequential", "branch", "error", "end"]);
+// self-arc — neither implies a trunk in/out. Exported for layout.ts (straightness
+// priorities + error-branch ordering work on control edges only).
+export const CONTROL_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["sequential", "branch", "error", "end"]);
 
 const NO_EXPANSION: ReadonlySet<string> = new Set();
 
@@ -448,10 +460,13 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     seen.add(key);
     // Control edges (sequential/branch) draw as a source-node-color → target-node-
     // color gradient (the GradientEdge custom edge). Colors come from the ORIGINAL
-    // endpoints' kinds (the real producer→consumer), even when re-anchored. error/
-    // end/data keep their semantic colors (see toFlowEdge / CSS).
-    const sourceColor = kindColor(nodeById.get(e.source)?.kind ?? "");
-    const targetColor = kindColor(nodeById.get(e.target)?.kind ?? "");
+    // endpoints (the real producer→consumer), even when re-anchored — via nodeColor,
+    // so a condition node's fan-out leaves in condition orange, not code yellow.
+    // error/end/data keep their semantic colors (see toFlowEdge / CSS).
+    const sourceNode = nodeById.get(e.source);
+    const targetNode = nodeById.get(e.target);
+    const sourceColor = sourceNode ? nodeColor(sourceNode) : kindColor("");
+    const targetColor = targetNode ? nodeColor(targetNode) : kindColor("");
     flowEdges.push(toFlowEdge(e, source, target, sourceHandle, targetHandle, detailed, view.direction, sourceColor, targetColor));
   }
 
@@ -482,7 +497,37 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     });
   }
 
+  assignEdgeLanes(flowEdges);
   return { nodes: flowNodes, edges: flowEdges };
+}
+
+// Edges entering/leaving a node all turned at the SAME default stub, so parallel
+// lines overlapped pixel-exactly into one ambiguous segment (user-caught, twice):
+// data bindings (a 6-row Inputs node feeding one consumer), and LR branch fan-outs
+// (each outcome leaves its OWN labeled row handle, yet all merged onto one rail).
+// Give each such edge a LANE: the smallest bucket unused among the laned edges
+// already assigned at EITHER of its endpoint nodes. DataEdge turns the lane into
+// geometry always; GradientEdge applies it in LR ONLY — in TD a fork's branches
+// leave ONE point (the icon column), so the shared rail IS the trunk-split look,
+// by design. Sequential edges are exempt (one out per node; merges come from
+// different sources, so their rails already differ). Build-time (lane multiplexing,
+// not geometry).
+export const LANE_COUNT = 6; // wraps past 6 parallel lanes at one node (collision acceptable)
+const LANED_KINDS = new Set<EdgeKind | "loop">(["data_flow", "branch", "error"]);
+
+function assignEdgeLanes(edges: FlowEdge[]): void {
+  const used = new Map<string, Set<number>>();
+  const usedAt = (id: string): Set<number> => used.get(id) ?? used.set(id, new Set()).get(id)!;
+  for (const e of edges) {
+    if (!e.data || !LANED_KINDS.has(e.data.kind)) continue;
+    const taken = new Set([...usedAt(e.source), ...usedAt(e.target)]);
+    let lane = 0;
+    while (taken.has(lane % LANE_COUNT) && lane < LANE_COUNT) lane += 1;
+    lane %= LANE_COUNT;
+    usedAt(e.source).add(lane);
+    usedAt(e.target).add(lane);
+    e.data.lane = lane;
+  }
 }
 
 function sourceHandleFor(
@@ -532,6 +577,19 @@ function targetHandleFor(
     if (node?.params.some((p) => p.name === edge.input_name)) {
       return paramHandle(edge.input_name);
     }
+    // input_name may be a KEY inside a dict-valued param (a code node's
+    // `inputs: {data: ${...}}` — the edge builder walks dict-of-string leaves, so
+    // the edge carries the dict key, not the param name). Land on the param row that
+    // CONTAINS the key — but only when that key's value is itself a `${...}` string,
+    // the exact condition that created the edge. Anything else stays the node-level
+    // fallback: degrade, never mis-attribute (H6).
+    const key = edge.input_name;
+    const host = node?.params.find((p) => {
+      if (typeof p.value !== "object" || p.value === null || Array.isArray(p.value)) return false;
+      const v = (p.value as Record<string, unknown>)[key];
+      return typeof v === "string" && v.includes("${");
+    });
+    if (host) return paramHandle(host.name);
   }
   return NODE_IN;
 }
@@ -591,7 +649,12 @@ function toFlowEdge(
     target,
     sourceHandle,
     targetHandle,
-    type: isControl ? "gradient" : "default",
+    // Data-flow uses the custom DataEdge ("data") so EVERY edge speaks the same
+    // rounded-orthogonal language as the control edges (GradientEdge) — a bezier
+    // here swoops across node bodies when an output row feeds the node below. The
+    // component owns the stroke (lane tint + endpoint node-color fades); CSS keeps
+    // only the dash pattern. The per-edge lane rides data.lane (assignDataEdgeLanes).
+    type: isControl ? "gradient" : "data",
     label,
     className: classes.join(" "),
     data: { kind: edge.kind, shadowed: edge.shadowed, from: edge.source, to: edge.target, defaultHidden, sourceColor, targetColor },
@@ -662,8 +725,17 @@ export function applyFocus(
     const base = stripDim(e.className);
     const dim = focus != null && !incident;
     const className = dim ? `${base} ${DIMMED_EDGE_CLASS}`.trim() : base;
-    if (className === e.className && hidden === (e.hidden ?? false)) return e;
-    return { ...e, className, hidden };
+    // Which END of an incident data line the focus sits on — DataEdge renders the
+    // line solid at the clicked node and fading a hint toward the far end, so the
+    // revealed wiring visibly BELONGS to the focus (user-chosen treatment).
+    const focusEnd =
+      incident && e.data?.kind === "data_flow"
+        ? e.source === focus || e.data.from === focus
+          ? ("source" as const)
+          : ("target" as const)
+        : undefined;
+    if (className === e.className && hidden === (e.hidden ?? false) && focusEnd === e.data?.focusEnd) return e;
+    return { ...e, className, hidden, ...(e.data ? { data: { ...e.data, focusEnd } } : {}) };
   });
   return { nodes: outNodes, edges: outEdges };
 }
