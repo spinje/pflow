@@ -92,7 +92,7 @@ pflow changes typically need coordinated updates across layers:
 
 ```
 Parsing (core/markdown_parser.py)
-  → Validation (core/workflow/validator.py, workflow/data_flow.py)
+  → Validation (core/workflow/validator.py, core/workflow/data_flow.py)
   → Template Validation (runtime/template_validation/)
   → Compilation (runtime/compilation/compiler.py)
   → Runtime Resolution (runtime/template_resolver.py, runtime/engine/template_resolution.py)
