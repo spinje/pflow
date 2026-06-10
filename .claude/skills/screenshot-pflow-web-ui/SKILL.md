@@ -42,11 +42,12 @@ Base `http://127.0.0.1:<port>/` (default port 8765). Source: `web/src/utils/view
 
 Single-quote the URL so the shell doesn't split on `&`.
 
-Screenshot — stdout is the PNG path; then `Read` it:
+Screenshot — `-p` makes stdout JUST the PNG path (no progress/header — saves tokens; errors
+still print + exit 1); then `Read` it:
 ```bash
 uv run pflow examples/real-workflows/screenshot-pflow-web-ui/screenshot.pflow.md \
   url='http://127.0.0.1:8765/?workflow=<name|path>&direction=TD&density=beautiful&node=<node_id>' \
-  [out_dir=/tmp/pflow-shots]
+  [out_dir=/tmp/pflow-shots] -p
 ```
 
 Inspect — stdout is the geometry JSON; pipe to `jq`:
