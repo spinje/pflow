@@ -1633,3 +1633,15 @@ U's landing) + the cap `≤ ${max_…}` on its own row; one row truncated both o
 nothing about looping (the U alone made the user ask "is this a loop?"); identity stays in kind
 color, behavior in loop amber. Verified on execute-plan: both rows legible, arrow on the
 condition row, mark visible at compact size.
+
+### Task 169 spawned: agent↔browser point-and-watch channel (2026-06-10)
+
+Reviewing execute-plan screenshots, the agent described where the floating Inputs node sits —
+and the user couldn't find it ("I can't find it"): the live trigger for a day-old idea. The
+agent can *see* the canvas (screenshot/inspect skill) but can't *point* in the user's window,
+nor *watch* what the user clicks. → **Task 169** (`task_169/task-169.md`): SSE push channel +
+CLI focus/frame commands broadcast to open windows + a user-event ring buffer — reusing the
+`?focus=` mechanics wholesale, building the overlay's transport WITHOUT pinning Task 133's
+event schema. Settled in the spec: delivery reports carry per-window visibility; open-if-absent
+is an explicit flag; force-focusing an existing background tab is impossible by web platform
+design (recorded so nobody tries).
