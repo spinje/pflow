@@ -15,7 +15,6 @@ import mcp from "../assets/icons/mcp.svg";
 import ollama from "../assets/icons/ollama.svg";
 import openai from "../assets/icons/openai.svg";
 import condition from "../assets/icons/condition.svg";
-import loop from "../assets/icons/loop.svg";
 import placeholder from "../assets/icons/placeholder.svg";
 import python from "../assets/icons/python.svg";
 import subworkflow from "../assets/icons/subworkflow.svg";
@@ -46,15 +45,14 @@ const KIND_ICON: Record<string, string> = {
 };
 
 /** The icon URL for a node. Role precedes kind: a decision code node presents as
- *  CONDITION (fork glyph); a LOOPED sub-workflow presents the loop glyph (its
- *  category line still says SUB-WORKFLOW, so the tile telegraphs behavior at no
- *  identity cost — leaf kinds keep their type icon, the loop U alone marks them).
+ *  CONDITION (fork glyph). Behavior (loop/batch) never swaps the tile — it rides
+ *  the border chip rail (ChipRail.tsx, 2026-06-10; retired the old looped-
+ *  sub-workflow loop-glyph swap): identity doesn't mutate.
  *  For `llm`, match the provider in its `model` param (`provider/model`); fall
  *  back to a sparkle for dynamic/missing/unknown models. */
 export function iconFor(node: RFNode): string {
   if (isCondition(node)) return condition;
   if (isTransform(node)) return transform; // shuffle glyph, cyan -> white (transform.svg)
-  if (node.kind === "workflow" && node.loop) return loop;
   if (node.kind === "llm") {
     const model = node.params.find((p) => p.name === "model")?.value;
     if (typeof model === "string") {
@@ -67,8 +65,8 @@ export function iconFor(node: RFNode): string {
 }
 
 /** Container-card icon (collapsed group / region header): the host node's icon —
- *  so a batch-of-shell shows the shell glyph, a looped sub-workflow the loop glyph —
- *  falling back to the sub-workflow frame when the group has no host node. */
+ *  so a batch-of-shell shows the shell glyph — falling back to the sub-workflow
+ *  frame when the group has no host node. */
 export function groupIconFor(hostNode: RFNode | null): string {
   return hostNode ? iconFor(hostNode) : subworkflow;
 }

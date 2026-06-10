@@ -2239,3 +2239,79 @@ leave their BranchPorts rows (which have their own dots), so a pure decider must
 an icon-row exit; in TD forks fan from NODE_OUT, so nothing changes there (pinned). web
 **159 tests** (+1); tsc + build clean; verified by zoomed crop (yellow dots on the code
 cards' exits, line into the next tile's flare).
+
+### TRANSFORM Level 2 planned + plan-reviewed — ready for a fresh implementer (2026-06-10)
+
+Design settled with the user against an iterated mock (now persisted:
+`implementation/transform-l2-mock/`): result-shape rows with `name: type` format
+(the authored annotation syntax), wholesale-read vs wrapper-collapsed row policies,
+quiet-dot unread keys, the no-line-without-a-read invariant, one-level depth, and
+Half B's observed-usage generalization to all kinds. Tines' transform sub-modes were
+mapped and consciously deferred (recorded in visualization-requirements.md).
+
+**Plan:** `implementation/transform-l2-plan.md` — hardened for handoff (a fresh agent,
+no conversation context): 9 locked decisions, 12 verified facts with symbol anchors,
+atomic steps with done-whens, anti-goals, per-phase gates. The two load-bearing
+technical calls, both code-verified: the sub-path dies at the ref REGEX (scope.py:12,
+one-segment capture) so retention starts there with a new `refs_with_path_in` (the
+`(root, field)` shape of `refs_in` is frozen — three callers); and `Edge.output_path`
+must be `compare=False` or dedup changes and Mermaid breaks (the input_name
+multi-role-lossiness precedent).
+
+**`review-plan` pass (0 critical / 7 major / 6 minor — all folded in).** The catches
+that mattered: F3 claimed two DATA_FLOW emission sites — there are THREE (the
+input→consumer site stays on `refs_in`); `_resolve_ref` has a fourth return case
+(bare ref + single declared output); the batch-alias exclusion must be an EXPLICIT
+guard (a per-item key colliding with the batch source's output_field name makes the
+equality rule coincidentally attach a wrong path); the row set must be authored ∪
+OBSERVED (an observed-only key otherwise loses its line to NODE_OUT — the exact read
+the feature exists for); "exactly one result assignment" needed pinned semantics
+(subscript mutations count; empty dict → keys=None; valueless `result:` AnnAssign is
+an input declaration); web-tree type-greenness required at the END of each phase
+(fixture factories); and a `/code-review` step joined Phase 4.
+
+Phases 1–2 are Python-only and start anytime; Phase 3 carries a HARD entry gate
+(`git status web/src/` clean — the parallel agent's LR row-ports work shares its files).
+
+### Batch/loop CHIP RAIL: the batch pill dies, the corner chrome unifies (2026-06-10, user-driven) ✅ (uncommitted)
+
+> Design locked via a 3-round shoot-lab (`/tmp/batch-chip-lab/`), Tines corner-chips as the
+> user's reference. Plan + the per-round picks: `implementation/batch-chip-rail-plan.md`.
+> Round 1: **A3** (tinted capsule, icon + count) · **B3** (dynamic shows `×N`; I flagged the
+> fake-number concern, user overrode — source rides the tooltip) · **C2** (loop chip, same
+> vocabulary). Round 2 (user idea): EVERYTHING moves to the top border as one rail; the
+> `▸ N nodes` count pill restyles to the chip language. Round 3 (user idea): the count moves
+> INSIDE the expander — `[25 ⤢]`, "nodes" + chevron die; **F1-square** final (rounded-square
+> 7px: round = info chip, square = button).
+
+The trigger: the header `parallel batch ×N` pill squeezed the 2-line description to
+uselessness ("Genera… a pe…") while DUPLICATING the deck — violating Badges.tsx's own
+"a badge earns its place only when nothing else shows the fact" rule.
+
+- **New `ChipRail.tsx`:** loop chip (amber round ↻; tooltip = polarity + condition + cap) +
+  batch chip (purple capsule, stack glyph, `×{count}` literal / `×N` dynamic; tooltip =
+  parallel|sequential + `over ${source_ref}`). Straddles the top border (top −11px),
+  right-aligned, BOTH container states (header-parity holds). GroupNode appends the merged
+  count-expander (keeps class `.group-toggle` — the GraphView click-semantic pins passed
+  untouched; stopPropagation + dblclick unchanged). Leaves get chips only.
+- **Retired:** the Badges batch arm (+ `.badge-batch`, the already-dead `.badge-loop`), the
+  category-line `.loop-mark`, the `iconFor` looped-sub-workflow loop-glyph swap (identity
+  never mutates — behavior is border chrome), the `▸ N nodes` count pill + separate corner
+  button. The io card's `"N inputs"` pill restyled to the 22px chip language (same species).
+- **The non-obvious find:** `.node.detailed` was `overflow: hidden` (compact had already
+  been re-set visible for connector stubs) — it would have CLIPPED the rail, and had been
+  SILENTLY clipping the batch deck on advanced cards all along. Both densities are now
+  `overflow: visible`; rows have transparent backgrounds so the rounded corners survive
+  (browser-verified). The header's `padding-right: 34px` corner-button clearance died too.
+- **Reserved seam, stated in the docs:** the rail is the future live-overlay's status-chip
+  home — status joins leftmost, outranks modifiers. Dynamic `×N` is exactly the slot a
+  per-run real count fills.
+
+**Verified:** web **165 tests** (+6 ChipRail pins: literal ×3 / dynamic ×N + tooltip /
+sequential naming / loop+batch order / expander slot / chip-less null) + tsc strict +
+build clean. Real browser (headless loop): batch-test TD/beautiful (leaf chip + deck,
+description full width), run-cycle collapsed card (`[⧉ ×N] [3 ⤢]` rail) AND open region
+(same rail across the fold), execute-plan review-round advanced (amber ↻ chip on a
+detailed card — the overflow fix at work; clean CLAUDE CODE category), io card pill
+parity (zoomed crops). Docs synced: web/CLAUDE.md (new rail bullet + 4 amendments),
+visualization-requirements.md (Implemented). Zero Python/contract change.

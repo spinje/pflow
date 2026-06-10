@@ -282,9 +282,9 @@ Tests sit beside their subject.
   focus-expanded) grows ↻ loop-rule rowS (WorkflowNode; amber, right-aligned —
   it's authored LOOP config, deliberately NOT presented as a data param; leafSize
   counts them): the CONDITION row + the cap `≤ ${…}` on its OWN row (one row
-  truncated both operands). The category line carries an amber ↻ mark in ALL
-  states (`.loop-mark` — a compact looped leaf otherwise says nothing about
-  looping). The U's arrow lands ON the condition row (`LOOP_ROW` handle, target-type)
+  truncated both operands). A looped node telegraphs in ALL states via the amber
+  ↻ CHIP on the border rail (ChipRail.tsx — superseded the category-line
+  `.loop-mark`, 2026-06-10). The U's arrow lands ON the condition row (`LOOP_ROW` handle, target-type)
   — "iteration re-enters under this rule"; the edge then carries NO floating
   label (the row holds the condition, like data lines dropping their label on
   row-landing). A compact leaf shows a BARE U into NODE_IN — beautiful stays
@@ -303,9 +303,11 @@ Tests sit beside their subject.
   render the IDENTICAL header markup (one JSX block): the leaf `.node-header` with
   the full-size tile + `.node-titles` (category + purpose||node_id), in leaf
   positions/typography. `METRICS.groupHeaderH` MUST equal `nodeHeaderH` (ELK's
-  region padding is derived from it). The member-count pill (`.group-pill`, ▸/▾ +
-  recursive step count `memberCount` — `group.members` only sees direct children)
-  is ABSOLUTE on the top-right border in both states. COLLAPSED → leaf classes
+  region padding is derived from it). The CHIP RAIL (`.chip-rail`, ChipRail.tsx —
+  the host's loop/batch behavior chips + the merged count-expander
+  `.group-toggle`: recursive step count `memberCount` + the A1 glyph;
+  `group.members` only sees direct children) is ABSOLUTE on the top-right border
+  in both states. COLLAPSED → leaf classes
   (`.node.compact.group-card`): card CSS, focus ring, dimming come wholesale;
   icon-column ELK ports (TD `portable` set, layout.ts) + top AND bottom connector
   flares. EXPANDED → kind-tinted region (`--kind` inline: workflow magenta
@@ -317,24 +319,42 @@ Tests sit beside their subject.
   test). Flare incidence comes from a control-incidence POST-pass over the FLOW
   edges for ALL groups (contract edges never name a group; purely-internal edges
   must not count). Collapsed cards dim under focus like leaves; expanded regions
-  never dim. Icon from `groupIconFor` (host's icon; a LOOPED sub-workflow swaps to
-  the amber loop glyph — the category line still says SUB-WORKFLOW; leaf kinds
-  never swap). React Flow's default `node-group` wrapper styling is neutralized in
+  never dim. Icon from `groupIconFor` (the host's KIND icon, always — behavior
+  rides the rail chips; the old looped-sub-workflow loop-glyph swap retired with
+  the chip rail, 2026-06-10). React Flow's default `node-group` wrapper styling is neutralized in
   index.css **including its `text-align: center`** — GroupNode owns the visual.
   Batch cards (and `.batched` leaves — unexpanded dynamic batches) draw a stacked
   DECK via pseudo-elements (the Tines stacked-copies look).
-- **Containers SELECT on click; expand/collapse is the corner button (design D,
-  user-decided 2026-06-10).** A container's body — collapsed card OR expanded
+- **The border CHIP RAIL (ChipRail.tsx, 2026-06-10, picked via a 3-round
+  shoot-lab).** Behavior modifiers render as 22px tinted chips straddling the TOP
+  border, right-aligned, on leaves AND containers: loop = amber round ↻ (tooltip:
+  polarity + condition + cap), batch = purple capsule (stack glyph + `×{count}`
+  literal / `×N` dynamic — the count is statically unknowable, so the iterated
+  `source_ref` rides the TOOLTIP, never a guessed number; a future run overlay
+  fills the real count). Grammar: round/capsule tinted chip = INFO; the one
+  SQUARE element (the group expander) = button. The rail replaced the header
+  batch badge (it squeezed the 2-line description and duplicated the deck), the
+  category-line ↻ mark, and the looped-tile icon swap — identity (tile/category)
+  never mutates; behavior is additive border chrome. The rail is the reserved
+  home for future live-overlay STATUS chips (status joins leftmost, outranks
+  modifiers). It extends 11px above the box; ELK doesn't know — same straddle
+  the old group-pill had (no layout impact). `.node.compact/.detailed` are BOTH
+  `overflow: visible` for it (detailed was hidden, silently clipping the deck
+  on advanced cards).
+- **Containers SELECT on click; expand/collapse is the rail's count-expander
+  (design D, user-decided 2026-06-10; pill+button merged into ONE element,
+  user-picked F1 same day).** A container's body — collapsed card OR expanded
   region/header — is a node like any other: click = focus + read panel (the panel
   shows the group's HOST node, resolved in GraphView's `selectedNode`; wrapper
   groups have no host → no panel). The ONLY single-click toggle is the
-  `.group-toggle` corner button GroupNode renders top-right in both states (A1
-  arrows-out/in glyphs, full button at rest, kind-color on hover — picked via
-  mockup lab; its `stopPropagation` is LOAD-BEARING, else the click also selects),
+  `.group-toggle` expander GroupNode renders as the rail's last element in both
+  states — the step count + A1 arrows-out/in glyph in a rounded-SQUARE chip
+  (the old `▸ N nodes` count pill and the separate corner button died in the
+  merge; its `stopPropagation` is LOAD-BEARING, else the click also selects) —
   plus double-click anywhere on the container (`onNodeDoubleClick`;
   `zoomOnDoubleClick={false}` on ReactFlow or every dblclick zooms). Batched
-  LEAVES get no button by construction — they render via WorkflowNode (nothing to
-  open). **Selecting a container selects the whole UNIT** (`applyFocus`): the
+  LEAVES get no expander by construction — they render via WorkflowNode (nothing
+  to open). **Selecting a container selects the whole UNIT** (`applyFocus`): the
   group, all descendants (flow `parentId` BFS), and every edge touching any of
   them — internal wiring + external bindings light, the rest dims; in beautiful
   the unit's hidden data lines reveal ("what feeds this box?" without opening

@@ -1,0 +1,191 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0D0D0D; --bg-node: #1b1f2a; --border: #2c3242;
+    --text: #e6e9ef; --muted: #9aa3b5; --faint: #6b7280;
+    --data: #6fbfa8; --transform: #5fd4dd; --condition: #ffa657; --code: #ffd479;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  body { background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, sans-serif;
+         margin: 0; padding: 30px; width: 1280px; position: relative; }
+  h2 { font-size: 13px; color: var(--muted); margin: 0 0 4px; font-weight: 600; }
+  .caption { font-size: 12px; color: var(--faint); margin: 0 0 16px; max-width: 720px; }
+  .section { position: relative; margin-bottom: 46px; }
+
+  .card { position: absolute; width: 320px; border-radius: 12px;
+          background: color-mix(in srgb, var(--c) 9%, var(--bg-node));
+          border: 1.5px solid color-mix(in srgb, var(--c) 55%, transparent);
+          font-family: var(--mono); }
+  .hdr { display: flex; gap: 10px; align-items: center; padding: 8px 10px; }
+  .tile { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 11px; background: var(--bg-node);
+          border: 2.5px solid var(--c); display: grid; place-items: center; }
+  .tile svg { width: 26px; height: 26px; }
+  .cat { font-size: 10px; letter-spacing: 1px; color: var(--c); display: block; }
+  .name { font-family: -apple-system, sans-serif; font-weight: 600; font-size: 12.5px; }
+  .body { border-top: 1px solid var(--border); padding: 4px 0 6px; }
+  .row { position: relative; height: 24px; display: flex; align-items: center;
+         padding: 0 14px; font-size: 11.5px; color: var(--muted); }
+  .row .val { margin-left: auto; color: var(--text); }
+  .row.out { justify-content: flex-end; color: var(--data); }
+  .row.sub { padding-right: 26px; color: var(--text); font-size: 11px; }
+  .row.sub .key { color: var(--data); }
+  .row.sub.unread .key { color: var(--faint); }
+  .dot { position: absolute; width: 7px; height: 7px; border-radius: 50%;
+         background: var(--data); top: 50%; transform: translateY(-50%); }
+  .dot.l { left: -4px; } .dot.r { right: -4px; }
+  .dot.quiet { background: #3a4255; }
+  .annot { position: absolute; font-size: 11px; color: var(--faint); font-style: italic; }
+  svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  .wires path { fill: none; stroke: var(--data); stroke-width: 2.5; stroke-dasharray: 2 5; stroke-linecap: round; }
+</style>
+</head>
+<body>
+
+<!-- ──────────────── SECTION 1: Half A, before/after ──────────────── -->
+<div class="section" style="height: 270px;">
+  <h2>HALF A — the authored output shape (transform cards grow result-key rows)</h2>
+  <p class="caption">deep-research's <b>combine</b> node, advanced density. Today the card only says
+  "→ result"; Level 2 extracts the literal dict keys from the AST (fail-closed: exactly one
+  literal-dict assignment) and shows what actually comes out.</p>
+
+  <div class="card" style="--c: var(--transform); left: 20px; top: 64px;">
+    <div class="hdr">
+      <div class="tile"><svg viewBox="0 0 192 192" fill="none"><defs><linearGradient id="f1" x1="0" y1="0" x2="1" y2="0"><stop offset="0.15" stop-color="#5fd4dd"/><stop offset="0.85" stop-color="#fff"/></linearGradient></defs><path d="M16 56 C70 56 122 136 162 136" stroke="url(#f1)" stroke-width="16" stroke-linecap="round"/><path d="M16 136 C70 136 122 56 162 56" stroke="url(#f1)" stroke-width="16" stroke-linecap="round"/><path d="M146 32 L174 56 L146 80" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M146 112 L174 136 L146 160" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></div>
+      <div><span class="cat">TRANSFORM</span><span class="name">Merge all source analyses into a unified summary</span></div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="dot l"></span>inputs <span class="val">{analyses}</span></div>
+      <div class="row out">→ result <span class="dot r"></span></div>
+    </div>
+  </div>
+  <span class="annot" style="left: 110px; top: 250px;">today (Level 1)</span>
+
+  <div class="card" style="--c: var(--transform); left: 440px; top: 64px;">
+    <div class="hdr">
+      <div class="tile"><svg viewBox="0 0 192 192" fill="none"><defs><linearGradient id="f2" x1="0" y1="0" x2="1" y2="0"><stop offset="0.15" stop-color="#5fd4dd"/><stop offset="0.85" stop-color="#fff"/></linearGradient></defs><path d="M16 56 C70 56 122 136 162 136" stroke="url(#f2)" stroke-width="16" stroke-linecap="round"/><path d="M16 136 C70 136 122 56 162 56" stroke="url(#f2)" stroke-width="16" stroke-linecap="round"/><path d="M146 32 L174 56 L146 80" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M146 112 L174 136 L146 160" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></div>
+      <div><span class="cat">TRANSFORM</span><span class="name">Merge all source analyses into a unified summary</span></div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="dot l"></span>inputs <span class="val">{analyses}</span></div>
+      <div class="row out">→ result<span style="color: var(--faint); font-size: 10px;">: dict</span> <span class="dot r"></span></div>
+      <div class="row out sub"><span class="key">· summary</span><span style="color: var(--faint); font-size: 10px;">: str</span> <span class="dot r"></span></div>
+      <div class="row out sub unread"><span class="key">· source_count</span><span style="color: var(--faint); font-size: 10px;">: int</span> <span class="dot r quiet"></span></div>
+    </div>
+  </div>
+  <span class="annot" style="left: 470px; top: 252px;">Level 2, wholesale-read case: result IS read bare (an llm prompt<br>takes ${combine.result}) → the parent row stays + keys nest.<br>`dict` = the AUTHORED annotation; key types inferred fail-closed</span>
+
+  <div class="card" style="--c: var(--transform); left: 870px; top: 64px;">
+    <div class="hdr">
+      <div class="tile"><svg viewBox="0 0 192 192" fill="none"><defs><linearGradient id="f2b" x1="0" y1="0" x2="1" y2="0"><stop offset="0.15" stop-color="#5fd4dd"/><stop offset="0.85" stop-color="#fff"/></linearGradient></defs><path d="M16 56 C70 56 122 136 162 136" stroke="url(#f2b)" stroke-width="16" stroke-linecap="round"/><path d="M16 136 C70 136 122 56 162 56" stroke="url(#f2b)" stroke-width="16" stroke-linecap="round"/><path d="M146 32 L174 56 L146 80" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M146 112 L174 136 L146 160" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></div>
+      <div><span class="cat">TRANSFORM</span><span class="name">Merge all source analyses into a unified summary</span></div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="dot l"></span>inputs <span class="val">{analyses}</span></div>
+      <div class="row out">→ result.summary<span style="color: var(--faint); font-size: 10px;">: str</span> <span class="dot r"></span></div>
+      <div class="row out unread" style="color: var(--faint);">→ result.source_count<span style="font-size: 10px;">: int</span> <span class="dot r quiet"></span></div>
+    </div>
+  </div>
+  <span class="annot" style="left: 900px; top: 252px;">WRAPPER-COLLAPSED case: nothing reads result bare →<br>the plumbing row drops; full dotted paths keep the<br>${node.result.summary} authoring truth</span>
+</div>
+
+<!-- ──────────────── SECTION 2: Half B, per-key landing ──────────────── -->
+<div class="section" style="height: 330px;">
+  <h2>HALF B — lines land on the exact KEY row (transform → consumer)</h2>
+  <p class="caption">execute-plan's <b>group-tick</b> feeding <b>check-groups</b>. Today all three
+  refs (<span style="font-family:var(--mono)">${group-tick.result.index}</span> …) leave ONE generic
+  "result" port; Level 2 keeps the sub-path on the edge, so each line leaves ITS key row and lands
+  on its input row — the "edges land on the exact handle" rule, one level deeper.</p>
+
+  <div class="card" id="gt" style="--c: var(--transform); left: 20px; top: 110px;">
+    <div class="hdr">
+      <div class="tile"><svg viewBox="0 0 192 192" fill="none"><defs><linearGradient id="f3" x1="0" y1="0" x2="1" y2="0"><stop offset="0.15" stop-color="#5fd4dd"/><stop offset="0.85" stop-color="#fff"/></linearGradient></defs><path d="M16 56 C70 56 122 136 162 136" stroke="url(#f3)" stroke-width="16" stroke-linecap="round"/><path d="M16 136 C70 136 122 56 162 56" stroke="url(#f3)" stroke-width="16" stroke-linecap="round"/><path d="M146 32 L174 56 L146 80" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M146 112 L174 136 L146 160" stroke="#fff" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg></div>
+      <div><span class="cat">TRANSFORM</span><span class="name">Advance the group cursor for the segment loop</span></div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="dot l"></span>inputs <span class="val">{index, groups}</span></div>
+      <div class="row out">→ result <span class="dot r quiet"></span></div>
+      <div class="row out sub"><span class="key">· index</span> <span class="dot r" id="gt-index"></span></div>
+      <div class="row out sub"><span class="key">· delta</span> <span class="dot r" id="gt-delta"></span></div>
+      <div class="row out sub"><span class="key">· is_last</span> <span class="dot r" id="gt-islast"></span></div>
+    </div>
+  </div>
+
+  <div class="card" id="cg" style="--c: var(--condition); left: 660px; top: 96px;">
+    <div class="hdr">
+      <div class="tile"><svg viewBox="0 -12 192 187" fill="none"><circle cx="96" cy="32" r="30" fill="none" stroke="#ffa657" stroke-width="16"/><path d="M96 64 L96 100 M96 100 L40 132 M96 100 L152 132" stroke="#fff" stroke-width="13" stroke-linecap="round"/><circle cx="40" cy="148" r="17" fill="none" stroke="#fff" stroke-width="12"/><circle cx="152" cy="148" r="17" fill="none" stroke="#fff" stroke-width="12"/></svg></div>
+      <div><span class="cat">CONDITION</span><span class="name">Route the loop: next segment, review, or done</span></div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="dot l" id="cg-index"></span>index <span class="val">${group-tick.result.index}</span></div>
+      <div class="row"><span class="dot l" id="cg-delta"></span>delta <span class="val">${group-tick.result.delta}</span></div>
+      <div class="row"><span class="dot l" id="cg-islast"></span>is_last <span class="val">${group-tick.result.is_last}</span></div>
+      <div class="row"><span class="dot l quiet"></span>cap <span class="val">${max_review_rounds}</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────── SECTION 3: Half B generalization ──────────────── -->
+<div class="section" style="height: 320px;">
+  <h2>HALF B BONUS — observed-usage rows on ANY node (not just transforms)</h2>
+  <p class="caption">Your screenshot's pair: <b>run-validate</b> is a subprocess node (never a
+  TRANSFORM) — but once edges carry sub-paths, its output rows refine to what downstream actually
+  reads. Authored shape (Half A, transforms) + observed usage (Half B, every kind) compose.</p>
+
+  <div class="card" id="rv" style="--c: var(--code); left: 20px; top: 110px;">
+    <div class="hdr">
+      <div class="tile"><svg viewBox="0 0 192 192" fill="none" stroke="#ffd479" stroke-width="15" stroke-linecap="round"><path d="M60 50 L20 96 L60 142"/><path d="M132 50 L172 96 L132 142"/></svg></div>
+      <div><span class="cat">CODE</span><span class="name">Run the project's validate_command for real</span></div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="dot l"></span>inputs <span class="val">{repo_dir, …}</span></div>
+      <div class="row out">→ result <span class="dot r quiet"></span></div>
+      <div class="row out sub"><span class="key">· ok</span> <span class="dot r" id="rv-ok"></span></div>
+      <div class="row out sub"><span class="key">· round</span> <span class="dot r" id="rv-round"></span></div>
+    </div>
+  </div>
+
+  <div class="card" id="cv" style="--c: var(--condition); left: 660px; top: 96px;">
+    <div class="hdr">
+      <div class="tile"><svg viewBox="0 -12 192 187" fill="none"><circle cx="96" cy="32" r="30" fill="none" stroke="#ffa657" stroke-width="16"/><path d="M96 64 L96 100 M96 100 L40 132 M96 100 L152 132" stroke="#fff" stroke-width="13" stroke-linecap="round"/><circle cx="40" cy="148" r="17" fill="none" stroke="#fff" stroke-width="12"/><circle cx="152" cy="148" r="17" fill="none" stroke="#fff" stroke-width="12"/></svg></div>
+      <div><span class="cat">CONDITION</span><span class="name">Decide the loop on the command's REAL result</span></div>
+    </div>
+    <div class="body">
+      <div class="row"><span class="dot l" id="cv-ok"></span>ok <span class="val">${run-validate.result.ok}</span></div>
+      <div class="row"><span class="dot l" id="cv-round"></span>round <span class="val">${run-validate.result.round}</span></div>
+      <div class="row"><span class="dot l quiet"></span>cap <span class="val">${max_fix_rounds}</span></div>
+    </div>
+  </div>
+</div>
+
+<svg class="wires" id="wires"></svg>
+<script>
+  // dotted teal data lines, rounded-orthogonal like the app, lane-staggered rails
+  const svg = document.getElementById("wires");
+  const pairs = [
+    ["gt-index",  "cg-index",  0],
+    ["gt-delta",  "cg-delta",  1],
+    ["gt-islast", "cg-islast", 2],
+    ["rv-ok",     "cv-ok",     0],
+    ["rv-round",  "cv-round",  1],
+  ];
+  const bodyRect = document.body.getBoundingClientRect();
+  for (const [fromId, toId, lane] of pairs) {
+    const f = document.getElementById(fromId).getBoundingClientRect();
+    const t = document.getElementById(toId).getBoundingClientRect();
+    const fx = f.right - bodyRect.left, fy = f.top + f.height / 2 - bodyRect.top;
+    const tx = t.left - bodyRect.left, ty = t.top + t.height / 2 - bodyRect.top;
+    const rail = fx + 120 + lane * 22; // staggered rails, the lane look
+    const r = 14;
+    const dirY = ty > fy ? 1 : -1;
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d",
+      `M ${fx} ${fy} L ${rail - r} ${fy} Q ${rail} ${fy} ${rail} ${fy + r * dirY}` +
+      ` L ${rail} ${ty - r * dirY} Q ${rail} ${ty} ${rail + r} ${ty} L ${tx} ${ty}`);
+    svg.appendChild(p);
+  }
+</script>
+</body>
+</html>

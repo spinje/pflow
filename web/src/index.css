@@ -300,10 +300,10 @@ button.active {
   /* subtle kind-colored border (the edge flows into the icon TILE, not the border). */
   border: 1.5px solid color-mix(in srgb, var(--kind) 55%, transparent);
   border-radius: 12px;
-  overflow: hidden;
-}
-/* beautiful: let the connector stubs extend past the border to meet the edge */
-.node.compact {
+  /* visible on BOTH densities: connector stubs (compact), the batch deck, and the
+     border chip rail all straddle the card box. Rows have transparent backgrounds,
+     so the rounded corners need no clipping. (detailed was overflow:hidden until
+     the chip rail, 2026-06-10 — it silently clipped the deck on advanced cards.) */
   overflow: visible;
 }
 
@@ -458,13 +458,6 @@ button.active {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-/* the looped-leaf behavior mark on the category line (WorkflowNode) — identity in
-   kind color, behavior in loop amber */
-.loop-mark {
-  color: var(--loop);
-  margin-left: 5px;
-  font-size: 11px;
 }
 .param-value {
   flex: 1 1 auto;
@@ -715,28 +708,76 @@ button.active {
   right: 0;
   cursor: pointer;
 }
-/* member-count pill — the collapse affordance (▸ closed / ▾ open). ABSOLUTE on the
-   top-right border in BOTH states so it doesn't move across the fold; opaque bg
-   masks the border line under it. */
-.count-pill {
-  font-family: var(--mono);
-  font-size: 9px;
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--kind) 10%, var(--bg));
-  border: 1px solid color-mix(in srgb, var(--kind) 25%, transparent);
-  border-radius: 999px;
-  padding: 1px 7px;
-  white-space: nowrap;
+/* ---------- the border CHIP RAIL (ChipRail.tsx, 2026-06-10) ----------
+   Behavior modifiers (loop amber / batch purple) + the group's merged count-expander,
+   straddling the TOP border, right-aligned — in BOTH container states (header-parity:
+   nothing moves across the fold). Grammar: ROUND/capsule tinted chip = info; the one
+   SQUARE element (.group-toggle) = button. Reserved as the future overlay's status-
+   chip home (status joins leftmost). The rail extends 11px above the box; ELK doesn't
+   know — same straddle the old group-pill had, no layout impact. */
+.chip-rail {
+  position: absolute;
+  top: -11px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.count-pill .chev {
-  color: var(--kind);
-  margin-right: 3px;
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--chip, var(--batch)) 14%, var(--bg-node));
+  border: 1px solid color-mix(in srgb, var(--chip, var(--batch)) 45%, transparent);
+  color: var(--chip, var(--batch));
+}
+.chip svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--chip, var(--batch));
+}
+.chip-round {
+  width: 22px;
+  padding: 0;
+}
+.chip-loop {
+  --chip: var(--loop);
+}
+.chip-batch {
+  --chip: var(--batch);
+}
+
+/* the root IO card's count pill ("14 inputs") — same border-straddling species as
+   the rail, restyled to its 22px language so the two pill kinds match. */
+.count-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--kind) 14%, var(--bg-node));
+  border: 1px solid color-mix(in srgb, var(--kind) 40%, transparent);
+  border-radius: 999px;
+  padding: 0 9px;
+  white-space: nowrap;
 }
 .group-pill {
   position: absolute;
-  top: -9px;
-  right: 14px;
-  z-index: 3;
+  top: -11px;
+  right: 10px;
+  z-index: 5;
 }
 /* the collapsed card (leaf anatomy via .node.compact) — clicking the BODY selects,
    exactly like a leaf; the corner .group-toggle (below) is the only click toggle */
@@ -744,27 +785,34 @@ button.active {
   cursor: pointer;
 }
 
-/* container expand/collapse corner button (construction site: GroupNode
-   .group-toggle — design D, 2026-06-10: body = select, button = toggle).
-   Full button at rest (user-picked R1); hover brightens to the kind color. */
+/* the merged COUNT-EXPANDER (construction site: GroupNode .group-toggle — design D
+   evolved 2026-06-10: the count pill and the corner button became ONE rail element,
+   user-picked F1 via shoot-lab). Recursive step count + the A1 glyph; the rail's one
+   SQUARE element (7px radius — round = info, square = button). Body still = select;
+   this (+ dblclick) is the only toggle. */
 .group-toggle {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   height: 22px;
   border-radius: 7px;
-  display: grid;
-  place-items: center;
+  padding: 0 8px;
   box-sizing: border-box;
   cursor: pointer;
-  z-index: 4;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
   background: color-mix(in srgb, var(--kind) 12%, var(--bg-node));
   border: 1px solid color-mix(in srgb, var(--kind) 30%, transparent);
 }
+/* optical centering: the mono digits sit 1px high against the glyph (user-caught) */
+.group-toggle .toggle-count {
+  transform: translateY(1px);
+}
 .group-toggle svg {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   stroke: var(--text-muted);
   stroke-width: 1.8;
   fill: none;
@@ -772,16 +820,12 @@ button.active {
   stroke-linejoin: round;
 }
 .group-toggle:hover {
+  color: var(--text);
   background: color-mix(in srgb, var(--kind) 22%, var(--bg-node));
   border-color: color-mix(in srgb, var(--kind) 55%, transparent);
 }
 .group-toggle:hover svg {
   stroke: var(--kind);
-}
-/* keep the header's flex content (titles + badges) clear of the corner button */
-.group-card .node-header,
-.group .group-header {
-  padding-right: 34px;
 }
 /* the expanded region's selection ring (collapsed cards get it via .node.focused) */
 .group.focused {
@@ -830,16 +874,6 @@ button.active {
   border-radius: 4px;
   white-space: nowrap;
   border: 1px solid transparent;
-}
-.badge-loop {
-  background: rgba(240, 184, 108, 0.14);
-  color: var(--loop);
-  border-color: #5a4524;
-}
-.badge-batch {
-  background: rgba(199, 155, 240, 0.14);
-  color: var(--batch);
-  border-color: #4a3a5e;
 }
 .badge-unexpanded {
   background: rgba(240, 160, 122, 0.14);

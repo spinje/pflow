@@ -19,6 +19,7 @@ import { iconFor } from "../../utils/icons";
 import type { RFParam } from "../../types";
 import { NodeBadges } from "./Badges";
 import { BranchPorts } from "./BranchPorts";
+import { ChipRail } from "./ChipRail";
 
 type WorkflowNodeType = Extract<FlowNode, { type: "node" }>;
 
@@ -227,6 +228,8 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
       {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
+      {/* Behavior chips (loop/batch) on the top border — the rail (ChipRail.tsx). */}
+      <ChipRail node={node} />
 
       <div className="node-header">
         <div className="node-tile">
@@ -239,19 +242,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
           {/* Type line + description, in BOTH densities. The description (purpose, or
               node_id when absent) wraps to ≤2 lines; node_id (the ${ref} key) is on
               the tooltip + in the read panel. */}
-          <span className="node-category">
-            {categoryLabel(node)}
-            {/* Amber ↻ behavior mark for a looped leaf (user ask 2026-06-10):
-                compact cards otherwise say nothing about looping — the U alone
-                made the user ask "is this a loop?". Leaves keep their kind icon
-                (only sub-workflows swap to the loop glyph), so the mark rides
-                the meta line: identity in kind color, behavior in loop amber. */}
-            {node.loop && (
-              <span className="loop-mark" title="loops">
-                ↻
-              </span>
-            )}
-          </span>
+          <span className="node-category">{categoryLabel(node)}</span>
           <span className="node-name" title={node.ref.node_id}>
             {node.purpose || node.ref.node_id}
           </span>

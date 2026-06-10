@@ -15,16 +15,16 @@
 //     vs region classes) and the TD connector flares are collapsed-only (an
 //     expanded region's edges enter at the border center, not the icon column).
 //
-//   The member-count pill is ABSOLUTE on the top-right border in BOTH states
-//   (straddling it like a badge) so it, too, stays put across the fold; its
-//   chevron is the collapse affordance (▸ closed / ▾ open).
+//   The chip RAIL is ABSOLUTE on the top-right border in BOTH states (straddling
+//   it) so it, too, stays put across the fold: the host's behavior chips (loop /
+//   batch — ChipRail.tsx) + the merged COUNT-EXPANDER (`.group-toggle`, the one
+//   square element: recursive step count + expand/collapse glyph).
 //
-// The icon comes from the HOST node via groupIconFor: a looped sub-workflow shows
-// the loop glyph (amber — the LoopEdge color), a batch shows its batched node's
-// kind icon. The category line still names the container kind, so the swap costs
-// no identity. A host is NOT 1:1 with a group (H8) — only the host's primary
-// (outermost) group draws the title/badges. Clicking a group toggles collapse
-// (wired in GraphView's onNodeClick).
+// The icon comes from the HOST node via groupIconFor (its kind icon — behavior
+// like loop/batch rides the rail chips, never the tile: identity doesn't mutate).
+// A host is NOT 1:1 with a group (H8) — only the host's primary (outermost) group
+// draws the title/chips. Toggling collapse lives on the expander + double-click;
+// body clicks SELECT (design D, GraphView's onNodeClick).
 
 import { type CSSProperties, memo, useEffect } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
@@ -36,7 +36,7 @@ import { BATCH_COLOR, kindColor } from "../../utils/format";
 import { groupIconFor } from "../../utils/icons";
 import type { ContainerKind } from "../../types";
 import { useInteraction } from "../interaction";
-import { NodeBadges } from "./Badges";
+import { ChipRail } from "./ChipRail";
 import { PortRows } from "./PortRows";
 import { Connector } from "./WorkflowNode";
 
@@ -138,7 +138,6 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
           {hostNode?.purpose || title}
         </span>
       </div>
-      {showTitle && hostNode && <NodeBadges node={hostNode} max={1} />}
       {unexpanded > 0 && (
         <span className="badge badge-unexpanded" title="literal batch items that failed to expand">
           {unexpanded} unexpanded
@@ -166,28 +165,32 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
       {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
       {header}
-      <span className="count-pill group-pill">
-        <span className="chev">{collapsed ? "▸" : "▾"}</span>
-        {countLabel}
-      </span>
-      {/* Expand/collapse lives ONLY here (+ double-click): the card/region body
-          SELECTS like any node (design D). stopPropagation is load-bearing — a
-          button click must not also focus the container; the dblclick stop keeps
-          a fast double-press on the button from ALSO firing the node-level
-          dblclick toggle (net no-op flicker). */}
-      <span
-        className="group-toggle"
-        title={collapsed ? "Expand" : "Collapse"}
-        onClick={(e) => {
-          e.stopPropagation();
-          toggleGroup(id);
-        }}
-        onDoubleClick={(e) => e.stopPropagation()}
-      >
-        <svg viewBox="0 0 12 12" aria-hidden="true">
-          <path d={collapsed ? GLYPH_EXPAND : GLYPH_COLLAPSE} />
-        </svg>
-      </span>
+      {/* The border rail: the host's behavior chips (loop/batch — only the primary
+          group draws identity chrome) + the merged COUNT-EXPANDER (the count pill
+          and the corner button became one element, user-picked F1 via shoot-lab
+          2026-06-10: recursive step count + the A1 glyph, rounded-SQUARE — the
+          rail's one button among round info chips). Expand/collapse lives ONLY
+          here (+ double-click): the card/region body SELECTS like any node
+          (design D). stopPropagation is load-bearing — a button click must not
+          also focus the container; the dblclick stop keeps a fast double-press
+          on the button from ALSO firing the node-level dblclick toggle (net
+          no-op flicker). */}
+      <ChipRail node={showTitle ? hostNode : null}>
+        <span
+          className="group-toggle"
+          title={`${countLabel} — ${collapsed ? "expand" : "collapse"}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleGroup(id);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <span className="toggle-count">{memberCount}</span>
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d={collapsed ? GLYPH_EXPAND : GLYPH_COLLAPSE} />
+          </svg>
+        </span>
+      </ChipRail>
       {/* The workflow's declared IO as rows (PortRows — the leaf-row anatomy).
           COLLAPSED: a two-column area under the header — inputs left, outputs right
           BOTTOM-ANCHORED (ending at the last row: the in→out diagonal, user-decided

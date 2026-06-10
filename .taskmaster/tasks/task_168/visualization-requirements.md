@@ -292,6 +292,20 @@
   advanced only (bottom run TD / top rail LR; opaque bg; never zIndex-elevate the loop edge —
   it would paint over its own label). The read panel always carries the full spec.
 
+- **Batch/loop CHIP RAIL (2026-06-10, user-picked via 3-round shoot-lab):** behavior
+  modifiers are 22px tinted chips straddling the card's top border (ChipRail.tsx) —
+  loop = amber round ↻, batch = purple capsule `⧉ ×{count}` (literal) / `⧉ ×N`
+  (dynamic — the count is statically unknowable; the iterated source rides the
+  tooltip, NEVER a guessed number; the future run overlay fills the real count).
+  Groups append the merged COUNT-EXPANDER `[25 ⤢]` (count pill + corner button
+  became ONE rounded-square element — round = info, square = button; "nodes" word
+  + ▸ chevron died). RETIRED: the header batch badge (squeezed the description,
+  duplicated the deck), the category-line ↻ mark, the looped-sub-workflow tile-icon
+  swap (identity never mutates — behavior is border chrome). The io card's count
+  pill restyled to the same chip language. The rail is the RESERVED home for
+  live-overlay status chips (status joins leftmost). Deck + loop-rule rows + read
+  panel unchanged. Plan: `implementation/batch-chip-rail-plan.md`.
+
 ## Wanted / planned (NOT yet built)
 
 - **LR merge alignment residual:** the merge target sits ~8px off the straight row in LR (no LR
