@@ -97,18 +97,29 @@ item / progress-log entry — read those before rendering chips/groups/batches):
 - **`RFEdge.input_name=None` is COMMON, not rare** (output-`source:` edges,
   batch-`items:` edges, multi-role dedup). → attach the data-flow line at
   **node level**, never drop it. (H6.)
-- **`RFEdge.condition`** (branch edges only): the source-code condition that
-  selects this outcome (`"if len(items) > 5"` / `"else"`), AST-extracted
-  **fail-closed** from the decision node's `code` param (`_branch_conditions`
-  in react_flow.py — supported shapes documented there; anything else ships
-  `None`, absent beats wrong). The frontend shows it mid-edge (advanced
-  always; beautiful only while the condition node is focus-expanded) and in
-  the read panel's outcome table.
+- **`RFEdge.condition`** (branch edges + a DECISION's END edge): the source-code
+  condition that selects this outcome (`"if len(items) > 5"` / `"else"`),
+  AST-extracted **fail-closed** from the decision node's `code` param
+  (`_branch_conditions` in react_flow.py — supported shapes documented there;
+  anything else ships `None`, absent beats wrong). A decision's END edge is its
+  reserved **"end" outcome** (`is_decision` counts the end route — a dynamic
+  `next="end"` arm is an END edge, never a BRANCH), so it carries the `"end"`
+  condition; a non-decision's END edge (static `- next: end`) never does. An
+  outcome selected by multiple non-adjacent arms lists them verbatim
+  (`"if ok · else"`). The frontend shows conditions on the edge / fork rows
+  (advanced always; beautiful only while the condition node is focus-expanded)
+  and in the read panel's outcome table.
 - **`RFNode.is_group_host=True`** → the node is materialized as a group (a
   literal batch, or an expanded sub-workflow host). **Suppress its leaf box**;
   read its loop badge off the host node. A host is NOT 1:1 with a group — a
   dynamic-batch-of-subworkflow emits two groups with the same `host`. (H8 /
   progress-log "Deviation 2".)
+- **`RFNode.is_transform`** (2026-06-10): the code node is a provably pure data
+  reshape (inputs → `result`, no external effects, no `next` routing) — classified
+  **fail-closed** from its AST (`_is_transform_code` in react_flow.py; anything
+  unrecognized ships `False`). The frontend MUST read this fact, never re-derive
+  it (it cannot — it needs the AST). Mutually exclusive with the CONDITION role
+  by construction (a `next`-setter is never a transform).
 - **Batch truncation:** only ≤2 *representative* item-groups survive in
   `groups`, but `RFNode.batch.items` keeps **all N** descriptors + `batch.count`.
   Map a surviving group to its item by the member ref's

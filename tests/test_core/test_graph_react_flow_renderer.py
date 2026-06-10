@@ -608,13 +608,27 @@ def test_branch_condition_extraction_matrix() -> None:
         "y": "elif b",
         "z": "else",
     }
+    # NON-adjacent duplicate outcome: list each selecting arm verbatim (" · "-joined) —
+    # no inferred disjunction, so it can't mis-attribute, only abbreviate
+    assert _branch_conditions('if a:\n    next = "x"\nelif b:\n    next = "y"\nelif c:\n    next = "x"\n') == {
+        "x": "if a · elif c",
+        "y": "elif b",
+    }
+    # the continue-or-stop gate (check-validate's exact shape): the "end" outcome
+    # spans the first arm AND the else — listed, not bailed
+    gate = (
+        'if ok:\n    next: str = "end"\nelif round < cap:\n    next: str = "fix-tests"\nelse:\n    next: str = "end"\n'
+    )
+    assert _branch_conditions(gate) == {
+        "end": "if ok · else",
+        "fix-tests": "elif round < cap",
+    }
 
     # fail-closed: every unsupported shape yields {} (absent beats wrong)
     bails = [
         "result = 1\n",  # no next assignment
         "next = routes[size]\n",  # computed outcome
         'if a:\n    next = "x"\nif b:\n    next = "y"\n',  # two chains: guards unknowable
-        'if a:\n    next = "x"\nelif b:\n    next = "y"\nelif c:\n    next = "x"\n',  # non-adjacent duplicate
         'for i in items:\n    next = "x"\n',  # assigned inside another block
         'if a:\n    if b:\n        next = "x"\n',  # nested conditional
         'if a:\n    next = "x"\n    next = "y"\n',  # two assignments in one arm
@@ -625,9 +639,101 @@ def test_branch_condition_extraction_matrix() -> None:
         assert _branch_conditions(code) == {}, f"expected fail-closed bail for: {code!r}"
 
 
+def test_decision_end_edge_carries_the_end_outcome_condition() -> None:
+    """A continue-or-stop decider's END edge IS its "end" outcome — it ships the
+    extracted condition. A static `- next: end` route (non-decision) never does."""
+    code = 'issues: list\nresult: int = len(issues)\nif issues:\n    next: str = "work"\nelse:\n    next: str = "end"\n'
+    graph = build_graph({
+        "nodes": [
+            {"id": "gate", "type": "code", "params": {"code": code}, "_routes_to_end": True},
+            {"id": "work", "type": "code"},
+        ],
+        "edges": [{"from": "gate", "to": "work", "action": "work"}],
+    })
+    assert graph.is_decision(NodeId("gate"))  # precondition: 1 branch label + END route
+    rf = render_react_flow(graph)
+
+    end_conditions = [e.condition for e in rf.edges if e.kind == "end"]
+    assert end_conditions == ["else"]
+    branch = next(e for e in rf.edges if e.kind == "branch")
+    assert (branch.label, branch.condition) == ("work", "if issues")
+
+    # static `- next: end`: single-outcome routing — no condition on its END edge
+    static = build_graph({
+        "nodes": [{"id": "a", "type": "code", "params": {"code": "result = 1\n"}, "_routes_to_end": True}],
+    })
+    static_rf = render_react_flow(static)
+    assert [e.condition for e in static_rf.edges if e.kind == "end"] == [None]
+
+
 def test_branch_condition_dead_default_is_omitted() -> None:
     """A default before a chain WITH an else arm is dead code — no guessed label."""
     from pflow.core.workflow.graph.renderers.react_flow import _branch_conditions
 
     out = _branch_conditions('next = "dead"\nif a:\n    next = "x"\nelse:\n    next = "y"\n')
     assert out == {"x": "if a", "y": "else"}  # "dead" absent, not mislabeled
+
+
+# ── TRANSFORM classification (fail-closed purity test) ─────────────────────────
+
+
+def test_is_transform_classification_matrix() -> None:
+    """Pure reshapes classify; anything effectful/unrecognized fails CLOSED."""
+    from pflow.core.workflow.graph.renderers.react_flow import _is_transform_code
+
+    transforms = [
+        # the canonical reshape: inputs -> result dict
+        'a: str\nresult: dict = {"upper": a.upper(), "n": len(a)}\n',
+        # `impl: object` is the code-node input ANNOTATION convention, not the
+        # builtin — banning it cost two real corpus transforms (the regression)
+        'impl: object\nresult: int = impl.get("n", 0) if isinstance(impl, dict) else 0\n',
+        # raising is a pure failure path (the engine handles it)
+        'x: int\nif x < 0:\n    raise ValueError("negative")\nresult: int = x * 2\n',
+        # whitelisted stdlib + method calls on values
+        "import json\nraw: str\ndata = json.loads(raw)\nresult: list = sorted(data.keys())\n",
+        # the author's own helper is pure-checked like everything else
+        "def clean(s):\n    return s.strip().lower()\nt: str\nresult: str = clean(t)\n",
+    ]
+    for code in transforms:
+        assert _is_transform_code(code) is True, f"expected TRANSFORM for: {code!r}"
+
+    not_transforms = [
+        # routing — a pure decider presents as CONDITION, never both
+        'ok: bool\nresult: int = 1\nif ok:\n    next = "a"\nelse:\n    next = "end"\n',
+        "import subprocess\nresult = subprocess.run(['ls'])\n",  # effectful import
+        'with open("f") as f:\n    result = f.read()\n',  # file IO
+        'o = open\nresult = o("f").read()\n',  # ALIASED effectful builtin (the hole)
+        'result = getattr(x, "attr")\n',  # dynamic attribute access
+        "result = fetch(url)\n",  # unknown call — fail closed
+        "x: int\ny = x * 2\n",  # pure but produces no result
+        "result = 1\nimport os\n",  # os anywhere disqualifies
+        "result =\n",  # syntax error
+    ]
+    for code in not_transforms:
+        assert _is_transform_code(code) is False, f"expected NOT transform for: {code!r}"
+
+
+def test_transform_fact_ships_on_the_contract() -> None:
+    """is_transform is baked per node: transform code True; decider False; non-code False."""
+    transform_code = "text: str\nresult: str = text.upper()\n"
+    decider_code = 'ok: bool\nresult: int = 1\nif ok:\n    next: str = "work"\nelse:\n    next: str = "end"\n'
+    graph = build_graph({
+        "nodes": [
+            {"id": "reshape", "type": "code", "params": {"code": transform_code}},
+            {"id": "gate", "type": "code", "params": {"code": decider_code}, "_routes_to_end": True},
+            {"id": "work", "type": "shell"},
+        ],
+        "edges": [
+            {"from": "reshape", "to": "gate"},
+            {"from": "gate", "to": "work", "action": "work"},
+        ],
+    })
+    rf = render_react_flow(graph)
+
+    by_id = {n.ref.node_id: n for n in rf.nodes}
+    assert by_id["reshape"].is_transform is True
+    assert by_id["gate"].is_transform is False  # pure + next -> CONDITION's, not TRANSFORM's
+    assert by_id["gate"].is_decision is True
+    assert by_id["work"].is_transform is False  # non-code kinds never classify
+    # additive field round-trips the wire like everything else
+    json.dumps(asdict(rf), default=str)

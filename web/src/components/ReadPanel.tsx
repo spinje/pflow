@@ -55,7 +55,11 @@ export function ReadPanel({
         <div>
           {/* The authored truth: the canvas presents a decision code node as
               CONDITION, so the panel is where `type: code` stays mappable. */}
-          <span className="read-panel-kind">{node.is_decision ? `${node.kind} · condition` : node.kind}</span>
+          <span className="read-panel-kind">
+            {/* the canvas shows the ROLE (CONDITION/TRANSFORM); this line keeps it
+                mappable back to the file's `type: code` */}
+            {node.is_decision ? `${node.kind} · condition` : node.is_transform ? `${node.kind} · transform` : node.kind}
+          </span>
           <h2>{node.ref.node_id}</h2>
         </div>
         <button className="icon-button" onClick={onClose} title="Close">
@@ -72,7 +76,8 @@ export function ReadPanel({
         <dl className="facts">
           {branches.map((edge) => (
             <div className="fact" key={edge.id}>
-              <dt>→ {edge.label}</dt>
+              {/* an END edge has no label — it is the reserved "end" outcome */}
+              <dt>→ {edge.label ?? "end"}</dt>
               <dd>{edge.condition ?? "—"}</dd>
             </div>
           ))}

@@ -40,10 +40,17 @@
   (progressive disclosure). Advanced shows them all.
 - **Forks are explicit:** a decision node shows one **labeled** source handle per outcome
   on its border (n8n-Switch style), each line to its target — in **both** densities.
+- **A continue-or-stop gate IS a decision; "end" is a real outcome (2026-06-10).**
+  `is_decision` counts the reserved end route (`if ok: next="end" else: next="fix"` —
+  the model's old ≥2-branch-labels rule missed 4 of the corpus's 6 deciders). The
+  "end" outcome renders LAST as a faint fork row (LR) and its condition rides the
+  END edge (pill on the final approach into the end dot in TD; read-panel row
+  `→ end`). A static `- next: end` stays a non-decision.
 - **Branch conditions are extracted FAIL-CLOSED, never guessed.** `RFEdge.condition`
   ("if len(items) > 5" / "else") comes from AST analysis of the decision node's code
   (`_branch_conditions`, react_flow.py); unsupported shapes ship `None` and the UI
-  shows nothing — an absent label beats a wrong one.
+  shows nothing — an absent label beats a wrong one. An outcome selected by multiple
+  non-adjacent arms LISTS them verbatim (`"if ok · else"`) — still nothing inferred.
 - **Two density modes from one model:** advanced (detailed cards + ports + params + wiring)
   and beautiful (compact, type-colored). Same data, different detail — not two apps.
 - **Packaging:** base `pip install pflow` gains no bundle; `pflow[ui]` serves it offline;
@@ -83,6 +90,19 @@
 ## Implemented
 
 - Catalog → per-workflow graph; `?workflow=` auto-load.
+- **TRANSFORM pseudo-kind (2026-06-10):** a code node whose AST provably only
+  reshapes inputs into `result` (no effects, no `next`) presents as TRANSFORM —
+  cyan `#5fd4dd` + shuffle glyph (user-picked via shoot-lab). Classified
+  FAIL-CLOSED in Python (`RFNode.is_transform`, `_is_transform_code`); the
+  frontend reads the fact (it can't re-derive — needs the AST). Corpus: 10/20
+  unique code nodes classify, 0 false positives. Mutually exclusive with
+  CONDITION by construction (a `next`-setter is never a transform). *Considered
+  + deferred:* Tines-style sub-modes (extract/dedupe/message-only) — intent
+  inference from arbitrary Python breaks the fail-closed bar, and the card's
+  `purpose` line already names the specifics; explode/implode map to pflow
+  batch, "automatic" to the llm kind, delay/throttle have no pflow analog. The
+  higher-value refinement is Level-2 result-shape extraction (literal `result`
+  dict keys → real output rows; 6/10 corpus transforms qualify).
 - Collapse/expand containers (re-layout); focus+context (dim non-incident); LR/TD toggle;
   advanced/beautiful density toggle.
 - Click-to-read panel (full params/prompts/code, source file:line).
@@ -101,6 +121,29 @@
   cards behave like nodes: ELK lays them into the spine, TD icon-column ports +
   connector flares, gradient blends IO teal ↔ the step's kind color. Pure visual
   policy, not contract edges; the per-port data lines are unchanged.
+- **LR ICON-ROW SPINE + ROW PORTS (2026-06-10):** LR control handles sit on the
+  ICON ROW (`ICON_ROW_Y` — in left / out right at the SAME height; the trunk passes
+  straight THROUGH the node) with fixed ELK ports + a LEFT tile flare (the TD
+  connector language rotated) + a kind-colored EXIT DOT on the right border (E1,
+  user-picked via lab — no right flare: the tile is at the card's left; hasOutgoing
+  is handle-aware so LR deciders light no icon-row exit).
+  Different-height cards sit header-to-header on ONE line. Every visible row also
+  declares a port (`rowAnchorsFor`); priorities are WEIGHTS: trunk 100 (a 13-binding
+  bundle at 5 out-voted 10 — measured), bindings 5. The io card's rows carry an
+  INPUTS/OUTPUTS caption for GRID PARITY with group-card columns, so spine-aligned
+  card pairs ALSO get straight binding bundles (was a constant 52px jog); leaf↔card
+  bindings have no parity guarantee (honest geometry). All test-pinned ≤1px.
+- **Containers SELECT on click; toggle = corner button (design D, 2026-06-10):**
+  a container's body focuses + opens the read panel (host node) like any node; the
+  `.group-toggle` corner button (A1 arrows-out/in, full-at-rest, both states) and
+  double-click are the only toggles. Selecting lights the whole UNIT (descendants +
+  internal wiring + external bindings; hidden data lines reveal in beautiful) AND,
+  in beautiful, expands the container's own IO ROWS + each binding's far end
+  (revealed lines land row-to-row — node-level they DEDUPE into one mislabeled
+  line; same-day user catch). IO-touching data lines never carry a floating label
+  (the rows name the fields). Batched leaves get no button (nothing to open). Deep
+  links select containers by name (`focus=<sub-workflow name>` → representative
+  group). Plan + decisions: `implementation/container-select-plan.md`.
 - **Fork handles** (labeled, both densities).
 - **Branch labels at the target entry (2026-06-10):** in TD the outcome label sits on the
   edge just above its target's left side (bare text, shadow halo, +4px nudge); error pills

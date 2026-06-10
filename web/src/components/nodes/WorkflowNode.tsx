@@ -13,7 +13,7 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 
 import type { FlowNode } from "../../graph/flow";
 import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
-import { ICON_COL_X, METRICS } from "../../graph/metrics";
+import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
 import { categoryLabel, collapseWhitespace, nodeColor, parseTemplate, previewValue, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
 import type { RFParam } from "../../types";
@@ -60,6 +60,17 @@ const CONNECTOR_BOTTOM = [
   `L${CONN.w},0 L0,0 L0,${CONN.baseApron}`,
   `A${TIP_L},${CONN.coveH} 0 0 1 ${TIP_L},${CONN_H - CONN.stemH} Z`,
 ].join(" ");
+// The LR flare: CONNECTOR_TOP transposed ((x,y) → (y,x); a reflection, so the arc
+// sweep flags flip) — the edge arrives HORIZONTALLY at the icon row and flows into
+// the tile's LEFT border. Element is CONN_H wide × CONN.w tall. There is no RIGHT
+// tile flare: the tile sits at the card's left, so the outgoing edge leaves the
+// card's right BORDER at the icon row, far from the tile — no cove to draw.
+const CONNECTOR_LEFT = [
+  `M0,${TIP_L} L0,${TIP_R} L${CONN.stemH},${TIP_R}`,
+  `A${CONN.coveH},${TIP_L} 0 0 1 ${BASE_Y},${CONN.w}`,
+  `L${CONN_H},${CONN.w} L${CONN_H},0 L${BASE_Y},0`,
+  `A${CONN.coveH},${TIP_L} 0 0 1 ${CONN.stemH},${TIP_L} Z`,
+].join(" ");
 // Anchor offset from the tile's padding box (the containing block for an absolutely
 // positioned child): +tileBorder would put the element's end at the border's OUTER
 // edge; subtracting sink+apron drops the landing line baseSink px inside the border
@@ -95,7 +106,22 @@ function ParamValue({ param }: { param: RFParam }): JSX.Element {
 // transformed, outside-the-box element was mis-measured by React Flow). TD/beautiful only.
 // Exported for GroupNode: a COLLAPSED group renders the same card anatomy (tile +
 // flares), so edges flow into its icon exactly like a leaf's.
-export function Connector({ side }: { side: "top" | "bottom" }): JSX.Element {
+export function Connector({ side }: { side: "top" | "bottom" | "left" }): JSX.Element {
+  if (side === "left") {
+    // Horizontal variant (LR): anchored to the tile's LEFT edge, vertically
+    // centered on the tile (== the icon row, where the LR control handles sit).
+    return (
+      <div
+        className="node-connector node-connector-left"
+        style={{ width: CONN_H, height: CONN.w, right: CONN_ANCHOR }}
+        aria-hidden="true"
+      >
+        <svg viewBox={`0 0 ${CONN_H} ${CONN.w}`}>
+          <path d={CONNECTOR_LEFT} />
+        </svg>
+      </div>
+    );
+  }
   const anchor: CSSProperties = side === "top" ? { bottom: CONN_ANCHOR } : { top: CONN_ANCHOR };
   return (
     <div
@@ -136,14 +162,24 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   // the tile, so a tile-anchored flare would sit mid-card, away from the outgoing edge.
   const topConnector = direction === "TD" && !detailed && hasIncoming;
   const bottomConnector = direction === "TD" && !detailed && !expanded && hasOutgoing;
-  // In TD the control handles sit on the icon column (ICON_COL_X = tile center — the
-  // SAME x layout.ts declares to ELK as the node's ports, so columns align icon-to-icon)
-  // and are pulled INWARD toward the tile (top/bottom offset) so the edge terminates
-  // closer to the tile — letting the connector flare be short instead of bridging the
-  // full header padding. NODE_IN is Position.Top (offset down), NODE_OUT is
-  // Position.Bottom (offset up).
-  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : undefined;
-  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : undefined;
+  // LR/beautiful: the incoming edge flows into the tile's LEFT border via the
+  // horizontal flare. No right-side tile flare — the tile sits at the card's left;
+  // the outgoing edge leaves the card's right border at the icon row, plain.
+  const leftConnector = direction === "LR" && !detailed && hasIncoming;
+  // Control handles sit on the ICON LINE — TD: the icon column (ICON_COL_X = tile
+  // center, the SAME x layout.ts declares to ELK as ports, so columns align
+  // icon-to-icon), LR: the icon ROW (ICON_ROW_Y = header center — in on the left,
+  // out on the right at the SAME height, so the trunk passes straight through;
+  // layout.ts declares matching LR ports). The flare-side handle is pulled INWARD
+  // toward the tile (5px) so the edge terminates closer in — letting the flare be
+  // short instead of bridging the full header padding.
+  const topHandleStyle =
+    direction === "TD" ? { left: ICON_COL_X, top: 5 } : { top: ICON_ROW_Y, left: 5 };
+  // right: 5 tucks the OUT terminus 5px UNDER the card (edges render behind
+  // nodes), so the line emerges through the border — RF otherwise anchors a
+  // right handle just OUTSIDE it, leaving a 2px unplugged gap (user-caught).
+  const bottomHandleStyle =
+    direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : { top: ICON_ROW_Y, right: 5 };
 
   // React Flow caches handle positions; moving them (LR↔TD flips the border handles
   // from the sides to the icon column; focus-expansion adds/removes the per-row
@@ -190,12 +226,14 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
           under the flare. */}
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
+      {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
 
       <div className="node-header">
         <div className="node-tile">
           <img className="node-icon-img" src={iconFor(node)} alt="" />
           {topConnector && <Connector side="top" />}
           {bottomConnector && <Connector side="bottom" />}
+          {leftConnector && <Connector side="left" />}
         </div>
         <div className="node-titles">
           {/* Type line + description, in BOTH densities. The description (purpose, or

@@ -274,6 +274,73 @@ function leafSize(
   return { width, height: HEADER_HEIGHT + rows * ROW_HEIGHT + ROW_PADDING };
 }
 
+/** Where each ROW handle sits inside its node box — the LR layout's PORT
+ *  declarations (layout.ts): with fixed ports ELK aligns ROW-to-ROW, so a bundle
+ *  of bindings between two cards runs dead straight instead of jogging by the
+ *  cards' constant grid offset (measured 52px on run-from-plan — user-caught
+ *  2026-06-10). The y math mirrors the components' render order exactly:
+ *  WorkflowNode body = params → outputs → loop rows, then BranchPorts below;
+ *  IOCardNode/GroupNode = `.io-rows` chrome (METRICS.ioRowsChrome) + optional
+ *  column label + rows, outputs column BOTTOM-ANCHORED (the stagger). Only the
+ *  role-side handles edges can actually use are anchored; loop rows carry only
+ *  the self-loop (never in ELK). An EXPANDED group returns none — an ELK port on
+ *  a COMPOUND node crashes elkjs under INCLUDE_CHILDREN (test-pinned). */
+export type RowAnchor = { handle: string; side: "left" | "right"; y: number };
+
+export function rowAnchorsFor(n: FlowNode): RowAnchor[] {
+  const mid = ROW_HEIGHT / 2;
+  if (n.type === "node") {
+    const { node, density, direction, outputFields, branchLabels, expanded } = n.data;
+    const anchors: RowAnchor[] = [];
+    let row = 0;
+    if (density === "detailed" || expanded) {
+      for (const p of node.params) {
+        anchors.push({ handle: paramHandle(p.name), side: "left", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
+      }
+      for (const f of outputFields) {
+        anchors.push({ handle: outputHandle(f), side: "right", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
+      }
+      if (node.loop) row += node.loop.cap != null ? 2 : 1;
+    }
+    if (direction === "LR") {
+      for (const label of branchLabels) {
+        anchors.push({ handle: branchHandle(label), side: "right", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
+      }
+    }
+    return anchors;
+  }
+  if (n.type === "io") {
+    if (!n.data.rowsVisible) return [];
+    const { kind, ports } = n.data;
+    // ioLabelH: the card's rows carry a column caption (grid parity with a group
+    // card's IO columns — both grids are header + chrome + label + rows).
+    const top = HEADER_HEIGHT + METRICS.ioRowsChrome + METRICS.ioLabelH;
+    return ports.map((p, i) => ({
+      handle: kind === "input" ? portHandle(p.id) : portTargetHandle(p.id),
+      side: kind === "input" ? ("right" as const) : ("left" as const),
+      y: top + i * ROW_HEIGHT + mid,
+    }));
+  }
+  if (n.type === "group" && n.data.collapsed && n.data.ioRowsVisible) {
+    const { inputs, outputs } = n.data;
+    const top = HEADER_HEIGHT + METRICS.ioRowsChrome + METRICS.ioLabelH;
+    const stagger = ioRowsCount(inputs.length, outputs.length) - outputs.length;
+    return [
+      ...inputs.map((p, i) => ({
+        handle: portTargetHandle(p.id),
+        side: "left" as const,
+        y: top + i * ROW_HEIGHT + mid,
+      })),
+      ...outputs.map((p, j) => ({
+        handle: portHandle(p.id),
+        side: "right" as const,
+        y: top + (stagger + j) * ROW_HEIGHT + mid,
+      })),
+    ];
+  }
+  return [];
+}
+
 // Control-flow edge kinds — these connect at a node's NODE_IN/NODE_OUT (the trunk),
 // so they drive the icon connector stubs. data_flow lands on param rows; loop is a
 // self-arc — neither implies a trunk in/out. Exported for layout.ts (straightness
@@ -304,6 +371,21 @@ export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet
     if (g.id === focus) focusWrapper = g;
     const owner = g.parent ?? g.id;
     for (const m of g.members) ioOwner.set(m, owner);
+  }
+  // Selecting a CONTAINER (workflow/batch group) expands "just its inputs and
+  // outputs" (user-decided 2026-06-10): the focus acts as ALL of its IO ports —
+  // each port's owner IS the group, so the card/region renders its IO rows, and
+  // every binding's far end expands too. Without this, a selected card's 13
+  // bindings re-anchor node-level, DEDUPE into one line, and the surviving label
+  // single-names the first port — actively misleading.
+  if (!focusWrapper) {
+    const container = graph.groups.find((g) => g.id === focus && (g.kind === "workflow" || g.kind === "batch"));
+    if (container) {
+      const ports = graph.groups
+        .filter((w) => (w.kind === "input_wrapper" || w.kind === "output_wrapper") && w.parent === container.id)
+        .flatMap((w) => w.members);
+      if (ports.length > 0) focusWrapper = { members: ports };
+    }
   }
   const foci = new Set<string>(focusWrapper ? focusWrapper.members : [focus]);
   // Only a leaf card can expand to its advanced body; a group host has no card and
@@ -422,6 +504,24 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
         conds[e.label] = e.condition;
         branchConditionsByNode.set(e.source, conds);
       }
+    }
+  }
+  // The reserved "end" OUTCOME: a decision's END edge is its stop arm (`if ok:
+  // next="end"` — the model counts it toward is_decision, and the contract attaches
+  // the extracted condition to that END edge). A SEPARATE pass so "end" always
+  // reads LAST among the fork rows — forward outcomes first, stop last — regardless
+  // of contract edge order. A non-decision's END edge (static `- next: end`) is
+  // single-outcome routing and gets no row.
+  const decisionIds = new Set(graph.nodes.filter((n) => n.is_decision).map((n) => n.id));
+  for (const e of graph.edges) {
+    if (e.kind !== "end" || !decisionIds.has(e.source)) continue;
+    const labels = branchLabelsByNode.get(e.source) ?? [];
+    if (!labels.includes("end")) labels.push("end");
+    branchLabelsByNode.set(e.source, labels);
+    if (e.condition) {
+      const conds = branchConditionsByNode.get(e.source) ?? {};
+      conds.end = e.condition;
+      branchConditionsByNode.set(e.source, conds);
     }
   }
 
@@ -616,7 +716,10 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       type: "io",
       position: { x: 0, y: 0 },
       width: rowsVisible ? IO_CARD_WIDTH : COMPACT_WIDTH,
-      height: rowsVisible ? HEADER_HEIGHT + ports.length * ROW_HEIGHT + ROW_PADDING : HEADER_HEIGHT,
+      // +ioLabelH: the rows carry an INPUTS/OUTPUTS column caption — GRID PARITY
+      // with a group card's IO columns (header + chrome + label + rows), so when
+      // the LR spine aligns two card headers their bindings align row-to-row too.
+      height: rowsVisible ? HEADER_HEIGHT + METRICS.ioLabelH + ports.length * ROW_HEIGHT + ROW_PADDING : HEADER_HEIGHT,
       data: {
         kind: wrapper.kind === "input_wrapper" ? "input" : "output",
         ports,
@@ -701,10 +804,18 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     const targetNode = nodeById.get(e.target);
     const sourceColor = sourceNode ? nodeColor(sourceNode) : kindColor("");
     const targetColor = targetNode ? nodeColor(targetNode) : kindColor("");
+    // An IO binding's floating label duplicates what the port ROWS already name
+    // (and a binding's label often single-names one side) — IO-touching data
+    // lines carry no label; the rows / read panel name the fields (user-caught
+    // 2026-06-10). Leaf-to-leaf data lines keep theirs (`stdout → data`).
+    const ioBinding = sourceNode?.io != null || targetNode?.io != null;
     // A labeled LR branch's condition lives on its BranchPorts ROW
     // (LeafData.branchConditions) — the edge pill is TD's home (no rows there)
     // and the re-anchored fallback's (a collapsed source has no rows to hold it).
-    const conditionOnRow = view.direction === "LR" && e.kind === "branch" && e.label != null && source === e.source;
+    // A decision's END edge is its "end" outcome and follows the same rule (its
+    // row is the "end" BranchPorts row).
+    const isOutcomeEdge = e.kind === "branch" ? e.label != null : e.kind === "end" && decisionIds.has(e.source);
+    const conditionOnRow = view.direction === "LR" && isOutcomeEdge && source === e.source;
     // LR target entries get their outcome name (TD-style bare text) whenever the
     // source's rows show — rows + target labels appear together.
     const lrOutcomeLabel = view.direction === "LR" && e.kind === "branch" && rowsVisible(e.source);
@@ -721,6 +832,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
         targetColor,
         rowsVisible(e.source) && !conditionOnRow,
         lrOutcomeLabel,
+        ioBinding,
       ),
     );
   }
@@ -843,7 +955,12 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     const kind = e.data?.kind;
     if (!kind || kind === "loop" || !CONTROL_KINDS.has(kind)) continue;
     inControlFlow.add(e.target);
-    outControlFlow.add(e.source);
+    // hasOutgoing means "the trunk leaves THIS node's NODE_OUT" — it drives the
+    // exit decorations (TD bottom flare, LR exit dot). HANDLE-aware on purpose:
+    // an LR decision's outcomes leave their labeled BranchPorts ROWS, not
+    // NODE_OUT, so a pure decider must not light an exit at the icon row. (In TD
+    // forks fan from NODE_OUT, so the handle check changes nothing there.)
+    if (e.sourceHandle === NODE_OUT) outControlFlow.add(e.source);
   }
   for (const n of flowNodes) {
     if (n.type === "node" || n.type === "group" || n.type === "io") {
@@ -906,6 +1023,12 @@ function sourceHandleFor(
   // the icon) and its label rides the edge instead (toFlowEdge), like the references.
   if (isRealSource && edge.kind === "branch" && edge.label && direction === "LR") {
     return branchHandle(edge.label);
+  }
+  // A decision's END edge leaves its "end" outcome row — the row exists exactly
+  // when the source is a decision (buildFlow appends "end" to its branchLabels),
+  // mirroring BranchPorts' render condition (the silent-drop rule).
+  if (isRealSource && edge.kind === "end" && direction === "LR" && nodeById.get(edge.source)?.is_decision) {
+    return branchHandle("end");
   }
   if (rowsVisible && isRealSource && edge.kind === "data_flow" && edge.output_field) {
     if (outputFieldsByNode.get(edge.source)?.has(edge.output_field)) {
@@ -972,6 +1095,7 @@ function toFlowEdge(
   targetColor: string,
   conditionShown = false,
   lrOutcomeLabel = false,
+  ioBinding = false,
 ): FlowEdge {
   const isData = edge.kind === "data_flow";
   // ALL control flow draws via the custom "gradient" edge, which owns the stroke
@@ -998,7 +1122,7 @@ function toFlowEdge(
       ? direction === "TD" || lrOutcomeLabel
         ? (edge.label ?? undefined)
         : undefined
-      : isData && !detailed && !rowToRow
+      : isData && !detailed && !rowToRow && !ioBinding
         ? dataFlowLabel(edge)
         : (edge.label ?? undefined);
   // No arrowheads — clean lines flow straight into the node borders (the seamless
@@ -1029,7 +1153,14 @@ function toFlowEdge(
       targetColor,
       condition: edge.condition ?? undefined,
       conditionShown: conditionShown && edge.condition != null,
-      outcome: edge.kind === "branch" ? (edge.label ?? undefined) : undefined,
+      // A decision's END edge carries the reserved "end" outcome (only decision END
+      // edges ship a condition, so the condition's presence is the decision test here).
+      outcome:
+        edge.kind === "branch"
+          ? (edge.label ?? undefined)
+          : edge.kind === "end" && edge.condition != null
+            ? "end"
+            : undefined,
     },
     hidden: defaultHidden,
   };
@@ -1053,20 +1184,43 @@ function stripDim(className: string | undefined): string {
 // port's id (a row). An edge is incident if its flow endpoints OR its original
 // endpoints (`data.from`/`to`) touch the focus, so a single port reveals just its
 // own lines even though its edges re-anchor onto the shared owner node.
-function edgeTouchesFocus(e: FlowEdge, focus: string): boolean {
-  return e.source === focus || e.target === focus || e.data?.from === focus || e.data?.to === focus;
-}
-
 export function applyFocus(
   nodes: FlowNode[],
   edges: FlowEdge[],
   focus: string | null,
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
-  const connected = new Set<string>();
+  // Selecting a CONTAINER (focus = a group node's id) selects the whole UNIT:
+  // the group, ALL its descendants, and every edge touching any of them —
+  // internal wiring and external bindings light up, everything else dims
+  // (design D, 2026-06-10: the card/region body SELECTS; the corner button
+  // toggles). For a leaf/port focus the unit is just the focus id, which
+  // preserves the original single-id incidence exactly.
+  const unit = new Set<string>();
   if (focus) {
-    connected.add(focus);
+    unit.add(focus);
+    if (nodes.some((n) => n.id === focus && n.type === "group")) {
+      const childrenByParent = new Map<string, string[]>();
+      for (const n of nodes) {
+        if (!n.parentId) continue;
+        const siblings = childrenByParent.get(n.parentId) ?? [];
+        siblings.push(n.id);
+        childrenByParent.set(n.parentId, siblings);
+      }
+      const queue = [focus];
+      while (queue.length > 0) {
+        for (const child of childrenByParent.get(queue.pop()!) ?? []) {
+          unit.add(child);
+          queue.push(child);
+        }
+      }
+    }
+  }
+  const touches = (e: FlowEdge): boolean =>
+    unit.has(e.source) || unit.has(e.target) || (e.data != null && (unit.has(e.data.from) || unit.has(e.data.to)));
+  const connected = new Set<string>(unit);
+  if (focus) {
     for (const e of edges) {
-      if (edgeTouchesFocus(e, focus)) {
+      if (touches(e)) {
         connected.add(e.source);
         connected.add(e.target);
       }
@@ -1086,7 +1240,9 @@ export function applyFocus(
     isLR && e.data?.outcome != null && e.source === e.data.from && leafById.has(e.source);
   if (focus) {
     for (const e of edges) {
-      if (e.data?.kind !== "branch" || e.data.condition == null) continue;
+      // Outcome edges: branches, plus a decision's END edge (its "end" outcome —
+      // clicking the end dot answers "why did flow stop here?").
+      if ((e.data?.kind !== "branch" && e.data?.kind !== "end") || e.data.condition == null) continue;
       if (e.target !== focus && e.data.to !== focus) continue;
       if (!rowReveals(e)) continue;
       const conds = revealBySource.get(e.source) ?? {};
@@ -1116,7 +1272,7 @@ export function applyFocus(
     return { ...n, data: { ...n.data, focused, dimmed, ...(n.type === "node" ? { revealedConditions } : {}) } } as FlowNode;
   });
   const outEdges = edges.map((e) => {
-    const incident = focus != null && edgeTouchesFocus(e, focus);
+    const incident = focus != null && touches(e);
     // A default-hidden edge (beautiful mode's data-flow lines) is revealed when it
     // touches the focus — "show me this node's / port's data wiring." Edges hidden
     // by the build stay hidden otherwise; control edges are never default-hidden.
@@ -1140,7 +1296,7 @@ export function applyFocus(
     // the LR row arm). The pill is otherwise governed by conditionShown.
     const conditionRevealed =
       focus != null &&
-      e.data?.kind === "branch" &&
+      (e.data?.kind === "branch" || e.data?.kind === "end") &&
       e.data.condition != null &&
       (e.target === focus || e.data.to === focus) &&
       !rowReveals(e)

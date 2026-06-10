@@ -154,26 +154,36 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     else fitView({ padding: 0.2, duration: 200 });
   }, [status, fitKey, fitView, nodeParam, nodesInitialized, getNodes]);
 
+  const toggleGroup = useCallback((groupId: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }, []);
+
   const onNodeClick = useCallback((_: unknown, node: Node) => {
-    if (node.type === "group") {
-      setCollapsed((prev) => {
-        const next = new Set(prev);
-        if (next.has(node.id)) next.delete(node.id);
-        else next.add(node.id);
-        return next;
-      });
-      return;
-    }
     if (node.type === "io") {
-      // The root IO card TOGGLES like a container (its focus-expansion is its open
-      // state, so a second click must close it — user-caught 2026-06-10).
+      // The root IO card TOGGLES (its focus-expansion IS its open state, so a
+      // second click must close it — user-caught 2026-06-10).
       setFocus((prev) => (prev === node.id ? null : node.id));
       setSelectedId((prev) => (prev === node.id ? null : node.id));
       return;
     }
+    // Leaves AND containers SELECT (design D, 2026-06-10): a container's body is a
+    // node like any other — focus + read panel; expand/collapse moved to the
+    // GroupNode corner button (via InteractionContext) and double-click.
     setFocus(node.id);
     setSelectedId(node.id);
   }, []);
+
+  const onNodeDoubleClick = useCallback(
+    (_: unknown, node: Node) => {
+      if (node.type === "group") toggleGroup(node.id);
+    },
+    [toggleGroup],
+  );
 
   const onPaneClick = useCallback(() => {
     setFocus(null);
@@ -184,14 +194,20 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // that port — its connections reveal, the row highlights. No read panel (a port
   // has no params).
   const interaction = useMemo(
-    () => ({ focusPort: (portId: string) => setFocus(portId) }),
-    [],
+    () => ({ focusPort: (portId: string) => setFocus(portId), toggleGroup }),
+    [toggleGroup],
   );
 
-  const selectedNode: RFNode | null = useMemo(
-    () => graph?.nodes.find((n) => n.id === selectedId) ?? null,
-    [graph, selectedId],
-  );
+  // A selected CONTAINER reads as its HOST node — purpose, params (bindings),
+  // loop/batch spec, source all live there. Wrapper groups have no host → no
+  // panel (the io-card panel stays a parked knob).
+  const selectedNode: RFNode | null = useMemo(() => {
+    if (!graph || !selectedId) return null;
+    const direct = graph.nodes.find((n) => n.id === selectedId);
+    if (direct) return direct;
+    const host = graph.groups.find((g) => g.id === selectedId)?.host;
+    return host ? (graph.nodes.find((n) => n.id === host) ?? null) : null;
+  }, [graph, selectedId]);
 
   // Collapse-all folds every collapsible container and clears focus (the focused
   // node is about to disappear into a box — a ring on a hidden node is meaningless).
@@ -253,6 +269,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
+            onNodeDoubleClick={onNodeDoubleClick}
+            zoomOnDoubleClick={false}
             onPaneClick={onPaneClick}
             nodesDraggable={false}
             nodesConnectable={false}
@@ -268,7 +286,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           {selectedNode && (
             <ReadPanel
               node={selectedNode}
-              branches={graph?.edges.filter((e) => e.kind === "branch" && e.source === selectedNode.id) ?? []}
+              branches={
+                // The outcome table: branch edges, plus a decision's END edge
+                // (its "end" stop arm — carries the extracted condition too).
+                graph?.edges.filter(
+                  (e) =>
+                    e.source === selectedNode.id &&
+                    (e.kind === "branch" || (e.kind === "end" && selectedNode.is_decision)),
+                ) ?? []
+              }
               onClose={() => setSelectedId(null)}
             />
           )}

@@ -43,6 +43,12 @@ Renderers consume `GraphModel`; they do not read IR. The legacy
   outgoing edge presence.
 - `GraphModel.is_decision()`, `is_terminal()`, and `shadowed()` are derived
   views. Do not store duplicate decision/terminal/suppression flags.
+- `is_decision()` counts OUTCOMES, not just branch labels: BRANCH labels plus the
+  reserved "end" route when an END edge exists (a dynamic `next="end"` arm becomes
+  an END edge, never a BRANCH — so a continue-or-stop gate like `if ok: next="end"
+  else: next="fix"` IS a decision). No branch labels at all (a static `- next: end`)
+  stays a non-decision. Changed 2026-06-10; the old ≥2-branch-labels rule missed
+  every loop gate in the corpus (4 of 6 real deciders).
 - `shadowed()` is a model-level view of structural-edge suppression. A
   structural edge is shadowed only by data-flow edges from the same structural
   source; top-level workflow input edges do not replace execution-order edges

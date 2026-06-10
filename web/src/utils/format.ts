@@ -103,23 +103,43 @@ export const BATCH_COLOR = "#c79bf0";
 // data-line color. Literal (not var()) for the same minimap/inline-style reasons.
 export const IO_COLOR = "#6fbfa8";
 
+// TRANSFORM — the second presented pseudo-kind: a code node whose AST provably
+// only reshapes data into `result` (RFNode.is_transform — classified FAIL-CLOSED
+// in Python; unlike is_decision the frontend cannot derive it, it needs the AST).
+// Cyan (user-picked via shoot-lab 2026-06-10): free hue space, clearly apart from
+// the muted file/IO teals, shell green, and the warm code/condition family. A pure
+// decider sets `next` and is excluded by the classifier, so CONDITION and
+// TRANSFORM can never both claim a node — the isCondition-first order below is
+// purely defensive.
+export const TRANSFORM_COLOR = "#5fd4dd";
+
+type RoleFacts = { kind: string; is_decision: boolean; is_transform: boolean };
+
 export function isCondition(node: { kind: string; is_decision: boolean }): boolean {
   // The kind gate is defensive: should branching ever extend beyond code nodes,
   // an llm/shell decider keeps its kind identity instead of lying.
   return node.is_decision && node.kind === "code";
 }
 
-/** The node's identity color: its kind color, or the condition color for a
- *  decision code node. Drives the card border/tile/category AND the edge
- *  gradients — keep every caller on this, not on raw kindColor(kind). */
-export function nodeColor(node: { kind: string; is_decision: boolean }): string {
-  return isCondition(node) ? CONDITION_COLOR : kindColor(node.kind);
+export function isTransform(node: { kind: string; is_transform: boolean }): boolean {
+  // Same defensive kind gate as isCondition.
+  return node.is_transform && node.kind === "code";
+}
+
+/** The node's identity color: its kind color, or the role color for a code node
+ *  presenting as CONDITION / TRANSFORM. Drives the card border/tile/category AND
+ *  the edge gradients — keep every caller on this, not on raw kindColor(kind). */
+export function nodeColor(node: RoleFacts): string {
+  if (isCondition(node)) return CONDITION_COLOR;
+  if (isTransform(node)) return TRANSFORM_COLOR;
+  return kindColor(node.kind);
 }
 
 // The small category line on a node card (the kind, e.g. "CLAUDE CODE"). Title-ish
-// uppercase; the human description (purpose) is the bold line below it. A decision
-// code node presents as CONDITION (role replaces kind — the Tines/n8n model).
-export function categoryLabel(node: { kind: string; is_decision: boolean }): string {
+// uppercase; the human description (purpose) is the bold line below it. A code
+// node's ROLE replaces its kind (the Tines/n8n model): CONDITION / TRANSFORM.
+export function categoryLabel(node: RoleFacts): string {
   if (isCondition(node)) return "CONDITION";
+  if (isTransform(node)) return "TRANSFORM";
   return node.kind.replace(/-/g, " ").toUpperCase();
 }

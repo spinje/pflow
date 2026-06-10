@@ -8,9 +8,9 @@
 
 import type { ELK, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk.bundled.js";
 
-import { CONTROL_KINDS, type Direction, type FlowEdge, type FlowNode } from "./flow";
+import { CONTROL_KINDS, type Direction, type FlowEdge, type FlowNode, rowAnchorsFor } from "./flow";
 import { NODE_IN, NODE_OUT } from "./handles";
-import { ICON_COL_X, METRICS } from "./metrics";
+import { ICON_COL_X, ICON_ROW_Y, METRICS } from "./metrics";
 
 // ELK is ~80% of the app bundle, and layoutGraph is already async — so it loads as
 // its own chunk on first layout instead of blocking the initial page. Cached: one
@@ -187,39 +187,82 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
     "elk.layered.crossingMinimization.forceNodeModelOrder": "true",
   };
 
-  // TD only: leaf nodes declare FIXED ports at the icon column. The control handles
-  // render there (WorkflowNode: left = ICON_COL_X), NOT at the node center — without
-  // ports ELK aligns box centers, so every chain/merge got a ~100px jog between the
-  // out-handle and the in-handle below it. Port-aware NETWORK_SIMPLEX aligns columns
-  // icon-to-icon: chains and end-sinks go dead straight, and exactly one branch of a
-  // fork/merge continues the trunk (the Tines pattern). LR handles are side-centered,
-  // which matches ELK's default anchors — no ports needed there.
+  // Card nodes declare FIXED control ports on the ICON LINE — TD: the icon column
+  // (ICON_COL_X), LR: the icon row (ICON_ROW_Y; user-decided 2026-06-10). The
+  // control handles render there, NOT at the node center — without ports ELK
+  // aligns box centers, so every chain/merge jogs by the cards' height/width
+  // difference. Port-aware NETWORK_SIMPLEX aligns the icon line itself: chains
+  // and end-sinks go dead straight, exactly one branch of a fork/merge continues
+  // the trunk (the Tines pattern), and in LR the headers of different-height
+  // cards sit on ONE line with the bodies hanging below. LR ROW handles get
+  // their own fixed ports too (`rowPorts`) so binding bundles align row-to-row.
   const portable = new Set<string>();
-  if (direction === "TD") {
+  for (const node of nodes) {
+    // Leaves, IO cards AND collapsed groups: all three render the same card
+    // anatomy with control handles on the icon LINE — TD: the icon column
+    // (ICON_COL_X), LR: the icon row (ICON_ROW_Y, the header's center; user-
+    // decided 2026-06-10 so the trunk passes straight THROUGH the node, in left /
+    // out right at the same height). Without the ports ELK aligns box centers and
+    // the trunk jogs at every height difference. EXPANDED groups render their
+    // handles on the icon line too (the trunk flows into the region's tile),
+    // but get NO ELK port: a port on a COMPOUND node crashes elkjs under
+    // INCLUDE_CHILDREN when an edge references it ("NEdge must have a source
+    // and target NNode specified" — found in-browser 2026-06-10, same crash
+    // family as considerModelOrder). ELK anchors region edges at the border
+    // default; smoothstep absorbs the offset to the rendered handle.
+    if (node.type === "node" || node.type === "io" || (node.type === "group" && node.data.collapsed)) portable.add(node.id);
+  }
+
+  // LR: row-bearing nodes (visible param/output/branch/IO rows) declare FIXED ports
+  // at each row handle's exact (side, y) — flow.ts rowAnchorsFor owns the y math.
+  // Port-aware NETWORK_SIMPLEX then aligns ROW-to-ROW, so a bundle of bindings
+  // between two cards runs dead straight instead of jogging by the cards' grid
+  // offset (measured: a constant 52px on run-from-plan, 2026-06-10). Expanded
+  // regions return no anchors (the compound-port crash, same rule as TD).
+  const rowPorts = new Map<string, Map<string, { side: "left" | "right"; y: number }>>();
+  if (direction === "LR") {
     for (const node of nodes) {
-      // Leaves, IO cards AND collapsed groups: all three render the same card
-      // anatomy with handles on the icon column (an IO card joins the control
-      // skeleton via the io-flow edges) — without their ports the trunk jogs at
-      // every collapsed sub-workflow / IO card. EXPANDED groups render their
-      // handles at the icon column too (the trunk flows into the region's tile),
-      // but get NO ELK port: a port on a COMPOUND node crashes elkjs under
-      // INCLUDE_CHILDREN when an edge references it ("NEdge must have a source
-      // and target NNode specified" — found in-browser 2026-06-10, same crash
-      // family as considerModelOrder). ELK anchors region edges at the border
-      // default; smoothstep absorbs the offset to the rendered handle.
-      if (node.type === "node" || node.type === "io" || (node.type === "group" && node.data.collapsed)) portable.add(node.id);
+      const anchors = rowAnchorsFor(node);
+      if (anchors.length > 0) {
+        rowPorts.set(node.id, new Map(anchors.map((a) => [a.handle, { side: a.side, y: a.y }])));
+      }
     }
   }
+  const rowPortId = (nodeId: string, handle: string): string => `${nodeId}::h:${handle}`;
+  const rowPortFor = (nodeId: string, handle: string | null | undefined): string | null =>
+    handle != null && rowPorts.get(nodeId)?.has(handle) ? rowPortId(nodeId, handle) : null;
 
   const toElk = (node: FlowNode): ElkNode => {
     const children = childrenByParent.get(node.id) ?? [];
     const elkNode: ElkNode = { id: node.id, width: node.width ?? 200, height: node.height ?? 60 };
+    // One port list per node: the control pair on the icon line (TD column /
+    // LR row) plus, in LR, a port per visible row handle.
+    const ports: NonNullable<ElkNode["ports"]> = [];
     if (portable.has(node.id)) {
+      ports.push(
+        direction === "TD"
+          ? { id: portIn(node.id), x: ICON_COL_X, y: 0, width: 0, height: 0 }
+          : { id: portIn(node.id), x: 0, y: ICON_ROW_Y, width: 0, height: 0 },
+        direction === "TD"
+          ? { id: portOut(node.id), x: ICON_COL_X, y: elkNode.height, width: 0, height: 0 }
+          : { id: portOut(node.id), x: elkNode.width ?? 0, y: ICON_ROW_Y, width: 0, height: 0 },
+      );
+    }
+    const anchors = rowPorts.get(node.id);
+    if (anchors) {
+      for (const [handle, a] of anchors) {
+        ports.push({
+          id: rowPortId(node.id, handle),
+          x: a.side === "left" ? 0 : (elkNode.width ?? 0),
+          y: a.y,
+          width: 0,
+          height: 0,
+        });
+      }
+    }
+    if (ports.length > 0) {
       elkNode.layoutOptions = { "elk.portConstraints": "FIXED_POS" };
-      elkNode.ports = [
-        { id: portIn(node.id), x: ICON_COL_X, y: 0, width: 0, height: 0 },
-        { id: portOut(node.id), x: ICON_COL_X, y: elkNode.height, width: 0, height: 0 },
-      ];
+      elkNode.ports = ports;
     }
     if (children.length > 0) {
       elkNode.children = children.map(toElk);
@@ -260,17 +303,38 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   // (beautiful mode's data-flow lines) — otherwise a node connected only by data
   // would float as a disconnected island. Only self-loops (the loop-back arcs,
   // drawn by LoopEdge) are excluded; ELK must not route a node to itself.
-  // An endpoint whose rendered handle is the icon-column trunk (NODE_IN/NODE_OUT on a
-  // ported leaf) connects to the matching ELK port; row-level handles (advanced data
-  // lines, IO rows) stay node-level — same anchor approximation as before.
+  // An endpoint whose rendered handle is the icon-column trunk (TD: NODE_IN/NODE_OUT
+  // on a ported leaf) or a declared LR row port connects to the matching ELK port;
+  // everything else stays node-level (ELK's default side-center anchor — what the
+  // rendered node-level handles already match).
   const elkEdges: ElkExtendedEdge[] = edges
     .filter((edge) => edge.source !== edge.target)
-    .map((edge) => ({
-      id: edge.id,
-      sources: [edge.sourceHandle === NODE_OUT && portable.has(edge.source) ? portOut(edge.source) : edge.source],
-      targets: [edge.targetHandle === NODE_IN && portable.has(edge.target) ? portIn(edge.target) : edge.target],
-      ...(straight.has(edge.id) ? { layoutOptions: { "elk.layered.priority.straightness": "10" } } : {}),
-    }));
+    .map((edge) => {
+      const source =
+        edge.sourceHandle === NODE_OUT && portable.has(edge.source)
+          ? portOut(edge.source)
+          : (rowPortFor(edge.source, edge.sourceHandle) ?? edge.source);
+      const target =
+        edge.targetHandle === NODE_IN && portable.has(edge.target)
+          ? portIn(edge.target)
+          : (rowPortFor(edge.target, edge.targetHandle) ?? edge.target);
+      // Row-to-row bindings ask for straightness too: the ports make alignment
+      // POSSIBLE, the priority makes NETWORK_SIMPLEX actually pay for it (without
+      // it ELK still aligns boxes and the bundle keeps the cards' chrome offset —
+      // measured 11px in the alignment test). The control SPINE is the hard rule:
+      // priorities are WEIGHTS, so a 13-binding bundle (13×5) out-votes a lone
+      // trunk edge at 10 (measured: preflight sat 233px off the spine) — 100 puts
+      // the trunk above any plausible bundle; bindings then align wherever the
+      // grids allow (grid parity makes card↔card bundles straight ANYWAY).
+      const rowToRow = source.includes("::h:") && target.includes("::h:");
+      const priority = straight.has(edge.id) ? "100" : rowToRow ? "5" : null;
+      return {
+        id: edge.id,
+        sources: [source],
+        targets: [target],
+        ...(priority ? { layoutOptions: { "elk.layered.priority.straightness": priority } } : {}),
+      };
+    });
 
   const root: ElkNode = {
     id: "root",

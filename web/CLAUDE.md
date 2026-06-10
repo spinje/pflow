@@ -90,6 +90,21 @@ Tests sit beside their subject.
   the presentation hides no other kind; the kind gate is defensive. No decision badge
   (same reasoning as the deleted loop badge); the read panel shows `code · condition`
   so the canvas stays mappable to `type: code` in the file.
+- **TRANSFORM is the second presented pseudo-kind (2026-06-10).** A pure-reshape **code**
+  node (`is_transform && kind === "code"` — `isTransform` in `utils/format.ts`) presents
+  as label `TRANSFORM`, the shuffle icon (`assets/icons/transform.svg`: two crossing
+  flows blending cyan→white, white chevrons), and the transform cyan
+  (`TRANSFORM_COLOR = #5fd4dd`, user-picked via shoot-lab — free hue space, apart from
+  the muted file/IO teals and shell green). UNLIKE is_decision the frontend CANNOT
+  derive this fact — it needs the AST; Python classifies it FAIL-CLOSED
+  (`_is_transform_code` in react_flow.py: provably pure reshape into `result`, no
+  effects, no `next`). A pure decider sets `next` and is excluded by the classifier,
+  so CONDITION/TRANSFORM never both claim a node (the isCondition-first order in
+  `nodeColor`/`categoryLabel` is defensive). Read panel shows `code · transform`.
+  Finer Tines-style modes (extract/dedupe/message-only) were considered and deferred —
+  sub-classifying intent from arbitrary Python is guesswork (breaks fail-closed), and
+  the `purpose` line already carries the specifics; explode/implode = pflow batch,
+  automatic = the llm kind, delay/throttle = N/A (no event-stream semantics).
 - **Density controls edges, not just node detail.** *Advanced* shows every edge.
   *Beautiful* shows only the control-flow skeleton: data-flow (`${ref}`) edges are built
   but `hidden`, and `applyFocus` reveals just the clicked node's data lines (hidden
@@ -174,7 +189,15 @@ Tests sit beside their subject.
   gets its outcome name at its entry — TD-style bare text ABOVE the line
   (`labelAnchor` Left arm; on-line struck the text) — so a reader finds where each
   row's line lands without tracing it. The read panel shows the untruncated
-  outcome → condition table (GraphView passes the node's branch edges).
+  outcome → condition table (GraphView passes the node's branch edges + a
+  decision's END edge, labeled "end"). **A decision's END edge is its reserved
+  "end" OUTCOME** (2026-06-10: `is_decision` counts the end route — `if ok:
+  next="end" else: next="fix"` gates ARE decisions): buildFlow appends `"end"`
+  LAST to the node's `branchLabels` (BranchPorts renders it as a faint row,
+  `.branch-port-end` — a real outcome that stops the flow), the LR end edge
+  leaves `branchHandle("end")`, and the END edge's `condition` follows the same
+  pill/row/reveal rules as a branch (incl. clicking the end dot — "why did flow
+  stop?"). A non-decision's END edge (static `- next: end`) is untouched.
   **TD** (no rows): an edge-colored `.edge-label` pill (target node's color, the
   standard pill rule — user-chosen 2026-06-10 over condition orange) rides
   `EdgeData.condition` on the FINAL APPROACH into its target, stacked above the
@@ -199,11 +222,38 @@ Tests sit beside their subject.
   through forks AND merges, user-decided); error-only targets order LAST among
   siblings (rightmost TD / bottom LR) via `forceNodeModelOrder` — the ONLY model-order
   option that survives `INCLUDE_CHILDREN` (every `considerModelOrder.strategy` value
-  crashes elkjs on a cross-hierarchy edge; bisected 2026-06-09).
-- **Icon connector flare (TD+beautiful).** A kind-colored SVG cove (`Connector` in
-  `WorkflowNode`, anchored as a child of `.node-tile`) makes a control edge appear to flow
-  **into the icon tile** — drawn only on sides that have a control edge (`hasIncoming`/
-  `hasOutgoing`, computed in `flow.ts buildFlow`). Three rules keep it gap-free; breaking any
+  crashes elkjs on a cross-hierarchy edge; bisected 2026-06-09). **LR has the same
+  icon-line discipline** (2026-06-10): control handles sit on the ICON ROW
+  (`ICON_ROW_Y` = header center — in on the left, out on the right at the SAME
+  height, so the trunk passes straight THROUGH the node), with matching fixed
+  ports; different-height cards then sit header-to-header on one line, bodies
+  hanging below. **LR also declares ROW ports**: every visible param/output/
+  branch/IO row gets a fixed port at its exact (side, y) — `flow.ts rowAnchorsFor`
+  owns the y math (mirrors the components' render order + `METRICS.ioRowsChrome`).
+  Ports only make alignment POSSIBLE; straightness priorities make ELK pay for
+  it, and they are WEIGHTS, not constraints: the control trunk carries **100**
+  (a 13-binding bundle at 5 each out-voted the old 10 — measured 233px off-spine),
+  row-to-row bindings carry **5**. The io card's rows carry an INPUTS/OUTPUTS
+  column caption for GRID PARITY with a group card's IO columns (one shared grid:
+  header + chrome + label + rows), so spine-aligned card pairs get straight
+  binding bundles simultaneously — leaf↔card bindings have no parity guarantee
+  and may keep small jogs (honest geometry). Expanded regions stay port-less
+  (the compound crash).
+- **Icon connector flare (beautiful; TD top/bottom + LR left).** A kind-colored SVG
+  cove (`Connector` in `WorkflowNode`, anchored as a child of `.node-tile`) makes a
+  control edge appear to flow **into the icon tile** — drawn only on sides that have
+  a control edge (`hasIncoming`/`hasOutgoing`, computed in `flow.ts buildFlow`). The
+  LR variant (`side="left"`, `CONNECTOR_LEFT` — the TOP path transposed, arc sweeps
+  flipped) lands on the tile's LEFT border at the icon row; there is NO right tile
+  flare — the tile sits at the card's left. The LR EXIT instead gets the **exit
+  dot** (`.exit-dot`, user-picked E1 from the exit-affordance lab 2026-06-10): a
+  kind-colored 10px dot straddling the right border at the icon row, pure
+  decoration (the invisible NODE_OUT handle is tucked 5px INSIDE the card so the
+  edge terminus hides under it — RF otherwise anchors a right handle just outside
+  the border, a visible 2px unplugged gap). Rendered by all three card components
+  on `hasOutgoing`, which is HANDLE-aware (`flow.ts` incidence post-pass counts
+  only edges leaving NODE_OUT): an LR decision's outcomes leave their BranchPorts
+  rows — which carry their own dots — so a pure decider lights no icon-row exit. Three rules keep it gap-free; breaking any
   one re-opens the historical gaps:
   1. The control `Handle`s stay on the node BORDER as direct, untransformed children — the
      only placement React Flow measures reliably. (A handle nested inside the transformed,
@@ -273,6 +323,32 @@ Tests sit beside their subject.
   index.css **including its `text-align: center`** — GroupNode owns the visual.
   Batch cards (and `.batched` leaves — unexpanded dynamic batches) draw a stacked
   DECK via pseudo-elements (the Tines stacked-copies look).
+- **Containers SELECT on click; expand/collapse is the corner button (design D,
+  user-decided 2026-06-10).** A container's body — collapsed card OR expanded
+  region/header — is a node like any other: click = focus + read panel (the panel
+  shows the group's HOST node, resolved in GraphView's `selectedNode`; wrapper
+  groups have no host → no panel). The ONLY single-click toggle is the
+  `.group-toggle` corner button GroupNode renders top-right in both states (A1
+  arrows-out/in glyphs, full button at rest, kind-color on hover — picked via
+  mockup lab; its `stopPropagation` is LOAD-BEARING, else the click also selects),
+  plus double-click anywhere on the container (`onNodeDoubleClick`;
+  `zoomOnDoubleClick={false}` on ReactFlow or every dblclick zooms). Batched
+  LEAVES get no button by construction — they render via WorkflowNode (nothing to
+  open). **Selecting a container selects the whole UNIT** (`applyFocus`): the
+  group, all descendants (flow `parentId` BFS), and every edge touching any of
+  them — internal wiring + external bindings light, the rest dims; in beautiful
+  the unit's hidden data lines reveal ("what feeds this box?" without opening
+  it). In beautiful, selecting a container ALSO expands "just its inputs and
+  outputs" (user-decided 2026-06-10): `expandTargets` treats a workflow/batch
+  group focus as ALL of its IO ports (child wrappers' members), so the card/
+  region renders its IO rows and each binding's far end expands too — every
+  revealed line lands row-to-row. Without this the bindings re-anchor
+  node-level and DEDUPE into one line whose surviving label single-names the
+  first port (actively misleading). Group select therefore re-layouts in
+  beautiful exactly like leaf focus-expansion (cached/animated/camera-anchored).
+  Deep links select containers BY NAME: `resolveNodeFlatId`
+  (viewParams.ts) resolves a group-host's node_id to its representative group
+  (skipping memberless batch shells), so `?focus=<sub-workflow name>` works.
 - **A SHELL batch group (no direct members) is never rendered.** The contract models
   "batched X" as batch-wrapping-X, but presentationally batch is a MODIFIER (deck +
   ×N badge), not a box to travel through (user decision 2026-06-10): a batched LEAF
@@ -280,8 +356,9 @@ Tests sit beside their subject.
   batched SUB-WORKFLOW is a sub-workflow WITH batch — the workflow group reparents
   past the shell (`effectiveParent`), becomes the host's representative
   (`groupsByHost` skips shells → edges/title/loop land on it), gets the deck from
-  `hostNode.batch`, and clicking its collapsed card opens the sub-workflow body
-  directly. Literal batches (real item-copy members) keep their container.
+  `hostNode.batch`, and its corner toggle opens the sub-workflow body directly
+  (one toggle — no shell box between). Literal batches (real item-copy members)
+  keep their container.
   `collapse.ts collapsibleGroupIds` excludes shells (they can't be toggled and must
   not inflate the N/M count).
 - **IO is ROWS on the workflow's OWN node — never a floating table (2026-06-10
@@ -341,8 +418,10 @@ Tests sit beside their subject.
   (`assignDataRails`): the data edge's middle segment centers in the clear gap
   between the endpoint boxes (data.railX/railY → DataEdge) so a wrap never hugs a
   node border. Decision forks render as labeled border handles (`branchHandle`) in
-  both densities; in beautiful, a revealed data line is
-  labeled with what flows (`output_field → input_name`).
+  both densities; in beautiful, a revealed LEAF-TO-LEAF data line is labeled with
+  what flows (`output_field → input_name`) — but an IO-touching binding carries NO
+  label (the port rows name the fields, and a binding label often single-names one
+  side; user-caught 2026-06-10), and any line landing row-to-row drops it too.
 - **Errors never blank the canvas.** `useWorkflowGraph`'s `status`
   (`loading`/`ready`/`empty`/`error`) drives a banner; a malformed 200 throws from
   `fetchGraph` (caught), an ELK failure becomes an error (not a stuck spinner), and any

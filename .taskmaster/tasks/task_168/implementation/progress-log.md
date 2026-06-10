@@ -1993,3 +1993,249 @@ done — never leave headed on); the stale-cache troubleshooting note updated fo
 `Cache-Control: no-cache` index.html header (only hashed `assets/*` may still need a `&v=` bust).
 Side benefit restated: no occluded agent-browser windows = the suspected environmental condition
 for the worker hang can no longer form.
+
+### Container SELECT vs corner-button TOGGLE — design D shipped (2026-06-10, user-driven) ✅ (uncommitted)
+
+> Plan (locked design, facts, decisions, rejected alternatives):
+> `implementation/container-select-plan.md`. Design chosen via THREE shoot-lab mockup rounds
+> (`/tmp/expand-btn-lab/`): V2 corner button (over border-button/split-pill/pill-as-button) ·
+> A1 arrows-out/in glyphs (over unfold/chevron/plus) · R1 full-button-at-rest (over quiet/
+> tinted/hover-only — user picked after the labs were opened IN their browser, a worthwhile
+> step the AskUserQuestion flow alone didn't give). All `web/`; zero contract/Python change.
+
+The seam: a container click carried two intents (select vs open) and only open existed —
+containers could never be focused (their bindings were permanently invisible in beautiful),
+never reached the read panel, and the card that LOOKS like a node was the only card that
+didn't select. Now: **body = SELECT** (focus + read panel via the group's HOST node — purpose/
+bindings/loop/batch/source all live there), **corner `.group-toggle` button + double-click =
+TOGGLE** (`zoomOnDoubleClick` off; the button's stopPropagation is load-bearing and pinned).
+
+- **`applyFocus` UNIT semantics:** focus on a group id selects the whole unit — descendants
+  (flow `parentId` BFS) + every edge touching any of them; internal wiring and boundary
+  bindings light, the rest dims, the unit's hidden data lines reveal. Leaf/port focus
+  degrades to unit={focus} — the existing focus pins passed UNTOUCHED (the regression
+  proof). `edgeTouchesFocus` deleted (absorbed by `touches`). Group focus does NO neighbor
+  expansion (`expandTargets` already returns ∅ for group ids) → pure restyle, no ELK.
+- **The toggle channel** rides the existing `InteractionContext` (`toggleGroup` beside
+  `focusPort`) — node `data` stays callback-free. GroupNode renders the button in BOTH
+  states; batched LEAVES get nothing by construction (user-caught during planning: batch
+  is a modifier — only GroupNode-rendered containers are openable).
+- **Deep links select containers BY NAME:** `resolveNodeFlatId` resolves a group-host's
+  node_id to its representative group (skipping memberless batch shells) — previously
+  `focus=execute-plan` resolved to null (the host node is never rendered). Task 169 needs
+  exactly this verb.
+- **Muscle-memory note:** "click card to open" is GONE (the one behavior change users feel);
+  the always-visible button + dblclick cover it.
+
+web **143 tests** (+10: applyFocus unit ×3, viewParams host-resolution ×3, GraphView
+click-semantics jsdom ×1 — body selects + button toggles + stays-collapsed-on-select, the
+isolated-GroupNode test was correctly skipped per plan since Handle requires node context);
+tsc strict + build clean. Verified in the real browser on run-from-plan:
+`focus=execute-plan` deep-link selects the collapsed card (kind ring, corner button rendered,
+read panel with the host's bindings dict, revealed teal binding lines incl. the labeled
+pr_url line, unrelated nodes dimmed) and with `collapse=none` selects the expanded region
+(interior full-strength — every outside node in this workflow is genuinely connected to the
+unit, verified against the bindings, so nothing dims: correct, not a bug).
+
+**Same-day follow-ups (user-caught, 2026-06-10): container select expands its IO rows; IO
+labels die.** Two screenshots, one root cause. (1) Selecting a sub-workflow in beautiful
+revealed its bindings NODE-level: 13 input bindings deduped into ONE line whose surviving
+label single-named the first port ("base_branch" standing in for 13 inputs — actively
+misleading, not just noisy). The user's frame: selection should expand the card "with just
+inputs and outputs". Fix: `expandTargets` treats a workflow/batch group focus as ALL of its
+IO ports (child wrappers' members) — the port's OWNER is the group, so the card grows its
+two-column IO area (the existing `ioRowsVisible: expandedSet.has(g.id)` seam — zero new
+mechanism) and each binding's far end expands too; every line lands row-to-row, dedupe
+disappears (distinct row handles). Group select in beautiful now re-layouts exactly like
+leaf focus-expansion (cached/animated/anchored) — the plan's "pure restyle v1" was
+superseded the same day by the user's better call. (2) The floating pills on IO bindings
+(`base_branch`, `plan_path`, …) duplicated what the named rows already say — IO-touching
+data lines now carry NO label ever (`ioBinding` in the edge loop → toFlowEdge); leaf-to-leaf
+lines keep `stdout → data`. web **145 tests** (+2: container expandTargets incl. far ends;
+io-label suppression with a leaf-to-leaf keep); tsc + build clean; verified in browser
+(focus=execute-plan: 13 named rows, row-landed lines, bottom-anchored outputs composing,
+zero pills). Docs synced (web/CLAUDE.md container + label bullets).
+
+### LR row PORTS: binding bundles run straight (2026-06-10, user-driven) ✅ (uncommitted)
+
+User: *"why are ALL lines not straight here?"* (the focus-expanded run-from-plan bundle, LR).
+**Measured, not theorized** (inspect): the two cards' row grids sat at a constant **+52px
+offset** (inputs rows y=141,167,193…; sub-workflow rows y=193,219,245…) — ELK aligns BOXES,
+and LR declared no ports, so it couldn't know rows exist; any ΔY then renders as the
+rounded-orthogonal Z-jog, and lanes deliberately stagger the 13 jogs apart.
+
+Fix (the TD icon-column principle extended to LR rows):
+- **`flow.ts rowAnchorsFor(node)`** — pure, owns each row handle's (side, y) inside its box,
+  mirroring the components' render order exactly: leaf body = params → outputs → loop rows,
+  BranchPorts below; io card / collapsed group card = `.io-rows` chrome + column label +
+  rows, outputs BOTTOM-ANCHORED (the stagger). New `METRICS.ioRowsChrome: 11` (= the
+  `.io-rows` margin-top 4 + border 1 + padding-top 6 — documented coupling, the rule can't
+  read one CSS var). Expanded regions return none (compound-port crash).
+- **`layout.ts`**: in LR, row-bearing nodes declare FIXED_POS ports from the anchors; edge
+  endpoints whose handle matches a declared port connect port-to-port.
+- **THE non-obvious bit (the test caught it):** ports alone changed nothing — ELK still
+  aligned boxes, leaving exactly the 11px chrome delta in the synthetic fixture. Ports make
+  alignment POSSIBLE; a **straightness priority** makes NETWORK_SIMPLEX pay for it.
+  Row-to-row edges get priority **5** (below the control trunk's 10 — the spine wins when
+  they compete). With it: alignment ≤1px, pinned by a real-ELK test.
+
+**Verified in the real browser** (inspect): both cards' rows now at IDENTICAL y's
+(193,219,245,…) — the 52px offset is gone; screenshot shows the 13-line bundle dead flat,
+each line leaving its row dot and running straight into its named row. web **148 tests**
+(+3: rowAnchorsFor leaf ordering incl. loop-row offsets; io-card chrome + bottom-anchored
+group outputs + region-none; the real-ELK ≤1px alignment pin); tsc + build clean. Honest
+residual: rows can only align where orderings/pitches allow — a row feeding two places, or
+differing row orders, still jogs (correct geometry); the LR merge ~8px node-level residual
+is untouched (different anchor class).
+
+### `is_decision` end-route fix: continue-or-stop gates become CONDITION nodes (2026-06-10, user-driven) ✅
+
+> Born from the TRANSFORM pseudo-kind feasibility discussion (the user's check-validate
+> screenshot): the Phase-0 corpus sweep (scratchpads/transform-role/) found **4 of the 6 real
+> deciders in the corpus had `is_decision=False`** — `gate`, `check-commits`, `check-final`,
+> `check-validate` — because their stop arms (`next: "end"`) become END edges, never BRANCH,
+> and the model required ≥2 BRANCH labels. The user's screenshot node was literally rendering
+> as plain CODE. An existing test had PINNED the gap as desired behavior
+> (`…without_changing_decision_or_terminal` asserted `not is_decision(check)`) — the
+> "interrogate what a green test asserts" lesson, again.
+
+- **Model (`model.py is_decision`):** a decision = ≥2 distinct OUTCOMES = branch labels ∪
+  {end if an END out-edge exists}. Zero branch labels (static `- next: end`, or every arm →
+  end) stays a non-decision, so `is_decision ⟹ kind == code` holds by construction. Pinned
+  by an outcome-matrix test + the rewritten routes-to-end test.
+- **Mermaid impact, judged not regressed:** a full 56-example corpus render diff (before/after,
+  scratchpads/transform-role/mermaid_corpus.py) shows EXACTLY the 4 nodes (×their parent
+  expansions, 6 files) flipping rect→decision diamond — the semantic intent. Goldens
+  byte-identical (none contain these workflows); no end-sink second-order changes fired.
+- **Contract (`react_flow.py`):** a decision's END edge now carries the extracted condition
+  for the reserved outcome `"end"` (`_branch_condition` accepts EdgeKind.END gated on
+  `is_decision` — a static end route stays condition-free). And `_render_conditions` no
+  longer BAILS on duplicate-outcome-in-non-adjacent-arms (check-validate's exact shape:
+  `end` at arms 0 and 2): it LISTS the selecting arms verbatim, `"if ok · else"` — each
+  fragment is the file's own text, so it can't mis-attribute, only abbreviate (user approved
+  relaxing the bail; the or-join stays reserved for adjacent plain arms where it's exact).
+  Two bail-matrix cases became render cases.
+- **Frontend:** buildFlow appends `"end"` LAST to a decision's `branchLabels` (forward
+  outcomes first, stop last — a separate pass so contract edge order can't reorder it);
+  BranchPorts renders it as a FAINT row (`.branch-port-end` — a real outcome that stops the
+  flow, styled like the end edge/dot it feeds); the LR end edge leaves `branchHandle("end")`
+  (mirrors the row's render condition — the silent-drop rule); the END edge's condition
+  follows the existing pill/row split (TD: pill on the final approach into the end dot; LR:
+  the row; beautiful: quiet until focus-expanded) and the target-click reveal now covers the
+  end dot ("why did flow stop here?"). ReadPanel's outcome table includes the END edge as
+  `→ end` (GraphView filter + label fallback).
+- **Verified:** real browser on validate-fix — TD shows the CONDITION card (orange fork icon)
+  with the `if ok · else` pill above the end dot; LR shows both fork rows
+  (`elif round < cap → fix-tests`, `if ok · else → end` faint) with each line leaving its own
+  row handle. *Gotcha re-confirmed: the already-running `pflow ui` server serves OLD Python —
+  restart it after a model/renderer change (the bundle rebuild is not enough).*
+  Gates: test_core 3078 passed; web 153 passed (+5 pins); tsc + build clean.
+- **Spawned, not yet built:** the TRANSFORM pseudo-kind itself (sweep verdict: 10/20 unique
+  corpus code nodes are pure transforms, 0 false positives with exception-constructors
+  whitelisted; 6/10 have literal result dicts for a future Level-2 output-shape extraction).
+
+### LR icon-row SPINE: the trunk passes straight THROUGH the nodes (2026-06-10, user-driven) ✅ (uncommitted)
+
+User, after the row-port fix: *"what about the actual nodes, why are they not in a straight
+line? Maybe it's related to that we are not connecting the solid edges into the 'image' like
+TD?"* — exactly right, plus their follow-up: the output edge must leave the OTHER side at the
+SAME height. LR control handles were side-CENTERED, so ELK aligned centers of wildly
+different-height cards and the spine wandered. The fix is the TD icon-column principle rotated:
+
+- **`ICON_ROW_Y`** (metrics, = header center 34): every LR control handle — leaf, io card,
+  group card AND region — sits at the icon row, in on the left / out on the right; layout.ts
+  declares matching FIXED ports (regions stay port-less, smoothstep absorbs). The `portable`
+  set now spans BOTH directions with direction-appropriate port pairs, merged with row ports
+  into one list per node.
+- **LR LEFT tile flare** (`CONNECTOR_LEFT` — the TOP path transposed, arc sweeps flipped by
+  the reflection): the incoming edge flows into the tile's left border, gap-free by the same
+  construction rules. NO right flare — the tile sits at the card's LEFT; the outgoing edge
+  leaves the card's right border plain at the icon row (geometry, not an omission).
+- **Priorities are WEIGHTS, not constraints — the measured surprise:** with trunk 10 vs
+  13 bindings × 5, the BUNDLE won and preflight sat 233px off the spine. Trunk → **100**
+  (above any plausible bundle); bindings stay 5.
+- **GRID PARITY** makes both wishes compatible where it matters: the io card's rows now carry
+  an INPUTS/OUTPUTS column caption (matching a group card's columns — one shared grid:
+  header + chrome + label + rows), so when the spine aligns two card headers their bindings
+  align row-to-row SIMULTANEOUSLY. Leaf↔card bindings have no parity guarantee and may keep
+  small jogs — honest geometry, stated not hidden.
+
+**Verified in the real browser** (inspect, focus-expanded run-from-plan LR): ALL five spine
+tiles at y=98 — including the previously-stray preflight and outputs card — AND the g0↔g1
+binding rows identical (199,225,251,…): spine straight + bundle straight at once. Zoomed
+crops: the left flares are seamless (cove into each tile, gradient through). web **154
+tests** (+1 spine pin for different-height leaves; the card↔card alignment pin rewritten to
+the parity guarantee + a header-alignment assert); tsc + build clean. Docs synced
+(web/CLAUDE.md layout + flare bullets, requirements).
+
+**Exit-gap fix (user-caught, same session): no new shape needed — tuck the terminus.** The LR
+OUT edge started ~2px OUTSIDE the card border (RF anchors a right-side handle at its own
+right edge, past the border), and a bright 3px line stopping beside the dim 1.5px card border
+read as unplugged. Measured (handle rect 655–659 vs border 657; path start 659), then fixed
+with the flare side's own trick: `right: 5` on the LR NODE_OUT handle tucks the terminus 5px
+UNDER the card — edges render behind nodes, so the line emerges through the border, seamless
+by construction (the same reason `left: 5` already made flare-less LEFT entries clean). All
+three card components; rejected adding a visible dot/shape — the "clean lines into borders"
+language stays. Verified by zoomed crop: line flush with the border on exit, into the flare
+on entry. web 154 tests, tsc + build clean.
+
+### TRANSFORM pseudo-kind shipped (2026-06-10, user-driven) ✅
+
+> The second presented role, following CONDITION's exact playbook (Phase-0 sweep →
+> fail-closed AST classifier → additive contract fact → format.ts seam → shoot-lab pick).
+> Sweep evidence: scratchpads/transform-role/ (10/20 unique corpus code nodes are pure
+> transforms; 6 hybrids excluded by definition; 4 genuinely effectful).
+
+- **Python (react_flow.py):** `RFNode.is_transform: bool` + module-level `_is_transform_code`
+  — a fail-closed purity walk: whitelisted modules/builtins, author-bound names allowed,
+  forbidden-name check on ANY `ast.Name` reference (closes the `o = open; o(...)` aliasing
+  hole the sweep prototype had), forbidden statement shapes (with/async/global/del), must
+  assign `result`, must NOT assign `next` (a pure decider is CONDITION's — the two roles are
+  mutually exclusive by construction, no frontend precedence logic needed).
+- **The corpus regression that tuned the whitelist:** banning `object`/`type` as names cost
+  two REAL transforms — `impl: object` is the code-node input ANNOTATION convention, not a
+  builtin reference. Forbidden set = genuinely effectful/dynamic names only. Production
+  classifier verified at exact sweep parity (10/10) through the full server path.
+- **Frontend:** `TRANSFORM_COLOR #5fd4dd` cyan + the shuffle glyph (`transform.svg`, crossing
+  flows cyan→white, condition.svg's gradient language) — both user-picked via a shoot-lab
+  (`/tmp/transform-icon-lab/`; morph + funnel rejected, lime + amber rejected for shell-green
+  collision / no separation). Seam extensions only: `isTransform` + `nodeColor`/`categoryLabel`
+  arms (a `RoleFacts` structural type), `iconFor` arm, ReadPanel `code · transform`. Edge
+  gradients pick the cyan up automatically through the nodeColor seam (test-pinned).
+- **Tines sub-modes considered + deferred (user question, answered with the mapping):**
+  extract/dedupe/message-only are flavors our one TRANSFORM covers (the `purpose` line
+  names the specifics; intent-inference from arbitrary Python breaks fail-closed);
+  explode/implode = pflow batch; "automatic" = the llm kind; delay/throttle = no pflow
+  analog. Recorded in visualization-requirements.md. Next refinement when wanted:
+  Level-2 result-shape extraction (6/10 corpus transforms have literal result dicts).
+- **Verified:** real browser on deep-research TD/beautiful — all five transforms (prepare/
+  normalize/compile/combine/final-report) wear the cyan shuffle identity, edges blend to
+  cyan, clearly apart from magenta/violet/teal neighbors. Gates: web 158 (+5 pins incl. the
+  defensive CONDITION-wins and kind-gate cases), Python renderer matrix (+2 tests, 14 cases),
+  tsc + build clean.
+
+**Finalization (same session):** ruff C901 forced the classifier into small per-concern
+helpers (`_assigned_names` / `_bound_names` / `_transform_disqualifies` — a net readability
+win, not just a lint appeasement). One genuine tooling gotcha cost two rounds: **ruff
+SIM114 auto-MERGES adjacent `elif` branches with identical bodies, and the merged form
+fails mypy** (`FunctionDef|ClassDef` or-ed with `ExceptHandler and n.name` widens `n.name`
+to `str | None`) — a fixer-vs-checker fight where `make check` can never converge. Fix:
+make the bodies structurally different (`bound.update({n.name} if n.name else ())`),
+comment pinned in react_flow.py. Final gates: `make test` **7812 passed**, `make check`
+clean, web **158**, tsc strict + build clean. Both arcs of this session — the
+`is_decision` end-route fix and the TRANSFORM pseudo-kind — are complete, browser-verified,
+and uncommitted on the branch alongside the parallel agent's LR row-ports work.
+
+**LR exit DOT (user-driven, same session): the user was right — a shape DOES look better.**
+After the tuck fix I'd argued "no new element"; the user pushed back, so a shoot-lab settled
+it (5 candidates on the real card anatomy, opened in their browser): **E1 solid dot** won —
+a kind-colored 10px dot straddling the right border at the icon row, the n8n output-port
+convention — over hollow ring (new visual vocabulary), nub, baseline, and a mini border
+flare (structurally weak: the cove language needs the 3px tile border to sink into; the card
+border is 1.5px subtle). Pure decoration on all three card components; the invisible tucked
+handle stays the real connection point. **The correctness subtlety:** `hasOutgoing` became
+HANDLE-aware (incidence counts only edges leaving NODE_OUT) — an LR decision's outcomes
+leave their BranchPorts rows (which have their own dots), so a pure decider must not light
+an icon-row exit; in TD forks fan from NODE_OUT, so nothing changes there (pinned). web
+**159 tests** (+1); tsc + build clean; verified by zoomed crop (yellow dots on the code
+cards' exits, line into the next tile's flare).

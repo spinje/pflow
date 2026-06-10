@@ -65,6 +65,10 @@ export interface RFNode {
   is_decision: boolean;
   is_terminal: boolean;
   is_group_host: boolean;
+  // A pure data TRANSFORM: a code node whose AST provably only reshapes inputs
+  // into `result` (no effects, no routing). Classified FAIL-CLOSED in Python
+  // (react_flow.py _is_transform_code) — the frontend cannot derive this one.
+  is_transform: boolean;
   unexpanded: UnexpandedReason | null;
   annotations: Record<string, unknown>;
 }

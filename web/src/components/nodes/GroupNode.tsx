@@ -31,13 +31,19 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 
 import { type FlowNode, ioRowsCount } from "../../graph/flow";
 import { NODE_IN, NODE_OUT } from "../../graph/handles";
-import { ICON_COL_X } from "../../graph/metrics";
+import { ICON_COL_X, ICON_ROW_Y } from "../../graph/metrics";
 import { BATCH_COLOR, kindColor } from "../../utils/format";
 import { groupIconFor } from "../../utils/icons";
 import type { ContainerKind } from "../../types";
+import { useInteraction } from "../interaction";
 import { NodeBadges } from "./Badges";
 import { PortRows } from "./PortRows";
 import { Connector } from "./WorkflowNode";
+
+// A1 arrows-out / arrows-in (maximize/restore language, 12×12) — the corner
+// toggle's glyphs, user-picked via the mockup lab (expand-btn-lab, 2026-06-10).
+const GLYPH_EXPAND = "M7.2 1.8 H10.2 V4.8 M10.2 1.8 L6.8 5.2 M4.8 10.2 H1.8 V7.2 M1.8 10.2 L5.2 6.8";
+const GLYPH_COLLAPSE = "M6.8 5.2 H10 M6.8 5.2 V2 M10.2 1.8 L6.8 5.2 M5.2 6.8 H2 M5.2 6.8 V10 M1.8 10.2 L5.2 6.8";
 
 type GroupNodeType = Extract<FlowNode, { type: "group" }>;
 
@@ -84,6 +90,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
+  const { toggleGroup } = useInteraction();
 
   // Collapse toggles move the control handles (region border-center ↔ card icon
   // column), and IO rows appearing/disappearing adds/removes per-row handles;
@@ -101,23 +108,29 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   const title = hostNode?.ref.node_id ?? KIND_LABEL[group.kind];
   const countLabel = `${memberCount} node${memberCount === 1 ? "" : "s"}`;
 
-  // TD control handles sit on the icon column in BOTH states (user requirement:
-  // the trunk flows through the tile whether the container is open or closed) —
-  // layout.ts declares matching ELK ports so the column aligns icon-to-icon.
-  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : undefined;
-  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : undefined;
+  // Control handles sit on the ICON LINE in BOTH states (user requirement: the
+  // trunk flows through the tile whether the container is open or closed) — TD:
+  // the icon column, LR: the icon row (in left / out right at the SAME height).
+  // layout.ts declares matching ELK ports for COLLAPSED cards; regions stay
+  // port-less (compound crash) and smoothstep absorbs the offset.
+  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : { top: ICON_ROW_Y, left: 5 };
+  // right: 5 tucks the OUT terminus under the card — see WorkflowNode.
+  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : { top: ICON_ROW_Y, right: 5 };
 
-  // The IDENTICAL header for both states. The TOP flare draws in both (the edge
-  // flows INTO the tile, open or closed); the BOTTOM flare is collapsed-only — an
-  // expanded region's tile sits at its top, far from the bottom exit (the same
-  // rule as a focus-expanded leaf card). `group-header` adds the absolute-overlay
-  // positioning the region needs; on the card the header is the whole card.
+  // The IDENTICAL header for both states. The TOP (TD) / LEFT (LR) flare draws in
+  // both (the edge flows INTO the tile, open or closed); the BOTTOM flare is
+  // collapsed-only — an expanded region's tile sits at its top, far from the
+  // bottom exit (the same rule as a focus-expanded leaf card). LR has no right
+  // tile flare: the tile sits at the card's left, away from the outgoing border.
+  // `group-header` adds the absolute-overlay positioning the region needs; on the
+  // card the header is the whole card.
   const header = (
     <div className={collapsed ? "node-header" : "node-header group-header"}>
       <div className="node-tile">
         <img className="node-icon-img" src={icon} alt="" />
         {direction === "TD" && hasIncoming && <Connector side="top" />}
         {collapsed && direction === "TD" && hasOutgoing && <Connector side="bottom" />}
+        {direction === "LR" && hasIncoming && <Connector side="left" />}
       </div>
       <div className="node-titles">
         <span className="node-category">{KIND_LABEL[group.kind]}</span>
@@ -151,10 +164,29 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
     <div className={classes.join(" ")} style={kindStyle}>
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
+      {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
       {header}
       <span className="count-pill group-pill">
         <span className="chev">{collapsed ? "▸" : "▾"}</span>
         {countLabel}
+      </span>
+      {/* Expand/collapse lives ONLY here (+ double-click): the card/region body
+          SELECTS like any node (design D). stopPropagation is load-bearing — a
+          button click must not also focus the container; the dblclick stop keeps
+          a fast double-press on the button from ALSO firing the node-level
+          dblclick toggle (net no-op flicker). */}
+      <span
+        className="group-toggle"
+        title={collapsed ? "Expand" : "Collapse"}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleGroup(id);
+        }}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
+        <svg viewBox="0 0 12 12" aria-hidden="true">
+          <path d={collapsed ? GLYPH_EXPAND : GLYPH_COLLAPSE} />
+        </svg>
       </span>
       {/* The workflow's declared IO as rows (PortRows — the leaf-row anatomy).
           COLLAPSED: a two-column area under the header — inputs left, outputs right

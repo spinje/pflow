@@ -95,4 +95,27 @@ describe("resolveNodeFlatId", () => {
   it("returns null when there is no graph yet", () => {
     expect(resolveNodeFlatId(null, new Set(["n3"]), "fetch-data")).toBeNull();
   });
+
+  // A group HOST's node is never rendered — its name must resolve to the
+  // representative GROUP so focus=/node= can target containers by name.
+  const hostGraph = {
+    nodes: [{ id: "n5", ref: { node_id: "execute-plan", ancestor_path: [], port: null } }],
+    edges: [],
+    groups: [
+      { id: "gshell", kind: "batch", host: "n5", members: [] }, // memberless shell — never rendered
+      { id: "gwf", kind: "workflow", host: "n5", members: ["n9"] },
+    ],
+  } as unknown as RFGraph;
+
+  it("resolves a group host's node_id to its representative group (skipping batch shells)", () => {
+    expect(resolveNodeFlatId(hostGraph, new Set(["gwf"]), "execute-plan")).toBe("gwf");
+  });
+
+  it("prefers the rendered node itself over its group when both could match", () => {
+    expect(resolveNodeFlatId(hostGraph, new Set(["n5", "gwf"]), "execute-plan")).toBe("n5");
+  });
+
+  it("returns null when neither the host nor its group is rendered", () => {
+    expect(resolveNodeFlatId(hostGraph, new Set(["other"]), "execute-plan")).toBeNull();
+  });
 });

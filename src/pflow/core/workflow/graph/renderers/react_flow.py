@@ -70,6 +70,13 @@ class RFNode:
     is_decision: bool
     is_terminal: bool
     is_group_host: bool
+    # A pure data TRANSFORM: a code node whose AST provably only reshapes its
+    # inputs into ``result`` — no external effects, no ``next`` routing (a pure
+    # decider is a CONDITION, never both). Classified FAIL-CLOSED by
+    # ``_is_transform_code``: anything unrecognized stays plain code. Like the
+    # other ``is_*`` facts the frontend must not re-derive this — unlike them it
+    # CANNOT (it needs the AST).
+    is_transform: bool
     unexpanded: str | None
     annotations: dict[str, Any]
 
@@ -168,9 +175,14 @@ class _ReactFlowRenderer:
             is_decision=self.graph.is_decision(node.id),
             is_terminal=self.graph.is_terminal(node.id),
             is_group_host=self._is_group_host(node),
+            is_transform=self._is_transform(node),
             unexpanded=node.unexpanded,
             annotations=dict(node.annotations),
         )
+
+    def _is_transform(self, node: Node) -> bool:
+        code = node.params.get("code") if node.kind == "code" else None
+        return _is_transform_code(code) if isinstance(code, str) else False
 
     def _param(self, node: Node, name: str, value: Any) -> RFParam:
         source = node.param_sources.get(name)
@@ -231,14 +243,23 @@ class _ReactFlowRenderer:
         Keyed off the edge's ORIGINAL source (a re-anchored branch edge still
         describes the same decision). Only decision code nodes are analyzed; the
         kind gate is defensive (multi-way routing is code-only today).
+
+        A decision's END edge is the "end" OUTCOME (a dynamic ``next="end"`` arm
+        becomes an END edge, never a BRANCH), so it gets the condition extracted
+        for ``"end"``. The ``is_decision`` gate keeps a static ``- next: end``
+        route condition-free — single-outcome routing decides nothing.
         """
-        if kind != EdgeKind.BRANCH or label is None:
+        if kind == EdgeKind.BRANCH and label is not None:
+            outcome = label
+        elif kind == EdgeKind.END and self.graph.is_decision(source):
+            outcome = "end"
+        else:
             return None
         if source not in self._conditions_by_node:
             node = self.nodes_by_id.get(source)
             code = node.params.get("code") if node is not None and node.kind == "code" else None
             self._conditions_by_node[source] = _branch_conditions(code) if isinstance(code, str) else {}
-        return self._conditions_by_node[source].get(label)
+        return self._conditions_by_node[source].get(outcome)
 
     def _group(self, container: Container) -> RFGroup:
         return RFGroup(
@@ -496,6 +517,14 @@ def _walk_chain(stmt: ast.If) -> tuple[list[_Arm], int]:
     return arms, count
 
 
+def _arm_text(arms: list[_Arm], i: int) -> str:
+    """One arm rendered with its own chain keyword — the file's verbatim text."""
+    test = arms[i][0]
+    if test is None:
+        return "else"
+    return ("if " if i == 0 else "elif ") + test
+
+
 def _render_conditions(arms: list[_Arm], default: str | None) -> dict[str, str]:
     by_outcome: dict[str, list[int]] = {}
     for i, (_, outcome) in enumerate(arms):
@@ -504,22 +533,205 @@ def _render_conditions(arms: list[_Arm], default: str | None) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for outcome, positions in by_outcome.items():
         if len(positions) == 1:
-            test = arms[positions[0]][0]
-            keyword = "if" if positions[0] == 0 else "elif"
-            mapping[outcome] = "else" if test is None else f"{keyword} {test}"
+            mapping[outcome] = _arm_text(arms, positions[0])
             continue
-        # Duplicate outcome: join only ADJACENT plain arms (no else / and-composed),
-        # where the elif guard semantics make a plain `or` join exact.
-        if positions != list(range(positions[0], positions[0] + len(positions))):
-            raise _ConditionBail("duplicate outcome in non-adjacent arms")
+        # Duplicate outcome, ADJACENT plain arms (no else / and-composed): a plain
+        # `or` join is exact under the elif guard semantics.
         tests = [arms[i][0] for i in positions]
-        if any(t is None or " and " in t for t in tests):
-            raise _ConditionBail("duplicate outcome with else/composed arm")
-        keyword = "if" if positions[0] == 0 else "elif"
-        mapping[outcome] = f"{keyword} " + " or ".join(t for t in tests if t is not None)
+        if positions == list(range(positions[0], positions[0] + len(positions))) and not any(
+            t is None or " and " in t for t in tests
+        ):
+            keyword = "if" if positions[0] == 0 else "elif"
+            mapping[outcome] = f"{keyword} " + " or ".join(t for t in tests if t is not None)
+            continue
+        # Other duplicates — non-adjacent arms or an else/composed arm (the
+        # continue-or-stop gate `if ok: end / elif …: fix / else: end` is the
+        # canonical case) — LIST each selecting arm verbatim, " · "-joined. No
+        # inferred disjunction: every fragment is the file's own text, so the
+        # label cannot mis-attribute (the fail-closed bar), only abbreviate.
+        mapping[outcome] = " · ".join(_arm_text(arms, i) for i in positions)
 
     # The default survives only when no else arm always overrides it; with an
     # else arm the default is dead code — omit it, don't guess.
     if default is not None and default not in mapping and all(test is not None for test, _ in arms):
         mapping[default] = "else"
     return mapping
+
+
+# ── TRANSFORM classification (fail-closed purity test) ─────────────────────────
+#
+# A code node is a pure data TRANSFORM when its AST provably only reshapes inputs
+# into ``result``: every construct is from a recognized-pure set, it assigns
+# ``result``, and it never assigns ``next`` (a pure decider presents as CONDITION
+# — by excluding deciders here, the two roles can never both claim a node).
+# FAIL-CLOSED: any import outside the whitelist, any call we can't classify, any
+# REFERENCE to an effectful builtin (not just a direct call — ``o = open`` then
+# ``o(...)`` must not slip through), or any unrecognized statement shape means the
+# node stays plain CODE. A wrong TRANSFORM label would falsely promise "no
+# external effects"; absent beats wrong.
+
+_TRANSFORM_MODULES = frozenset({
+    "json",
+    "re",
+    "math",
+    "datetime",
+    "collections",
+    "itertools",
+    "textwrap",
+    "string",
+    "copy",
+    "functools",
+    "base64",
+    "hashlib",
+    "statistics",
+    "difflib",
+})
+
+# Builtins a reshape legitimately calls. Exception constructors are included:
+# ``raise ValueError(...)`` is a pure failure path (the engine handles the raise),
+# not an external effect. ``next`` here is the ITERATOR builtin — an ASSIGNMENT to
+# the name ``next`` is routing and disqualifies separately below.
+_TRANSFORM_BUILTINS = frozenset({
+    "len",
+    "str",
+    "int",
+    "float",
+    "bool",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "sorted",
+    "reversed",
+    "enumerate",
+    "zip",
+    "range",
+    "min",
+    "max",
+    "sum",
+    "abs",
+    "round",
+    "any",
+    "all",
+    "repr",
+    "format",
+    "isinstance",
+    "filter",
+    "map",
+    "divmod",
+    "hash",
+    "frozenset",
+    "ord",
+    "chr",
+    "print",
+    "next",
+    "iter",
+    "type",
+    "Exception",
+    "ValueError",
+    "TypeError",
+    "RuntimeError",
+    "KeyError",
+    "IndexError",
+    "ZeroDivisionError",
+    "StopIteration",
+    "AssertionError",
+})
+
+# Effectful/dynamic builtins: ANY reference (ast.Name) disqualifies — aliasing,
+# passing as an argument, and direct calls all read the name first. Pure
+# introspection names (``type``, ``isinstance``) and annotation types
+# (``impl: object`` — the code-node input convention) are NOT effects and must
+# stay off this list (``object`` here cost two real corpus transforms).
+_TRANSFORM_FORBIDDEN_NAMES = frozenset({
+    "open",
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "input",
+    "globals",
+    "locals",
+    "vars",
+    "getattr",
+    "setattr",
+    "delattr",
+    "breakpoint",
+    "exit",
+    "quit",
+})
+
+# Statement shapes that imply effects or dynamism beyond a reshape.
+_TRANSFORM_FORBIDDEN_NODES = (
+    ast.With,
+    ast.AsyncWith,
+    ast.AsyncFor,
+    ast.AsyncFunctionDef,
+    ast.Await,
+    ast.Global,
+    ast.Nonlocal,
+    ast.Delete,
+)
+
+
+def _assigned_names(n: ast.AST) -> set[str]:
+    """Names an assignment statement binds (incl. tuple-unpack leaves)."""
+    if not isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+        return set()
+    targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+    return {leaf.id for t in targets for leaf in ast.walk(t) if isinstance(leaf, ast.Name)}
+
+
+def _bound_names(tree: ast.Module) -> set[str]:
+    """Every name the code itself binds (assignments, defs, loops, comprehensions,
+    imports, walrus, except-as) — calls to these are the author's own pure-checked
+    code, not unknown externals."""
+    bound: set[str] = set()
+    for n in ast.walk(tree):
+        bound.update(_assigned_names(n))
+        if isinstance(n, (ast.NamedExpr, ast.For, ast.comprehension)):
+            bound.update(leaf.id for leaf in ast.walk(n.target) if isinstance(leaf, ast.Name))
+        elif isinstance(n, (ast.FunctionDef, ast.ClassDef)):
+            bound.add(n.name)
+        elif isinstance(n, ast.ExceptHandler):
+            # `except E as x` — n.name is Optional, so the body must differ from the
+            # def/class arm above or ruff SIM114 re-merges them and mypy fails.
+            bound.update({n.name} if n.name else ())
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            bound.update(alias.asname or alias.name.split(".")[0] for alias in n.names)
+    return bound
+
+
+def _transform_disqualifies(n: ast.AST, bound: set[str]) -> bool:
+    """One AST node that proves the code is NOT a pure transform."""
+    if isinstance(n, _TRANSFORM_FORBIDDEN_NODES):
+        return True
+    if isinstance(n, ast.Name):
+        return n.id in _TRANSFORM_FORBIDDEN_NAMES
+    if isinstance(n, ast.Import):
+        return any(alias.name.split(".")[0] not in _TRANSFORM_MODULES for alias in n.names)
+    if isinstance(n, ast.ImportFrom):
+        return (n.module or "").split(".")[0] not in _TRANSFORM_MODULES
+    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
+        # A Name call must be a whitelisted builtin or the author's own code
+        # (imports are gated above; attribute calls — x.strip(), json.loads —
+        # ride the import gate / operate on already-pure values).
+        return n.func.id not in _TRANSFORM_BUILTINS and n.func.id not in bound
+    return False
+
+
+def _is_transform_code(code: str) -> bool:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return False
+    bound = _bound_names(tree)
+    assigns_result = False
+    for n in ast.walk(tree):
+        if _transform_disqualifies(n, bound):
+            return False
+        assigned = _assigned_names(n)
+        if "next" in assigned:
+            return False  # routing — a decider, not a transform
+        assigns_result = assigns_result or "result" in assigned
+    return assigns_result

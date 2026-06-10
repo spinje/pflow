@@ -17,6 +17,7 @@ function node(id: string, over: Partial<RFNode> = {}): RFNode {
     source: null,
     is_decision: false,
     is_terminal: false,
+    is_transform: false,
     is_group_host: false,
     unexpanded: null,
     annotations: {},

@@ -144,8 +144,18 @@ class GraphModel:
         return None
 
     def is_decision(self, n: NodeId) -> bool:
+        # A decision has >= 2 distinct routing OUTCOMES: the BRANCH labels plus the
+        # reserved "end" route when one exists. A dynamic `next` arm to "end" becomes
+        # an END edge, never a BRANCH — so a continue-or-stop decider (1 branch label
+        # + an END route, e.g. `if ok: next="end" else: next="fix"`) is a decision.
+        # No branch labels at all (a static `- next: end`, or every arm -> "end")
+        # means single-outcome routing, not a decision.
         labels = {edge.label for edge in self.edges if edge.source == n and edge.kind == EdgeKind.BRANCH}
-        return len(labels) >= 2
+        if not labels:
+            return False
+        if len(labels) >= 2:
+            return True
+        return any(edge.source == n and edge.kind == EdgeKind.END for edge in self.edges)
 
     def is_terminal(self, n: NodeId) -> bool:
         # A node is terminal when it has no forward control-flow successor. ERROR and END

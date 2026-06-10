@@ -26,8 +26,13 @@ export function BranchPorts({
         // when the rows show it: advanced / focus-expanded). Truncation is CSS
         // ellipsis; the full text rides the title + the read panel's table.
         const cond = conditions?.[label];
+        // The reserved "end" outcome (a decision's stop arm — buildFlow appends it
+        // last) reads faint: it's a real outcome, but it stops the flow rather
+        // than reaching a node. "end" cannot collide with a target name (the
+        // parser reserves it), so the label is a safe discriminator.
+        const isEnd = label === "end";
         return (
-          <div className="branch-port" key={label} title={`branch: ${label}`}>
+          <div className={`branch-port${isEnd ? " branch-port-end" : ""}`} key={label} title={isEnd ? "route: end" : `branch: ${label}`}>
             {cond && (
               <span className="branch-cond" title={cond}>
                 {cond}

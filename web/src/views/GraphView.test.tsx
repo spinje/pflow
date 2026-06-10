@@ -45,6 +45,7 @@ const GRAPH: RFGraph = {
       is_decision: false,
       is_terminal: false,
       is_group_host: false,
+    is_transform: false,
       unexpanded: null,
       annotations: {},
     },
@@ -62,6 +63,7 @@ const GRAPH: RFGraph = {
       is_decision: false,
       is_terminal: true,
       is_group_host: false,
+    is_transform: false,
       unexpanded: null,
       annotations: {},
     },
@@ -116,6 +118,40 @@ describe("GraphView mount", () => {
     vi.mocked(fetchGraph).mockRejectedValue(new ApiError(422, [{ message: "unknown node type 'frob'" }]));
     render(<GraphView workflow="broken" onBack={() => {}} />);
     await waitFor(() => expect(screen.getByText(/unknown node type 'frob'/)).toBeTruthy());
+  });
+
+  it("container clicks: body SELECTS (read panel, no toggle); the corner button TOGGLES (design D)", async () => {
+    const mkNode = (over: Partial<RFGraph["nodes"][number]>): RFGraph["nodes"][number] =>
+      ({ ...GRAPH.nodes[0]!, ref: { node_id: over.id ?? "x", ancestor_path: [], port: null }, ...over }) as RFGraph["nodes"][number];
+    const grouped: RFGraph = {
+      nodes: [
+        mkNode({ id: "h0", kind: "workflow", purpose: "run the core", is_group_host: true, params: [] }),
+        mkNode({ id: "m0", purpose: "inner step", parent: "g0", params: [] }),
+      ],
+      edges: [],
+      groups: [{ id: "g0", kind: "workflow", parent: null, host: "h0", members: ["m0"], nesting_depth: 0, annotations: {} }],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(grouped);
+    const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("inner step")).toBeTruthy());
+
+    // The corner button TOGGLES: the member disappears (collapse re-runs the build)
+    // and selecting did NOT happen (no read panel).
+    const toggle = container.querySelector(".group-toggle");
+    expect(toggle).toBeTruthy();
+    fireEvent.click(toggle!);
+    await waitFor(() => expect(screen.queryByText("inner step")).toBeNull());
+    expect(container.querySelector(".read-panel")).toBeNull();
+
+    // The card BODY selects: read panel opens on the HOST node, container stays collapsed.
+    fireEvent.click(screen.getByText("run the core"));
+    await waitFor(() => expect(container.querySelector(".read-panel")).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "h0" })).toBeTruthy();
+    expect(screen.queryByText("inner step")).toBeNull(); // still collapsed — select didn't open it
+
+    // The button expands it back.
+    fireEvent.click(container.querySelector(".group-toggle")!);
+    await waitFor(() => expect(screen.getByText("inner step")).toBeTruthy());
   });
 
   it("surfaces a layout failure as an error banner, not a permanent 'Laying out…' (C1)", async () => {

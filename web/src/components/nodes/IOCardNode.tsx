@@ -12,7 +12,7 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 
 import type { FlowNode } from "../../graph/flow";
 import { NODE_IN, NODE_OUT } from "../../graph/handles";
-import { ICON_COL_X } from "../../graph/metrics";
+import { ICON_COL_X, ICON_ROW_Y } from "../../graph/metrics";
 import { IO_COLOR } from "../../utils/format";
 import { ioCardIcon } from "../../utils/icons";
 import { PortRows } from "./PortRows";
@@ -31,10 +31,13 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
   const detailed = density === "detailed";
   const topConnector = direction === "TD" && !detailed && hasIncoming;
   const bottomConnector = direction === "TD" && !detailed && !rowsVisible && hasOutgoing;
-  // TD control handles sit on the icon column, pulled inward toward the tile —
-  // the same geometry as WorkflowNode (and the ELK port layout.ts declares).
-  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : undefined;
-  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : undefined;
+  const leftConnector = direction === "LR" && !detailed && hasIncoming;
+  // Control handles sit on the ICON LINE — TD: the icon column, LR: the icon row
+  // (in left / out right at the SAME height) — the same geometry as WorkflowNode
+  // and the ELK ports layout.ts declares.
+  const topHandleStyle = direction === "TD" ? { left: ICON_COL_X, top: 5 } : { top: ICON_ROW_Y, left: 5 };
+  // right: 5 tucks the OUT terminus under the card — see WorkflowNode.
+  const bottomHandleStyle = direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : { top: ICON_ROW_Y, right: 5 };
 
   // Rows appearing/disappearing adds/removes per-row handles; without a re-measure
   // React Flow keeps stale handle coords and edges fly to the origin.
@@ -60,12 +63,14 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
           every node's, so the trunk flows into the tile under the flare. */}
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
+      {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
 
       <div className="node-header">
         <div className="node-tile">
           <img className="node-icon-img" src={ioCardIcon(kind)} alt="" />
           {topConnector && <Connector side="top" />}
           {bottomConnector && <Connector side="bottom" />}
+          {leftConnector && <Connector side="left" />}
         </div>
         <div className="node-titles">
           <span className="node-category">{kind === "input" ? "INPUTS" : "OUTPUTS"}</span>
@@ -85,6 +90,11 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
             // RECEIVE from producers (there is no parent to bind from / feed to).
             handles={kind === "input" ? "feed" : "receive"}
             focusedPortId={focusedPortId}
+            // The column caption keeps this card's row GRID identical to a group
+            // card's IO columns (header + chrome + label + rows) — so when the LR
+            // spine aligns the two headers, their bindings align row-to-row too
+            // (grid parity; flow.ts rowAnchorsFor + the io card height count it).
+            label={kind === "input" ? "INPUTS" : "OUTPUTS"}
           />
         </div>
       )}

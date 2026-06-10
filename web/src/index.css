@@ -335,6 +335,34 @@ button.active {
   transform: translateX(-50%);
   z-index: 3;
 }
+/* horizontal (LR) variant: anchored off the tile's LEFT edge (inline `right`),
+   vertically centered on the tile — the base class's horizontal centering must
+   be undone (construction site: WorkflowNode Connector side="left") */
+.node-connector-left {
+  left: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* the LR EXIT DOT — the control edge's departure point on a card's right border
+   (user-picked E1 solid dot, exit-affordance lab 2026-06-10; the entry side has
+   the tile flare, the exit side has this). Pure decoration: the real NODE_OUT
+   handle is invisible and tucked 5px INSIDE the card (the terminus hides under
+   the node), the dot straddles the border at the icon row. Kind-colored like the
+   flares. Rendered by WorkflowNode/IOCardNode/GroupNode when the trunk actually
+   leaves NODE_OUT (handle-aware hasOutgoing — an LR decision's outcomes leave
+   their BranchPorts rows, which carry their own dots). */
+.exit-dot {
+  position: absolute;
+  right: -5px;
+  top: calc(var(--node-header-h) / 2);
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--kind);
+  z-index: 3;
+}
 .node-connector svg {
   display: block;
   width: 100%;
@@ -513,6 +541,16 @@ button.active {
 }
 .react-flow__handle.branch-handle {
   background: var(--decision);
+}
+/* The reserved "end" outcome row (a decision's stop arm — BranchPorts.tsx): faint,
+   matching the end edge/dot it feeds — a real outcome that stops the flow. */
+.branch-port-end .branch-label {
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--text-faint) 10%, var(--bg));
+  border-color: color-mix(in srgb, var(--text-faint) 28%, transparent);
+}
+.branch-port-end .react-flow__handle.branch-handle {
+  background: var(--text-faint);
 }
 
 /* IO rows — a workflow's inputs/outputs as rows on its OWN node, never a floating
@@ -700,10 +738,54 @@ button.active {
   right: 14px;
   z-index: 3;
 }
-/* the collapsed card (leaf anatomy via .node.compact) — only the click affordance
-   differs from a real leaf */
+/* the collapsed card (leaf anatomy via .node.compact) — clicking the BODY selects,
+   exactly like a leaf; the corner .group-toggle (below) is the only click toggle */
 .group-card {
   cursor: pointer;
+}
+
+/* container expand/collapse corner button (construction site: GroupNode
+   .group-toggle — design D, 2026-06-10: body = select, button = toggle).
+   Full button at rest (user-picked R1); hover brightens to the kind color. */
+.group-toggle {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  cursor: pointer;
+  z-index: 4;
+  background: color-mix(in srgb, var(--kind) 12%, var(--bg-node));
+  border: 1px solid color-mix(in srgb, var(--kind) 30%, transparent);
+}
+.group-toggle svg {
+  width: 12px;
+  height: 12px;
+  stroke: var(--text-muted);
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.group-toggle:hover {
+  background: color-mix(in srgb, var(--kind) 22%, var(--bg-node));
+  border-color: color-mix(in srgb, var(--kind) 55%, transparent);
+}
+.group-toggle:hover svg {
+  stroke: var(--kind);
+}
+/* keep the header's flex content (titles + badges) clear of the corner button */
+.group-card .node-header,
+.group .group-header {
+  padding-right: 34px;
+}
+/* the expanded region's selection ring (collapsed cards get it via .node.focused) */
+.group.focused {
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
 }
 
 /* batch DECK (Tines-style, user-requested 2026-06-10): a batch card reads as a

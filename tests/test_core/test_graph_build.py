@@ -341,7 +341,7 @@ def test_synthetic_input_and_output_with_same_name_have_distinct_identity() -> N
     assert input_node.id.ancestor_path == () and output_node.id.ancestor_path == ()
 
 
-def test_routes_to_end_builds_synthetic_end_edges_without_changing_decision_or_terminal() -> None:
+def test_routes_to_end_builds_synthetic_end_edges_and_counts_end_as_a_decision_outcome() -> None:
     validate_fix = _parse("examples/agent-orchestration/plan-to-code/execute-plan/validate-fix/validate-fix.pflow.md")
     graph = build_graph(validate_fix)
 
@@ -349,7 +349,10 @@ def test_routes_to_end_builds_synthetic_end_edges_without_changing_decision_or_t
     end_edges = [edge for edge in graph.edges if edge.source == check and edge.kind == EdgeKind.END]
     assert len(end_edges) == 1
     assert _node(graph, end_edges[0].target).kind == "end"
-    assert not graph.is_decision(check)
+    # A continue-or-stop decider IS a decision: 1 branch label (fix-tests) + the
+    # END route = 2 distinct outcomes. (The old rule required >= 2 branch labels,
+    # which missed every `if ok: next="end"` loop gate.)
+    assert graph.is_decision(check)
     assert not graph.is_terminal(check)
 
     conditional = _parse("examples/core/conditional-branching.pflow.md")
@@ -357,6 +360,28 @@ def test_routes_to_end_builds_synthetic_end_edges_without_changing_decision_or_t
     handle_error = NodeId("handle-error")
     assert [edge for edge in branch_graph.edges if edge.source == handle_error and edge.kind == EdgeKind.END]
     assert branch_graph.is_terminal(handle_error)
+    # A static `- next: end` (no branch edges) is single-outcome routing, not a decision.
+    assert not branch_graph.is_decision(handle_error)
+
+
+def test_is_decision_outcome_matrix() -> None:
+    a, b, end = NodeId("a"), NodeId("b"), NodeId("__end__")
+
+    def model(edges: list[Edge]) -> GraphModel:
+        return GraphModel(
+            nodes=[Node(a, "code"), Node(b, "code"), Node(end, "end")],
+            edges=edges,
+            containers=[],
+        )
+
+    # 1 branch label + an END route -> 2 outcomes -> decision
+    assert model([Edge(a, b, EdgeKind.BRANCH, label="go"), Edge(a, end, EdgeKind.END)]).is_decision(a)
+    # 1 branch label alone -> single forward outcome -> not a decision
+    assert not model([Edge(a, b, EdgeKind.BRANCH, label="go")]).is_decision(a)
+    # END route alone (static `- next: end` / every arm -> "end") -> not a decision
+    assert not model([Edge(a, end, EdgeKind.END)]).is_decision(a)
+    # ERROR edges never count as outcomes
+    assert not model([Edge(a, b, EdgeKind.ERROR, label="error"), Edge(a, end, EdgeKind.END)]).is_decision(a)
 
     manual = build_graph({
         "nodes": [

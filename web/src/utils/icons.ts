@@ -19,7 +19,8 @@ import loop from "../assets/icons/loop.svg";
 import placeholder from "../assets/icons/placeholder.svg";
 import python from "../assets/icons/python.svg";
 import subworkflow from "../assets/icons/subworkflow.svg";
-import { IO_COLOR, isCondition } from "./format";
+import transform from "../assets/icons/transform.svg";
+import { IO_COLOR, isCondition, isTransform } from "./format";
 import type { RFNode } from "../types";
 
 // condition.svg: three hollow rings joined by tapering legs, one in / two out — a
@@ -52,6 +53,7 @@ const KIND_ICON: Record<string, string> = {
  *  back to a sparkle for dynamic/missing/unknown models. */
 export function iconFor(node: RFNode): string {
   if (isCondition(node)) return condition;
+  if (isTransform(node)) return transform; // shuffle glyph, cyan -> white (transform.svg)
   if (node.kind === "workflow" && node.loop) return loop;
   if (node.kind === "llm") {
     const model = node.params.find((p) => p.name === "model")?.value;

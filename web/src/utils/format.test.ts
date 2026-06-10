@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { CONDITION_COLOR, categoryLabel, kindColor, nodeColor, parseTemplate, previewValue } from "./format";
+import { CONDITION_COLOR, TRANSFORM_COLOR, categoryLabel, kindColor, nodeColor, parseTemplate, previewValue } from "./format";
 
 describe("condition presentation (decision code node = CONDITION pseudo-kind)", () => {
   it("a decision code node presents as CONDITION in the condition color", () => {
-    const node = { kind: "code", is_decision: true };
+    const node = { kind: "code", is_decision: true, is_transform: false };
     expect(categoryLabel(node)).toBe("CONDITION");
     expect(nodeColor(node)).toBe(CONDITION_COLOR);
   });
 
   it("a non-decision code node keeps the code identity", () => {
-    const node = { kind: "code", is_decision: false };
+    const node = { kind: "code", is_decision: false, is_transform: false };
     expect(categoryLabel(node)).toBe("CODE");
     expect(nodeColor(node)).toBe(kindColor("code"));
   });
@@ -19,7 +19,29 @@ describe("condition presentation (decision code node = CONDITION pseudo-kind)", 
     // is_decision ⟹ code today (dynamic `next` is code-only) — but if branching
     // ever extends, an llm/shell decider must not present as CONDITION and hide
     // what it runs.
-    const node = { kind: "shell", is_decision: true };
+    const node = { kind: "shell", is_decision: true, is_transform: false };
+    expect(categoryLabel(node)).toBe("SHELL");
+    expect(nodeColor(node)).toBe(kindColor("shell"));
+  });
+});
+
+describe("transform presentation (pure-reshape code node = TRANSFORM pseudo-kind)", () => {
+  it("a transform code node presents as TRANSFORM in cyan", () => {
+    const node = { kind: "code", is_decision: false, is_transform: true };
+    expect(categoryLabel(node)).toBe("TRANSFORM");
+    expect(nodeColor(node)).toBe(TRANSFORM_COLOR);
+  });
+
+  it("CONDITION wins defensively if both facts ever claim a node", () => {
+    // Impossible by construction (the Python classifier excludes next-setters)
+    // — but if that invariant ever breaks, the routing role is the louder fact.
+    const node = { kind: "code", is_decision: true, is_transform: true };
+    expect(categoryLabel(node)).toBe("CONDITION");
+    expect(nodeColor(node)).toBe(CONDITION_COLOR);
+  });
+
+  it("the kind gate is defensive: a non-code is_transform keeps its kind identity", () => {
+    const node = { kind: "shell", is_decision: false, is_transform: true };
     expect(categoryLabel(node)).toBe("SHELL");
     expect(nodeColor(node)).toBe(kindColor("shell"));
   });

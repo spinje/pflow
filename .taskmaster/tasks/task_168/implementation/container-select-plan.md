@@ -1,6 +1,7 @@
 # Container SELECT vs EXPAND/COLLAPSE — implementation plan
 
-> **Status: PLANNED, not started** (user instruction: no code until go).
+> **Status: IMPLEMENTED 2026-06-10** (all six phases; see the progress-log entry for
+> deviations — there were none of substance).
 > Design locked 2026-06-10 via mockup labs (`/tmp/expand-btn-lab/` rounds 1–3, shoot-verified).
 > Companion docs: `web/CLAUDE.md` (current behavior), `visualization-requirements.md` (will gain
 > the decided interaction model on completion).

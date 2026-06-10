@@ -65,10 +65,14 @@ export function writeViewParams(search: string, patch: { direction?: Direction; 
 /** Resolve a `node=` value to the flat React Flow id the camera should frame, or null
  *  (caller fits the whole graph). Prefers a structural node_id match — what an author
  *  knows from the .pflow.md — taking the FIRST match, since node_id is not globally
- *  unique across nested sub-workflows (documented limitation). Falls back to treating
- *  the value as a flat id (an agent's deterministic escape hatch for a duplicate).
- *  Returns null when the match isn't currently rendered (hidden in a collapsed group /
- *  suppressed as a group host) — the caller degrades to a whole-graph fit. */
+ *  unique across nested sub-workflows (documented limitation). A GROUP HOST's node is
+ *  never rendered (its container represents it), so a host name resolves to its
+ *  representative group — the workflow/batch group whose `host` it is, skipping
+ *  memberless batch shells (flow.ts's `primaryGroupForHost` notion) — which makes
+ *  `focus=<sub-workflow name>` select the card/region (agents, Task 169). Falls back
+ *  to treating the value as a flat id (an agent's deterministic escape hatch for a
+ *  duplicate). Returns null when nothing matched is currently rendered (hidden in a
+ *  collapsed ancestor) — the caller degrades to a whole-graph fit. */
 export function resolveNodeFlatId(
   graph: RFGraph | null,
   renderedIds: ReadonlySet<string>,
@@ -77,6 +81,12 @@ export function resolveNodeFlatId(
   if (!graph) return null;
   const match = graph.nodes.find((n) => n.ref.node_id === nodeValue);
   if (match && renderedIds.has(match.id)) return match.id;
+  if (match) {
+    const representative = graph.groups.find(
+      (g) => g.host === match.id && !(g.kind === "batch" && g.members.length === 0),
+    );
+    if (representative && renderedIds.has(representative.id)) return representative.id;
+  }
   if (renderedIds.has(nodeValue)) return nodeValue; // flat-id fallback
   return null;
 }

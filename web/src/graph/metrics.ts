@@ -14,6 +14,12 @@ export const METRICS = {
   /** .io-col-label height — the small INPUTS/OUTPUTS column caption above IO rows
    *  (collapsed group card + expanded region; sizing math counts it once). */
   ioLabelH: 18,
+  /** .io-rows TOP CHROME — the sum of its margin-top (4) + border-top (1) +
+   *  padding-top (6) in index.css. The LR row-PORT alignment (flow.ts
+   *  rowAnchorsFor → layout.ts ports) depends on this matching the rendered
+   *  rows; change the `.io-rows` rule and this together or ports drift off
+   *  the row dots. */
+  ioRowsChrome: 11,
   /** .group-io-in sidebar width — the expanded region's inputs column. layout.ts
    *  reserves it as ELK left padding so the body lays out BESIDE the sidebar. */
   ioSidebarW: 200,
@@ -42,6 +48,13 @@ export const METRICS = {
  *  center — so ELK must be told (fixed ports, layout.ts) or it aligns box centers
  *  and a "straight" chain renders with a jog at every node. */
 export const ICON_COL_X = METRICS.headerPad + METRICS.tileSize / 2;
+
+/** The icon-row center y — the LR analog of ICON_COL_X (user-decided 2026-06-10):
+ *  every LR control handle sits at the HEADER's vertical center (the tile's
+ *  center), in on the left and out on the right at the SAME height, so the trunk
+ *  reads as passing straight THROUGH the node and ELK (fixed ports, layout.ts)
+ *  aligns headers — bodies of different heights hang below the aligned line. */
+export const ICON_ROW_Y = METRICS.nodeHeaderH / 2;
 
 /** The CSS custom properties main.tsx injects on :root — the stylesheet's view of
  *  METRICS. A pure map (no DOM access) so graph/ stays node-env testable. */
