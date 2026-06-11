@@ -449,6 +449,11 @@ button.active {
 .param-name.out {
   color: var(--data-edge);
   margin-left: auto;
+  /* The 42% cap above reserves room for a param row's VALUE — an output row
+     has no value (the `: type` suffix nests inside this span), so the label
+     gets the whole row before ellipsizing (`result.output_dir` was truncating
+     against empty space). */
+  max-width: 100%;
 }
 /* Output rows (WorkflowNode `output-row nested|quiet`, `row-type`): a NESTED row
    indents under its parent (the wholesale-read case); a QUIET row is authored-
@@ -1238,4 +1243,48 @@ button.active {
   color: var(--text-faint);
   border-style: dashed;
   cursor: default;
+}
+
+/* The workflow-interface panel (IoPanel.tsx): one entry per input/output. */
+.io-port {
+  padding: 8px 6px;
+  margin: 0 -6px;
+  border-radius: 4px;
+  border-top: 1px solid var(--border);
+}
+.io-port.marked {
+  background: color-mix(in srgb, var(--text) 7%, transparent); /* = .fact-marked */
+}
+.io-port-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.io-port-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+.io-port-uses {
+  margin: 6px 0 0;
+  flex-wrap: wrap;
+}
+/* In these rows a chip is one word of a phrase ("from [build-report] .result"),
+   not a stretched endpoint slot — un-stretch so the field path sits snug. */
+.io-port-uses .edge-chip {
+  flex: 0 1 auto;
+}
+/* The relationship word ("used by" / "from") — the panel's faint label-word
+   vocabulary (feeds/consumed/…), clearer than a bare arrow. */
+.io-port-uses-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+.io-port-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
 }

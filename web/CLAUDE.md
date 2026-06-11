@@ -75,7 +75,9 @@ Tests sit beside their subject.
   size, ports and handles cannot drift. Composition: a bare read or unknown
   keys → parent row + nested key rows (D2); no bare read + keys known → flat
   full-dotted-path rows, no parent (D3); `quiet` = no reading edge (D4 — grey
-  dot, faint, no line can exist). The landing ladder, one level deeper than H6:
+  dot, faint, no line can exist). A field-level row's type falls back to
+  `graph.kind_output_types[kind]` (the registry's declared interface — types
+  existing rows, never creates one; authored shapes win). The landing ladder, one level deeper than H6:
   sub-key ref → its exact key row (`o:result.ok`) → the field's parent row →
   `NODE_OUT`. Quiet is kept truthful by `scanParamReads` (flow.ts): plain-param
   refs (`prompt: ${gen.result.ok}`) form NO data-flow edges, so the scan merges
@@ -381,8 +383,9 @@ Tests sit beside their subject.
 - **Containers SELECT on click; expand/collapse is the rail's count-expander
   (user-decided 2026-06-10).** A container's body — collapsed card OR expanded
   region/header — is a node like any other: click = focus + read panel (the panel
-  shows the group's HOST node, resolved in GraphView's `selectedNode`; wrapper
-  groups have no host → no panel). The ONLY single-click toggle is the
+  shows the group's HOST node, resolved in GraphView's `selectedNode`; a ROOT
+  wrapper group resolves through `selectedIoGroup` to the IoPanel instead — see
+  the IO bullet). The ONLY single-click toggle is the
   `.group-toggle` expander GroupNode renders as the rail's last element in both
   states — the step count + arrows-out/in glyph in a rounded-SQUARE chip
   (its `stopPropagation` is LOAD-BEARING, else the click also selects) —
@@ -468,8 +471,31 @@ Tests sit beside their subject.
   (`IOCardNode`, RF type `"io"`, id = the wrapper's group id — focus/deep-link ids
   stay stable): tile + INPUTS/OUTPUTS category + the workflow name + a `"14 inputs"`
   pill; compact in beautiful, rows under the leaf `showBody` rule (advanced /
-  focus-expanded) — and clicking the card TOGGLES (its expansion is its open
-  state, so a second click closes it; GraphView onNodeClick). The card class is
+  focus-expanded) — and clicking the card SELECTS like every other node
+  (2026-06-11, the toggle died when the card got a panel): focus + **IoPanel**
+  (components/IoPanel.tsx), the workflow's interface written out — per input:
+  type/required/`default:`/full description + consumer chips under a faint
+  `used by` label; per output: a `from` label + the producer chip + the
+  dot-prefixed field it reads (one phrase: `from [build-report] .result`;
+  `.io-port-uses` un-stretches `.edge-chip`, `.io-port-uses-label` is the
+  relationship word — the panel's label-word vocabulary, clearer than bare
+  arrows) + source line. Types carry NO filler — never "any" (an invented
+  claim, user-caught 2026-06-11): `Port.dataType` is the authored `type:` when
+  declared, else an OUTPUT derives fail-closed from its SINGLE producer edge
+  via `producedTypeOf` (the same shape→registry resolution order the canvas
+  output rows use), else null — and the derivation lives IN `wrapperPorts`,
+  so the canvas io rows show `report str` identically to the panel. Ports come
+  from the exported `wrapperPorts` (flow.ts — the SAME single copy the canvas
+  rows render from); consumers/producers derive inline from contract data-flow
+  edges; chips are EdgePanel's exported `Chip`. An input with
+  NO data-flow edges shows no "used by" row at all — never an "unused" claim
+  (loop-condition reads form no edges: the quiet≠unconsumed rule). A ROOT
+  card's row click ALSO opens the panel with that entry marked (`focusPort` in
+  GraphView resolves the port's owner via `ioOwners`; NESTED rows stay
+  focus-only). GraphView's `selectedIoGroup` is the third panel-resolution arm,
+  disjoint by id namespace from `selectedNode`/`selectedEdge`. In beautiful the
+  card's rows still open via focus (selection sets focus → expansion); closing =
+  pane click / panel ✕, like every node. The card class is
   ALWAYS `compact` (the card shell lives on `.node.compact/.detailed`; adding
   `expanded` doubles the divider — both were real bugs). **Root IO cards JOIN THE
   CONTROL SKELETON (2026-06-10):** `buildFlow` synthesizes `io-flow:` control edges

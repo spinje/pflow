@@ -47,6 +47,8 @@ export interface BatchSpec {
 export interface IOPort {
   data_type: string | null;
   required: boolean;
+  // The authored `default:` value verbatim; null when absent.
+  default: unknown;
 }
 
 export type UnexpandedReason = "depth_limit" | "unresolved" | "dynamic_path" | "cycle";
@@ -130,6 +132,10 @@ export interface RFGraph {
   nodes: RFNode[];
   edges: RFEdge[];
   groups: RFGroup[];
+  // kind -> output field -> declared type (the registry's parsed docstring
+  // interfaces), for kinds present in this graph. The LAST type fallback on
+  // output rows that already exist — never creates a row; authored shapes win.
+  kind_output_types?: Record<string, Record<string, string>>;
 }
 
 export interface CatalogItem {

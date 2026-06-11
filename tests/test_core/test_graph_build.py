@@ -15,6 +15,7 @@ from pflow.core.workflow.graph import (
     Edge,
     EdgeKind,
     GraphModel,
+    IOPort,
     Node,
     NodeId,
     SourceRef,
@@ -339,6 +340,29 @@ def test_synthetic_input_and_output_with_same_name_have_distinct_identity() -> N
     # stays empty (real descents only) so the runtime-trace join key is unaffected.
     assert (input_node.id.port, output_node.id.port) == ("in", "out")
     assert input_node.id.ancestor_path == () and output_node.id.ancestor_path == ()
+
+
+def test_input_ports_carry_interface_data_and_required_defaults_true() -> None:
+    graph = build_graph({
+        "inputs": {
+            "topic": {"type": "string", "description": "What to research"},
+            "limit": {"type": "integer", "required": False, "default": 5},
+        },
+        "nodes": [{"id": "work", "type": "code"}],
+    })
+
+    # Description rides `purpose` (symmetric with outputs); an input that omits
+    # `required:` IS required — the ir_schema default every runtime reader applies.
+    topic = _node(graph, _input_id("topic"))
+    assert topic.purpose == "What to research"
+    assert topic.io == IOPort(data_type="string", required=True, default=None)
+
+    limit = _node(graph, _input_id("limit"))
+    assert limit.purpose == ""
+    assert limit.io == IOPort(data_type="integer", required=False, default=5)
+    # Inputs ship no source ref (the parser injects `_source_line` only for
+    # outputs/nodes; the inputs schema forbids extra keys).
+    assert limit.source is None
 
 
 def test_routes_to_end_builds_synthetic_end_edges_and_counts_end_as_a_decision_outcome() -> None:

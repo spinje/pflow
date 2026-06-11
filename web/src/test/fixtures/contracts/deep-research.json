@@ -8,11 +8,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The source documents to analyze.",
       "params": [],
       "io": {
         "data_type": "array",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -34,11 +35,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The research focus or question guiding the analysis.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -200,7 +202,7 @@
           },
           {
             "name": "source_count",
-            "data_type": null
+            "data_type": "int"
           }
         ]
       },
@@ -328,11 +330,11 @@
           },
           {
             "name": "analyses",
-            "data_type": null
+            "data_type": "int"
           },
           {
             "name": "reviews",
-            "data_type": null
+            "data_type": "int"
           }
         ]
       },
@@ -352,11 +354,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The source document text to analyze.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -383,11 +386,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The analysis focus area.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": false
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -435,7 +439,11 @@
       "is_terminal": false,
       "is_group_host": false,
       "is_transform": false,
-      "output_shape": null,
+      "output_shape": {
+        "field": "response",
+        "data_type": "str",
+        "keys": null
+      },
       "unexpanded": null,
       "annotations": {}
     },
@@ -570,11 +578,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The text section to score.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -605,11 +614,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The scoring criteria to apply.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": false
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -661,7 +671,11 @@
       "is_terminal": false,
       "is_group_host": false,
       "is_transform": false,
-      "output_shape": null,
+      "output_shape": {
+        "field": "response",
+        "data_type": "str",
+        "keys": null
+      },
       "unexpanded": null,
       "annotations": {}
     },
@@ -752,7 +766,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -790,7 +805,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -824,7 +840,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -858,7 +875,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -888,11 +906,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The research summary to review.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -919,11 +938,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The review perspective to apply.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": false
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -971,7 +991,11 @@
       "is_terminal": false,
       "is_group_host": false,
       "is_transform": false,
-      "output_shape": null,
+      "output_shape": {
+        "field": "response",
+        "data_type": "str",
+        "keys": null
+      },
       "unexpanded": null,
       "annotations": {}
     },
@@ -992,7 +1016,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1022,11 +1047,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The research summary to review.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1053,11 +1079,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The review perspective to apply.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": false
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1105,7 +1132,11 @@
       "is_terminal": false,
       "is_group_host": false,
       "is_transform": false,
-      "output_shape": null,
+      "output_shape": {
+        "field": "response",
+        "data_type": "str",
+        "keys": null
+      },
       "unexpanded": null,
       "annotations": {}
     },
@@ -1126,7 +1157,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1155,7 +1187,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1812,5 +1845,18 @@
       "nesting_depth": 0,
       "annotations": {}
     }
-  ]
+  ],
+  "kind_output_types": {
+    "code": {
+      "stdout": "str",
+      "stderr": "str",
+      "error": "str"
+    },
+    "llm": {
+      "response": "str|dict",
+      "error": "str",
+      "prompt": "str",
+      "llm_usage": "dict"
+    }
+  }
 }

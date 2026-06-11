@@ -6,6 +6,10 @@
 > contract, file:line, the H1–H13 review fixes) → `implementation/implementation-plan.md`; the
 > load-bearing "why a server" → `ADR-0005`; vocabulary → `CONTEXT.md`. This log *references* them;
 > it never restates them.
+> **How to read this:** search for the dated entry covering your area — do NOT read it whole
+> (~90k tokens, mostly history). For CURRENT behavior the CLAUDE.mds + `visualization-requirements.md`
+> are canonical; this log is the why/journey, and reversed decisions carry *(superseded …)* markers —
+> check for one before acting on any rule you find here.
 >
 > **Meta-state (2026-06-07):** design + plan + a 4-lens plan review are complete; the plan is approved.
 > **Implementation is being carried out by a separate agent.** This log *seeds* the journey with the
@@ -549,12 +553,14 @@ Pinned by tests: branch edges use `branchHandle(label)` and the node carries `br
 
 ### Visual iteration 4: IO ports → one consolidated "table" node (2026-06-08, user-driven, planned)
 
-User insight: the clutter wasn't *that* inputs are shown, it's that **each input was its own node**. Fix (the React Flow table-node pattern): `input_wrapper`/`output_wrapper` → ONE **Inputs**/**Outputs** node with a **row + handle per port**, shown in **both** densities; row-level focus preserves "click an input → see its connections." Planned first (the user approved the plan), then built. web **37 tests**; tsc + build clean. Pure frontend — zero contract change.
+User insight: the clutter wasn't *that* inputs are shown, it's that **each input was its own node**. Fix (the React Flow table-node pattern): `input_wrapper`/`output_wrapper` → ONE **Inputs**/**Outputs** node with a **row + handle per port**, shown in **both** densities; row-level focus preserves "click an input → see its connections." Planned first (the user approved the plan), then built. web **37 tests**; tsc + build clean. Pure frontend — zero contract change. *(The ports table itself was later replaced wholesale by IO-rows-on-the-workflow-node, 2026-06-10 — see that entry; the row-level-focus and dual-handle ideas survive there.)*
 
-- **flow.ts:** `ioWrappers` → one `type:"ports"` node per wrapper (id reuses the wrapper's `g*` id; rows = its member IO nodes). IO member nodes are no longer emitted; `ioNodeToPort` maps each to `(portsNodeId, portHandle(id))`. `renderAnchor` resolves an IO node to its ports node; the handle functions return the **row handle** when the edge reaches the ports node (else node-level, for a collapsed-past re-anchor). The whole `showIO`/hide-IO-in-beautiful/drop-IO-edges machinery is **deleted** — IO is always shown; its edges are ordinary data-flow (hidden-in-beautiful, revealed on focus).
-- **Row-level focus (the one new mechanic):** every edge now carries `data.from`/`data.to` (its *original* contract endpoints). `applyFocus` matches incidence via `edgeTouchesFocus` = flow endpoints **OR** `data.from`/`to` — so focus can be a node id, the ports-node id, or a **single port id** (a row), and a port reveals just its own lines even though its edges re-anchor onto the shared ports node. The ports node highlights its `focusedPortId` row. Clicking a row drives this via a small `InteractionContext` (`focusPort`) — keeps node `data` callback-free.
-- **Components:** new `PortsNode` (header + clickable rows + per-row handle), `PortNode` deleted, `ports` registered (drop `port`). CSS swapped pill → table.
-- **Net effect:** one tidy Inputs box per level instead of N floating pills; no floating (one node, ELK-positioned near consumers via data-flow-in-layout); click a row → that input's line(s) + consumer(s) light up; click a consumer → all its input lines reveal; advanced shows everything. Removes more code than it adds.
+**What survives of the build** *(the deleted table's mechanics trimmed 2026-06-11 — they described
+dead code)*: **row-level focus was born here** — every edge carries `data.from`/`data.to` (its
+*original* contract endpoints), so focus can be a node id, an owner id, or a **single port id**
+(a row), revealing just that port's lines even though its edges re-anchor onto a shared node;
+clicking a row drives it via a small `InteractionContext` (`focusPort`) — keeps node `data`
+callback-free. Both mechanisms are live today (PortRows / applyFocus).
 
 **Follow-up fix — every port row needs BOTH handles (the missing binding edges).** First cut gave each row only a *source* handle (feed-out). But a port bridges two scopes: an **input** RECEIVES from the parent (binding) AND feeds consumers; an **output** RECEIVES from a producer AND feeds the parent. The contract has these "receive" edges (verified: 30 into input ports like `repo_dir→repo_dir`, 11 into output ports like `check-validate→ok`) — but they targeted the row's source-type handle, so React Flow couldn't attach them and they silently didn't draw (the user spotted the missing lines). Fix: each row now renders a **target** handle (`portTargetHandle`, left/top — receives) AND a **source** handle (`portHandle`, right/bottom — feeds); `targetHandleFor` routes an IO target to `portTargetHandle`. Pinned by an assertion that a binding edge lands on the target handle.
 
@@ -572,7 +578,10 @@ User clicked `fetch-data` in beautiful and asked where `stdout` went. Cause: out
 
 ### Docs + requirements persisted (2026-06-08)
 
-- New **`visualization-requirements.md`** (task folder) — a one-page checklist of the **hard requirements** (handles land exactly; no info-loss in advanced; consolidated dual-handle ports nodes; row-level focus; beautiful = control skeleton + click-to-reveal; explicit fork handles), **decided principles** (a linear pipeline IS a line; layout reflects all structure even when hidden; focus never re-layouts), **implemented**, **wanted/deferred** (gradient edges; smart edge-router), and the deferred increments (overlay, editing). The *what*, complementing this log's *why* and the CLAUDE.md *how*.
+- New **`visualization-requirements.md`** (task folder) — the one-page what-must-hold checklist
+  (hard requirements / decided principles / implemented / wanted / deferred). The *what*,
+  complementing this log's *why* and the CLAUDE.md *how*. *(Its contents have evolved heavily
+  since — the doc is the living source, not this snapshot.)*
 - **`web/CLAUDE.md`** (already existed) got the consolidated-ports + dual-handle + row-level-focus concepts and the jsdom/handle-type finding below. **`ui/CLAUDE.md`** stale path fixed (`api.ts` → `api/client.ts`). Left `execution/`, `registry/`, `graph/` CLAUDE.mds alone (Phase-1–3 / Task-133 coordination, not this session's authored work).
 
 ### Finalize verification + a real test-quality pass (2026-06-08)
@@ -684,7 +693,7 @@ Gates after every step: **`tsc --noEmit` clean, `vitest` 39 passing, `npm run bu
 mount test (`GraphView.test.tsx`) and `flow.test.ts` (incl. a new TD-fork test + the HANDLE-TYPE
 invariant) are green.
 
-## Critical learnings & insights (the GOLD — read before touching the canvas)
+## Critical learnings & insights (the GOLD — origin record; CURRENT canonical versions live in `web/CLAUDE.md`)
 
 1. **React Flow renders ALL edges in one SVG layer BEHIND the nodes.** This is the single most
    important constraint and the root of the whole "edge flows *into* the icon" saga. A stock edge
@@ -1144,29 +1153,27 @@ Inputs/Outputs row handles were `Position.Top/Bottom` — each row's dot rendere
 bottom-center BETWEEN rows, and binding edges dove into the middle of the stack (visually
 disconnected; reproduced on the real lyrics-generator workflow). A row in a vertical table always
 connects on its left/right sides — the same rule the advanced param/output rows already follow;
-direction moves the trunk, not a table row's connection point. `PortsNode` now uses constant
-`Position.Left`(target)/`Position.Right`(source); a side bonus is the handles no longer move on an
-LR↔TD flip (PortsNode has no `useUpdateNodeInternals`, so the old direction-dependent positions
-were also a stale-measurement trap). Verified via `inspect` (row handles at the node's left/right
+direction moves the trunk, not a table row's connection point. Fixed by making the row sides
+CONSTANT (left=receive / right=feed); a side bonus of constant sides is the handles no longer
+move on an LR↔TD flip (direction-dependent handle positions without `useUpdateNodeInternals`
+are a stale-measurement trap). Verified via `inspect` (row handles at the node's left/right
 edges, per-row y) + a zoomed crop: all six output bindings land exactly on their row dots.
+*(PortsNode died with the IO-rows redesign, 2026-06-10; the rows-connect-SIDEWAYS rule survives
+on PortRows and is a design principle in visualization-requirements.md.)*
 
 ### Ports-edge follow-ups: facing sides + data-edge lanes (2026-06-09) ✅
 
-**Ports-row edges attach on the side FACING their peer (user-caught crossings, same session).**
-Binding edges between two ports nodes (parent INPUTS → sub-workflow INPUTS) left the source's
-right side and wrapped all the way around to the target's left side — and sibling wrap-arounds
-crossed each other. Root cause: handle sides are fixed at BUILD time (target=left, source=right),
-but which side faces the peer is only knowable AFTER layout. Fix: each ports row now renders all
-FOUR handles (base pair + mirrored `iotr:`/`iol:` pair stacked on the same dots — zero visual
-change), and a new post-layout pure pass `graph/portSides.ts::assignPortSides` (wired in
-useWorkflowGraph after ELK) flips an edge's port handle to the mirrored side when its peer's
-absolute center is clearly (>24px hysteresis) on the other side. One comparison serves both ends:
-s−t > H ⇒ target receives on its right AND source feeds from its left — facing each other, no
-wrap. Prefix discipline held (`iotr:`/`iol:` disjoint from `iot:`/`io:` via trailing colons;
-handleType extended). +4 pins (incl. the parent-relative absolute-center case). *(The center
-comparison was later upgraded to HANDLE-X — see the row-side settlement entry.)* Verified on
-lyrics-generator via zoomed crop: the OUTPUTS→INPUTS binding now lands directly on the
-facing row dot. NOT a router — full crossing avoidance stays the deferred smart edge-router.
+**Ports-row edges attach on the side FACING their peer (user-caught crossings, same session) —
+machinery since DELETED; lessons only** *(mechanics trimmed 2026-06-11 — they described dead
+code)*. Binding edges between two ports nodes left the source's right side and wrapped all the
+way around to the target's left — and sibling wrap-arounds crossed each other. Root cause:
+handle sides were fixed at BUILD time, but which side faces the peer is only knowable AFTER
+layout — so a post-layout side-flip pass over mirrored handles shipped here. *(The entire
+facing-sides machinery was DELETED with the ports table in the IO-rows redesign: rows on the
+boundary got structural sides — the flip problem ceased to exist rather than being solved. What
+survives: the side comparison must use the HANDLE x, not node centers — see the row-side
+settlement entry — and the trailing-colon prefix discipline still documented in handles.ts.)*
+NOT a router — full crossing avoidance stays the deferred smart edge-router.
 
 **Data-edge LANES: parallel bindings no longer overlap pixel-exactly (user-caught, same session).**
 All data edges at a node turned at smoothstep's default 20px stub, so a 6-row Inputs node's
@@ -1288,9 +1295,8 @@ for `.react-flow__controls*` (raised bg, border, `fill: currentColor` so the +/�
 the text color). While verifying, a screenshot came back with the OLD bundle (bezier edges, white
 minimap) despite a fresh build — **the MCP Chrome's HTTP cache heuristically reuses assets because
 StaticFiles sends no `Cache-Control`**; source-vs-render check confirmed the tree was fine. Pinned
-in the skill's troubleshooting: cache-bust with a throwaway `&v=` param. (Consider a real fix
-later: `Cache-Control: no-cache` on index.html in `ui/server.py` — content-hashed assets are safe
-to cache, the HTML entry is not.)
+in the skill's troubleshooting: cache-bust with a throwaway `&v=` param. (The real fix —
+`Cache-Control: no-cache` on index.html — landed 2026-06-10 with the worker-hang closure.)
 
 **LR branch fan-outs get lanes too (user-caught, 2026-06-10).** In LR a fork's outcomes leave their
 OWN labeled row handles, yet railCenter funneled them all onto ONE shared vertical rail — distinct
@@ -1366,15 +1372,9 @@ its rail mid-gap, ~55px clear of both nodes. Final row-side model recorded in
 ### Session close (THE close — earlier per-arc closes were merged here) (2026-06-10)
 
 **Everything from "Connector aspect-ratio root cause" (2026-06-09) down is ONE UNCOMMITTED batch**
-from two agents working the same files in parallel. Contents, by arc: the connector aspect-ratio
-fix + CONDITION pseudo-kind + condition.svg; the full Tines edge language (rounded-orthogonal
-GradientEdge rail, ELK fixed ports + leftmost-straight + error-last, dict-key row landing, sideways
-+ facing ports-row handles, data/branch lanes, radius 18→24→**20**, focus-directional fade); the
-row-side settlement (strict param/output sides + `assignDataRails` gap rails); the perf round
-(layout cache, ELK Web Worker, stale-paint guard); animated expansion transitions (store
-interpolation, ≤60-node gate); the dark minimap + themed zoom controls; collapse controls + the
->60-node overview-open default (`graph/collapse.ts`, `collapse=` param, deep-link ancestor
-protection); metrics single-sourcing + the palette re-theme. **A per-author split was evaluated and
+from two agents working the same files in parallel — the arcs are the entries above (connector +
+CONDITION; the Tines edge language; the row-side settlement; the perf round; animated expansion;
+minimap/controls theming; collapse controls; metrics + palette). **A per-author split was evaluated and
 rejected** — WorkflowNode/index.css/flow.ts/flow.test.ts/useWorkflowGraph.ts/web/CLAUDE.md
 interleave both authors, and each side's work references the other's (CONN reads METRICS; lanes
 ride DataEdge; portSides + the layout cache wire into the same hook). Commit as one
@@ -1409,6 +1409,8 @@ kind-tinted border. Sub-workflow kind color = **magenta `#e26ad8`** (lab compare
 AGAINST palette neighbors: hot pink collides with mcp `#ff8fab`, violet with claude-code/batch).
 **Looped sub-workflow swaps its tile icon to the amber loop glyph** (user's idea) — safe because
 the category line still says SUB-WORKFLOW; leaf kinds never swap (their icon IS their identity).
+*(The swap was RETIRED with the chip rail, 2026-06-10 — identity never mutates; behavior is
+border chrome.)*
 Mid-build the user added the **batch deck** (Tines stacked-copies reference image) — shipped as
 pure CSS pseudo-elements on `.group-card.group-batch` + `.node.batched` (unexpanded dynamic
 batches).
@@ -1466,6 +1468,10 @@ inspected before coding: a dynamic batch emits a batch group with **zero direct 
 for a batched leaf — the leaf renders beside it; or holding only the workflow group for a batched
 sub-workflow). **Rule: a memberless batch group is a decorator SHELL and never renders.** Literal
 batches (real item-copy members) keep their container — there are actual items to reveal.
+*(SUPERSEDED 2026-06-11 — the memberlessness discriminator was the CRITICAL review-fixes bug: a
+literal batch group ALSO has zero direct node members (its items are child GROUPS), so this rule
+swallowed literal batches whole. The surviving rule is literal-vs-dynamic + child groups, single
+copy in `shellBatchIds` — see the review-fixes entry.)*
 
 Implementation (flow.ts): `shellBatch` set + `effectiveParent` (reparents children past shells);
 `groupsByHost` skips shells → `primaryGroupForHost`/`renderAnchor` land host edges, title, badges,
@@ -1486,11 +1492,12 @@ iterated pill → backdrop-box → halo with the user; left edge at the node's l
 labels stay mid-edge, unnumbered. **The surprise that shaped it: declared order does NOT survive
 layout.** The leftmost-stays-straight policy keeps the trunk child centered under the source, so
 siblings don't land in declared order — caught live on conditional-branching (process-large declared
-first, laid out center). Numbering is therefore POST-LAYOUT (`assignBranchOrdinals`, third pass in
-portSides.ts: TD left→right by target box, LR top→bottom); buildFlow's declared-order value is only
-the seed/marker. **LR row numbering consciously deferred:** BranchPorts rows render in declared
+first, laid out center). Numbering therefore had to be POST-LAYOUT (an `assignBranchOrdinals`
+pass — deleted same day with the ordinals; the declared-order-doesn't-survive-layout lesson is
+what remains load-bearing: it's why `orderForkSiblings` exists). **LR row numbering consciously deferred:** BranchPorts rows render in declared
 order, which can disagree with the spatial numbers — two different numbers for one outcome across a
-direction toggle is worse than none.
+direction toggle is worse than none. *(The ordinals were removed the same day and the whole
+machinery deleted — see the placement-settled entry below.)*
 
 ### Branch CONDITIONS on the edge (2026-06-10, planned + built) ✅
 
@@ -1574,22 +1581,10 @@ LoopEdge, GroupNode, loop/subworkflow icons, collapse.ts, assignLoopRails — sh
 layout.ts, portSides.ts, useWorkflowGraph.ts, index.css, web/CLAUDE.md). A per-author split is again
 impractical; commit as one batch after a joint gate run.
 
-**This agent's slice, net:** (1) TD outcome labels entry-anchored (bare text + halo, `labelAnchor`,
-+4px nudge; error pills mid-edge); (2) fork targets lay out in CODE order (`orderForkSiblings`,
-layout.ts + 4 tests — first `if` leftmost); (3) the branch-CONDITION feature end-to-end:
-`RFEdge.condition` (additive contract field) + fail-closed `_branch_conditions` AST extraction in
-react_flow.py (+3 Python tests incl. the 9-case bail matrix; goldens byte-identical; purity green),
-frontend pills on lone segments (`conditionAnchor` + 4 tests: mid-run for side branches, final
-descent +5px for the straight child), visibility = advanced always / beautiful on focus-expansion
-(build-time `EdgeData.condition`), ReadPanel outcome→condition table; (4) ordinals tried + removed
-same day (machinery deleted per the deletion test). Phase-0 evidence: `scratchpads/condition-labels/`
-(corpus sweep — only 3 decision nodes exist; 3/3 extract FULL).
-
-**Pre-commit gate (re-run on the FINAL merged tree):** `cd web && npx vitest run` (last green at
-this slice: **117**) + `npm run build`; `uv run pytest tests/test_core/test_graph_react_flow_renderer.py
-test_graph_model_purity.py test_mermaid_golden.py tests/test_cli/test_ui.py` (last green: 104) then
-full `make check` + `make test`. **`git add` untracked:** `web/src/graph/layout.test.ts`,
-`scratchpads/condition-labels/` (keep — Phase-0 evidence the extraction patterns cite).
+**This agent's slice** = the three entries above (entry-anchored TD labels, code-order fork
+layout, the branch-CONDITION feature end-to-end) + the same-day ordinal removal. Phase-0
+evidence kept in-tree: `scratchpads/condition-labels/` (corpus sweep — only 3 decision nodes
+exist; 3/3 extract FULL). *(Batch landed; gates were re-run on the merged tree.)*
 
 **Open threads (not blockers):** TD branches going the SAME direction share collinear rails —
 condition pills would sit on overlapping segments (no corpus case yet; revisit with the smart
@@ -1632,7 +1627,8 @@ U's landing) + the cap `≤ ${max_…}` on its own row; one row truncated both o
 **↻ mark on the category line** (`CLAUDE CODE ↻`, `.loop-mark`) — a compact looped leaf said
 nothing about looping (the U alone made the user ask "is this a loop?"); identity stays in kind
 color, behavior in loop amber. Verified on execute-plan: both rows legible, arrow on the
-condition row, mark visible at compact size.
+condition row, mark visible at compact size. *(The category mark was retired with the chip rail
+the same day — the border ↻ chip took the telegraph role.)*
 
 ### Task 169 spawned: agent↔browser point-and-watch channel (2026-06-10)
 
@@ -1891,7 +1887,9 @@ into the first node; same for outputs but reversed."* All `web/`; zero contract/
   incoming control edge; **falls back to the FIRST root step on a root cycle** — semantically
   honest, pflow starts execution at the first step) and each root `is_terminal` step's
   representative (via `renderAnchor` — a terminal sub-workflow host anchors on its GROUP card/
-  region) → Outputs card. `kind: "sequential"` / `type: "gradient"` so every downstream policy
+  region) → Outputs card. *(The `is_terminal` filter was itself the floating-Outputs bug —
+  replaced by control-sink derivation 2026-06-11, see the closing entry.)*
+  `kind: "sequential"` / `type: "gradient"` so every downstream policy
   (incidence, gradient, focus dim, lanes-exempt) treats them as the control trunk they visually
   are; colors blend IO teal ↔ the step's `nodeColor`. Drawn in BOTH densities (structure, like
   forks). NOT contract edges — visual policy only; the per-port data lines are untouched.
@@ -2511,19 +2509,11 @@ ellipsizes the faint type suffix away — user question exposed it). Python 7822
 ### Session close — TRANSFORM L2 + follow-ups batch (2026-06-10)
 
 **One joint uncommitted batch again** (32 modified files), interleaved with the parallel
-agent's edge-selection + chip-rail arcs in flow.ts/flow.test.ts/GraphView/useWorkflowGraph/
-index.css/CLAUDE.mds — per-author split impractical (same precedent as the two prior batches).
-**This agent's slice:** scope.py / model.py / build.py / react_flow.py (+ its two build-test
-files) — the L2 contract chain; web: types.ts, flow.ts (outputRows/scanParamReads/landing),
-WorkflowNode (output rows + tooltip), ReadPanel (shape facts + consumed), GraphView (reads
-prop), index.css (output-row styles), their tests; docs: graph/ui/web CLAUDE.mds,
-visualization-requirements.md, this log.
-
-**Pre-commit gate (re-run on the FINAL merged tree):** `make test` (last green: **7822** + 1
-skipped) + `make check` (clean, incl. mypy/deptry); `cd web && npx tsc --noEmit && npx vitest
-run` (last green: **217**) + `npm run build`; corpus Mermaid diff empty (run twice this
-session via HEAD worktree; the post-L2 rounds were renderer/frontend-only, goldens inherently
-safe). No untracked files to add.
+agent's edge-selection + chip-rail arcs in the same web files — per-author split impractical
+(same precedent as the two prior batches). **This agent's slice** = the L2 contract chain
+(scope/model/build/react_flow + tests) and its web half (types/flow/WorkflowNode/ReadPanel/
+GraphView + styles/tests) + doc sync. *(Batch landed; gates re-run green on the merged tree —
+corpus Mermaid diff empty, run twice via a HEAD worktree.)*
 
 **Open threads (not blockers):** the watch item — advanced density grew (every
 shape-bearing node carries rows; reads fine on run-cycle/execute-plan, user's eyes on the
@@ -2685,7 +2675,9 @@ called at the end of `layoutGraph` so cache/anchoring/animation see aligned posi
 PURE sequential chain (forks/merges/multi-terminal sinks break it; error edges don't) aligns
 its anchors to its HEAD's, per scope, both directions; shifts that would crowd a sibling
 (`SPINE_CLEARANCE`) are skipped. Measured straight on run-from-plan + deep-research (TD + LR);
-deep-research's Outputs card stays off-spine correctly (6 terminals → merge sink). 12 pins in
+deep-research's Outputs card stays off-spine correctly (6 terminals → merge sink) *(changed
+2026-06-11: the sink-derivation fix leaves deep-research ONE sink, so its Outputs card now joins
+the spine — the multi-source merge rule still applies where real merges exist)*. 12 pins in
 `spine.test.ts` incl. a real-ELK integration test, mutation-verified (unwiring → red). Gates:
 web 245, tsc, build. Zero contract/Python change; flow.ts untouched (parallel handoff agent's
 file). Rules + LR binding-jog residual: web/CLAUDE.md spine bullet.
@@ -2755,36 +2747,12 @@ one markup). Verified on song-creator; web 256 + tsc + build clean.
 ### Session close — review-fixes batch + losslessness invariant + label (2026-06-11)
 
 **ONE UNCOMMITTED BATCH again, interleaved with the parallel spine-alignment agent**
-(their slice: `web/src/graph/spine.ts` + `spine.test.ts` + `layout.ts` + the web/CLAUDE.md
-spine bullet — untouched by this workstream; the per-author split is impractical per the
-standing branch precedent). **This agent's slice:**
-
-- *Python:* `renderers/react_flow.py` (`_is_group_host` literal arm +
-  `_literal_batch_hosts_with_items`; `_module_scope_walk` scoping for
-  `_result_assignments`/`_is_transform_code`), `test_graph_react_flow_renderer.py`
-  (+6 pins), `test_graph_build.py` (the mutation-checked `compare=False` pin),
-  NEW `tests/test_core/test_react_flow_contract_fixtures.py` +
-  `tests/fixtures/react_flow_contracts/_generate.py` (the contract drift guard).
-- *Web:* `flow.ts` (`shellBatchIds` / `ioOwners` / `paramTextReads` +
-  `consumedReadPaths` / coalesce-aware scan / `decisionEnd` / stale comments),
-  `collapse.ts` + `viewParams.ts` (consume `shellBatchIds`), `GraphView.tsx`
-  (`consumedReadPaths` reads prop), `WorkflowNode.tsx` (inline unexpanded badge;
-  Badges.tsx DELETED), `ChipRail.tsx` (ModifierChips absorbed), `GroupNode.tsx`
-  (`groupCategory` → BATCH-WORKFLOW), `index.css` (`.badge-more` gone), NEW
-  `lossless.test.ts` + `web/src/test/fixtures/contracts/*.json`, test updates in
-  flow/collapse/viewParams/GraphView test files.
-- *Docs:* web/CLAUDE.md (shell + deep-link bullets), ui/CLAUDE.md (H8 bullet),
-  visualization-requirements.md (Implemented), the handoff doc's status header,
-  this log.
-
-**Pre-commit gate (re-run on the FINAL merged tree, both agents landed):** `make test`
-(last green: **7831 + 1 skipped**) + full `make check` (NOT yet run repo-wide this
-session — deliberately deferred while the parallel agent was mid-flight: pre-commit's
-fixers run `--all-files`); `cd web && npx tsc --noEmit && npx vitest run` (last green:
-**256**) + `npm run build`. **`git add` untracked:** `review-fixes-handoff.md`,
-`tests/fixtures/react_flow_contracts/`, `tests/test_core/test_react_flow_contract_fixtures.py`,
-`web/src/graph/lossless.test.ts`, `web/src/test/fixtures/` (+ the spine agent's
-`spine.ts`/`spine.test.ts`).
+(their slice: `spine.ts` + `spine.test.ts` + `layout.ts` + the web/CLAUDE.md spine bullet —
+untouched by this workstream; the per-author split is impractical per the standing branch
+precedent). **This agent's slice** = the three entries above (the 9-issue review-fixes batch,
+the losslessness invariant + real-contract fixtures, the BATCH-WORKFLOW label): the Python
+renderer + the new drift guard, the web flow/collapse/viewParams/components changes + tests,
+and the doc sync. *(Landed as `70fc42c7`.)*
 
 **Open threads (not blockers):** the truncated literal batch's chip-vs-expander reading
 (`⧉ ×5` true count beside `[2 ⤢]` kept-representative steps — both honest, can read as a
@@ -2828,3 +2796,160 @@ declared output with `is_terminal: false`, asserts the io-flow edge exists and t
 mid-chain step gets none; the cycle test extended with the Outputs-side fallback); tsc
 strict + build clean. Docs synced: web/CLAUDE.md (skeleton bullet),
 visualization-requirements.md (Implemented bullet). Zero Python/contract change.
+
+### Output-shape typing extended: locals + certainties + branch dicts + kind shapes (2026-06-11, user-driven) ✅ (uncommitted)
+
+Trigger: the user's lyrics screenshot ("why can't we show result.files is an array? why is
+result.output_… truncated?") → corpus audit. **Root cause:** `_key_type` was DEPTH-0 — it typed
+only what sat syntactically at the dict value position, while the corpus's dominant authoring
+style is "build locals up top, assemble result at the end" (55% of keys were `"k": some_local`).
+Fix: the `_TypeScope` resolver chain in react_flow.py — rules live in ui/CLAUDE.md →
+`RFNode.output_shape`, forms pinned in `test_key_type_resolution_matrix`. Corpus 17% → 65% of
+keys typed; the residual is honestly uncertain (conditional bindings, loop-built strings).
+Renderer-only + one CSS rule (`.param-name.out` — the 42% cap reserved room for a param value
+output rows don't have); deep-research is the only fixture that changed. Browser-verified on
+the user's exact cases; flow.ts (the parallel agent's in-flight file) deliberately untouched —
+the schema-less llm shape rides `outputRowsFor`'s existing D4 quiet-row path with zero
+frontend changes.
+
+**Decisions/surprises the code and docs don't carry:**
+- **Latent bug fixed in passing:** the old `inputs.get(name)` arm shipped a REBOUND input's
+  stale annotation type (`text: str` + `text = text.split()` claimed str). Now every binding
+  site is unanimity-checked; an annotated input seeds its own resolution (induction base: the
+  first binding IS the input value), so same-type rebinding (`text.strip()`) still resolves.
+- **Schema-present ≠ schema-less (the correctness line):** a templated/non-object
+  `output_schema` stays None, never "str" — its runtime value is parsed JSON. Only a fully
+  ABSENT schema ships the kind's free-form-text contract (`_llm_kind_shape`). The user chose
+  the quiet-row presence (every schema-less llm card grows `→ response: str`) over
+  type-only-when-observed.
+- **The two-assignment pins survived the branch-dict generalization unchanged** — their
+  fixtures' key sets happen to differ, which is exactly the new rule's bail condition.
+- **Deferred (needs its own decision):** registry-declared interface types for observed rows
+  on shell/http/file/mcp nodes (`stdout: string`) — a contract extension, the third authored
+  type source. `output_schema`'s `anyOf`/list-form/`$ref` gaps: zero corpus occurrences, left
+  fail-closed.
+
+### Registry types on observed rows: the third type source wired (2026-06-11, user-approved design) ✅ (uncommitted)
+
+The deferred decision from the typing audit, shipped: `RFGraph.kind_output_types` (kind →
+output field → declared type, from the registry's parsed docstring interfaces) — full rules in
+ui/CLAUDE.md. The design call that matters: **kind-level facts ship once per payload and are
+INJECTED at the server seam** (`Registry.output_types_by_kind()` → `render_react_flow(...,
+kind_output_types=)`) — the renderer stays registry-free (purity), the model never carries
+platform facts, and the frontend join is one fallback line in `outputRowsFor` (types existing
+rows, never creates one — the old "noise rows" rejection stays honored). Rejected: per-node
+shape lists (duplicates kind facts N times + re-opens D4 row-forcing) and any hardcoded
+kind→type table (registry drift). Decisions a future agent needs:
+
+- **`any` entries are dropped at the read-model** (`output_types_by_kind` docstring) — a type
+  that says nothing is not a fact worth shipping; MCP tools without an outputSchema all
+  declare `result: any`.
+- **The fixture generator MUST mirror the server's injection** (`_generate.py` — caught when
+  the first regen shipped an empty map): committed contracts represent the real wire, and the
+  drift guard passing under the isolated registry proves core-kind interfaces are
+  deterministic across environments.
+- The map effectively serves shell/http/file/mcp only — llm/claude-code/code always carry an
+  authored shape, which wins by fallback order.
+
+Gates: renderer/registry/ui suites green (web 259, Python 3242 across test_core+ui+registry),
+fixtures regen'd (all three gain the field), tsc + build clean; browser-verified —
+conditional-branching's shell card shows `→ stdout: str`.
+
+**Self-audit catch (same session):** the frontend fallback was pinned unit-level only — the
+buildFlow argument threading `graph.kind_output_types` to the rows was unpinned (deleting it
+kept every test green: the tested-but-unwired trap). Added the buildFlow-level wiring pin
+(flow.test.ts). Honest residual, cosmetic: registry types show on canvas rows but not in the
+read panel's facts (panels show authored text only — revisit only if it confuses).
+
+### IO interface panel: the io card's dead click gets its panel (2026-06-11, user-driven) ✅ (uncommitted)
+
+> Plan (locked decisions D1–D7, verified facts, steps): `implementation/io-panel-plan.md`.
+> Trigger: the user's screenshot — clicking the OUTPUTS card does nothing in advanced
+> (GraphView's own comment called the missing panel "a parked knob"). Three searcher passes
+> verified the wiring before planning; built phase-by-phase per the plan. This entry records
+> the deviations and finds only.
+
+**THE research find that grew the Python slice — `required` polarity was WRONG on the wire.**
+`build.py:_add_inputs` defaulted a missing `required:` to `False`; every runtime reader
+(validator.py:1663, workflow_executor, ir_preparation, path_validation, describe-formatter,
+context.py) defaults `True`, and ir_schema documents `default: True`. So the canvas tooltips
+mislabeled every input that doesn't author `required:` — and the new panel would have too.
+Fixed at the source. **The plan's predicted golden risk fired exactly once:** Mermaid renders
+`(type, required)` on input port labels, so `document-processor.mmd` changed — verified
+against the source workflows (title/body omit `required:` → they ARE required at runtime) and
+regenerated: the old golden was the mislabel. Contract fixtures regenerated (the drift guard's
+two failures were exactly the two fixtures with inputs — conditional-branching has none).
+
+**Contract additions (inputs gain the symmetry outputs had):** input `description` → `purpose`
+(`_add_inputs` mirrors `_add_outputs`), `IOPort.default: Any = None` (authored value verbatim;
+an authored `default: null` is indistinguishable from absent — accepted, pathological).
+**Input `source` stays None (deviation from the plan's "verify, don't assume" item):** the
+parser injects `_source_line` only for outputs/nodes, and the inputs schema is
+`additionalProperties: False` — injecting it means a schema change, scope creep. The panel
+shows source for outputs only.
+
+**Frontend shape (per plan, no surprises):** `wrapperPorts` lifted from a buildFlow closure to
+a module-level export (THE single copy — canvas rows and panel entries can't disagree);
+`IoPanel` is a third sibling panel (EdgePanel's `Chip` exported — the ReadPanel-exports
+precedent; `.read-panel` shell + facts CSS reused; 5 small `.io-port-*` rules added);
+GraphView grew the `selectedIoGroup` third resolution arm (disjoint by id namespace) and the
+io toggle arm DIED — every node-shaped thing now selects identically. `focusPort` became
+owner-aware via `ioOwners`: a ROOT card's row click also opens the panel with that entry
+marked; nested rows stay focus-only. No-claims rule carried over: an input with zero
+data-flow edges shows NO "used by" row (loop-condition reads form no edges — quiet ≠
+unconsumed; never an affirmative "unused").
+
+**Test gotchas (each cost a round):** jsdom has no `scrollIntoView` (optional-call the
+method); `syncUrl`'s replaceState LEAKS density across tests in GraphView.test.tsx (an
+earlier test's "advanced" click persisted in the URL — the io test pins `?density=beautiful`
+in a try/finally); the 29 hand-built `io:` fixture literals needed `default: null` (kept
+REQUIRED in the TS mirror deliberately — the wire always ships it, and optionalizing it
+re-opens the synthetic-fixture trap).
+
+**Verified live** (headless loop, server restarted per the serves-old-Python gotcha, on the
+user's actual lyrics-generator): OUTPUTS advanced TD → panel with `report` + description +
+`lyrics-generator.pflow.md:689` + `build-report TRANSFORM` producer chip + `result` field;
+INPUTS beautiful focus=g0 → card expands to rows, lines reveal, panel shows `sources`
+(`array · required`, full multi-line description, 3 consumer chips incl. an io-port chip)
+and `output_base` with `default: ./output`. Wire probed: `purpose`/`required: true`/`default`
+all ship.
+
+**Gates:** test_core 3101 passed (incl. the new build pin + the updated io wire-shape
+assertion); contract drift guard 3 passed; web **266 passed** (+7: 5 IoPanel jsdom + 2
+GraphView click-semantics pins — the old toggle had NO jsdom pin, a known gap, so nothing
+was rewritten); tsc strict + `npm run build` clean; Mermaid goldens green (1 intentional
+regen, above). Docs synced: web/CLAUDE.md (io bullet rewritten around the panel; container
+bullet's "no panel" parenthetical corrected), ui/CLAUDE.md (the `RFNode.io` contract bullet
+incl. the do-not-revert polarity note), visualization-requirements.md (hard-requirement +
+Implemented). Full `make check`/`make test` deferred to the joint batch close (parallel
+agent mid-flight — the standing branch precedent).
+
+**Same-day follow-ups (user-caught, 2026-06-11): the "any" filler dies; the producer row
+reads as a phrase.** Two screenshot catches on the new panel. (1) `report any` — but the
+output authors NO `type:` (verified at the source: description + `source:` only), so "any"
+was an INVENTED claim — worse, the canvas card beside it shows the producer's `→ result: str`.
+The typing arc (same day, parallel agent) covered canvas output rows but not the io-port
+slot — this closed the gap: new `producedTypeOf` (flow.ts, beside `outputRowsFor`) derives an
+UNDECLARED output's type from its producer, fail-closed, in the SAME resolution order the
+rows use (authored shape field/key type → registry `kind_output_types`; deeper paths /
+multi-edge interpolations → nothing). Authored `type:` always wins; single-producer-edge
+only. ReadPanel's identical `?? "any"` io fact → the in-file "—" convention. NO filler
+anywhere — absent beats wrong. (2) `← [chip]………result` — the field floated to the row's far
+edge (`.edge-chip` is `flex: 1 1 0`, the EdgePanel two-endpoint layout); in these rows a chip
+is one WORD of a phrase, so `.io-port-uses .edge-chip` un-stretches and the field renders
+dot-prefixed snug beside it: `← [build-report · TRANSFORM] .result`. Gates: web **267**
+(IoPanel fixture now exercises the derivation: untyped output + shaped producer → `str`,
+`queryByText("any")` null), tsc + build clean; browser-verified on the same lyrics-generator
+deep link — `report str` + the one-phrase producer row.
+
+**Round 3 (user-caught, same day): the derived type moves INTO `wrapperPorts`; arrows become
+words.** (1) "we are not showing report: str in outputs?" — right: the derivation had landed
+panel-side only, while the canvas io row reads the same `Port.dataType`. Moved it into
+`wrapperPorts` itself (output ports with no authored `type:` + exactly one producer edge →
+`producedTypeOf`), so the CANVAS row now shows `report str` too and the panel's local
+derivation block was deleted — one copy, three surfaces (io card row, group-card rows, panel).
+(2) "should we say 'data coming from'?" — the bare ←/→ arrows were replaced with the panel's
+existing label-word vocabulary (`feeds`/`consumed`/…): a faint `from` heads the producer row
+(`from [build-report · TRANSFORM] .result` — one phrase) and `used by` heads the consumer
+chips. web **267** green (label-word + canvas-row assertions updated), tsc + build clean;
+browser-verified — the OUTPUTS card row and the panel both read `report str`.

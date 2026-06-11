@@ -336,6 +336,28 @@ class Registry:
 
         return result
 
+    def output_types_by_kind(self) -> dict[str, dict[str, str]]:
+        """Per node kind, its declared output fields and their types.
+
+        A read-model over the parsed docstring interfaces (``- Writes:
+        shared["stdout"]: str``): kind -> output field -> declared type, the
+        docstring's own text (lowercased by the extractor — ``str``, ``int``,
+        ``str|dict``). Entries typed ``any`` are dropped: a type that says
+        nothing is not a fact worth shipping (e.g. MCP tools without an
+        outputSchema declare ``result: any``).
+        """
+        types: dict[str, dict[str, str]] = {}
+        for kind, metadata in self.load().items():
+            outputs = (metadata.get("interface") or {}).get("outputs") or []
+            fields = {
+                out["key"]: out["type"]
+                for out in outputs
+                if isinstance(out, dict) and out.get("key") and out.get("type") not in (None, "", "any")
+            }
+            if fields:
+                types[kind] = fields
+        return types
+
     def _auto_discover_core_nodes(self) -> None:
         """Auto-discover and save core nodes on first use."""
         import pflow.nodes

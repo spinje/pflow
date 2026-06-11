@@ -83,8 +83,10 @@ export type Port = {
   name: string;
   dataType: string | null;
   required: boolean;
-  // Outputs carry their authored description (the contract's `purpose`); inputs
-  // have none. Surfaced as the row tooltip.
+  // The authored `default:` value (inputs only); null when absent.
+  defaultValue: unknown;
+  // The authored description (the contract's `purpose`), inputs and outputs
+  // alike. Surfaced as the row tooltip and the IoPanel entry.
   description: string | null;
 };
 
@@ -315,7 +317,37 @@ type FieldReadsView = { readonly bare: boolean; readonly subKeys: readonly strin
 
 const EMPTY_READS: FieldReadsView = Object.freeze({ bare: false, subKeys: Object.freeze([]) });
 
-export function outputRowsFor(node: RFNode, observed?: ReadonlyMap<string, FieldReadsView>): OutputRow[] {
+/** The type a producer's `field[.key]` carries, FAIL-CLOSED: the authored
+ *  shape's field/key type, else the registry's kind interface — the same
+ *  resolution order the output rows use (outputRowsFor). Deeper paths and
+ *  anything unprovable return null; never a filler like "any". IoPanel uses
+ *  this to type an undeclared workflow output from its producer's annotation. */
+export function producedTypeOf(
+  node: RFNode | undefined,
+  field: string | null,
+  path: readonly string[],
+  kindTypes?: Readonly<Record<string, string>>,
+): string | null {
+  if (!node || !field) return null;
+  const shape = node.output_shape;
+  if (path.length === 0) {
+    if (shape?.field === field && shape.data_type) return shape.data_type;
+    return kindTypes?.[field] ?? null;
+  }
+  if (path.length === 1 && shape?.field === field) {
+    return shape.keys?.find((k) => k.name === path[0])?.data_type ?? null;
+  }
+  return null;
+}
+
+export function outputRowsFor(
+  node: RFNode,
+  observed?: ReadonlyMap<string, FieldReadsView>,
+  // The registry's declared types for this node's KIND (graph.kind_output_types
+  // [node.kind]) — the LAST fallback for a field-level row's type. Never adds a
+  // row: shell/http/mcp rows exist only from reads; this just names what flows.
+  kindTypes?: Readonly<Record<string, string>>,
+): OutputRow[] {
   const fields = [...(observed?.keys() ?? [])];
   const shape = node.output_shape;
   // An authored shape produces rows even with zero readers — "produced but
@@ -341,7 +373,13 @@ export function outputRowsFor(node: RFNode, observed?: ReadonlyMap<string, Field
       // nest under it. With no keys at all this IS today's single-row behavior
       // — which non-`result` fields (stdout) keep, except they too gain nested
       // rows when sub-reads exist (the observed-usage generalization).
-      rows.push({ field, label: field, dataType: fieldShape?.data_type ?? null, quiet: !reads.bare, nested: false });
+      rows.push({
+        field,
+        label: field,
+        dataType: fieldShape?.data_type ?? kindTypes?.[field] ?? null,
+        quiet: !reads.bare,
+        nested: false,
+      });
       for (const name of names) {
         rows.push({ field: `${field}.${name}`, label: name, dataType: typeOf(name), quiet: !read.has(name), nested: true });
       }
@@ -585,6 +623,36 @@ export function ioOwners(graph: RFGraph): { wrappers: Map<string, string>; ports
     }
   }
   return { wrappers, ports };
+}
+
+/** A wrapper's IO members as row models, in member order. THE single copy:
+ *  buildFlow's row areas (cards/regions) and the IoPanel's port entries both
+ *  consume it, so canvas rows and panel entries can never disagree.
+ *
+ *  `dataType` is the authored `type:` when declared, else — outputs only —
+ *  derived FAIL-CLOSED from the port's single producer edge via producedTypeOf
+ *  (a multi-edge `source:` is an interpolation, not one field; unknown stays
+ *  null, NEVER a filler like "any" — user-caught 2026-06-11). */
+export function wrapperPorts(graph: RFGraph, wrapper: RFGroup): Port[] {
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const derivedType = (port: RFNode): string | null => {
+    if (port.kind !== "output") return null;
+    const producers = graph.edges.filter((e) => e.kind === "data_flow" && e.target === port.id);
+    if (producers.length !== 1) return null;
+    const producer = nodeById.get(producers[0]!.source);
+    return producedTypeOf(producer, producers[0]!.output_field, producers[0]!.output_path, graph.kind_output_types?.[producer?.kind ?? ""]);
+  };
+  return wrapper.members
+    .map((memberId) => nodeById.get(memberId))
+    .filter((m): m is RFNode => m != null && m.io != null)
+    .map((m) => ({
+      id: m.id,
+      name: m.ref.node_id,
+      dataType: m.io!.data_type ?? derivedType(m),
+      required: m.io!.required,
+      defaultValue: m.io!.default ?? null,
+      description: m.purpose || null,
+    }));
 }
 
 // The expansion set for a focus in beautiful mode: the focused leaf plus every leaf
@@ -838,26 +906,14 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   // IO ownership (ioOwners — the single rule): port → owner feeds edge handle
   // resolution; wrapper → owner places the row areas.
   const { wrappers: ownerByWrapper, ports: ioNodeToOwner } = ioOwners(graph);
-  const wrapperPorts = (wrapper: RFGroup): Port[] =>
-    wrapper.members
-      .map((memberId) => nodeById.get(memberId))
-      .filter((m): m is RFNode => m != null && m.io != null)
-      .map((m) => ({
-        id: m.id,
-        name: m.ref.node_id,
-        dataType: m.io!.data_type,
-        required: m.io!.required,
-        // Only outputs carry an authored description (build puts it on purpose).
-        description: m.purpose || null,
-      }));
   // Group id -> the IO rows it carries (from its child level's wrappers).
   const groupIO = new Map<string, { inputs: Port[]; outputs: Port[] }>();
   for (const wrapper of ioWrappers) {
     if (!wrapper.parent) continue; // root wrappers become standalone IO cards below
     const owner = ownerByWrapper.get(wrapper.id) ?? wrapper.id;
     const slot = groupIO.get(owner) ?? { inputs: [], outputs: [] };
-    if (wrapper.kind === "input_wrapper") slot.inputs = wrapperPorts(wrapper);
-    else slot.outputs = wrapperPorts(wrapper);
+    if (wrapper.kind === "input_wrapper") slot.inputs = wrapperPorts(graph, wrapper);
+    else slot.outputs = wrapperPorts(graph, wrapper);
     groupIO.set(owner, slot);
   }
   const NO_IO = { inputs: [] as Port[], outputs: [] as Port[] };
@@ -960,7 +1016,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
         data: { node: n, direction: view.direction, dimmed: false, focused: false },
       });
     } else {
-      const outputRows = outputRowsFor(n, observedReadsByNode.get(n.id));
+      const outputRows = outputRowsFor(n, observedReadsByNode.get(n.id), graph.kind_output_types?.[n.kind]);
       outputRowsByNode.set(n.id, outputRows);
       const branchLabels = branchLabelsByNode.get(n.id) ?? [];
       const isExpanded = view.density === "compact" && expandedSet.has(n.id);
@@ -1003,7 +1059,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   let rootOutputCard: string | null = null;
   for (const wrapper of ioWrappers) {
     if (wrapper.parent) continue; // nested → rows on the workflow group (above)
-    const ports = wrapperPorts(wrapper);
+    const ports = wrapperPorts(graph, wrapper);
     if (ports.length === 0) continue;
     const rowsVisible = view.density === "detailed" || expandedSet.has(wrapper.id);
     if (rowsVisible) ioRowsShown.add(wrapper.id);

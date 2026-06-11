@@ -87,6 +87,10 @@ class TestGraphEndpoint:
         for edge in payload["edges"]:
             assert edge["source"] in node_ids
             assert edge["target"] in node_ids
+        # The registry's declared output types ride the payload, scoped to the
+        # kinds present (the frontend's last type fallback on output rows).
+        assert payload["kind_output_types"]["shell"]["stdout"] == "str"
+        assert set(payload["kind_output_types"]) <= node_kinds
 
     def test_missing_workflow_param_is_400(self) -> None:
         """No ``workflow`` query param → 400 with a structured error body."""

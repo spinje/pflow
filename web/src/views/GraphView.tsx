@@ -17,7 +17,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
-import { consumedReadPaths, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { consumedReadPaths, ioOwners, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { nodeColor } from "../utils/format";
 import { edgeClickAction, readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
@@ -25,6 +25,7 @@ import type { RFEdge, RFNode } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { InteractionProvider } from "../components/interaction";
+import { IoPanel } from "../components/IoPanel";
 import { nodeTypes } from "../components/nodes";
 import { ReadPanel } from "../components/ReadPanel";
 import { Toolbar } from "../components/Toolbar";
@@ -174,16 +175,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   }, []);
 
   const onNodeClick = useCallback((_: unknown, node: Node) => {
-    if (node.type === "io") {
-      // The root IO card TOGGLES (its focus-expansion IS its open state, so a
-      // second click must close it — user-caught 2026-06-10).
-      setFocus((prev) => (prev === node.id ? null : node.id));
-      setSelectedId((prev) => (prev === node.id ? null : node.id));
-      return;
-    }
-    // Leaves AND containers SELECT (design D, 2026-06-10): a container's body is a
-    // node like any other — focus + read panel; expand/collapse moved to the
-    // GroupNode corner button (via InteractionContext) and double-click.
+    // EVERYTHING selects (design D, 2026-06-10; io cards joined 2026-06-11 when
+    // they got a panel — the toggle was the canvas's only toggle, and "second
+    // click closes" died the same way it did for containers): focus + panel;
+    // closing = pane click / panel ✕, like every other node. An io card's
+    // beautiful-mode rows still open via focus (expansion IS its focus state).
     setFocus(node.id);
     setSelectedId(node.id);
   }, []);
@@ -228,23 +224,45 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setSelectedId(null);
   }, []);
 
-  // Clicking a single IO ROW (on a root IO card or a group's row area) focuses just
-  // that port — its connections reveal, the row highlights. No read panel (a port
-  // has no params).
+  // Clicking a single IO ROW focuses just that port — its connections reveal, the
+  // row highlights. On a ROOT IO card the row ALSO opens the interface panel with
+  // its entry marked (card = the whole interface, row = one port, same panel both
+  // ways). Nested rows (on group cards) stay focus-only: their owner's panel is
+  // the host ReadPanel, and auto-opening it on a row click is a different gesture.
+  const ioOwnership = useMemo(() => (graph ? ioOwners(graph) : null), [graph]);
   const interaction = useMemo(
-    () => ({ focusPort: (portId: string) => setFocus(portId), toggleGroup }),
-    [toggleGroup],
+    () => ({
+      focusPort: (portId: string) => {
+        setFocus(portId);
+        const owner = ioOwnership?.ports.get(portId);
+        const ownerGroup = owner != null ? graphRef.current?.groups.find((g) => g.id === owner) : undefined;
+        if (ownerGroup && ownerGroup.parent == null && (ownerGroup.kind === "input_wrapper" || ownerGroup.kind === "output_wrapper")) {
+          setSelectedId(owner!);
+        }
+      },
+      toggleGroup,
+    }),
+    [ioOwnership, toggleGroup],
   );
 
   // A selected CONTAINER reads as its HOST node — purpose, params (bindings),
-  // loop/batch spec, source all live there. Wrapper groups have no host → no
-  // panel (the io-card panel stays a parked knob).
+  // loop/batch spec, source all live there. Root wrapper groups have no host;
+  // they resolve through selectedIoGroup below (the interface panel) instead.
   const selectedNode: RFNode | null = useMemo(() => {
     if (!graph || !selectedId) return null;
     const direct = graph.nodes.find((n) => n.id === selectedId);
     if (direct) return direct;
     const host = graph.groups.find((g) => g.id === selectedId)?.host;
     return host ? (graph.nodes.find((n) => n.id === host) ?? null) : null;
+  }, [graph, selectedId]);
+
+  // A selected ROOT IO CARD (its id IS its wrapper group's) reads as the
+  // workflow's interface. Third resolution arm, disjoint from the other two by
+  // id namespace: wrapper groups never match a node or a contract edge.
+  const selectedIoGroup = useMemo(() => {
+    if (!graph || !selectedId) return null;
+    const g = graph.groups.find((grp) => grp.id === selectedId);
+    return g && g.parent == null && (g.kind === "input_wrapper" || g.kind === "output_wrapper") ? g : null;
   }, [graph, selectedId]);
 
   // A selected EDGE reads as its contract edge (flow edges keep contract ids;
@@ -367,6 +385,17 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               edge={selectedEdge}
               graph={graph}
               renderedIds={renderedIds}
+              onNavigate={onNavigate}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
+          {graph && selectedIoGroup && (
+            <IoPanel
+              group={selectedIoGroup}
+              graph={graph}
+              workflowName={workflowName}
+              renderedIds={renderedIds}
+              markedPortId={focus != null && selectedIoGroup.members.includes(focus) ? focus : null}
               onNavigate={onNavigate}
               onClose={() => setSelectedId(null)}
             />

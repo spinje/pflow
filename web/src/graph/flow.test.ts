@@ -282,7 +282,7 @@ describe("buildFlow — collapsed group is a CARD (leaf anatomy, 2026-06-10 rede
       node("host", { kind: "workflow", is_group_host: true }),
       node("inner", { parent: "g0" }),
       node("deep", { parent: "g1" }),
-      node("io1", { kind: "input", io: { data_type: null, required: true }, parent: "g0" }),
+      node("io1", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "g0" }),
       node("n2"),
       node("iso"),
     ],
@@ -459,6 +459,21 @@ describe("outputRowsFor — the output-row composition (D2/D3/D4)", () => {
     expect(outputRowsFor(node("g"))).toEqual([]);
   });
 
+  it("kind-declared types are the LAST fallback: type observed rows, never create one", () => {
+    const kindTypes = { stdout: "str", exit_code: "int" };
+    // an observed shell read gains the registry's declared type...
+    expect(outputRowsFor(node("g"), reads({ stdout: { bare: true, subKeys: [] } }), kindTypes)).toEqual([
+      { field: "stdout", label: "stdout", dataType: "str", quiet: false, nested: false },
+    ]);
+    // ...but an unread declared field (exit_code) creates NO row (no claim)
+    expect(outputRowsFor(node("g"), undefined, kindTypes)).toEqual([]);
+    // and an authored per-node shape always WINS over the kind map
+    const n = node("g", { output_shape: { field: "stdout", data_type: "bytes", keys: null } });
+    expect(outputRowsFor(n, reads({ stdout: { bare: true, subKeys: [] } }), kindTypes)).toEqual([
+      { field: "stdout", label: "stdout", dataType: "bytes", quiet: false, nested: false },
+    ]);
+  });
+
   it("a response-field shape (structured llm) puts rows on `response`, never `result`", () => {
     // The shape names its own port: llm's structured output lands on `response`
     // (the Python side sets field per kind) — rows, quiet flags, and key union
@@ -544,6 +559,24 @@ describe("buildFlow — per-key landing (output_path → the exact key row)", ()
     ]);
     // The input graph has zero edges of ANY kind — nothing may be synthesized.
     expect(edges).toHaveLength(0);
+  });
+
+  it("graph.kind_output_types reaches the rows through buildFlow (the WIRING, not just the unit)", () => {
+    // The unit fallback is pinned above; this guards the one argument in
+    // buildFlow that threads the contract field through — deleting it would
+    // keep every unit test green (the tested-but-unwired trap).
+    const g: RFGraph = {
+      nodes: [node("sh", { kind: "shell" }), node("use", { params: [] })],
+      edges: [edge("e0", "sh", "use", "data_flow", { output_field: "stdout", input_name: null })],
+      groups: [],
+      kind_output_types: { shell: { stdout: "str" } },
+    };
+    const { nodes } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "sh");
+    if (leaf?.type !== "node") throw new Error("expected the shell leaf");
+    expect(leaf.data.outputRows).toEqual([
+      { field: "stdout", label: "stdout", dataType: "str", quiet: false, nested: false },
+    ]);
   });
 });
 
@@ -1079,7 +1112,7 @@ describe("buildFlow — IO ports are rows on their OWNER node (group / root IO c
   function ioInput(id: string, name: string, required = false): RFNode {
     return node(id, {
       kind: "input",
-      io: { data_type: "string", required },
+      io: { data_type: "string", required, default: null },
       parent: "g_in",
       ref: { node_id: name, ancestor_path: [], port: "in" },
     });
@@ -1188,7 +1221,7 @@ describe("buildFlow — ROOT IO wrappers become standalone IO cards", () => {
   function rootInput(id: string, name: string, required = false): RFNode {
     return node(id, {
       kind: "input",
-      io: { data_type: "string", required },
+      io: { data_type: "string", required, default: null },
       parent: "g_in",
       ref: { node_id: name, ancestor_path: [], port: "in" },
     });
@@ -1196,7 +1229,7 @@ describe("buildFlow — ROOT IO wrappers become standalone IO cards", () => {
   function rootOutput(id: string, name: string, description = ""): RFNode {
     return node(id, {
       kind: "output",
-      io: { data_type: null, required: false },
+      io: { data_type: null, required: false, default: null },
       parent: "g_out",
       purpose: description,
       ref: { node_id: name, ancestor_path: [], port: "out" },
@@ -1262,7 +1295,7 @@ describe("buildFlow — root IO cards join the control SKELETON (io-flow edges)"
   // (incidence flags). NOT contract edges — pure visual policy, drawn in BOTH
   // densities (structure, like forks).
   function rootIO(id: string, wrapper: string, kind: "input" | "output"): RFNode {
-    return node(id, { kind, io: { data_type: null, required: false }, parent: wrapper });
+    return node(id, { kind, io: { data_type: null, required: false, default: null }, parent: wrapper });
   }
   const chain: RFGraph = {
     nodes: [rootIO("inA", "g_in", "input"), node("first"), node("last", { is_terminal: true }), rootIO("outA", "g_out", "output")],
@@ -1395,7 +1428,7 @@ describe("buildFlow — HANDLE-TYPE INVARIANT (the recurring silent-edge-drop bu
   function rfInput(id: string, name: string): RFNode {
     return node(id, {
       kind: "input",
-      io: { data_type: "string", required: false },
+      io: { data_type: "string", required: false, default: null },
       parent: "g_in",
       ref: { node_id: name, ancestor_path: [], port: "in" },
     });
@@ -1599,11 +1632,11 @@ describe("rowAnchorsFor — row-port geometry (the LR alignment's source of trut
   it("io card rows include the .io-rows chrome; group card outputs are bottom-anchored; regions get none", () => {
     const g: RFGraph = {
       nodes: [
-        node("inA", { kind: "input", io: { data_type: null, required: true }, parent: "g_root" }),
+        node("inA", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_root" }),
         node("host", { kind: "workflow", is_group_host: true }),
-        node("p1", { kind: "input", io: { data_type: null, required: true }, parent: "g_in" }),
-        node("p2", { kind: "input", io: { data_type: null, required: false }, parent: "g_in" }),
-        node("o1", { kind: "output", io: { data_type: null, required: false }, parent: "g_out" }),
+        node("p1", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_in" }),
+        node("p2", { kind: "input", io: { data_type: null, required: false, default: null }, parent: "g_in" }),
+        node("o1", { kind: "output", io: { data_type: null, required: false, default: null }, parent: "g_out" }),
         node("body", { parent: "g_wf" }),
       ],
       edges: [],
@@ -1685,11 +1718,11 @@ describe("layoutGraph — produces positions (ELK smoke)", () => {
     // row-to-row simultaneously. Leaf↔card bindings have no parity guarantee.
     const g: RFGraph = {
       nodes: [
-        node("inA", { kind: "input", io: { data_type: null, required: true }, parent: "g_in" }),
-        node("inB", { kind: "input", io: { data_type: null, required: false }, parent: "g_in" }),
+        node("inA", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_in" }),
+        node("inB", { kind: "input", io: { data_type: null, required: false, default: null }, parent: "g_in" }),
         node("host", { kind: "workflow", is_group_host: true }),
-        node("p1", { kind: "input", io: { data_type: null, required: true }, parent: "g_wf_in" }),
-        node("p2", { kind: "input", io: { data_type: null, required: false }, parent: "g_wf_in" }),
+        node("p1", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_wf_in" }),
+        node("p2", { kind: "input", io: { data_type: null, required: false, default: null }, parent: "g_wf_in" }),
         node("body", { parent: "g_wf" }),
       ],
       edges: [
@@ -1749,7 +1782,7 @@ describe("layoutGraph — produces positions (ELK smoke)", () => {
         node("host", { kind: "workflow", is_group_host: true }),
         node("inA", {
           kind: "input",
-          io: { data_type: null, required: true },
+          io: { data_type: null, required: true, default: null },
           parent: "g_in",
           ref: { node_id: "x", ancestor_path: [], port: "in" },
         }),
@@ -1959,7 +1992,7 @@ describe("focus-expansion — beautiful cards expand to rows (decided 2026-06-09
   it("expandTargets: focusing an IO card (wrapper id) expands the consumers of all its member ports", () => {
     const g: RFGraph = {
       nodes: [
-        node("in1", { kind: "input", io: { data_type: null, required: true }, parent: "gw" }),
+        node("in1", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "gw" }),
         node("c1", { params: [{ name: "p", value: "${in1}", is_dynamic: true, source: null }] }),
       ],
       edges: [edge("df", "in1", "c1", "data_flow", { input_name: "p" })],
@@ -1980,11 +2013,11 @@ describe("focus-expansion — beautiful cards expand to rows (decided 2026-06-09
     // row-to-row instead of deduping into one mislabeled node-level line.
     const g: RFGraph = {
       nodes: [
-        node("rootIn", { kind: "input", io: { data_type: null, required: true }, parent: "g_root" }),
+        node("rootIn", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_root" }),
         node("producer"),
         node("host", { kind: "workflow", is_group_host: true }),
-        node("p1", { kind: "input", io: { data_type: null, required: true }, parent: "g_wf_in" }),
-        node("p2", { kind: "input", io: { data_type: null, required: false }, parent: "g_wf_in" }),
+        node("p1", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_wf_in" }),
+        node("p2", { kind: "input", io: { data_type: null, required: false, default: null }, parent: "g_wf_in" }),
         node("body", { parent: "g_wf" }),
       ],
       edges: [
@@ -2006,7 +2039,7 @@ describe("focus-expansion — beautiful cards expand to rows (decided 2026-06-09
   it("IO-touching data lines carry NO floating label (the rows name the fields)", () => {
     const g: RFGraph = {
       nodes: [
-        node("in1", { kind: "input", io: { data_type: null, required: true }, parent: "gw" }),
+        node("in1", { kind: "input", io: { data_type: null, required: true, default: null }, parent: "gw" }),
         node("c1", { params: [{ name: "p", value: "${in1}", is_dynamic: true, source: null }] }),
         node("a"),
         node("b", { params: [{ name: "x", value: "${a.o}", is_dynamic: true, source: null }] }),
@@ -2156,7 +2189,7 @@ describe("expandTargets — edge focus expands exactly the two endpoints", () =>
   it("an IO-port endpoint contributes its OWNER (the line must land on a rendered row)", () => {
     const g: RFGraph = {
       nodes: [
-        node("p", { kind: "input", io: { data_type: "string", required: true } }),
+        node("p", { kind: "input", io: { data_type: "string", required: true, default: null } }),
         node("b", { params: [{ name: "x", value: "${p}", is_dynamic: true, source: null }] }),
       ],
       edges: [edge("e_pb", "p", "b", "data_flow", { input_name: "x" })],

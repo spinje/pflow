@@ -25,7 +25,9 @@ const KIND_TINT: Record<string, string> = {
   end: "var(--text-faint)",
 };
 
-function Chip({
+// Exported for IoPanel (the same endpoint-chip semantics: resolve-or-disable,
+// io ports get port-focus) — the ReadPanel-exports precedent, not a shared module.
+export function Chip({
   node,
   graph,
   renderedIds,

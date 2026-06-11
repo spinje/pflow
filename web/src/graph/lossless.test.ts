@@ -260,9 +260,9 @@ describe("losslessness — synthetic structural matrix", () => {
     nodes: [
       node("a"),
       node("host", { kind: "workflow", is_group_host: true }),
-      node("in_x", { kind: "input", io: { data_type: "string", required: true }, parent: "g_in" }),
+      node("in_x", { kind: "input", io: { data_type: "string", required: true, default: null }, parent: "g_in" }),
       node("inner", { parent: "g_wf", params: [{ name: "p", value: "${in_x}", is_dynamic: true, source: null }] }),
-      node("out_y", { kind: "output", io: { data_type: null, required: false }, parent: "g_out" }),
+      node("out_y", { kind: "output", io: { data_type: null, required: false, default: null }, parent: "g_out" }),
       node("c", { params: [{ name: "q", value: "${host.out_y}", is_dynamic: true, source: null }] }),
     ],
     edges: [

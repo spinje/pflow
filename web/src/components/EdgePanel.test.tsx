@@ -89,8 +89,8 @@ describe("EdgePanel — data variant", () => {
     // mirrors e3: three inputs feeding one prompt — one edge per ${ref}
     const g: RFGraph = {
       nodes: [
-        node("repo_dir", { kind: "input", io: { data_type: "string", required: true } }),
-        node("plan_path", { kind: "input", io: { data_type: "string", required: true } }),
+        node("repo_dir", { kind: "input", io: { data_type: "string", required: true, default: null } }),
+        node("plan_path", { kind: "input", io: { data_type: "string", required: true, default: null } }),
         node("chunk", { kind: "code" }),
         node("implement", {
           kind: "claude-code",
@@ -146,7 +146,7 @@ describe("EdgePanel — data variant", () => {
 
   it("a binding into a workflow output shows the port's io facts (an IO target has no params)", () => {
     const g: RFGraph = {
-      nodes: [node("a"), node("pr_url", { kind: "output", io: { data_type: "string", required: false } })],
+      nodes: [node("a"), node("pr_url", { kind: "output", io: { data_type: "string", required: false, default: null } })],
       edges: [edge("eo", "a", "pr_url", "data_flow", { output_field: "url" })],
       groups: [],
     };
@@ -175,7 +175,7 @@ describe("EdgePanel — data variant", () => {
             },
           ],
         }),
-        node("n5", { ref: { node_id: "concept_brief", ancestor_path: [], port: null }, kind: "input", io: { data_type: "string", required: true }, parent: "gin" }),
+        node("n5", { ref: { node_id: "concept_brief", ancestor_path: [], port: null }, kind: "input", io: { data_type: "string", required: true, default: null }, parent: "gin" }),
       ],
       edges: [edge("eb", "n3", "n5", "data_flow", { output_field: "result" })],
       groups: [
@@ -295,7 +295,7 @@ describe("EdgePanel — endpoint chips resolve-or-disable", () => {
   it("an IO-port chip uses port-focus semantics (focus the row, keep this panel)", () => {
     const g: RFGraph = {
       nodes: [
-        node("repo", { kind: "input", io: { data_type: "string", required: true } }),
+        node("repo", { kind: "input", io: { data_type: "string", required: true, default: null } }),
         node("b", { params: [{ name: "x", value: "${repo}", is_dynamic: true, source: null }] }),
       ],
       edges: [edge("e0", "repo", "b", "data_flow", { input_name: "x" })],
@@ -373,7 +373,7 @@ describe("EdgePanel — hostless item containers and coalesce refs", () => {
           is_group_host: true,
           params: [{ name: "inputs", value: { x: "${prep.stdout}" }, is_dynamic: true, source: null }],
         }),
-        node("n3", { ref: { node_id: "x", ancestor_path: [], port: null }, kind: "input", io: { data_type: null, required: true }, parent: "g_in" }),
+        node("n3", { ref: { node_id: "x", ancestor_path: [], port: null }, kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_in" }),
       ],
       edges: [edge("eb", "n1", "n3", "data_flow", { output_field: "stdout" })],
       groups: [

@@ -19,7 +19,8 @@
 - **Inputs/outputs = ROWS on the workflow's OWN node, never a floating table**
   (2026-06-10): a ROOT wrapper is a standalone IO *card* (tile + INPUTS/OUTPUTS +
   workflow name + count pill; compact in beautiful, rows in advanced/focus-expanded;
-  click toggles its rows); a NESTED wrapper's rows live on the workflow GROUP —
+  click SELECTS + opens the interface panel — the 2026-06-10 toggle died 2026-06-11
+  when the card got a panel); a NESTED wrapper's rows live on the workflow GROUP —
   collapsed card: two-column area (inputs left, outputs right BOTTOM-ANCHORED, always
   ≥ 1 row below the inputs' start — the in→out diagonal IS the information); expanded
   region: inputs = LEFT SIDEBAR (the body lays out BESIDE it), outputs = bottom-right
@@ -33,7 +34,9 @@
   edges land node-level, never a handle that doesn't render.
 - **Row-level focus:** clicking a single input/output **row** reveals just *that* port's
   connections + highlights the row (not the whole node). Focusing a consumer expands
-  the IO owner so revealed lines land row-to-row.
+  the IO owner so revealed lines land row-to-row. A ROOT card's row ALSO opens the
+  interface panel with its entry marked (card = whole interface, row = one port —
+  same panel both ways); nested rows stay focus-only.
 - **Beautiful = control skeleton; data wiring is on-demand.** `${ref}` data-flow lines
   are hidden by default in beautiful; clicking a node/port/consumer reveals just its
   lines (progressive disclosure). Advanced shows them all.
@@ -103,6 +106,15 @@
   deep links are also how agents screenshot a specific state.
 - Two densities + LR/TD toggle; collapse/expand containers; focus+context (dim
   non-incident); click-to-read panel (full params/prompts/code, source file:line).
+- **IO interface panel (2026-06-11):** clicking a root INPUTS/OUTPUTS card selects
+  it + opens `IoPanel` — the workflow's API written out (per input: type/required/
+  default/description + consumer chips; per output: producer chip + the read field +
+  source line; no "unused" claims — quiet ≠ unconsumed). Backed by a contract fix:
+  inputs now ship `purpose` (description), `io.default`, and `required` with the
+  TRUE default (the wire's old `False` default contradicted validator/executor —
+  one Mermaid golden updated to the truthful `(string, required)` label). Card
+  click = select everywhere (the io toggle died); root row click opens the panel
+  with its entry marked.
 - **Tines/n8n visual language** (Phase A + follow-ups, 2026-06-09/10): one leaf
   component; neutral tile + brand/native-color icon (*tile is NOT solid-color —
   user-chosen*; node CARD border stays subtle — *do not thicken/recolor it*);
@@ -125,6 +137,18 @@
   reader at all" (a param-text scan covers refs that form no edges; loop-condition
   refs are the unscanned residual); wholesale sends never decompose. Plan:
   `implementation/transform-l2-plan.md`.
+- **Output-shape TYPING extended (2026-06-11):** result-dict key types resolve
+  through module locals + Python-semantics certainties (`_TypeScope`,
+  react_flow.py — corpus 17%→65% typed, still fail-closed: uncertain ships
+  None); branch-assigned SAME-key literal dicts ship keys (the loop-gate
+  pattern); schema-less llm/claude-code ship `field: str` (kind contract) →
+  a quiet `→ response: str` row on every llm card. Output-row labels no
+  longer truncate at the param-row 42% cap.
+- **Registry types on observed rows (2026-06-11):** `RFGraph.kind_output_types`
+  (the registry's parsed docstring interfaces, injected at the server seam —
+  renderer stays registry-free) types shell/http/file/mcp rows that exist
+  from reads (`→ stdout: str`); never creates a row; authored shapes win;
+  `any` entries dropped. Fixture generator mirrors the server injection.
 - **IO rows on the workflow node (2026-06-10):** root IO cards + collapsed-card
   two-column IO + region sidebar/outputs strip — replaced the floating ports table
   wholesale. Plan: `implementation/io-rows-plan.md`.

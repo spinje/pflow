@@ -8,11 +8,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "Branch PRs target, and that new branches are based on.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": false
+        "required": false,
+        "default": "main"
       },
       "loop": null,
       "batch": null,
@@ -34,11 +35,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "Cap on how many issues the planner may pick up in a single cycle.",
       "params": [],
       "io": {
         "data_type": "integer",
-        "required": false
+        "required": false,
+        "default": 5
       },
       "loop": null,
       "batch": null,
@@ -439,11 +441,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "The issue to work on: an object with `number`, `title`, and `branch` (the branch\nname the planner assigned).",
       "params": [],
       "io": {
         "data_type": "object",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -470,11 +473,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "Branch to base the new work branch on.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -501,11 +505,12 @@
         "port": "in"
       },
       "kind": "input",
-      "purpose": "",
+      "purpose": "Absolute path to the repository root (resolved by the parent via\n`git rev-parse --show-toplevel`). Both agents run with this as their `cwd`, so\nworktree paths are predictable regardless of where pflow was launched.",
       "params": [],
       "io": {
         "data_type": "string",
-        "required": true
+        "required": true,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -855,7 +860,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -889,7 +895,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -923,7 +930,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -957,7 +965,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1009,7 +1018,8 @@
       "params": [],
       "io": {
         "data_type": "array",
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1038,7 +1048,8 @@
       "params": [],
       "io": {
         "data_type": null,
-        "required": false
+        "required": false,
+        "default": null
       },
       "loop": null,
       "batch": null,
@@ -1541,5 +1552,30 @@
       "nesting_depth": 0,
       "annotations": {}
     }
-  ]
+  ],
+  "kind_output_types": {
+    "claude-code": {
+      "result": "str|dict",
+      "_schema_error": "str",
+      "llm_usage": "dict"
+    },
+    "code": {
+      "stdout": "str",
+      "stderr": "str",
+      "error": "str"
+    },
+    "llm": {
+      "response": "str|dict",
+      "error": "str",
+      "prompt": "str",
+      "llm_usage": "dict"
+    },
+    "shell": {
+      "stdout": "str",
+      "stdout_is_binary": "bool",
+      "stderr": "str",
+      "stderr_is_binary": "bool",
+      "exit_code": "int"
+    }
+  }
 }

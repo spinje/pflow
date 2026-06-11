@@ -97,6 +97,15 @@ item / progress-log entry — read those before rendering chips/groups/batches):
 - **`RFEdge.input_name=None` is COMMON, not rare** (output-`source:` edges,
   batch-`items:` edges, multi-role dedup). → attach the data-flow line at
   **node level**, never drop it. (H6.)
+- **`RFNode.io` carries the full interface fact (2026-06-11):**
+  `{data_type, required, default}`. An input that omits `required:` ships
+  `required=True` — the ir_schema default every runtime reader applies (the
+  wire shipped `False` before, mislabeling the common authored case — do not
+  "fix" it back). `default` is the authored value verbatim, `None` when
+  absent. An INPUT's description rides `purpose` (symmetric with outputs);
+  inputs ship `source=None` (the parser injects `_source_line` only for
+  outputs/nodes — the inputs schema forbids extra keys). Consumed by the
+  IO rows' tooltips and the IoPanel (the root IO card's interface panel).
 - **`RFEdge.condition`** (branch edges + a DECISION's END edge): the source-code
   condition that selects this outcome (`"if len(items) > 5"` / `"else"`),
   AST-extracted **fail-closed** from the decision node's `code` param
@@ -126,21 +135,32 @@ item / progress-log entry — read those before rendering chips/groups/batches):
   unrecognized ships `False`). The frontend MUST read this fact, never re-derive
   it (it cannot — it needs the AST). Mutually exclusive with the CONDITION role
   by construction (a `next`-setter is never a transform).
-- **`RFNode.output_shape`** (TRANSFORM L2, 2026-06-10): the authored shape of
-  the node's structured output. `shape.field` names the port it describes —
-  where the kind actually WRITES: `"result"` for code (AST-extracted,
-  `_result_shape_from_code`: multiple assignments, mutations — incl.
-  `result.update()`/`del`/`for`-rebinding — empty/non-literal dicts all ship
-  `keys=None`, never a partial list) and structured claude-code
-  (`output_schema` → parsed value in `result`); `"response"` for structured
-  llm (its parsed value lands in `response`, never `result` —
-  `_shape_from_output_schema` is fail-closed: only top-level `type: object`
-  schemas with dict `properties` ship). Key types use each source's OWN
-  vocabulary (Python names from annotations; "string"/"number" from schemas).
-  Ships for ALL code nodes, not just transforms (D9 — display policy is the
-  frontend's). A non-null shape with data_type AND keys null means only
-  "provably assigns `result`". Drives the output rows (`outputRowsFor`,
-  web/src/graph/flow.ts).
+- **`RFNode.output_shape`** (TRANSFORM L2, 2026-06-10; typing extended
+  2026-06-11): the authored shape of the node's structured output.
+  `shape.field` names the port the kind actually WRITES: `"result"` for
+  code/claude-code, `"response"` for llm. Everything is FAIL-CLOSED — a type
+  ships only when it is authored truth or a Python-semantics certainty
+  (`_TypeScope` + `_key_type` in react_flow.py; the resolution forms are
+  pinned in `test_key_type_resolution_matrix`). Rules a consumer must know:
+  code keys ship when every module-scope `result` assignment is a literal
+  dict with the SAME key set (branch-assigned gates qualify; any mutation /
+  differing arms → `keys=None`, never partial); **a schema-LESS llm/
+  claude-code node ships `{field, "str", keys: null}`** (kind contract:
+  free-form text) — so every such card renders a quiet `→ response: str` row
+  (D4) — while a schema *present but unreadable* (templated `${...}`,
+  non-object) stays null (its runtime value is parsed JSON; "str" would lie).
+  Types use each source's own vocabulary, never normalized (annotation
+  unparse: `dict[str, int]` verbatim; "string"/"number" from schemas). A
+  non-null shape with data_type AND keys null means only "provably assigns
+  `result`". Drives the output rows (`outputRowsFor`, web/src/graph/flow.ts).
+- **`RFGraph.kind_output_types`** (2026-06-11): kind → output field → declared
+  type, from the registry's parsed docstring interfaces
+  (`Registry.output_types_by_kind()` — drops `any`), INJECTED at the server
+  seam (the renderer never reads the registry; the model never carries
+  platform facts). Filtered to kinds present in the graph. The frontend's
+  LAST type fallback on output rows that already exist — it never creates a
+  row, and per-node authored shapes always win (so it effectively serves
+  shell/http/file/mcp; llm/claude-code/code always have a shape).
 - **`RFEdge.output_path`** (TRANSFORM L2): the ref's sub-path below
   `output_field` — `${gen.result.ok}` ships `["ok"]`. Cleared together with
   `output_field` on truncation re-anchoring. The per-key landing uses the FIRST

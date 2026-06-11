@@ -155,16 +155,29 @@ class RFGraph:
     nodes: list[RFNode]
     edges: list[RFEdge]
     groups: list[RFGroup]
+    # kind -> output field -> declared type, for kinds present in this graph.
+    # PLATFORM facts (the registry's parsed docstring interfaces), injected by
+    # the caller — the renderer never reads the registry itself, and the model
+    # never carries them (they are not workflow-authored data). The frontend
+    # uses them as the LAST type fallback on output rows that already exist;
+    # they never create a row. Per-node authored shapes always win.
+    kind_output_types: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
 
 
-def render_react_flow(graph: GraphModel) -> RFGraph:
-    """Translate a workflow graph model into a React Flow-native payload."""
-    return _ReactFlowRenderer(graph).render()
+def render_react_flow(graph: GraphModel, *, kind_output_types: dict[str, dict[str, str]] | None = None) -> RFGraph:
+    """Translate a workflow graph model into a React Flow-native payload.
+
+    ``kind_output_types`` is the registry's kind -> output field -> type map
+    (``Registry.output_types_by_kind()``); the renderer ships only the kinds
+    actually present in the graph.
+    """
+    return _ReactFlowRenderer(graph, kind_output_types or {}).render()
 
 
 @dataclass
 class _ReactFlowRenderer:
     graph: GraphModel
+    kind_output_types: dict[str, dict[str, str]] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.nodes_by_id: dict[NodeId, Node] = {node.id: node for node in self.graph.nodes}
@@ -198,10 +211,14 @@ class _ReactFlowRenderer:
         self._conditions_by_node: dict[NodeId, dict[str, str]] = {}
 
     def render(self) -> RFGraph:
+        kinds_present = {node.kind for node in self._kept_nodes}
         return RFGraph(
             nodes=[self._node(node) for node in self._kept_nodes],
             edges=self._resolve_edges(),
             groups=[self._group(container) for container in self._kept_containers],
+            kind_output_types={
+                kind: fields for kind, fields in self.kind_output_types.items() if kind in kinds_present
+            },
         )
 
     def _node(self, node: Node) -> RFNode:
@@ -245,9 +262,9 @@ class _ReactFlowRenderer:
         # claude-code parses into `result` (claude_code.py "Writes:"), llm
         # into `response` (llm.py "Writes:").
         if node.kind == "claude-code":
-            return _shape_from_output_schema(node.params.get("output_schema"), field="result")
+            return _llm_kind_shape(node, field="result")
         if node.kind == "llm":
-            return _shape_from_output_schema(node.params.get("output_schema"), field="response")
+            return _llm_kind_shape(node, field="response")
         return None
 
     def _param(self, node: Node, name: str, value: Any) -> RFParam:
@@ -911,58 +928,265 @@ def _result_shape_uncertain(tree: ast.Module) -> bool:
 
 
 def _result_annotation(assignments: list[ast.AST]) -> str | None:
-    """The authored ``result: T = ...`` annotation when T is a simple name;
-    subscripted/exotic annotations ship None (fail-closed)."""
+    """The authored ``result: T = ...`` annotation, as its authored text
+    (``ast.unparse`` — same vocabulary rule as ``_input_annotations``)."""
     for n in assignments:
-        if (
-            isinstance(n, ast.AnnAssign)
-            and isinstance(n.target, ast.Name)
-            and n.target.id == "result"
-            and isinstance(n.annotation, ast.Name)
-        ):
-            return n.annotation.id
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "result":
+            return ast.unparse(n.annotation)
     return None
 
 
-def _key_type(value: ast.expr, inputs: dict[str, str]) -> str | None:
-    """Best-effort type of one literal-dict value (D8) — never guess."""
+# Builtin calls whose return type is a language fact, not an inference. Gated on
+# the name not being rebound by the code itself (see _TypeScope.shadowed).
+_BUILTIN_RETURNS = {
+    "len": "int",
+    "str": "str",
+    "int": "int",
+    "float": "float",
+    "bool": "bool",
+    "list": "list",
+    "dict": "dict",
+    "set": "set",
+    "tuple": "tuple",
+    "sorted": "list",
+    "repr": "str",
+}
+
+# str methods that return str — only applied when the RECEIVER provably types
+# as str (a string literal, f-string, or a str-typed name), so `"sep".join(x)`
+# resolves while `unknown.join(x)` stays None.
+_STR_METHODS = frozenset({
+    "join",
+    "strip",
+    "lstrip",
+    "rstrip",
+    "format",
+    "replace",
+    "upper",
+    "lower",
+    "title",
+    "capitalize",
+    "removeprefix",
+    "removesuffix",
+})
+
+
+@dataclass(frozen=True)
+class _TypeScope:
+    """Everything _key_type may resolve a name/call against — all authored or
+    language-certain, never inferred-by-guess."""
+
+    names: dict[str, str]  # name -> type certain on EVERY module-scope binding
+    returns: dict[str, str]  # module-level `def f(...) -> T` -> authored T text
+    shadowed: frozenset[str]  # every name the code binds (gates builtin calls)
+
+
+def _key_type(value: ast.expr, scope: _TypeScope) -> str | None:  # noqa: C901
+    """Best-effort type of one literal-dict value (D8) — never guess.
+
+    Every arm is either authored truth (annotations, helper return types) or a
+    Python-semantics certainty (a comparison is always bool; ``len`` always
+    returns int; same-type operands stay that type). Anything genuinely
+    uncertain — conditionally-bound names, unknown calls, mixed-type operands —
+    ships None: absent beats wrong.
+    """
     if isinstance(value, ast.Constant):
         # A literal None reads as the value "None", not the class "NoneType".
         return "None" if value.value is None else type(value.value).__name__
     if isinstance(value, ast.JoinedStr):
         return "str"
     if isinstance(value, ast.Name):
-        return inputs.get(value.id)
+        return scope.names.get(value.id)
     if isinstance(value, ast.Dict):
         return "dict"
-    if isinstance(value, ast.List):
+    if isinstance(value, (ast.List, ast.ListComp)):
         return "list"
+    if isinstance(value, ast.DictComp):
+        return "dict"
+    if isinstance(value, (ast.Set, ast.SetComp)):
+        return "set"
+    if isinstance(value, ast.Tuple):
+        return "tuple"
+    if isinstance(value, ast.Compare):
+        return "bool"
+    if isinstance(value, ast.UnaryOp):
+        if isinstance(value.op, ast.Not):
+            return "bool"
+        if isinstance(value.op, (ast.USub, ast.UAdd)):
+            t = _key_type(value.operand, scope)
+            return t if t in ("int", "float") else None
+    if isinstance(value, ast.BoolOp):
+        return _unanimous_type(value.values, scope)
+    if isinstance(value, ast.IfExp):
+        return _unanimous_type([value.body, value.orelse], scope)
+    if isinstance(value, ast.BinOp):
+        if isinstance(value.op, ast.Div):
+            # True division NEVER preserves int (4/2 == 2.0): float whenever
+            # both operands are provably numeric, unknowable otherwise.
+            operand_types = {_key_type(value.left, scope), _key_type(value.right, scope)}
+            return "float" if operand_types <= {"int", "float"} else None
+        if isinstance(value.op, ast.Pow):
+            return None  # int ** negative-int is float — not type-preserving
+        # Other operators: same-type operands keep their type (str+str,
+        # int*int, list+list); mixed pairs (str*int) stay None — fail-closed
+        # over operator tables.
+        return _unanimous_type([value.left, value.right], scope)
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+        if value.func.id in scope.returns:
+            return scope.returns[value.func.id]
+        if value.func.id not in scope.shadowed:
+            return _BUILTIN_RETURNS.get(value.func.id)
+        return None
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr in _STR_METHODS
+        and _key_type(value.func.value, scope) == "str"
+    ):
+        return "str"
     return None
 
 
-def _literal_dict_keys(assignments: list[ast.AST], inputs: dict[str, str]) -> list[RFResultKey] | None:
-    """Keys ONLY when the sole assignment binds the NAME ``result`` to a
-    non-empty literal dict with all-string keys; anything else → None (an
-    empty literal is almost always a to-be-mutated accumulator)."""
-    if len(assignments) != 1:
-        return None
-    n = assignments[0]
+def _unanimous_type(values: list[ast.expr], scope: _TypeScope) -> str | None:
+    types = {_key_type(v, scope) for v in values}
+    return types.pop() if len(types) == 1 and None not in types else None
+
+
+def _module_def_returns(tree: ast.Module) -> dict[str, str]:
+    """Module-level ``def f(...) -> T`` return annotations — authored truth for
+    typing calls to the author's own helpers. A name defined twice, or also
+    assigned as a variable, is dropped (its call type is no longer certain)."""
+    returns: dict[str, str] = {}
+    dropped: set[str] = set()
+    for n in _module_scope_walk(tree):
+        if isinstance(n, ast.FunctionDef):
+            if n.name in returns or n.name in dropped or n.returns is None:
+                dropped.add(n.name)
+                returns.pop(n.name, None)
+            else:
+                returns[n.name] = ast.unparse(n.returns)
+        elif _assigned_names(n) & returns.keys():
+            for name in _assigned_names(n) & returns.keys():
+                dropped.add(name)
+                returns.pop(name)
+    return returns
+
+
+def _untypeable_bound_names(n: ast.AST) -> set[str]:
+    """Names a binding form binds whose value type is never certain: tuple
+    unpack / multi-target assigns, aug-assign, walrus, loop/with targets,
+    def/class names, import aliases. (Single-Name Assign/AnnAssign — the
+    typeable forms — are the caller's, not handled here.)"""
+    targets: list[ast.AST] = []
     if isinstance(n, ast.Assign):
-        named = any(isinstance(t, ast.Name) and t.id == "result" for t in n.targets)
-        value: ast.expr | None = n.value
-    elif isinstance(n, ast.AnnAssign):
-        named = isinstance(n.target, ast.Name) and n.target.id == "result"
-        value = n.value
-    else:
+        targets = list(n.targets)
+    elif isinstance(n, (ast.AugAssign, ast.NamedExpr, ast.For, ast.comprehension)):
+        targets = [n.target]
+    elif isinstance(n, (ast.With, ast.AsyncWith)):
+        targets = [item.optional_vars for item in n.items if item.optional_vars is not None]
+    elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {n.name}
+    elif isinstance(n, (ast.Import, ast.ImportFrom)):
+        return {alias.asname or alias.name.split(".")[0] for alias in n.names}
+    elif isinstance(n, (ast.ExceptHandler, ast.MatchAs)) and n.name is not None:
+        return {n.name}
+    return {leaf.id for t in targets for leaf in ast.walk(t) if isinstance(leaf, ast.Name)}
+
+
+def _binding_sites(tree: ast.Module) -> dict[str, list[str | ast.expr | None]]:
+    """Per name, every module-scope binding's type contribution: an authored
+    annotation text (str), a value expression to resolve via ``_key_type``
+    (ast.expr), or a poison marker (None) for forms whose value type is never
+    certain (see ``_untypeable_bound_names``)."""
+    sites: dict[str, list[str | ast.expr | None]] = {}
+    for n in _module_scope_walk(tree):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            sites.setdefault(n.targets[0].id, []).append(n.value)
+        elif isinstance(n, ast.AnnAssign) and n.value is not None and isinstance(n.target, ast.Name):
+            sites.setdefault(n.target.id, []).append(ast.unparse(n.annotation))
+        else:
+            for name in _untypeable_bound_names(n):
+                sites.setdefault(name, []).append(None)
+    return sites
+
+
+def _certain_name_types(tree: ast.Module, inputs: dict[str, str], returns: dict[str, str]) -> dict[str, str]:
+    """Names whose type is certain on EVERY module-scope binding.
+
+    Each binding site (see ``_binding_sites``) contributes a type; a name
+    resolves only when all its sites carry the SAME non-None type. An
+    annotated INPUT that the code rebinds is unanimity-checked against its
+    annotation too — so ``text: str`` followed by ``text = text.split()``
+    correctly reads None, not the stale ``str`` (a latent mislabel before
+    this pass existed).
+
+    Resolution runs to a fixed point so locals may reference each other in
+    any order; a cycle simply never resolves (fail-closed).
+    """
+    sites = _binding_sites(tree)
+    # A rebound input must agree with its annotation; an untouched input is
+    # certain as authored.
+    env = {name: t for name, t in inputs.items() if name not in sites}
+    for name, t in inputs.items():
+        if name in sites:
+            sites[name].append(t)
+
+    shadowed = frozenset(_bound_names(tree))
+    changed = True
+    while changed:
+        changed = False
+        for name, site_list in sites.items():
+            if name in env or any(s is None for s in site_list):
+                continue
+            # An annotated input seeds its OWN resolution (induction base: the
+            # first binding IS the input value), so `text = text.strip()` on a
+            # `text: str` input resolves — unanimity then forces every later
+            # rebinding to preserve the type, keeping the seed sound.
+            seed = inputs.get(name)
+            names = env if seed is None else {**env, name: seed}
+            scope = _TypeScope(names=names, returns=returns, shadowed=shadowed)
+            types = {s if isinstance(s, str) else _key_type(s, scope) for s in site_list if s is not None}
+            resolved = types.pop() if len(types) == 1 else None
+            if resolved is not None:
+                env[name] = resolved
+                changed = True
+    return env
+
+
+def _literal_dict_keys(assignments: list[ast.AST], scope: _TypeScope) -> list[RFResultKey] | None:
+    """Keys when EVERY module-scope assignment binds the NAME ``result`` to a
+    non-empty literal dict with all-string keys AND all assignments agree on
+    the key set — the shape is then certain on every execution path (a
+    branch-assigned gate node like ``if ok: result = {...} else: result =
+    {...}`` qualifies). Differing key sets, an empty literal (almost always a
+    to-be-mutated accumulator), or any non-literal-dict assignment → None.
+    A key's type ships only when every arm agrees on it."""
+    dicts: list[ast.Dict] = []
+    for n in assignments:
+        if isinstance(n, ast.Assign):
+            named = any(isinstance(t, ast.Name) and t.id == "result" for t in n.targets)
+            value: ast.expr | None = n.value
+        elif isinstance(n, ast.AnnAssign):
+            named = isinstance(n.target, ast.Name) and n.target.id == "result"
+            value = n.value
+        else:
+            return None
+        if not named or not isinstance(value, ast.Dict) or not value.keys:
+            return None
+        dicts.append(value)
+
+    arms: list[dict[str, ast.expr]] = []
+    for d in dicts:
+        arm: dict[str, ast.expr] = {}
+        for k, v in zip(d.keys, d.values):
+            if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+                return None  # **spread or non-string key — the full list is uncertain
+            arm[k.value] = v
+        arms.append(arm)
+    first = arms[0]
+    if any(arm.keys() != first.keys() for arm in arms[1:]):
         return None
-    if not named or not isinstance(value, ast.Dict) or not value.keys:
-        return None
-    keys: list[RFResultKey] = []
-    for k, v in zip(value.keys, value.values):
-        if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
-            return None  # **spread or non-string key — the full list is uncertain
-        keys.append(RFResultKey(name=k.value, data_type=_key_type(v, inputs)))
-    return keys
+    return [RFResultKey(name=name, data_type=_unanimous_type([arm[name] for arm in arms], scope)) for name in first]
 
 
 def _shape_from_output_schema(schema: Any, field: str) -> RFOutputShape | None:
@@ -998,8 +1222,34 @@ def _result_shape_from_code(code: str) -> RFOutputShape | None:
     assignments = _result_assignments(tree)
     if not assignments:
         return None
+    if _result_shape_uncertain(tree):
+        keys = None
+    else:
+        returns = _module_def_returns(tree)
+        scope = _TypeScope(
+            names=_certain_name_types(tree, _input_annotations(tree), returns),
+            returns=returns,
+            shadowed=frozenset(_bound_names(tree)),
+        )
+        keys = _literal_dict_keys(assignments, scope)
     return RFOutputShape(
         field="result",
         data_type=_result_annotation(assignments),
-        keys=None if _result_shape_uncertain(tree) else _literal_dict_keys(assignments, _input_annotations(tree)),
+        keys=keys,
     )
+
+
+def _llm_kind_shape(node: Node, field: str) -> RFOutputShape | None:
+    """The shape of an llm/claude-code node's output port.
+
+    With an output_schema authored, the schema IS the shape (fail-closed
+    parse). With NO schema at all, the kind's own contract makes the type
+    certain: the node writes free-form text — ``str`` (llm.py /
+    claude_code.py "Writes:" — the ``dict`` arm only occurs WHEN a schema is
+    set). A schema that is present but unreadable (a templated ``${...}``
+    string, a non-object schema) ships None, NOT "str" — the runtime value
+    there is parsed JSON, so claiming text would be wrong."""
+    schema = node.params.get("output_schema")
+    if schema is None:
+        return RFOutputShape(field=field, data_type="str", keys=None)
+    return _shape_from_output_schema(schema, field=field)

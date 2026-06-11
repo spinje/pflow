@@ -306,7 +306,7 @@ def test_ref_mirrors_node_id_with_explicit_batch_index_and_port() -> None:
     # Synthetic input node carries its IO role as `port`.
     text_input = _rf_node(rf, "text", (AncestorStep("reviews", 0),))
     assert text_input.ref.port == "in"
-    assert text_input.io == {"data_type": "string", "required": False}
+    assert text_input.io == {"data_type": "string", "required": True, "default": None}
 
 
 def test_dynamic_batch_ref_carries_null_batch_index() -> None:
@@ -916,7 +916,7 @@ def test_code_output_shape_extraction_matrix() -> None:
             RFResultKey("msg", "str"),  # f-string
             RFResultKey("meta", "dict"),
             RFResultKey("rows", "list"),
-            RFResultKey("calc", None),  # unknown expression — no type, never guess
+            RFResultKey("calc", "int"),  # int * int — same-type operands keep the type
         ],
     )
     # plain Assign (no annotation): keys ship, data_type is None
@@ -934,9 +934,10 @@ def test_code_output_shape_extraction_matrix() -> None:
     assert _result_shape_from_code("result: dict = {}\n") == RFOutputShape("result", "dict", None)
     # **spread makes the key list uncertain — None, not the partial literal keys
     assert _result_shape_from_code('extra: dict\nresult = {"a": 1, **extra}\n') == RFOutputShape("result", None, None)
-    # subscripted annotation is not a simple name — fail-closed None
+    # subscripted annotation ships as its authored text (the same ast.unparse
+    # vocabulary rule as input annotations — authored truth, never normalized)
     assert _result_shape_from_code('result: dict[str, int] = {"a": 1}\n') == RFOutputShape(
-        "result", None, [RFResultKey("a", "int")]
+        "result", "dict[str, int]", [RFResultKey("a", "int")]
     )
     # a walrus binding of result counts as an assignment
     assert _result_shape_from_code('result: dict = {"a": 1}\nx = (result := {})\n') == RFOutputShape(
@@ -990,6 +991,129 @@ def test_code_output_shape_extraction_matrix() -> None:
     )
 
 
+def test_kind_output_types_ship_scoped_to_present_kinds() -> None:
+    """The injected registry kind->field->type map rides the contract filtered
+    to kinds actually in the graph; omitted -> empty dict (no claim). The
+    renderer never reads the registry itself — callers inject (purity)."""
+    graph = build_graph({"nodes": [{"id": "run", "type": "shell", "params": {"command": "ls"}}]})
+    injected = {
+        "shell": {"stdout": "str", "exit_code": "int"},
+        "http": {"status_code": "int"},  # kind not present -> filtered out
+    }
+
+    rf = render_react_flow(graph, kind_output_types=injected)
+    assert rf.kind_output_types == {"shell": {"stdout": "str", "exit_code": "int"}}
+    json.dumps(asdict(rf), default=str)
+
+    assert render_react_flow(graph).kind_output_types == {}
+
+
+def test_key_type_resolution_matrix() -> None:
+    """The extended _key_type forms: each is authored truth or a Python-semantics
+    certainty — conditionally-bound names, unknown calls, and mixed-type
+    operands all stay None (absent beats wrong)."""
+    from pflow.core.workflow.graph.renderers.react_flow import (
+        _result_shape_from_code,
+    )
+
+    def keys_of(code: str) -> dict[str, str | None]:
+        shape = _result_shape_from_code(code)
+        assert shape is not None and shape.keys is not None
+        return {k.name: k.data_type for k in shape.keys}
+
+    # local with ONE module-scope binding to a literal — the corpus's dominant
+    # authored pattern (`files = []` built up via .append, assembled at the end)
+    assert keys_of('files = []\nfiles.append(1)\nresult: dict = {"files": files}\n') == {"files": "list"}
+    # a local bound to an f-string / another typed local resolves transitively
+    assert keys_of('a = f"x"\nb = a\nresult = {"b": b}\n') == {"b": "str"}
+    # conditionally REBOUND name (two sites, types differ) stays None
+    assert keys_of('x = 1\nif x:\n    v = "s"\nelse:\n    v = []\nresult = {"v": v}\n') == {"v": None}
+    # two sites that AGREE resolve (every possible bound value has the type)
+    assert keys_of('if x:\n    v = "a"\nelse:\n    v = "b"\nresult = {"v": v}\n') == {"v": "str"}
+    # a rebound INPUT is unanimity-checked against its annotation — the stale
+    # annotation must NOT win when the rebinding changes the type
+    assert keys_of('text: str\ntext = text.split()\nresult = {"t": text}\n') == {"t": None}
+    # ...but a same-type rebinding keeps the authored annotation
+    assert keys_of('text: str\ntext = text.strip()\nresult = {"t": text}\n') == {"t": "str"}
+    # tuple-unpack / aug-assign / loop targets poison (value type never certain)
+    assert keys_of('a, b = pair\nresult = {"a": a}\n') == {"a": None}
+    assert keys_of('n = 1\nn += 1\nresult = {"n": n}\n') == {"n": None}
+    # language certainties: comparisons and `not` are bool; len() is int;
+    # negative literals keep their number type; comprehensions are lists
+    assert keys_of('items: list\nresult = {"more": len(items) > 1, "none": not items}\n') == {
+        "more": "bool",
+        "none": "bool",
+    }
+    assert keys_of('items: list\nresult = {"n": len(items), "neg": -1, "sq": [i for i in items]}\n') == {
+        "n": "int",
+        "neg": "int",
+        "sq": "list",
+    }
+    # a builtin call is typed ONLY while the name is not rebound by the code
+    assert keys_of('def len(x): return x\nresult = {"n": len(3)}\n') == {"n": None}
+    # str-method calls resolve when the RECEIVER provably types as str
+    assert keys_of('parts: list\nresult = {"s": "\\n".join(parts)}\n') == {"s": "str"}
+    assert keys_of('parts: list\nmystery = load()\nresult = {"s": mystery.join(parts)}\n') == {"s": None}
+    # BoolOp/IfExp/BinOp: unanimous operand types keep the type; mixed -> None
+    assert keys_of('a: str\nresult = {"s": a or "fallback", "m": a or 1}\n') == {"s": "str", "m": None}
+    assert keys_of('a: str\nb: str\nflag: bool\nresult = {"s": a if flag else b}\n') == {"s": "str"}
+    assert keys_of('a: str\nresult = {"s": a + "!", "m": a * 3}\n') == {"s": "str", "m": None}
+    # TRUE DIVISION never preserves int (4/2 == 2.0): numeric operands -> float,
+    # anything else -> None; `**` is excluded entirely (int**-1 is float)
+    assert keys_of('n: int\nm: int\nresult = {"ratio": n / m, "p": n**m, "u": q / m}\n') == {
+        "ratio": "float",
+        "p": None,
+        "u": None,
+    }
+    # except-as / match-as rebindings poison a name like any other binding
+    assert keys_of('x = "s"\ntry:\n    pass\nexcept ValueError as x:\n    pass\nresult = {"x": x}\n') == {"x": None}
+    assert keys_of('x = "s"\nmatch v:\n    case [1] as x:\n        pass\nresult = {"x": x}\n') == {"x": None}
+    # an annotated module-level helper's return type is authored truth (D4's
+    # `_abs(...)` case becomes author-fixable by annotating the helper)
+    assert keys_of(
+        'def _abs(p) -> str:\n    return p\nplan: str\nresult = {"plan": _abs(plan), "n": untyped(plan)}\n'
+    ) == {"plan": "str", "n": None}
+    # a helper defined twice (or also assigned) loses its certainty
+    assert keys_of('def f() -> str:\n    return ""\ndef f() -> int:\n    return 1\nresult = {"v": f()}\n') == {
+        "v": None
+    }
+
+
+def test_branch_assigned_same_key_dicts_ship_keys() -> None:
+    """A gate node assigning `result` to a literal dict in EVERY arm with the
+    SAME key set has a certain shape on every execution path — the corpus's
+    loop-gate pattern (run-validate / check-groups), previously keys=None."""
+    from pflow.core.workflow.graph.renderers.react_flow import (
+        RFOutputShape,
+        RFResultKey,
+        _result_shape_from_code,
+    )
+
+    # the run-validate shape: ok is bool in BOTH arms (Constant / Compare),
+    # tail's types disagree (str constant vs subscript) -> key ships untyped
+    assert _result_shape_from_code(
+        "ok: bool\nround: int\n"
+        'if skip:\n    result: dict = {"ok": True, "round": round, "tail": "(skipped)"}\n'
+        'else:\n    result: dict = {"ok": rc == 0, "round": round, "tail": combined[-2000:]}\n'
+    ) == RFOutputShape(
+        "result",
+        "dict",
+        [RFResultKey("ok", "bool"), RFResultKey("round", "int"), RFResultKey("tail", None)],
+    )
+    # DIFFERING key sets across arms -> shape genuinely varies by path: None
+    assert _result_shape_from_code(
+        'if ok:\n    result = {"ok": True, "rounds": 1}\nelse:\n    result = {"ok": False, "next_round": 2}\n'
+    ) == RFOutputShape("result", None, None)
+    # one arm not a literal dict -> None (no partial claims)
+    assert _result_shape_from_code('if ok:\n    result = {"ok": True}\nelse:\n    result = build()\n') == RFOutputShape(
+        "result", None, None
+    )
+    # an EMPTY literal in any arm is an accumulator smell -> None
+    assert _result_shape_from_code('if ok:\n    result = {"ok": True}\nelse:\n    result = {}\n') == RFOutputShape(
+        "result", None, None
+    )
+
+
 def test_shape_from_output_schema_matrix() -> None:
     """A structured-output node's output_schema IS its authored shape."""
     from pflow.core.workflow.graph.renderers.react_flow import (
@@ -1024,14 +1148,23 @@ def test_output_schema_shape_names_the_field_each_kind_writes() -> None:
     """claude-code parses its schema value into `result`; llm into `response`.
     The shape's `field` must match where the node actually writes — rows on
     the wrong port would describe a value that doesn't exist there."""
+    from pflow.core.workflow.graph.renderers.react_flow import RFOutputShape
+
     schema = {"type": "object", "properties": {"pr_url": {"type": "string"}}, "required": ["pr_url"]}
     graph = build_graph({
         "nodes": [
             {"id": "ship", "type": "claude-code", "params": {"prompt": "open a PR", "output_schema": schema}},
             {"id": "ask", "type": "llm", "params": {"prompt": "judge", "output_schema": schema}},
             {"id": "plain", "type": "llm", "params": {"prompt": "chat"}},
+            {"id": "agent", "type": "claude-code", "params": {"prompt": "go"}},
+            {"id": "templated", "type": "llm", "params": {"prompt": "judge", "output_schema": "${schema_ref}"}},
         ],
-        "edges": [{"from": "ship", "to": "ask"}, {"from": "ask", "to": "plain"}],
+        "edges": [
+            {"from": "ship", "to": "ask"},
+            {"from": "ask", "to": "plain"},
+            {"from": "plain", "to": "agent"},
+            {"from": "agent", "to": "templated"},
+        ],
     })
     rf = render_react_flow(graph)
 
@@ -1043,7 +1176,15 @@ def test_output_schema_shape_names_the_field_each_kind_writes() -> None:
     ask_shape = by_id["ask"].output_shape
     assert ask_shape is not None
     assert ask_shape.field == "response"  # llm writes `response`, never `result`
-    assert by_id["plain"].output_shape is None  # no schema -> nothing provable
+    # NO schema at all -> the kind's own contract makes the type certain: the
+    # node writes free-form text (llm.py / claude_code.py "Writes:" — the dict
+    # arm only occurs WHEN a schema is set).
+    assert by_id["plain"].output_shape == RFOutputShape("response", "str", None)
+    assert by_id["agent"].output_shape == RFOutputShape("result", "str", None)
+    # A schema PRESENT but unreadable (templated `${...}` string) is NOT the
+    # no-schema case: the runtime value there is parsed JSON, so claiming
+    # "str" would be wrong — fail-closed None, exactly as before.
+    assert by_id["templated"].output_shape is None
     json.dumps(asdict(rf), default=str)
 
 

@@ -62,6 +62,9 @@ class BatchSpec:
 class IOPort:
     data_type: str | None
     required: bool = False
+    # The authored `default:` value verbatim; None when absent (an authored
+    # `default: null` is indistinguishable — accepted, it's pathological).
+    default: Any = None
 
 
 @dataclass(frozen=True)

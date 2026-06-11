@@ -77,7 +77,9 @@ export function ParamBlock({
 
 function StructuralFacts({ node }: { node: RFNode }): JSX.Element | null {
   const rows: Array<[string, string]> = [];
-  if (node.io) rows.push(["io", `${node.io.data_type ?? "any"}${node.io.required ? " (required)" : ""}`]);
+  // "—" = no authored type (the in-file convention) — never the filler "any",
+  // which reads as an authored claim (user-caught 2026-06-11).
+  if (node.io) rows.push(["io", `${node.io.data_type ?? "—"}${node.io.required ? " (required)" : ""}`]);
   if (node.loop) {
     rows.push(["loop", `${node.loop.polarity} ${node.loop.condition}`]);
     if (node.loop.cap != null) rows.push(["loop cap", String(node.loop.cap)]);

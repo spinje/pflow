@@ -47,11 +47,18 @@ def render_contract(name: str) -> dict[str, Any]:
     """The live renderer's contract for one fixture workflow, as plain JSON data."""
     from pflow.core.workflow.graph import render_react_flow
     from pflow.execution.graph_service import resolve_validate_build
+    from pflow.registry import Registry
 
     graph = resolve_validate_build(str(REPO_ROOT / WORKFLOWS[name]), max_depth=MAX_DEPTH)
+    # Mirror the `pflow ui` server exactly: it injects the registry's declared
+    # output types (ui/server.py). The fixture workflows use core kinds only,
+    # whose interfaces live in this repo's docstrings — deterministic across
+    # environments (the renderer filters to kinds present in the graph).
+    kind_types = Registry().output_types_by_kind()
     # Round-trip through dumps/loads so the committed file and the comparison
     # both see pure JSON types (tuples -> lists), exactly what the wire carries.
-    return json.loads(json.dumps(asdict(render_react_flow(graph)), default=str))  # type: ignore[no-any-return]
+    rf = render_react_flow(graph, kind_output_types=kind_types)
+    return json.loads(json.dumps(asdict(rf), default=str))  # type: ignore[no-any-return]
 
 
 def main() -> None:

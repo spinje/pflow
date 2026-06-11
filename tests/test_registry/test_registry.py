@@ -286,6 +286,47 @@ class TestRegistryNodeRetrieval:
             assert result["llm"] == test_data["llm"]
             assert result["read-file"] == test_data["read-file"]
 
+    def test_output_types_by_kind_ships_declared_types_and_drops_any(self):
+        """The kind->field->type read-model: declared docstring types verbatim;
+        ``any`` entries dropped (a type that says nothing is not a fact worth
+        shipping); kinds with no typed outputs absent entirely."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = Registry(Path(tmpdir) / "test.json")
+            registry.save({
+                "shell": {
+                    "module": "m",
+                    "class_name": "C",
+                    "interface": {
+                        "outputs": [
+                            {"key": "stdout", "type": "str", "description": ""},
+                            {"key": "exit_code", "type": "int", "description": ""},
+                        ]
+                    },
+                },
+                "mcp-some-tool": {
+                    "module": "m",
+                    "class_name": "C",
+                    "interface": {"outputs": [{"key": "result", "type": "any", "description": ""}]},
+                },
+                "bare": {"module": "m", "class_name": "C"},
+            })
+
+            types = registry.output_types_by_kind()
+
+            assert types["shell"] == {"stdout": "str", "exit_code": "int"}
+            assert "mcp-some-tool" not in types  # only output was `any`
+            assert "bare" not in types  # no interface at all
+
+    def test_output_types_by_kind_on_real_core_nodes(self):
+        """The real scanned shell interface produces the documented types
+        (guards the docstring convention end-to-end, not just the read-model)."""
+        registry = Registry()
+        types = registry.output_types_by_kind()
+
+        assert types["shell"]["stdout"] == "str"
+        assert types["shell"]["exit_code"] == "int"
+        assert all("any" not in fields.values() for fields in types.values())
+
     def test_filters_invalid_node_names(self):
         """Test that invalid node names are filtered out."""
         with tempfile.TemporaryDirectory() as tmpdir:

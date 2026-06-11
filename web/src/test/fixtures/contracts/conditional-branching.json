@@ -350,5 +350,19 @@
       "output_path": []
     }
   ],
-  "groups": []
+  "groups": [],
+  "kind_output_types": {
+    "code": {
+      "stdout": "str",
+      "stderr": "str",
+      "error": "str"
+    },
+    "shell": {
+      "stdout": "str",
+      "stdout_is_binary": "bool",
+      "stderr": "str",
+      "stderr_is_binary": "bool",
+      "exit_code": "int"
+    }
+  }
 }

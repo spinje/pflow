@@ -226,6 +226,105 @@ describe("GraphView mount", () => {
     await waitFor(() => expect(screen.getByText("inner step")).toBeTruthy());
   });
 
+  it("io card clicks: SELECT opens the interface panel (the toggle died, 2026-06-11); a row click marks its entry; ✕ closes", async () => {
+    const ioGraph: RFGraph = {
+      nodes: [
+        {
+          ...GRAPH.nodes[0]!,
+          id: "p_in",
+          ref: { node_id: "topic", ancestor_path: [], port: "in" },
+          kind: "input",
+          purpose: "",
+          params: [],
+          io: { data_type: "string", required: true, default: null },
+          parent: "g_in",
+          source: null,
+        },
+        GRAPH.nodes[0]!, // greet — the consumer
+      ],
+      edges: [
+        {
+          id: "e_in",
+          source: "p_in",
+          target: "n0",
+          kind: "data_flow",
+          label: null,
+          output_field: null,
+          input_name: "command",
+          shadowed: false,
+          condition: null,
+          output_path: [],
+        },
+      ],
+      groups: [{ id: "g_in", kind: "input_wrapper", parent: null, host: null, members: ["p_in"], nesting_depth: 0, annotations: {} }],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(ioGraph);
+    // Pin the density: an earlier test's toolbar click leaks density=advanced
+    // into the URL (syncUrl replaceState persists across tests in this file).
+    window.history.replaceState({}, "", "/?density=beautiful");
+    try {
+      const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("1 input")).toBeTruthy());
+
+      // Click the card: panel opens AND (beautiful) the rows focus-expand.
+      fireEvent.click(screen.getByText("INPUTS"));
+      await waitFor(() => expect(screen.getByText("workflow inputs")).toBeTruthy());
+      await waitFor(() => expect(container.querySelector(".io-row")).toBeTruthy());
+
+      // A second click KEEPS it open — the old toggle-close is gone. (Two "INPUTS"
+      // texts exist now: the card category + the expanded rows' column caption.)
+      fireEvent.click(screen.getAllByText("INPUTS")[0]!);
+      expect(screen.getByText("workflow inputs")).toBeTruthy();
+
+      // A row click marks that port's panel entry (card = whole interface,
+      // row = one port — same panel both ways).
+      fireEvent.click(container.querySelector(".io-row")!);
+      await waitFor(() => expect(container.querySelector(".io-port.marked")).toBeTruthy());
+
+      // ✕ closes the panel like every other panel.
+      fireEvent.click(screen.getByTitle("Close"));
+      expect(screen.queryByText("workflow inputs")).toBeNull();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("a NESTED group's IO row click focuses only — no panel auto-opens", async () => {
+    const nested: RFGraph = {
+      nodes: [
+        { ...GRAPH.nodes[0]!, id: "h0", ref: { node_id: "sub", ancestor_path: [], port: null }, kind: "workflow", is_group_host: true, params: [] },
+        { ...GRAPH.nodes[0]!, id: "m0", ref: { node_id: "inner", ancestor_path: [{ node_id: "sub", batch_index: null }], port: null }, purpose: "inner step", parent: "g_wf", params: [] },
+        {
+          ...GRAPH.nodes[0]!,
+          id: "p1",
+          ref: { node_id: "x", ancestor_path: [{ node_id: "sub", batch_index: null }], port: "in" },
+          kind: "input",
+          purpose: "",
+          params: [],
+          io: { data_type: null, required: true, default: null },
+          parent: "g_wf_in",
+          source: null,
+        },
+      ],
+      edges: [],
+      groups: [
+        { id: "g_wf", kind: "workflow", parent: null, host: "h0", members: ["m0"], nesting_depth: 0, annotations: {} },
+        { id: "g_wf_in", kind: "input_wrapper", parent: "g_wf", host: null, members: ["p1"], nesting_depth: 1, annotations: {} },
+      ],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(nested);
+    const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    // Advanced: the open region's sidebar rows render without any focus.
+    fireEvent.click(screen.getByText("advanced"));
+    await waitFor(() => expect(container.querySelector(".io-row")).toBeTruthy());
+
+    fireEvent.click(container.querySelector(".io-row")!);
+    // Focus landed on the port (the row highlights) but NO panel opened — a
+    // nested row's owner panel is the host ReadPanel, a different gesture.
+    await waitFor(() => expect(container.querySelector(".io-row.focused")).toBeTruthy());
+    expect(container.querySelector(".read-panel")).toBeNull();
+  });
+
   it("an unexpanded leaf renders its badge — the ONE badge a leaf can carry", async () => {
     // Pins the Badges.tsx → inline-badge consolidation (review cleanup
     // 2026-06-11): no test rendered the leaf badge before, so the "no visual

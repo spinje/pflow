@@ -9,8 +9,8 @@ graph LR
     classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
     classDef output fill:#E8E8E8,stroke:#666666,color:#000
     subgraph workflow-inputs ["workflow inputs"]
-        input_title[/"title (string)"/]:::input
-        input_body[/"body (string)"/]:::input
+        input_title[/"title (string, required)"/]:::input
+        input_body[/"body (string, required)"/]:::input
     end
     style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
     subgraph process_title-in ["process_title inputs"]

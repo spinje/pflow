@@ -42,6 +42,7 @@ from pflow.execution.graph_service import (
     WorkflowGraphValidationError,
     resolve_validate_build,
 )
+from pflow.registry import Registry
 
 # Sub-workflow expansion depth served to the client. The frontend collapses and
 # expands containers client-side, so the server always ships the full tree.
@@ -95,7 +96,9 @@ def graph(request: Request) -> Response:
     except WorkflowGraphValidationError as e:
         return _json({"errors": [d.to_dict() for d in e.diagnostics]}, status_code=422)
 
-    return _json(asdict(render_react_flow(model)))
+    # Platform facts joined at the seam: the renderer stays registry-free.
+    kind_types = Registry().output_types_by_kind()
+    return _json(asdict(render_react_flow(model, kind_output_types=kind_types)))
 
 
 class _BundleFiles(StaticFiles):

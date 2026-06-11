@@ -171,14 +171,20 @@ class _GraphBuilder:
         for name, config in inputs.items():
             node_id = _input_node_id(str(name), ancestor_path)
             result[str(name)] = node_id
+            cfg = config if isinstance(config, dict) else {}
             self._add_node(
                 Node(
                     id=node_id,
                     kind="input",
                     parent=container.id,
+                    purpose=str(cfg.get("description", "")),
                     io=IOPort(
-                        data_type=str(config.get("type")) if isinstance(config, dict) and config.get("type") else None,
-                        required=bool(config.get("required", False)) if isinstance(config, dict) else False,
+                        data_type=str(cfg.get("type")) if cfg.get("type") else None,
+                        # An input that omits `required:` IS required — the
+                        # ir_schema-documented default every runtime reader
+                        # (validator/executor/context) already applies.
+                        required=bool(cfg.get("required", True)),
+                        default=cfg.get("default"),
                     ),
                 )
             )
