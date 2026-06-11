@@ -65,8 +65,8 @@ validator.py (orchestrator)
 
 | File | What it imports |
 |------|----------------|
-| `runtime/compilation/compile_validation.py` | `validate_workflow_templates`, `extract_node_outputs` |
-| `core/workflow/validator.py` | `validate_workflow_templates` (lazy) |
+| `runtime/compilation/compile_validation.py` | `extract_node_outputs` only — the template passes do NOT run at compile time |
+| `core/workflow/validator.py` | `validate_workflow_templates` (lazy) — the ONLY production caller of the template passes |
 | `execution/formatters/node_output_formatter.py` | `flatten_output_structure` |
 | `execution/executor_service.py` | `MAX_DISPLAYED_FIELDS` (lazy) |
 

@@ -230,9 +230,10 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 
 ### Planned Features (in order of priority)
 
-**Next?**
-- Task 125: Human-in-the-Loop Approval Gates
-- Task 164: Resume Workflow From a Failed Node
+**Next?** (in build order)
+1. Task 125: Human-in-the-Loop Approval Gates
+2. Task 164: Resume Workflow From a Failed Node
+3. Task 171: Durable Resume Tokens & Non-TTY Gates
 
 **v0.14.0**
 - Task 142: Explore Function-Based Code Node Syntax
@@ -247,7 +248,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
-- Task 133: Unified Per-Node Storage for Trace and Cache
+- Task 133: Trace/Cache Storage Architecture
 
 **v1.0.0 - Security & Sandboxing:**
 - Task 87: Sandboxed Execution Runtime
@@ -265,6 +266,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 **Refactors:**
 - Task 117: Subcommand JSON Error Output
 - Task 120: Strict Input Type Validation
+- Task 170: One Template Language
 
 **Later:**
 - Task 124: Code Node Dependency Management

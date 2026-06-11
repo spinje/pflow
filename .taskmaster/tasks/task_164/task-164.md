@@ -25,14 +25,15 @@ following successors to the end** — the missing "resume-and-continue" half of 
 `--only` snapshot machinery.
 
 ## Relationship to Task 125 (shared substrate)
-Task 125 (HITL gates) and this task are the **same primitive under different triggers**:
-checkpoint → restore → continue. See task-125.md "Architecture". The division of labour:
-- **Task 125 blocking gates** need NO substrate (verified: in-TTY in-place pause works) → independent, built first.
+Task 125 (HITL gates, blocking) and this task are the **same primitive under different
+triggers**: checkpoint → restore → continue. See task-125.md "Architecture". The division of
+labour (125's durable phase was split out as **Task 171** on 2026-06-12, so each task is one PR):
+- **Task 125 (blocking gates)** needs NO substrate (verified: in-TTY in-place pause works) → independent, built first.
 - **THIS task builds the checkpoint→restore→continue substrate** — it is the general,
   HITL-free exercise of it.
-- **Task 125 durable resume + non-TTY gates** then reuse this substrate as a thin trigger
-  (stop-at-a-gate instead of stop-at-a-failure).
-Build order: 125-blocking → 164 (this) → 125-durable.
+- **Task 171 (durable resume tokens + non-TTY gates)** then reuses this substrate as a thin
+  trigger (stop-at-a-gate instead of stop-at-a-failure), persisting 125's decision payload.
+Build order: **125 → 164 (this) → 171**.
 
 ## Reuse: what already exists (verified 2026-06)
 The reconstruction half ships, tested, via `--only` (issue #443):
@@ -59,6 +60,54 @@ The reconstruction half ships, tested, via `--only` (issue #443):
 5. Refine `restored_nodes` to mean "seeded AND not visited this run" — derive post-walk from
    `node_visit_counts` (`execution_state.py:144-145` is the one display-contract touchpoint).
 
+## Engine/planner parity plan (added 2026-06-11 — from the planner-mirror refactor, issue #504 / PR #505)
+
+The planner-mirror refactor (PR #505) made five engine/planner surfaces shared
+(`validate_only_target`, `route_action`, `new_execution_state`, `build_batch_output`,
+`build_snapshot_degraded_diagnostic`) and quantified the drift record this task walks into:
+8–9 of 10 post-dry-run commits touched `plan.py` in lockstep with engine changes, and the
+closest precedent to THIS task — the `--only` snapshot change (`ac479cfd`) — cost **+78 plan.py
+lines alongside +175 engine lines** because entry/seeding semantics are plan.py's mirror
+surface. Consequences for this task's implementation plan:
+
+1. **Phase 0 (first phase of this task's PR, pure refactor): extract the shared
+   "seed snapshot + resolve entry node" helper.** The composition exists twice today —
+   `engine._run_only_snapshot`'s prologue and `plan.py::_resolve_walk_start` — and the delta
+   above would add a third copy. Extract it into `runtime/` with both existing callers rewired
+   FIRST (parity suites as the safety net, zero behavior change), then build resume's engine
+   mode and any planner view as additional callers. Do not extract it before this task starts:
+   the helper's interface is shaped by resume's needs (continue-walking vs run-one-node,
+   failed-trace policy vs full-run policy) — designing it without the third consumer risks a
+   wrong seam (ADR-0006 doctrine: share rules/data, not traversal; the helper is a rule).
+   Task 166 is the payoff precedent: loop-carry landed behind `plan_node()` and cost zero
+   plan.py work.
+2. **Decide the dry-run story explicitly.** Does `--dry-run --resume` exist (planner predicts
+   the resumed tail's cache/cost)? If yes, the planner becomes the helper's fourth caller via
+   `_resolve_walk_start`. If no, record that as a scoped-out decision — don't leave it implicit,
+   or the planner silently lies about resume runs.
+3. **Write the parity test first, mutation-verified.** Before feature code, add a drift-suite
+   test pinning "engine's resume entry state == planner's walk-start state" (copy the recipe
+   from `test_plan_batch_sub_workflow_output_shape_matches_engine`, PR #505 — which demonstrated
+   a re-forked shape literal passes all 43 pre-existing batch/drift tests and is caught only by
+   a call-site parity pin). Mutation-check it by re-forking one side before trusting it.
+4. **Now-shared pieces to reuse directly:** `validate_only_target` is the validation pattern
+   (and likely the function) for the resume target K — note it now hard-errors on `""`;
+   `route_action` means "continue the walk after K" needs zero new routing logic;
+   `build_snapshot_degraded_diagnostic` is the template for a resume-scoped degraded/lossy-state
+   advisory (one builder, per-surface params); any new `__execution__` key resume needs goes in
+   `new_execution_state()` (`node_state.py`) — never a per-side literal.
+5. **Snapshot fidelity is a spec-gate, not an implementation detail.** The Lossy-serialization
+   bullet below understates the decision: `--only` accepted trace sanitization (bytes →
+   placeholder, dunder-drop, `default=str`) as an iteration-tool caveat, but resume is a
+   reliability feature — ADR-0002 explicitly reserves the "dedicated snapshot store" escape
+   hatch for when the trace coupling bites. Decide loud-caveat vs escape-hatch during spec
+   grilling, BEFORE Phase 0 (it changes what the shared helper reads).
+
+> Line-number caveat: the `file:line` refs in Reuse / The delta were verified pre-#505; that PR
+> touches `engine.py`/`plan.py` (e.g. `_validate_only_target` is now module-level
+> `validate_only_target`; the walk loop dispatches via `route_action`). Re-verify offsets at
+> implementation time.
+
 ## Known Hard Problems
 - **Node-K idempotency (the core problem).** K may have *partially* side-effected before
   failing (an http POST that sent but timed out on the response, an mcp tool that created a
@@ -82,13 +131,18 @@ The reconstruction half ships, tested, via `--only` (issue #443):
   — non-JSON-native values resurrect as `str()`. Either ensure resumable shared values are
   JSON-native or harden serialization. Shared with Task 125.
 
-## CLI Surface (open — coordinate with Task 125)
-`pflow resume` is a name Task 125 also wants (for resuming a paused gate). Decide whether one
-`pflow resume` serves both "resume a paused approval" and "resume a failed run", or whether
-this is `pflow <workflow> --resume` / `--from-failed`. Resolve jointly with 125.
+## CLI Surface (open — coordinate with Task 171)
+`pflow resume` is a name Task 171 also wants (for resuming a paused gate via token). Decide
+whether one `pflow resume` serves both "resume a paused approval" (token-addressed) and
+"resume a failed run" (workflow-addressed), or whether this is `pflow <workflow> --resume` /
+`--from-failed`. Resolve jointly with 171 (flagged in task-171.md Dependencies too).
 
 ## Dependencies
-- **Task 125** — shares the checkpoint/resume substrate; build order 125-blocking → this → 125-durable.
+- **Task 125** — shares the checkpoint/resume substrate; build order **125 → this → 171**.
+- **Task 171** — durable resume tokens / non-TTY gates (split from 125's durable phase,
+  2026-06-12); the second consumer of this task's substrate. Its checkpoint is a purpose-built
+  state file (controlled pause), NOT a failed-run trace — design this task's restore reader so
+  it can read both sources (see task-171.md Design Decisions).
 - **Task 73** (deprecated, "Checkpoint Persistence for External Agent Repair") — prior art;
   its side-effect/idempotency analysis still applies. Read `.taskmaster/tasks/task_73/`.
 - **`--only` machinery** (issue #443) — the reconstruction half this builds on.
@@ -102,6 +156,9 @@ this is `pflow <workflow> --resume` / `--from-failed`. Resolve jointly with 125.
 - `restored_nodes` shows upstream-of-K as not_executed; K-onward as executed.
 - No prior failed trace → clear error (`OnlySnapshotMissingError`-style), not a silent re-run.
 - Hard-kill case reported honestly as not-resumable (no trace).
+- Phase-0 extraction lands first with parity suites passing unmodified; the engine↔planner
+  walk-entry parity test exists and is mutation-verified (re-fork one side → test fails)
+  BEFORE resume feature code (see Engine/planner parity plan).
 
 ## References
 - **Verified capability facts (2026-06, with file:line):** see Reuse + The delta above.

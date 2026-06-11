@@ -35,6 +35,21 @@ feedback, recurrence, state-threading.
 produced output. From round 2 on, the Carry supplies the value. A role, not a separate field —
 a carried input's ordinary input value *is* its Seed. _Avoid_: initial, default, base.
 
+**Template** — a string in a Step's params containing `${…}` expressions, resolved against the
+shared store at runtime and checked against declared output structure at validation — one parse
+serves both surfaces. _Avoid_: placeholder, interpolation, substitution.
+
+**Reference** — a path inside a template expression — a root (step, input, or batch alias) plus
+field/index segments — naming data in the shared store. _Avoid_: variable, pointer, path
+(unqualified).
+
+**Coalesce** — the `??` operator in a template expression: Operands tried left to right, the
+first present one wins; an absent root *or* an absent field falls through. _Avoid_: fallback,
+default, or-else.
+
+**Operand** — one alternative in a Coalesce chain: a Reference or a JSON literal. A literal
+always resolves, ending the chain. _Avoid_: argument, branch.
+
 **Retry** — re-running a *single step's own work* after a **transient** failure, capped by a
 maximum attempt count, same inputs each time. A *deterministic* failure (e.g. bad config) is
 not retried. A retry that eventually succeeds leaves no trace — the run is a clean Success.
