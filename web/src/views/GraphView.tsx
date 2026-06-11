@@ -78,7 +78,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // extension — the toolbar keeps the full path).
   const workflowName = useMemo(() => workflow.split("/").pop()?.replace(/\.pflow\.md$/, "") ?? workflow, [workflow]);
 
-  const { nodes, edges, onNodesChange, onEdgesChange, status, errors, graph } = useWorkflowGraph(workflow, {
+  const { nodes, edges, builtEdgeIds, onNodesChange, onEdgesChange, status, errors, graph } = useWorkflowGraph(workflow, {
     density,
     direction,
     collapsed,
@@ -209,14 +209,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // single-group collapse can re-anchor + dedupe the focused edge's id out of the
   // flow — the focus styling would then match nothing (all-dim canvas) while the
   // panel keeps describing an invisible line. Clear both when that happens.
+  // Consult the CURRENT build (builtEdgeIds — synchronous with the focus-derived
+  // expansion), never the painted edges: a deep-linked node-level-deduped edge
+  // resurfaces in the very build its own focus triggers, while the painted
+  // snapshot lags one async layout behind — checking the painted set cancelled
+  // the deep link before it could render (review-caught 2026-06-11).
   useEffect(() => {
-    if (!focus || !graph || edges.length === 0) return;
+    if (!focus || !graph || builtEdgeIds.size === 0) return;
     const isEdgeFocus = focus.startsWith("io-flow:") || graph.edges.some((e) => e.id === focus);
-    if (isEdgeFocus && !edges.some((e) => e.id === focus)) {
+    if (isEdgeFocus && !builtEdgeIds.has(focus)) {
       setFocus(null);
       setSelectedId((prev) => (prev === focus ? null : prev));
     }
-  }, [focus, graph, edges]);
+  }, [focus, graph, builtEdgeIds]);
 
   const onPaneClick = useCallback(() => {
     setFocus(null);

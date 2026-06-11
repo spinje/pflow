@@ -21,6 +21,7 @@ import { memo, type CSSProperties } from "react";
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, Position, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
+import { EdgeHalo } from "./EdgeHalo";
 import { ICON_COL_X, METRICS } from "../../graph/metrics";
 import { truncate } from "../../utils/format";
 
@@ -222,20 +223,8 @@ export const GradientEdge = memo(function GradientEdge({
       </defs>
       {/* SELECTED (edge-click, applyFocus-written data.selected — RF's native
           `selected` prop is deliberately unused: deep links select too, and two
-          styling truths drift): a halo under-stroke in the edge's own paint, the
-          edge analog of the node focus ring. INLINE stroke is load-bearing — RF's
-          base stylesheet strokes `.selected` paths grey, and inline wins. */}
-      {data?.selected && (
-        <path
-          d={edgePath}
-          fill="none"
-          stroke={`url(#${gradientId})`}
-          strokeWidth={METRICS.edgeStroke * 3.5}
-          strokeOpacity={0.25}
-          strokeLinecap="round"
-          className="edge-halo"
-        />
-      )}
+          styling truths drift). */}
+      {data?.selected && <EdgeHalo path={edgePath} stroke={`url(#${gradientId})`} />}
       <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: METRICS.edgeStroke }} />
       {/* A SELECTED edge suppresses its own floating pills: it is elevated above
           the EdgeLabelRenderer layer (it would strike through them), and the read

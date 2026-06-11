@@ -11,6 +11,7 @@
 // as a NON-CLICKABLE chip — visible honesty over a silent no-op focus (R2). An IO
 // port chip uses port-focus semantics (focus the row, keep this panel).
 
+import { bindingParam } from "../graph/flow";
 import { categoryLabel, nodeColor } from "../utils/format";
 import { resolveEndpointFlatId } from "../utils/viewParams";
 import { OutcomeTable, ParamBlock } from "./ReadPanel";
@@ -46,7 +47,7 @@ function Chip({
     return (
       <button className="edge-chip" style={{ "--chip-c": color } as React.CSSProperties} onClick={() => onNavigate(node.id)}>
         <span className="edge-chip-name">{node.ref.node_id}</span>
-        <span className="edge-chip-kind">{node.io ? "io port" : ""}</span>
+        <span className="edge-chip-kind">io port</span>
       </button>
     );
   }
@@ -65,34 +66,32 @@ function Chip({
   );
 }
 
-/** The param a data edge lands on — mirrors targetHandleFor's walk (flow.ts):
- *  direct name match first, else the dict-valued param whose `input_name` key is
- *  itself a `${...}` string (the exact condition that created the edge). */
-export function bindingParam(target: RFNode | undefined | null, inputName: string | null): RFNode["params"][number] | null {
-  if (!target || target.io != null || !inputName) return null;
-  const direct = target.params.find((p) => p.name === inputName);
-  if (direct) return direct;
-  return (
-    target.params.find((p) => {
-      if (typeof p.value !== "object" || p.value === null || Array.isArray(p.value)) return false;
-      const v = (p.value as Record<string, unknown>)[inputName];
-      return typeof v === "string" && v.includes("${");
-    }) ?? null
-  );
-}
-
 /** The node that AUTHORED a binding into an IO port. A line into a sub-workflow's
  *  input port carries its `${...}` text on the sub-workflow STEP (`inputs: {key:
  *  "${...}"}` in the parent file) — the port itself has no params. Resolve: the
- *  wrapper holding the port → its parent workflow/batch group → that group's HOST
- *  node. A ROOT wrapper has no parent group → null (the caller/CLI binds it;
- *  there is no authored text to show). */
+ *  wrapper holding the port → its enclosing workflow/batch group → that group's
+ *  HOST node, walking PAST hostless ancestors (a literal-batch ITEM container
+ *  ships `host: null`; the binding is authored once on the batch host one level
+ *  up — review-caught 2026-06-11). A ROOT wrapper has no parent group → null
+ *  (the caller/CLI binds it; there is no authored text to show). */
 export function portOwnerHost(graph: RFGraph, port: RFNode): RFNode | null {
   const wrapper = graph.groups.find(
     (g) => (g.kind === "input_wrapper" || g.kind === "output_wrapper") && g.members.includes(port.id),
   );
-  const parent = wrapper?.parent ? graph.groups.find((g) => g.id === wrapper.parent) : null;
+  let parent = wrapper?.parent ? (graph.groups.find((g) => g.id === wrapper.parent) ?? null) : null;
+  while (parent && !parent.host && parent.parent) {
+    parent = graph.groups.find((g) => g.id === parent!.parent) ?? null;
+  }
   return parent?.host ? (graph.nodes.find((n) => n.id === parent.host) ?? null) : null;
+}
+
+/** Whether an IO port belongs to a NESTED wrapper (a sub-workflow's interface) as
+ *  opposed to the root workflow's own inputs/outputs — drives the io fact's
+ *  wording, which must never call a sub-workflow item's input a "workflow input". */
+export function portIsNested(graph: RFGraph, port: RFNode): boolean {
+  return graph.groups.some(
+    (g) => (g.kind === "input_wrapper" || g.kind === "output_wrapper") && g.members.includes(port.id) && g.parent != null,
+  );
 }
 
 export function EdgePanel({
@@ -132,10 +131,14 @@ export function EdgePanel({
             : "sequential";
   const tint = edge.kind === "branch" || edge.kind === "sequential" ? (sourceNode ? nodeColor(sourceNode) : undefined) : KIND_TINT[edge.kind];
 
-  // Data title: "output_field → input_name", each side falling back to an IO
-  // port's name (an input's binding carries no output_field — the port IS the
-  // source). Both roles null (re-anchored/deduped) → neutral wording.
-  const left = edge.output_field ?? (sourceNode?.io ? sourceName : null);
+  // Data title: "output_field[.sub.path] → input_name", each side falling back to
+  // an IO port's name (an input's binding carries no output_field — the port IS
+  // the source). `output_path` is part of the edge's MEANING (review-caught
+  // 2026-06-11: two sub-key lines from one field gave byte-identical panels):
+  // "result.ok → x" and "result.err → y" must read as the distinct connections
+  // they are. Both roles null (re-anchored/deduped) → neutral wording.
+  const fieldPath = edge.output_field ? [edge.output_field, ...edge.output_path].join(".") : null;
+  const left = fieldPath ?? (sourceNode?.io ? sourceName : null);
   const right = edge.input_name ?? (targetNode?.io ? targetName : null);
   const dataTitle = left && right ? `${left} → ${right}` : (left ?? right ?? "data connection");
   const title =
@@ -164,7 +167,9 @@ export function EdgePanel({
         ? bindingParam(targetHost, targetNode.ref.node_id)
         : bindingParam(targetNode, edge.input_name)
       : null;
-  const highlightRef = sourceNode ? (edge.output_field && !sourceNode.io ? `${sourceName}.${edge.output_field}` : sourceName) : undefined;
+  // The most specific prefix the contract gives us — including the sub-key path,
+  // so `${gen.result.ok}` and `${gen.result.err}` light ONLY their own line's ref.
+  const highlightRef = sourceNode ? (fieldPath && !sourceNode.io ? `${sourceName}.${fieldPath}` : sourceName) : undefined;
 
   // "one of N references into `prompt`" — interpolated params draw one line per ref.
   const refSiblings =
@@ -247,7 +252,7 @@ export function EdgePanel({
               <dt>bundle</dt>
               <dd>
                 one of {bundle.length} bindings between these nodes:{" "}
-                {bundle.map((b) => `${b.output_field ?? "?"} → ${b.input_name ?? "?"}`).join(", ")}
+                {bundle.map((b) => `${b.output_field ? [b.output_field, ...b.output_path].join(".") : "?"} → ${b.input_name ?? "?"}`).join(", ")}
               </dd>
             </div>
           )}
@@ -268,7 +273,9 @@ export function EdgePanel({
               {targetHost
                 ? `sub-workflow input of ${targetHost.ref.node_id}: `
                 : targetNode.kind === "input"
-                  ? "workflow input "
+                  ? portIsNested(graph, targetNode)
+                    ? "sub-workflow input "
+                    : "workflow input "
                   : "workflow output "}
               <code>{targetName}</code>
               {targetNode.io.data_type ? ` (${targetNode.io.data_type})` : ""}

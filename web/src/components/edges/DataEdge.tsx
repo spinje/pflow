@@ -21,6 +21,7 @@ import { memo, type CSSProperties } from "react";
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
+import { EdgeHalo } from "./EdgeHalo";
 import { LANE_COUNT } from "../../graph/flow";
 import { METRICS } from "../../graph/metrics";
 
@@ -85,20 +86,7 @@ export const DataEdge = memo(function DataEdge({
           </linearGradient>
         </defs>
       )}
-      {/* Halo under-stroke: the edge analog of the node focus ring, in the edge's
-          own color. INLINE stroke is load-bearing — RF's base stylesheet strokes
-          `.selected` paths grey, and inline wins. */}
-      {data?.selected && (
-        <path
-          d={edgePath}
-          fill="none"
-          stroke="var(--data-edge-selected)"
-          strokeWidth={METRICS.edgeStroke * 3.5}
-          strokeOpacity={0.25}
-          strokeLinecap="round"
-          className="edge-halo"
-        />
-      )}
+      {data?.selected && <EdgeHalo path={edgePath} stroke="var(--data-edge-selected)" />}
       <BaseEdge id={id} path={edgePath} style={{ stroke, strokeWidth: METRICS.edgeStroke }} />
       {/* A SELECTED edge suppresses its own label (it is elevated above the
           EdgeLabelRenderer layer; the read panel names the fields); a dimmed

@@ -2558,3 +2558,34 @@ label column (sized for "loop cap") wrapped outcome names mid-word and orphaned 
 (min 76px, ellipsis past 55% with title tooltip), rows padded 4px and baseline-aligned;
 `.fact-marked` keeps just the bg (spacing moved to the row rule). Screenshot-verified on the
 user's exact case (conditional-branching e2). web 218; build clean.
+
+### 4-lens deep review of `d8e4a3a9..HEAD` + my-side fixes (2026-06-11) ✅
+
+> Reviewed the COMMITTED merge of both parallel workstreams (edge selection × output
+> rows/L2/chip rail) with 4 scoped lenses (feature-interactions / silent-failures /
+> simplicity / test-fidelity). Workstream-B + shared items handed off with full repro/DoD:
+> `implementation/review-fixes-handoff.md` (9 issues — headlined by the CRITICAL
+> pre-existing literal-`items:` batch hole: host=True + memberless batch group → node
+> invisible, spine dropped; repro verified live, screenshot in /tmp/pflow-shots). My-side
+> items fixed in the same session:
+
+- **EdgePanel learned `output_path`** (interactions-W1): title/bundle/highlight carry the
+  sub-key path — two sub-key lines from one field now read as the distinct connections
+  they are; the highlight prefix includes the path so sibling refs never co-light. +3 pins.
+- **Deep-link invalidation race FIXED** (silent-W1): the hook now exposes `builtEdgeIds`
+  (synchronous with focus-derived expansion) and the clear-on-disappear effect consults
+  IT, never the painted lagging edges — a deep-linked dedupe-losing binding id now
+  survives (live-verified: run-from-plan `focus=e134`, the 4th binding of the n13→g1
+  bundle: halo + dim + panel land).
+- **`portOwnerHost` walks past hostless item containers** (silent-W2) + the io fact never
+  calls a nested port a "workflow input" (`portIsNested`). Pinned with the
+  batch→hostless-item→wrapper topology.
+- **`bindingParam` consolidated into flow.ts** (simplicity-1): `targetHandleFor` now
+  consumes the single copy — canvas landing and panel can no longer drift.
+- **Coalesce-aware highlight** (silent-S3): ParamBlock matches per `??` operand.
+- **EdgeHalo extracted** (simplicity-7); Chip dead ternary removed (simplicity-5);
+  **EdgePanel fixtures got production-style divergent ids** (test-W3 — flat id ≠ node_id;
+  an id↔name confusion now fails ~10 formerly-blind assertions).
+- Deferred with full spec into the handoff doc: the camera-follow regression pin (test-W2).
+
+Gates: web **223 passed** (+5), tsc strict + build clean; bundle rebuilt + live probes green.

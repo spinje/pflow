@@ -30,6 +30,14 @@ export interface WorkflowGraphView extends Omit<BuildOptions, "expanded"> {
 export interface WorkflowGraphResult {
   nodes: FlowNode[];
   edges: FlowEdge[];
+  // The CURRENT build's edge ids — synchronous with focus-derived expansion,
+  // unlike the painted `edges` (which lag behind the async layout). The edge-
+  // selection invalidation must consult THIS set: a deep-linked deduped edge
+  // resurfaces in the very build its own focus triggers, but the painted
+  // snapshot still lacks it for one layout round-trip (review-caught
+  // 2026-06-11: the invalidation raced the expansion and silently cancelled
+  // the deep link).
+  builtEdgeIds: ReadonlySet<string>;
   onNodesChange: OnNodesChange<FlowNode>;
   onEdgesChange: OnEdgesChange<FlowEdge>;
   status: GraphStatus;
@@ -128,6 +136,8 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
     () => (graph ? buildFlow(graph, { density, direction, collapsed, expanded, workflowName }) : { nodes: [], edges: [] }),
     [graph, density, direction, collapsed, expanded, workflowName],
   );
+
+  const builtEdgeIds = useMemo(() => new Set(built.edges.map((e) => e.id)), [built]);
 
   // The current layout-affecting state as a string — the layout cache key AND the
   // staleness guard the decoration effect compares laid snapshots against.
@@ -331,5 +341,5 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
         ? "empty"
         : "ready";
 
-  return { nodes, edges, onNodesChange, onEdgesChange, status, errors, graph };
+  return { nodes, edges, builtEdgeIds, onNodesChange, onEdgesChange, status, errors, graph };
 }

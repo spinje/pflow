@@ -7,7 +7,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { bindingParam, EdgePanel } from "./EdgePanel";
+import { bindingParam } from "../graph/flow";
+import { EdgePanel } from "./EdgePanel";
 import type { RFEdge, RFGraph, RFNode } from "../types";
 
 afterEach(cleanup);
@@ -56,15 +57,18 @@ function show(graph: RFGraph, edgeId: string, rendered?: string[], onNavigate = 
 
 describe("EdgePanel — data variant", () => {
   // mirrors run-from-plan e2: happy-check.result → report-commits.impl
+  // Production-style ids: flat ids (n1/n2) NEVER equal ref.node_id — an id↔name
+  // confusion in the panel must fail here, not pass vacuously (review-caught).
   const graph: RFGraph = {
     nodes: [
-      node("happy-check", { kind: "claude-code" }),
-      node("report-commits", {
+      node("n1", { ref: { node_id: "happy-check", ancestor_path: [], port: null }, kind: "claude-code" }),
+      node("n2", {
+        ref: { node_id: "report-commits", ancestor_path: [], port: null },
         kind: "code",
         params: [{ name: "impl", value: "${happy-check.result}", is_dynamic: true, source: { file: "execute-plan.pflow.md", line: 212 } }],
       }),
     ],
-    edges: [edge("e2", "happy-check", "report-commits", "data_flow", { output_field: "result", input_name: "impl" })],
+    edges: [edge("e2", "n1", "n2", "data_flow", { output_field: "result", input_name: "impl" })],
     groups: [],
   };
 
@@ -156,8 +160,9 @@ describe("EdgePanel — data variant", () => {
     // sub-workflow STEP's `inputs:` mapping, NOT on the port (it has no params).
     const g: RFGraph = {
       nodes: [
-        node("pair", { kind: "code" }),
-        node("song-creator", {
+        node("n3", { ref: { node_id: "pair", ancestor_path: [], port: null }, kind: "code" }),
+        node("n4", {
+          ref: { node_id: "song-creator", ancestor_path: [], port: null },
           kind: "workflow",
           is_group_host: true,
           params: [
@@ -170,12 +175,12 @@ describe("EdgePanel — data variant", () => {
             },
           ],
         }),
-        node("concept_brief", { kind: "input", io: { data_type: "string", required: true } }),
+        node("n5", { ref: { node_id: "concept_brief", ancestor_path: [], port: null }, kind: "input", io: { data_type: "string", required: true }, parent: "gin" }),
       ],
-      edges: [edge("eb", "pair", "concept_brief", "data_flow", { output_field: "result" })],
+      edges: [edge("eb", "n3", "n5", "data_flow", { output_field: "result" })],
       groups: [
-        { id: "gwf", kind: "workflow", parent: null, host: "song-creator", members: ["x"], nesting_depth: 0, annotations: {} },
-        { id: "gin", kind: "input_wrapper", parent: "gwf", host: null, members: ["concept_brief"], nesting_depth: 1, annotations: {} },
+        { id: "gwf", kind: "workflow", parent: null, host: "n4", members: [], nesting_depth: 0, annotations: {} },
+        { id: "gin", kind: "input_wrapper", parent: "gwf", host: null, members: ["n5"], nesting_depth: 1, annotations: {} },
       ],
     };
     show(g, "eb");
@@ -318,5 +323,87 @@ describe("bindingParam — the targetHandleFor mirror", () => {
       params: [{ name: "inputs", value: { data: "plain" }, is_dynamic: false, source: null }],
     });
     expect(bindingParam(target, "data")).toBeNull();
+  });
+});
+
+describe("EdgePanel — output_path (sub-key) edges read as DISTINCT connections", () => {
+  // Two sub-key lines from ONE field gave byte-identical panels before the panel
+  // learned output_path (review-caught 2026-06-11). Title, highlight, and bundle
+  // entries must all carry the sub-key path.
+  const g: RFGraph = {
+    nodes: [
+      node("n1", { ref: { node_id: "gen", ancestor_path: [], port: null }, kind: "code" }),
+      node("n2", {
+        ref: { node_id: "use", ancestor_path: [], port: null },
+        params: [{ name: "a", value: "use ${gen.result.ok} and ${gen.result.err}", is_dynamic: true, source: null }],
+      }),
+    ],
+    edges: [
+      edge("p1", "n1", "n2", "data_flow", { output_field: "result", output_path: ["ok"], input_name: "a" }),
+      edge("p2", "n1", "n2", "data_flow", { output_field: "result", output_path: ["err"], input_name: "a" }),
+    ],
+    groups: [],
+  };
+
+  it("the title names the sub-key, not just the field", () => {
+    show(g, "p1");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("result.ok → a");
+  });
+
+  it("ONLY this line's ref highlights — never the sibling sub-key of the same field", () => {
+    show(g, "p1");
+    const marks = [...document.querySelectorAll("mark.ref-mark")].map((m) => m.textContent);
+    expect(marks).toEqual(["${gen.result.ok}"]);
+  });
+
+  it("bundle entries name the sub-keys, never two identical field rows", () => {
+    show(g, "p1");
+    expect(screen.getByText(/result\.ok → a, result\.err → a/)).toBeTruthy();
+  });
+});
+
+describe("EdgePanel — hostless item containers and coalesce refs", () => {
+  it("a literal-batch ITEM container's port resolves PAST the hostless group to the batch host (never 'workflow input')", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("n1", { ref: { node_id: "prep", ancestor_path: [], port: null } }),
+        node("n2", {
+          ref: { node_id: "work", ancestor_path: [], port: null },
+          kind: "workflow",
+          is_group_host: true,
+          params: [{ name: "inputs", value: { x: "${prep.stdout}" }, is_dynamic: true, source: null }],
+        }),
+        node("n3", { ref: { node_id: "x", ancestor_path: [], port: null }, kind: "input", io: { data_type: null, required: true }, parent: "g_in" }),
+      ],
+      edges: [edge("eb", "n1", "n3", "data_flow", { output_field: "stdout" })],
+      groups: [
+        { id: "g_batch", kind: "batch", parent: null, host: "n2", members: [], nesting_depth: 0, annotations: {} },
+        { id: "g_item", kind: "workflow", parent: "g_batch", host: null, members: [], nesting_depth: 1, annotations: {} },
+        { id: "g_in", kind: "input_wrapper", parent: "g_item", host: null, members: ["n3"], nesting_depth: 2, annotations: {} },
+      ],
+    };
+    show(g, "eb");
+    expect(screen.getByText("receives")).toBeTruthy();
+    const marks = [...document.querySelectorAll("mark.ref-mark")].map((m) => m.textContent);
+    expect(marks).toEqual(["${prep.stdout}"]);
+    expect(screen.getByText(/sub-workflow input of work/)).toBeTruthy();
+    expect(screen.queryByText(/workflow input [^o]/)).toBeNull();
+  });
+
+  it("a coalesce-authored ref still highlights (matching is per operand)", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("n1", { ref: { node_id: "gen", ancestor_path: [], port: null }, kind: "code" }),
+        node("n2", {
+          ref: { node_id: "use", ancestor_path: [], port: null },
+          params: [{ name: "a", value: '${gen.result ?? "fallback"}', is_dynamic: true, source: null }],
+        }),
+      ],
+      edges: [edge("ec", "n1", "n2", "data_flow", { output_field: "result", input_name: "a" })],
+      groups: [],
+    };
+    show(g, "ec");
+    const marks = [...document.querySelectorAll("mark.ref-mark")].map((m) => m.textContent);
+    expect(marks).toEqual(['${gen.result ?? "fallback"}']);
   });
 });

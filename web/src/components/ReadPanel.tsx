@@ -57,8 +57,12 @@ export function ParamBlock({
         {highlightRef
           ? parseTemplate(text).map((seg, i) => {
               if (!seg.isRef) return seg.text;
-              const ref = seg.text.trim();
-              const mine = ref === highlightRef || ref.startsWith(`${highlightRef}.`);
+              // A `${a.b ?? "fallback"}` block matches per coalesce OPERAND — the
+              // whole-text compare never matched coalesce-authored refs.
+              const mine = seg.text
+                .split("??")
+                .map((op) => op.trim())
+                .some((op) => op === highlightRef || op.startsWith(`${highlightRef}.`));
               return mine ? (
                 <mark className="ref-mark" key={i}>{`\${${seg.text}}`}</mark>
               ) : (

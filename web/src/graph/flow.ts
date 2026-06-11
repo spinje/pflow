@@ -1246,24 +1246,32 @@ function targetHandleFor(
   }
   const isRealTarget = target === edge.target;
   if (rowsVisible && isRealTarget && edge.kind === "data_flow" && edge.input_name) {
-    if (node?.params.some((p) => p.name === edge.input_name)) {
-      return paramHandle(edge.input_name);
-    }
-    // input_name may be a KEY inside a dict-valued param (a code node's
-    // `inputs: {data: ${...}}` — the edge builder walks dict-of-string leaves, so
-    // the edge carries the dict key, not the param name). Land on the param row that
-    // CONTAINS the key — but only when that key's value is itself a `${...}` string,
-    // the exact condition that created the edge. Anything else stays the node-level
-    // fallback: degrade, never mis-attribute (H6).
-    const key = edge.input_name;
-    const host = node?.params.find((p) => {
-      if (typeof p.value !== "object" || p.value === null || Array.isArray(p.value)) return false;
-      const v = (p.value as Record<string, unknown>)[key];
-      return typeof v === "string" && v.includes("${");
-    });
-    if (host) return paramHandle(host.name);
+    const p = bindingParam(node, edge.input_name);
+    if (p) return paramHandle(p.name);
   }
   return NODE_IN;
+}
+
+/** The param a data edge LANDS ON: direct name match first, else the dict-valued
+ *  param whose `input_name` KEY is itself a `${...}` string (a code node's
+ *  `inputs: {data: ${...}}` — the edge builder walks dict-of-string leaves, so the
+ *  edge carries the dict key, not the param name). Only that exact
+ *  edge-creating condition matches; anything else returns null so callers
+ *  degrade, never mis-attribute (H6). THE single copy of this walk — the
+ *  EdgePanel's param block consumes it too, so the panel can never highlight a
+ *  param the rendered line doesn't land on (review-caught duplication,
+ *  2026-06-11). */
+export function bindingParam(target: RFNode | null | undefined, inputName: string | null): RFNode["params"][number] | null {
+  if (!target || target.io != null || !inputName) return null;
+  const direct = target.params.find((p) => p.name === inputName);
+  if (direct) return direct;
+  return (
+    target.params.find((p) => {
+      if (typeof p.value !== "object" || p.value === null || Array.isArray(p.value)) return false;
+      const v = (p.value as Record<string, unknown>)[inputName];
+      return typeof v === "string" && v.includes("${");
+    }) ?? null
+  );
 }
 
 // What flows on a data-flow line, e.g. "stdout → data". Shown as the edge label in
