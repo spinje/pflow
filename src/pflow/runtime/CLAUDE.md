@@ -206,25 +206,28 @@ shared["__pflow_prompt_cache__"] = MappingProxyType[node_id, CacheRenderContext]
                                           # parent → child would break cache scoping AND the
                                           # CacheBlockIR freeze guarantee.
                                           #
-                                          # UNSUPPORTED COMBO (v1): a sub-workflow with
-                                          # `storage_mode: shared` writes directly to the
-                                          # parent's root store (NamespacedSharedStore.__setitem__
-                                          # at namespaced_store.py:51 makes __*__ keys bypass
-                                          # the namespace). Two parallel batch items each
-                                          # running a `storage_mode: shared` sub-workflow that
-                                          # has its own ## Cache block both invoke
-                                          # WorkflowEngine.run's save/restore on the SAME parent
-                                          # root, and the restore order across worker threads
-                                          # is non-deterministic (last-finished worker wins).
-                                          # Each child reads its own installed value during
-                                          # execution (correct), but the parent's value AFTER
-                                          # the batch is whichever child restored last. Today
-                                          # no consumer reads parent's prompt_cache after a
-                                          # parallel batch completes, so this is silent-but-
-                                          # benign. If a future code path adds such a consumer,
-                                          # add a runtime guard at engine.run entry rejecting
-                                          # the combination. Also see plan-doc DD#12 and
-                                          # progress-log Segment 2 for the full rationale.
+                                          # storage_mode: shared × parallel batch × child
+                                          # ## Cache is SAFE — the per-item store copy is the
+                                          # load-bearing isolation. Each batch item (parallel
+                                          # AND sequential) runs against a shallow copy
+                                          # (`item_shared = dict(shared)`, batch_executor.py),
+                                          # so a `storage_mode: shared` child's save/restore of
+                                          # this key — which bypasses namespacing for __*__ keys
+                                          # (NamespacedSharedStore.__setitem__) — lands in the
+                                          # discarded copy, never the parent root. The value is
+                                          # an immutable MappingProxyType, only ever REBOUND,
+                                          # so a copy can't leak mutations either. Consumers DO
+                                          # read this key after a batch (plan_node reads it for
+                                          # every node; LLMNode for rendering) — they see the
+                                          # parent's untouched binding. Pinned by
+                                          # tests/test_runtime/test_storage_mode_shared_prompt_cache.py
+                                          # (mutation-verified: removing the dict(shared) copy
+                                          # fails it). If batch items ever stop copying the
+                                          # store, this combination becomes a real last-
+                                          # finished-worker-wins race — restore the copy or add
+                                          # a guard at engine.run entry. (An earlier version of
+                                          # this note described the race as existing-but-benign;
+                                          # GH #379 closed when the code trace disproved it.)
 
 # Nested workflow keys
 shared["_pflow_depth"] = int

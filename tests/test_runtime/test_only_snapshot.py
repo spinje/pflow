@@ -28,7 +28,7 @@ from pflow.execution.execution_state import build_execution_steps
 from pflow.execution.result import RunnerConfig, WorkflowStatus
 from pflow.execution.runner import WorkflowRunner
 from pflow.runtime.engine.engine import WorkflowEngine
-from pflow.runtime.engine.types import CompiledWorkflow, LoopConfig, NodeConfig
+from pflow.runtime.engine.types import CompiledWorkflow, LoopConfig, NodeConfig, TemplateConfig
 from pflow.runtime.workflow_trace import (
     format_trace_filename,
     load_full_run_events,
@@ -498,6 +498,110 @@ def test_seed_skips_events_without_output() -> None:
     shared: dict[str, Any] = {}
     seed_snapshot_into_shared(shared, events, exclude="target")
     assert "ghost" not in shared
+
+
+# ---------------------------------------------------------------------------
+# ADR-0002 Limitation L2 — --only freezes the branch choice
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.trace_files
+def test_only_coalesce_silently_uses_snapshot_branch(tmp_path: Path) -> None:
+    """L2 silent sub-case: a coalesce on the target resolves against the
+    snapshot's branch outcome — silently.
+
+    The full run takes the primary branch, so ``fallback`` never executes and
+    is absent from the snapshot. Under ``--only report``, the coalesce
+    ``${primary.stdout ?? fallback.stdout}`` resolves from the seeded primary
+    with NO warning and NO degraded status — even though a fresh invocation
+    might have taken the other branch (upstream never re-runs, so the branch
+    choice is frozen). This is the DOCUMENTED limitation in ADR-0002
+    (context/adr/0002-443-only-snapshot-source.md, Limitations). If this test
+    starts failing because the behavior became loud, update the ADR's
+    Limitations section in the same change.
+    """
+    ir = {
+        "nodes": [
+            {
+                "id": "primary",
+                "type": "shell",
+                "purpose": "Succeeds, so the fallback branch is never taken.",
+                "params": {"next": "report", "on-error": "fallback", "command": "printf primary-data"},
+            },
+            {
+                "id": "fallback",
+                "type": "shell",
+                "purpose": "Error-branch recovery; absent from the full run's snapshot.",
+                "params": {"next": "report", "command": "printf fallback-data"},
+            },
+            {
+                "id": "report",
+                "type": "shell",
+                "purpose": "Coalesces whichever branch ran.",
+                "params": {"command": "printf 'got ${primary.stdout ?? fallback.stdout}'"},
+            },
+        ],
+    }
+    wf = tmp_path / "branch-freeze.pflow.md"
+    write_workflow_file(ir, wf)
+
+    full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert full.success, [d.message for d in full.diagnostics]
+    assert "fallback" not in full.shared_after, "precondition: fallback branch must not run"
+    full.trace.save_to_file()
+
+    result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="report"))
+    assert result.success, [d.message for d in result.diagnostics]
+    # The coalesce silently used the snapshot's branch:
+    assert result.shared_after["report"]["stdout"] == "got primary-data"
+    # ...with nothing loud — no advisory, no degraded status (the L2 "silent" pin).
+    assert result.status == WorkflowStatus.SUCCESS
+    assert result.shared_after["__execution__"]["restored_nodes"] == ["primary"]
+    assert "fallback" not in result.shared_after, "untaken branch must not be addressable"
+
+
+def test_only_bare_ref_to_branch_not_in_snapshot_is_loud() -> None:
+    """L2 loud sub-case: a bare (non-coalesce) ref to a branch the snapshot
+    didn't take fails with an unresolved-reference error.
+
+    Pins the ADR-0002 Consequence "branch divergence is loud, not silent" for
+    the bare-ref form: ``branch_b`` never ran in the snapshot, so seeding
+    leaves it absent and strict-mode template resolution raises — the failure
+    is archived under ``__failures__`` as a template error naming the missing
+    reference.
+    """
+    target = _SpyNode()
+    target.node_id = "target"
+    target.set_params({"_calls": []})
+
+    cfg = NodeConfig(
+        node_id="target",
+        node_type_name="SpyNode",
+        template_config=TemplateConfig(
+            template_params={"message": "${branch_b.out}"},
+            static_params={},
+            expected_types={},
+            resolution_mode="strict",
+        ),
+        batch_config=None,
+        namespaced=True,
+        interface_metadata=None,
+    )
+    workflow = CompiledWorkflow(start_node=target, node_configs={"target": cfg})
+    shared: dict[str, Any] = {}
+    engine = WorkflowEngine(
+        only_node="target",
+        snapshot_events=[{"node_id": "branch_a", "node_output": {"out": "frozen-a"}}],
+    )
+
+    with pytest.raises(ValueError, match="branch_b") as excinfo:
+        engine.run(workflow, shared)
+
+    # Loud all the way down: the target never executed, the failure is archived
+    # as a template error, and the exception is annotated for the runner.
+    assert target.params["_calls"] == []
+    assert shared["__failures__"]["target"]["category"] == "template_error"
+    assert getattr(excinfo.value, "_pflow_node_id", None) == "target"
 
 
 # ---------------------------------------------------------------------------

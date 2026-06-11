@@ -5,7 +5,7 @@ Note: dict/list detection in shell commands is now done at template validation t
 still handles safe cases correctly.
 """
 
-from src.pflow.nodes.shell.shell import ShellNode
+from pflow.nodes.shell.shell import ShellNode
 
 
 class TestCommandTemplateValidation:

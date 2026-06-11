@@ -8,7 +8,7 @@ import base64
 import os
 import tempfile
 
-from src.pflow.nodes.file import ReadFileNode
+from pflow.nodes.file import ReadFileNode
 
 
 class TestReadFileBinarySupport:

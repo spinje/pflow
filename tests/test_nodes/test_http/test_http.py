@@ -47,7 +47,7 @@ import pytest
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import RequestException, Timeout
 
-from src.pflow.nodes.http import HttpNode
+from pflow.nodes.http import HttpNode
 
 
 class TestHttpNode:

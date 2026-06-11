@@ -4,7 +4,7 @@ Tests verify that the ShellNode correctly handles stdin from params,
 including template-resolved values (set directly as resolved params).
 """
 
-from src.pflow.nodes.shell.shell import ShellNode
+from pflow.nodes.shell.shell import ShellNode
 
 
 class TestShellStdinParameterFallback:

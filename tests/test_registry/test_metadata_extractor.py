@@ -153,7 +153,7 @@ class TestMetadataExtractorBehavior:
 
     def test_works_with_real_node_implementations(self):
         """Test extraction from actual pflow node implementations."""
-        from src.pflow.nodes.file.read_file import ReadFileNode
+        from pflow.nodes.file.read_file import ReadFileNode
 
         result = self.extractor.extract_metadata(ReadFileNode)
 

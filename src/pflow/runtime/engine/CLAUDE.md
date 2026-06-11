@@ -343,7 +343,7 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 - `runtime/cache.py`: used by `instrumentation.py` (`_deterministic_json`, `compute_node_cache_key`, `compute_batch_cache_key`)
 - `core/json_utils.py`: used by `template_resolution.py`, `batch_executor.py`
 - `core/param_coercion.py`: used by `template_resolution.py`
-- `core/llm_client.py`: heavy LiteLLM import — only `nodes/llm/llm.py` and the discovery callsites depend on it. The engine (`instrumentation.py`, `batch_executor.py`) MUST NOT import from this module to keep CLI startup fast.
+- `core/llm_client.py`: the LLM adapter seam. Engine modules MUST NOT import it at MODULE level — lazy imports inside the function that needs it are fine (the one sanctioned engine site: `batch_executor.py`'s synthetic cache-warmup helper does `from pflow.core.llm_client import complete` in-function). Module-level importers are pinned to an allowlist (`nodes/llm/llm.py` + the discovery callsites) by `tests/test_import_hygiene.py::test_module_level_llm_client_imports_are_allowlisted`. Rationale: litellm itself is lazy inside `complete()` (see `core/CLAUDE.md` → llm_client.py), so `llm_client` is light to import *today* — the rule keeps the engine→adapter edge lazy so a future heavy top-level dependency in the adapter can't silently drag CLI startup.
 - `core/exceptions.py`: `CompilationError`, `MaxNodeVisitsError`
 
 ## Gotchas

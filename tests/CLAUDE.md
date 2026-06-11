@@ -244,8 +244,8 @@ action = validator.run(shared)
 assert action == "retry"  # WorkflowEngine handles routing
 ```
 
-### 2. Import Errors
-`ModuleNotFoundError: No module named 'src'` → Run from project root, check PYTHONPATH.
+### 2. Import Hygiene
+Always import production code as `from pflow...`, never `from src.pflow...`. Both resolve under `pythonpath = ["."]`, but they create DISTINCT module objects — isinstance checks fail across the boundary and the autouse LLM mock (which patches `pflow.core.llm_client.complete`) is silently bypassed. Enforced by `tests/test_import_hygiene.py`, which also pins the allowlist of modules permitted to import `llm_client` at module level (everything else must lazy-import — see `runtime/engine/CLAUDE.md` → Cross-Module Dependencies).
 
 ### 3. File System Tests
 Always use temporary directories. Clean up in `finally` blocks. Prefer `tmp_path` over `tempfile.NamedTemporaryFile(delete=False)`.

@@ -28,7 +28,7 @@ import platform
 
 import pytest
 
-from src.pflow.nodes.shell.shell import ShellNode
+from pflow.nodes.shell.shell import ShellNode
 
 # Size that reliably exceeds pipe buffer on all platforms
 # macOS: 16KB, Linux: 64KB - we use 20KB (just above macOS minimum)
@@ -265,7 +265,7 @@ class TestSignalHandlerConfiguration:
         import signal
 
         # Import and call the signal setup function
-        from src.pflow.cli.main import _setup_signals
+        from pflow.cli.main import _setup_signals
 
         _setup_signals()
 

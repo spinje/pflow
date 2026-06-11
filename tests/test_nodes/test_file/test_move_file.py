@@ -3,7 +3,7 @@
 import os
 import tempfile
 
-from src.pflow.nodes.file import MoveFileNode
+from pflow.nodes.file import MoveFileNode
 
 
 class TestMoveFileNode:
