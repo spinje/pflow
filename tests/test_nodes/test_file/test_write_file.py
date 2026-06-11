@@ -6,7 +6,7 @@ import tempfile
 
 import pytest
 
-from src.pflow.nodes.file import WriteFileNode
+from pflow.nodes.file import WriteFileNode
 
 
 class TestWriteFileNode:

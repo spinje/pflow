@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from src.pflow.nodes.file import ReadFileNode
+from pflow.nodes.file import ReadFileNode
 
 
 class TestReadFileNode:

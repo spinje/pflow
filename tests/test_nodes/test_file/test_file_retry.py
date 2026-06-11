@@ -10,7 +10,7 @@ import threading
 import time
 from unittest.mock import patch
 
-from src.pflow.nodes.file import (
+from pflow.nodes.file import (
     CopyFileNode,
     DeleteFileNode,
     MoveFileNode,

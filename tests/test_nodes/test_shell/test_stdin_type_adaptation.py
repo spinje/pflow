@@ -4,7 +4,7 @@ The shell node should intelligently adapt any Python type to string for stdin,
 since subprocess.run() requires string or None for input.
 """
 
-from src.pflow.nodes.shell.shell import ShellNode
+from pflow.nodes.shell.shell import ShellNode
 
 
 class TestDictListToJSON:

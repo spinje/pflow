@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 
-from src.pflow.registry.registry import Registry
+from pflow.registry.registry import Registry
 
 
 def test_http_node_discovered():

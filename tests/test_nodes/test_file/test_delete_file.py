@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from src.pflow.nodes.file import DeleteFileNode
+from pflow.nodes.file import DeleteFileNode
 
 
 class TestDeleteFileNode:

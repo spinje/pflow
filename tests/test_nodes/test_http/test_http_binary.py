@@ -8,7 +8,7 @@ import base64
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
-from src.pflow.nodes.http import HttpNode
+from pflow.nodes.http import HttpNode
 
 
 class TestHttpBinarySupport:

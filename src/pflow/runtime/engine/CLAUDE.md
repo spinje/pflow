@@ -102,7 +102,7 @@ Happy path: steps 1-17.5, returns action string. Error path: catches exception, 
 - `getattr(e, "_pflow_partial_resolutions", None)` extracts template resolutions before the error (attached by `resolve_templates`)
 - `getattr(e, "_pflow_template_diagnostic", None)` extracts a structured Diagnostic for strict-mode template errors so `_builtin_exception_diagnostic` can return it directly without losing the per-reference structure
 - `call_completion_callback(..., action="error", error=e)` — without this the progress spinner shows the failed node as still running
-- `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution `ValueError` (via `_pflow_partial_resolutions` presence) as `template_error`, otherwise `exception`
+- `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution errors as `template_error` (requires BOTH `isinstance(e, ValueError)` AND `_pflow_partial_resolutions` presence — engine.py step's `is_template_error` check), otherwise `exception`. The exception TYPE is load-bearing here; see GH #503 before migrating it.
 - `e._pflow_node_id = config.node_id` — the Runner's `_exception_to_result` reads this to annotate diagnostics
 - The Runner additionally attaches `e._pflow_shared_store = shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after`. Without this, exception-path failures have empty `shared_after` and CLI/MCP formatters lose all per-node detail.
 
@@ -343,7 +343,7 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 - `runtime/cache.py`: used by `instrumentation.py` (`_deterministic_json`, `compute_node_cache_key`, `compute_batch_cache_key`)
 - `core/json_utils.py`: used by `template_resolution.py`, `batch_executor.py`
 - `core/param_coercion.py`: used by `template_resolution.py`
-- `core/llm_client.py`: heavy LiteLLM import — only `nodes/llm/llm.py` and the discovery callsites depend on it. The engine (`instrumentation.py`, `batch_executor.py`) MUST NOT import from this module to keep CLI startup fast.
+- `core/llm_client.py`: the LLM adapter seam. Engine modules MUST NOT import it at MODULE level — lazy imports inside the function that needs it are fine (the one sanctioned engine site: `batch_executor.py`'s synthetic cache-warmup helper does `from pflow.core.llm_client import complete` in-function). Module-level importers are pinned to an allowlist (`nodes/llm/llm.py` + the discovery callsites) by `tests/test_import_hygiene.py::test_module_level_llm_client_imports_are_allowlisted`. Rationale: litellm itself is lazy inside `complete()` (see `core/CLAUDE.md` → llm_client.py), so `llm_client` is light to import *today* — the rule keeps the engine→adapter edge lazy so a future heavy top-level dependency in the adapter can't silently drag CLI startup.
 - `core/exceptions.py`: `CompilationError`, `MaxNodeVisitsError`
 
 ## Gotchas
