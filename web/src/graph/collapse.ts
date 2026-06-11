@@ -9,6 +9,7 @@
 // directions, and a `node=`/`focus=` deep link is never hidden — its ancestor chain
 // of groups stays expanded so the link always shows its target.
 
+import { shellBatchIds } from "./flow";
 import type { RFGraph } from "../types";
 
 // Roughly where a fully-expanded canvas stops being readable at fit-zoom — also the
@@ -20,12 +21,14 @@ export type CollapseMode = "all" | "none" | null;
 
 /** Every group id that can collapse on the canvas: workflow/batch containers. IO
  *  wrappers are excluded — they render as IO rows on their owner node, not group boxes.
- *  Shell batch groups (no direct members — a batched leaf's empty decorator, or the
- *  wrapper around a batched sub-workflow's workflow group) are excluded too: buildFlow
- *  never renders them, so they can't be toggled and must not inflate the N/M count. */
+ *  Shell batch groups (flow.ts shellBatchIds — the single copy of the rule) are
+ *  excluded too: buildFlow never renders them, so they can't be toggled and must not
+ *  inflate the N/M count. A LITERAL batch group with expanded item groups is NOT a
+ *  shell — it renders as a real box and collapses like any container. */
 export function collapsibleGroupIds(graph: RFGraph): string[] {
+  const shells = shellBatchIds(graph);
   return graph.groups
-    .filter((g) => (g.kind === "workflow" || g.kind === "batch") && !(g.kind === "batch" && g.members.length === 0))
+    .filter((g) => (g.kind === "workflow" || g.kind === "batch") && !shells.has(g.id))
     .map((g) => g.id);
 }
 

@@ -256,6 +256,27 @@ Tests sit beside their subject.
   binding bundles simultaneously — leaf↔card bindings have no parity guarantee
   and may keep small jogs (honest geometry). Expanded regions stay port-less
   (the compound crash).
+- **The SPINE pass straightens what the missing region ports bend
+  (`graph/spine.ts alignSpine`, run at the END of `layoutGraph` — so the layout
+  cache / camera anchoring / animation all see aligned positions).** Because
+  expanded regions carry no ELK port, ELK anchors their trunk edges at the box
+  CENTER while the handles render on the icon line — every wide region knocks
+  the following chain sideways by ~half its width and the error COMPOUNDS down
+  the flow (the "staircase", user-caught 2026-06-11). The pass re-aligns each
+  PURE sequential chain's control anchors (icon line; an end dot's CENTER) to
+  its HEAD's — the head keeps ELK's position (entry placement, fork ordering).
+  Chain links are sequential/end edges between same-scope siblings; a node with
+  >1 spine-relevant control edge on either side (fork / merge / multi-terminal
+  sink) breaks the chain there — fork fan-outs keep their 2D spread, a shared
+  Outputs card stays ELK-balanced between its sources. ERROR edges count toward
+  neither side (a handler hanging off a node must not break the trunk through
+  it). A shift that would land within `SPINE_CLEARANCE` of a same-scope sibling
+  is SKIPPED (honest jog beats overlap — ELK's collision guarantees only hold
+  for the positions it chose). Runs per scope in parent-relative coords, so
+  nested chains straighten past their own nested regions too. LR residual,
+  stated: shifting a region vertically can re-jog row-aligned bindings crossing
+  its boundary — trunk-over-bindings is the established priority order (100 vs
+  5), now applied post-hoc as well.
 - **Icon connector flare (beautiful; TD top/bottom + LR left).** A kind-colored SVG
   cove (`Connector` in `WorkflowNode`, anchored as a child of `.node-tile`) makes a
   control edge appear to flow **into the icon tile** — drawn only on sides that have
@@ -385,7 +406,8 @@ Tests sit beside their subject.
   beautiful exactly like leaf focus-expansion (cached/animated/camera-anchored).
   Deep links select containers BY NAME: `resolveNodeFlatId`
   (viewParams.ts) resolves a group-host's node_id to its representative group
-  (skipping memberless batch shells), so `?focus=<sub-workflow name>` works.
+  (skipping decorator shells via `shellBatchIds` — a literal batch host resolves
+  to its rendered BATCH container), so `?focus=<sub-workflow name>` works.
 - **Edges SELECT on click (2026-06-10).** The clicked CONNECTION is the focus subject:
   only that edge lights — bright variant (`--data-edge-selected` for data lines; full
   gradient for control), a **halo under-stroke** (the edge analog of the node ring;
@@ -422,18 +444,26 @@ Tests sit beside their subject.
   `focus=<flat edge id>` works (the deterministic escape hatch — agents/screenshot
   loop); `initialCollapsed` protects BOTH endpoints' ancestor chains for an edge
   target. Stable edge ADDRESSING (`source→target:input`) stays deferred (Task 169).
-- **A SHELL batch group (no direct members) is never rendered.** The contract models
-  "batched X" as batch-wrapping-X, but presentationally batch is a MODIFIER (deck +
-  ×N badge), not a box to travel through (user decision 2026-06-10): a batched LEAF
-  renders as a normal selectable node (its shell was the "▸ 0 nodes" card bug); a
-  batched SUB-WORKFLOW is a sub-workflow WITH batch — the workflow group reparents
-  past the shell (`effectiveParent`), becomes the host's representative
-  (`groupsByHost` skips shells → edges/title/loop land on it), gets the deck from
-  `hostNode.batch`, and its corner toggle opens the sub-workflow body directly
-  (one toggle — no shell box between). Literal batches (real item-copy members)
-  keep their container.
-  `collapse.ts collapsibleGroupIds` excludes shells (they can't be toggled and must
-  not inflate the N/M count).
+- **A decorator-SHELL batch group is never rendered — and `shellBatchIds` (flow.ts)
+  is the ONE copy of what counts as a shell.** The contract models "batched X" as
+  batch-wrapping-X, but presentationally batch is a MODIFIER (deck + ×N chip), not a
+  box to travel through (user decision 2026-06-10): a DYNAMIC batch group is always
+  a shell — the workflow group reparents past it (`effectiveParent`), becomes the
+  host's representative (`groupsByHost` skips shells → edges/title/loop land on it),
+  gets the deck from `hostNode.batch`, and its corner toggle opens the sub-workflow
+  body directly; a batched LEAF renders as a normal selectable node (its shell was
+  the "▸ 0 nodes" card bug; a LITERAL-batched leaf ships `is_group_host: false` from
+  Python — leaf items are BatchSpec.items data, there is no body to draw). The
+  EXCEPTION: a LITERAL batch whose items expanded into real item groups is NOT a
+  shell — the batch container renders as the host's representative box (title +
+  chips + deck) with the item groups inside ("literal batches keep their
+  container"). The discriminator is literal-vs-dynamic + child groups, NEVER
+  memberlessness — a batch group never has direct node members, so the old
+  `members.length === 0` rule swallowed literal batches whole: the host had no
+  on-canvas representative and every edge touching it warn-dropped, shattering the
+  spine at each literal batch step (review-caught 2026-06-11, CRITICAL).
+  `collapse.ts collapsibleGroupIds` and `viewParams.ts resolveEndpointFlatId` both
+  consume `shellBatchIds` — never re-derive the rule locally.
 - **IO is ROWS on the workflow's OWN node — never a floating table (2026-06-10
   redesign).** An `input_wrapper`/`output_wrapper` group's ports render via the shared
   `PortRows` component on their OWNER; the IO member nodes are NOT emitted. Three

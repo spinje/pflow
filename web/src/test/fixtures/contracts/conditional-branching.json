@@ -1,0 +1,354 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "ref": {
+        "node_id": "fetch-data",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Fetch input data for processing.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo '{\"status\": \"ok\", \"items\": [1, 2, 3]}'",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "line": 15
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "line": 8
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n1",
+      "ref": {
+        "node_id": "classify",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Route to the appropriate handler based on the data.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "data": "${fetch-data.stdout}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "data: dict\n\nitems = data.get(\"items\", [])\n\nif len(items) > 5:\n    next: str = \"process-large\"\nelse:\n    next: str = \"process-small\"\nresult: dict = data",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "line": 27
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "line": 18
+      },
+      "is_decision": true,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "result",
+        "data_type": "dict",
+        "keys": null
+      },
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n2",
+      "ref": {
+        "node_id": "process-small",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Handle small datasets directly.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo \"Processing small batch\"",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "line": 46
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "line": 38
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n3",
+      "ref": {
+        "node_id": "process-large",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Handle large datasets with more resources.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo \"Processing large batch\"",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "line": 57
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "line": 49
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n4",
+      "ref": {
+        "node_id": "handle-error",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Log and handle classification errors.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo \"Error occurred during classification\" >&2",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "line": 68
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "line": 60
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n5",
+      "ref": {
+        "node_id": "done",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Final reporting step.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo \"Processing complete\"",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "line": 78
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "line": 71
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n6",
+      "ref": {
+        "node_id": "__end__",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "end",
+      "purpose": "",
+      "params": [],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": null,
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "source": "n0",
+      "target": "n1",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e1",
+      "source": "n1",
+      "target": "n4",
+      "kind": "error",
+      "label": "error",
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e2",
+      "source": "n1",
+      "target": "n3",
+      "kind": "branch",
+      "label": "process-large",
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": "if len(items) > 5",
+      "output_path": []
+    },
+    {
+      "id": "e3",
+      "source": "n1",
+      "target": "n2",
+      "kind": "branch",
+      "label": "process-small",
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": "else",
+      "output_path": []
+    },
+    {
+      "id": "e4",
+      "source": "n2",
+      "target": "n5",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e5",
+      "source": "n3",
+      "target": "n5",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e6",
+      "source": "n4",
+      "target": "n6",
+      "kind": "end",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e7",
+      "source": "n0",
+      "target": "n1",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "stdout",
+      "input_name": "data",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    }
+  ],
+  "groups": []
+}

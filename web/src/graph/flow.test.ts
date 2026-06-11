@@ -6,6 +6,7 @@ import {
   type BuildOptions,
   COLLAPSED_GROUP_HEIGHT,
   COLLAPSED_GROUP_WIDTH,
+  consumedReadPaths,
   expandTargets,
   type FieldReads,
   type FlowEdge,
@@ -160,6 +161,88 @@ describe("buildFlow — a batched sub-workflow IS a sub-workflow WITH batch (H8 
     const leaf = nodes.find((n) => n.id === "b");
     expect(leaf?.type).toBe("node"); // a normal, selectable node — batch rides as deck/badge
     expect(edges.find((e) => e.id === "e0")?.target).toBe("b");
+  });
+});
+
+describe("buildFlow — LITERAL batches (the invisible-step hole, review-caught 2026-06-11)", () => {
+  // Two contract shapes the old `members.length === 0` shell rule swallowed whole:
+  // the node lost its only on-canvas representative and every edge touching it was
+  // warn-dropped — the workflow shattered into islands at each literal batch step.
+
+  it("a literal-batched LEAF renders as a normal node; its empty batch group stays a shell; spine edges survive", () => {
+    // The confirmed repro contract (prep → fan[items ×3] → done): the host ships
+    // is_group_host=false (the Python-side fix) + a memberless batch group.
+    const graph: RFGraph = {
+      nodes: [
+        node("n0"),
+        node("n1", {
+          batch: { parallel: false, dynamic: false, as_name: "item", source_ref: null, count: 3, items: ["alice", "bob", "carol"] },
+        }),
+        node("n2"),
+      ],
+      edges: [edge("e0", "n0", "n1", "sequential"), edge("e1", "n1", "n2", "sequential")],
+      groups: [group("g0", { kind: "batch", host: "n1", nesting_depth: 1 })],
+    };
+    const { nodes, edges } = buildFlow(graph, COMPACT);
+    const leaf = nodes.find((n) => n.id === "n1");
+    expect(leaf?.type).toBe("node"); // the step is VISIBLE (deck + ⧉ ×3 chip ride node.batch)
+    expect(nodes.find((n) => n.id === "g0")).toBeUndefined(); // no item groups → still a shell
+    expect(edges.find((e) => e.id === "e0")).toMatchObject({ source: "n0", target: "n1" });
+    expect(edges.find((e) => e.id === "e1")).toMatchObject({ source: "n1", target: "n2" });
+  });
+
+  it("a literal batch OF SUB-WORKFLOWS renders its batch container as the host's representative — incl. truncation-re-anchored edges", () => {
+    // The song-creator shape (user-caught): host=true + memberless batch group +
+    // host=null item groups WITH members. A literal batch group holding expanded
+    // item groups is NOT a shell — real item copies to reveal ("literal batches
+    // keep their container"): it renders, carries the host's title/chips, and
+    // anchors every edge touching the host. e2 mirrors the TRUNCATION shape
+    // (craft-reviews: 5 items → 2 kept groups): the Python side re-anchors
+    // hidden-item bindings to the HOST node-level (input_name cleared) — the
+    // frontend must give that edge a real anchor too, never drop it.
+    const graph: RFGraph = {
+      nodes: [
+        node("up"),
+        node("host", {
+          kind: "workflow",
+          is_group_host: true,
+          batch: {
+            parallel: true,
+            dynamic: false,
+            as_name: "item",
+            source_ref: null,
+            count: 5,
+            items: [{ workflow: "./c.pflow.md" }, { workflow: "./c.pflow.md" }, {}, {}, {}],
+          },
+        }),
+        node("w0", { parent: "gi0" }),
+        node("w1", { parent: "gi1" }),
+        node("down"),
+      ],
+      edges: [
+        edge("e0", "up", "host", "sequential"),
+        edge("e1", "host", "down", "sequential"),
+        edge("e2", "up", "host", "data_flow", { output_field: "stdout" }),
+      ],
+      groups: [
+        group("g_batch", { kind: "batch", host: "host", nesting_depth: 1 }),
+        group("gi0", { kind: "workflow", parent: "g_batch", nesting_depth: 1, members: ["w0"] }),
+        group("gi1", { kind: "workflow", parent: "g_batch", nesting_depth: 1, members: ["w1"] }),
+      ],
+    };
+    const { nodes, edges } = buildFlow(graph, COMPACT);
+    expect(nodes.find((n) => n.id === "host")).toBeUndefined(); // host suppressed as before
+    const box = nodes.find((n) => n.id === "g_batch");
+    expect(box?.type).toBe("group"); // ...but its batch container RENDERS
+    if (box?.type === "group") {
+      expect(box.data.showTitle).toBe(true); // and represents the host (title + chip rail)
+      expect(box.data.hostNode?.id).toBe("host");
+    }
+    expect(nodes.find((n) => n.id === "gi0")?.parentId).toBe("g_batch"); // items stay INSIDE (no reparenting past a real box)
+    // The whole spine + the host-level binding anchor on the box — nothing dropped.
+    expect(edges.find((e) => e.id === "e0")?.target).toBe("g_batch");
+    expect(edges.find((e) => e.id === "e1")?.source).toBe("g_batch");
+    expect(edges.find((e) => e.id === "e2")?.target).toBe("g_batch");
   });
 });
 
@@ -515,6 +598,46 @@ describe("buildFlow — plain-param reads correct the quiet claim (no edges, no 
     expect(leaf.data.outputRows).toEqual([]);
   });
 
+  it("a ref inside a quoted COALESCE LITERAL is never a read (the row stays quiet)", () => {
+    // `${cfg.text ?? "ask gen.result owner"}`: the quoted fallback contains a
+    // space, and a space inside the literal satisfies the root prefix class —
+    // without the operand split, `gen`'s result row read as ACTIVE with zero
+    // real readers (the inverse of the lie quiet rows prevent; review-caught
+    // 2026-06-11). Python's build is immune (scope.py splits operands); the
+    // frontend scan must mirror it.
+    const g: RFGraph = {
+      nodes: [
+        node("gen", { output_shape: shaped }),
+        node("use", {
+          params: [{ name: "note", value: '${cfg.text ?? "ask gen.result owner"}', is_dynamic: true, source: null }],
+        }),
+      ],
+      edges: [],
+      groups: [],
+    };
+    const { nodes } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected gen");
+    expect(leaf.data.outputRows.every((r) => r.quiet)).toBe(true);
+  });
+
+  it("a ref in the NON-literal coalesce operand IS a read (positive control)", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("gen", { output_shape: shaped }),
+        node("use", {
+          params: [{ name: "note", value: '${gen.result.ok ?? "x"}', is_dynamic: true, source: null }],
+        }),
+      ],
+      edges: [],
+      groups: [],
+    };
+    const { nodes } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected gen");
+    expect(leaf.data.outputRows.find((r) => r.field === "result.ok")?.quiet).toBe(false);
+  });
+
   it("scope-aware: a same-named node in ANOTHER scope is not marked", () => {
     const g: RFGraph = {
       nodes: [
@@ -528,6 +651,30 @@ describe("buildFlow — plain-param reads correct the quiet claim (no edges, no 
     const leaf = nodes.find((n) => n.id === "gen");
     if (leaf?.type !== "node") throw new Error("expected gen");
     expect(leaf.data.outputRows.every((r) => r.quiet)).toBe(true);
+  });
+
+  it("consumedReadPaths: the panel's consumed list agrees with the canvas (edges + param reads, full depth)", () => {
+    // Panel/canvas parity (review-caught 2026-06-11): a key consumed ONLY via a
+    // prompt body must list in the panel's "consumed" fact; edge reads keep
+    // their untruncated dotted paths; the no-new-claims gate still applies.
+    const g: RFGraph = {
+      nodes: [
+        node("gen", { output_shape: shaped }),
+        node("edge-reader", { params: [{ name: "p", value: "${gen.result.a.b}", is_dynamic: true, source: null }] }),
+        node("prompt-reader", {
+          kind: "llm",
+          params: [{ name: "prompt", value: "Use ${gen.result.ok} and ${gen.nope.x}", is_dynamic: true, source: null }],
+        }),
+      ],
+      edges: [
+        edge("e0", "gen", "edge-reader", "data_flow", { output_field: "result", input_name: "p", output_path: ["a", "b"] }),
+      ],
+      groups: [],
+    };
+    const paths = consumedReadPaths(g);
+    // Edge read full-depth; the prompt-only read listed too; `nope` gated out
+    // (no edge read, not the authored shape's field — no row = no claim).
+    expect(paths.get("gen")).toEqual(["result.a.b", "result.ok"]);
   });
 
   it("the reader's batch alias never reads a sibling that shares its name", () => {
@@ -905,6 +1052,26 @@ describe("buildFlow — a decision's END edge is its reserved 'end' outcome (con
     const e0 = edges.find((e) => e.id === "e0");
     expect(e0?.sourceHandle).toBe(NODE_OUT);
     expect(e0?.data?.outcome).toBeUndefined();
+  });
+
+  it("a decision END edge with condition=null STILL carries outcome 'end' (is_decision gates, not condition presence)", () => {
+    // Extraction is fail-closed: a gate whose stop-arm condition could not be
+    // parsed ships condition=null — yet it IS a decision and its END edge IS the
+    // "end" outcome. toFlowEdge used condition presence as the decision test
+    // (review-caught 2026-06-11): the outcome silently vanished from EdgeData
+    // while branchLabels/EdgePanel still treated it as an outcome.
+    const unparsed: RFGraph = {
+      nodes: [node("dec", { is_decision: true, kind: "code" }), node("work"), node("end0", { kind: "end" })],
+      edges: [
+        edge("eEnd", "dec", "end0", "end"), // condition: null (fail-closed bail)
+        edge("eGo", "dec", "work", "branch", { label: "work" }),
+      ],
+      groups: [],
+    };
+    const { nodes, edges } = buildFlow(unparsed, DETAILED);
+    expect(edges.find((e) => e.id === "eEnd")?.data?.outcome).toBe("end");
+    const dec = nodes.find((n) => n.id === "dec");
+    expect(dec?.type === "node" ? dec.data.branchLabels : null).toEqual(["work", "end"]); // the faint LR end row renders
   });
 });
 

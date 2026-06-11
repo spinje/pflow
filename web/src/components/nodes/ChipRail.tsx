@@ -28,13 +28,17 @@ function batchTitle(batch: NonNullable<RFNode["batch"]>): string {
   return `${mode} batch over ${over}`;
 }
 
-/** Loop + batch chips for a node's structural facts; null when it has neither. */
-export function ModifierChips({ node }: { node: RFNode }): JSX.Element | null {
-  if (!node.loop && !node.batch) return null;
+/** The border rail. Children render AFTER the modifier chips (rightmost slot —
+ *  GroupNode appends its merged count-expander there). Renders nothing when empty
+ *  so a plain leaf adds zero DOM. */
+export function ChipRail({ node, children }: { node: RFNode | null; children?: ReactNode }): JSX.Element | null {
+  const loop = node?.loop ?? null;
+  const batch = node?.batch ?? null;
+  if (!loop && !batch && !children) return null;
   return (
-    <>
-      {node.loop && (
-        <span className="chip chip-loop chip-round" title={loopTitle(node.loop)}>
+    <span className="chip-rail">
+      {loop && (
+        <span className="chip chip-loop chip-round" title={loopTitle(loop)}>
           <svg viewBox="0 0 32 32" aria-hidden="true">
             <path
               d="M16 5 a11 11 0 1 0 11 11"
@@ -47,28 +51,15 @@ export function ModifierChips({ node }: { node: RFNode }): JSX.Element | null {
           </svg>
         </span>
       )}
-      {node.batch && (
-        <span className="chip chip-batch" title={batchTitle(node.batch)}>
+      {batch && (
+        <span className="chip chip-batch" title={batchTitle(batch)}>
           <svg viewBox="0 0 16 16" aria-hidden="true">
             <rect x="5" y="2" width="9" height="8" rx="2" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" />
             <rect x="2" y="6" width="9" height="8" rx="2" fill="var(--bg-node)" stroke="currentColor" strokeWidth="1.5" />
           </svg>
-          {node.batch.dynamic ? "×N" : `×${node.batch.count ?? "?"}`}
+          {batch.dynamic ? "×N" : `×${batch.count ?? "?"}`}
         </span>
       )}
-    </>
-  );
-}
-
-/** The border rail. Children render AFTER the modifier chips (rightmost slot —
- *  GroupNode appends its merged count-expander there). Renders nothing when empty
- *  so a plain leaf adds zero DOM. */
-export function ChipRail({ node, children }: { node: RFNode | null; children?: ReactNode }): JSX.Element | null {
-  const hasChips = node != null && (node.loop != null || node.batch != null);
-  if (!hasChips && !children) return null;
-  return (
-    <span className="chip-rail">
-      {hasChips && <ModifierChips node={node} />}
       {children}
     </span>
   );

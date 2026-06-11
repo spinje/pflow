@@ -54,6 +54,17 @@ const KIND_LABEL: Record<ContainerKind, string> = {
   output_wrapper: "outputs",
 };
 
+/** The category line. A literal batch OF SUB-WORKFLOWS composes both facts as
+ *  "BATCH-WORKFLOW" (user-decided 2026-06-11): the box is a sub-workflow step
+ *  like its dynamic sibling AND a real batch container of item copies — a bare
+ *  "BATCH" demoted the step's identity purely because its items were authored
+ *  literally. Other batch shapes (hostless / non-workflow hosts) keep the
+ *  plain label. */
+function groupCategory(kind: ContainerKind, hostKind: string | undefined): string {
+  if (kind === "batch" && hostKind === "workflow") return "batch-workflow";
+  return KIND_LABEL[kind];
+}
+
 // The container's identity color (inline --kind, same mechanism as the leaf card).
 // Batch purple must equal the CSS --batch var; workflow magenta comes from the kind
 // palette so card, edges, and icon stay one color.
@@ -133,7 +144,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
         {direction === "LR" && hasIncoming && <Connector side="left" />}
       </div>
       <div className="node-titles">
-        <span className="node-category">{KIND_LABEL[group.kind]}</span>
+        <span className="node-category">{groupCategory(group.kind, hostNode?.kind)}</span>
         <span className="node-name" title={title}>
           {hostNode?.purpose || title}
         </span>

@@ -1044,6 +1044,44 @@ def test_batch_alias_ref_never_carries_an_output_path() -> None:
     assert edge.output_path == ()
 
 
+def test_two_subkey_refs_in_one_binding_dedupe_to_one_edge_first_path_wins() -> None:
+    """``Edge.output_path`` is ``compare=False`` — LOAD-BEARING, mutation-checked.
+
+    Edge dedup is full dataclass equality, so two sub-key refs of the SAME field
+    inside ONE binding (``"${gen.result.ok} ${gen.result.no}"``) must collapse to
+    ONE DATA_FLOW edge whose ``output_path`` is the FIRST ref's ``("ok",)`` — the
+    same documented lossiness as ``input_name``'s multi-role case. Removing
+    ``compare=False`` puts the paths into identity: this test then sees TWO edges
+    and fails (verified by mutation) — exactly the "cleanup" regression that
+    would silently change Mermaid's edge count on multi-sub-key workflows.
+    """
+    child = {"inputs": {"ok": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {"id": "gen", "type": "code", "params": {"code": 'result = {"ok": 1, "no": 2}'}},
+                {
+                    "id": "check",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "inputs": {"ok": "${gen.result.ok} ${gen.result.no}"}},
+                },
+            ],
+            "edges": [{"from": "gen", "to": "check"}],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    target = _input_id("ok", AncestorStep("check", None))
+    edges = [e for e in graph.edges if e.target == target and e.kind == EdgeKind.DATA_FLOW]
+    assert len(edges) == 1
+    assert (edges[0].output_field, edges[0].output_path) == ("result", ("ok",))
+
+
 def test_leaf_dynamic_batch_records_sibling_items_source_data_flow() -> None:
     # A leaf (non-workflow) batch over a sibling-produced items source must carry the
     # prep->host dependency in the model — workflow batches already do; leaf batches

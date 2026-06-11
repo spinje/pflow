@@ -910,10 +910,6 @@ button.active {
   color: var(--danger);
   border-color: #5a2a2a;
 }
-.badge-more {
-  background: var(--bg-raised);
-  color: var(--text-faint);
-}
 .badge-dynamic {
   background: var(--ref-bg);
   color: var(--ref);

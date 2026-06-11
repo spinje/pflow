@@ -11,6 +11,7 @@ import type { ELK, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk.bundled.js";
 import { CONTROL_KINDS, type Direction, type FlowEdge, type FlowNode, rowAnchorsFor } from "./flow";
 import { NODE_IN, NODE_OUT } from "./handles";
 import { ICON_COL_X, ICON_ROW_Y, METRICS } from "./metrics";
+import { alignSpine } from "./spine";
 
 // ELK is ~80% of the app bundle, and layoutGraph is already async — so it loads as
 // its own chunk on first layout instead of blocking the initial page. Cached: one
@@ -352,7 +353,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   };
   laidOut.children?.forEach(collect);
 
-  return nodes.map((node) => {
+  const positioned = nodes.map((node) => {
     const box = boxes.get(node.id);
     if (!box) {
       // ELK should place every node it was given; a miss would silently pile the
@@ -368,6 +369,14 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
       style: { ...node.style, width: box.width, height: box.height },
     };
   });
+
+  // Expanded regions carry no ELK port (the compound crash above), so ELK anchors
+  // their trunk edges at the box CENTER while the handles render on the icon line
+  // — a chain through wide regions renders as an accumulating staircase. The
+  // spine pass re-aligns each pure sequential chain's anchors to its head
+  // (graph/spine.ts); running it HERE means the layout cache, camera anchoring
+  // and the animation all see the aligned positions.
+  return alignSpine(positioned, edges, direction);
 }
 
 /** Reorder a sibling list so each fork's targets follow their branch-edge order

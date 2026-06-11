@@ -362,11 +362,27 @@ export function outputRowsFor(node: RFNode, observed?: ReadonlyMap<string, Field
   return rows;
 }
 
-// Template-ref extraction for the param-read scan — mirrors scope.py's two-stage
-// regex (block, then root + dotted tail per operand). Literal operands can't
-// false-positive: a quote/digit boundary never satisfies the root prefix class.
+// Template-ref extraction for the param-read scan — mirrors scope.py's walk
+// (refs_with_path_in): find each ${...} block, split it on the coalesce operator
+// into operands, SKIP literal operands, then capture root + dotted tail per
+// non-literal operand. The operand split is load-bearing, not hygiene: a quoted
+// fallback like `${cfg.text ?? "ask gen.result owner"}` contains spaces, and a
+// space INSIDE the literal satisfies the root prefix class — without the skip,
+// `gen`'s `result` row would read as ACTIVE with zero real readers (the inverse
+// of the lie quiet rows exist to prevent; review-caught 2026-06-11).
 const REF_BLOCK_RE = /\$\{([^}]*)\}/g;
 const REF_IN_BLOCK_RE = /(?:^|[\s?])([a-zA-Z0-9_-]+)((?:\.[a-zA-Z0-9_-]+)*)/g;
+const COALESCE_SPLIT_RE = /\s*\?\?\s*/;
+
+/** Mirrors TemplateResolver.is_literal_operand (the skip scope.py applies before
+ *  extracting refs): literals start with one of `{ [ " -` or a digit, or are
+ *  exactly the keywords true/false/null; identifiers start with a letter/underscore. */
+function isLiteralOperand(operand: string): boolean {
+  const first = operand[0];
+  if (first == null) return false;
+  if ('{["-0123456789'.includes(first)) return true;
+  return operand === "true" || operand === "false" || operand === "null";
+}
 
 function stringLeaves(value: unknown): string[] {
   if (typeof value === "string") return [value];
@@ -375,47 +391,97 @@ function stringLeaves(value: unknown): string[] {
   return [];
 }
 
-/** Merge plain-param `${sibling.field.key}` reads into the observed-read set
- *  (see the call site in buildFlow for the WHY + the deliberate bounds). */
-function scanParamReads(graph: RFGraph, observed: Map<string, Map<string, FieldReads>>): void {
+// One plain-param `${sibling.field…}` read, resolved to its producer. The shared
+// walk both consumers below derive from (canvas rows AND the read panel — split
+// scans would drift; review-caught 2026-06-11): scope-aware (same-parent node_id
+// only), batch-alias-skipping, coalesce-literal-skipping; a bare `${gen}` names
+// no field and never counts.
+type ParamRead = { producer: RFNode; segments: string[] };
+
+function paramTextReads(graph: RFGraph): ParamRead[] {
   const byScopeName = new Map<string, RFNode>();
   for (const n of graph.nodes) {
     if (n.io === null && n.kind !== "end") byScopeName.set(`${n.parent ?? ""}|${n.ref.node_id}`, n);
   }
+  const found: ParamRead[] = [];
   for (const reader of graph.nodes) {
     const alias = reader.batch?.as_name;
     for (const param of reader.params) {
       for (const leaf of stringLeaves(param.value)) {
         for (const block of leaf.matchAll(REF_BLOCK_RE)) {
-          for (const m of (block[1] ?? "").matchAll(REF_IN_BLOCK_RE)) {
-            const root = m[1];
-            const tail = m[2] ?? "";
-            if (root == null || root === alias) continue; // the per-item batch alias, never a sibling
-            const producer = byScopeName.get(`${reader.parent ?? ""}|${root}`);
-            if (!producer || producer.id === reader.id) continue;
-            const segments = tail ? tail.slice(1).split(".") : [];
-            const field = segments[0];
-            if (field == null) continue; // a bare `${gen}` names no field
-            const fields = observed.get(producer.id);
-            const existing = fields?.get(field);
-            // Only correct rows that EXIST (via edges or the authored shape) —
-            // a param read must not grow new field rows.
-            if (existing == null && field !== producer.output_shape?.field) continue;
-            const reads = existing ?? { bare: false, subKeys: [] };
-            const subKey = segments[1];
-            if (subKey != null) {
-              if (!reads.subKeys.includes(subKey)) reads.subKeys.push(subKey);
-            } else {
-              reads.bare = true;
+          for (const operand of (block[1] ?? "").split(COALESCE_SPLIT_RE)) {
+            const trimmed = operand.trim();
+            if (isLiteralOperand(trimmed)) continue;
+            for (const m of trimmed.matchAll(REF_IN_BLOCK_RE)) {
+              const root = m[1];
+              const tail = m[2] ?? "";
+              if (root == null || root === alias) continue; // the per-item batch alias, never a sibling
+              const producer = byScopeName.get(`${reader.parent ?? ""}|${root}`);
+              if (!producer || producer.id === reader.id) continue;
+              const segments = tail ? tail.slice(1).split(".") : [];
+              if (segments.length === 0) continue; // a bare `${gen}` names no field
+              found.push({ producer, segments });
             }
-            const slot = fields ?? new Map<string, FieldReads>();
-            slot.set(field, reads);
-            observed.set(producer.id, slot);
           }
         }
       }
     }
   }
+  return found;
+}
+
+/** Merge plain-param `${sibling.field.key}` reads into the observed-read set
+ *  (see the call site in buildFlow for the WHY + the deliberate bounds). */
+function scanParamReads(graph: RFGraph, observed: Map<string, Map<string, FieldReads>>): void {
+  for (const { producer, segments } of paramTextReads(graph)) {
+    const field = segments[0]!;
+    const fields = observed.get(producer.id);
+    const existing = fields?.get(field);
+    // Only correct rows that EXIST (via edges or the authored shape) —
+    // a param read must not grow new field rows.
+    if (existing == null && field !== producer.output_shape?.field) continue;
+    const reads = existing ?? { bare: false, subKeys: [] };
+    const subKey = segments[1];
+    if (subKey != null) {
+      if (!reads.subKeys.includes(subKey)) reads.subKeys.push(subKey);
+    } else {
+      reads.bare = true;
+    }
+    const slot = fields ?? new Map<string, FieldReads>();
+    slot.set(field, reads);
+    observed.set(producer.id, slot);
+  }
+}
+
+/** Full-depth dotted read paths per producer — the read panel's "consumed" fact.
+ *  ONE truth with the canvas rows: contract data-flow edges PLUS the same
+ *  param-text scan buildFlow merges — a key consumed only through a prompt body
+ *  must list in the panel too, or panel and canvas state contradictory facts
+ *  about the same binding (review-caught 2026-06-11). Param reads pass the same
+ *  no-new-claims gate as the canvas (a field must exist via an edge read or the
+ *  authored shape); unlike the canvas rows (first segment only, D7) the paths
+ *  here are untruncated — the panel is the full-depth home. */
+export function consumedReadPaths(graph: RFGraph): Map<string, string[]> {
+  const paths = new Map<string, string[]>();
+  const edgeFields = new Map<string, Set<string>>();
+  const add = (producerId: string, path: string): void => {
+    const list = paths.get(producerId) ?? [];
+    if (!list.includes(path)) list.push(path);
+    paths.set(producerId, list);
+  };
+  for (const e of graph.edges) {
+    if (e.kind !== "data_flow" || e.output_field == null) continue;
+    const fields = edgeFields.get(e.source) ?? new Set<string>();
+    fields.add(e.output_field);
+    edgeFields.set(e.source, fields);
+    add(e.source, [e.output_field, ...e.output_path].join("."));
+  }
+  for (const { producer, segments } of paramTextReads(graph)) {
+    const field = segments[0]!;
+    if (!edgeFields.get(producer.id)?.has(field) && field !== producer.output_shape?.field) continue;
+    add(producer.id, segments.join("."));
+  }
+  return paths;
 }
 
 /** Where each ROW handle sits inside its node box — the LR layout's PORT
@@ -494,6 +560,33 @@ export const CONTROL_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["sequenti
 const NO_EXPANSION: ReadonlySet<string> = new Set();
 const NO_CONDITIONS: Record<string, string> = {};
 
+/** IO ownership — which flow node carries a wrapper's rows: the root IO card
+ *  (the wrapper's own id) or the enclosing workflow group, reparented past
+ *  decorator shells. `wrappers` maps wrapper id → owner; `ports` maps each IO
+ *  member node → that owner. THE single copy of the rule: buildFlow (row
+ *  emission + edge handle resolution) and expandTargets (focus expansion) both
+ *  consume it — the same concept under two divergent rules 200 lines apart was
+ *  a drift trap (review-caught 2026-06-11). Strict on purpose: only non-empty
+ *  wrappers own rows, and only io-kind members are ports. */
+export function ioOwners(graph: RFGraph): { wrappers: Map<string, string>; ports: Map<string, string> } {
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const groupById = new Map(graph.groups.map((g) => [g.id, g]));
+  const shells = shellBatchIds(graph);
+  const wrappers = new Map<string, string>();
+  const ports = new Map<string, string>();
+  for (const g of graph.groups) {
+    if ((g.kind !== "input_wrapper" && g.kind !== "output_wrapper") || g.members.length === 0) continue;
+    let parent = g.parent;
+    while (parent && shells.has(parent)) parent = groupById.get(parent)?.parent ?? null;
+    const owner = g.parent ? (parent ?? g.id) : g.id;
+    wrappers.set(g.id, owner);
+    for (const m of g.members) {
+      if (nodeById.get(m)?.io != null) ports.set(m, owner);
+    }
+  }
+  return { wrappers, ports };
+}
+
 // The expansion set for a focus in beautiful mode: the focused leaf plus every leaf
 // on the other end of one of its DATA-FLOW lines. Those cards render their advanced
 // body so the revealed lines land on actual rows (source's output row → target's
@@ -508,13 +601,12 @@ const NO_CONDITIONS: Record<string, string> = {};
 export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet<string> {
   if (!focus) return NO_EXPANSION;
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
-  const ioOwner = new Map<string, string>(); // IO port id -> the node carrying its row
+  // IO port id -> the node carrying its row (ioOwners — the same rule buildFlow
+  // resolves edge handles with, so expansion and row emission can't disagree).
+  const ioOwner = ioOwners(graph).ports;
   let focusWrapper: { members: string[] } | null = null;
   for (const g of graph.groups) {
-    if (g.kind !== "input_wrapper" && g.kind !== "output_wrapper") continue;
-    if (g.id === focus) focusWrapper = g;
-    const owner = g.parent ?? g.id;
-    for (const m of g.members) ioOwner.set(m, owner);
+    if ((g.kind === "input_wrapper" || g.kind === "output_wrapper") && g.id === focus) focusWrapper = g;
   }
   // Only a leaf card can expand to its advanced body; a group host has no card and
   // an end sink has no body. An IO port expands its OWNER instead.
@@ -568,22 +660,48 @@ export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet
   return out;
 }
 
+/** Decorator-shell batch groups — batch boxes that must NEVER render. The contract
+ *  models "batched X" as batch-wrapping-X; presentationally batch is a MODIFIER on
+ *  the thing itself — the deck + ×N chip, not a box to travel through (user decision
+ *  2026-06-10): a DYNAMIC batch group is always a shell (its one representative body
+ *  is "the sub-workflow WITH batch" — the workflow group reparents past it), and a
+ *  literal-batched LEAF's empty group is a shell too (leaf items are BatchSpec.items
+ *  data — nothing to reveal). The EXCEPTION is a LITERAL batch whose items expanded
+ *  into real item groups: those are actual copies to reveal, so the batch container
+ *  renders and is the suppressed host's representative ("literal batches keep their
+ *  container"). The discriminator is literal-vs-dynamic + expanded child groups, NOT
+ *  memberlessness — a batch group never has direct node members (sub-workflow items
+ *  live in child item groups), so the old `members.length === 0` rule swallowed
+ *  literal sub-workflow batches and severed the host's spine (review-caught
+ *  2026-06-11, CRITICAL). THE single copy of the rule — buildFlow, collapse.ts and
+ *  viewParams.ts all consume it (three drifting copies is how the bug shipped). */
+export function shellBatchIds(graph: RFGraph): ReadonlySet<string> {
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const parentsOfGroups = new Set<string>();
+  for (const g of graph.groups) {
+    if (g.parent != null) parentsOfGroups.add(g.parent);
+  }
+  const shells = new Set<string>();
+  for (const g of graph.groups) {
+    if (g.kind !== "batch" || g.members.length > 0) continue;
+    const batch = g.host ? nodeById.get(g.host)?.batch : null;
+    // A literal batch WITH expanded item groups is a real box, never a shell.
+    if (batch != null && !batch.dynamic && parentsOfGroups.has(g.id)) continue;
+    shells.add(g.id);
+  }
+  return shells;
+}
+
 export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const groupById = new Map(graph.groups.map((g) => [g.id, g]));
   const expandedSet = view.expanded ?? NO_EXPANSION;
 
-  // A batch group with NO direct members is a decorator SHELL (the contract models
-  // "batched X" as batch-wrapping-X): empty for a batched leaf, or holding only the
-  // workflow group of a batched sub-workflow. Presentationally, batch is a MODIFIER
-  // on the thing itself — the deck + ×N badge — not a box to travel through (user
-  // decision 2026-06-10): shells are never rendered, their child reparents past
-  // them, and a suppressed host's representative skips them (a batched sub-workflow
-  // IS a sub-workflow WITH batch). Literal batches (real item-copy members) keep
-  // their container — there are actual items to reveal.
-  const shellBatch = new Set(
-    graph.groups.filter((g) => g.kind === "batch" && g.members.length === 0).map((g) => g.id),
-  );
+  // Decorator-shell batch groups are never rendered: their children reparent past
+  // them and a suppressed host's representative skips them. A literal batch group
+  // holding expanded item groups is NOT a shell — it renders and represents its
+  // host (the single copy of the rule lives in shellBatchIds above).
+  const shellBatch = shellBatchIds(graph);
   const effectiveParent = (parent: string | null): string | null => {
     while (parent && shellBatch.has(parent)) parent = groupById.get(parent)?.parent ?? null;
     return parent;
@@ -711,17 +829,9 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   const ioWrappers = graph.groups.filter(
     (g) => (g.kind === "input_wrapper" || g.kind === "output_wrapper") && g.members.length > 0,
   );
-  const wrapperOwner = (wrapper: RFGroup): string =>
-    wrapper.parent ? (effectiveParent(wrapper.parent) ?? wrapper.id) : wrapper.id;
-  const ioNodeToOwner = new Map<string, string>(); // IO node id -> its owner flow-node id
-  for (const wrapper of ioWrappers) {
-    const owner = wrapperOwner(wrapper);
-    for (const memberId of wrapper.members) {
-      if (nodeById.get(memberId)?.io != null) {
-        ioNodeToOwner.set(memberId, owner);
-      }
-    }
-  }
+  // IO ownership (ioOwners — the single rule): port → owner feeds edge handle
+  // resolution; wrapper → owner places the row areas.
+  const { wrappers: ownerByWrapper, ports: ioNodeToOwner } = ioOwners(graph);
   const wrapperPorts = (wrapper: RFGroup): Port[] =>
     wrapper.members
       .map((memberId) => nodeById.get(memberId))
@@ -738,7 +848,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   const groupIO = new Map<string, { inputs: Port[]; outputs: Port[] }>();
   for (const wrapper of ioWrappers) {
     if (!wrapper.parent) continue; // root wrappers become standalone IO cards below
-    const owner = wrapperOwner(wrapper);
+    const owner = ownerByWrapper.get(wrapper.id) ?? wrapper.id;
     const slot = groupIO.get(owner) ?? { inputs: [], outputs: [] };
     if (wrapper.kind === "input_wrapper") slot.inputs = wrapperPorts(wrapper);
     else slot.outputs = wrapperPorts(wrapper);
@@ -996,7 +1106,11 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     // and the re-anchored fallback's (a collapsed source has no rows to hold it).
     // A decision's END edge is its "end" outcome and follows the same rule (its
     // row is the "end" BranchPorts row).
-    const isOutcomeEdge = e.kind === "branch" ? e.label != null : e.kind === "end" && decisionIds.has(e.source);
+    // A decision's END edge is its reserved "end" outcome — discriminated by the
+    // SOURCE's is_decision fact, never by condition presence (extraction is
+    // fail-closed: an unparseable gate ships condition=null and is still a decision).
+    const decisionEnd = e.kind === "end" && decisionIds.has(e.source);
+    const isOutcomeEdge = e.kind === "branch" ? e.label != null : decisionEnd;
     const conditionOnRow = view.direction === "LR" && isOutcomeEdge && source === e.source;
     // LR target entries get their outcome name (TD-style bare text) whenever the
     // source's rows show — rows + target labels appear together.
@@ -1015,6 +1129,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
         rowsVisible(e.source) && !conditionOnRow,
         lrOutcomeLabel,
         ioBinding,
+        decisionEnd,
       ),
     );
   }
@@ -1296,6 +1411,7 @@ function toFlowEdge(
   conditionShown = false,
   lrOutcomeLabel = false,
   ioBinding = false,
+  decisionEnd = false,
 ): FlowEdge {
   const isData = edge.kind === "data_flow";
   // ALL control flow draws via the custom "gradient" edge, which owns the stroke
@@ -1353,14 +1469,13 @@ function toFlowEdge(
       targetColor,
       condition: edge.condition ?? undefined,
       conditionShown: conditionShown && edge.condition != null,
-      // A decision's END edge carries the reserved "end" outcome (only decision END
-      // edges ship a condition, so the condition's presence is the decision test here).
-      outcome:
-        edge.kind === "branch"
-          ? (edge.label ?? undefined)
-          : edge.kind === "end" && edge.condition != null
-            ? "end"
-            : undefined,
+      // A decision's END edge carries the reserved "end" outcome — gated on the
+      // SOURCE's is_decision fact (`decisionEnd`), never on condition presence:
+      // extraction is fail-closed, so a decision whose end-route condition could
+      // not be parsed ships condition=null yet its END edge is still an outcome
+      // (buildFlow's branchLabels machinery and EdgePanel already use this rule;
+      // review-caught 2026-06-11).
+      outcome: edge.kind === "branch" ? (edge.label ?? undefined) : decisionEnd ? "end" : undefined,
     },
     hidden: defaultHidden,
   };

@@ -21,6 +21,30 @@ vi.mock("../api/client", async (importOriginal) => {
 });
 // Stub ELK so the component test is deterministic; overridable per-test.
 vi.mock("../graph/layout", () => ({ layoutGraph: vi.fn() }));
+// Partial-mock @xyflow/react ONLY to OBSERVE fitView calls (the camera-follow
+// pin): the spy wraps the real instance's fitView and calls through, so every
+// other test sees unchanged behavior.
+const fitViewSpy = vi.hoisted(() => vi.fn());
+vi.mock("@xyflow/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@xyflow/react")>();
+  return {
+    ...actual,
+    // jsdom's no-op ResizeObserver means React Flow never "measures" nodes, so
+    // the real hook would stay false forever and the effects it gates (fit,
+    // focus deep link) would be unreachable in any jsdom test.
+    useNodesInitialized: () => true,
+    useReactFlow: (): ReturnType<typeof actual.useReactFlow> => {
+      const inst = actual.useReactFlow();
+      return {
+        ...inst,
+        fitView: (opts?: Parameters<typeof inst.fitView>[0]) => {
+          fitViewSpy(opts);
+          return inst.fitView(opts);
+        },
+      };
+    },
+  };
+});
 
 import { ApiError, fetchGraph } from "../api/client";
 import { layoutGraph } from "../graph/layout";
@@ -93,6 +117,7 @@ beforeEach(() => {
   vi.mocked(fetchGraph).mockReset();
   vi.mocked(layoutGraph).mockReset();
   vi.mocked(layoutGraph).mockImplementation(layoutStub);
+  fitViewSpy.mockClear();
 });
 
 describe("GraphView mount", () => {
@@ -135,6 +160,31 @@ describe("GraphView mount", () => {
     expect(screen.getByText("stdout, result.a.b")).toBeTruthy();
   });
 
+  it("the panel's consumed list includes plain-param (prompt-body) reads — panel/canvas parity", async () => {
+    // `prompt: ${greet.stdout}` forms NO contract edge; the canvas already counts
+    // it (scanParamReads) — the panel must too, or the two state contradictory
+    // facts about the same binding (review-caught 2026-06-11). `stdout` has an
+    // edge read here (so the gate admits it); the second ref is prompt-only.
+    const promptRead: RFGraph = {
+      ...GRAPH,
+      nodes: [
+        { ...GRAPH.nodes[0]!, output_shape: { field: "result", data_type: "dict", keys: [{ name: "ok", data_type: "bool" }] } },
+        {
+          ...GRAPH.nodes[1]!,
+          params: [{ name: "prompt", value: "Check ${greet.result.ok}", is_dynamic: true, source: null }],
+        },
+      ],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(promptRead);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("say hi")); // select the producer (greet)
+    await waitFor(() => expect(screen.getByText("consumed")).toBeTruthy());
+    // The edge read (stdout) AND the prompt-only read (result.ok) both list.
+    expect(screen.getByText("stdout, result.ok")).toBeTruthy();
+  });
+
   it("shows a structured banner on a real ApiError, not a blank canvas", async () => {
     // Reject with the REAL ApiError so this pins the api.ts -> GraphView contract.
     vi.mocked(fetchGraph).mockRejectedValue(new ApiError(422, [{ message: "unknown node type 'frob'" }]));
@@ -174,6 +224,51 @@ describe("GraphView mount", () => {
     // The button expands it back.
     fireEvent.click(container.querySelector(".group-toggle")!);
     await waitFor(() => expect(screen.getByText("inner step")).toBeTruthy());
+  });
+
+  it("an unexpanded leaf renders its badge — the ONE badge a leaf can carry", async () => {
+    // Pins the Badges.tsx → inline-badge consolidation (review cleanup
+    // 2026-06-11): no test rendered the leaf badge before, so the "no visual
+    // change" claim rested on markup inspection alone.
+    const unexp: RFGraph = {
+      ...GRAPH,
+      nodes: [GRAPH.nodes[0]!, { ...GRAPH.nodes[1]!, kind: "workflow", unexpanded: "depth_limit" }],
+      edges: [],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(unexp);
+    const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    const badge = container.querySelector(".badge-unexpanded");
+    expect(badge?.textContent).toBe("depth limit"); // underscores read as spaces
+    expect(badge?.getAttribute("title")).toBe("not expanded: depth_limit");
+  });
+
+  it("chip-click camera follow: navigating from the EdgePanel fitViews the resolved node", async () => {
+    // The user-caught regression (2026-06-11): an EdgePanel chip naming an
+    // off-screen card selected it invisibly — `onNavigate` must bring the
+    // target into view. Loaded via the `focus=<flat edge id>` deep link (the
+    // GraphView edge arm, previously untested) because jsdom renders no edge
+    // DOM to click. Padding/zoom/duration are tunable — only the target id is
+    // pinned.
+    window.history.replaceState({}, "", "/?focus=e0");
+    try {
+      vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      // The deep link selects the edge once nodes are measured: EdgePanel opens
+      // with its endpoint chips ("greet" appears only as a chip name — the
+      // canvas card shows the purpose, "say hi").
+      await waitFor(() => expect(screen.getByText("greet")).toBeTruthy());
+
+      fitViewSpy.mockClear();
+      fireEvent.click(screen.getByText("greet")); // the source endpoint chip
+      await waitFor(() => expect(fitViewSpy).toHaveBeenCalled());
+      const followed = fitViewSpy.mock.calls.some(
+        (c) => (c[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "n0",
+      );
+      expect(followed).toBe(true);
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
   });
 
   it("surfaces a layout failure as an error banner, not a permanent 'Laying out…' (C1)", async () => {

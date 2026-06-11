@@ -17,7 +17,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
-import type { Density, Direction, FlowEdge, FlowNode } from "../graph/flow";
+import { consumedReadPaths, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { nodeColor } from "../utils/format";
 import { edgeClickAction, readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
@@ -260,6 +260,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // endpoint hidden in a collapsed ancestor → a non-clickable chip).
   const renderedIds = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
 
+  // The read panel's "consumed" fact — the SAME computation the canvas rows use
+  // (contract edges + the param-text scan), so panel and canvas can never state
+  // contradictory facts about a binding (review-caught 2026-06-11).
+  const readPaths = useMemo(() => (graph ? consumedReadPaths(graph) : null), [graph]);
+
   // Chip navigation: focus always moves; the panel swaps only when the chip
   // names a selectable subject (an IO-port chip keeps this edge panel open).
   // The camera FOLLOWS (user-caught 2026-06-11): a chip can name a card anywhere
@@ -379,16 +384,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                 ) ?? []
               }
               reads={
-                // What downstream actually READS from this node, full-depth:
-                // the canvas rows land on the first path segment (D7); the
-                // panel shows the whole dotted path (`result.a.b`).
-                [
-                  ...new Set(
-                    (graph?.edges ?? [])
-                      .filter((e) => e.source === selectedNode.id && e.kind === "data_flow" && e.output_field != null)
-                      .map((e) => [e.output_field, ...e.output_path].join(".")),
-                  ),
-                ]
+                // What downstream actually READS from this node, full-depth —
+                // edges AND plain-param refs, via the same scan the canvas rows
+                // consume (consumedReadPaths). The canvas lands on the first
+                // path segment (D7); the panel shows the whole dotted path.
+                readPaths?.get(selectedNode.id) ?? []
               }
               onClose={() => setSelectedId(null)}
             />

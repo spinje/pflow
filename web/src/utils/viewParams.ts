@@ -6,7 +6,7 @@
 // VIEW params. Pure (no React, no `window`) so it unit-tests node-env — the component
 // passes `window.location.search` in and applies the returned string via history.
 
-import type { Density, Direction } from "../graph/flow";
+import { type Density, type Direction, shellBatchIds } from "../graph/flow";
 import type { RFGraph } from "../types";
 
 export interface ViewParams {
@@ -90,18 +90,19 @@ export function resolveNodeFlatId(
 
 /** Resolve a CONTRACT node id (an edge endpoint, a host) to the flat id that is
  *  actually rendered for it: the node itself, or — for a suppressed group host —
- *  its representative group (skipping memberless batch shells). Returns null when
- *  nothing is rendered (hidden inside a collapsed ancestor) — the caller must
- *  degrade VISIBLY (e.g. a non-clickable chip), never silently focus a ghost id. */
+ *  its representative group (skipping decorator shells via flow.ts shellBatchIds,
+ *  the single copy of the rule: a LITERAL batch group with expanded item groups IS
+ *  the host's representative). Returns null when nothing is rendered (hidden inside
+ *  a collapsed ancestor) — the caller must degrade VISIBLY (e.g. a non-clickable
+ *  chip), never silently focus a ghost id. */
 export function resolveEndpointFlatId(
   graph: RFGraph,
   renderedIds: ReadonlySet<string>,
   contractId: string,
 ): string | null {
   if (renderedIds.has(contractId)) return contractId;
-  const representative = graph.groups.find(
-    (g) => g.host === contractId && !(g.kind === "batch" && g.members.length === 0),
-  );
+  const shells = shellBatchIds(graph);
+  const representative = graph.groups.find((g) => g.host === contractId && !shells.has(g.id));
   if (representative && renderedIds.has(representative.id)) return representative.id;
   return null;
 }

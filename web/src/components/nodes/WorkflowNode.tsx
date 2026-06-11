@@ -17,7 +17,6 @@ import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
 import { categoryLabel, collapseWhitespace, nodeColor, parseTemplate, previewValue, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
 import type { RFParam } from "../../types";
-import { NodeBadges } from "./Badges";
 import { BranchPorts } from "./BranchPorts";
 import { ChipRail } from "./ChipRail";
 
@@ -247,7 +246,17 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
             {node.purpose || node.ref.node_id}
           </span>
         </div>
-        <NodeBadges node={node} max={detailed ? undefined : 1} />
+        {/* The ONE status badge a leaf can carry — inline, like GroupNode's
+            unexpanded badge (loop/batch are ChipRail border chips; decision/
+            transform present as pseudo-kinds). The old Badge[] list machinery
+            could never hold more than this (review-caught 2026-06-11). */}
+        {node.unexpanded && (
+          <div className="badges">
+            <span className="badge badge-unexpanded" title={`not expanded: ${node.unexpanded}`}>
+              {node.unexpanded.replace(/_/g, " ")}
+            </span>
+          </div>
+        )}
       </div>
 
       {hasBody && (

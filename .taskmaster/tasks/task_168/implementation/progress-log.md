@@ -2589,3 +2589,207 @@ user's exact case (conditional-branching e2). web 218; build clean.
 - Deferred with full spec into the handoff doc: the camera-follow regression pin (test-W2).
 
 Gates: web **223 passed** (+5), tsc strict + build clean; bundle rebuilt + live probes green.
+
+### Review-fixes batch: all 9 handoff issues closed (2026-06-11) ✅
+
+> Worked `implementation/review-fixes-handoff.md` start to finish — every issue verified
+> against the live code/contract BEFORE fixing (workstream-A's items were confirmed
+> already landed in `e7f2bd7b`). One issue grew: the rest matched the doc exactly.
+
+**Issue 1 (CRITICAL) — scope was WIDER than the handoff stated (user-caught mid-fix,
+independently confirmed by my own contract dump minutes earlier): BOTH literal-batch
+shapes were invisible, not just the leaf.** A literal batch OF SUB-WORKFLOWS (deep-research
+`reviews`, song-creator `emotional-reviews`/`craft-reviews`) ships a memberless batch group
+whose item workflow containers are child GROUPS with `host=None` — so the old
+`members.length === 0` shell rule swallowed it, the `is_group_host` host had no on-canvas
+representative, and `renderAnchor` warn-dropped every edge touching it (song-creator: 6
+edges, the spine shattered at both batch steps). The handoff's own DoD #4 ("sub-workflow
+batches still render") would have passed while leaving it broken. Two-sided fix:
+- **Python:** `_is_group_host`'s literal arm now requires KEPT item containers
+  (`_literal_batch_hosts_with_items`) — a literal-batched LEAF ships `False` (leaf items
+  are BatchSpec.items data; no body to draw — it renders as a leaf with deck + the
+  previously-DEAD literal `⧉ ×3` chip), an all-unexpanded literal workflow batch ships
+  `False` too; a literal batch with expanded items stays `True`. +3 renderer pins.
+- **Frontend:** `shellBatchIds` (flow.ts) is now THE single copy of the shell rule —
+  dynamic batch group ⇒ always a shell ("sub-workflow WITH batch" reparenting intact,
+  run-cycle untouched); literal batch group ⇒ shell only when it holds no child groups.
+  The literal batch container renders as the host's representative box (title, chip rail,
+  deck, collapsible, counted in N/M, deep-linkable by name). buildFlow + `collapse.ts`
+  + `viewParams.ts` all consume the helper — the rule lived in THREE drifting copies,
+  which is exactly how the bug class shipped. +2 flow pins (the leaf repro shape; the
+  song-creator shape incl. a truncation-re-anchored host-level edge), +1 collapse,
+  +1 viewParams.
+- **Verified live** (screenshots in /tmp/pflow-shots): the leaf repro renders
+  `prep → fan(⧉ ×3 + deck) → done` in both densities; song-creator's spine is one
+  connected chain ("0/9 open" — the batch boxes now count), collapsed card `[⧉ ×4][4 ⤢]`,
+  truncated `craft-reviews` `[⧉ ×5][2 ⤢]` (honest: full count on the chip, kept
+  representatives on the expander), expanded region shows the item groups inside.
+
+**Issues 2–9, per the handoff's DoD (deviations only):**
+- **2:** `_module_scope_walk` (new) scopes `_result_assignments` + `_is_transform_code`'s
+  result accounting to MODULE level — purity/`next` gates stay whole-tree (fail-closed
+  direction). Comprehension-walrus still counts (PEP 572 binds in the containing scope);
+  lambdas skipped. Pinned: nested-def-only `result` → shape None + not-transform;
+  module literal UNPOLLUTED by a helper's local (an improvement over the old "second
+  assignment" reading); top-level if/else PRESERVED (shape ships, keys None).
+- **3:** the `compare=False` pin went in `test_graph_build.py` and was MUTATION-VERIFIED
+  (removing `compare=False` → two edges → red; restored → green). NOTE-TO-SELF recorded:
+  I restored the mutation via `git checkout model.py` — safe here (model.py carried no
+  uncommitted work) but the same reflex later reverted my OWN uncommitted GraphView.tsx
+  edits during the Issue-9 mutation check; re-applied. Mutate via targeted edits, restore
+  via targeted edits — never `git checkout` a file that may carry in-flight work.
+- **4:** `scanParamReads` now splits `??` operands and skips literals (mirrors
+  `TemplateResolver.split_coalesce_operands`/`is_literal_operand` exactly); the provably
+  wrong "literal operands can't false-positive" comment replaced with the real argument.
+  Pinned both ways (quoted-literal ref stays quiet; non-literal operand still reads).
+- **5:** `toFlowEdge` takes `decisionEnd` (computed from the `decisionIds` set at the call
+  site) — outcome "end" now rides a condition-null decision END edge (branchLabels and
+  EdgePanel already used the correct rule; EdgeData was the odd one out).
+- **6:** `paramTextReads` extracted as the shared walk; `scanParamReads` consumes it and
+  new exported `consumedReadPaths` (edges full-depth + param reads, same no-new-claims
+  gate) feeds GraphView's `reads` prop — panel and canvas can no longer disagree. Pinned
+  pure (flow.test) + jsdom (prompt-only read lists in the panel).
+- **7:** Badges.tsx DELETED (the unexpanded badge is inlined in WorkflowNode, GroupNode's
+  shape); `.badge-more` CSS gone; ChipRail absorbed `ModifierChips` (unexported, double
+  guard gone). No visual change — markup identical by construction, pins untouched.
+- **8:** `ioOwners(graph)` returns BOTH maps (wrapper→owner, port→owner) from one
+  implementation — buildFlow's `wrapperOwner`/`ioNodeToOwner` and expandTargets' loose
+  `g.parent ?? g.id` copy both replaced. All existing pins stayed green unchanged.
+- **9:** the camera-follow pin partial-mocks `@xyflow/react` (fitView spy wraps + calls
+  through; `useNodesInitialized` stubbed true — jsdom's no-op ResizeObserver means RF
+  never measures, so the deep-link/fit effects were unreachable in ANY jsdom test).
+  Covers the `focus=<edge id>` GraphView arm too (previously untested). MUTATION-VERIFIED
+  (deleting the `fitView` call in `onNavigate` → red).
+
+**Docs synced:** web/CLAUDE.md (the shell bullet rewritten around `shellBatchIds`; deep-link
+bullet), ui/CLAUDE.md (`is_group_host` H8 bullet), visualization-requirements.md
+(Implemented), the handoff doc's status header.
+
+**Gates:** `make test` **7831 passed / 1 skipped**; mypy + ruff clean on changed files;
+Mermaid goldens byte-identical (model.py/build.py untouched — the Python changes are
+RF-renderer-only); web **245 passed** (+22 over the batch's start; counts interleave with
+the parallel agent's spine work — their in-flight tsc error in `spine.ts` resolved on
+their side mid-session), tsc strict clean, bundle rebuilt, server restarted (the
+serves-old-Python gotcha), final advanced-density screenshot green.
+
+**Still deferred (unchanged from the handoff's deferred section):** the flow.ts
+decomposition (now ~1700 lines), `toFlowEdge`'s positional params, the selected-edge
+shade/halo shoot-lab (user pick).
+
+### SPINE alignment (2026-06-11, user-driven) ✅ (uncommitted)
+
+The user's staircase screenshot → root cause: expanded regions have no ELK port (compound
+crash), so ELK center-anchors them while handles render on the icon line — drift compounds
+down every chain. Fix: `web/src/graph/spine.ts alignSpine` (new post-layout POSITION pass,
+called at the end of `layoutGraph` so cache/anchoring/animation see aligned positions): each
+PURE sequential chain (forks/merges/multi-terminal sinks break it; error edges don't) aligns
+its anchors to its HEAD's, per scope, both directions; shifts that would crowd a sibling
+(`SPINE_CLEARANCE`) are skipped. Measured straight on run-from-plan + deep-research (TD + LR);
+deep-research's Outputs card stays off-spine correctly (6 terminals → merge sink). 12 pins in
+`spine.test.ts` incl. a real-ELK integration test, mutation-verified (unwiring → red). Gates:
+web 245, tsc, build. Zero contract/Python change; flow.ts untouched (parallel handoff agent's
+file). Rules + LR binding-jog residual: web/CLAUDE.md spine bullet.
+
+### The frontend LOSSLESSNESS invariant + real-contract fixtures (2026-06-11, user-prompted) ✅
+
+> The user's "passing the right thing" challenge, answered with the gap this very
+> session proves: the literal-batch bug fired buildFlow's "dropped edge — no on-canvas
+> anchor" console.warn on real workflows for a DAY and no test listened. Python had its
+> no-info-loss test (model→RF); the frontend half (RF→flow) did not exist — and every
+> web test ever written feeds buildFlow HAND-BUILT contracts (the synthetic-fixture
+> trap, tests/CLAUDE.md #19: my own Issue-1 web fixtures bake `is_group_host: false`,
+> so reverting the Python fix would have left them green).
+
+Two pieces, both mutation-verified:
+
+- **`web/src/graph/lossless.test.ts`** — `expectLossless(graph, view)`: (1) the
+  production warn becomes a test FAILURE; (2) every non-IO contract node must have an
+  on-canvas representative; (3) every contract edge's connectivity must survive — some
+  flow edge of the same kind connects a representative of its source to one of its
+  target, unless both share one (a legitimate internal drop). Representatives derive
+  from the contract's own semantics THROUGH THE PRODUCTION SEAMS (`ioOwners`,
+  `shellBatchIds`) — never a renderAnchor re-implementation. Swept over a 7-shape
+  synthetic structural matrix (chain+data / decision+error+end / dynamic batch leaf /
+  dynamic batch sub-wf+loop / literal batch leaf / literal batch sub-wf incl. the
+  truncation-re-anchored edge / nested IO wrappers+bindings) × up to 6 view states
+  (both densities × both directions, collapse-all, focus-expanded).
+- **Committed REAL contracts** (`web/src/test/fixtures/contracts/*.json` —
+  conditional-branching / run-cycle / deep-research, generated by
+  `tests/fixtures/react_flow_contracts/_generate.py`), swept through the same
+  invariant. Drift-guarded by `tests/test_core/test_react_flow_contract_fixtures.py`
+  (committed JSON == live renderer output; regen command in the failure message —
+  the cache_analysis `_generate.py` pattern). This closes the cross-language seam: a
+  contract change OR a fixture-workflow edit fails the Python guard loudly; a
+  composition regression fails the web invariant against REAL renderer output.
+
+**Mutation evidence (the only reason to trust it):** (1) reintroducing the old
+`members.length === 0` shell rule → the song-creator synthetic shape AND the real
+deep-research contract fail (the exact Issue-1 class, caught at both layers — the
+shared-helper mutation cannot cancel out: the host loses all representatives either
+way); (2) a SILENT no-warn branch-edge drop → the decision shape + conditional-branching
++ run-cycle fail via the connectivity accounting — the invariant is not warn-theater.
+Both restored via targeted edits (the git-checkout lesson applied).
+
+Also closed while interrogating my own tests: the leaf unexpanded BADGE had zero render
+coverage (Issue 7's DoD said "trust the existing test" — it didn't exist; the
+no-visual-change claim rested on markup inspection alone). Added the GraphView jsdom pin
+(badge text + tooltip). Fixed collapse.test's stale shell-definition comment ("no direct
+members" — the exact misreading that shipped the bug).
+
+**Considered + NOT done (judged not worth it):** a JS↔Python ref-grammar parity matrix
+for `paramTextReads` beyond the coalesce pins (the residuals — bracket refs, loop
+conditions — are documented and both sides agree by construction today); browser CI
+(established decision); more unit pins for their own sake.
+
+Gates: web **256 passed** (+10), tsc strict clean; Python drift guard 3 passed.
+
+**Literal-batch card category → "BATCH-WORKFLOW" (2026-06-11, user-decided; first cut
+"SUB-WORKFLOW · BATCH" was revised to the compact form the same session).** The
+newly-rendering literal batch container said bare "BATCH" (the GROUP's kind) while its
+dynamic sibling says "SUB-WORKFLOW" + chip — the same authored step changed identity by
+items-authoring style, and the batch fact appeared twice (label + chip). Now
+`groupCategory` (GroupNode) composes identity-first for a batch container with a
+workflow-kind host; other batch shapes keep the plain label. Both states (header parity —
+one markup). Verified on song-creator; web 256 + tsc + build clean.
+
+### Session close — review-fixes batch + losslessness invariant + label (2026-06-11)
+
+**ONE UNCOMMITTED BATCH again, interleaved with the parallel spine-alignment agent**
+(their slice: `web/src/graph/spine.ts` + `spine.test.ts` + `layout.ts` + the web/CLAUDE.md
+spine bullet — untouched by this workstream; the per-author split is impractical per the
+standing branch precedent). **This agent's slice:**
+
+- *Python:* `renderers/react_flow.py` (`_is_group_host` literal arm +
+  `_literal_batch_hosts_with_items`; `_module_scope_walk` scoping for
+  `_result_assignments`/`_is_transform_code`), `test_graph_react_flow_renderer.py`
+  (+6 pins), `test_graph_build.py` (the mutation-checked `compare=False` pin),
+  NEW `tests/test_core/test_react_flow_contract_fixtures.py` +
+  `tests/fixtures/react_flow_contracts/_generate.py` (the contract drift guard).
+- *Web:* `flow.ts` (`shellBatchIds` / `ioOwners` / `paramTextReads` +
+  `consumedReadPaths` / coalesce-aware scan / `decisionEnd` / stale comments),
+  `collapse.ts` + `viewParams.ts` (consume `shellBatchIds`), `GraphView.tsx`
+  (`consumedReadPaths` reads prop), `WorkflowNode.tsx` (inline unexpanded badge;
+  Badges.tsx DELETED), `ChipRail.tsx` (ModifierChips absorbed), `GroupNode.tsx`
+  (`groupCategory` → BATCH-WORKFLOW), `index.css` (`.badge-more` gone), NEW
+  `lossless.test.ts` + `web/src/test/fixtures/contracts/*.json`, test updates in
+  flow/collapse/viewParams/GraphView test files.
+- *Docs:* web/CLAUDE.md (shell + deep-link bullets), ui/CLAUDE.md (H8 bullet),
+  visualization-requirements.md (Implemented), the handoff doc's status header,
+  this log.
+
+**Pre-commit gate (re-run on the FINAL merged tree, both agents landed):** `make test`
+(last green: **7831 + 1 skipped**) + full `make check` (NOT yet run repo-wide this
+session — deliberately deferred while the parallel agent was mid-flight: pre-commit's
+fixers run `--all-files`); `cd web && npx tsc --noEmit && npx vitest run` (last green:
+**256**) + `npm run build`. **`git add` untracked:** `review-fixes-handoff.md`,
+`tests/fixtures/react_flow_contracts/`, `tests/test_core/test_react_flow_contract_fixtures.py`,
+`web/src/graph/lossless.test.ts`, `web/src/test/fixtures/` (+ the spine agent's
+`spine.ts`/`spine.test.ts`).
+
+**Open threads (not blockers):** the truncated literal batch's chip-vs-expander reading
+(`⧉ ×5` true count beside `[2 ⤢]` kept-representative steps — both honest, can read as a
+contradiction; revisit if it confuses); the deferred trio unchanged (flow.ts decomposition
+~1750 lines, `toFlowEdge` options-object — now 13 positional params, selected-edge
+shade/halo shoot-lab awaiting the user's pick); fixture-workflow edits to
+conditional-branching / run-cycle / deep-research now fail the contract drift guard with a
+one-command regen (by design — the failure message carries it).

@@ -46,12 +46,32 @@ describe("collapsibleGroupIds — workflow/batch collapse, IO wrappers never", (
     expect(collapsibleGroupIds(g)).toEqual(["gw", "gb"]);
   });
 
-  it("excludes SHELL batch groups (no direct members — buildFlow never renders them)", () => {
+  it("excludes SHELL batch groups (decorator shells — buildFlow never renders them)", () => {
+    // A dynamic/childless batch group is a decorator shell per shellBatchIds
+    // (the single copy of the rule — NOT "no direct members": batch groups never
+    // have direct members, which is exactly how the literal-batch hole shipped).
     const g = graphWith(3, [
       group("gw"),
-      group("g_shell", { kind: "batch" }), // a batched leaf/sub-workflow's decorator
+      group("g_shell", { kind: "batch" }), // a batched leaf / dynamic sub-workflow's decorator
     ]);
     expect(collapsibleGroupIds(g)).toEqual(["gw"]);
+  });
+
+  it("a LITERAL batch group with expanded item groups IS collapsible (a real box, not a shell)", () => {
+    // The song-creator shape (review-caught 2026-06-11): a literal batch of
+    // sub-workflows renders its batch container as the host's representative —
+    // it must be toggleable and count in the toolbar's N/M.
+    const host = node("h0", {
+      kind: "workflow",
+      is_group_host: true,
+      batch: { parallel: true, dynamic: false, as_name: "item", source_ref: null, count: 2, items: [{}, {}] },
+    });
+    const g = graphWith(
+      3,
+      [group("g_lit", { kind: "batch", host: "h0" }), group("g_item", { parent: "g_lit", nesting_depth: 1, members: ["m0"] })],
+      [host, node("m0", { parent: "g_item" })],
+    );
+    expect(collapsibleGroupIds(g)).toEqual(["g_lit", "g_item"]);
   });
 });
 

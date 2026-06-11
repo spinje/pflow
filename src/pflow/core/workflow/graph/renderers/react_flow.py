@@ -184,6 +184,15 @@ class _ReactFlowRenderer:
         ]
         self._node_id_map: dict[NodeId, str] = {node.id: f"n{i}" for i, node in enumerate(self._kept_nodes)}
         self._group_id_map: dict[str, str] = {c.id: f"g{j}" for j, c in enumerate(self._kept_containers)}
+        # Literal-batch hosts whose batch container actually holds expanded item
+        # containers (sub-workflow items). A literal batch of a LEAF creates a batch
+        # container with NO members and NO child containers (leaf items are
+        # BatchSpec.items data, never nodes) — such a host has no body to draw and
+        # must stay a leaf box (deck + xN chip), not a suppressed group host.
+        kept_parents = {c.parent for c in self._kept_containers if c.parent is not None}
+        self._literal_batch_hosts_with_items = {
+            c.host for c in self._kept_containers if c.kind == "batch" and c.host is not None and c.id in kept_parents
+        }
         # Per-decision-node memo for fail-closed condition extraction (one AST
         # parse per decision node, not per branch edge).
         self._conditions_by_node: dict[NodeId, dict[str, str]] = {}
@@ -342,15 +351,16 @@ class _ReactFlowRenderer:
         """Whether the frontend suppresses this node's leaf box and draws a group.
 
         A node is materialized as a group when it hosts an expanded child body — a
-        literal batch (item boxes) or an expanded sub-workflow (incl. a dynamic
-        batch's representative body). Dynamic-batch / unexpanded hosts have no
-        expanded body, so they stay leaf boxes with a badge. The loop/batch badge is
-        always read off the host node, so ``host`` is intentionally not 1:1 with a
-        single group (a dynamic-batch-of-subworkflow hosts both a batch and a
-        workflow container).
+        literal batch with expanded ITEM CONTAINERS (sub-workflow items) or an
+        expanded sub-workflow (incl. a dynamic batch's representative body). A
+        literal-batched LEAF has no item containers (leaf items are data, not
+        nodes), so it stays a leaf box — like dynamic-batch / unexpanded hosts,
+        which have no expanded body either. The loop/batch badge is always read off
+        the host node, so ``host`` is intentionally not 1:1 with a single group (a
+        dynamic-batch-of-subworkflow hosts both a batch and a workflow container).
         """
         if node.batch is not None and not node.batch.dynamic:
-            return True
+            return node.id in self._literal_batch_hosts_with_items
         return node.id in self._workflow_host_ids and node.unexpanded is None
 
     def _path_hidden(self, ancestor_path: tuple[AncestorStep, ...]) -> bool:
@@ -748,6 +758,29 @@ def _assigned_names(n: ast.AST) -> set[str]:
     return {leaf.id for t in targets for leaf in ast.walk(t) if isinstance(leaf, ast.Name)}
 
 
+def _module_scope_walk(tree: ast.Module) -> list[ast.AST]:
+    """Every AST node in MODULE scope — never descending into def/class/lambda.
+
+    A ``result`` bound inside a nested ``def`` is that function's LOCAL variable,
+    not the node's output; counting it would ship an ``output_shape`` describing a
+    port the node never writes (quiet rows that LIE) and could present a
+    helper-bearing node as TRANSFORM. Top-level compound statements (if/try/for)
+    ARE walked — ``result`` bound there is the module-level name. Comprehensions
+    are walked too: a walrus inside one binds in the CONTAINING scope (PEP 572);
+    a walrus inside a lambda binds in the lambda's own scope, so lambdas are
+    skipped with the other nested scopes.
+    """
+    found: list[ast.AST] = []
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        n = stack.pop()
+        found.append(n)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(n))
+    return found
+
+
 def _bound_names(tree: ast.Module) -> set[str]:
     """Every name the code itself binds (assignments, defs, loops, comprehensions,
     imports, walrus, except-as) — calls to these are the author's own pure-checked
@@ -792,15 +825,15 @@ def _is_transform_code(code: str) -> bool:
     except SyntaxError:
         return False
     bound = _bound_names(tree)
-    assigns_result = False
     for n in ast.walk(tree):
         if _transform_disqualifies(n, bound):
             return False
-        assigned = _assigned_names(n)
-        if "next" in assigned:
+        if "next" in _assigned_names(n):
             return False  # routing — a decider, not a transform
-        assigns_result = assigns_result or "result" in assigned
-    return assigns_result
+    # The purity/routing gates above stay WHOLE-tree (fail-closed: a forbidden
+    # name anywhere disqualifies), but ``result`` must be assigned at MODULE
+    # level — a helper's local ``result`` is not the node's output.
+    return any("result" in _assigned_names(n) for n in _module_scope_walk(tree))
 
 
 # ── Result-shape extraction (fail-closed) ──────────────────────────────────────
@@ -824,17 +857,19 @@ def _input_annotations(tree: ast.Module) -> dict[str, str]:
 
 
 def _result_assignments(tree: ast.Module) -> list[ast.AST]:
-    """Every construct that assigns or mutates ``result``.
+    """Every MODULE-scope construct that assigns or mutates ``result``.
 
     Deliberately the target WALK, not just direct Name targets, so the
     subscript mutation ``result["k"] = v`` counts: a literal dict followed by a
     mutation must ship ``keys=None`` (a strict Name-target reading would ship a
     keys list missing ``k`` — quiet rows that LIE). A walrus counts too. A
     valueless ``result:`` AnnAssign is an INPUT declaration by the code-node
-    convention — neither an assignment nor an annotation source.
+    convention — neither an assignment nor an annotation source. Scoped via
+    ``_module_scope_walk``: a ``result`` inside a nested ``def`` is a local, not
+    the node's output (review-caught 2026-06-11).
     """
     found: list[ast.AST] = []
-    for n in ast.walk(tree):
+    for n in _module_scope_walk(tree):
         if isinstance(n, ast.AnnAssign) and n.value is None:
             continue
         if "result" in _assigned_names(n) or (

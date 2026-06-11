@@ -110,10 +110,16 @@ item / progress-log entry — read those before rendering chips/groups/batches):
   (advanced always; beautiful only while the condition node is focus-expanded)
   and in the read panel's outcome table.
 - **`RFNode.is_group_host=True`** → the node is materialized as a group (a
-  literal batch, or an expanded sub-workflow host). **Suppress its leaf box**;
-  read its loop badge off the host node. A host is NOT 1:1 with a group — a
-  dynamic-batch-of-subworkflow emits two groups with the same `host`. (H8 /
-  progress-log "Deviation 2".)
+  literal batch WITH expanded item containers, or an expanded sub-workflow
+  host). **Suppress its leaf box**; read its loop badge off the host node. A
+  host is NOT 1:1 with a group — a dynamic-batch-of-subworkflow emits two
+  groups with the same `host`. A LITERAL-batched LEAF ships `False` (leaf items
+  are BatchSpec.items data, not nodes — there is no body to draw; flagging it
+  True left the node with no on-canvas representative and dropped its spine
+  edges, review-caught 2026-06-11). The host of a literal batch OF
+  SUB-WORKFLOWS is represented by its rendered BATCH container (the frontend's
+  `shellBatchIds` rule). (H8 / progress-log "Deviation 2" + the 2026-06-11
+  literal-batch fix.)
 - **`RFNode.is_transform`** (2026-06-10): the code node is a provably pure data
   reshape (inputs → `result`, no external effects, no `next` routing) — classified
   **fail-closed** from its AST (`_is_transform_code` in react_flow.py; anything

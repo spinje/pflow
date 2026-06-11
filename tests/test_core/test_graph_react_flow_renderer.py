@@ -479,6 +479,85 @@ def test_unexpanded_dynamic_batch_host_is_not_a_group() -> None:
     assert any(group.kind == "batch" and group.host == proc.id for group in rf.groups)
 
 
+def test_literal_batched_leaf_is_not_a_group_host() -> None:
+    # A literal batch of a LEAF creates a batch container with NO members and NO item
+    # containers (leaf items are BatchSpec.items data, never nodes). The host must stay
+    # a LEAF box (deck + xN chip): flagging it a group host left it with no on-canvas
+    # representative — the frontend suppresses an is_group_host leaf AND never renders a
+    # memberless batch group, so the node vanished and its spine edges silently dropped
+    # (review-caught 2026-06-11, CRITICAL).
+    graph = build_graph({
+        "nodes": [
+            {"id": "prep", "type": "shell"},
+            {"id": "fan", "type": "shell", "batch": {"items": ["alice", "bob", "carol"], "as": "item"}},
+            {"id": "done", "type": "shell"},
+        ],
+        "edges": [{"from": "prep", "to": "fan"}, {"from": "fan", "to": "done"}],
+    })
+    rf = render_react_flow(graph)
+
+    fan = _rf_node(rf, "fan")
+    assert fan.is_group_host is False
+    assert fan.batch is not None and fan.batch["count"] == 3 and fan.batch["dynamic"] is False
+    # The memberless batch group still ships (a decorator shell the frontend never renders).
+    assert any(group.kind == "batch" and group.host == fan.id and group.members == [] for group in rf.groups)
+    # Both spine edges reference the leaf node itself.
+    prep, done = _rf_node(rf, "prep"), _rf_node(rf, "done")
+    sequential = {(e.source, e.target) for e in rf.edges if e.kind == "sequential"}
+    assert (prep.id, fan.id) in sequential and (fan.id, done.id) in sequential
+
+
+def test_literal_batch_of_subworkflows_host_is_a_group() -> None:
+    # The literal arm's positive case: expanded ITEM CONTAINERS are a real body to draw,
+    # so the host IS materialized as a group (its batch container holds the item groups).
+    child = {"inputs": {"text": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+    graph = build_graph(
+        {
+            "nodes": [
+                {
+                    "id": "reviews",
+                    "type": "workflow",
+                    "params": {"workflow": "child"},
+                    "batch": {"items": [{"workflow": "child"}, {"workflow": "child"}]},
+                }
+            ]
+        },
+        resolve_child=_child_resolver({"child": child}),
+        max_depth=2,
+    )
+    rf = render_react_flow(graph)
+
+    reviews = _rf_node(rf, "reviews")
+    assert reviews.is_group_host is True
+    batch_group = next(group for group in rf.groups if group.kind == "batch")
+    item_groups = [g for g in rf.groups if g.kind == "workflow" and g.parent == batch_group.id]
+    assert len(item_groups) == 2
+
+
+def test_literal_workflow_batch_with_no_expanded_items_stays_a_leaf() -> None:
+    # Every item failed to expand (dynamic ${...} paths): the batch container exists but
+    # holds no item containers — nothing to draw, so the host stays a leaf with its
+    # chip/deck (the unexpanded-dynamic-batch reasoning applied to the literal arm).
+    graph = build_graph(
+        {
+            "nodes": [
+                {
+                    "id": "reviews",
+                    "type": "workflow",
+                    "params": {"workflow": "child"},
+                    "batch": {"items": [{"workflow": "${a}"}, {"workflow": "${b}"}]},
+                }
+            ]
+        },
+    )
+    rf = render_react_flow(graph)
+
+    reviews = _rf_node(rf, "reviews")
+    assert reviews.is_group_host is False
+    batch_group = next(group for group in rf.groups if group.kind == "batch")
+    assert batch_group.annotations.get("unexpanded_items") == {0: "dynamic_path", 1: "dynamic_path"}
+
+
 def test_depth_limited_node_forwards_its_reason_through_the_renderer() -> None:
     # A second `unexpanded` reason (`depth_limit`) round-trips through render_react_flow,
     # so the contract carries the distinct reasons the "no information loss" bar names —
@@ -780,6 +859,9 @@ def test_is_transform_classification_matrix() -> None:
         "x: int\ny = x * 2\n",  # pure but produces no result
         "result = 1\nimport os\n",  # os anywhere disqualifies
         "result =\n",  # syntax error
+        # a nested def's `result` is a LOCAL — the module never assigns the
+        # node's output, so this is NOT a transform (review-caught 2026-06-11)
+        'def helper():\n    result = {"a": 1}\n    return result\nx = helper()\n',
     ]
     for code in not_transforms:
         assert _is_transform_code(code) is False, f"expected NOT transform for: {code!r}"
@@ -887,6 +969,21 @@ def test_code_output_shape_extraction_matrix() -> None:
     # no result assignment at all / syntax error
     assert _result_shape_from_code("x: int\ny = x * 2\n") is None
     assert _result_shape_from_code("result =\n") is None
+    # a nested def's `result` is a LOCAL, not the node's output — the module
+    # never assigns result, so no shape ships (review-caught 2026-06-11: the
+    # old whole-tree walk shipped rows describing a port the node never writes)
+    assert _result_shape_from_code('def helper():\n    result = {"a": 1}\n    return result\nx = helper()\n') is None
+    # ...and a module-level literal is unpolluted by a helper's local `result`
+    # (the helper's local is irrelevant to the output, not a "second assignment")
+    assert _result_shape_from_code(
+        'result: dict = {"a": 1}\ndef helper():\n    result = "x"\n    return result\n'
+    ) == RFOutputShape("result", "dict", [RFResultKey("a", "int")])
+    # module-level `if/else` branches still count (PRESERVED: result bound in a
+    # top-level compound statement IS the module-level name) — two assignments,
+    # so keys are unknowable but the shape itself ships
+    assert _result_shape_from_code('if x:\n    result = {"a": 1}\nelse:\n    result = {"b": 2}\n') == RFOutputShape(
+        "result", None, None
+    )
     # REGRESSION GUARD (F10): `impl: object` is an input annotation, nothing more
     assert _result_shape_from_code('impl: object\nresult: dict = {"v": impl}\n') == RFOutputShape(
         "result", "dict", [RFResultKey("v", "object")]

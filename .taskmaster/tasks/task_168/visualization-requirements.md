@@ -328,6 +328,23 @@
   `compare=False` — load-bearing, see graph/CLAUDE.md). Plan:
   `implementation/transform-l2-plan.md`.
 
+- **Review-fixes batch (2026-06-11) — the 9 handoff issues
+  (`implementation/review-fixes-handoff.md`) all closed.** Headline: **literal
+  `items:` batches were INVISIBLE** (both shapes — a batched leaf AND a batch of
+  sub-workflows: the host had no on-canvas representative, its spine edges
+  warn-dropped; user-caught on song-creator). Fix: Python ships
+  `is_group_host=False` for a literal-batched LEAF (deck + `⧉ ×N` literal chip —
+  previously dead code — now render); a literal batch OF SUB-WORKFLOWS renders
+  its BATCH container as the host's box (title/chips/deck + item groups inside,
+  collapsible, deep-linkable by name). `shellBatchIds` (flow.ts) is now the ONE
+  copy of the shell rule (buildFlow + collapse.ts + viewParams.ts). Also: result
+  shapes scope to MODULE-level `result` (a helper's local no longer fakes an
+  output / transform); `compare=False` on `Edge.output_path` mutation-pinned;
+  `scanParamReads` splits coalesce operands (a quoted fallback no longer marks a
+  row read); decision END edges keyed on `is_decision`, not condition presence;
+  ReadPanel's `consumed` uses the same scan as the canvas (`consumedReadPaths`);
+  Badges.tsx hollow machinery deleted; `ioOwners` unifies the two port-ownership
+  rules; chip-click camera follow regression-pinned.
 - **Edges SELECT on click + EdgePanel — ✅ DONE (2026-06-10, user-driven; plan + 4-lens
   review: `implementation/edge-selection-plan.md`):** clicking any edge focuses the
   CONNECTION — bright same-hue variant (`--data-edge-selected`, lab-tunable) + halo
@@ -343,6 +360,17 @@
   row-to-row. `focus=<flat edge id>` deep-links work (collapse protects both
   endpoints' chains); RF native selection neutralized (incl. Backspace-delete).
   Selected-shade/halo shoot-lab pending; hover highlight is the gated follow-on.
+
+- **SPINE alignment — the staircase dies (2026-06-11, user-caught):** expanded
+  regions carry no ELK port (compound crash), so ELK center-anchored them while
+  their handles render on the icon line — every wide region knocked the chain
+  sideways and the error compounded down the flow. `alignSpine` (graph/spine.ts,
+  end of layoutGraph) re-aligns each PURE sequential chain's anchors to its
+  HEAD's, per scope, both directions. Forks/merges/multi-terminal sinks break
+  chains (fan-outs keep their spread; a shared Outputs card stays ELK-balanced);
+  error edges break nothing; a shift that would crowd a sibling is skipped
+  (`SPINE_CLEARANCE`). Verified: run-from-plan + deep-research TD/LR — every
+  root spine member at ONE x (resp. y), measured.
 
 ## Wanted / planned (NOT yet built)
 

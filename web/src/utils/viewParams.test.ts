@@ -118,6 +118,27 @@ describe("resolveNodeFlatId", () => {
   it("returns null when neither the host nor its group is rendered", () => {
     expect(resolveNodeFlatId(hostGraph, new Set(["other"]), "execute-plan")).toBeNull();
   });
+
+  it("a LITERAL batch host resolves to its batch container (a real box, not a shell)", () => {
+    // The song-creator shape (review-caught 2026-06-11): a literal batch of
+    // sub-workflows is represented by its rendered batch container — deep links
+    // by name (`focus=emotional-reviews`) must land on it.
+    const literalHostGraph = {
+      nodes: [
+        {
+          id: "n7",
+          ref: { node_id: "emotional-reviews", ancestor_path: [], port: null },
+          batch: { parallel: true, dynamic: false, as_name: "item", source_ref: null, count: 4, items: [{}, {}, {}, {}] },
+        },
+      ],
+      edges: [],
+      groups: [
+        { id: "g6", kind: "batch", host: "n7", members: [] },
+        { id: "g7", kind: "workflow", parent: "g6", members: ["n8"] },
+      ],
+    } as unknown as RFGraph;
+    expect(resolveNodeFlatId(literalHostGraph, new Set(["g6", "g7"]), "emotional-reviews")).toBe("g6");
+  });
 });
 
 describe("resolveEndpointFlatId — contract endpoint → rendered flat id (edge chips)", () => {

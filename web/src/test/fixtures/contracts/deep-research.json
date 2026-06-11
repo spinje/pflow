@@ -1,0 +1,1816 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "ref": {
+        "node_id": "sources",
+        "ancestor_path": [],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "array",
+        "required": true
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g0",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n1",
+      "ref": {
+        "node_id": "focus",
+        "ancestor_path": [],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g0",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n2",
+      "ref": {
+        "node_id": "prepare",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Validate and normalize the source documents.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "docs": "${sources}",
+            "focus": "${focus}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "docs: list\nfocus: str\n\nresult: list = [{\"text\": d, \"focus\": focus} for d in docs]",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+            "line": 33
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "line": 23
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": true,
+      "output_shape": {
+        "field": "result",
+        "data_type": "list",
+        "keys": null
+      },
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n3",
+      "ref": {
+        "node_id": "analyze-sources",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "workflow",
+      "purpose": "Analyze each prepared document through extraction and scoring.",
+      "params": [
+        {
+          "name": "workflow",
+          "value": "./analyze-source.pflow.md",
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "content": "${item.text}",
+            "focus": "${item.focus}"
+          },
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": {
+        "parallel": true,
+        "dynamic": true,
+        "as_name": "item",
+        "source_ref": "${prepare.result}",
+        "count": null,
+        "items": null
+      },
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "line": 39
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": true,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n4",
+      "ref": {
+        "node_id": "combine",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Merge all source analyses into a unified summary.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "analyses": "${analyze-sources.results}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "analyses: list\n\nresult: dict = {\"summary\": \"Combined analysis\", \"source_count\": len(analyses)}",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+            "line": 63
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "line": 54
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": true,
+      "output_shape": {
+        "field": "result",
+        "data_type": "dict",
+        "keys": [
+          {
+            "name": "summary",
+            "data_type": "str"
+          },
+          {
+            "name": "source_count",
+            "data_type": null
+          }
+        ]
+      },
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n5",
+      "ref": {
+        "node_id": "reviews",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "workflow",
+      "purpose": "Review the combined analysis from five critical perspectives. Each review runs the same workflow template with a different focus aspect.",
+      "params": [
+        {
+          "name": "workflow",
+          "value": "${item.workflow}",
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "summary": "${combine.result}",
+            "aspect": "${item.aspect}"
+          },
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": {
+        "parallel": true,
+        "dynamic": false,
+        "as_name": "item",
+        "source_ref": null,
+        "count": 5,
+        "items": [
+          {
+            "aspect": "accuracy",
+            "workflow": "./review-aspect.pflow.md"
+          },
+          {
+            "aspect": "completeness",
+            "workflow": "./review-aspect.pflow.md"
+          },
+          {
+            "aspect": "clarity",
+            "workflow": "./review-aspect.pflow.md"
+          },
+          {
+            "aspect": "relevance",
+            "workflow": "./review-aspect.pflow.md"
+          },
+          {
+            "aspect": "depth",
+            "workflow": "./review-aspect.pflow.md"
+          }
+        ]
+      },
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "line": 68
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": true,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n6",
+      "ref": {
+        "node_id": "final-report",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Compile the analysis and reviews into a final research report.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "analyses": "${analyze-sources.results}",
+            "reviews": "${reviews.results}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "analyses: list\nreviews: list\n\nresult: dict = {\"report\": \"Final research report\", \"analyses\": len(analyses), \"reviews\": len(reviews)}",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+            "line": 103
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "line": 93
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": true,
+      "output_shape": {
+        "field": "result",
+        "data_type": "dict",
+        "keys": [
+          {
+            "name": "report",
+            "data_type": "str"
+          },
+          {
+            "name": "analyses",
+            "data_type": null
+          },
+          {
+            "name": "reviews",
+            "data_type": null
+          }
+        ]
+      },
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n7",
+      "ref": {
+        "node_id": "content",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g3",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n8",
+      "ref": {
+        "node_id": "focus",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g3",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n9",
+      "ref": {
+        "node_id": "extract",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "llm",
+      "purpose": "Extract key sections from the source content.",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "Extract the key sections from this document, focusing on ${focus}: ${content}",
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g2",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "line": 22
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n10",
+      "ref": {
+        "node_id": "score",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "workflow",
+      "purpose": "Score the extracted sections for quality.",
+      "params": [
+        {
+          "name": "workflow",
+          "value": "./score-section.pflow.md",
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "text": "${extract.response}",
+            "criteria": "${focus}"
+          },
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g2",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "line": 29
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": true,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n11",
+      "ref": {
+        "node_id": "compile",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Compile the extraction and scores into a structured analysis.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "sections": "${extract.response}",
+            "scores": "${score.score}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "sections: str\nscores: dict\n\nresult: dict = {\"sections\": sections, \"scores\": scores, \"compiled\": True}",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+            "line": 49
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g2",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "line": 39
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": true,
+      "output_shape": {
+        "field": "result",
+        "data_type": "dict",
+        "keys": [
+          {
+            "name": "sections",
+            "data_type": "str"
+          },
+          {
+            "name": "scores",
+            "data_type": "dict"
+          },
+          {
+            "name": "compiled",
+            "data_type": "bool"
+          }
+        ]
+      },
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n12",
+      "ref": {
+        "node_id": "text",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          },
+          {
+            "node_id": "score",
+            "batch_index": null
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g5",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n13",
+      "ref": {
+        "node_id": "criteria",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          },
+          {
+            "node_id": "score",
+            "batch_index": null
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g5",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n14",
+      "ref": {
+        "node_id": "evaluate",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          },
+          {
+            "node_id": "score",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "llm",
+      "purpose": "Score the section against the given criteria.",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "Score this text for ${criteria}: ${text}",
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g4",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "line": 22
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n15",
+      "ref": {
+        "node_id": "normalize",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          },
+          {
+            "node_id": "score",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Normalize scores to a 0-100 scale.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "raw_score": "${evaluate.response}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "raw_score: str\n\nresult: dict = {\"score\": 85, \"normalized\": True}",
+          "is_dynamic": false,
+          "source": {
+            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+            "line": 38
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g4",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "line": 29
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": true,
+      "output_shape": {
+        "field": "result",
+        "data_type": "dict",
+        "keys": [
+          {
+            "name": "score",
+            "data_type": "int"
+          },
+          {
+            "name": "normalized",
+            "data_type": "bool"
+          }
+        ]
+      },
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n16",
+      "ref": {
+        "node_id": "score",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          },
+          {
+            "node_id": "score",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The normalized quality score.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g6",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "line": 49
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n17",
+      "ref": {
+        "node_id": "reasoning",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          },
+          {
+            "node_id": "score",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The evaluator's reasoning for the score.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g6",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "line": 55
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n18",
+      "ref": {
+        "node_id": "analysis",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The structured analysis with sections and scores.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g7",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "line": 61
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n19",
+      "ref": {
+        "node_id": "quality_score",
+        "ancestor_path": [
+          {
+            "node_id": "analyze-sources",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The quality score from the scoring sub-workflow.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g7",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "line": 67
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n20",
+      "ref": {
+        "node_id": "summary",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 0
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g10",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n21",
+      "ref": {
+        "node_id": "aspect",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 0
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g10",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n22",
+      "ref": {
+        "node_id": "critique",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 0
+          }
+        ],
+        "port": null
+      },
+      "kind": "llm",
+      "purpose": "Review the summary from the given perspective.",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "Review this research summary for ${aspect}: ${summary}",
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g9",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "line": 22
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n23",
+      "ref": {
+        "node_id": "review_text",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 0
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The review text from this perspective.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g11",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "line": 35
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n24",
+      "ref": {
+        "node_id": "summary",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 1
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g13",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n25",
+      "ref": {
+        "node_id": "aspect",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 1
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g13",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n26",
+      "ref": {
+        "node_id": "critique",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 1
+          }
+        ],
+        "port": null
+      },
+      "kind": "llm",
+      "purpose": "Review the summary from the given perspective.",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "Review this research summary for ${aspect}: ${summary}",
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g12",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "line": 22
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n27",
+      "ref": {
+        "node_id": "review_text",
+        "ancestor_path": [
+          {
+            "node_id": "reviews",
+            "batch_index": 1
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The review text from this perspective.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g14",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "line": 35
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n28",
+      "ref": {
+        "node_id": "report",
+        "ancestor_path": [],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The final research report combining all analyses and reviews.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g15",
+      "source": {
+        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "line": 115
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "unexpanded": null,
+      "annotations": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "source": "n14",
+      "target": "n15",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e1",
+      "source": "n14",
+      "target": "n15",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": "raw_score",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e2",
+      "source": "n13",
+      "target": "n14",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e3",
+      "source": "n12",
+      "target": "n14",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e4",
+      "source": "n15",
+      "target": "n16",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e5",
+      "source": "n14",
+      "target": "n17",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e6",
+      "source": "n9",
+      "target": "n10",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e7",
+      "source": "n10",
+      "target": "n11",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e8",
+      "source": "n9",
+      "target": "n12",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": "text",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e9",
+      "source": "n9",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": "sections",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e10",
+      "source": "n16",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "score",
+      "input_name": "scores",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e11",
+      "source": "n8",
+      "target": "n9",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e12",
+      "source": "n7",
+      "target": "n9",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e13",
+      "source": "n8",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "criteria",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e14",
+      "source": "n11",
+      "target": "n18",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e15",
+      "source": "n16",
+      "target": "n19",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "score",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e16",
+      "source": "n21",
+      "target": "n22",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e17",
+      "source": "n20",
+      "target": "n22",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e18",
+      "source": "n22",
+      "target": "n23",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e19",
+      "source": "n25",
+      "target": "n26",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e20",
+      "source": "n24",
+      "target": "n26",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e21",
+      "source": "n26",
+      "target": "n27",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e22",
+      "source": "n2",
+      "target": "n3",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e23",
+      "source": "n3",
+      "target": "n4",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e24",
+      "source": "n4",
+      "target": "n5",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e25",
+      "source": "n5",
+      "target": "n6",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e26",
+      "source": "n2",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": "content",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e27",
+      "source": "n2",
+      "target": "n8",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": "focus",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e28",
+      "source": "n3",
+      "target": "n4",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "results",
+      "input_name": "analyses",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e29",
+      "source": "n4",
+      "target": "n20",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": "summary",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e30",
+      "source": "n4",
+      "target": "n24",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": "summary",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e31",
+      "source": "n4",
+      "target": "n5",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e32",
+      "source": "n3",
+      "target": "n6",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "results",
+      "input_name": "analyses",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e33",
+      "source": "n5",
+      "target": "n6",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "results",
+      "input_name": "reviews",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e34",
+      "source": "n0",
+      "target": "n2",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "docs",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e35",
+      "source": "n1",
+      "target": "n2",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "focus",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e36",
+      "source": "n6",
+      "target": "n28",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    }
+  ],
+  "groups": [
+    {
+      "id": "g0",
+      "kind": "input_wrapper",
+      "parent": null,
+      "host": null,
+      "members": [
+        "n0",
+        "n1"
+      ],
+      "nesting_depth": 0,
+      "annotations": {
+        "start_node": "prepare"
+      }
+    },
+    {
+      "id": "g1",
+      "kind": "batch",
+      "parent": null,
+      "host": "n3",
+      "members": [],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g2",
+      "kind": "workflow",
+      "parent": "g1",
+      "host": "n3",
+      "members": [
+        "n9",
+        "n10",
+        "n11"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g3",
+      "kind": "input_wrapper",
+      "parent": "g2",
+      "host": null,
+      "members": [
+        "n7",
+        "n8"
+      ],
+      "nesting_depth": 1,
+      "annotations": {
+        "start_node": "extract"
+      }
+    },
+    {
+      "id": "g4",
+      "kind": "workflow",
+      "parent": "g2",
+      "host": "n10",
+      "members": [
+        "n14",
+        "n15"
+      ],
+      "nesting_depth": 2,
+      "annotations": {}
+    },
+    {
+      "id": "g5",
+      "kind": "input_wrapper",
+      "parent": "g4",
+      "host": null,
+      "members": [
+        "n12",
+        "n13"
+      ],
+      "nesting_depth": 2,
+      "annotations": {
+        "start_node": "evaluate"
+      }
+    },
+    {
+      "id": "g6",
+      "kind": "output_wrapper",
+      "parent": "g4",
+      "host": null,
+      "members": [
+        "n16",
+        "n17"
+      ],
+      "nesting_depth": 2,
+      "annotations": {}
+    },
+    {
+      "id": "g7",
+      "kind": "output_wrapper",
+      "parent": "g2",
+      "host": null,
+      "members": [
+        "n18",
+        "n19"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g8",
+      "kind": "batch",
+      "parent": null,
+      "host": "n5",
+      "members": [],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g9",
+      "kind": "workflow",
+      "parent": "g8",
+      "host": null,
+      "members": [
+        "n22"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g10",
+      "kind": "input_wrapper",
+      "parent": "g9",
+      "host": null,
+      "members": [
+        "n20",
+        "n21"
+      ],
+      "nesting_depth": 1,
+      "annotations": {
+        "start_node": "critique"
+      }
+    },
+    {
+      "id": "g11",
+      "kind": "output_wrapper",
+      "parent": "g9",
+      "host": null,
+      "members": [
+        "n23"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g12",
+      "kind": "workflow",
+      "parent": "g8",
+      "host": null,
+      "members": [
+        "n26"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g13",
+      "kind": "input_wrapper",
+      "parent": "g12",
+      "host": null,
+      "members": [
+        "n24",
+        "n25"
+      ],
+      "nesting_depth": 1,
+      "annotations": {
+        "start_node": "critique"
+      }
+    },
+    {
+      "id": "g14",
+      "kind": "output_wrapper",
+      "parent": "g12",
+      "host": null,
+      "members": [
+        "n27"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g15",
+      "kind": "output_wrapper",
+      "parent": null,
+      "host": null,
+      "members": [
+        "n28"
+      ],
+      "nesting_depth": 0,
+      "annotations": {}
+    }
+  ]
+}
