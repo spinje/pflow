@@ -945,3 +945,34 @@ def test_real_degraded_batch_snapshot_warns_in_run_and_plan(tmp_path: Path) -> N
     # leak as the node id (the extractor keeps the Diagnostic's explicit node_id).
     assert advisory.node_id == "summarize"
     assert "__only_snapshot__" not in {d.node_id for d in result.diagnostics}
+
+
+def test_snapshot_degraded_diagnostic_builder_shares_identity_across_sources() -> None:
+    """Unit-pin the shared builder: one construction site for both surfaces.
+
+    The engine (`_emit_snapshot_degraded_advisory`) and the planner
+    (`_resolve_walk_start`) both build this Diagnostic via
+    `build_snapshot_degraded_diagnostic` — id/title/suggestions are identical
+    by construction; only the verb tense, `source`, and the planner-only
+    `context` differ (all intentional).
+    """
+    from pflow.runtime.engine.engine import build_snapshot_degraded_diagnostic
+
+    runtime = build_snapshot_degraded_diagnostic("target", source="runtime")
+    planner = build_snapshot_degraded_diagnostic("target", source="planner")
+
+    assert runtime.id == planner.id == "only.snapshot-degraded"
+    assert runtime.title == planner.title
+    assert runtime.suggestions == planner.suggestions
+    assert runtime.node_id == planner.node_id == "target"
+
+    # Messages differ exactly by the verb.
+    assert runtime.message == planner.message.replace("would restore", "restored")
+    assert "restored upstream" in runtime.message
+    assert "would restore upstream" in planner.message
+
+    # Source + context are the per-surface parameters.
+    assert runtime.source == "runtime"
+    assert planner.source == "planner"
+    assert runtime.context is None
+    assert planner.context == {"category": "execution_failure"}

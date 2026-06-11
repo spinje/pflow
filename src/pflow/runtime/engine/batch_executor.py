@@ -13,6 +13,7 @@ import contextlib
 import copy
 import logging
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -960,6 +961,55 @@ def _strip_redundant_item_llm_fields(item_event: dict[str, Any]) -> None:
         stored_output.pop("system", None)
 
 
+def build_batch_output(
+    results: Sequence[Optional[dict[str, Any]]],
+    *,
+    total_count: int,
+    errors: list[dict[str, Any]],
+    timing_stats: Optional[dict[str, float]],
+    batch_config: BatchConfig,
+) -> dict[str, Any]:
+    """Canonical batch output shape written to ``shared[node_id]``.
+
+    Single source for the 6-key contract (``results`` / ``count`` /
+    ``success_count`` / ``error_count`` / ``errors`` / ``batch_metadata``)
+    and the 6-key ``batch_metadata``. Consumers:
+
+    - the engine's ``_aggregate_batch_results`` below (live aggregation —
+      passes filtered successes, real errors, computed timing)
+    - the dry-run planner's ``_build_batch_output_shape``
+      (``execution/plan.py`` — passes ``errors=[]``, ``timing_stats=None``)
+
+    so downstream ``${node.results}`` / ``${node.batch_metadata}`` templates
+    resolve against one shape that cannot drift. Matches the
+    ``BATCH_OUTPUTS`` contract in ``template_validation/validator.py``.
+    ``errors`` is always a list, never None (GH #484). Per-item ``item`` /
+    ``original_index`` stamping is intentionally NOT here — the engine stamps
+    per item during execution (``_execute_batch_item``, streaming, with a
+    collision warning); the planner zips at aggregation time.
+
+    ``results`` element type is Optional because the engine's ``exec_res``
+    can carry ``None`` placeholders (parallel pre-sizing / fail-fast) that
+    error-index filtering doesn't remove; they pass through verbatim, as the
+    pre-extraction literal did.
+    """
+    return {
+        "results": results,
+        "count": total_count,
+        "success_count": len(results),
+        "error_count": len(errors),
+        "errors": errors,
+        "batch_metadata": {
+            "parallel": batch_config.parallel,
+            "max_concurrent": batch_config.max_concurrent if batch_config.parallel else None,
+            "max_retries": batch_config.max_retries,
+            "retry_wait": batch_config.retry_wait if batch_config.retry_wait > 0 else None,
+            "execution_mode": "parallel" if batch_config.parallel else "sequential",
+            "timing": timing_stats,
+        },
+    }
+
+
 def _aggregate_batch_results(
     exec_res: list[dict[str, Any] | None],
     errors: list[dict[str, Any]],
@@ -996,21 +1046,13 @@ def _aggregate_batch_results(
     # Write to shared store — results contains only successful items.
     # errors list is the authoritative record of failures (with index, item, error).
     # Happens BEFORE any abort-raise so the failure archive captures the data.
-    shared[node_id] = {
-        "results": successful_results,
-        "count": len(exec_res),
-        "success_count": success_count,
-        "error_count": len(errors),
-        "errors": errors,
-        "batch_metadata": {
-            "parallel": batch_config.parallel,
-            "max_concurrent": batch_config.max_concurrent if batch_config.parallel else None,
-            "max_retries": batch_config.max_retries,
-            "retry_wait": batch_config.retry_wait if batch_config.retry_wait > 0 else None,
-            "execution_mode": "parallel" if batch_config.parallel else "sequential",
-            "timing": timing_stats,
-        },
-    }
+    shared[node_id] = build_batch_output(
+        successful_results,
+        total_count=len(exec_res),
+        errors=errors,
+        timing_stats=timing_stats,
+        batch_config=batch_config,
+    )
 
     # All items failed -> abort. Raised AFTER the shared store write so
     # step 17.5's mark_node_failed captures the rich batch metadata.

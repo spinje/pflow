@@ -22,7 +22,7 @@ from pflow.core.exceptions import CompilationError
 from pflow.core.node import BaseNode
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
-from pflow.runtime.engine.engine import WorkflowEngine, parse_only_path
+from pflow.runtime.engine.engine import WorkflowEngine, parse_only_path, validate_only_target
 from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
 from tests.shared.markdown_utils import write_workflow_file
 
@@ -92,6 +92,54 @@ class TestParseOnlyPath:
         """``a..b`` is caught early with the full original path in the error."""
         with pytest.raises(CompilationError, match="a\\.\\.b"):
             parse_only_path("a..b")
+
+
+# ---------------------------------------------------------------------------
+# 1b. validate_only_target unit tests (shared by engine._run_inner and the
+#     planner's _build_plan_with_shared — one validation, two entry points)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateOnlyTarget:
+    """Direct tests for the shared parse-and-validate function."""
+
+    @staticmethod
+    def _workflow() -> CompiledWorkflow:
+        node = _StubNode()
+        node.node_id = "step-a"
+        return CompiledWorkflow(
+            start_node=node,
+            node_configs={"step-a": _make_config("step-a"), "step-b": _make_config("step-b")},
+        )
+
+    def test_none_returns_none_pair_without_validating(self) -> None:
+        assert validate_only_target(self._workflow(), None) == (None, None)
+
+    def test_flat_valid_target(self) -> None:
+        assert validate_only_target(self._workflow(), "step-a") == ("step-a", None)
+
+    def test_unknown_id_raises_with_sorted_available_nodes(self) -> None:
+        with pytest.raises(CompilationError, match="'typo' not found") as exc_info:
+            validate_only_target(self._workflow(), "typo")
+        assert exc_info.value.details["available_nodes"] == ["step-a", "step-b"]
+
+    def test_dotted_on_real_node_raises_not_supported(self) -> None:
+        with pytest.raises(CompilationError, match="not supported"):
+            validate_only_target(self._workflow(), "step-a.child")
+
+    def test_membership_first_ordering_for_dotted_typo(self) -> None:
+        """``typo.child`` reports 'not found', NOT 'not supported'."""
+        with pytest.raises(CompilationError, match="not found"):
+            validate_only_target(self._workflow(), "typo.child")
+
+    def test_empty_string_raises(self) -> None:
+        """``--only ""`` is a hard error — never a silent full run.
+
+        Pins the unified loud-error semantics (the engine previously fell
+        through to a full walk on empty string; the planner raised).
+        """
+        with pytest.raises(CompilationError, match="'' not found"):
+            validate_only_target(self._workflow(), "")
 
 
 # ---------------------------------------------------------------------------

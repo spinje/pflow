@@ -153,7 +153,9 @@ Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, 
 ## Reserved Shared Store Keys (Canonical Reference)
 
 ```python
-# Execution tracking (managed by engine/instrumentation.py)
+# Execution tracking (managed by engine/instrumentation.py).
+# The 5-key core shape below is constructed ONLY via
+# node_state.new_execution_state() — never re-inline this literal.
 shared["__execution__"] = {
     "completed_nodes": [],     # Successfully executed nodes
     "node_actions": {},        # Actions returned by each node

@@ -2288,3 +2288,98 @@ def test_create_planner_shared_underscore_alias_is_preserved() -> None:
     assert _create_planner_shared is create_planner_shared, (
         "alias drift: _create_planner_shared should be the same callable as create_planner_shared (set at plan.py:503)."
     )
+
+
+def test_plan_batch_sub_workflow_output_shape_matches_engine(tmp_path) -> None:
+    """Engine↔planner BATCH OUTPUT SHAPE parity — the re-fork net for `build_batch_output`.
+
+    The engine (`_aggregate_batch_results`) and the planner
+    (`_build_batch_output_shape`) both delegate the batch output contract to
+    the shared `build_batch_output`, so this test is identity-by-construction
+    today. It exists to catch the historical bug class (#318, #336, #484, the
+    Task 162 under-report): one side re-forking the shape — re-inlining the
+    dict literal and drifting a key — passes every unit test on the shared
+    builder, because those pin the function, not the call sites. This test
+    pins the call sites: the shape downstream parent templates resolve
+    against at PLAN time must structurally equal what the engine actually
+    writes at RUN time.
+
+    Mutation: re-fork either call site (replace the `build_batch_output` call
+    with an inline literal and drop/rename any key, or regress `errors` to
+    None) → the key-order or value assertions below fail.
+    """
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [{"id": "echo", "type": "shell", "cache": True, "params": {"command": "printf ${value}"}}],
+            "edges": [],
+            "outputs": {"out": {"source": "${echo.stdout}", "description": "Echoed value"}},
+        },
+        child_path,
+    )
+    parent_ir = {
+        "inputs": {"items": {"type": "array"}},
+        "nodes": [
+            {
+                "id": "fanout",
+                "type": "workflow",
+                "params": {"workflow": str(child_path), "inputs": {"value": "${item}"}},
+                "batch": {"items": "${items}"},
+            }
+        ],
+        "edges": [],
+    }
+    write_workflow_file(parent_ir, parent_path)
+    params = {"items": ["a", "b"]}
+
+    # ENGINE side: real run; the aggregated batch shape lands in shared_after.
+    run_result = _runner_run(parent_path, params)
+    assert run_result.success
+    engine_shape = run_result.shared_after["fanout"]
+
+    # PLANNER side: plan the same workflow against the same (isolated-default)
+    # memo cache the runner wrote, exposing the planner's scratch shared.
+    from pflow.execution.plan import _build_plan_with_shared
+
+    compiled, registry = _compile(parent_ir, params=params)
+    _plan, planner_shared = _build_plan_with_shared(
+        compiled,
+        params,
+        MemoizationCache(),
+        registry,
+        workflow_name="parent",
+        _parent_workflow_file=str(parent_path),
+    )
+    planner_shape = planner_shared["fanout"]
+
+    # Key sets AND insertion order, both levels — a re-forked literal that
+    # drops, renames, or reorders a key fails here.
+    assert list(engine_shape) == list(planner_shape)
+    assert list(engine_shape["batch_metadata"]) == list(planner_shape["batch_metadata"])
+
+    # Values the planner must predict exactly for a fully-successful batch.
+    for key in ("count", "success_count", "error_count", "errors"):
+        assert planner_shape[key] == engine_shape[key], f"engine/planner drift on '{key}'"
+    for key in ("parallel", "max_concurrent", "max_retries", "retry_wait", "execution_mode"):
+        assert planner_shape["batch_metadata"][key] == engine_shape["batch_metadata"][key], (
+            f"engine/planner drift on batch_metadata '{key}'"
+        )
+
+    # Intentional difference: the engine measured real timings, the planner
+    # never executes. The KEY must exist on both sides; only the value differs.
+    assert engine_shape["batch_metadata"]["timing"] is not None
+    assert planner_shape["batch_metadata"]["timing"] is None
+
+    # Per-item stamping stayed per-side (engine: during execution; planner:
+    # at aggregation) — pin that both sides agree on item + original_index,
+    # and that the child's declared output is addressable on both sides.
+    assert len(engine_shape["results"]) == len(planner_shape["results"]) == 2
+    for idx, item in enumerate(params["items"]):
+        for side, shape in (("engine", engine_shape), ("planner", planner_shape)):
+            result = shape["results"][idx]
+            assert result["item"] == item, f"{side} results[{idx}] item mismatch"
+            assert result["original_index"] == idx, f"{side} results[{idx}] original_index mismatch"
+            assert "out" in result, f"{side} results[{idx}] missing declared child output 'out'"

@@ -14,9 +14,12 @@ Key design decisions:
 
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
+from enum import Enum, auto
 from types import MappingProxyType
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError, LoopCarryError, LoopConditionError
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
@@ -374,6 +377,50 @@ def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:
     return first, remaining
 
 
+def validate_only_target(workflow: CompiledWorkflow, only_node: str | None) -> tuple[str | None, str | None]:
+    """Parse and validate an ``--only`` target; return ``(this_only, child_only)``.
+
+    Shared between the runtime engine (``WorkflowEngine._run_inner``) and the
+    dry-run planner (``execution/plan.py::_build_plan_with_shared``) so ``run``
+    and ``plan`` reject identical ``--only`` values with identical
+    ``CompilationError`` text and category.
+
+    Ordering is load-bearing: the membership check runs FIRST so ``--only
+    typo.child`` still reports "not found" with the available-nodes list,
+    while ``--only realnode.child`` reports the "not supported" message.
+    Targeting a node inside a sub-workflow is deferred (see issue #443 plan
+    "Deferred"); under snapshot ``--only`` it's an explicit error rather than
+    a silent re-walk.
+
+    ``None`` returns ``(None, None)`` without validating. An empty string is
+    a hard error ("Node '' not found") — never a silent full run; malformed
+    agent input must fail loudly.
+
+    ``child_only`` is currently ALWAYS ``None`` on successful return — dotted
+    targets raise above. The tuple shape is reserved for the deferred
+    nested-targeting follow-up (issue #443, "the dotted plumbing exists
+    dormant").
+    """
+    this_only, child_only = parse_only_path(only_node)
+    if this_only is None:
+        return None, None
+    if this_only not in workflow.node_configs:
+        available = sorted(workflow.node_configs.keys())
+        raise CompilationError(
+            f"Node '{this_only}' not found",
+            phase="only_node_resolution",
+            details={"available_nodes": available},
+            suggestion=f"Available nodes: {', '.join(available)}",
+        )
+    if child_only:
+        raise CompilationError(
+            f"--only '{only_node}': targeting a nested node (dotted path) is not supported under snapshot --only.",
+            phase="only_node_resolution",
+            suggestion=f"Run --only '{this_only}' to run that node alone, or run the full workflow.",
+        )
+    return this_only, child_only
+
+
 def is_clean_termination(action: Optional[str], successors: dict[str, Any]) -> bool:
     """Whether the graph walk should clean-terminate after a node returns `action`.
 
@@ -391,6 +438,52 @@ def is_clean_termination(action: Optional[str], successors: dict[str, Any]) -> b
     condition should surface as a routing error.
     """
     return action == "end" or all(k == "error" for k in successors)
+
+
+class RouteKind(Enum):
+    """Outcome categories of ``route_action``."""
+
+    FOLLOW = auto()
+    CLEAN_STOP = auto()
+    ROUTING_ERROR = auto()
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    """Result of ``route_action``. ``next_node`` is set only for FOLLOW."""
+
+    kind: RouteKind
+    next_node: Any = None
+
+
+def route_action(action: Optional[str], successors: dict[str, Any]) -> RouteDecision:
+    """Pure routing kernel: where does the walk go after a node yields ``action``?
+
+    Shared between the runtime engine (``WorkflowEngine._run_inner``'s
+    successor step) and the dry-run planner's ``_classify``
+    (``execution/plan.py``), so the precedence rule — successor match wins,
+    then clean termination (via ``is_clean_termination``), else routing
+    error — is expressed exactly once. Side effects stay with the callers:
+    the engine maps ROUTING_ERROR to ``_handle_no_successor`` (failure
+    archive, cache invalidation, trace flip); the planner overlays its
+    BOUNDARY concept on top via ``_represents_work``.
+
+    ``action`` is taken as-is by design (critical asymmetry): the engine
+    feeds the live action string (possibly None — the lookup falls back to
+    "default"); the planner feeds the cached action for cached entries and
+    "default" for everything else. Each caller decides what action means.
+
+    ``.get(...) is None`` is the official no-successor test: successors only
+    ever hold node objects (``BaseNode.next()`` is the single write site, and
+    no node class defines ``__bool__``/``__len__``), so no falsy-but-present
+    successor is constructible.
+    """
+    nxt = successors.get(action or "default")
+    if nxt is not None:
+        return RouteDecision(RouteKind.FOLLOW, nxt)
+    if is_clean_termination(action, successors):
+        return RouteDecision(RouteKind.CLEAN_STOP)
+    return RouteDecision(RouteKind.ROUTING_ERROR)
 
 
 def find_node_by_id(start_node: Any, node_id: str) -> Any:
@@ -426,6 +519,37 @@ def find_node_by_id(start_node: Any, node_id: str) -> Any:
     )
 
 
+def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
+    """Build the ``only.snapshot-degraded`` WARNING ``Diagnostic``.
+
+    Shared between the engine's ``_emit_snapshot_degraded_advisory`` (sink:
+    ``__warnings__["__only_snapshot__"]`` → DEGRADED status) and the dry-run
+    planner's ``_resolve_walk_start`` (``execution/plan.py``; sink: the plan's
+    diagnostics list), so id / title / suggestions cannot drift between the
+    preview and the run. Message tense differs by design: the planner speaks
+    future-conditional ("would restore"), the engine past ("restored"). The
+    planner variant carries ``context={"category": "execution_failure"}``;
+    the runtime variant keeps ``context=None`` (the Diagnostic default).
+    """
+    verb = "would restore" if source == "planner" else "restored"
+    return Diagnostic(
+        severity=Severity.WARNING,
+        title="Restored upstream from a degraded run",
+        message=(
+            f"--only '{this_only}' {verb} upstream from a DEGRADED full run; the restored "
+            f"upstream data may be incomplete (e.g. a batch step that continued past failed "
+            f"items dropped them from its results). Re-run the full workflow to refresh the snapshot."
+        ),
+        suggestions=[
+            "Re-run the full workflow once to record a clean (success) snapshot, then retry --only.",
+        ],
+        node_id=this_only,
+        source=source,
+        context={"category": "execution_failure"} if source == "planner" else None,
+        id="only.snapshot-degraded",
+    )
+
+
 class WorkflowEngine:
     """Executes a CompiledWorkflow by walking the node graph and handling all runtime concerns."""
 
@@ -448,32 +572,6 @@ class WorkflowEngine:
         # ``None`` — many construction sites rely on the defaults.
         self.workflow_path = workflow_path
         self.snapshot_events = snapshot_events
-
-    def _validate_only_target(self, workflow: CompiledWorkflow, this_only: str, child_only: str | None) -> None:
-        """Validate a flat ``--only`` target; reject dotted (nested) targets.
-
-        Ordering is load-bearing: the membership check runs FIRST so ``--only
-        typo.child`` still reports "not found" with the available-nodes list,
-        while ``--only realnode.child`` reports the "not supported" message.
-        Targeting a node inside a sub-workflow is deferred (see issue #443 plan
-        "Deferred" — name-based run-anywhere targeting); under snapshot ``--only``
-        it's an explicit error rather than a silent re-walk.
-        """
-        if this_only not in workflow.node_configs:
-            available = sorted(workflow.node_configs.keys())
-            raise CompilationError(
-                f"Node '{this_only}' not found",
-                phase="only_node_resolution",
-                details={"available_nodes": available},
-                suggestion=f"Available nodes: {', '.join(available)}",
-            )
-        if child_only:
-            raise CompilationError(
-                f"--only '{self.only_node}': targeting a nested node (dotted path) is not supported "
-                f"under snapshot --only.",
-                phase="only_node_resolution",
-                suggestion=f"Run --only '{this_only}' to run that node alone, or run the full workflow.",
-            )
 
     def _run_node_with_child_only(
         self, node: Any, config: NodeConfig, shared: dict[str, Any], child_only: str | None
@@ -546,16 +644,14 @@ class WorkflowEngine:
 
     def _run_inner(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
         """Run body — split out so run() can wrap with save/restore cleanly."""
-        this_only, child_only = parse_only_path(self.only_node)
-
         # 0. --only: snapshot semantics (issue #443). Do NOT re-walk the graph —
         # that re-executes and re-fires side-effecting upstream nodes (e.g.
         # `gh pr create`) on every iteration. Instead restore upstream from the
         # most recent full run's trace and execute ONLY the target.
-        # _validate_only_target rejects unknown ids and dotted (nested) targets
+        # validate_only_target rejects unknown ids and dotted (nested) targets
         # first; a missing snapshot is a hard error, never a silent re-walk.
-        if this_only:
-            self._validate_only_target(workflow, this_only, child_only)
+        this_only, _ = validate_only_target(workflow, self.only_node)
+        if this_only is not None:
             return self._run_only_snapshot(workflow, shared, this_only)
 
         # 1. Reset visit counts
@@ -570,7 +666,7 @@ class WorkflowEngine:
         loop_counts: dict[str, int] = {}
         loop_caps: dict[str, int] = {}
         try:
-            while curr:
+            while curr is not None:
                 node_id = getattr(curr, "node_id", None)
                 if node_id is None or node_id not in workflow.node_configs:
                     raise CompilationError(
@@ -613,12 +709,16 @@ class WorkflowEngine:
                         continue
                     shared.pop("__iteration__", None)
 
-                # Follow successor edge
-                nxt = curr.successors.get(last_action or "default")
-                if not nxt:
-                    last_action = self._handle_no_successor(last_action, node_id, curr, shared)
+                # Follow successor edge (shared routing kernel — see route_action)
+                decision = route_action(last_action, curr.successors)
+                if decision.kind is not RouteKind.FOLLOW:
+                    if decision.kind is RouteKind.ROUTING_ERROR:
+                        # Assignment is load-bearing: _handle_no_successor returns
+                        # "error" so the run's action string reflects the failure
+                        # (WorkflowExecutor checks it for child success).
+                        last_action = self._handle_no_successor(last_action, node_id, curr, shared)
                     break
-                curr = nxt
+                curr = decision.next_node
         finally:
             # Defensive: an error mid-loop never leaks ${__iteration__} into the
             # surfaced shared_after. The clean-exit path already popped it above.
@@ -633,7 +733,7 @@ class WorkflowEngine:
         """Execute ONLY the target node against a frozen upstream snapshot (issue #443).
 
         Snapshot semantics for FLAT ``--only`` (dotted is rejected upstream by
-        ``_validate_only_target``). Rather than re-walking from the start node —
+        ``validate_only_target``). Rather than re-walking from the start node —
         which re-executes and re-fires side-effecting upstream nodes on every
         iteration — restore every upstream node's output from the most recent
         full successful run's trace, then execute only ``this_only``. Upstream is
@@ -691,22 +791,8 @@ class WorkflowEngine:
         the node the user is iterating on (``_extract_runtime_warnings`` keeps
         the explicit node_id rather than substituting the dict key).
         """
-        from pflow.core.diagnostic import Diagnostic, Severity
-
-        shared.setdefault("__warnings__", {})["__only_snapshot__"] = Diagnostic(
-            severity=Severity.WARNING,
-            title="Restored upstream from a degraded run",
-            message=(
-                f"--only '{this_only}' restored upstream from a DEGRADED full run; the restored "
-                f"upstream data may be incomplete (e.g. a batch step that continued past failed "
-                f"items dropped them from its results). Re-run the full workflow to refresh the snapshot."
-            ),
-            suggestions=[
-                "Re-run the full workflow once to record a clean (success) snapshot, then retry --only.",
-            ],
-            node_id=this_only,
-            source="runtime",
-            id="only.snapshot-degraded",
+        shared.setdefault("__warnings__", {})["__only_snapshot__"] = build_snapshot_degraded_diagnostic(
+            this_only, source="runtime"
         )
 
     def _loop_should_reenter(
@@ -790,8 +876,6 @@ class WorkflowEngine:
         important signal). Per-iteration ``clear_node_failure`` already pops stale
         warnings on re-entry, so only the final iteration's advisory is at stake.
         """
-        from pflow.core.diagnostic import Diagnostic, Severity
-
         keyword = "until" if until else "while"
         still_state = "falsy" if until else "truthy"
         target_state = "truthy" if until else "falsy"
@@ -845,6 +929,10 @@ class WorkflowEngine:
 
         Returns the (possibly updated) last_action.
         """
+        # Defensive guard: the walk loop only reaches here on a route_action
+        # ROUTING_ERROR (clean termination breaks without calling), so this
+        # check is unreachable from _run_inner — kept so any future direct
+        # caller still gets the clean-termination short-circuit.
         if is_clean_termination(last_action, curr.successors):
             return last_action  # Intentional termination or no forward path
 
@@ -1117,8 +1205,6 @@ class WorkflowEngine:
             # returns DEGRADED instead of SUCCESS. Without this, recovered
             # workflows silently report SUCCESS (GH #246).
             if str(action).startswith("error"):
-                from pflow.core.diagnostic import Diagnostic, Severity
-
                 node_data = shared.get(config.node_id, {})
                 node_error = node_data.get("error") if isinstance(node_data, dict) else None
                 error_handler = node.successors.get("error")

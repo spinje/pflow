@@ -38,19 +38,26 @@ from time import time
 from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.exceptions import CompilationError, LoopConditionError
+from pflow.core.exceptions import LoopConditionError
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
-from pflow.runtime.engine.batch_executor import resolve_batch_items
+from pflow.runtime.engine.batch_executor import build_batch_output, resolve_batch_items
 from pflow.runtime.engine.engine import (
+    RouteKind,
     build_prompt_cache_dict,
+    build_snapshot_degraded_diagnostic,
     find_node_by_id,
-    is_clean_termination,
-    parse_only_path,
+    route_action,
+    validate_only_target,
 )
-from pflow.runtime.engine.instrumentation import MAX_NODE_VISITS, apply_memo_hit, enforce_loop_guard
+from pflow.runtime.engine.instrumentation import (
+    MAX_NODE_VISITS,
+    apply_memo_hit,
+    enforce_loop_guard,
+    initialize_execution_state,
+)
 from pflow.runtime.engine.loop_control import loop_runtime_scope, resolve_loop_cap
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.template_resolution import resolve_templates
@@ -152,10 +159,12 @@ class Decision:
 def _classify(entry: PlanEntry, curr: Any) -> Decision:
     """Map a planned entry + current graph node to a walker transition.
 
-    Mirrors engine semantics from `engine.run()` / `_handle_no_successor`:
-    the engine does `successors.get(action)` without fallback, then treats
-    `"end"` and all-error-successors as clean termination and any other
-    no-match as a routing failure. This function is the one place where
+    The match/terminate/routing-error precedence is the shared kernel
+    `route_action` (the same function the engine's walk dispatches on), so
+    routing semantics cannot drift. Planner-local on top of the kernel: the
+    action normalization below (cached entries route on their cached action,
+    everything else on "default") and the BOUNDARY overlay via
+    `_represents_work`. This function is the one place where
     status → transition is expressed.
     """
     if entry.status == "routing_error":
@@ -163,20 +172,23 @@ def _classify(entry: PlanEntry, curr: Any) -> Decision:
 
     action = entry.action if entry.status == "cached" and entry.action else "default"
 
-    # Action matches a successor → walker advances through that edge.
-    if action in curr.successors:
+    # The kernel decides where the walk goes; the planner threads its
+    # normalized `action` into every Decision — `_advance` consumes it
+    # (`_apply_follow`'s successor lookup + visited_edges dedup key, and
+    # `_routing_error_entry`'s diagnostic message).
+    decision = route_action(action, curr.successors)
+
+    if decision.kind is RouteKind.FOLLOW:
         if _represents_work(entry):
             return Decision(Transition.BOUNDARY, action)
         return Decision(Transition.FOLLOW, action)
 
-    # No matching successor. Shared with engine's `_handle_no_successor` via
-    # `is_clean_termination` — "end" sentinel and all-error-successors clean-
-    # terminate in both paths by construction.
-    if is_clean_termination(action, curr.successors):
+    if decision.kind is RouteKind.CLEAN_STOP:
         return Decision(Transition.STOP, action)
 
-    # Cached node routed an action that doesn't name any successor →
-    # engine would mark_node_failed(FAILURE_CATEGORY_ROUTING) at runtime.
+    # ROUTING_ERROR. Cached node routed an action that doesn't name any
+    # successor → engine would mark_node_failed(FAILURE_CATEGORY_ROUTING)
+    # at runtime.
     if entry.status == "cached":
         return Decision(Transition.ROUTING_ERROR, action)
 
@@ -263,9 +275,7 @@ def _build_plan_with_shared(
     historical cost/duration estimates scoped to the child's workflow_path.
     Cost basis is always `upper_bound` — conservative for cost-gating.
     """
-    _validate_only_target(compiled, only_node)
-
-    this_only, child_only = parse_only_path(only_node)
+    this_only, child_only = validate_only_target(compiled, only_node)
 
     shared = create_planner_shared(compiled, params, cache, _parent_workflow_file, loop_active=_loop_active)
     visited_paths = list(_visited_paths) if _visited_paths else []
@@ -455,34 +465,6 @@ def _apply_follow(
     return curr.successors.get(action)
 
 
-def _validate_only_target(compiled: CompiledWorkflow, only_node: str | None) -> None:
-    """Hard-error when --only names an unknown node; reject dotted (nested) targets.
-
-    Mirrors ``engine._validate_only_target`` so ``run`` and ``plan`` produce the
-    SAME error category for the same ``--only`` value. Membership is checked
-    FIRST so ``--only typo.child`` still reports "not found"; a dotted path
-    against a real node reports the "not supported" message (deferred — see
-    issue #443 plan "Deferred").
-    """
-    this_only, child_only = parse_only_path(only_node)
-    if this_only is None:
-        return
-    if this_only not in compiled.node_configs:
-        available = sorted(compiled.node_configs.keys())
-        raise CompilationError(
-            f"Node '{this_only}' not found",
-            phase="only_node_resolution",
-            details={"available_nodes": available},
-            suggestion=f"Available nodes: {', '.join(available)}",
-        )
-    if child_only:
-        raise CompilationError(
-            f"--only '{only_node}': targeting a nested node (dotted path) is not supported under snapshot --only.",
-            phase="only_node_resolution",
-            suggestion=f"Run --only '{this_only}' to run that node alone, or run the full workflow.",
-        )
-
-
 def _resolve_walk_start(
     compiled: CompiledWorkflow,
     shared: dict[str, Any],
@@ -500,8 +482,8 @@ def _resolve_walk_start(
     the engine actually serving/executing it.
 
     When the snapshot source is a DEGRADED run, append the same loud advisory the
-    engine emits (``_emit_snapshot_degraded_advisory``) to ``diagnostics`` so
-    ``--dry-run --only`` shows the partial-upstream caveat too — the ADR's "loud,
+    engine emits (shared ``build_snapshot_degraded_diagnostic``) to ``diagnostics``
+    so ``--dry-run --only`` shows the partial-upstream caveat too — the ADR's "loud,
     never silent" promise must hold on the preview surface, not just the real run.
     """
     if this_only is None:
@@ -509,24 +491,7 @@ def _resolve_walk_start(
     events, source_status = load_snapshot_or_raise(workflow_path, this_only)
     seed_snapshot_into_shared(shared, events, exclude=this_only)
     if source_status == "degraded":
-        diagnostics.append(
-            Diagnostic(
-                severity=Severity.WARNING,
-                title="Restored upstream from a degraded run",
-                message=(
-                    f"--only '{this_only}' would restore upstream from a DEGRADED full run; the restored "
-                    f"upstream data may be incomplete (e.g. a batch step that continued past failed items "
-                    f"dropped them from its results). Re-run the full workflow to refresh the snapshot."
-                ),
-                suggestions=[
-                    "Re-run the full workflow once to record a clean (success) snapshot, then retry --only.",
-                ],
-                node_id=this_only,
-                source="planner",
-                context={"category": "execution_failure"},
-                id="only.snapshot-degraded",
-            )
-        )
+        diagnostics.append(build_snapshot_degraded_diagnostic(this_only, source="planner"))
     return find_node_by_id(compiled.start_node, this_only)
 
 
@@ -557,14 +522,9 @@ def create_planner_shared(
     shared: dict[str, Any] = {**params}
     shared.update(compiled.resolved_defaults)
     shared["__memoization_cache__"] = cache
-    shared["__execution__"] = {
-        "completed_nodes": [],
-        "node_actions": {},
-        "node_hashes": {},
-        "failed_node": None,
-        "node_visit_counts": {},
-    }
-    shared["__cache_hits__"] = []
+    # Same canonical __execution__/__cache_hits__ seed the engine uses
+    # (_execute_node step 2) — shared init, not a mirrored literal.
+    initialize_execution_state(shared)
     if parent_workflow_file:
         shared["_pflow_workflow_file"] = parent_workflow_file
     shared["__pflow_prompt_cache__"] = MappingProxyType(build_prompt_cache_dict(compiled, shared))
@@ -1912,28 +1872,27 @@ def _build_batch_output_shape(
     items: list[Any],
     batch_config: BatchConfig,
 ) -> dict[str, Any]:
-    """Mirror the runtime batch result shape for downstream template resolution."""
+    """Runtime batch result shape for downstream template resolution.
+
+    The shape itself comes from the shared ``build_batch_output`` (the same
+    builder ``_aggregate_batch_results`` uses at runtime); the planner passes
+    the no-execution degenerates (``errors=[]``, ``timing_stats=None``). Only
+    the per-item ``item``/``original_index`` stamping is planner-local — the
+    engine stamps per item during execution, the planner zips at aggregation.
+    """
     results: list[dict[str, Any]] = []
     for idx, (item, output) in enumerate(zip(items, item_outputs, strict=True)):
         result = dict(output) if output else {}
         result["item"] = item
         result["original_index"] = idx
         results.append(result)
-    return {
-        "results": results,
-        "count": len(items),
-        "success_count": len(item_outputs),
-        "error_count": 0,
-        "errors": [],
-        "batch_metadata": {
-            "parallel": batch_config.parallel,
-            "max_concurrent": batch_config.max_concurrent if batch_config.parallel else None,
-            "max_retries": batch_config.max_retries,
-            "retry_wait": batch_config.retry_wait if batch_config.retry_wait > 0 else None,
-            "execution_mode": "parallel" if batch_config.parallel else "sequential",
-            "timing": None,
-        },
-    }
+    return build_batch_output(
+        results,
+        total_count=len(items),
+        errors=[],
+        timing_stats=None,
+        batch_config=batch_config,
+    )
 
 
 def _populate_sub_workflow_outputs(
@@ -1957,9 +1916,11 @@ def _populate_sub_workflow_outputs(
 
     - **Undeclared fallback**: when the child has NO declared outputs, copy
       every non-internal, non-input key from child_shared to parent's
-      namespace. Matches runtime's fallback at `workflow_executor.py:472-478`.
-      Agents referencing `${<node_id>.<child_node_id>.<field>}` can resolve
-      the same way at plan time as at runtime.
+      namespace. Matches runtime's undeclared fallback in
+      `WorkflowExecutor._expose_child_outputs` (per-key rule: the shared
+      `WorkflowExecutor.is_exposable_child_key` predicate). Agents
+      referencing `${<node_id>.<child_node_id>.<field>}` can resolve the
+      same way at plan time as at runtime.
 
     Writes `parent_shared[node_id]` to the resulting dict in either path.
     """

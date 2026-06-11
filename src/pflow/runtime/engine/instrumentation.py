@@ -16,6 +16,7 @@ from typing import Any, Optional
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MaxNodeVisitsError
 from pflow.core.node_type_display import is_llm_node_type
+from pflow.runtime.node_state import new_execution_state
 
 from .types import BatchConfig
 
@@ -31,15 +32,14 @@ logger = logging.getLogger(__name__)
 
 
 def initialize_execution_state(shared: dict) -> None:
-    """Ensure __execution__ and __cache_hits__ exist in shared store."""
+    """Ensure __execution__ and __cache_hits__ exist in shared store.
+
+    Called by the engine (``_execute_node`` step 2) AND by the dry-run
+    planner (``execution/plan.py::create_planner_shared``) so both walks
+    seed the identical canonical state from ``new_execution_state()``.
+    """
     if "__execution__" not in shared:
-        shared["__execution__"] = {
-            "completed_nodes": [],
-            "node_actions": {},
-            "node_hashes": {},
-            "failed_node": None,
-            "node_visit_counts": {},
-        }
+        shared["__execution__"] = new_execution_state()
     else:
         if "node_hashes" not in shared["__execution__"]:
             shared["__execution__"]["node_hashes"] = {}
