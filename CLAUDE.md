@@ -265,6 +265,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 **Refactors:**
 - Task 117: Subcommand JSON Error Output
 - Task 120: Strict Input Type Validation
+- Task 170: One Template Language
 
 **Later:**
 - Task 124: Code Node Dependency Management
