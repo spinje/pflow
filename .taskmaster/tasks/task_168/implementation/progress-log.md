@@ -2793,3 +2793,38 @@ contradiction; revisit if it confuses); the deferred trio unchanged (flow.ts dec
 shade/halo shoot-lab awaiting the user's pick); fixture-workflow edits to
 conditional-branching / run-cycle / deep-research now fail the contract drift guard with a
 one-command regen (by design — the failure message carries it).
+
+### Floating Outputs card: io-flow sinks derive from control edges, not `is_terminal` (2026-06-11, user-caught) ✅
+
+The user's screenshots (lyrics-generator): the Outputs card floated beside the spine,
+attached to nothing. Root cause, confirmed by rendering the real contract: the io-flow
+synthesis filtered Outputs-side anchors on the contract's `is_terminal`, but that model
+fact counts DATA_FLOW out-edges (deliberately — Mermaid end-sink parity, model.py:169's
+own warning comment) — so the most natural authoring shape, *a final leaf whose result is
+sourced into a declared workflow output*, reads non-terminal (`build-report -[DATA_FLOW]->
+report`). lyrics-generator had ZERO terminal root steps → zero `io-flow:` edges → the card
+was a data-only island (its data edges hidden in beautiful). And unlike the Inputs side,
+the Outputs side had NO fallback. **Why "sometimes":** a workflow ending in a SUB-WORKFLOW
+worked (run-from-plan — the data edges feeding root outputs originate from the
+sub-workflow's internal output ports, so the host NodeId has no out-edges and stays
+terminal); a workflow ending in a leaf that feeds an output didn't. The feature's original
+verification subjects (run-from-plan, run-cycle) were all the working shape —
+**deep-research had the bug too** (old root terminals: `[]`, confirmed).
+
+**Fix (flow.ts only — visual policy; the contract's `is_terminal` is untouched, Mermaid
+parity unthreatened):** sink-ness is now derived from contract edges — a root step with no
+outgoing `sequential`/`branch` edge (error/end excluded, the model's own clauses minus the
+DATA_FLOW one). Repurposed the never-consumed `outgoingControl` dead set into
+`outgoingForward`; added the missing LAST-root-step fallback mirroring the Inputs side's
+first-step fallback (a root cycle can no longer strand the card either). A
+second-Python-fact alternative (`is_control_terminal` on RFNode) was rejected under the
+deletion test — the frontend already holds the edges.
+
+**Verified:** corpus sink-set diff (old vs new): lyrics-generator `[] → [build-report]`,
+deep-research `[] → [final-report]`, run-from-plan/conditional-branching unchanged. Real
+browser TD/beautiful: lyrics-generator + deep-research both render one continuous spine
+Inputs → … → Outputs. web **257 tests** (+1 pin: the exact bug shape — final leaf feeds a
+declared output with `is_terminal: false`, asserts the io-flow edge exists and the
+mid-chain step gets none; the cycle test extended with the Outputs-side fallback); tsc
+strict + build clean. Docs synced: web/CLAUDE.md (skeleton bullet),
+visualization-requirements.md (Implemented bullet). Zero Python/contract change.

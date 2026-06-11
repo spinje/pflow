@@ -23,19 +23,28 @@ src/
   api/               server communication (client.ts: fetch + ApiError; a live /events
                      subscription would go here)
   graph/             PURE contract → React Flow transform; NO React (tests run node-env)
-    flow.ts          buildFlow (nodes/edges) + applyFocus; size constants
+    flow.ts          buildFlow (nodes/edges) + applyFocus + expandTargets; size constants
     layout.ts        ELK positioning (the only async step; lazy-loads elkjs as its own chunk)
-    handles.ts       handle-id scheme
+    portSides.ts     post-layout edge decoration (data rails, loop rails, back rails)
+    spine.ts         post-layout sequential-chain re-alignment (the SPINE bullet)
+    collapse.ts      initial-collapse policy (auto-collapse budget, URL overrides)
+    handles.ts       handle-id scheme (each id encodes its source/target type)
     metrics.ts       layout-coupled geometry constants — the single source for flow.ts
                      sizes, the connector/edge geometry, and the :root CSS vars main.tsx
                      injects before first paint
+    lossless.test.ts the no-information-loss invariant, swept over synthetic shapes +
+                     real committed contracts (test/fixtures/contracts/)
   hooks/             useWorkflowGraph: fetch → build → layout → focus → RF state + status
   utils/             pure helpers — format.ts (${ref} parsing, value previews, kind
-                     colors, category label); icons.ts (node-kind/provider → SVG URL)
+                     colors, category label); icons.ts (node-kind/provider → SVG URL);
+                     viewParams.ts (URL params, deep-link id resolution, edge-click dispatch)
   assets/icons/      vendored brand/tool SVGs (Vite bundles them into static/assets)
   views/             the screens App switches between (CatalogView, GraphView)
-  components/         reusable UI: Toolbar, ReadPanel, ErrorBoundary, nodes/, edges/
-  test/              rf-jsdom.ts — React Flow jsdom mocks for component tests
+  components/        reusable UI: Toolbar, ReadPanel, EdgePanel, ErrorBoundary,
+                     interaction.ts (the click-callback context), nodes/, edges/
+  test/              rf-jsdom.ts — React Flow jsdom mocks; fixtures/contracts/ — real
+                     /api/graph payloads, drift-guarded by a Python test (regen command
+                     in its failure message)
 ```
 
 Tests sit beside their subject.
@@ -98,9 +107,8 @@ Tests sit beside their subject.
   Add a node-kind icon in that one file.
 - **CONDITION is a presented pseudo-kind, not a contract kind.** A decision **code** node
   (`is_decision && kind === "code"` — `isCondition` in `utils/format.ts`) presents as
-  label `CONDITION`, a fork icon (`assets/icons/condition.svg`: hollow orange ring in,
-  hollow white rings out, legs blending orange→white — see the comment in the file for
-  the baked-flip/evenodd-hole/gradient-stop geometry), and the condition orange
+  label `CONDITION`, a fork icon (`assets/icons/condition.svg` — its in-file comment
+  carries the baked-flip/evenodd-hole/gradient-stop geometry), and the condition orange
   (`#ffa657` == the CSS `--decision` var; keep them equal). `nodeColor(node)` is the single seam — card border, tile,
   category AND edge gradients all go through it; never call raw `kindColor(kind)` for a
   node's identity. Safe because multi-way routing (`next: str = ...`) is code-only, so
@@ -109,19 +117,17 @@ Tests sit beside their subject.
   so the canvas stays mappable to `type: code` in the file.
 - **TRANSFORM is the second presented pseudo-kind (2026-06-10).** A pure-reshape **code**
   node (`is_transform && kind === "code"` — `isTransform` in `utils/format.ts`) presents
-  as label `TRANSFORM`, the shuffle icon (`assets/icons/transform.svg`: two crossing
-  flows blending cyan→white, white chevrons), and the transform cyan
-  (`TRANSFORM_COLOR = #5fd4dd`, user-picked via shoot-lab — free hue space, apart from
+  as label `TRANSFORM`, the shuffle icon (`assets/icons/transform.svg`), and the
+  transform cyan (`TRANSFORM_COLOR = #5fd4dd` — deliberately apart from
   the muted file/IO teals and shell green). UNLIKE is_decision the frontend CANNOT
   derive this fact — it needs the AST; Python classifies it FAIL-CLOSED
   (`_is_transform_code` in react_flow.py: provably pure reshape into `result`, no
   effects, no `next`). A pure decider sets `next` and is excluded by the classifier,
   so CONDITION/TRANSFORM never both claim a node (the isCondition-first order in
   `nodeColor`/`categoryLabel` is defensive). Read panel shows `code · transform`.
-  Finer Tines-style modes (extract/dedupe/message-only) were considered and deferred —
-  sub-classifying intent from arbitrary Python is guesswork (breaks fail-closed), and
-  the `purpose` line already carries the specifics; explode/implode = pflow batch,
-  automatic = the llm kind, delay/throttle = N/A (no event-stream semantics).
+  Finer Tines-style sub-modes were considered + DEFERRED (intent inference breaks
+  fail-closed) — rationale in the task-168 `visualization-requirements.md`; don't
+  re-propose without it.
 - **Density controls edges, not just node detail.** *Advanced* shows every edge.
   *Beautiful* shows only the control-flow skeleton: data-flow (`${ref}`) edges are built
   but `hidden`, and `applyFocus` reveals just the clicked node's data lines (hidden
@@ -192,39 +198,36 @@ Tests sit beside their subject.
   entry — left edge just right of the node's left border (`labelAnchor` +
   `LABEL_NUDGE_X`). Error pills stay mid-path. Fork TARGETS lay out in the code's
   chain order (`orderForkSiblings` in layout.ts — first `if` leftmost; Steps
-  order is irrelevant to a fork's reading order). **Branch CONDITIONS** (from the
-  contract's fail-closed AST extraction) render where the outcome lives, visible in
-  advanced always / beautiful while the condition node is focus-expanded (the
-  build-time `conditionShown` default; safe as build-time state since expansion
+  order is irrelevant to a fork's reading order). **Branch CONDITIONS** (the
+  contract's fail-closed AST extraction) render where the outcome lives. **TD**: an
+  edge-colored `.edge-label` pill (target node's color, the standard pill rule)
+  rides `EdgeData.condition` on the FINAL APPROACH into its target, stacked above
+  the outcome label (`conditionAnchor` — ONE pill per target entry; a path-midpoint
+  anchor collides: TD fork siblings share the rail Y, and a back-railed loop-back's
+  midpoint sits on its wrap — measured). **LR**: the source's BranchPorts ROW is
+  the condition's home — quiet text beside the outcome pill
+  (`LeafData.branchConditions`; mid-path pills clipped under cards and floated on
+  backward wraps); a branch re-anchored onto a group (no rows) keeps the edge pill.
+  Visible in advanced always / beautiful while the condition node is
+  focus-expanded (the build-time `conditionShown` default — safe since expansion
   re-runs the build) — PLUS clicking a branch TARGET reveals just its own condition
-  ("why was I reached?"): TD (or an LR branch re-anchored onto a group — no rows)
-  → the edge pill (`conditionRevealed`, applyFocus); a labeled LR branch from a
-  leaf → the SOURCE's BranchPorts row (`LeafData.revealedConditions`, merged over
-  `branchConditions` in WorkflowNode — an edge pill at the target entry overlapped
-  the clicked card). The raw `condition` + `outcome` always ride EdgeData so the
+  ("why was I reached?"): the edge pill via `conditionRevealed` (applyFocus), or
+  for a labeled LR branch from a leaf, the SOURCE's row via
+  `LeafData.revealedConditions` (an edge pill at the target entry overlapped the
+  clicked card). The raw `condition` + `outcome` always ride EdgeData so the
   restyle pass has them. In LR, whenever the source's rows show, each target ALSO
   gets its outcome name at its entry — TD-style bare text ABOVE the line
   (`labelAnchor` Left arm; on-line struck the text) — so a reader finds where each
   row's line lands without tracing it. The read panel shows the untruncated
   outcome → condition table (GraphView passes the node's branch edges + a
   decision's END edge, labeled "end"). **A decision's END edge is its reserved
-  "end" OUTCOME** (2026-06-10: `is_decision` counts the end route — `if ok:
-  next="end" else: next="fix"` gates ARE decisions): buildFlow appends `"end"`
-  LAST to the node's `branchLabels` (BranchPorts renders it as a faint row,
-  `.branch-port-end` — a real outcome that stops the flow), the LR end edge
-  leaves `branchHandle("end")`, and the END edge's `condition` follows the same
-  pill/row/reveal rules as a branch (incl. clicking the end dot — "why did flow
-  stop?"). A non-decision's END edge (static `- next: end`) is untouched.
-  **TD** (no rows): an edge-colored `.edge-label` pill (target node's color, the
-  standard pill rule — user-chosen 2026-06-10 over condition orange) rides
-  `EdgeData.condition` on the FINAL APPROACH into its target, stacked above the
-  outcome label (`conditionAnchor` — ONE pill per target entry; the old
-  path-midpoint anchor collided: TD siblings share the rail Y, so same-direction
-  pills landed pixel-identical — measured on check-groups — and a back-railed
-  loop-back's midpoint sat on its wrap). **LR**: the BranchPorts ROW is the condition's home — quiet text
-  beside its outcome pill (`LeafData.branchConditions`; mid-path pills clipped
-  under cards / floated on backward wraps, user-caught 2026-06-10); a re-anchored
-  branch (collapsed source — no rows) keeps the edge pill. **BACKWARD branch/error
+  "end" OUTCOME** (`is_decision` counts the end route — `if ok: next="end" else:
+  next="fix"` gates ARE decisions): buildFlow appends `"end"` LAST to the node's
+  `branchLabels` (BranchPorts renders it as a faint row, `.branch-port-end` — a
+  real outcome that stops the flow), the LR end edge leaves `branchHandle("end")`,
+  and the END edge's `condition` follows the same pill/row/reveal rules (incl.
+  clicking the end dot — "why did flow stop?"). A non-decision's END edge (static
+  `- next: end`) is untouched. **BACKWARD branch/error
   edges** (loop-backs to an earlier node) get a post-layout BACK RAIL
   (`assignBackRails`, portSides.ts — LR routes below both endpoint boxes, TD left
   of them; lane-staggered): smoothstep's stock wrap U-turned at the ~20px stub
@@ -284,7 +287,7 @@ Tests sit beside their subject.
   LR variant (`side="left"`, `CONNECTOR_LEFT` — the TOP path transposed, arc sweeps
   flipped) lands on the tile's LEFT border at the icon row; there is NO right tile
   flare — the tile sits at the card's left. The LR EXIT instead gets the **exit
-  dot** (`.exit-dot`, user-picked E1 from the exit-affordance lab 2026-06-10): a
+  dot** (`.exit-dot`, user-picked 2026-06-10): a
   kind-colored 10px dot straddling the right border at the icon row, pure
   decoration (the invisible NODE_OUT handle is tucked 5px INSIDE the card so the
   edge terminus hides under it — RF otherwise anchors a right handle just outside
@@ -317,12 +320,11 @@ Tests sit beside their subject.
   endpoints share an axis, so the default smoothstep midpoint runs the line straight
   back THROUGH the node. **Where the U lands and what it says (the loop-row
   design, user-decided 2026-06-10):** a LEAF whose body rows render (advanced /
-  focus-expanded) grows ↻ loop-rule rowS (WorkflowNode; amber, right-aligned —
+  focus-expanded) grows ↻ loop-rule rows (WorkflowNode; amber, right-aligned —
   it's authored LOOP config, deliberately NOT presented as a data param; leafSize
   counts them): the CONDITION row + the cap `≤ ${…}` on its OWN row (one row
   truncated both operands). A looped node telegraphs in ALL states via the amber
-  ↻ CHIP on the border rail (ChipRail.tsx — superseded the category-line
-  `.loop-mark`, 2026-06-10). The U's arrow lands ON the condition row (`LOOP_ROW` handle, target-type)
+  ↻ CHIP on the border rail (ChipRail.tsx). The U's arrow lands ON the condition row (`LOOP_ROW` handle, target-type)
   — "iteration re-enters under this rule"; the edge then carries NO floating
   label (the row holds the condition, like data lines dropping their label on
   row-landing). A compact leaf shows a BARE U into NODE_IN — beautiful stays
@@ -358,37 +360,32 @@ Tests sit beside their subject.
   edges for ALL groups (contract edges never name a group; purely-internal edges
   must not count). Collapsed cards dim under focus like leaves; expanded regions
   never dim. Icon from `groupIconFor` (the host's KIND icon, always — behavior
-  rides the rail chips; the old looped-sub-workflow loop-glyph swap retired with
-  the chip rail, 2026-06-10). React Flow's default `node-group` wrapper styling is neutralized in
+  rides the rail chips, never the icon). React Flow's default `node-group` wrapper styling is neutralized in
   index.css **including its `text-align: center`** — GroupNode owns the visual.
   Batch cards (and `.batched` leaves — unexpanded dynamic batches) draw a stacked
   DECK via pseudo-elements (the Tines stacked-copies look).
-- **The border CHIP RAIL (ChipRail.tsx, 2026-06-10, picked via a 3-round
-  shoot-lab).** Behavior modifiers render as 22px tinted chips straddling the TOP
+- **The border CHIP RAIL (ChipRail.tsx, 2026-06-10).** Behavior modifiers render
+  as 22px tinted chips straddling the TOP
   border, right-aligned, on leaves AND containers: loop = amber round ↻ (tooltip:
   polarity + condition + cap), batch = purple capsule (stack glyph + `×{count}`
   literal / `×N` dynamic — the count is statically unknowable, so the iterated
   `source_ref` rides the TOOLTIP, never a guessed number; a future run overlay
   fills the real count). Grammar: round/capsule tinted chip = INFO; the one
-  SQUARE element (the group expander) = button. The rail replaced the header
-  batch badge (it squeezed the 2-line description and duplicated the deck), the
-  category-line ↻ mark, and the looped-tile icon swap — identity (tile/category)
+  SQUARE element (the group expander) = button. Identity (tile/category)
   never mutates; behavior is additive border chrome. The rail is the reserved
   home for future live-overlay STATUS chips (status joins leftmost, outranks
-  modifiers). It extends 11px above the box; ELK doesn't know — same straddle
-  the old group-pill had (no layout impact). `.node.compact/.detailed` are BOTH
+  modifiers). It extends 11px above the box; ELK doesn't know (no layout
+  impact). `.node.compact/.detailed` are BOTH
   `overflow: visible` for it (detailed was hidden, silently clipping the deck
   on advanced cards).
 - **Containers SELECT on click; expand/collapse is the rail's count-expander
-  (design D, user-decided 2026-06-10; pill+button merged into ONE element,
-  user-picked F1 same day).** A container's body — collapsed card OR expanded
+  (user-decided 2026-06-10).** A container's body — collapsed card OR expanded
   region/header — is a node like any other: click = focus + read panel (the panel
   shows the group's HOST node, resolved in GraphView's `selectedNode`; wrapper
   groups have no host → no panel). The ONLY single-click toggle is the
   `.group-toggle` expander GroupNode renders as the rail's last element in both
-  states — the step count + A1 arrows-out/in glyph in a rounded-SQUARE chip
-  (the old `▸ N nodes` count pill and the separate corner button died in the
-  merge; its `stopPropagation` is LOAD-BEARING, else the click also selects) —
+  states — the step count + arrows-out/in glyph in a rounded-SQUARE chip
+  (its `stopPropagation` is LOAD-BEARING, else the click also selects) —
   plus double-click anywhere on the container (`onNodeDoubleClick`;
   `zoomOnDoubleClick={false}` on ReactFlow or every dblclick zooms). Batched
   LEAVES get no expander by construction — they render via WorkflowNode (nothing
@@ -478,7 +475,12 @@ Tests sit beside their subject.
   CONTROL SKELETON (2026-06-10):** `buildFlow` synthesizes `io-flow:` control edges
   — Inputs card → each root ENTRY step (no incoming control edge; falls back to
   the FIRST root step, where pflow starts execution, on a root cycle) and each
-  terminal step's representative → Outputs card. NOT contract edges (pflow has no
+  root CONTROL SINK's representative → Outputs card (no sequential/branch out-edge,
+  derived from contract edges; LAST-root-step fallback on a cycle). Sink-ness must
+  NOT come from the contract's `is_terminal` — that fact counts DATA_FLOW out-edges
+  (Mermaid end-sink parity), so a final leaf feeding a declared output reads
+  non-terminal and the Outputs card floats as an island (the 2026-06-11 bug).
+  NOT contract edges (pflow has no
   io→node control flow) — visual policy that makes the cards behave like nodes:
   drawn in BOTH densities, gradient blends IO teal ↔ the step's kind color, ELK
   lays the cards into the spine (they were data-only islands parked beside it),
@@ -490,9 +492,7 @@ Tests sit beside their subject.
   puts its rows on the workflow GROUP
   (`GroupData.inputs/outputs`): the COLLAPSED card grows a two-column area — inputs
   left, outputs right BOTTOM-ANCHORED (`PortRows staggerRows = ioRowsCount − nOut`,
-  always ≥ 1 row below the inputs' start: the in→out diagonal IS the information;
-  identical to the original one-row stagger at balanced counts, the bottom-right
-  corner when inputs dominate — a 13-in/3-out card left outputs hugging the top);
+  always ≥ 1 row below the inputs' start: the in→out diagonal IS the information);
   the EXPANDED region
   renders inputs as the LEFT SIDEBAR and outputs as the bottom-right strip —
   ALWAYS shown while the region is OPEN, in BOTH densities (an open container
@@ -503,8 +503,8 @@ Tests sit beside their subject.
   (GOTCHA: under direction DOWN elkjs applies the minimum TRANSPOSED — pass
   `(minH, minW)` in TD; measured, test-pinned). Rows follow the STRICT side
   convention (same as param/output rows): receive (`portTargetHandle`) LEFT, feed
-  (`portHandle`) RIGHT — sides are structural now, so the old mirrored handles
-  (`iotr:`/`iol:`) and the `assignFacingSides` pass are GONE. Both handles always
+  (`portHandle`) RIGHT — sides are structural, never flipped post-layout. Both
+  handles always
   render (an edge naming a missing handle is silently dropped — the recurring bug
   class); the role-less side's dot is hidden via `.port-handle.quiet`. Edge handle
   resolution is owner-aware (`ioNodeToOwner` + `rowsVisible(owner)`): rows hidden →

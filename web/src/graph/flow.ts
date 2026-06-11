@@ -103,7 +103,7 @@ export type IOCardData = {
   focusedPortId: string | null; // the row to highlight when an individual port is focused
   // Control-edge incidence (the connector flares, same as LeafData): the cards join
   // the control SKELETON via the synthesized io-flow edges (Inputs → entry step,
-  // terminal step → Outputs), so they behave like nodes — flares included. Filled
+  // control sink → Outputs), so they behave like nodes — flares included. Filled
   // by the control-incidence post-pass over the FLOW edges.
   hasIncoming: boolean;
   hasOutgoing: boolean;
@@ -709,13 +709,19 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
 
   // CONTRACT-level control incidence. Render-time incidence (the connector flares)
   // comes from a post-pass over the FLOW edges — these sets exist to find the root
-  // ENTRY steps (no incoming control edge) for the synthesized io-flow skeleton.
+  // ENTRY steps (no incoming control edge) and CONTROL SINKS (no forward control
+  // successor) for the synthesized io-flow skeleton. Sinks count only
+  // sequential/branch out-edges (error/end excluded, the model's own clauses) and
+  // deliberately NOT the contract's `is_terminal`: that fact also counts DATA_FLOW,
+  // so a final leaf feeding a declared output reads non-terminal — filtering on it
+  // left the Outputs card with no io-flow edge at all, a floating island
+  // (user-caught 2026-06-11 on lyrics-generator).
   const incomingControl = new Set<string>();
-  const outgoingControl = new Set<string>();
+  const outgoingForward = new Set<string>();
   for (const e of graph.edges) {
     if (!CONTROL_KINDS.has(e.kind)) continue;
     incomingControl.add(e.target);
-    outgoingControl.add(e.source);
+    if (e.kind === "sequential" || e.kind === "branch") outgoingForward.add(e.source);
   }
 
   // Workflow STEPS inside each container, recursively — what a user would call
@@ -1137,8 +1143,10 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   // The root IO cards JOIN THE CONTROL SKELETON (user-decided 2026-06-10): the
   // Inputs card heads the flow — a control-style edge into each root ENTRY step
   // (no incoming control edge; falls back to the FIRST root step, where pflow
-  // starts execution, when a root cycle leaves no entry) — and every terminal
-  // step's representative runs into the Outputs card. These are NOT contract
+  // starts execution, when a root cycle leaves no entry) — and every root CONTROL
+  // SINK's representative runs into the Outputs card (no forward control successor,
+  // derived from the edges — see `outgoingForward`; falls back to the LAST root
+  // step on a root cycle). These are NOT contract
   // edges (pflow has no io→node control flow); they are visual policy that makes
   // the cards behave like nodes: ELK lays them into the spine (instead of parking
   // data-only islands beside it) and their tiles grow connector flares like any
@@ -1179,7 +1187,10 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       }
     }
     if (rootOutputCard) {
-      for (const n of rootSteps.filter((s) => s.is_terminal)) {
+      const sinks = rootSteps.filter((n) => !outgoingForward.has(n.id));
+      // A root cycle can leave no sink — fall back to the LAST root step (the
+      // mirror of the entry side's first-step fallback) so the card never floats.
+      for (const n of sinks.length > 0 ? sinks : rootSteps.slice(-1)) {
         const anchor = renderAnchor(n.id);
         if (!anchor || anchor === rootOutputCard || anchored.has(`out:${anchor}`)) continue;
         anchored.add(`out:${anchor}`);

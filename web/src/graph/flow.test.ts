@@ -1319,15 +1319,44 @@ describe("buildFlow — root IO cards join the control SKELETON (io-flow edges)"
     expect(es.find((e) => e.id === "io-flow:g_in->g_wf")).toBeDefined();
   });
 
-  it("a root cycle (no entry) falls back to the FIRST root step", () => {
+  it("a final leaf FEEDING a declared output still runs into the Outputs card", () => {
+    // The lyrics-generator bug (user-caught 2026-06-11): the contract's is_terminal
+    // counts DATA_FLOW out-edges, so the most natural authoring shape — the last
+    // step's result sourced into a workflow output — read non-terminal and the
+    // Outputs card floated with no io-flow edge. Sink-ness is now derived from
+    // sequential/branch edges only; the data-flow out-edge must not disqualify.
     const g: RFGraph = {
-      nodes: [rootIO("inA", "g_in", "input"), node("a"), node("b")],
+      nodes: [
+        rootIO("inA", "g_in", "input"),
+        node("first"),
+        node("last", { is_terminal: false }),
+        rootIO("outA", "g_out", "output"),
+      ],
+      edges: [edge("e0", "first", "last", "sequential"), edge("e1", "last", "outA", "data_flow", { output_field: "result" })],
+      groups: [
+        group("g_in", { kind: "input_wrapper", members: ["inA"] }),
+        group("g_out", { kind: "output_wrapper", members: ["outA"] }),
+      ],
+    };
+    const { edges: es } = buildFlow(g, COMPACT);
+    expect(es.find((e) => e.id === "io-flow:last->g_out")).toBeDefined();
+    // `first` has a forward control successor — it is not a sink.
+    expect(es.find((e) => e.id === "io-flow:first->g_out")).toBeUndefined();
+  });
+
+  it("a root cycle (no entry, no sink) falls back to FIRST root step in / LAST out", () => {
+    const g: RFGraph = {
+      nodes: [rootIO("inA", "g_in", "input"), node("a"), node("b"), rootIO("outA", "g_out", "output")],
       edges: [edge("e0", "a", "b", "sequential"), edge("e1", "b", "a", "branch", { label: "retry" })],
-      groups: [group("g_in", { kind: "input_wrapper", members: ["inA"] })],
+      groups: [
+        group("g_in", { kind: "input_wrapper", members: ["inA"] }),
+        group("g_out", { kind: "output_wrapper", members: ["outA"] }),
+      ],
     };
     const { edges: es } = buildFlow(g, COMPACT);
     expect(es.find((e) => e.id === "io-flow:g_in->a")).toBeDefined();
-    expect(es.filter((e) => e.id.startsWith("io-flow:")).length).toBe(1);
+    expect(es.find((e) => e.id === "io-flow:b->g_out")).toBeDefined();
+    expect(es.filter((e) => e.id.startsWith("io-flow:")).length).toBe(2);
   });
 
   it("no root wrappers → no io-flow edges (zero-IO workflows unchanged)", () => {
