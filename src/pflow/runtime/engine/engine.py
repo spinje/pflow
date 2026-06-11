@@ -17,8 +17,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Any, Literal, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError, LoopCarryError, LoopConditionError
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
@@ -57,9 +58,6 @@ from .namespaced_store import NamespacedSharedStore
 from .plan_node import NodePlan, plan_node
 from .template_resolution import contains_unresolved_template, resolve_templates
 from .types import CompiledWorkflow, NodeConfig
-
-if TYPE_CHECKING:
-    from pflow.core.diagnostic import Diagnostic
 
 # Map node class names to failure categories for step 17.5 (error-action
 # path). The node type is known at compile time — no data-shape heuristic
@@ -379,7 +377,7 @@ def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:
     return first, remaining
 
 
-def validate_only_target(workflow: CompiledWorkflow, only_node: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+def validate_only_target(workflow: CompiledWorkflow, only_node: str | None) -> tuple[str | None, str | None]:
     """Parse and validate an ``--only`` target; return ``(this_only, child_only)``.
 
     Shared between the runtime engine (``WorkflowEngine._run_inner``) and the
@@ -397,6 +395,11 @@ def validate_only_target(workflow: CompiledWorkflow, only_node: Optional[str]) -
     ``None`` returns ``(None, None)`` without validating. An empty string is
     a hard error ("Node '' not found") — never a silent full run; malformed
     agent input must fail loudly.
+
+    ``child_only`` is currently ALWAYS ``None`` on successful return — dotted
+    targets raise above. The tuple shape is reserved for the deferred
+    nested-targeting follow-up (issue #443, "the dotted plumbing exists
+    dormant").
     """
     this_only, child_only = parse_only_path(only_node)
     if this_only is None:
@@ -516,7 +519,7 @@ def find_node_by_id(start_node: Any, node_id: str) -> Any:
     )
 
 
-def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["planner", "runtime"]) -> "Diagnostic":
+def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
     """Build the ``only.snapshot-degraded`` WARNING ``Diagnostic``.
 
     Shared between the engine's ``_emit_snapshot_degraded_advisory`` (sink:
@@ -528,8 +531,6 @@ def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["plann
     planner variant carries ``context={"category": "execution_failure"}``;
     the runtime variant keeps ``context=None`` (the Diagnostic default).
     """
-    from pflow.core.diagnostic import Diagnostic, Severity
-
     verb = "would restore" if source == "planner" else "restored"
     return Diagnostic(
         severity=Severity.WARNING,
@@ -875,8 +876,6 @@ class WorkflowEngine:
         important signal). Per-iteration ``clear_node_failure`` already pops stale
         warnings on re-entry, so only the final iteration's advisory is at stake.
         """
-        from pflow.core.diagnostic import Diagnostic, Severity
-
         keyword = "until" if until else "while"
         still_state = "falsy" if until else "truthy"
         target_state = "truthy" if until else "falsy"
@@ -1206,8 +1205,6 @@ class WorkflowEngine:
             # returns DEGRADED instead of SUCCESS. Without this, recovered
             # workflows silently report SUCCESS (GH #246).
             if str(action).startswith("error"):
-                from pflow.core.diagnostic import Diagnostic, Severity
-
                 node_data = shared.get(config.node_id, {})
                 node_error = node_data.get("error") if isinstance(node_data, dict) else None
                 error_handler = node.successors.get("error")
