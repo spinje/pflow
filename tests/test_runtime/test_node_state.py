@@ -14,8 +14,38 @@ from pflow.runtime.node_state import (
     get_node_output,
     get_node_status,
     mark_node_failed,
+    new_execution_state,
     node_succeeded,
 )
+
+
+class TestNewExecutionState:
+    def test_returns_canonical_five_key_shape(self):
+        state = new_execution_state()
+        assert state == {
+            "completed_nodes": [],
+            "node_actions": {},
+            "node_hashes": {},
+            "failed_node": None,
+            "node_visit_counts": {},
+        }
+
+    def test_calls_share_no_mutable_objects(self):
+        first = new_execution_state()
+        second = new_execution_state()
+        first["completed_nodes"].append("node-a")
+        first["node_actions"]["node-a"] = "default"
+        assert second["completed_nodes"] == []
+        assert second["node_actions"] == {}
+
+    def test_mark_node_failed_defensive_init_has_no_cache_hits(self):
+        # mark_node_failed's engine-less defensive init must seed the
+        # canonical __execution__ WITHOUT the engine-owned __cache_hits__.
+        shared: dict = {}
+        mark_node_failed(shared, "node", category=FAILURE_CATEGORY_SHELL)
+        assert set(shared["__execution__"]) == set(new_execution_state())
+        assert shared["__execution__"]["failed_node"] == "node"
+        assert "__cache_hits__" not in shared
 
 
 class TestGetNodeStatus:

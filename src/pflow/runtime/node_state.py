@@ -47,6 +47,33 @@ FAILURE_CATEGORY_EXCEPTION = "exception"
 FAILURE_CATEGORY_TEMPLATE = "template_error"
 
 
+def new_execution_state() -> dict[str, Any]:
+    """Return a fresh canonical ``__execution__`` dict (the 5-key shape).
+
+    Single source for the literal. Consumers:
+
+    - ``runtime/engine/instrumentation.py::initialize_execution_state`` —
+      the engine's ensure-style init, which also owns ``__cache_hits__``
+      and the missing-subkey repair for resumed state
+    - ``mark_node_failed`` below — defensive init on engine-less paths
+    - the dry-run planner via ``initialize_execution_state``
+      (``execution/plan.py::create_planner_shared``), which is also reused
+      by the cache-discrepancy scaffold
+      (``core/prompt_cache_analysis/stages/discrepancy/predict.py``)
+
+    Engine-only keys (``only_node``, ``restored_nodes``) are NOT here —
+    the engine stamps them separately (``_execute_node`` step 2 and the
+    ``--only`` snapshot path).
+    """
+    return {
+        "completed_nodes": [],
+        "node_actions": {},
+        "node_hashes": {},
+        "failed_node": None,
+        "node_visit_counts": {},
+    }
+
+
 def get_node_status(shared: dict[str, Any], node_id: str) -> NodeStatus:
     """Return the execution state of a node.
 
@@ -151,13 +178,7 @@ def mark_node_failed(
         )
 
     if "__execution__" not in shared:
-        shared["__execution__"] = {
-            "completed_nodes": [],
-            "node_actions": {},
-            "node_hashes": {},
-            "failed_node": None,
-            "node_visit_counts": {},
-        }
+        shared["__execution__"] = new_execution_state()
 
     popped = shared.pop(node_id, None)
     data: dict[str, Any] = popped if isinstance(popped, dict) else ({} if popped is None else {"value": popped})

@@ -33,7 +33,7 @@ The snapshot needs the last full run's output for **every** upstream node, as a 
    per-node extraction is `final_events_by_node(trace["nodes"])`. Nested `--only a.b.c` is
    designed to recurse through the trace's `sub_workflow_events`, mirroring the workflow's own
    nesting — **deferred, not built**: v1 is flat-only (see Limitations) and dotted targets are
-   rejected at validation (`engine.py:_validate_only_target`); the dotted plumbing exists dormant.
+   rejected at validation (`engine.py:validate_only_target`, shared by engine and planner); the dotted plumbing exists dormant.
 
 ## Consequences
 
