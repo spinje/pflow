@@ -35,7 +35,7 @@ import pytest
 _SCANNED_DIRS = ("src", "tests", "scripts")
 
 
-def test_no_src_pflow_imports() -> None:
+def test_no_src_package_imports() -> None:
     """Every import of pflow code must use the ``pflow`` package name.
 
     Walks every ``.py`` file under src/, tests/, and scripts/ and fails on
@@ -94,11 +94,10 @@ def _is_src_module(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 # The full set of modules allowed to import pflow.core.llm_client at module
-# level. Everything else must lazy-import inside the function that needs it
-# (current lazy sites: batch_executor.py's synthetic cache-warmup helper,
-# cli/commands/settings.py). Adding a module here means accepting that its
-# entire import chain pays llm_client's import cost — fine for LLM-only
-# paths, wrong for anything the CLI loads at startup.
+# level. Everything else must lazy-import inside the function that needs it.
+# Adding a module here means accepting that its entire import chain pays
+# llm_client's import cost — fine for LLM-only paths, wrong for anything the
+# CLI loads at startup.
 _ALLOWED_MODULE_LEVEL_LLM_CLIENT_IMPORTERS: frozenset[str] = frozenset({
     "src/pflow/nodes/llm/llm.py",
     "src/pflow/core/workflow/discovery.py",
@@ -180,6 +179,9 @@ def _import_time_imports(tree: ast.Module) -> Iterator[ast.Import | ast.ImportFr
 
 
 def _is_type_checking_test(test: ast.expr) -> bool:
+    # Compound tests (`if TYPE_CHECKING and x:`) are NOT recognized — they
+    # fail toward a false POSITIVE with a clear message, the safe direction
+    # for a guard test. If one ever appears legitimately, extend this.
     return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
         isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
     )

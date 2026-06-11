@@ -102,7 +102,7 @@ Happy path: steps 1-17.5, returns action string. Error path: catches exception, 
 - `getattr(e, "_pflow_partial_resolutions", None)` extracts template resolutions before the error (attached by `resolve_templates`)
 - `getattr(e, "_pflow_template_diagnostic", None)` extracts a structured Diagnostic for strict-mode template errors so `_builtin_exception_diagnostic` can return it directly without losing the per-reference structure
 - `call_completion_callback(..., action="error", error=e)` — without this the progress spinner shows the failed node as still running
-- `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution `ValueError` (via `_pflow_partial_resolutions` presence) as `template_error`, otherwise `exception`
+- `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution errors as `template_error` (requires BOTH `isinstance(e, ValueError)` AND `_pflow_partial_resolutions` presence — engine.py step's `is_template_error` check), otherwise `exception`. The exception TYPE is load-bearing here; see GH #503 before migrating it.
 - `e._pflow_node_id = config.node_id` — the Runner's `_exception_to_result` reads this to annotate diagnostics
 - The Runner additionally attaches `e._pflow_shared_store = shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after`. Without this, exception-path failures have empty `shared_after` and CLI/MCP formatters lose all per-node detail.
 

@@ -569,6 +569,10 @@ def test_only_bare_ref_to_branch_not_in_snapshot_is_loud() -> None:
     leaves it absent and strict-mode template resolution raises — the failure
     is archived under ``__failures__`` as a template error naming the missing
     reference.
+
+    ``ValueError`` is what strict-mode resolution raises today
+    (template_resolution.py); if it migrates to a PflowError subclass
+    (GH #503), update the ``pytest.raises`` here.
     """
     target = _SpyNode()
     target.node_id = "target"
