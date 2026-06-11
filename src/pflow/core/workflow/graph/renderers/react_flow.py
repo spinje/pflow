@@ -18,6 +18,7 @@ Mermaid's narrower render-time shadowing rule.
 from __future__ import annotations
 
 import ast
+import dataclasses
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -56,6 +57,35 @@ class RFParam:
 
 
 @dataclass(frozen=True)
+class RFResultKey:
+    name: str
+    data_type: str | None
+
+
+@dataclass(frozen=True)
+class RFOutputShape:
+    """What a node's structured output provably looks like (the authored shape).
+
+    ``field`` names the output port the shape describes — where the node
+    actually WRITES: ``"result"`` for code (AST-extracted) and structured
+    claude-code (``output_schema`` → parsed value in ``result``), ``"response"``
+    for structured llm (its parsed value lands in ``response``, never
+    ``result``). ``data_type`` is the authored annotation / schema type (None
+    when not provable). ``keys`` are the authored keys with best-effort value
+    types — None whenever not statically certain (multiple assignments,
+    mutations, empty/non-literal dicts, non-object schemas). FAIL-CLOSED at
+    every step: never a partial keys list — a shape row that lies is worse
+    than no row. A non-None shape with data_type AND keys None is a valid
+    state: it asserts only "this code provably assigns ``result``" (e.g.
+    ``result = compute()``) with nothing further provable.
+    """
+
+    field: str
+    data_type: str | None
+    keys: list[RFResultKey] | None
+
+
+@dataclass(frozen=True)
 class RFNode:
     id: str
     ref: RFRef
@@ -77,6 +107,13 @@ class RFNode:
     # other ``is_*`` facts the frontend must not re-derive this — unlike them it
     # CANNOT (it needs the AST).
     is_transform: bool
+    # The authored shape of the node's structured output (annotation/schema +
+    # keys), extracted fail-closed; `shape.field` names the port it describes
+    # (code/claude-code → "result", structured llm → "response"). Ships for ALL
+    # code nodes (D9 — run-validate's annotation is just as true as a
+    # transform's; display policy is the frontend's) and for schema'd
+    # claude-code/llm. None whenever nothing is provable.
+    output_shape: RFOutputShape | None
     unexpanded: str | None
     annotations: dict[str, Any]
 
@@ -96,6 +133,10 @@ class RFEdge:
     # node's code by ``_branch_conditions``. ``None`` on non-branch edges and
     # whenever extraction could not be done SAFELY — absent beats wrong.
     condition: str | None = None
+    # The ref's sub-path below ``output_field``: ``${gen.result.ok}`` ships
+    # ["ok"]. Cleared with ``output_field`` on truncation re-anchoring (a
+    # re-anchored endpoint no longer names a real port).
+    output_path: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -176,6 +217,7 @@ class _ReactFlowRenderer:
             is_terminal=self.graph.is_terminal(node.id),
             is_group_host=self._is_group_host(node),
             is_transform=self._is_transform(node),
+            output_shape=self._output_shape(node),
             unexpanded=node.unexpanded,
             annotations=dict(node.annotations),
         )
@@ -183,6 +225,21 @@ class _ReactFlowRenderer:
     def _is_transform(self, node: Node) -> bool:
         code = node.params.get("code") if node.kind == "code" else None
         return _is_transform_code(code) if isinstance(code, str) else False
+
+    def _output_shape(self, node: Node) -> RFOutputShape | None:
+        if node.kind == "code":
+            code = node.params.get("code")
+            return _result_shape_from_code(code) if isinstance(code, str) else None
+        # Structured-output nodes: the output_schema IS the authored shape. The
+        # FIELD differs per kind — and must match where the node actually
+        # writes, or the rows would describe a port that doesn't exist:
+        # claude-code parses into `result` (claude_code.py "Writes:"), llm
+        # into `response` (llm.py "Writes:").
+        if node.kind == "claude-code":
+            return _shape_from_output_schema(node.params.get("output_schema"), field="result")
+        if node.kind == "llm":
+            return _shape_from_output_schema(node.params.get("output_schema"), field="response")
+        return None
 
     def _param(self, node: Node, name: str, value: Any) -> RFParam:
         source = node.param_sources.get(name)
@@ -218,7 +275,15 @@ class _ReactFlowRenderer:
                 continue
             output_field = edge.output_field if source == edge.source else None
             input_name = edge.input_name if target == edge.target else None
-            key = (source, target, edge.kind, edge.label, output_field, input_name)
+            # Same rule as output_field: a re-anchored source no longer names a
+            # real port, so the sub-path is cleared with it.
+            output_path = list(edge.output_path) if source == edge.source else []
+            # output_path is part of identity here: two sub-key refs in ONE
+            # output `source:` expression (site 2 never dedups at build) must
+            # keep both edges — collapsing them would render the second key as
+            # quiet-unread. Re-anchored edges clear the path above, so the
+            # truncation dedup (N item edges -> one host edge) is unaffected.
+            key = (source, target, edge.kind, edge.label, output_field, input_name, tuple(output_path))
             if key in seen:
                 continue
             seen.add(key)
@@ -233,6 +298,7 @@ class _ReactFlowRenderer:
                     input_name=input_name,
                     shadowed=self.graph.shadowed(edge),
                     condition=self._branch_condition(edge.source, edge.kind, edge.label),
+                    output_path=output_path,
                 )
             )
         return resolved
@@ -735,3 +801,170 @@ def _is_transform_code(code: str) -> bool:
             return False  # routing — a decider, not a transform
         assigns_result = assigns_result or "result" in assigned
     return assigns_result
+
+
+# ── Result-shape extraction (fail-closed) ──────────────────────────────────────
+#
+# What a code node PRODUCES: the authored `result:` annotation plus — when the
+# code assigns `result` exactly once, as a non-empty literal dict — its keys
+# with best-effort value types. FAIL-CLOSED at every step: anything not
+# statically certain ships as None, never a partial keys list. Ships for ALL
+# code nodes, not just transforms (D9) — display policy is the frontend's.
+
+
+def _input_annotations(tree: ast.Module) -> dict[str, str]:
+    """Top-level valueless ``name: type`` AnnAssigns — the code-node INPUT
+    declaration convention (an AnnAssign WITH a value is an assignment, not a
+    declaration — see ``_is_transform_code``'s F10 precedent)."""
+    return {
+        stmt.target.id: ast.unparse(stmt.annotation)
+        for stmt in tree.body
+        if isinstance(stmt, ast.AnnAssign) and stmt.value is None and isinstance(stmt.target, ast.Name)
+    }
+
+
+def _result_assignments(tree: ast.Module) -> list[ast.AST]:
+    """Every construct that assigns or mutates ``result``.
+
+    Deliberately the target WALK, not just direct Name targets, so the
+    subscript mutation ``result["k"] = v`` counts: a literal dict followed by a
+    mutation must ship ``keys=None`` (a strict Name-target reading would ship a
+    keys list missing ``k`` — quiet rows that LIE). A walrus counts too. A
+    valueless ``result:`` AnnAssign is an INPUT declaration by the code-node
+    convention — neither an assignment nor an annotation source.
+    """
+    found: list[ast.AST] = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.AnnAssign) and n.value is None:
+            continue
+        if "result" in _assigned_names(n) or (
+            isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name) and n.target.id == "result"
+        ):
+            found.append(n)
+    return found
+
+
+def _name_in_target(target: ast.AST, name: str) -> bool:
+    return any(isinstance(leaf, ast.Name) and leaf.id == name for leaf in ast.walk(target))
+
+
+def _result_shape_uncertain(tree: ast.Module) -> bool:
+    """Mutation/rebinding channels OUTSIDE plain assignments.
+
+    Any of these makes a literal keys list unreliable, so ``keys`` ships None
+    (the annotation still ships): a method call or ANY attribute access on
+    ``result`` (``result.update(...)`` / ``.pop()`` — distinguishing mutating
+    from pure methods would need a whitelist; absent beats wrong), ``del
+    result[...]``, and rebinding via ``for``/``with``/comprehension/``match
+    ... as``. Aliasing (``r = result; r.update(...)``) is statically invisible
+    — accepted residual.
+    """
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "result":
+            return True
+        if isinstance(n, ast.Delete) and any(_name_in_target(t, "result") for t in n.targets):
+            return True
+        if isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)) and _name_in_target(n.target, "result"):
+            return True
+        if isinstance(n, (ast.With, ast.AsyncWith)) and any(
+            item.optional_vars is not None and _name_in_target(item.optional_vars, "result") for item in n.items
+        ):
+            return True
+        if isinstance(n, ast.MatchAs) and n.name == "result":
+            return True
+    return False
+
+
+def _result_annotation(assignments: list[ast.AST]) -> str | None:
+    """The authored ``result: T = ...`` annotation when T is a simple name;
+    subscripted/exotic annotations ship None (fail-closed)."""
+    for n in assignments:
+        if (
+            isinstance(n, ast.AnnAssign)
+            and isinstance(n.target, ast.Name)
+            and n.target.id == "result"
+            and isinstance(n.annotation, ast.Name)
+        ):
+            return n.annotation.id
+    return None
+
+
+def _key_type(value: ast.expr, inputs: dict[str, str]) -> str | None:
+    """Best-effort type of one literal-dict value (D8) — never guess."""
+    if isinstance(value, ast.Constant):
+        # A literal None reads as the value "None", not the class "NoneType".
+        return "None" if value.value is None else type(value.value).__name__
+    if isinstance(value, ast.JoinedStr):
+        return "str"
+    if isinstance(value, ast.Name):
+        return inputs.get(value.id)
+    if isinstance(value, ast.Dict):
+        return "dict"
+    if isinstance(value, ast.List):
+        return "list"
+    return None
+
+
+def _literal_dict_keys(assignments: list[ast.AST], inputs: dict[str, str]) -> list[RFResultKey] | None:
+    """Keys ONLY when the sole assignment binds the NAME ``result`` to a
+    non-empty literal dict with all-string keys; anything else → None (an
+    empty literal is almost always a to-be-mutated accumulator)."""
+    if len(assignments) != 1:
+        return None
+    n = assignments[0]
+    if isinstance(n, ast.Assign):
+        named = any(isinstance(t, ast.Name) and t.id == "result" for t in n.targets)
+        value: ast.expr | None = n.value
+    elif isinstance(n, ast.AnnAssign):
+        named = isinstance(n.target, ast.Name) and n.target.id == "result"
+        value = n.value
+    else:
+        return None
+    if not named or not isinstance(value, ast.Dict) or not value.keys:
+        return None
+    keys: list[RFResultKey] = []
+    for k, v in zip(value.keys, value.values):
+        if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+            return None  # **spread or non-string key — the full list is uncertain
+        keys.append(RFResultKey(name=k.value, data_type=_key_type(v, inputs)))
+    return keys
+
+
+def _shape_from_output_schema(schema: Any, field: str) -> RFOutputShape | None:
+    """The authored shape of a structured-output node (claude-code / llm).
+
+    The ``output_schema`` is authored truth — no inference; ``field`` is where
+    that kind actually writes the parsed value. FAIL-CLOSED: anything but a
+    top-level ``type: object`` schema with a non-empty dict ``properties``
+    ships None (a templated ``${...}`` schema is a string; a non-object schema
+    produces a value whose keys aren't rows). Key types are the schema's OWN
+    vocabulary ("string"/"number"/…) — the authored text, just as code nodes
+    ship their annotation's Python names.
+    """
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return None
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return None
+    keys: list[RFResultKey] = []
+    for name, prop in properties.items():
+        if not isinstance(name, str):
+            return None  # the full key list is uncertain — never partial
+        prop_type = prop.get("type") if isinstance(prop, dict) else None
+        keys.append(RFResultKey(name=name, data_type=prop_type if isinstance(prop_type, str) else None))
+    return RFOutputShape(field=field, data_type="object", keys=keys)
+
+
+def _result_shape_from_code(code: str) -> RFOutputShape | None:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+    assignments = _result_assignments(tree)
+    if not assignments:
+        return None
+    return RFOutputShape(
+        field="result",
+        data_type=_result_annotation(assignments),
+        keys=None if _result_shape_uncertain(tree) else _literal_dict_keys(assignments, _input_annotations(tree)),
+    )

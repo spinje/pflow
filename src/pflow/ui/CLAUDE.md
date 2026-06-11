@@ -120,6 +120,30 @@ item / progress-log entry — read those before rendering chips/groups/batches):
   unrecognized ships `False`). The frontend MUST read this fact, never re-derive
   it (it cannot — it needs the AST). Mutually exclusive with the CONDITION role
   by construction (a `next`-setter is never a transform).
+- **`RFNode.output_shape`** (TRANSFORM L2, 2026-06-10): the authored shape of
+  the node's structured output. `shape.field` names the port it describes —
+  where the kind actually WRITES: `"result"` for code (AST-extracted,
+  `_result_shape_from_code`: multiple assignments, mutations — incl.
+  `result.update()`/`del`/`for`-rebinding — empty/non-literal dicts all ship
+  `keys=None`, never a partial list) and structured claude-code
+  (`output_schema` → parsed value in `result`); `"response"` for structured
+  llm (its parsed value lands in `response`, never `result` —
+  `_shape_from_output_schema` is fail-closed: only top-level `type: object`
+  schemas with dict `properties` ship). Key types use each source's OWN
+  vocabulary (Python names from annotations; "string"/"number" from schemas).
+  Ships for ALL code nodes, not just transforms (D9 — display policy is the
+  frontend's). A non-null shape with data_type AND keys null means only
+  "provably assigns `result`". Drives the output rows (`outputRowsFor`,
+  web/src/graph/flow.ts).
+- **`RFEdge.output_path`** (TRANSFORM L2): the ref's sub-path below
+  `output_field` — `${gen.result.ok}` ships `["ok"]`. Cleared together with
+  `output_field` on truncation re-anchoring. The per-key landing uses the FIRST
+  segment only (D7); deeper structure is read-panel territory. `output_path` is
+  part of the renderer's edge-identity key: two sub-key refs in one output
+  `source:` expression keep both edges. Residual lossiness: two sub-key refs
+  sharing one `input_name` in one param string still collapse at BUILD dedup
+  (first path wins — the `input_name` precedent; `Edge.output_path` is
+  `compare=False`, see graph/CLAUDE.md).
 - **Batch truncation:** only ≤2 *representative* item-groups survive in
   `groups`, but `RFNode.batch.items` keeps **all N** descriptors + `batch.count`.
   Map a surviving group to its item by the member ref's

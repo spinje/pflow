@@ -3,13 +3,72 @@
 // contract, so there is no on-demand fetch). Surfaces what the canvas can't: full
 // param values, source file:line, loop/batch/io config.
 
-import { fullValue } from "../utils/format";
+import { fullValue, parseTemplate } from "../utils/format";
 import type { RFEdge, RFNode, SourceRef } from "../types";
 
-function sourceLabel(source: SourceRef | null): string | null {
+export function sourceLabel(source: SourceRef | null): string | null {
   if (!source?.file) return null;
   const name = source.file.split("/").pop() ?? source.file;
   return source.line != null ? `${name}:${source.line}` : name;
+}
+
+/** The outcome → condition table of a decision (branch edges + the reserved "end"
+ *  arm). Shared by ReadPanel (a condition node's panel) and EdgePanel (a selected
+ *  branch/end edge marks ITS row). */
+export function OutcomeTable({ branches, marked }: { branches: RFEdge[]; marked?: string }): JSX.Element | null {
+  if (branches.length === 0) return null;
+  return (
+    // `outcomes` overrides the facts table's fixed 76px label column: outcome
+    // names are long ("process-large") and wrapped mid-word, orphaning the arrow.
+    <dl className="facts outcomes">
+      {branches.map((edge) => (
+        <div className={`fact${edge.id === marked ? " fact-marked" : ""}`} key={edge.id}>
+          {/* an END edge has no label — it is the reserved "end" outcome */}
+          <dt title={edge.label ?? "end"}>→ {edge.label ?? "end"}</dt>
+          <dd>{edge.condition ?? "—"}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** One param's full detail (name + dynamic badge + source file:line + value).
+ *  Shared by ReadPanel (every param) and EdgePanel (the one param a selected data
+ *  edge lands on). `highlightRef` marks the `${ref}` segments belonging to that
+ *  edge's SOURCE, so a multi-ref prompt shows WHICH reference the clicked line is
+ *  (matches `ref` exactly or `ref.<path>` — never a different node's refs). */
+export function ParamBlock({
+  param,
+  highlightRef,
+}: {
+  param: RFNode["params"][number];
+  highlightRef?: string;
+}): JSX.Element {
+  const src = sourceLabel(param.source);
+  const text = fullValue(param.value);
+  return (
+    <div className="read-param">
+      <div className="read-param-head">
+        <span className="read-param-name">{param.name}</span>
+        {param.is_dynamic && <span className="badge badge-dynamic">dynamic</span>}
+        {src && <span className="read-param-source">{src}</span>}
+      </div>
+      <pre className="read-param-value">
+        {highlightRef
+          ? parseTemplate(text).map((seg, i) => {
+              if (!seg.isRef) return seg.text;
+              const ref = seg.text.trim();
+              const mine = ref === highlightRef || ref.startsWith(`${highlightRef}.`);
+              return mine ? (
+                <mark className="ref-mark" key={i}>{`\${${seg.text}}`}</mark>
+              ) : (
+                `\${${seg.text}}`
+              );
+            })
+          : text}
+      </pre>
+    </div>
+  );
 }
 
 function StructuralFacts({ node }: { node: RFNode }): JSX.Element | null {
@@ -24,6 +83,16 @@ function StructuralFacts({ node }: { node: RFNode }): JSX.Element | null {
     rows.push(["batch", `${node.batch.parallel ? "parallel, " : ""}over ${over} as \`${node.batch.as_name}\``]);
   }
   if (node.unexpanded) rows.push(["unexpanded", node.unexpanded]);
+  // The authored output shape, in full — the canvas's output rows show one
+  // level (D7); the panel carries every key + type, labeled by the shape's own
+  // port (`result` / `response`). "—" = unknown, the same convention as the
+  // branch-condition table below.
+  if (node.output_shape) {
+    rows.push([node.output_shape.field, node.output_shape.data_type ?? "—"]);
+    for (const key of node.output_shape.keys ?? []) {
+      rows.push([`${node.output_shape.field}.${key.name}`, key.data_type ?? "—"]);
+    }
+  }
   if (rows.length === 0) return null;
   return (
     <dl className="facts">
@@ -40,12 +109,18 @@ function StructuralFacts({ node }: { node: RFNode }): JSX.Element | null {
 export function ReadPanel({
   node,
   branches = [],
+  reads = [],
   onClose,
 }: {
   node: RFNode;
   // The node's outgoing branch edges (GraphView filters the contract) — the
   // untruncated home of the outcome → condition table on a condition node.
   branches?: RFEdge[];
+  // Full observed read paths OUT of this node (`output_field[.path…]` joined,
+  // from its data-flow edges, deduped by GraphView). The canvas rows land on
+  // the FIRST path segment (D7); the panel is the untruncated home — a
+  // `${gen.result.a.b}` read shows here as `result.a.b`.
+  reads?: string[];
   onClose: () => void;
 }): JSX.Element {
   const src = sourceLabel(node.source);
@@ -72,30 +147,22 @@ export function ReadPanel({
 
       <StructuralFacts node={node} />
 
-      {branches.length > 0 && (
+      {reads.length > 0 && (
         <dl className="facts">
-          {branches.map((edge) => (
-            <div className="fact" key={edge.id}>
-              {/* an END edge has no label — it is the reserved "end" outcome */}
-              <dt>→ {edge.label ?? "end"}</dt>
-              <dd>{edge.condition ?? "—"}</dd>
-            </div>
-          ))}
+          <div className="fact">
+            <dt>consumed</dt>
+            <dd>{reads.join(", ")}</dd>
+          </div>
         </dl>
       )}
+
+      <OutcomeTable branches={branches} />
 
       {node.params.length > 0 && (
         <section className="read-panel-params">
           <h3>params</h3>
           {node.params.map((param) => (
-            <div className="read-param" key={param.name}>
-              <div className="read-param-head">
-                <span className="read-param-name">{param.name}</span>
-                {param.is_dynamic && <span className="badge badge-dynamic">dynamic</span>}
-                {sourceLabel(param.source) && <span className="read-param-source">{sourceLabel(param.source)}</span>}
-              </div>
-              <pre className="read-param-value">{fullValue(param.value)}</pre>
-            </div>
+            <ParamBlock param={param} key={param.name} />
           ))}
         </section>
       )}

@@ -7,9 +7,13 @@ import {
   COLLAPSED_GROUP_HEIGHT,
   COLLAPSED_GROUP_WIDTH,
   expandTargets,
+  type FieldReads,
+  type FlowEdge,
   type FlowNode,
   HEADER_HEIGHT,
+  outputRowsFor,
   rowAnchorsFor,
+  SELECTED_EDGE_Z,
 } from "./flow";
 import {
   branchHandle,
@@ -44,6 +48,7 @@ function node(id: string, over: Partial<RFNode> = {}): RFNode {
     is_decision: false,
     is_terminal: false,
     is_transform: false,
+    output_shape: null,
     is_group_host: false,
     unexpanded: null,
     annotations: {},
@@ -65,7 +70,7 @@ function group(id: string, over: Partial<RFGroup> = {}): RFGroup {
 }
 
 function edge(id: string, source: string, target: string, kind: EdgeKind, over: Partial<RFEdge> = {}): RFEdge {
-  return { id, source, target, kind, label: null, output_field: null, input_name: null, shadowed: false, condition: null, ...over };
+  return { id, source, target, kind, label: null, output_field: null, input_name: null, shadowed: false, condition: null, output_path: [], ...over };
 }
 
 const DETAILED: BuildOptions = { density: "detailed", direction: "LR", collapsed: new Set() };
@@ -290,6 +295,257 @@ describe("buildFlow — data-flow lines land on param rows (H6)", () => {
     };
     const { edges } = buildFlow(g, DETAILED);
     expect(edges.find((e) => e.id === "e0")?.targetHandle).toBe(NODE_IN);
+  });
+});
+
+describe("outputRowsFor — the output-row composition (D2/D3/D4)", () => {
+  const reads = (m: Record<string, FieldReads>): Map<string, FieldReads> => new Map(Object.entries(m));
+  const shape = (keys: Array<[string, string | null]> | null, dataType: string | null = "dict") => ({
+    field: "result",
+    data_type: dataType,
+    keys: keys?.map(([name, t]) => ({ name, data_type: t })) ?? null,
+  });
+
+  it("wholesale read + authored keys: parent row renders, keys nest under it (D2)", () => {
+    const n = node("g", { output_shape: shape([["summary", "str"], ["n", "int"]]) });
+    const rows = outputRowsFor(n, reads({ result: { bare: true, subKeys: ["summary"] } }));
+    expect(rows).toEqual([
+      { field: "result", label: "result", dataType: "dict", quiet: false, nested: false },
+      { field: "result.summary", label: "summary", dataType: "str", quiet: false, nested: true },
+      { field: "result.n", label: "n", dataType: "int", quiet: true, nested: true },
+    ]);
+  });
+
+  it("no bare read + keys known: flat FULL-PATH rows, no parent (D3)", () => {
+    const n = node("g", { output_shape: shape([["ok", "bool"], ["rounds", "int"]]) });
+    const rows = outputRowsFor(n, reads({ result: { bare: false, subKeys: ["ok"] } }));
+    expect(rows).toEqual([
+      { field: "result.ok", label: "result.ok", dataType: "bool", quiet: false, nested: false },
+      { field: "result.rounds", label: "result.rounds", dataType: "int", quiet: true, nested: false },
+    ]);
+  });
+
+  it("authored keys with ZERO readers: quiet shape documentation (D4)", () => {
+    const n = node("g", { output_shape: shape([["a", "str"]]) });
+    const rows = outputRowsFor(n); // no observed reads at all
+    expect(rows).toEqual([{ field: "result.a", label: "result.a", dataType: "str", quiet: true, nested: false }]);
+  });
+
+  it("keys unknown: parent row + observed sub-reads nested (run-validate's case)", () => {
+    const n = node("g"); // output_shape: null — a plain code node, shape not provable
+    const rows = outputRowsFor(n, reads({ result: { bare: false, subKeys: ["ok", "round"] } }));
+    expect(rows).toEqual([
+      { field: "result", label: "result", dataType: null, quiet: true, nested: false },
+      { field: "result.ok", label: "ok", dataType: null, quiet: false, nested: true },
+      { field: "result.round", label: "round", dataType: null, quiet: false, nested: true },
+    ]);
+  });
+
+  it("an observed-only key ABSENT from the authored shape still gets an active row (both cases)", () => {
+    const n = node("g", { output_shape: shape([["a", "str"]]) });
+    // flat case (no bare read): the stale-shape read still lands on a row
+    expect(outputRowsFor(n, reads({ result: { bare: false, subKeys: ["mystery"] } }))).toContainEqual({
+      field: "result.mystery",
+      label: "result.mystery",
+      dataType: null,
+      quiet: false,
+      nested: false,
+    });
+    // parent-row case (bare read): same key, nested
+    expect(outputRowsFor(n, reads({ result: { bare: true, subKeys: ["mystery"] } }))).toContainEqual({
+      field: "result.mystery",
+      label: "mystery",
+      dataType: null,
+      quiet: false,
+      nested: true,
+    });
+  });
+
+  it("non-result fields keep single-row behavior and gain sub-rows on sub-reads", () => {
+    const n = node("g");
+    expect(outputRowsFor(n, reads({ stdout: { bare: true, subKeys: [] } }))).toEqual([
+      { field: "stdout", label: "stdout", dataType: null, quiet: false, nested: false },
+    ]);
+    expect(outputRowsFor(n, reads({ stdout: { bare: false, subKeys: ["x"] } }))).toEqual([
+      { field: "stdout", label: "stdout", dataType: null, quiet: true, nested: false },
+      { field: "stdout.x", label: "x", dataType: null, quiet: false, nested: true },
+    ]);
+  });
+
+  it("no outputs at all: no rows", () => {
+    expect(outputRowsFor(node("g"))).toEqual([]);
+  });
+
+  it("a response-field shape (structured llm) puts rows on `response`, never `result`", () => {
+    // The shape names its own port: llm's structured output lands on `response`
+    // (the Python side sets field per kind) — rows, quiet flags, and key union
+    // all follow shape.field, so a `${ask.response.risk}` read lands correctly.
+    const n = node("ask", {
+      kind: "llm",
+      output_shape: { field: "response", data_type: "object", keys: [{ name: "risk", data_type: "string" }] },
+    });
+    expect(outputRowsFor(n)).toEqual([
+      { field: "response.risk", label: "response.risk", dataType: "string", quiet: true, nested: false },
+    ]);
+    expect(outputRowsFor(n, reads({ response: { bare: false, subKeys: ["risk"] } }))).toEqual([
+      { field: "response.risk", label: "response.risk", dataType: "string", quiet: false, nested: false },
+    ]);
+  });
+});
+
+describe("buildFlow — per-key landing (output_path → the exact key row)", () => {
+  const shaped = { field: "result", data_type: "dict", keys: [{ name: "ok", data_type: "bool" }] };
+  const graph: RFGraph = {
+    nodes: [
+      node("gen", { output_shape: shaped }),
+      node("use", { params: [{ name: "p", value: "${gen.result.ok}", is_dynamic: true, source: null }] }),
+    ],
+    edges: [edge("e0", "gen", "use", "data_flow", { output_field: "result", input_name: "p", output_path: ["ok"] })],
+    groups: [],
+  };
+
+  it("a sub-key ref leaves its exact key row (advanced)", () => {
+    const { edges } = buildFlow(graph, DETAILED);
+    expect(edges.find((e) => e.id === "e0")?.sourceHandle).toBe(outputHandle("result.ok"));
+  });
+
+  it("the edge scan classifies a sub-read as NOT bare — real edges compose the flat D3 rows", () => {
+    // The seam between the edge scan and outputRowsFor: a node read ONLY via
+    // `${gen.result.ok}` must take the wrapper-collapse shape — no parent
+    // `result` row. (Mutation-verified gap: marking sub-reads as bare passed
+    // every prior test, because the unit matrix injects FieldReads directly.)
+    const { nodes } = buildFlow(graph, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected the gen leaf");
+    expect(leaf.data.outputRows).toEqual([
+      { field: "result.ok", label: "result.ok", dataType: "bool", quiet: false, nested: false },
+    ]);
+  });
+
+  it("a 2-deep path lands on its FIRST segment's row (D7)", () => {
+    const g: RFGraph = {
+      ...graph,
+      nodes: [
+        node("gen", { output_shape: shaped }),
+        node("use", { params: [{ name: "p", value: "${gen.result.a.b}", is_dynamic: true, source: null }] }),
+      ],
+      edges: [edge("e0", "gen", "use", "data_flow", { output_field: "result", input_name: "p", output_path: ["a", "b"] })],
+    };
+    const { edges } = buildFlow(g, DETAILED);
+    // "a" is observed-only (not in the authored shape) — it still grows a row (union).
+    expect(edges.find((e) => e.id === "e0")?.sourceHandle).toBe(outputHandle("result.a"));
+  });
+
+  it("a bare (wholesale) ref lands on the parent row, never decomposed (D6)", () => {
+    const g: RFGraph = {
+      ...graph,
+      edges: [edge("e0", "gen", "use", "data_flow", { output_field: "result", input_name: "p", output_path: [] })],
+    };
+    const { edges } = buildFlow(g, DETAILED);
+    expect(edges.find((e) => e.id === "e0")?.sourceHandle).toBe(outputHandle("result"));
+  });
+
+  it("rows hidden (beautiful, unexpanded): node-level fallback, never a missing handle", () => {
+    const { edges } = buildFlow(graph, COMPACT);
+    expect(edges.find((e) => e.id === "e0")?.sourceHandle).toBe(NODE_OUT);
+  });
+
+  it("D5 invariant: authored keys with NO reading edges produce quiet rows and ZERO lines", () => {
+    const g: RFGraph = { nodes: [node("gen", { output_shape: shaped })], edges: [], groups: [] };
+    const { nodes, edges } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected the leaf");
+    // The composition is fully determined: one flat quiet row, nothing else.
+    expect(leaf.data.outputRows).toEqual([
+      { field: "result.ok", label: "result.ok", dataType: "bool", quiet: true, nested: false },
+    ]);
+    // The input graph has zero edges of ANY kind — nothing may be synthesized.
+    expect(edges).toHaveLength(0);
+  });
+});
+
+describe("buildFlow — plain-param reads correct the quiet claim (no edges, no lines)", () => {
+  // `prompt: ${gen.result.ok}` forms NO data-flow edge, so edge-derived quiet
+  // wrongly claimed "unconsumed" for prompt-fed keys (user decision 2026-06-10:
+  // the param-text scan). The scan only ever flips quiet / extends key unions —
+  // it must not create rows or lines.
+  const shaped = {
+    field: "result",
+    data_type: "dict",
+    keys: [
+      { name: "ok", data_type: "bool" },
+      { name: "n", data_type: "int" },
+    ],
+  };
+
+  it("a sibling prompt ref un-quiets its key row — and still draws NO line (D5)", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("gen", { output_shape: shaped }),
+        node("use", {
+          kind: "llm",
+          params: [{ name: "prompt", value: "Summarize ${gen.result.ok}", is_dynamic: true, source: null }],
+        }),
+      ],
+      edges: [],
+      groups: [],
+    };
+    const { nodes, edges } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected gen");
+    expect(leaf.data.outputRows).toEqual([
+      { field: "result.ok", label: "result.ok", dataType: "bool", quiet: false, nested: false },
+      { field: "result.n", label: "result.n", dataType: "int", quiet: true, nested: false },
+    ]);
+    expect(edges.filter((e) => e.data?.kind === "data_flow")).toHaveLength(0);
+  });
+
+  it("never creates a new field row (no edge + no shape → no row = no claim)", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("gen"),
+        node("use", { params: [{ name: "p", value: "${gen.stdout}", is_dynamic: true, source: null }] }),
+      ],
+      edges: [],
+      groups: [],
+    };
+    const { nodes } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected gen");
+    expect(leaf.data.outputRows).toEqual([]);
+  });
+
+  it("scope-aware: a same-named node in ANOTHER scope is not marked", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("gen", { output_shape: shaped, parent: "g0" }),
+        node("use", { params: [{ name: "p", value: "${gen.result.ok}", is_dynamic: true, source: null }] }),
+      ],
+      edges: [],
+      groups: [group("g0", { kind: "workflow", members: ["gen"] })],
+    };
+    const { nodes } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected gen");
+    expect(leaf.data.outputRows.every((r) => r.quiet)).toBe(true);
+  });
+
+  it("the reader's batch alias never reads a sibling that shares its name", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("item", { output_shape: shaped }),
+        node("use", {
+          batch: { parallel: false, dynamic: true, as_name: "item", source_ref: "${rows}", count: null, items: null },
+          params: [{ name: "p", value: "${item.result.ok}", is_dynamic: true, source: null }],
+        }),
+      ],
+      edges: [],
+      groups: [],
+    };
+    const { nodes } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "item");
+    if (leaf?.type !== "node") throw new Error("expected item");
+    expect(leaf.data.outputRows.every((r) => r.quiet)).toBe(true);
   });
 });
 
@@ -962,6 +1218,8 @@ describe("buildFlow — HANDLE-TYPE INVARIANT (the recurring silent-edge-drop bu
       edge("bind", "feeder", "inA", "data_flow"), // → portTargetHandle (TARGET) — the bug case
       edge("feed", "inA", "consumer", "data_flow", { input_name: "x" }), // portHandle (src) → paramHandle (tgt)
       edge("out", "consumer", "dec", "data_flow", { output_field: "result" }), // outputHandle (src)
+      // outputHandle on a dotted KEY-ROW field ("o:result.ok") — the per-key landing's scheme
+      edge("sub", "consumer", "dec", "data_flow", { output_field: "result", output_path: ["ok"] }),
       edge("seq", "consumer", "dec", "sequential"), // NODE_OUT/NODE_IN
       edge("br1", "dec", "a", "branch", { label: "yes" }), // branchHandle (src)
       edge("br2", "dec", "b", "branch", { label: "no" }),
@@ -1566,5 +1824,148 @@ describe("focus-expansion — beautiful cards expand to rows (decided 2026-06-09
     const { edges: es } = buildFlow(g, COMPACT);
     expect(es.find((e) => e.id === "bind")?.label).toBeUndefined(); // io binding — quiet
     expect(es.find((e) => e.id === "leafy")?.label).toBe("o → x"); // leaf-to-leaf keeps it
+  });
+});
+
+describe("applyFocus — selecting an EDGE (edge-click selection, 2026-06-10)", () => {
+  // a feeds b twice (x, y) and c once; a → b is also the sequential trunk. The
+  // clicked CONNECTION is the subject: only that edge lights, its endpoints stay
+  // full-strength, and everything else — including the endpoints' OTHER edges — dims.
+  const graph: RFGraph = {
+    nodes: [
+      node("a"),
+      node("b", {
+        params: [
+          { name: "x", value: "${a.o}", is_dynamic: true, source: null },
+          { name: "y", value: "${a.p}", is_dynamic: true, source: null },
+        ],
+      }),
+      node("c", { params: [{ name: "z", value: "${a.o}", is_dynamic: true, source: null }] }),
+    ],
+    edges: [
+      edge("e_seq", "a", "b", "sequential"),
+      edge("e_ab1", "a", "b", "data_flow", { output_field: "o", input_name: "x" }),
+      edge("e_ab2", "a", "b", "data_flow", { output_field: "p", input_name: "y" }),
+      edge("e_ac", "a", "c", "data_flow", { output_field: "o", input_name: "z" }),
+    ],
+    groups: [],
+  };
+  const find = (r: { edges: FlowEdge[] }, id: string): FlowEdge => r.edges.find((e) => e.id === id)!;
+
+  it("a selected CONTROL edge gets selected + zIndex (the identity-bailout case: nothing else in its compare tuple changes)", () => {
+    const built = buildFlow(graph, DETAILED);
+    const focused = applyFocus(built.nodes, built.edges, "e_seq");
+    const sel = find(focused, "e_seq");
+    expect(sel.data?.selected).toBe(true);
+    expect(sel.zIndex).toBe(SELECTED_EDGE_Z);
+    expect(sel.className ?? "").not.toContain("edge-dimmed");
+  });
+
+  it("only the connection lights: endpoints stay full-strength, their OTHER edges dim, no node wears the ring", () => {
+    const built = buildFlow(graph, DETAILED);
+    const focused = applyFocus(built.nodes, built.edges, "e_seq");
+    const dimmedOf = (id: string): boolean | null => {
+      const n = focused.nodes.find((x) => x.id === id);
+      return n && n.type !== "end" ? n.data.dimmed : null;
+    };
+    expect(dimmedOf("a")).toBe(false);
+    expect(dimmedOf("b")).toBe(false);
+    expect(dimmedOf("c")).toBe(true);
+    expect(find(focused, "e_ab1").className).toContain("edge-dimmed");
+    expect(find(focused, "e_ab1").data?.dimmed).toBe(true); // R10: pills dim via data
+    expect(find(focused, "e_ac").className).toContain("edge-dimmed");
+    expect(focused.nodes.every((n) => n.type === "end" || !n.data.focused)).toBe(true);
+  });
+
+  it("moving focus from the edge to its endpoint clears selected/zIndex (re-processing decorated output)", () => {
+    const built = buildFlow(graph, DETAILED);
+    const first = applyFocus(built.nodes, built.edges, "e_seq");
+    const second = applyFocus(first.nodes, first.edges, "a");
+    const e = find(second, "e_seq");
+    expect(e.data?.selected).toBeUndefined();
+    expect(e.zIndex).toBeUndefined();
+  });
+
+  it("a selected DATA edge draws solid at both ends: focusEnd explicitly cleared (the ternary would default it to 'target')", () => {
+    const built = buildFlow(graph, DETAILED);
+    // sanity: a NODE focus sets the directional fade on the same edge
+    expect(find(applyFocus(built.nodes, built.edges, "a"), "e_ab1").data?.focusEnd).toBe("source");
+    const sel = find(applyFocus(built.nodes, built.edges, "e_ab1"), "e_ab1");
+    expect(sel.data?.selected).toBe(true);
+    expect(sel.data?.focusEnd).toBeUndefined();
+  });
+
+  it("a selected shadowed edge sheds edge-shadowed (35% opacity would fight bright+halo) — and gets it back on clear", () => {
+    const g: RFGraph = {
+      nodes: [node("a"), node("b")],
+      edges: [edge("e_sh", "a", "b", "sequential", { shadowed: true })],
+      groups: [],
+    };
+    const built = buildFlow(g, DETAILED);
+    expect(find({ edges: built.edges }, "e_sh").className).toContain("edge-shadowed");
+    expect(find(applyFocus(built.nodes, built.edges, "e_sh"), "e_sh").className).not.toContain("edge-shadowed");
+    expect(find(applyFocus(built.nodes, built.edges, null), "e_sh").className).toContain("edge-shadowed");
+  });
+
+  it("beautiful: a default-hidden data edge stays revealed under its OWN focus; siblings stay hidden", () => {
+    const built = buildFlow(graph, COMPACT);
+    const focused = applyFocus(built.nodes, built.edges, "e_ac");
+    expect(find(focused, "e_ac").hidden).toBe(false);
+    expect(find(focused, "e_ab1").hidden).toBe(true);
+  });
+
+  it("selecting an LR branch edge reveals ITS condition on the SOURCE's row (the selected edge suppresses its own pill)", () => {
+    const g: RFGraph = {
+      nodes: [node("dec", { kind: "code", is_decision: true }), node("t1"), node("t2")],
+      edges: [
+        edge("br1", "dec", "t1", "branch", { label: "go", condition: "if ok" }),
+        edge("br2", "dec", "t2", "branch", { label: "stop", condition: "else" }),
+      ],
+      groups: [],
+    };
+    const built = buildFlow(g, DETAILED); // LR
+    const focused = applyFocus(built.nodes, built.edges, "br1");
+    const dec = focused.nodes.find((n) => n.id === "dec");
+    expect(dec?.type === "node" ? dec.data.revealedConditions : undefined).toEqual({ go: "if ok" });
+  });
+});
+
+describe("expandTargets — edge focus expands exactly the two endpoints", () => {
+  // Endpoints go straight into the OUTPUT set, never into `foci` — seeding foci
+  // would expand both endpoints' entire data neighborhoods (the R6 trap).
+  const graph: RFGraph = {
+    nodes: [
+      node("a"),
+      node("b", { params: [{ name: "x", value: "${a.o}", is_dynamic: true, source: null }] }),
+      node("c", { params: [{ name: "y", value: "${a.o}", is_dynamic: true, source: null }] }),
+      node("d", { params: [{ name: "z", value: "${a.o}", is_dynamic: true, source: null }] }),
+    ],
+    edges: [
+      edge("e_seq", "a", "b", "sequential"),
+      edge("e_ab", "a", "b", "data_flow", { output_field: "o", input_name: "x" }),
+      edge("e_ac", "a", "c", "data_flow", { output_field: "o", input_name: "y" }),
+      edge("e_ad", "a", "d", "data_flow", { output_field: "o", input_name: "z" }),
+    ],
+    groups: [],
+  };
+
+  it("a data-edge focus expands {source, target} — NOT the endpoints' other data partners", () => {
+    expect([...expandTargets(graph, "e_ab")].sort()).toEqual(["a", "b"]);
+  });
+
+  it("a control-edge focus expands nothing (node-level endpoints already read fine)", () => {
+    expect(expandTargets(graph, "e_seq").size).toBe(0);
+  });
+
+  it("an IO-port endpoint contributes its OWNER (the line must land on a rendered row)", () => {
+    const g: RFGraph = {
+      nodes: [
+        node("p", { kind: "input", io: { data_type: "string", required: true } }),
+        node("b", { params: [{ name: "x", value: "${p}", is_dynamic: true, source: null }] }),
+      ],
+      edges: [edge("e_pb", "p", "b", "data_flow", { input_name: "x" })],
+      groups: [group("w_in", { kind: "input_wrapper", members: ["p"] })],
+    };
+    expect([...expandTargets(g, "e_pb")].sort()).toEqual(["b", "w_in"]);
   });
 });

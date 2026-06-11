@@ -142,7 +142,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     node,
     density,
     direction,
-    outputFields,
+    outputRows,
     branchLabels,
     branchConditions,
     revealedConditions,
@@ -217,7 +217,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (node.unexpanded) classes.push("unexpanded");
   if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
   const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
-  const hasBody = showBody && (node.params.length > 0 || outputFields.length > 0 || node.loop != null);
+  const hasBody = showBody && (node.params.length > 0 || outputRows.length > 0 || node.loop != null);
 
   return (
     <div ref={rootRef} className={classes.join(" ")} style={kindStyle}>
@@ -270,10 +270,24 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
               </span>
             </div>
           ))}
-          {outputFields.map((field) => (
-            <div className="param-row output-row" key={`o:${field}`}>
-              <span className="param-name out">→ {field}</span>
-              <Handle id={outputHandle(field)} type="source" position={Position.Right} className="handle out-handle" />
+          {/* Output rows (outputRowsFor, flow.ts): name + faint `: type` (D1).
+              A NESTED row indents under its parent (the wholesale-read case);
+              a QUIET row is authored-but-unread — faint, grey dot, and no line
+              can reach it (lines come only from edges). Every row still renders
+              its handle: the landing ladder only names rows that exist, and a
+              quiet row never receives an edge by construction (D4/D5). */}
+          {outputRows.map((row) => (
+            <div
+              className={`param-row output-row${row.nested ? " nested" : ""}${row.quiet ? " quiet" : ""}`}
+              key={`o:${row.field}`}
+            >
+              {/* The title carries field AND type: a long label ellipsizes the
+                  faint `: type` suffix away, so hover must recover both. */}
+              <span className="param-name out" title={row.dataType ? `${row.field}: ${row.dataType}` : row.field}>
+                {row.nested ? "·" : "→"} {row.label}
+                {row.dataType != null && <span className="row-type">: {row.dataType}</span>}
+              </span>
+              <Handle id={outputHandle(row.field)} type="source" position={Position.Right} className="handle out-handle" />
             </div>
           ))}
           {/* The ↻ loop-rule rows — the node's authored loop config as rows, styled

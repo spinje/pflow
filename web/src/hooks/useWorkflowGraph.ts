@@ -138,10 +138,16 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
 
   // The last focused node — the anchor for expansion re-layouts. Kept after focus
   // clears so collapsing back is anchored on the same node the user was looking at.
+  // An EDGE focus anchors on the edge's rendered SOURCE endpoint: an edge id
+  // resolves to no node position (absolutePosition → null), so the camera would
+  // silently stop compensating and the clicked line would jump on expansion.
+  // The flow edge's `source` (not data.from) is always a rendered id.
   const anchorRef = useRef<string | null>(null);
   useEffect(() => {
-    if (focus) anchorRef.current = focus;
-  }, [focus]);
+    if (!focus) return;
+    const focusedEdge = built.edges.find((e) => e.id === focus);
+    anchorRef.current = focusedEdge ? focusedEdge.source : focus;
+  }, [focus, built]);
   // The previous layout + the view it was computed for. Anchoring applies only when
   // the SAME view re-laid out because of an expansion change — a workflow/direction/
   // density/collapse change has its own viewport semantics (GraphView's fit effect).

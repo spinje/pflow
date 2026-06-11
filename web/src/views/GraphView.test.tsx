@@ -46,6 +46,7 @@ const GRAPH: RFGraph = {
       is_terminal: false,
       is_group_host: false,
     is_transform: false,
+    output_shape: null,
       unexpanded: null,
       annotations: {},
     },
@@ -64,6 +65,7 @@ const GRAPH: RFGraph = {
       is_terminal: true,
       is_group_host: false,
     is_transform: false,
+    output_shape: null,
       unexpanded: null,
       annotations: {},
     },
@@ -79,6 +81,7 @@ const GRAPH: RFGraph = {
       input_name: "command",
       shadowed: false,
       condition: null,
+      output_path: [],
     },
   ],
   groups: [],
@@ -111,6 +114,25 @@ describe("GraphView mount", () => {
     // Advanced adds the body: the dynamic param's ${ref} connection chip.
     fireEvent.click(screen.getByText("advanced"));
     await waitFor(() => expect(screen.getByText("greet.stdout")).toBeTruthy());
+  });
+
+  it("read panel shows the full consumed paths for the clicked producer", async () => {
+    // The panel is the untruncated home of observed reads (D7: canvas rows land
+    // one level): clicking a producer lists `output_field[.path…]` full-depth.
+    const deepRead: RFGraph = {
+      ...GRAPH,
+      edges: [
+        { ...GRAPH.edges[0]! },
+        { ...GRAPH.edges[0]!, id: "e1", output_field: "result", output_path: ["a", "b"], input_name: null },
+      ],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(deepRead);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("say hi")); // select the producer (greet)
+    await waitFor(() => expect(screen.getByText("consumed")).toBeTruthy());
+    expect(screen.getByText("stdout, result.a.b")).toBeTruthy();
   });
 
   it("shows a structured banner on a real ApiError, not a blank canvas", async () => {

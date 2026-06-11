@@ -181,7 +181,6 @@ export const GradientEdge = memo(function GradientEdge({
   sourcePosition,
   targetPosition,
   data,
-  selected,
   label,
 }: EdgeProps<FlowEdge>): JSX.Element {
   // A post-layout back rail (assignBackRails — a backward branch/error edge routed
@@ -221,8 +220,27 @@ export const GradientEdge = memo(function GradientEdge({
           ))}
         </linearGradient>
       </defs>
-      <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: selected ? METRICS.edgeStroke + 1 : METRICS.edgeStroke }} />
-      {(label || showCondition) && (
+      {/* SELECTED (edge-click, applyFocus-written data.selected — RF's native
+          `selected` prop is deliberately unused: deep links select too, and two
+          styling truths drift): a halo under-stroke in the edge's own paint, the
+          edge analog of the node focus ring. INLINE stroke is load-bearing — RF's
+          base stylesheet strokes `.selected` paths grey, and inline wins. */}
+      {data?.selected && (
+        <path
+          d={edgePath}
+          fill="none"
+          stroke={`url(#${gradientId})`}
+          strokeWidth={METRICS.edgeStroke * 3.5}
+          strokeOpacity={0.25}
+          strokeLinecap="round"
+          className="edge-halo"
+        />
+      )}
+      <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: METRICS.edgeStroke }} />
+      {/* A SELECTED edge suppresses its own floating pills: it is elevated above
+          the EdgeLabelRenderer layer (it would strike through them), and the read
+          panel carries the full outcome/condition anyway. */}
+      {(label || showCondition) && !data?.selected && (
         <EdgeLabelRenderer>
           {/* The pill's FILL takes its edge's color via --label-c (error = the semantic
               red, else the target node's color — the line's color where it arrives);
@@ -231,7 +249,7 @@ export const GradientEdge = memo(function GradientEdge({
               fork is the condition node's act) while the fill stays node-colored. */}
           {label && (
             <div
-              className={`edge-label nodrag nopan${isBranchPill ? " branch" : ""}`}
+              className={`edge-label nodrag nopan${isBranchPill ? " branch" : ""}${data?.dimmed ? " label-dimmed" : ""}`}
               style={
                 {
                   transform: `${anchor.selfTranslate} translate(${anchor.x}px, ${anchor.y}px)`,
@@ -256,7 +274,7 @@ export const GradientEdge = memo(function GradientEdge({
               const at = conditionAnchor({ sourceY, targetX, targetY, targetPosition, pathX: labelX, pathY: labelY });
               return (
                 <div
-                  className="edge-label nodrag nopan"
+                  className={`edge-label nodrag nopan${data?.dimmed ? " label-dimmed" : ""}`}
                   title={data.condition}
                   style={
                     {

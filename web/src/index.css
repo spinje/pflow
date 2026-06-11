@@ -25,6 +25,10 @@
   --warn: #f0a07a;
   --danger: #ff6b6b;
   --data-edge: #6fbfa8;
+  /* The SELECTED data line: the bright member of the same green-teal family (hue
+     carries identity, brightness carries state). Provisional — shoot-lab tunes it
+     against transform cyan + shell green neighbors; this var is the one knob. */
+  --data-edge-selected: #8fe8c0;
   --radius: 8px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -445,6 +449,27 @@ button.active {
 .param-name.out {
   color: var(--data-edge);
   margin-left: auto;
+}
+/* Output rows (WorkflowNode `output-row nested|quiet`, `row-type`): a NESTED row
+   indents under its parent (the wholesale-read case); a QUIET row is authored-
+   but-unread shape documentation — faint text + a dimmed dot, no line reaches it;
+   the type is a faint `: type` suffix (the file's own annotation syntax). */
+.output-row.nested .param-name.out {
+  padding-left: 14px;
+}
+.output-row.quiet .param-name.out {
+  color: var(--text-faint);
+}
+.output-row.quiet .react-flow__handle.out-handle {
+  background: var(--text-faint);
+  opacity: 0.45;
+}
+.row-type {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.output-row.quiet .row-type {
+  opacity: 0.7;
 }
 /* the ↻ loop-rule rows (WorkflowNode) — authored loop config as rows (condition,
    then the cap on its own row), amber so it reads "loop RULE", not a data param;
@@ -1114,4 +1139,107 @@ button.active {
   word-break: break-word;
   max-height: 280px;
   overflow: auto;
+}
+
+/* ---- edge selection (EdgePanel + canvas treatment) ---------------------- */
+
+/* A dimmed edge's floating pill dims WITH its line: EdgeLabelRenderer content
+   renders outside .react-flow__edge, so the edge dim opacity can't cascade —
+   the components add this class from EdgeData.dimmed (applyFocus). */
+.label-dimmed {
+  opacity: 0.18;
+}
+
+/* The outcome → condition table (OutcomeTable): outcome names are long, so the
+   facts table's fixed 76px label column wrapped them mid-word and orphaned the
+   arrow. Labels stay on ONE line (ellipsis past half the row; full name on the
+   title tooltip); rows get breathing room and align baseline-to-baseline. */
+.facts.outcomes .fact {
+  margin: 0 -6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  align-items: baseline;
+  gap: 10px;
+}
+.facts.outcomes .fact dt {
+  flex: 0 0 auto;
+  min-width: 76px;
+  max-width: 55%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The selected edge's row in the EdgePanel outcome table. */
+.fact-marked {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  border-radius: 4px;
+}
+
+/* The selected data edge's own ${ref} inside the param value (ParamBlock
+   highlightRef) — which reference of a multi-ref prompt the clicked line IS. */
+.ref-mark {
+  background: color-mix(in srgb, var(--data-edge-selected) 22%, transparent);
+  color: var(--data-edge-selected);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* Endpoint chips: the selected connection's two ends, kind-colored, clickable
+   (navigate focus) — or disabled when the endpoint is hidden inside a collapsed
+   container (visible honesty over a silent no-op). */
+.edge-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.edge-chips-arrow {
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+.edge-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 0;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--chip-c, var(--text)) 8%, var(--bg-node));
+  border: 1px solid color-mix(in srgb, var(--chip-c, var(--text)) 30%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.edge-chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--chip-c, var(--text)) 60%, transparent);
+}
+.edge-chip:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.edge-chip-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.edge-chip-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: color-mix(in srgb, var(--chip-c, var(--text-faint)) 80%, var(--text));
+}
+.edge-chip-static {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  border-style: dashed;
+  cursor: default;
 }

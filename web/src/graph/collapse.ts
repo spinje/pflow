@@ -31,21 +31,32 @@ export function collapsibleGroupIds(graph: RFGraph): string[] {
 
 /** The collapsed set a workflow opens with. `mode` (the `collapse=` param) wins;
  *  otherwise auto: over-budget workflows open fully collapsed, others fully expanded.
- *  `protect` (deep-link targets — node_id or flat id) keeps each target visible by
- *  expanding its whole ancestor chain. */
+ *  `protect` (deep-link targets — node_id, flat id, or a flat EDGE id) keeps each
+ *  target visible by expanding its whole ancestor chain. An edge target protects
+ *  BOTH endpoints: an auto-collapsed endpoint drops/re-anchors the edge out of the
+ *  flow, and the selection invalidation then clears the deep link to a silent no-op. */
 export function initialCollapsed(graph: RFGraph, mode: CollapseMode, protect: readonly (string | null)[]): ReadonlySet<string> {
   const all = collapsibleGroupIds(graph);
   const collapseAll = mode === "all" || (mode === null && graph.nodes.length > AUTO_COLLAPSE_NODE_BUDGET);
   if (!collapseAll) return new Set();
   const set = new Set(all);
   const groupById = new Map(graph.groups.map((g) => [g.id, g]));
-  for (const target of protect) {
-    if (!target) continue;
-    const node = graph.nodes.find((n) => n.ref.node_id === target || n.id === target);
+  const protectNode = (id: string | null | undefined): void => {
+    const node = graph.nodes.find((n) => n.ref.node_id === id || n.id === id);
     let parent = node?.parent ?? null;
     while (parent) {
       set.delete(parent);
       parent = groupById.get(parent)?.parent ?? null;
+    }
+  };
+  for (const target of protect) {
+    if (!target) continue;
+    const edge = graph.edges.find((e) => e.id === target);
+    if (edge) {
+      protectNode(edge.source);
+      protectNode(edge.target);
+    } else {
+      protectNode(target);
     }
   }
   return set;

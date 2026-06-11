@@ -306,6 +306,44 @@
   live-overlay status chips (status joins leftmost). Deck + loop-rule rows + read
   panel unchanged. Plan: `implementation/batch-chip-rail-plan.md`.
 
+- **TRANSFORM Level 2 — output shape + per-key landing (2026-06-10):** a
+  node's card shows WHAT it produces (`RFNode.output_shape`; its `field` names
+  the port it describes — where that kind actually writes). Sources: code
+  nodes via AST (the authored `result:` annotation + literal-dict keys w/
+  types, FAIL-CLOSED: mutations/multi-assign/`result.update()` ship
+  `keys=None`, never a partial list; ships for ALL code nodes, not just
+  transforms), and structured claude-code/llm via their `output_schema`
+  (authored truth, object schemas only — claude-code's value lands in
+  `result`, llm's in `response`, and the shape names the RIGHT one). A sub-key
+  ref (`${gen.result.ok}`) lands on its EXACT key row (`RFEdge.output_path` —
+  first segment only, D7; deeper = read panel). Row composition (`outputRowsFor`,
+  flow.ts) = authored ∪ observed: bare read → parent row + nested `· key` rows
+  (D2); no bare read + keys known → flat `→ result.ok` full-path rows (D3);
+  quiet rows = no reader at all (D4 — plain-param refs form no edges, so a
+  frontend param-text scan (`scanParamReads`) merges sibling prompt/command
+  reads into the observed set; quiet stays truthful; the scan never creates
+  rows or lines — loop-condition refs are the unscanned residual). Wholesale
+  sends never decompose (D6). ONE row list drives render/height/LR-ports/
+  landing by construction. Mermaid byte-identical (`Edge.output_path` is
+  `compare=False` — load-bearing, see graph/CLAUDE.md). Plan:
+  `implementation/transform-l2-plan.md`.
+
+- **Edges SELECT on click + EdgePanel — ✅ DONE (2026-06-10, user-driven; plan + 4-lens
+  review: `implementation/edge-selection-plan.md`):** clicking any edge focuses the
+  CONNECTION — bright same-hue variant (`--data-edge-selected`, lab-tunable) + halo
+  under-stroke + zIndex elevation above the cards it crosses (the interactive answer to
+  edge tunneling), endpoints lit, all else dims (incl. label pills via
+  `EdgeData.dimmed` — they previously glowed over a dimmed canvas), own label
+  suppressed. The read panel explains the connection (5 variants: data with the
+  authored `${ref}` highlighted + file:line, branch/decision-end with the marked
+  outcome table, error semantics, static end, sequential incl. the `shadowed` fact's
+  first user surfacing); endpoint chips navigate (host→representative group) or
+  disable when hidden. `loop:` arcs redirect to their anchor; `io-flow:` edges restyle
+  only. Beautiful: selecting a data edge expands both endpoints so the line lands
+  row-to-row. `focus=<flat edge id>` deep-links work (collapse protects both
+  endpoints' chains); RF native selection neutralized (incl. Backspace-delete).
+  Selected-shade/halo shoot-lab pending; hover highlight is the gated follow-on.
+
 ## Wanted / planned (NOT yet built)
 
 - **LR merge alignment residual:** the merge target sits ~8px off the straight row in LR (no LR

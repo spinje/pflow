@@ -80,13 +80,42 @@ export function resolveNodeFlatId(
 ): string | null {
   if (!graph) return null;
   const match = graph.nodes.find((n) => n.ref.node_id === nodeValue);
-  if (match && renderedIds.has(match.id)) return match.id;
   if (match) {
-    const representative = graph.groups.find(
-      (g) => g.host === match.id && !(g.kind === "batch" && g.members.length === 0),
-    );
-    if (representative && renderedIds.has(representative.id)) return representative.id;
+    const resolved = resolveEndpointFlatId(graph, renderedIds, match.id);
+    if (resolved) return resolved;
   }
   if (renderedIds.has(nodeValue)) return nodeValue; // flat-id fallback
   return null;
+}
+
+/** Resolve a CONTRACT node id (an edge endpoint, a host) to the flat id that is
+ *  actually rendered for it: the node itself, or — for a suppressed group host —
+ *  its representative group (skipping memberless batch shells). Returns null when
+ *  nothing is rendered (hidden inside a collapsed ancestor) — the caller must
+ *  degrade VISIBLY (e.g. a non-clickable chip), never silently focus a ghost id. */
+export function resolveEndpointFlatId(
+  graph: RFGraph,
+  renderedIds: ReadonlySet<string>,
+  contractId: string,
+): string | null {
+  if (renderedIds.has(contractId)) return contractId;
+  const representative = graph.groups.find(
+    (g) => g.host === contractId && !(g.kind === "batch" && g.members.length === 0),
+  );
+  if (representative && renderedIds.has(representative.id)) return representative.id;
+  return null;
+}
+
+/** What an edge CLICK does (pure — GraphView applies it; jsdom renders no edge
+ *  DOM, so the dispatch is tested here, not through clicks). A `loop:` self-arc
+ *  redirects to selecting its render ANCHOR (the flow edge's `source` — a GROUP
+ *  id for a looped sub-workflow, flowing through the container-unit and
+ *  group→host panel paths; never `data.from`, the suppressed host). A synthesized
+ *  `io-flow:` edge has no contract identity: it focuses (restyle) and explicitly
+ *  CLEARS the panel — leaving a stale node panel open beside an unrelated focused
+ *  edge would misdescribe the selection. A contract edge selects fully. */
+export function edgeClickAction(edge: { id: string; source: string }): { focus: string; selectedId: string | null } {
+  if (edge.id.startsWith("loop:")) return { focus: edge.source, selectedId: edge.source };
+  if (edge.id.startsWith("io-flow:")) return { focus: edge.id, selectedId: null };
+  return { focus: edge.id, selectedId: edge.id };
 }

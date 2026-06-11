@@ -81,7 +81,7 @@ export const LoopEdge = memo(function LoopEdge({
       {label && (
         <EdgeLabelRenderer>
           <div
-            className="loop-edge-label nodrag nopan"
+            className={`loop-edge-label nodrag nopan${data?.dimmed ? " label-dimmed" : ""}`}
             style={{ transform: `translate(-50%, -50%) translate(${labelPos.x}px, ${labelPos.y}px)` }}
           >
             {label}

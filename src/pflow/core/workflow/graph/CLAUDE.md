@@ -83,10 +83,13 @@ containers, child input maps, and output maps; then resolve structural and
 data-flow edges. This avoids the legacy Mermaid resolver's partial-read
 ordering trap.
 
-`scope.py` intentionally only contains `refs_in` and `source_refs_in`.
+`scope.py` contains three extractor views over ONE shared walk (they cannot
+drift): `refs_with_path_in` → `(root, first_segment, remaining_segments)` —
+the path-preserving form (`${a.b.c.d}` → `("a", "b", ("c", "d"))`); `refs_in`
+and `source_refs_in` are the legacy `(root, field)` truncations of it and stay
+byte-identical (readability aliases of each other, not distinct extractors).
 Mermaid-ID-dependent `Scope.resolve()` was not moved; build performs structural
-resolution to `NodeId` plus optional output field. `refs_in` is a readability
-alias of `source_refs_in` (identical behavior) — not two distinct extractors.
+resolution to `NodeId` plus optional output field.
 
 `build_graph()` assumes **pre-validated IR**. It is not a validation layer: the
 `WorkflowValidator` pipeline is the enforcement point, and the only production
@@ -110,6 +113,17 @@ when one source feeds a target through multiple roles (e.g. a `params.inputs`
 binding *and* `loop.max_iterations`), the `(source, target)` dedup keeps a single
 edge and only the first role's `input_name` survives. The structural dependency is
 always preserved; only the role label is lossy in that rare multi-role case.
+
+`Edge.output_path` (the ref's sub-path below `output_field`: `${gen.result.ok}`
+→ `("ok",)`) is declared `compare=False` — **load-bearing, do not "fix"**: edge
+dedup is full dataclass equality, so putting the path in identity would turn two
+same-`input_name` sub-key refs into two edges and change Mermaid's edge count
+(goldens break). Out of identity, dedup is byte-identical to before the field
+existed; the first ref's path winning under dedup is the same documented
+lossiness as `input_name` above. Only emission sites 1 (`_add_one_param_input_edges`)
+and 2 (`_connect_source_expression`) set it, behind two guards: never through
+the batch alias, and only when the resolved `output_field` equals the ref's
+first segment.
 
 ## Renderer Notes
 

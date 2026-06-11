@@ -21,7 +21,7 @@ from pflow.core.workflow.graph.model import (
     SourceRef,
     UnexpandedReason,
 )
-from pflow.core.workflow.graph.scope import refs_in, source_refs_in
+from pflow.core.workflow.graph.scope import refs_in, refs_with_path_in
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 
@@ -514,7 +514,7 @@ class _GraphBuilder:
         target = target_inputs.get(input_name, node_id) if input_name is not None else node_id
         if not isinstance(binding, str) or "${" not in binding:
             return
-        for root, ref_field in refs_in(binding):
+        for root, ref_field, ref_path in refs_with_path_in(binding):
             # The batch alias takes precedence over a same-named top-level input: when
             # `as: data` collides with an input also named `data`, an item binding's
             # `${data.x}` must resolve to the batch source, not the input node.
@@ -529,12 +529,20 @@ class _GraphBuilder:
             source, output_field = resolved
             if source == target:
                 continue
+            # The ref's sub-path below the resolved output port: `${gen.result.ok}`
+            # carries ("ok",). Only when the first segment IS the resolved port —
+            # and NEVER through the batch alias: with `as: item` over
+            # `items: ${prep.rows}`, a binding `${item.rows.x}` has first segment
+            # "rows" == the batch source's output_field, but attaching ("x",)
+            # would describe an edge whose source is prep — the wrong node.
+            output_path = ref_path if root != batch_alias and output_field == ref_field else ()
             edge = Edge(
                 source=source,
                 target=target,
                 kind=EdgeKind.DATA_FLOW,
                 output_field=output_field,
                 input_name=input_name,
+                output_path=output_path,
             )
             if edge not in self.edges:
                 self.edges.append(edge)
@@ -622,12 +630,20 @@ class _GraphBuilder:
     def _connect_source_expression(self, source_expr: str, target: NodeId, level: _LevelResult) -> None:
         if not isinstance(source_expr, str) or "${" not in source_expr:
             return
-        for root, ref_field in source_refs_in(source_expr):
+        for root, ref_field, ref_path in refs_with_path_in(source_expr):
             resolved = self._resolve_ref(root, ref_field, level)
             if resolved is None:
                 continue
             source, output_field = resolved
-            self.edges.append(Edge(source=source, target=target, kind=EdgeKind.DATA_FLOW, output_field=output_field))
+            self.edges.append(
+                Edge(
+                    source=source,
+                    target=target,
+                    kind=EdgeKind.DATA_FLOW,
+                    output_field=output_field,
+                    output_path=ref_path if output_field == ref_field else (),
+                )
+            )
 
     def _resolve_ref(self, root: str, field: str | None, level: _LevelResult) -> tuple[NodeId, str | None] | None:
         if root in {"item", "__iteration__"}:

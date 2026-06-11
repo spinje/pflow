@@ -46,7 +46,6 @@ export const DataEdge = memo(function DataEdge({
   sourcePosition,
   targetPosition,
   data,
-  selected,
   label,
 }: EdgeProps<FlowEdge>): JSX.Element {
   const lane = (data?.lane ?? 0) % LANE_COUNT;
@@ -70,7 +69,12 @@ export const DataEdge = memo(function DataEdge({
   const gradientId = `data-grad-${id}`;
   // Gradient axis runs FROM the clicked end TO the far end (solid → hint-faded).
   const fromFocus = focusEnd === "target" ? { x1: targetX, y1: targetY, x2: sourceX, y2: sourceY } : { x1: sourceX, y1: sourceY, x2: targetX, y2: targetY };
-  const stroke = focusEnd ? `url(#${gradientId})` : "var(--data-edge)";
+  // SELECTED (edge-click): the bright member of the same green-teal family — hue
+  // carries identity, brightness carries state (applyFocus clears focusEnd on the
+  // selected edge, so both ends draw solid). RF's native `selected` prop is
+  // deliberately unused: applyFocus-written data.selected is the single styling
+  // truth (deep links select too).
+  const stroke = data?.selected ? "var(--data-edge-selected)" : focusEnd ? `url(#${gradientId})` : "var(--data-edge)";
   return (
     <>
       {focusEnd && (
@@ -81,15 +85,29 @@ export const DataEdge = memo(function DataEdge({
           </linearGradient>
         </defs>
       )}
-      <BaseEdge
-        id={id}
-        path={edgePath}
-        style={{ stroke, strokeWidth: selected ? METRICS.edgeStroke + 1 : METRICS.edgeStroke }}
-      />
-      {label && (
+      {/* Halo under-stroke: the edge analog of the node focus ring, in the edge's
+          own color. INLINE stroke is load-bearing — RF's base stylesheet strokes
+          `.selected` paths grey, and inline wins. */}
+      {data?.selected && (
+        <path
+          d={edgePath}
+          fill="none"
+          stroke="var(--data-edge-selected)"
+          strokeWidth={METRICS.edgeStroke * 3.5}
+          strokeOpacity={0.25}
+          strokeLinecap="round"
+          className="edge-halo"
+        />
+      )}
+      <BaseEdge id={id} path={edgePath} style={{ stroke, strokeWidth: METRICS.edgeStroke }} />
+      {/* A SELECTED edge suppresses its own label (it is elevated above the
+          EdgeLabelRenderer layer; the read panel names the fields); a dimmed
+          edge's label dims with it (pills live outside .react-flow__edge, so the
+          CSS opacity dim can't reach them). */}
+      {label && !data?.selected && (
         <EdgeLabelRenderer>
           <div
-            className="edge-label nodrag nopan"
+            className={`edge-label nodrag nopan${data?.dimmed ? " label-dimmed" : ""}`}
             style={
               {
                 transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,

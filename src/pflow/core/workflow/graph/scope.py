@@ -4,12 +4,13 @@ import re
 
 # Extract refs from INSIDE ``${...}`` blocks only, so literal text (validator-rejected
 # but defensively handled) never produces false positives.  Two-stage scan: find each
-# ``${...}`` block, then within each block capture every ``root`` (optionally
-# ``.field``).  Handles coalesce (``${a.x ?? b.y}`` — two refs per block) in any
-# template context (bindings and output sources alike — ``??`` is a general-purpose
-# template operator, not output-only).  Handles bare refs (``${data}`` — no field).
+# ``${...}`` block, then within each block capture every ``root`` plus its full dotted
+# tail (``.field.sub.deeper`` — zero or more segments).  Handles coalesce
+# (``${a.x ?? b.y}`` — two refs per block) in any template context (bindings and
+# output sources alike — ``??`` is a general-purpose template operator, not
+# output-only).  Handles bare refs (``${data}`` — no field).
 _BRACE_BLOCK_RE = re.compile(r"\$\{([^}]*)\}")
-_REF_IN_BLOCK_RE = re.compile(r"(?:^|[\s?])([a-zA-Z0-9_-]+)(?:\.([a-zA-Z0-9_-]+))?")
+_REF_IN_BLOCK_RE = re.compile(r"(?:^|[\s?])([a-zA-Z0-9_-]+)((?:\.[a-zA-Z0-9_-]+)*)")
 
 
 def refs_in(value: str) -> list[tuple[str, str | None]]:
@@ -25,10 +26,21 @@ def refs_in(value: str) -> list[tuple[str, str | None]]:
 
 def source_refs_in(source: str) -> list[tuple[str, str | None]]:
     """Extract ``(root, field)`` pairs from a template expression."""
+    return [(root, field) for root, field, _ in refs_with_path_in(source)]
+
+
+def refs_with_path_in(value: str) -> list[tuple[str, str | None, tuple[str, ...]]]:
+    """Extract ``(root, first_segment, remaining_segments)`` per template ref.
+
+    The path-preserving variant of :func:`refs_in`: ``${a.b.c.d}`` yields
+    ``("a", "b", ("c", "d"))``; ``${a.b}`` yields ``("a", "b", ())``; a bare
+    ``${a}`` yields ``("a", None, ())``. One shared walk implements all three
+    extractors so they cannot drift.
+    """
     from pflow.runtime.template_resolver import TemplateResolver
 
-    refs: list[tuple[str, str | None]] = []
-    for block in _BRACE_BLOCK_RE.finditer(source):
+    refs: list[tuple[str, str | None, tuple[str, ...]]] = []
+    for block in _BRACE_BLOCK_RE.finditer(value):
         # Split coalesce operands and skip JSON literals (Optional A) — a
         # literal like ${missing ?? "x"} must not surface "x" as a data-flow
         # ref (it would draw a spurious edge from a node coincidentally named x).
@@ -36,5 +48,8 @@ def source_refs_in(source: str) -> list[tuple[str, str | None]]:
             if TemplateResolver.is_literal_operand(operand.strip()):
                 continue
             for m in _REF_IN_BLOCK_RE.finditer(operand):
-                refs.append((m.group(1), m.group(2)))
+                # Group 2 is the dotted tail (".b.c") or the EMPTY STRING on a
+                # bare ref — map "" to (root, None, ()), never (root, "", ()).
+                segments = m.group(2).lstrip(".").split(".") if m.group(2) else []
+                refs.append((m.group(1), segments[0] if segments else None, tuple(segments[1:])))
     return refs

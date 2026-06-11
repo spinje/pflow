@@ -106,6 +106,15 @@ class Edge:
     label: str | None = None
     output_field: str | None = None
     input_name: str | None = None
+    # The ref's sub-path BELOW output_field: ``${gen.result.ok}`` carries
+    # ("ok",). ``compare=False`` is LOAD-BEARING, not an optimization: edge
+    # dedup is full dataclass equality (build.py `if edge not in self.edges`).
+    # In identity, two same-input_name sub-key refs would become two edges and
+    # change Mermaid's edge count (goldens break). Out of identity, dedup is
+    # byte-identical to before this field; the accepted lossiness (the first
+    # ref's path wins in that rare shape) is exactly the documented
+    # `input_name` multi-role precedent.
+    output_path: tuple[str, ...] = field(default=(), compare=False)
 
 
 ContainerKind = Literal["workflow", "batch", "input_wrapper", "output_wrapper"]

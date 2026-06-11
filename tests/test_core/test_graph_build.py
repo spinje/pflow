@@ -928,6 +928,122 @@ def test_batch_alias_takes_precedence_over_same_named_top_level_input() -> None:
     )
 
 
+def test_refs_with_path_in_extracts_full_dotted_tail() -> None:
+    """The path-preserving extractor; refs_in stays byte-identical via the shared walk."""
+    from pflow.core.workflow.graph.scope import refs_in, refs_with_path_in
+
+    assert refs_with_path_in("${a.b.c.d}") == [("a", "b", ("c", "d"))]
+    assert refs_with_path_in("${a.b}") == [("a", "b", ())]
+    assert refs_with_path_in("${a}") == [("a", None, ())]
+    assert refs_with_path_in("${a.b.c ?? x.y}") == [("a", "b", ("c",)), ("x", "y", ())]
+    assert refs_with_path_in('${missing ?? "literal"}') == [("missing", None, ())]
+    # the (root, field) view is the same walk truncated — cannot drift
+    assert refs_in("${a.b.c.d} and ${e}") == [("a", "b"), ("e", None)]
+
+
+def test_data_flow_edges_carry_output_path_below_the_resolved_port() -> None:
+    """A sub-key ref keeps its sub-path on the edge; wholesale/input refs carry none."""
+    child = {
+        "inputs": {
+            "ok": {"type": "boolean"},
+            "deep": {"type": "string"},
+            "whole": {"type": "object"},
+        },
+        "nodes": [{"id": "work", "type": "code"}],
+    }
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "inputs": {"input_x": {"type": "object"}},
+            "nodes": [
+                {"id": "gen", "type": "code", "params": {"code": "result = compute('${input_x.y}')"}},
+                {
+                    "id": "check",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "child",
+                        "inputs": {
+                            "ok": "${gen.result.ok}",
+                            "deep": "${gen.result.a.b}",
+                            "whole": "${gen.result}",
+                        },
+                    },
+                },
+            ],
+            "edges": [{"from": "gen", "to": "check"}],
+            "outputs": {
+                "summary": {"source": "${gen.result.text}"},
+                # An output source reading BELOW a workflow input: resolves to the
+                # input node with output_field=None, so the equality guard must
+                # keep the tail off (an input node has no "y" port to land on).
+                "echoed": {"source": "${input_x.y.z}"},
+            },
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    def data_edge_into(target: NodeId) -> Edge:
+        matches = [e for e in graph.edges if e.target == target and e.kind == EdgeKind.DATA_FLOW]
+        assert len(matches) == 1, f"expected one data edge into {target}"
+        return matches[0]
+
+    step = AncestorStep("check", None)
+    sub_key = data_edge_into(_input_id("ok", step))
+    assert (sub_key.output_field, sub_key.output_path) == ("result", ("ok",))
+    two_deep = data_edge_into(_input_id("deep", step))
+    assert (two_deep.output_field, two_deep.output_path) == ("result", ("a", "b"))
+    wholesale = data_edge_into(_input_id("whole", step))
+    assert (wholesale.output_field, wholesale.output_path) == ("result", ())
+    # site 2 (output source:) carries the tail too
+    source_edge = data_edge_into(_output_id("summary"))
+    assert (source_edge.output_field, source_edge.output_path) == ("result", ("text",))
+    # site 2's equality guard: an input-rooted deep ref resolves with
+    # output_field=None, so the tail must NOT attach (mutation-tested gap W1 —
+    # without the guard this edge would carry ("z",) toward a port-less node)
+    deep_input_edge = data_edge_into(_output_id("echoed"))
+    assert (deep_input_edge.output_field, deep_input_edge.output_path) == (None, ())
+    # site 3 (workflow input -> consumer) has no output port, hence no sub-path
+    input_edge = next(e for e in graph.edges if e.source == _input_id("input_x") and e.kind == EdgeKind.DATA_FLOW)
+    assert input_edge.output_path == ()
+
+
+def test_batch_alias_ref_never_carries_an_output_path() -> None:
+    """The explicit alias guard: `${data.rows.x}` under `as: data` over
+    `items: ${prep.rows}` has first segment "rows" == the batch source's
+    output_field — the equality rule ALONE would attach ("x",) to an edge whose
+    source is prep, describing the wrong node. The alias guard keeps it ()."""
+    child = {"inputs": {"text": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {"id": "prep", "type": "code"},
+                {
+                    "id": "process",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "inputs": {"text": "${data.rows.x}"}},
+                    "batch": {"items": "${prep.rows}", "as": "data"},
+                },
+            ],
+            "edges": [{"from": "prep", "to": "process"}],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    target = _input_id("text", AncestorStep("process", None))
+    edge = next(e for e in graph.edges if e.target == target and e.source == NodeId("prep"))
+    assert edge.output_field == "rows"
+    assert edge.output_path == ()
+
+
 def test_leaf_dynamic_batch_records_sibling_items_source_data_flow() -> None:
     # A leaf (non-workflow) batch over a sibling-produced items source must carry the
     # prep->host dependency in the model — workflow batches already do; leaf batches

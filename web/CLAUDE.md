@@ -57,6 +57,23 @@ Tests sit beside their subject.
   HANDLE-TYPE INVARIANT test (`flow.test.ts`) enforces this — **jsdom CANNOT** (React
   Flow renders no edge DOM under jsdom, so any "no edge errors" assertion there is
   theater). Edge integrity is a pure `flow.ts` test, never a render test.
+- **Output rows have ONE source of truth: `outputRowsFor` (TRANSFORM L2,
+  2026-06-10).** The `OutputRow[]` list it composes — authored shape
+  (`RFNode.output_shape` — its `field` names the port: result/response) ∪ observed reads (edge `output_field` + first
+  `output_path` segment) — is the SAME array consumed by `WorkflowNode`
+  (render), `leafSize` (height), `rowAnchorsFor` (LR ELK ports), and
+  `sourceHandleFor` (the landing ladder via `outputRowsByNode`), so render,
+  size, ports and handles cannot drift. Composition: a bare read or unknown
+  keys → parent row + nested key rows (D2); no bare read + keys known → flat
+  full-dotted-path rows, no parent (D3); `quiet` = no reading edge (D4 — grey
+  dot, faint, no line can exist). The landing ladder, one level deeper than H6:
+  sub-key ref → its exact key row (`o:result.ok`) → the field's parent row →
+  `NODE_OUT`. Quiet is kept truthful by `scanParamReads` (flow.ts): plain-param
+  refs (`prompt: ${gen.result.ok}`) form NO data-flow edges, so the scan merges
+  sibling param-text reads into the observed set — scope-aware (same-parent
+  node_id only), batch-alias-skipping, and it NEVER creates a new field row or
+  a line (no edge + no shape → no row; lines come only from edges — D5).
+  Residual: refs outside params (loop conditions) are not scanned.
 - **Edges are additive.** An endpoint hidden by collapse or a suppressed group-host
   re-anchors to a visible ancestor — never dropped. A missing anchor is a bug and
   `flow.ts` warns instead of dropping it.
@@ -369,6 +386,42 @@ Tests sit beside their subject.
   Deep links select containers BY NAME: `resolveNodeFlatId`
   (viewParams.ts) resolves a group-host's node_id to its representative group
   (skipping memberless batch shells), so `?focus=<sub-workflow name>` works.
+- **Edges SELECT on click (2026-06-10).** The clicked CONNECTION is the focus subject:
+  only that edge lights — bright variant (`--data-edge-selected` for data lines; full
+  gradient for control), a **halo under-stroke** (the edge analog of the node ring;
+  its stroke must stay INLINE — RF's base stylesheet greys `.selected` paths),
+  **elevation** (`zIndex: SELECTED_EDGE_Z`, an applyFocus-OWNED channel — never read
+  back from the edge) — while its two endpoints stay full-strength and everything
+  else dims, INCLUDING EdgeLabelRenderer pills (they live outside
+  `.react-flow__edge`, so applyFocus writes `EdgeData.dimmed` and the components add
+  `.label-dimmed`). The selected edge suppresses its OWN floating label/pill
+  (elevation strikes through the label layer; the panel carries the info) — a
+  selected LR branch instead reveals its condition on the source's row. `applyFocus`
+  clears `focusEnd` on the selected edge (both ends solid — the ternary would default
+  one end faded) and strips `edge-shadowed` (35% opacity vs bright). In beautiful, a
+  selected DATA edge expands exactly its two endpoint owners (`expandTargets` edge
+  arm — endpoints go into the OUTPUT set, never `foci`, or both neighborhoods would
+  expand) so the line lands row-to-row. The click dispatch is pure
+  (`edgeClickAction`, viewParams.ts — jsdom renders no edge DOM): `loop:` arcs
+  redirect to their render ANCHOR (`e.source` — a group id for looped sub-workflows;
+  never `data.from`, the suppressed host), `io-flow:` edges focus restyle-only and
+  CLEAR the panel, contract edges select fully. **EdgePanel**
+  (components/EdgePanel.tsx) reads the contract edge by id (flow edges keep contract
+  ids; synthesized ids miss by design): five variants — data (param join via
+  `bindingParam`, mirroring `targetHandleFor`'s dict-key walk; this edge's `${ref}`
+  highlighted via ParamBlock's `highlightRef`; "one of N references/bindings"
+  counts), branch/decision-end (OutcomeTable with the row marked; discriminate a
+  decision's end by the SOURCE's `is_decision`, never condition presence —
+  extraction is fail-closed), error, static-end, sequential (surfaces `shadowed`).
+  Endpoint CHIPS navigate via `resolveEndpointFlatId` (host → representative group)
+  and render NON-CLICKABLE when the endpoint isn't rendered — never a silent no-op
+  focus. RF native selection stays inert: components ignore the `selected` prop,
+  `deleteKeyCode={null}` (Backspace would delete from the store). An edge-id focus
+  has no `from/to` escape hatch through rebuilds, so GraphView CLEARS the selection
+  when the focused edge id leaves the flow (collapse re-anchor/dedupe). Deep links:
+  `focus=<flat edge id>` works (the deterministic escape hatch — agents/screenshot
+  loop); `initialCollapsed` protects BOTH endpoints' ancestor chains for an edge
+  target. Stable edge ADDRESSING (`source→target:input`) stays deferred (Task 169).
 - **A SHELL batch group (no direct members) is never rendered.** The contract models
   "batched X" as batch-wrapping-X, but presentationally batch is a MODIFIER (deck +
   ×N badge), not a box to travel through (user decision 2026-06-10): a batched LEAF

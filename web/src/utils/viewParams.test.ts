@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_VIEW, readViewParams, resolveNodeFlatId, writeViewParams } from "./viewParams";
+import { DEFAULT_VIEW, edgeClickAction, readViewParams, resolveEndpointFlatId, resolveNodeFlatId, writeViewParams } from "./viewParams";
 import type { RFGraph } from "../types";
 
 describe("readViewParams", () => {
@@ -117,5 +117,42 @@ describe("resolveNodeFlatId", () => {
 
   it("returns null when neither the host nor its group is rendered", () => {
     expect(resolveNodeFlatId(hostGraph, new Set(["other"]), "execute-plan")).toBeNull();
+  });
+});
+
+describe("resolveEndpointFlatId — contract endpoint → rendered flat id (edge chips)", () => {
+  const graph = {
+    nodes: [{ id: "n5", ref: { node_id: "execute-plan", ancestor_path: [], port: null } }],
+    edges: [],
+    groups: [
+      { id: "gshell", kind: "batch", host: "n5", members: [] }, // memberless shell — never rendered
+      { id: "gwf", kind: "workflow", host: "n5", members: ["n9"] },
+    ],
+  } as unknown as RFGraph;
+
+  it("a rendered node resolves to itself", () => {
+    expect(resolveEndpointFlatId(graph, new Set(["n5"]), "n5")).toBe("n5");
+  });
+
+  it("a suppressed group host resolves to its representative group (skipping batch shells)", () => {
+    expect(resolveEndpointFlatId(graph, new Set(["gwf"]), "n5")).toBe("gwf");
+  });
+
+  it("returns null when nothing is rendered for the endpoint (the chip must disable, not silently focus)", () => {
+    expect(resolveEndpointFlatId(graph, new Set(["other"]), "n5")).toBeNull();
+  });
+});
+
+describe("edgeClickAction — the edge-click dispatch (pure: jsdom renders no edge DOM)", () => {
+  it("a contract edge selects fully: focus + panel", () => {
+    expect(edgeClickAction({ id: "e12", source: "n3" })).toEqual({ focus: "e12", selectedId: "e12" });
+  });
+
+  it("a loop: self-arc redirects to its render ANCHOR (the flow edge's source — a group id for a looped sub-workflow)", () => {
+    expect(edgeClickAction({ id: "loop:gwf", source: "gwf" })).toEqual({ focus: "gwf", selectedId: "gwf" });
+  });
+
+  it("an io-flow: synthesized edge focuses (restyle) and explicitly CLEARS the panel", () => {
+    expect(edgeClickAction({ id: "io-flow:gin->n0", source: "gin" })).toEqual({ focus: "io-flow:gin->n0", selectedId: null });
   });
 });

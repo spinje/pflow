@@ -18,6 +18,7 @@ import pytest
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.workflow.graph import (
     AncestorStep,
+    BatchSpec,
     Edge,
     EdgeKind,
     GraphModel,
@@ -163,6 +164,77 @@ def test_output_source_edge_is_emitted_with_no_input_name() -> None:
     assert edge.input_name is None
     assert edge.output_field == "stdout"
     assert edge.source == _rf_node(rf, "gen").id
+
+
+def test_edge_output_path_rides_the_wire() -> None:
+    # `${gen.result.ok}` ships output_path=["ok"] (a JSON-friendly list) on the
+    # RF edge — the per-key landing's wire fact (Half B).
+    child = {"inputs": {"ok": {"type": "boolean"}}, "nodes": [{"id": "work", "type": "code"}]}
+    graph = build_graph(
+        {
+            "nodes": [
+                {"id": "gen", "type": "code", "params": {"code": 'result = {"ok": True}'}},
+                {
+                    "id": "check",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "inputs": {"ok": "${gen.result.ok}"}},
+                },
+            ],
+            "edges": [{"from": "gen", "to": "check"}],
+        },
+        resolve_child=_child_resolver({"child": child}),
+        max_depth=2,
+    )
+    rf = render_react_flow(graph)
+
+    gen = _rf_node(rf, "gen")
+    edge = next(e for e in rf.edges if e.source == gen.id and e.kind == "data_flow")
+    assert edge.output_field == "result"
+    assert edge.output_path == ["ok"]
+    json.dumps(asdict(rf), default=str)
+
+
+def test_two_sub_key_refs_in_one_output_source_keep_both_edges() -> None:
+    # Output `source:` edges carry input_name=None, so without output_path in the
+    # renderer's dedup key, `${gen.result.ok} / ${gen.result.rounds}` in ONE
+    # expression would collapse to one RF edge — and `rounds` would render as a
+    # quiet (unread) row despite being read.
+    graph = build_graph({
+        "nodes": [{"id": "gen", "type": "code", "params": {"code": 'result = {"ok": True, "rounds": 1}'}}],
+        "outputs": {"combined": {"source": "${gen.result.ok} ${gen.result.rounds}"}},
+    })
+    rf = render_react_flow(graph)
+
+    gen = _rf_node(rf, "gen")
+    outgoing = [e for e in rf.edges if e.source == gen.id and e.kind == "data_flow"]
+    assert sorted(tuple(e.output_path) for e in outgoing) == [("ok",), ("rounds",)]
+
+
+def test_truncation_re_anchored_source_clears_output_path() -> None:
+    # An edge whose SOURCE is hidden by batch truncation re-anchors to the host
+    # and clears output_field (H9/W1) — output_path must clear WITH it: the host
+    # has no such port, and a stale sub-path would land a line on a row that
+    # describes a different node. (Hand-built model: the build path can't easily
+    # produce a hidden-source edge, but the renderer must honor the rule.)
+    host = NodeId("fan")
+    hidden = NodeId("work", (AncestorStep("fan", 5),))
+    consumer = NodeId("use")
+    graph = GraphModel(
+        nodes=[
+            Node(host, "code", batch=BatchSpec(parallel=False, dynamic=False, count=6, items=[1, 2, 3, 4, 5, 6])),
+            Node(hidden, "code"),
+            Node(consumer, "code"),
+        ],
+        edges=[Edge(hidden, consumer, EdgeKind.DATA_FLOW, output_field="result", input_name="v", output_path=("ok",))],
+        containers=[],
+    )
+    rf = render_react_flow(graph)
+
+    edge = next(e for e in rf.edges if e.kind == "data_flow")
+    assert edge.source == _rf_node(rf, "fan").id  # re-anchored onto the host
+    assert edge.output_field is None
+    assert edge.output_path == []
+    assert edge.input_name == "v"  # the kept target keeps its role
 
 
 def test_param_is_dynamic_uses_ref_extractor_not_str_repr() -> None:
@@ -736,4 +808,173 @@ def test_transform_fact_ships_on_the_contract() -> None:
     assert by_id["gate"].is_decision is True
     assert by_id["work"].is_transform is False  # non-code kinds never classify
     # additive field round-trips the wire like everything else
+    json.dumps(asdict(rf), default=str)
+
+
+def test_code_output_shape_extraction_matrix() -> None:
+    """The authored result shape extracts fail-closed: certain or None, never partial."""
+    from pflow.core.workflow.graph.renderers.react_flow import (
+        RFOutputShape,
+        RFResultKey,
+        _result_shape_from_code,
+    )
+
+    # annotation only — value is not a literal dict, so keys are unknown
+    assert _result_shape_from_code("x: str\nresult: str = x.upper()\n") == RFOutputShape("result", "str", None)
+    # the canonical case: single literal dict, key types inferred per D8
+    assert _result_shape_from_code(
+        'count: int\nname: str\nresult: dict = {"ok": True, "n": count, "msg": f"{name}!", '
+        '"meta": {"a": 1}, "rows": [1], "calc": count * 2}\n'
+    ) == RFOutputShape(
+        "result",
+        "dict",
+        [
+            RFResultKey("ok", "bool"),  # ast.Constant -> its Python type name
+            RFResultKey("n", "int"),  # bare Name matching an annotated input
+            RFResultKey("msg", "str"),  # f-string
+            RFResultKey("meta", "dict"),
+            RFResultKey("rows", "list"),
+            RFResultKey("calc", None),  # unknown expression — no type, never guess
+        ],
+    )
+    # plain Assign (no annotation): keys ship, data_type is None
+    assert _result_shape_from_code('result = {"a": 1}\n') == RFOutputShape("result", None, [RFResultKey("a", "int")])
+    # TWO result assignments — keys unknowable, annotation still shipped
+    assert _result_shape_from_code('result: dict = {"a": 1}\nresult = {"b": 2}\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    # subscript mutation counts as a second assignment (a strict Name-target
+    # reading would ship a keys list missing "k" — quiet rows that LIE)
+    assert _result_shape_from_code('result: dict = {"a": 1}\nresult["k"] = 2\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    # empty literal dict — almost always a to-be-mutated accumulator
+    assert _result_shape_from_code("result: dict = {}\n") == RFOutputShape("result", "dict", None)
+    # **spread makes the key list uncertain — None, not the partial literal keys
+    assert _result_shape_from_code('extra: dict\nresult = {"a": 1, **extra}\n') == RFOutputShape("result", None, None)
+    # subscripted annotation is not a simple name — fail-closed None
+    assert _result_shape_from_code('result: dict[str, int] = {"a": 1}\n') == RFOutputShape(
+        "result", None, [RFResultKey("a", "int")]
+    )
+    # a walrus binding of result counts as an assignment
+    assert _result_shape_from_code('result: dict = {"a": 1}\nx = (result := {})\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    # mutation/rebinding channels OUTSIDE plain assignments also invalidate keys
+    # (the docstring's promise reaches further than assignment statements):
+    # method-call mutation, attribute access at all, del, for/with rebinding
+    assert _result_shape_from_code('result: dict = {"a": 1}\nresult.update({"k": 2})\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    assert _result_shape_from_code('result: dict = {"a": 1}\nx = result.get("a")\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    assert _result_shape_from_code('result: dict = {"a": 1}\ndel result["a"]\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    assert _result_shape_from_code('result: dict = {"a": 1}\nfor result in rows():\n    pass\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    assert _result_shape_from_code('result: dict = {"a": 1}\nwith ctx() as result:\n    pass\n') == RFOutputShape(
+        "result", "dict", None
+    )
+    # a literal None value reads as the VALUE "None", never the class "NoneType"
+    assert _result_shape_from_code('result = {"x": None}\n') == RFOutputShape(
+        "result", None, [RFResultKey("x", "None")]
+    )
+    # a VALUELESS `result:` AnnAssign is an INPUT declaration — ignored entirely
+    assert _result_shape_from_code("result: dict\nx = 1\n") is None
+    # no result assignment at all / syntax error
+    assert _result_shape_from_code("x: int\ny = x * 2\n") is None
+    assert _result_shape_from_code("result =\n") is None
+    # REGRESSION GUARD (F10): `impl: object` is an input annotation, nothing more
+    assert _result_shape_from_code('impl: object\nresult: dict = {"v": impl}\n') == RFOutputShape(
+        "result", "dict", [RFResultKey("v", "object")]
+    )
+
+
+def test_shape_from_output_schema_matrix() -> None:
+    """A structured-output node's output_schema IS its authored shape."""
+    from pflow.core.workflow.graph.renderers.react_flow import (
+        RFOutputShape,
+        RFResultKey,
+        _shape_from_output_schema,
+    )
+
+    # the canonical case: object schema -> keys in authored order, schema-vocabulary types
+    assert _shape_from_output_schema(
+        {
+            "type": "object",
+            "properties": {"pr_url": {"type": "string"}, "summary": {"type": "string"}},
+            "required": ["pr_url", "summary"],
+        },
+        field="result",
+    ) == RFOutputShape("result", "object", [RFResultKey("pr_url", "string"), RFResultKey("summary", "string")])
+    # a property without a plain "type" gets a typeless key — never guessed
+    assert _shape_from_output_schema(
+        {"type": "object", "properties": {"items": {"anyOf": [{"type": "array"}]}}},
+        field="response",
+    ) == RFOutputShape("response", "object", [RFResultKey("items", None)])
+    # fail-closed: non-object schema / missing-empty properties / templated string
+    assert _shape_from_output_schema({"type": "string"}, field="result") is None
+    assert _shape_from_output_schema({"type": "object"}, field="result") is None
+    assert _shape_from_output_schema({"type": "object", "properties": {}}, field="result") is None
+    assert _shape_from_output_schema("${schema_ref}", field="result") is None
+    assert _shape_from_output_schema(None, field="result") is None
+
+
+def test_output_schema_shape_names_the_field_each_kind_writes() -> None:
+    """claude-code parses its schema value into `result`; llm into `response`.
+    The shape's `field` must match where the node actually writes — rows on
+    the wrong port would describe a value that doesn't exist there."""
+    schema = {"type": "object", "properties": {"pr_url": {"type": "string"}}, "required": ["pr_url"]}
+    graph = build_graph({
+        "nodes": [
+            {"id": "ship", "type": "claude-code", "params": {"prompt": "open a PR", "output_schema": schema}},
+            {"id": "ask", "type": "llm", "params": {"prompt": "judge", "output_schema": schema}},
+            {"id": "plain", "type": "llm", "params": {"prompt": "chat"}},
+        ],
+        "edges": [{"from": "ship", "to": "ask"}, {"from": "ask", "to": "plain"}],
+    })
+    rf = render_react_flow(graph)
+
+    by_id = {n.ref.node_id: n for n in rf.nodes}
+    ship_shape = by_id["ship"].output_shape
+    assert ship_shape is not None
+    assert (ship_shape.field, ship_shape.data_type) == ("result", "object")
+    assert [(k.name, k.data_type) for k in ship_shape.keys or []] == [("pr_url", "string")]
+    ask_shape = by_id["ask"].output_shape
+    assert ask_shape is not None
+    assert ask_shape.field == "response"  # llm writes `response`, never `result`
+    assert by_id["plain"].output_shape is None  # no schema -> nothing provable
+    json.dumps(asdict(rf), default=str)
+
+
+def test_output_shape_ships_on_the_contract_for_all_code_nodes() -> None:
+    """output_shape ships for ALL code nodes (D9), None elsewhere; round-trips."""
+    transform_code = 'text: str\nresult: dict = {"upper": text.upper()}\n'
+    validator_code = 'ok: bool\nresult: dict = {"ok": ok, "round": 1}\nif ok:\n    next = "a"\nelse:\n    next = "b"\n'
+    graph = build_graph({
+        "nodes": [
+            {"id": "reshape", "type": "code", "params": {"code": transform_code}},
+            {"id": "gate", "type": "code", "params": {"code": validator_code}},
+            {"id": "a", "type": "shell"},
+            {"id": "b", "type": "shell"},
+        ],
+        "edges": [
+            {"from": "reshape", "to": "gate"},
+            {"from": "gate", "to": "a", "action": "a"},
+            {"from": "gate", "to": "b", "action": "b"},
+        ],
+    })
+    rf = render_react_flow(graph)
+
+    by_id = {n.ref.node_id: n for n in rf.nodes}
+    assert by_id["reshape"].output_shape is not None
+    assert [k.name for k in by_id["reshape"].output_shape.keys or []] == ["upper"]
+    # NOT gated on is_transform: the decider's shape is just as true (D9)
+    assert by_id["gate"].is_transform is False
+    assert by_id["gate"].output_shape is not None
+    assert [k.name for k in by_id["gate"].output_shape.keys or []] == ["ok", "round"]
+    assert by_id["a"].output_shape is None  # non-code kinds never ship a shape
     json.dumps(asdict(rf), default=str)

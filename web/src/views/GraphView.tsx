@@ -20,8 +20,9 @@ import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
 import type { Density, Direction, FlowEdge, FlowNode } from "../graph/flow";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { nodeColor } from "../utils/format";
-import { readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
-import type { RFNode } from "../types";
+import { edgeClickAction, readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
+import type { RFEdge, RFNode } from "../types";
+import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { InteractionProvider } from "../components/interaction";
 import { nodeTypes } from "../components/nodes";
@@ -131,6 +132,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     if (flatId) {
       setFocus(flatId);
       setSelectedId(flatId);
+      return;
+    }
+    // Flat EDGE id fallback (the deterministic escape hatch, like node='s flat-id
+    // arm): `focus=e12` selects that connection — the screenshot/inspect loop and
+    // Task 169 agents can capture an edge-selection state without driving a
+    // click. STABLE edge addressing (source→target:input) stays deferred.
+    if (graphRef.current?.edges.some((e) => e.id === focusParam)) {
+      setFocus(focusParam);
+      setSelectedId(focusParam);
     }
   }, [status, focusParam, nodesInitialized, getNodes]);
 
@@ -185,6 +195,29 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     [toggleGroup],
   );
 
+  // Edges SELECT on click, like everything else on the canvas (2026-06-10). The
+  // three-way dispatch (loop: redirect / io-flow: restyle-only / contract edge →
+  // full selection) is pure and tested in viewParams.test.ts — jsdom renders no
+  // edge DOM, so it cannot be exercised through clicks here.
+  const onEdgeClick = useCallback((_: unknown, edge: FlowEdge) => {
+    const action = edgeClickAction(edge);
+    setFocus(action.focus);
+    setSelectedId(action.selectedId);
+  }, []);
+
+  // A selected EDGE id has no `from`/`to` escape hatch through rebuilds: a
+  // single-group collapse can re-anchor + dedupe the focused edge's id out of the
+  // flow — the focus styling would then match nothing (all-dim canvas) while the
+  // panel keeps describing an invisible line. Clear both when that happens.
+  useEffect(() => {
+    if (!focus || !graph || edges.length === 0) return;
+    const isEdgeFocus = focus.startsWith("io-flow:") || graph.edges.some((e) => e.id === focus);
+    if (isEdgeFocus && !edges.some((e) => e.id === focus)) {
+      setFocus(null);
+      setSelectedId((prev) => (prev === focus ? null : prev));
+    }
+  }, [focus, graph, edges]);
+
   const onPaneClick = useCallback(() => {
     setFocus(null);
     setSelectedId(null);
@@ -208,6 +241,37 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     const host = graph.groups.find((g) => g.id === selectedId)?.host;
     return host ? (graph.nodes.find((n) => n.id === host) ?? null) : null;
   }, [graph, selectedId]);
+
+  // A selected EDGE reads as its contract edge (flow edges keep contract ids;
+  // synthesized io-flow:/loop: ids never match — by design they have no panel).
+  // Mutually exclusive with selectedNode: the id namespaces are disjoint.
+  const selectedEdge: RFEdge | null = useMemo(
+    () => (graph && selectedId ? (graph.edges.find((e) => e.id === selectedId) ?? null) : null),
+    [graph, selectedId],
+  );
+
+  // The currently-rendered flat ids — EdgePanel's chips resolve their contract
+  // endpoints against this (a suppressed host → its representative group; an
+  // endpoint hidden in a collapsed ancestor → a non-clickable chip).
+  const renderedIds = useMemo(() => new Set(nodes.map((n) => n.id)), [nodes]);
+
+  // Chip navigation: focus always moves; the panel swaps only when the chip
+  // names a selectable subject (an IO-port chip keeps this edge panel open).
+  // The camera FOLLOWS (user-caught 2026-06-11): a chip can name a card anywhere
+  // on the canvas — selecting it off-screen reads as a dead click. Generous
+  // padding + a zoom cap make it "bring into view", not a hard close-up; in
+  // beautiful the expansion re-layout that may follow anchors on the same id,
+  // so the target stays near where the fit put it.
+  const onNavigate = useCallback(
+    (focusId: string, selected?: string | null) => {
+      setFocus(focusId);
+      if (selected !== undefined) setSelectedId(selected);
+      if (getNodes().some((n) => n.id === focusId)) {
+        fitView({ nodes: [{ id: focusId }], padding: 0.45, maxZoom: 1.2, duration: 300 });
+      }
+    },
+    [fitView, getNodes],
+  );
 
   // Collapse-all folds every collapsible container and clears focus (the focused
   // node is about to disappear into a box — a ring on a hidden node is meaningless).
@@ -272,6 +336,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             onNodeDoubleClick={onNodeDoubleClick}
             zoomOnDoubleClick={false}
             onPaneClick={onPaneClick}
+            onEdgeClick={onEdgeClick}
+            // RF native selection stays inert: applyFocus-written data.selected is
+            // the single styling truth, and Backspace must never delete a selected
+            // element from the store (useEdgesState applies remove changes).
+            deleteKeyCode={null}
             nodesDraggable={false}
             nodesConnectable={false}
             elementsSelectable
@@ -283,6 +352,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             <MiniMap pannable zoomable nodeColor={minimapNodeColor} nodeStrokeColor="transparent" nodeBorderRadius={3} />
           </ReactFlow>
           </div>
+          {graph && selectedEdge && (
+            <EdgePanel
+              edge={selectedEdge}
+              graph={graph}
+              renderedIds={renderedIds}
+              onNavigate={onNavigate}
+              onClose={() => setSelectedId(null)}
+            />
+          )}
           {selectedNode && (
             <ReadPanel
               node={selectedNode}
@@ -294,6 +372,18 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                     e.source === selectedNode.id &&
                     (e.kind === "branch" || (e.kind === "end" && selectedNode.is_decision)),
                 ) ?? []
+              }
+              reads={
+                // What downstream actually READS from this node, full-depth:
+                // the canvas rows land on the first path segment (D7); the
+                // panel shows the whole dotted path (`result.a.b`).
+                [
+                  ...new Set(
+                    (graph?.edges ?? [])
+                      .filter((e) => e.source === selectedNode.id && e.kind === "data_flow" && e.output_field != null)
+                      .map((e) => [e.output_field, ...e.output_path].join(".")),
+                  ),
+                ]
               }
               onClose={() => setSelectedId(null)}
             />

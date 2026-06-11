@@ -46,7 +46,7 @@ export type LeafData = {
   node: RFNode;
   density: Density;
   direction: Direction;
-  outputFields: string[];
+  outputRows: OutputRow[];
   branchLabels: string[]; // decision fork outcomes — labeled handles on the border
   // Outcome label → the extracted condition selecting it ("if len(items) > 5").
   // In LR the BranchPorts ROW is the condition's home (mid-path pills clipped
@@ -198,6 +198,16 @@ export type EdgeData = {
   condition?: string;
   conditionShown?: boolean;
   conditionRevealed?: boolean;
+  // Edge SELECTION (edge-click, 2026-06-10): set by applyFocus when this edge IS
+  // the focus. Components draw the bright selected treatment + halo and suppress
+  // their own floating label/pill (the elevated edge would strike through it — the
+  // read panel carries the info instead). The elevation zIndex rides the edge
+  // OBJECT, not data.
+  selected?: boolean;
+  // Set by applyFocus alongside the dim className: EdgeLabelRenderer pills render
+  // OUTSIDE .react-flow__edge, so the CSS opacity dim never reaches them — the
+  // components apply this flag to their label/pill divs.
+  dimmed?: boolean;
   loop?: LoopSpec; // present only on synthesized loop-back arcs
 };
 
@@ -251,7 +261,7 @@ function leafSize(
   node: RFNode,
   density: Density,
   direction: Direction,
-  outputFields: string[],
+  outputRows: OutputRow[],
   branchLabels: string[],
   expanded: boolean,
 ): { width: number; height: number } {
@@ -270,8 +280,142 @@ function leafSize(
   // The ↻ loop-rule rows a looped leaf renders in its body (WorkflowNode): the
   // condition row (the U's landing) + a cap row when one is set.
   const loopRows = node.loop ? (node.loop.cap != null ? 2 : 1) : 0;
-  const rows = node.params.length + outputFields.length + branchRows + loopRows;
+  const rows = node.params.length + outputRows.length + branchRows + loopRows;
   return { width, height: HEADER_HEIGHT + rows * ROW_HEIGHT + ROW_PADDING };
+}
+
+// One output-port row on a leaf card, derived by outputRowsFor — THE single
+// source of truth that WorkflowNode (render), leafSize (height), rowAnchorsFor
+// (LR ELK ports) and sourceHandleFor (edge landing) all consume, so render,
+// size, ports and handles stay in lockstep by construction.
+export type OutputRow = {
+  // The handle key: "result" | "result.summary" (always the full dotted path).
+  field: string;
+  // The row text: "result" (parent) | "summary" (nested under a parent, D2) |
+  // "result.summary" (flat wrapper-collapse, D3 — always the FULL dotted path,
+  // the exact text an author must write in `${...}`, never a bare key name).
+  label: string;
+  // Faint `: type` suffix (D1) — the authored annotation / inferred key type.
+  dataType: string | null;
+  // Authored-but-unread (D4): grey dot, faint text. No line can exist — lines
+  // come only from edges, and edges only from actual `${refs}` (D5).
+  quiet: boolean;
+  nested: boolean; // renders indented under its parent row (the D2 case)
+};
+
+// What the graph's edges READ from one node, per output field: a bare read
+// (`${n.result}`) and/or sub-key reads (`${n.result.ok}` → "ok" — the FIRST
+// path segment only, D7; deeper structure is read-panel-only, matching where
+// edges can form). Collected in buildFlow's edge scan, in first-read order.
+export type FieldReads = { bare: boolean; subKeys: string[] };
+// The read-only view outputRowsFor consumes — the edge scan needs mutation,
+// the composition must not (a future refactor merging authored keys INTO
+// subKeys would silently corrupt the frozen EMPTY_READS singleton otherwise).
+type FieldReadsView = { readonly bare: boolean; readonly subKeys: readonly string[] };
+
+const EMPTY_READS: FieldReadsView = Object.freeze({ bare: false, subKeys: Object.freeze([]) });
+
+export function outputRowsFor(node: RFNode, observed?: ReadonlyMap<string, FieldReadsView>): OutputRow[] {
+  const fields = [...(observed?.keys() ?? [])];
+  const shape = node.output_shape;
+  // An authored shape produces rows even with zero readers — "produced but
+  // unconsumed" is exactly the signal the quiet rows exist to show (D4). The
+  // shape names its own port (`result` / `response` — where that kind actually
+  // writes); it leads when authored-only: it is the node's primary product.
+  if (shape && !fields.includes(shape.field)) fields.unshift(shape.field);
+  const rows: OutputRow[] = [];
+  for (const field of fields) {
+    const reads = observed?.get(field) ?? EMPTY_READS;
+    const fieldShape = shape != null && field === shape.field ? shape : null;
+    const authored = fieldShape?.keys ?? null;
+    // The key set is ALWAYS authored ∪ observed: an observed sub-read of a key
+    // ABSENT from the authored shape (stale shape / post-literal mutation /
+    // permissive mode) still gets an ACTIVE row — otherwise its line falls to
+    // NODE_OUT and the feature fails for exactly the read it exists to show.
+    const names = (authored ?? []).map((k) => k.name);
+    for (const k of reads.subKeys) if (!names.includes(k)) names.push(k);
+    const read = new Set(reads.subKeys);
+    const typeOf = (name: string): string | null => authored?.find((k) => k.name === name)?.data_type ?? null;
+    if (reads.bare || authored == null) {
+      // D2 (wholesale read) / keys-unknown: the parent row renders and key rows
+      // nest under it. With no keys at all this IS today's single-row behavior
+      // — which non-`result` fields (stdout) keep, except they too gain nested
+      // rows when sub-reads exist (the observed-usage generalization).
+      rows.push({ field, label: field, dataType: fieldShape?.data_type ?? null, quiet: !reads.bare, nested: false });
+      for (const name of names) {
+        rows.push({ field: `${field}.${name}`, label: name, dataType: typeOf(name), quiet: !read.has(name), nested: true });
+      }
+    } else {
+      // D3 (wrapper-collapse): nothing reads the field bare AND the keys are
+      // known — the parent row is dropped; keys render flat with full paths.
+      for (const name of names) {
+        rows.push({
+          field: `${field}.${name}`,
+          label: `${field}.${name}`,
+          dataType: typeOf(name),
+          quiet: !read.has(name),
+          nested: false,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+// Template-ref extraction for the param-read scan — mirrors scope.py's two-stage
+// regex (block, then root + dotted tail per operand). Literal operands can't
+// false-positive: a quote/digit boundary never satisfies the root prefix class.
+const REF_BLOCK_RE = /\$\{([^}]*)\}/g;
+const REF_IN_BLOCK_RE = /(?:^|[\s?])([a-zA-Z0-9_-]+)((?:\.[a-zA-Z0-9_-]+)*)/g;
+
+function stringLeaves(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringLeaves);
+  if (value !== null && typeof value === "object") return Object.values(value).flatMap(stringLeaves);
+  return [];
+}
+
+/** Merge plain-param `${sibling.field.key}` reads into the observed-read set
+ *  (see the call site in buildFlow for the WHY + the deliberate bounds). */
+function scanParamReads(graph: RFGraph, observed: Map<string, Map<string, FieldReads>>): void {
+  const byScopeName = new Map<string, RFNode>();
+  for (const n of graph.nodes) {
+    if (n.io === null && n.kind !== "end") byScopeName.set(`${n.parent ?? ""}|${n.ref.node_id}`, n);
+  }
+  for (const reader of graph.nodes) {
+    const alias = reader.batch?.as_name;
+    for (const param of reader.params) {
+      for (const leaf of stringLeaves(param.value)) {
+        for (const block of leaf.matchAll(REF_BLOCK_RE)) {
+          for (const m of (block[1] ?? "").matchAll(REF_IN_BLOCK_RE)) {
+            const root = m[1];
+            const tail = m[2] ?? "";
+            if (root == null || root === alias) continue; // the per-item batch alias, never a sibling
+            const producer = byScopeName.get(`${reader.parent ?? ""}|${root}`);
+            if (!producer || producer.id === reader.id) continue;
+            const segments = tail ? tail.slice(1).split(".") : [];
+            const field = segments[0];
+            if (field == null) continue; // a bare `${gen}` names no field
+            const fields = observed.get(producer.id);
+            const existing = fields?.get(field);
+            // Only correct rows that EXIST (via edges or the authored shape) —
+            // a param read must not grow new field rows.
+            if (existing == null && field !== producer.output_shape?.field) continue;
+            const reads = existing ?? { bare: false, subKeys: [] };
+            const subKey = segments[1];
+            if (subKey != null) {
+              if (!reads.subKeys.includes(subKey)) reads.subKeys.push(subKey);
+            } else {
+              reads.bare = true;
+            }
+            const slot = fields ?? new Map<string, FieldReads>();
+            slot.set(field, reads);
+            observed.set(producer.id, slot);
+          }
+        }
+      }
+    }
+  }
 }
 
 /** Where each ROW handle sits inside its node box — the LR layout's PORT
@@ -290,15 +434,15 @@ export type RowAnchor = { handle: string; side: "left" | "right"; y: number };
 export function rowAnchorsFor(n: FlowNode): RowAnchor[] {
   const mid = ROW_HEIGHT / 2;
   if (n.type === "node") {
-    const { node, density, direction, outputFields, branchLabels, expanded } = n.data;
+    const { node, density, direction, outputRows, branchLabels, expanded } = n.data;
     const anchors: RowAnchor[] = [];
     let row = 0;
     if (density === "detailed" || expanded) {
       for (const p of node.params) {
         anchors.push({ handle: paramHandle(p.name), side: "left", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
       }
-      for (const f of outputFields) {
-        anchors.push({ handle: outputHandle(f), side: "right", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
+      for (const r of outputRows) {
+        anchors.push({ handle: outputHandle(r.field), side: "right", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
       }
       if (node.loop) row += node.loop.cap != null ? 2 : 1;
     }
@@ -372,6 +516,32 @@ export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet
     const owner = g.parent ?? g.id;
     for (const m of g.members) ioOwner.set(m, owner);
   }
+  // Only a leaf card can expand to its advanced body; a group host has no card and
+  // an end sink has no body. An IO port expands its OWNER instead.
+  const expandable = (id: string): boolean => {
+    const n = nodeById.get(id);
+    return n != null && n.io === null && !n.is_group_host && n.kind !== "end";
+  };
+  const out = new Set<string>();
+  const add = (id: string): void => {
+    if (expandable(id)) out.add(id);
+    else {
+      const owner = ioOwner.get(id);
+      if (owner) out.add(owner);
+    }
+  };
+  // Selecting a DATA EDGE (edge-click) expands exactly its two endpoints (owner-
+  // aware), so the selected line lands row-to-row. The endpoints go straight into
+  // the OUTPUT set — never into `foci`, or the data-flow scan below would expand
+  // both endpoints' entire data neighborhoods. A control-edge focus expands
+  // nothing (node-level endpoints already read fine at the trunk).
+  const focusEdge = graph.edges.find((e) => e.id === focus);
+  if (focusEdge) {
+    if (focusEdge.kind !== "data_flow") return NO_EXPANSION;
+    add(focusEdge.source);
+    add(focusEdge.target);
+    return out;
+  }
   // Selecting a CONTAINER (workflow/batch group) expands "just its inputs and
   // outputs" (user-decided 2026-06-10): the focus acts as ALL of its IO ports —
   // each port's owner IS the group, so the card/region renders its IO rows, and
@@ -388,20 +558,6 @@ export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet
     }
   }
   const foci = new Set<string>(focusWrapper ? focusWrapper.members : [focus]);
-  // Only a leaf card can expand to its advanced body; a group host has no card and
-  // an end sink has no body. An IO port expands its OWNER instead.
-  const expandable = (id: string): boolean => {
-    const n = nodeById.get(id);
-    return n != null && n.io === null && !n.is_group_host && n.kind !== "end";
-  };
-  const out = new Set<string>();
-  const add = (id: string): void => {
-    if (expandable(id)) out.add(id);
-    else {
-      const owner = ioOwner.get(id);
-      if (owner) out.add(owner);
-    }
-  };
   for (const id of foci) add(id);
   for (const e of graph.edges) {
     if (e.kind !== "data_flow") continue;
@@ -480,10 +636,10 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     primaryGroupForHost.set(host, outer.id);
   }
 
-  // Output fields a node exposes as right-side ports: the distinct output_field
-  // of its outgoing data-flow edges. Computed from the raw edges (only used when
-  // an edge keeps its real source — re-anchored edges fall back to node-level).
-  const outputFieldsByNode = new Map<string, Set<string>>();
+  // What each node's output fields are READ as (bare and/or sub-key reads, per
+  // field) — feeds outputRowsFor (only used when an edge keeps its real source;
+  // re-anchored edges fall back to node-level).
+  const observedReadsByNode = new Map<string, Map<string, FieldReads>>();
   // Branch outcomes a decision node forks on — one labeled source handle per
   // outcome, in declared order (deduped). Drives the n8n-Switch-style border ports.
   const branchLabelsByNode = new Map<string, string[]>();
@@ -491,9 +647,16 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   const branchConditionsByNode = new Map<string, Record<string, string>>();
   for (const e of graph.edges) {
     if (e.kind === "data_flow" && e.output_field) {
-      const set = outputFieldsByNode.get(e.source) ?? new Set<string>();
-      set.add(e.output_field);
-      outputFieldsByNode.set(e.source, set);
+      const fields = observedReadsByNode.get(e.source) ?? new Map<string, FieldReads>();
+      const reads = fields.get(e.output_field) ?? { bare: false, subKeys: [] };
+      const sub = e.output_path?.[0];
+      if (sub != null) {
+        if (!reads.subKeys.includes(sub)) reads.subKeys.push(sub);
+      } else {
+        reads.bare = true;
+      }
+      fields.set(e.output_field, reads);
+      observedReadsByNode.set(e.source, fields);
     }
     if (e.kind === "branch" && e.label) {
       const labels = branchLabelsByNode.get(e.source) ?? [];
@@ -524,6 +687,20 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       branchConditionsByNode.set(e.source, conds);
     }
   }
+
+  // Plain-param reads (user decision 2026-06-10): `prompt: ${gen.result.ok}`
+  // forms NO data-flow edge (the model's known scope limit), so edge-derived
+  // quiet rows wrongly claimed "produced but unconsumed" for the most common
+  // wiring. Scan every node's param text for sibling refs and merge them into
+  // the observed reads — quiet then truthfully means "no reader at all".
+  // Bounded on purpose: scope-aware (a ref root resolves only to a SIBLING
+  // node_id — same parent — mirroring build's level-scoped resolution, so a
+  // name reused in another sub-workflow can't be mis-marked); the reader's
+  // batch alias is skipped; a param read NEVER creates a new top-level field
+  // row (no edge + no shape → no row = no claim) and draws no line (D5: lines
+  // come only from edges). Residual: refs outside params (loop conditions) are
+  // not scanned.
+  scanParamReads(graph, observedReadsByNode);
 
   // A workflow's IO ports render as ROWS on an OWNER node, never as a separate
   // table: a NESTED workflow's wrapper puts its rows on the workflow GROUP node
@@ -590,6 +767,10 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   // Owners whose IO rows actually RENDER this build — the single truth edge handle
   // resolution reads, so a row handle is emitted exactly when its row exists.
   const ioRowsShown = new Set<string>();
+  // The outputRows actually given to each emitted leaf — the landing ladder
+  // (sourceHandleFor) checks "does this row render" against THIS list, never a
+  // recomputed one (the silent-drop rule: never name a handle that doesn't render).
+  const outputRowsByNode = new Map<string, OutputRow[]>();
 
   // Groups first, parents before children (ascending nesting_depth) — React Flow
   // requires a parent node to precede its children in the array.
@@ -663,13 +844,14 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
         data: { node: n, direction: view.direction, dimmed: false, focused: false },
       });
     } else {
-      const outputFields = [...(outputFieldsByNode.get(n.id) ?? [])];
+      const outputRows = outputRowsFor(n, observedReadsByNode.get(n.id));
+      outputRowsByNode.set(n.id, outputRows);
       const branchLabels = branchLabelsByNode.get(n.id) ?? [];
       const isExpanded = view.density === "compact" && expandedSet.has(n.id);
       // Same visibility rule as the edge pill: advanced always, else focus-expanded.
       const showsRows = view.density === "detailed" || isExpanded;
       const branchConditions = showsRows ? (branchConditionsByNode.get(n.id) ?? NO_CONDITIONS) : NO_CONDITIONS;
-      const size = leafSize(n, view.density, view.direction, outputFields, branchLabels, isExpanded);
+      const size = leafSize(n, view.density, view.direction, outputRows, branchLabels, isExpanded);
       flowNodes.push({
         id: n.id,
         type: "node", // one leaf component at two densities; density rides in data
@@ -682,7 +864,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
           node: n,
           density: view.density,
           direction: view.direction,
-          outputFields,
+          outputRows,
           branchLabels,
           branchConditions,
           hasIncoming: false, // filled by the control-incidence post-pass (flow edges)
@@ -789,7 +971,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     }
     if (source === target) continue; // collapsed/host self-loop — a correct drop
 
-    const sourceHandle = sourceHandleFor(e, source, rowsVisible(e.source), view.direction, outputFieldsByNode, nodeById, ioNodeToOwner);
+    const sourceHandle = sourceHandleFor(e, source, rowsVisible(e.source), view.direction, outputRowsByNode, nodeById, ioNodeToOwner);
     const targetHandle = targetHandleFor(e, target, rowsVisible(e.target), nodeById, ioNodeToOwner);
 
     const key = `${source}->${target}|${e.kind}|${e.label ?? ""}|${sourceHandle}|${targetHandle}`;
@@ -1007,7 +1189,7 @@ function sourceHandleFor(
   source: string,
   rowsVisible: boolean, // the source node renders its body rows (advanced, or focus-expanded; an IO endpoint checks its OWNER)
   direction: Direction,
-  outputFieldsByNode: Map<string, Set<string>>,
+  outputRowsByNode: Map<string, OutputRow[]>,
   nodeById: Map<string, RFNode>,
   ioNodeToOwner: Map<string, string>,
 ): string {
@@ -1031,7 +1213,17 @@ function sourceHandleFor(
     return branchHandle("end");
   }
   if (rowsVisible && isRealSource && edge.kind === "data_flow" && edge.output_field) {
-    if (outputFieldsByNode.get(edge.source)?.has(edge.output_field)) {
+    // The landing ladder (H6, one level deeper — D7): a sub-key ref lands on its
+    // exact key row when that row renders; else the field's parent row; else
+    // node-level. "Renders" is checked against the node's ACTUAL outputRows —
+    // never name a handle that doesn't render (React Flow drops it silently).
+    const rows = outputRowsByNode.get(edge.source);
+    const sub = edge.output_path?.[0];
+    const keyField = sub != null ? `${edge.output_field}.${sub}` : null;
+    if (keyField != null && rows?.some((r) => r.field === keyField)) {
+      return outputHandle(keyField);
+    }
+    if (rows?.some((r) => r.field === edge.output_field)) {
       return outputHandle(edge.output_field);
     }
   }
@@ -1167,6 +1359,12 @@ function toFlowEdge(
 }
 
 const DIMMED_EDGE_CLASS = "edge-dimmed";
+const SHADOWED_EDGE_CLASS = "edge-shadowed";
+
+// The z-index applyFocus writes onto a SELECTED edge so it paints above the cards
+// it crosses (React Flow otherwise renders all edges behind nodes — the tunneling
+// problem edge selection exists to solve). Exported for tests/components.
+export const SELECTED_EDGE_Z = 1000;
 
 function stripDim(className: string | undefined): string {
   return (className ?? "")
@@ -1180,15 +1378,23 @@ function stripDim(className: string | undefined): string {
 // data + an interaction"). Returns fresh node/edge objects so React Flow re-renders
 // the changed styling. Groups are never dimmed (they carry context for the focus).
 // `focus=null` clears any prior dim/highlight.
-// `focus` is a contract id — a node id, a root IO card's id, OR an individual IO
-// port's id (a row). An edge is incident if its flow endpoints OR its original
-// endpoints (`data.from`/`to`) touch the focus, so a single port reveals just its
-// own lines even though its edges re-anchor onto the shared owner node.
+// `focus` is a contract id — a node id, a root IO card's id, an individual IO
+// port's id (a row), OR a flow EDGE's id (edge-click selection). An edge is
+// incident if its flow endpoints OR its original endpoints (`data.from`/`to`)
+// touch the focus, so a single port reveals just its own lines even though its
+// edges re-anchor onto the shared owner node. For an EDGE focus the clicked
+// CONNECTION is the subject: only that edge lights (selected + elevated), its two
+// endpoint nodes stay full-strength, and everything else — including the
+// endpoints' OTHER edges — dims.
 export function applyFocus(
   nodes: FlowNode[],
   edges: FlowEdge[],
   focus: string | null,
 ): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  // Selecting an EDGE: deliberately NOT the unit machinery below — seeding the
+  // unit with the endpoints would light their entire neighborhoods, when the
+  // subject is one connection.
+  const focusedEdge = focus != null ? (edges.find((e) => e.id === focus) ?? null) : null;
   // Selecting a CONTAINER (focus = a group node's id) selects the whole UNIT:
   // the group, ALL its descendants, and every edge touching any of them —
   // internal wiring and external bindings light up, everything else dims
@@ -1196,7 +1402,7 @@ export function applyFocus(
   // toggles). For a leaf/port focus the unit is just the focus id, which
   // preserves the original single-id incidence exactly.
   const unit = new Set<string>();
-  if (focus) {
+  if (focus && !focusedEdge) {
     unit.add(focus);
     if (nodes.some((n) => n.id === focus && n.type === "group")) {
       const childrenByParent = new Map<string, string[]>();
@@ -1217,8 +1423,21 @@ export function applyFocus(
   }
   const touches = (e: FlowEdge): boolean =>
     unit.has(e.source) || unit.has(e.target) || (e.data != null && (unit.has(e.data.from) || unit.has(e.data.to)));
+  // Incidence: for an edge focus, exactly the focused edge; otherwise any edge
+  // touching the unit.
+  const incidentTo = (e: FlowEdge): boolean => (focusedEdge ? e.id === focus : touches(e));
   const connected = new Set<string>(unit);
-  if (focus) {
+  if (focusedEdge) {
+    // The lit nodes are the selected edge's endpoints — both the rendered anchors
+    // and the original contract endpoints (a re-anchored line lights the visible
+    // ancestor it lands on).
+    connected.add(focusedEdge.source);
+    connected.add(focusedEdge.target);
+    if (focusedEdge.data) {
+      connected.add(focusedEdge.data.from);
+      connected.add(focusedEdge.data.to);
+    }
+  } else if (focus) {
     for (const e of edges) {
       if (touches(e)) {
         connected.add(e.source);
@@ -1241,9 +1460,12 @@ export function applyFocus(
   if (focus) {
     for (const e of edges) {
       // Outcome edges: branches, plus a decision's END edge (its "end" outcome —
-      // clicking the end dot answers "why did flow stop here?").
+      // clicking the end dot answers "why did flow stop here?"). Selecting the
+      // branch EDGE itself also reveals its condition here (the selected edge
+      // suppresses its own floating pill — elevation would strike through it —
+      // so the source's row is the condition's visible home; TD stays panel-only).
       if ((e.data?.kind !== "branch" && e.data?.kind !== "end") || e.data.condition == null) continue;
-      if (e.target !== focus && e.data.to !== focus) continue;
+      if (e.target !== focus && e.data.to !== focus && e.id !== focus) continue;
       if (!rowReveals(e)) continue;
       const conds = revealBySource.get(e.source) ?? {};
       conds[e.data.outcome!] = e.data.condition;
@@ -1272,7 +1494,8 @@ export function applyFocus(
     return { ...n, data: { ...n.data, focused, dimmed, ...(n.type === "node" ? { revealedConditions } : {}) } } as FlowNode;
   });
   const outEdges = edges.map((e) => {
-    const incident = focus != null && touches(e);
+    const incident = focus != null && incidentTo(e);
+    const selected = focusedEdge != null && e.id === focus ? true : undefined;
     // A default-hidden edge (beautiful mode's data-flow lines) is revealed when it
     // touches the focus — "show me this node's / port's data wiring." Edges hidden
     // by the build stay hidden otherwise; control edges are never default-hidden.
@@ -1280,14 +1503,33 @@ export function applyFocus(
     // writes — so re-processing decorated output can't misread a revealed edge.
     const defaultHidden = e.data?.defaultHidden === true;
     const hidden = defaultHidden && !incident;
-    const base = stripDim(e.className);
+    const stripped = stripDim(e.className);
+    // A SELECTED shadowed structural edge renders full-strength: the build's
+    // edge-shadowed class (35% opacity) would fight the bright+halo treatment.
+    // Safe and reversible — this pass always re-runs on the pristine laid snapshot.
+    const base = selected
+      ? stripped
+          .split(" ")
+          .filter((c) => c && c !== SHADOWED_EDGE_CLASS)
+          .join(" ")
+      : stripped;
     const dim = focus != null && !incident;
     const className = dim ? `${base} ${DIMMED_EDGE_CLASS}`.trim() : base;
+    // EdgeLabelRenderer pills live OUTSIDE .react-flow__edge, so the CSS dim can't
+    // reach them — carry the dim as data for the components' label divs.
+    const dimmed = dim ? true : undefined;
+    // The selected edge paints above the cards it crosses. applyFocus OWNS this
+    // channel (the build never sets edge zIndex — a loop edge deliberately must
+    // not): falling back to e.zIndex would pin a stale elevation when this pass
+    // re-processes its own decorated output (caught by test).
+    const zIndex = selected ? SELECTED_EDGE_Z : undefined;
     // Which END of an incident data line the focus sits on — DataEdge renders the
     // line solid at the clicked node and fading a hint toward the far end, so the
-    // revealed wiring visibly BELONGS to the focus (user-chosen treatment).
+    // revealed wiring visibly BELONGS to the focus (user-chosen treatment). A
+    // SELECTED edge clears it explicitly: both ends draw solid (without this the
+    // ternary would silently default the focused edge to "target" and fade one end).
     const focusEnd =
-      incident && e.data?.kind === "data_flow"
+      incident && !selected && e.data?.kind === "data_flow"
         ? e.source === focus || e.data.from === focus
           ? ("source" as const)
           : ("target" as const)
@@ -1306,11 +1548,20 @@ export function applyFocus(
       className === e.className &&
       hidden === (e.hidden ?? false) &&
       focusEnd === e.data?.focusEnd &&
-      conditionRevealed === e.data?.conditionRevealed
+      conditionRevealed === e.data?.conditionRevealed &&
+      selected === e.data?.selected &&
+      dimmed === e.data?.dimmed &&
+      zIndex === e.zIndex
     ) {
       return e;
     }
-    return { ...e, className, hidden, ...(e.data ? { data: { ...e.data, focusEnd, conditionRevealed } } : {}) };
+    return {
+      ...e,
+      className,
+      hidden,
+      zIndex,
+      ...(e.data ? { data: { ...e.data, focusEnd, conditionRevealed, selected, dimmed } } : {}),
+    };
   });
   return { nodes: outNodes, edges: outEdges };
 }

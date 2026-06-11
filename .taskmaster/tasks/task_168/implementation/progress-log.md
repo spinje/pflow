@@ -2315,3 +2315,246 @@ description full width), run-cycle collapsed card (`[⧉ ×N] [3 ⤢]` rail) AND
 detailed card — the overflow fix at work; clean CLAUDE CODE category), io card pill
 parity (zoomed crops). Docs synced: web/CLAUDE.md (new rail bullet + 4 amendments),
 visualization-requirements.md (Implemented). Zero Python/contract change.
+
+### TRANSFORM Level 2 — result shape + per-key edge landing (2026-06-10) ✅ (uncommitted)
+
+> Plan: `implementation/transform-l2-plan.md` (approved + review-folded). Built phase-by-phase
+> per the plan; this entry records the DEVIATIONS and surprises only. web **188 tests** (incl.
+> the parallel agent's edge-selection work in the same tree); Python **7820 passed**; `make
+> check` clean; **corpus Mermaid diff EMPTY** (56/56, before/after via a HEAD worktree — run
+> twice: post-Phase-2 and on the final tree); browser-verified on all four plan cases.
+
+**Built as planned (no restating):** `RFResultShape`/`_result_shape_from_code` (Half A),
+`refs_with_path_in` one-shared-walk extractor, `Edge.output_path` `compare=False`,
+build sites 1+2 with the alias-guard + equality rule, `RFEdge.output_path` cleared with
+re-anchoring, the `OutputRow` single-source row model + D2/D3/D4 composition + the per-key
+landing ladder. The plan's verified facts held — zero integration surprises in Phases 1–3.
+
+**7-agent review (the Phase-4 step-0 gate) → all fixes landed same session:**
+- **The convergent find (5 of 7 agents): the fail-closed promise had mutation holes.** The
+  plan's pinned "result assignment" definition (Assign/AnnAssign/AugAssign target-walk +
+  subscript) missed `result.update({...})` / `.pop()` / `del result[k]` / `for result in` /
+  `with ... as result` — each ships a keys list that LIES (probed live by two agents).
+  Fixed beyond the plan's letter, per its own rationale: new `_result_shape_uncertain`
+  invalidates `keys` on ANY attribute access on `result` (no mutating-vs-pure whitelist —
+  `.get()` also kills keys; absent beats wrong), del/for/with/comprehension/match-as
+  rebinding. Aliasing (`r = result`) stays statically invisible — accepted residual.
+- **Two mutation-verified test gaps (test-fidelity agent), both closed:** (1) deleting the
+  site-2 equality guard survived ALL 3087 core tests — the plan's own done-when case was too
+  weak to reach it; pinned via an output `source: "${input_x.y.z}"` (resolves to an input →
+  `output_field=None` → tail must stay off). (2) Mutating the edge-scan to mark sub-reads as
+  bare survived all 177 web tests (the unit matrix injects FieldReads directly; the seam
+  between scan and composition was untested) — pinned by asserting the exact flat D3 row list
+  from REAL edges.
+- **Renderer dedup key now includes `output_path`** (3 agents flagged the residual as
+  understated): site-2 output-source edges carry `input_name=None`, so two sub-key refs in ONE
+  `source:` expression collapsed to one RF edge — the second key lost its line AND rendered
+  quiet-unread. The plan called extending the key optional; the quiet-row consequence made it
+  real. Build-level dedup (site 1, same input_name) stays first-path-wins — that one is
+  Mermaid-coupled and locked.
+- Smaller: `EMPTY_READS` frozen + a readonly view type (the future-refactor corruption trap);
+  `{"x": None}` ships type `"None"` not `"NoneType"`; ReadPanel unknown types use the in-file
+  `"—"` convention; the all-null shape state (`result = compute()` → `(None, None)` = "provably
+  assigns result, nothing further") documented on both contract mirrors; authored-only `result`
+  rows order FIRST (primary product).
+
+**THE honest finding (agent-UX critical, NOT fixed — needs a user decision): quiet ≠
+unconsumed.** Observed reads derive from DATA_FLOW edges, and plain-param refs
+(`prompt: ${gen.result.ok}`) form NO edges (the known model scope limit) — so a key consumed
+only through a prompt/command body renders as a quiet "produced but unconsumed" row: an
+affirmative wrong claim, where pre-L2 there was merely no line. Documented as "no tracked
+reader" in web/CLAUDE.md + the requirements doc; candidate fix (frontend-side param-text scan
+into observedReadsByNode — scope-aware sibling matching, no new lines) parked for the user.
+Also parked: ReadPanel doesn't show observed/deep read paths (the plan's ">1-level paths"
+promise under-delivered; GraphView is the parallel agent's territory today).
+
+**Parallel-agent note:** built alongside the edge-selection agent (their EdgePanel/
+`selected`/zIndex work) in flow.ts/flow.test.ts/GraphView/useWorkflowGraph. Their in-flight
+red test self-resolved; final gates ran green on the merged tree. The 7-agent review saw the
+combined diff — two reviewers explicitly separated the foreign work and checked L2
+interactions against it (none adverse).
+
+**Browser verification (server restarted per F11; bundle rebuilt):** validate-fix
+`run-validate` advanced → quiet `→ result: dict` parent + nested active `· ok`/`· round` rows,
+lines leaving the key rows (mock §3); execute-plan `group-tick` → three flat `→ result.*` D3
+rows, three lines (mock §2); deep-research `combine` → parent + nested keys, ONE wholesale
+line (mock §1); validate-fix beautiful at rest → unchanged skeleton, no rows/lines. Wire
+probed: `result_shape` + `output_path` ship exactly the F1 shapes.
+
+**Quiet-rows decision RESOLVED (user, same day): the param-text scan shipped.** The user chose
+option (a) — `scanParamReads` (flow.ts) merges plain-param `${sibling.field.key}` reads into
+the observed set so quiet truthfully means "no reader at all". Deliberate bounds, each pinned
+by a test: scope-aware (same-parent `node_id` only — a name reused in another sub-workflow
+can't be mis-marked), the reader's batch alias is skipped, and a param read NEVER creates a
+new top-level field row (no edge + no shape → no row = no claim) nor a line (D5 intact — the
+un-quieted test also asserts zero data-flow edges). Residual: refs outside params (loop
+conditions) are not scanned. web **215 tests** (+4); the parallel agent's transient
+`__scratch.test.ts` is the only tsc noise on the shared tree (theirs to clean).
+
+### Edge SELECTION (click) + EdgePanel shipped (2026-06-10, user-driven) ✅ (uncommitted)
+
+> Plan + the 4-lens plan review (R1–R16 hardening): `implementation/edge-selection-plan.md`.
+> Design converged in conversation: edge-click chosen over hover-first (sticky, touch,
+> agent-verifiable, deep-linkable, panel content — hover is the gated follow-on on the same
+> machinery); selection = "the loud version of yourself" (hue carries identity, brightness
+> carries state — never a foreign selection color). All `web/`; zero contract/Python change.
+
+The review earned its run: all four lenses independently converged on the same seams —
+GradientEdge's twin stray RF-`selected` branch, chip navigation needing `resolveNodeFlatId`'s
+host resolution, the `loop:` redirect needing the RENDER anchor (`e.source`, a group id for
+looped sub-workflows — `data.from` is the suppressed host), and the two findings that became
+the load-bearing rules: **the applyFocus identity-bailout must compare the new fields** (a
+focused CONTROL edge changes nothing else in its tuple — selection would silently never land)
+and **an edge-id focus has no `from/to` escape hatch through rebuilds** (collapse re-anchor/
+dedupe can erase the id → GraphView clears the selection rather than leave an all-dim canvas
+under a live panel).
+
+- **Pure layer:** `applyFocus` edge arm (only-the-connection incidence — deliberately NOT the
+  unit machinery; endpoints lit via `connected`, focusEnd explicitly cleared, `edge-shadowed`
+  stripped, `selected`/`dimmed` written to data, zIndex an applyFocus-OWNED channel — my first
+  cut fell back to `e.zIndex` and the re-processing test caught the stale-1000 immediately);
+  `expandTargets` edge arm (endpoints into the OUTPUT set, never `foci` — the R6 trap).
+- **Wiring:** pure `edgeClickAction` dispatch (loop redirect / io-flow restyle-only+panel-clear /
+  full select), R7 invalidation effect, `deleteKeyCode={null}`, camera anchor maps edge→flow
+  source endpoint at set time.
+- **EdgePanel** (5 variants) + the R16 extraction (`ParamBlock`/`OutcomeTable` out of ReadPanel,
+  extended with highlight-this-ref / mark-this-row). The dict-key binding walk (`bindingParam`
+  mirrors `targetHandleFor`) proved itself on the FIRST live render: run-from-plan's
+  `happy-check.result → impl` lands inside the `inputs` dict param, highlighted correctly.
+- **Components:** bright `--data-edge-selected` (provisional `#8fe8c0` — shoot-lab pending),
+  halo under-stroke (INLINE stroke — RF's base stylesheet greys `.selected` paths), label
+  suppression on the selected edge, `.label-dimmed` on pills (previously sibling outcome labels
+  glowed at full strength over a 0.18-opacity canvas — R10).
+- **Deep link:** `focus=<flat edge id>` shipped as the deterministic escape hatch (the
+  screenshot loop + Task 169 need it; STABLE addressing stays deferred). Live verification
+  immediately exposed the gap the impact review predicted: `initialCollapsed`'s protect chain
+  was node-only, so `focus=e14` without `node=` auto-collapsed both endpoints → edge dropped →
+  R7 cleared it → silent no-op. Fixed: an edge target protects BOTH endpoints' chains (pinned).
+
+**The verification detour worth recording:** beautiful-mode edge focus initially measured
+unexpanded (n49 at 68px, e2 unrendered) across 3 runs + a fresh headless Chrome — looked like
+a wiring bug. The scratch-vitest-on-the-real-contract discipline proved the pure pipeline
+correct (collapsed {g6,g9} matches the toolbar's 2/4, n49 expands to 316, e2 reveals), and a
+12s-wait DOM probe then showed everything LANDS — the **ELK worker hang resurfaced** on the
+deep-link expansion layout and `layoutWithWatchdog` rescued at 10s exactly as designed
+(bounded badness, never a dead canvas). Re-probes minutes later: 3s, no stall, twice — the
+same nondeterministic environmental class the hang handoff closed with; the watchdog defense
+has now earned its keep in the wild. No action.
+
+**Verified live** (screenshot/inspect loop, all via `focus=<edge id>`): data edge advanced TD
+(bright dotted line + halo, dim canvas, panel with highlighted ref + file:line); beautiful
+data edge (both endpoints expand, row-to-row, 24 edges dimmed, halo — DOM-probed);
+branch e12 (marked outcome table, condition, suppressed own pill); decision-end e14 (end ·
+outcome + table, protect-chain fix confirmed); error edge on conditional-branching (red
+gradient + halo, semantics line, even the branch label pills dim now). **Honest residuals:**
+no natural card-crossing case found in the framed shots, so elevation-over-card + the elevated
+hit-band remain visually unproven (zIndex confirmed applied; worst case = old behavior);
+the selected-shade × halo-weight shoot-lab is pending the user's pick.
+
+Gates: web **215 passed** (+27 over pre-feature: 10 flow edge-focus/expand pins, 6
+viewParams dispatch/resolution, 13 EdgePanel variants incl. dict-key + role-less + bundle
+fixtures, 1 collapse edge-protect — counts interleave with the parallel agent's suite),
+tsc strict + build clean. Docs synced: web/CLAUDE.md (edges-select bullet),
+visualization-requirements.md (Implemented), the screenshot skill's `focus=` row.
+*(Parallel-agent note: their output-rows/chip-rail work landed in the same files
+(flow.ts/types.ts/ReadPanel) throughout — all my edits re-read fresh; their ReadPanel
+result_shape facts and my ParamBlock/OutcomeTable extraction compose cleanly.)*
+
+**ReadPanel "untruncated home" promise closed (same day, follow-up).** The last knowingly
+under-delivered plan item (Phase 3.2's ">1-level paths"): GraphView now passes `reads` beside
+`branches` — the node's outgoing data-flow edges as full dotted paths
+(`output_field[.output_path…]`, deduped) — and the panel renders a `consumed` fact
+(`result.ok, result.round` on run-validate, verified in-browser via the focus deep-link).
+Unblocked because the parallel agent finished their GraphView/ReadPanel rework (and removed
+their `__scratch.test.ts` — tsc + the full gated `npm run build` are clean again). web **216
+tests** (+1: clicking a producer surfaces the full-depth consumed paths, incl. a 2-deep
+`result.a.b`).
+
+**Output-schema shapes + the result_shape → output_shape generalization (same day, user-driven).**
+The user's screenshot question ("why does the ship card show a bare `→ result` + `· pr_url`?")
+surfaced that structured-output nodes DECLARE their shape — `output_schema` is authored truth the
+extractor ignored (AST-over-Python only). Shipping it required one contract correction first: llm's
+structured output lands in `response`, NOT `result` (llm.py "Writes:"; claude-code's lands in
+`result`) — so the shape must NAME ITS FIELD or llm rows would describe a port that doesn't exist.
+Renamed `RFNode.result_shape` → **`output_shape`** with a `field` member ("result" | "response");
+the field is hours old and uncommitted, so the rename cost nothing and kills the naming lie before
+it ships. `_shape_from_output_schema(schema, field)` (fail-closed: only top-level `type: object`
+with dict properties; templated `${...}` schemas are strings → None) feeds claude-code
+(field="result") and llm (field="response"); code nodes unchanged (field="result"). Key types use
+each source's OWN vocabulary (Python names from annotations, "string"/"number" from schemas) —
+authored text, never normalized. Frontend: `outputRowsFor`/`scanParamReads`/ReadPanel all follow
+`shape.field`. Execute-plan now ships shapes on all 5 schema'd claude-code nodes (probed: ship →
+pr_url/summary: string). Also same session: the row tooltip carries `field: type` (a long label
+ellipsizes the faint type suffix away — user question exposed it). Python 7822 + make check; web
+217 (+1 response-field pin); goldens untouched (renderer-only).
+
+**Post-entry verification + decisions from the Q&A round (2026-06-10, late):**
+- **llm response-shape verified LIVE on corpus** (the output-shape entry predated this):
+  run-cycle's `plan` node ships `{field: response, keys: [issues: array]}` on the wire and
+  renders its response rows on canvas — both shape sources (AST + output_schema) and both
+  fields (result/response) now have real-browser evidence, not just pins.
+- **Rename totality finished:** two test NAMES still said `result_shape`
+  (`test_result_shape_extraction_matrix` / `..._ships_on_the_contract_...`) — renamed to
+  `output_shape` forms; the only remaining `result_shape` tokens in the tree are the two
+  internal helpers (`_result_shape_from_code`/`_result_shape_uncertain`), whose names are
+  correct (they extract the result-field shape specifically).
+- **Considered + REJECTED: registry-declared interface rows.** "A node can output many
+  root objects" (shell: stdout/stderr/exit_code/…; llm: response/error/prompt/llm_usage) —
+  the row machinery already handles multiple roots per node (rows are per observed FIELD).
+  Documenting ALL of a kind's potential roots as quiet rows from the registry's declared
+  interface was considered and rejected: it would pin a fixed block of mostly-noise rows on
+  every advanced card. Rows come only from authored shapes or actual reads — no row = no
+  claim. (If ever revisited: the source is the node registry, and output_shape becomes a list.)
+- **Open knob (user undecided):** the nested-row glyph — `· ok` (current, per the approved
+  mock) vs `.ok` (mirrors the `${result.ok}` ref syntax). Don't change without their call.
+
+### Session close — TRANSFORM L2 + follow-ups batch (2026-06-10)
+
+**One joint uncommitted batch again** (32 modified files), interleaved with the parallel
+agent's edge-selection + chip-rail arcs in flow.ts/flow.test.ts/GraphView/useWorkflowGraph/
+index.css/CLAUDE.mds — per-author split impractical (same precedent as the two prior batches).
+**This agent's slice:** scope.py / model.py / build.py / react_flow.py (+ its two build-test
+files) — the L2 contract chain; web: types.ts, flow.ts (outputRows/scanParamReads/landing),
+WorkflowNode (output rows + tooltip), ReadPanel (shape facts + consumed), GraphView (reads
+prop), index.css (output-row styles), their tests; docs: graph/ui/web CLAUDE.mds,
+visualization-requirements.md, this log.
+
+**Pre-commit gate (re-run on the FINAL merged tree):** `make test` (last green: **7822** + 1
+skipped) + `make check` (clean, incl. mypy/deptry); `cd web && npx tsc --noEmit && npx vitest
+run` (last green: **217**) + `npm run build`; corpus Mermaid diff empty (run twice this
+session via HEAD worktree; the post-L2 rounds were renderer/frontend-only, goldens inherently
+safe). No untracked files to add.
+
+**Open threads (not blockers):** the watch item — advanced density grew (every
+shape-bearing node carries rows; reads fine on run-cycle/execute-plan, user's eyes on the
+big harness are the acceptance test); llm `error`/`prompt`/`llm_usage` and shell's binary
+flags stay observed-only by design; expression-level type inference deliberately not
+attempted (the fail-closed bar).
+
+**Same-day follow-up (user-caught, 2026-06-10): the data panel's param/highlight was BLIND to
+sub-workflow input ports.** The user clicked `result → concept_brief` (a binding into a
+sub-workflow's input) and saw no highlighted `${ref}` — the panel's `bindingParam` looked only
+at the direct TARGET, and a port has no params; the authored text lives on the sub-workflow
+STEP's `inputs:` mapping in the parent file. This is the most common binding shape in real
+fan-out workflows and none of the corpus fixtures covered it. Fix: `portOwnerHost`
+(EdgePanel.tsx) resolves port → wrapper → parent group → HOST node; an input-port target
+shows the host's `inputs` param with this edge's ref highlighted (binding key = the PORT's
+name), and the io fact now words the port honestly by direction ("sub-workflow input of
+song-creator" / "workflow input" / "workflow output" — it previously said "workflow output"
+for every io target). Pinned by a jsdom fixture mirroring the user's exact shape; verified
+live on run-from-plan e66 (group-tick.result → execute-plan's delta port: the `inputs` dict
+renders with only `${group-tick.result.delta}` marked). web 220 tests; tsc + build clean.
+
+**Chip-click camera follow (user-caught, 2026-06-11).** A chip naming an off-screen card
+selected it invisibly — the panel swapped but the canvas looked dead. `onNavigate` now also
+`fitView`s the target (padding 0.45, maxZoom 1.2, 300ms — "bring into view", not a close-up;
+in beautiful the expansion re-layout that may follow anchors on the same id, so the target
+stays near where the fit put it). Verified via a DOM-click probe on run-from-plan e66:
+camera transform changed + panel swapped to the chip's node. web 218 tests; tsc + build clean.
+
+**Outcome-table layout fix (user-caught, 2026-06-11).** The shared facts table's fixed 76px
+label column (sized for "loop cap") wrapped outcome names mid-word and orphaned the arrow
+("→\nprocess-\nlarge"). OutcomeTable now carries `facts outcomes`: labels one-line
+(min 76px, ellipsis past 55% with title tooltip), rows padded 4px and baseline-aligned;
+`.fact-marked` keeps just the bg (spacing moved to the row rule). Screenshot-verified on the
+user's exact case (conditional-branching e2). web 218; build clean.

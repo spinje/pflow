@@ -18,6 +18,7 @@ function node(id: string, over: Partial<RFNode> = {}): RFNode {
     is_decision: false,
     is_terminal: false,
     is_transform: false,
+    output_shape: null,
     is_group_host: false,
     unexpanded: null,
     annotations: {},
@@ -98,5 +99,22 @@ describe("initialCollapsed — big workflows open as an overview", () => {
     );
     expect(initialCollapsed(g, null, ["n9"]).has("g0")).toBe(false);
     expect(initialCollapsed(g, null, ["ghost", null]).has("g0")).toBe(true);
+  });
+
+  it("an EDGE deep link protects BOTH endpoints' ancestor chains (a collapsed endpoint drops the edge → silent no-op)", () => {
+    const g: RFGraph = {
+      ...graphWith(
+        AUTO_COLLAPSE_NODE_BUDGET + 1,
+        [group("g0"), group("g1"), group("g2")],
+        [node("a", { parent: "g0" }), node("b", { parent: "g1" })],
+      ),
+      edges: [
+        { id: "e7", source: "a", target: "b", kind: "data_flow", label: null, output_field: null, input_name: null, shadowed: false, condition: null, output_path: [] },
+      ],
+    };
+    const collapsed = initialCollapsed(g, null, ["e7"]);
+    expect(collapsed.has("g0")).toBe(false); // source's chain
+    expect(collapsed.has("g1")).toBe(false); // target's chain
+    expect(collapsed.has("g2")).toBe(true); // unrelated stays collapsed
   });
 });
