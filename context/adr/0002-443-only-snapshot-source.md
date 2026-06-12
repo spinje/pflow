@@ -59,6 +59,10 @@ The snapshot needs the last full run's output for **every** upstream node, as a 
   memo cache a subset, so building `--only` on the trace today means it rides that consolidation
   naturally — the snapshot reader repoints at the merged artifact — rather than being orphaned.
   The dedup the merge must solve is the same repetition that makes a dedicated store tempting.
+  *(Update 2026-06: Task 133 evaluated and **rejected** the merge — trace/cache overlap is small
+  relative to total volume, and the subsystems stay separate. The trace remains the snapshot
+  source; the size problem was instead addressed by blob interning (Task 165, format 2.5.0).
+  The "dedicated snapshot store" escape hatch above stands unchanged.)*
 
 ## Limitations (v1, FLAT `--only` only)
 

@@ -248,7 +248,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
-- Task 133: Unified Per-Node Storage for Trace and Cache
+- Task 133: Trace/Cache Storage Architecture
 
 **v1.0.0 - Security & Sandboxing:**
 - Task 87: Sandboxed Execution Runtime
