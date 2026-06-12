@@ -107,6 +107,8 @@ For every validation change in the diff/plan, check:
 
 **Strictness changes deserve extra scrutiny**: If validation is made stricter, existing valid workflows may break. Ask: "Is this intentional? What workflows would fail?" Task 85 changed simple templates from fail-soft to fail-hard — 3 existing tests encoded the old lenient behavior and had to be updated.
 
+**Placement question**: when the diff adds a check at one entry point or layer, ask why it isn't in the canonical layer (the WorkflowValidator pipeline or the shared `WorkflowRunner` path). "It was convenient here" is drift waiting to happen — the other entry points won't get it.
+
 Historical examples:
 - Unknown parameters promoted from warnings to errors — but 24 stale param names across 9 example workflows had been silently accepted for months (fix 6f896d4d)
 - Validation allowed empty strings for required inputs, but runtime failed with unhelpful errors (fix 7e3b3bfd)

@@ -205,6 +205,8 @@ Key historical patterns:
 - Empty strings accepted for required inputs — failed shell expansions passed `""` through (fix 7e3b3bfd)
 - Nested dict/list params skipped during validation — templates inside dicts silently unchecked (fix 72747856)
 
+The same lens applies to safety tooling itself: a new or edited meta-test, lint rule, or make target that can never fail (wrong glob, 0 files matched) is the purest silent failure — it passes forever and guards nothing. Demand the demonstrated red case.
+
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
 - **Falsy-tolerant logic where falsy genuinely means "skip/absent by design."** `if items:` is a bug for `cost=0.0` but correct when empty means no-op. Confirm what falsy MEANS in that domain before flagging truthiness.

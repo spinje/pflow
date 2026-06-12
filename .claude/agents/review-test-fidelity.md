@@ -159,6 +159,8 @@ Historical examples:
 Check:
 - Is there a test that fails WITHOUT the fix and passes WITH the fix?
 - Does the test assert on the SPECIFIC behavior that was broken, not just the general area?
+- Does it exercise the EXACT code path that was buggy, not a neighbor? A regression test on the adjacent path protects nothing.
+- Could it pass by coincidence? Single-item datasets make `count == 1` trivially true — use ≥2 items with distinguishable values so the assertion can actually discriminate.
 - Is the test named or commented to indicate it's a regression test?
 
 Historical examples where regression tests were needed:
@@ -215,6 +217,10 @@ Not just "it works" but:
 - "It handles the boundary between two features" (batch + branching)
 
 If the diff only has happy-path tests, flag it. The bugs in this codebase live in the edge cases and error paths.
+
+### 12. Safety Tooling Must Be Proven to Fail
+
+If the diff adds or edits a check that guards the codebase — a meta-test (`tests/test_docs/`), lint rule, make target, CI step, pre-commit hook — demand the demonstrated red case: what input makes it fail, and has that been shown? **A green check is evidence of nothing until you've seen it red** — a typechecker verifying 0 files and a linter linting 0 files both pass beautifully.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 

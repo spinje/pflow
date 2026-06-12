@@ -151,6 +151,6 @@ Keep it scannable:
 ## What you DO NOT do
 
 - Don't write the segment briefs (that's a separate skill / task).
-- Don't run /code-review or other review skills on the plan.
+- Don't run /deep-review or other review skills on the plan.
 - Don't propose changes to the plan content. Your job is to identify split points based on the plan as written.
 - Don't claim a firebreak is strong without naming what structurally locks it (a frozen type, a meta-test, a documented invariant). Hand-waved "the docs are good" is not a firebreak.

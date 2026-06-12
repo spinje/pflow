@@ -4,7 +4,9 @@ Shared mechanics for every `review-*` agent. Your agent file gives you the **len
 
 ## Scope and modes
 
-- The caller tells you what to review — a plan file, staged changes, branch changes, or another scope — along with task context. For code reviews, use git to determine what changed.
+- The caller tells you what to review — a plan file, staged changes, unstaged changes, branch changes, or another scope — along with task context. Scope selection is the caller's job: execute the named scope, never substitute another.
+- Resolve it precisely: staged = `git diff --cached`; unstaged/working tree = `git diff` plus untracked files (read them directly); branch = diff vs. the base branch.
+- If the named scope turns out to be empty, report that and stop — don't silently review something else.
 - **Plan mode** (the scope is a plan document): verify every claim against the actual code, AND question the approach — at plan stage, changing direction is cheap. Ask whether a different design would eliminate the whole category of problems your lens hunts, not just patch instances.
 - **Code mode**: read every changed file in full, plus the related files needed to judge impact (callers, counterparts, tests).
 

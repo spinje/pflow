@@ -133,3 +133,6 @@ Only offer to create an ADR when all three are true:
 3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons
 
 If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](context/adr/ADR-FORMAT.md).
+### Offer a plan review
+
+When the implementation plan is captured, offer to run `/deep-review` (plan mode) on it before implementation begins — plan-stage findings are the cheapest to fix.

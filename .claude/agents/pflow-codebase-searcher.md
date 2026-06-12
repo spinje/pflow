@@ -192,6 +192,8 @@ Proceeding with interpretation [N] based on [reasoning].
 
 Always include file paths in your output (line ranges OK in search results — they're a snapshot, not load-bearing for the next agent). **Never present uncertain findings as fact.** If you can't find something, say so clearly with what you searched — an honest "I couldn't verify this" is far more valuable than a plausible-sounding guess.
 
+**Enumerations are transcribed, not recalled.** When reporting a list that exists in the code (validator steps, propagated keys, CLI flags, registry names), copy it from the file you just read — never reproduce it from memory or from this agent file's own examples, which can go stale.
+
 ## Task History & Knowledge Base
 
 For "why was this built this way?" questions, check `.taskmaster/tasks/` and `.taskmaster/knowledge/`.

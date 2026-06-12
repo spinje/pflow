@@ -207,6 +207,8 @@ with self._lock:
 
 This pattern appears in any "lazy initialization" or "ensure started" code. If the diff adds code that checks a flag then acts on it — verify it's protected by a lock.
 
+**Verify lock SCOPE, not just lock presence.** The lock must span the entire check-and-act sequence it guards. A lock released between the check and the action — or covering only the flag write, not the initialization it gates — is the same race with extra steps.
+
 Historical example:
 - `_ensure_started()` in MCP connection pool had a TOCTOU race where two threads could create duplicate event loops (Task 127, fixed with `threading.Lock()` + double-check locking)
 
@@ -326,7 +328,7 @@ def process(items, results=[]):  # results is shared mutable state!
 - **Races without a constructible interleaving.** If you can't write Thread A / Thread B / stale read as concrete steps, it's theoretical — say so in the Summary instead of filing it.
 - **Single dict get/set operations under the GIL** — documented SAFE above. Only compound read-modify-write on shared state is a finding.
 - **Code reachable only sequentially.** Trace the actual callers before assuming concurrency; "this function isn't thread-safe" is not a finding if nothing ever calls it from a thread.
-- **The documented design choices themselves**: deepcopy-per-thread node isolation, SQLite connection-per-operation + WAL, `Registry.__deepcopy__` returning `self`, the bare-pool-with-manual-shutdown pattern. Flag deviations FROM these, not the patterns.
+- **The documented design choices themselves**: deepcopy-per-thread node isolation, SQLite connection-per-operation + WAL, `Registry.__deepcopy__` returning `self`, the bare-pool-with-manual-shutdown pattern. Flag deviations FROM these, not the patterns. But grandfathered ≠ licensed: an accepted pre-existing race or documented exemption does not transfer its pass to NEW code doing the same thing.
 - **Python-version behavior outside the supported 3.10–3.14 window.**
 
 ## Output Format

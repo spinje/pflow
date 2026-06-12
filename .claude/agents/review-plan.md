@@ -39,6 +39,7 @@ For EVERY factual claim the plan makes about existing code, verify it:
 - "This runs before/after X" → Trace the actual execution order.
 - "This is not needed because X already handles it" → Verify X actually handles it.
 - "There are N places that need updating" → Search and count. Plans consistently undercount.
+- "Depends on Task N" → read Task N's actual state (`.taskmaster/tasks/task_N/`). Is it done, and does it provide what this plan assumes? Don't trust the dependency line.
 
 **Use semantic search, not just keyword search.** When verifying claims, think about synonyms and related concepts. Searching for "planning"/"planner" missed "repairable"/"repair"/"triggers repair" in Task 92. If the plan says "update all template handling," search for both the shared resolver AND manual `${...}` string manipulation patterns.
 
@@ -60,6 +61,10 @@ Plans make design decisions. Some are obviously right. Others deserve scrutiny. 
 **"Has this approach been tried before in this codebase? What happened?"**
 - Check `.taskmaster/knowledge/pitfalls.md` and `decisions.md` for prior art
 - Check if similar features used a different pattern (and why)
+
+**"Does this contradict a recorded decision?"**
+- Check `context/adr/` — a plan that contradicts a recorded ADR is Critical unless it explicitly justifies reopening the decision (name the ADR either way)
+- Check terminology against `context/CONTEXT.md` — a plan that coins new names for existing domain concepts creates drift
 
 Historical examples where the plan's approach was wrong:
 - Plan specified blocklist for file-resolvable params → allowlist was needed (Task 129, 20 test failures from `workflow` param matching as file reference)
@@ -138,6 +143,7 @@ Check the plan's internal logic:
 - Are there contradictions between phases? ("Phase 2 says X but Phase 3 assumes not-X")
 - Does the plan reference things it creates as if they already exist?
 - If the plan has numbered steps, does the ordering make sense?
+- Does the plan/spec carry unresolved "Open Questions"? A plan isn't implementation-ready while open questions block phases — name which questions block which phases.
 
 Historical examples:
 - Plan corrections described newly-created code as "already exists" (Task 108)
@@ -201,9 +207,9 @@ Historical examples where manual testing caught what unit tests missed:
 
 #### Code Review and Review Checkpoints
 
-All plans of significant scope should include code review phase at the end of the implementation, and include instructions for invoking the `/code-review` skill at the beginning of the code review phase.
+All plans of significant scope should include code review phase at the end of the implementation, and include instructions for invoking the `/deep-review` skill at the beginning of the code review phase.
 
-For implementations where an individual phase is significant in scope, the plan should include code review checkpoint using the `/code-review` skill — not just at the end, but at key phase boundaries. Think hard about if this is necessary or not. Only suggest if you think the phase is likely to introduce significant new bugs that will be difficult to catch later or compound as the implementation progresses.
+For implementations where an individual phase is significant in scope, the plan should include code review checkpoint using the `/deep-review` skill — not just at the end, but at key phase boundaries. Think hard about if this is necessary or not. Only suggest if you think the phase is likely to introduce significant new bugs that will be difficult to catch later or compound as the implementation progresses.
 
 Consider review points after phases that:
 - Complete a major feature boundary (e.g., "core implementation done, before integration")

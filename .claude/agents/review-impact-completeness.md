@@ -215,6 +215,8 @@ grep "function_or_pattern" tests/
 # Then READ each test file — don't just check if the grep matched, check if the test's ASSERTIONS are still correct
 ```
 
+**Meta-tests are consumers too.** The `tests/test_docs/` meta-tests enumerate patterns (agent-file paths, example workflows, doc links). If the diff adds a new instance of an enumerated pattern, check the meta-test's scope list covers it. Conversely, when your finding is "this rule must hold everywhere," suggest a meta-test as the durable fix — a one-time sweep decays, a meta-test doesn't.
+
 ### 9. Feature Surface Area
 
 Not just "who calls this function?" but "where is this feature EXPOSED?" A complete impact analysis checks all surfaces:
@@ -233,6 +235,11 @@ Not just "who calls this function?" but "where is this feature EXPOSED?" A compl
 | Architecture docs | `architecture/` |
 
 If the diff changes a feature's behavior, check: is the feature described accurately across ALL its surfaces?
+
+**Materiality rubric for doc/CLAUDE.md updates** — not every change warrants doc churn:
+- **Required**: the change alters behavior or structure a CLAUDE.md/guide/doc currently describes — the stale doc would actively mislead.
+- **Worth suggesting**: the change introduces a pattern future work will repeat.
+- **Not needed**: internal refactors invisible at the documented level — flagging these is noise.
 
 Historical examples:
 - Entire cache feature (Task 106) implemented with zero documentation or agent instructions
