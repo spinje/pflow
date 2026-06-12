@@ -21,6 +21,13 @@ vi.mock("../api/client", async (importOriginal) => {
 });
 // Stub ELK so the component test is deterministic; overridable per-test.
 vi.mock("../graph/layout", () => ({ layoutGraph: vi.fn() }));
+// Keep the read panel's ParamBlocks synchronous: the real shiki load under
+// jsdom would land setState after assertions (act warnings + cross-test bleed
+// through the memoized highlighter promise). null = legacy plain rendering.
+vi.mock("../utils/highlight", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/highlight")>();
+  return { ...actual, highlight: vi.fn().mockResolvedValue(null) };
+});
 // Partial-mock @xyflow/react ONLY to OBSERVE fitView calls (the camera-follow
 // pin): the spy wraps the real instance's fitView and calls through, so every
 // other test sees unchanged behavior.
@@ -48,6 +55,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 
 import { ApiError, fetchGraph } from "../api/client";
 import { layoutGraph } from "../graph/layout";
+import { highlight } from "../utils/highlight";
 import { GraphView } from "./GraphView";
 
 const layoutStub = async (nodes: FlowNode[]): Promise<FlowNode[]> =>
@@ -131,14 +139,35 @@ describe("GraphView mount", () => {
     // Toolbar title is available before the graph resolves.
     expect(screen.getByText("demo")).toBeTruthy();
 
-    // Both densities show the description: n0's purpose ("say hi"), and n1 falls back
-    // to its node_id ("done") since it has no purpose.
+    // Both densities show the description: n0's purpose ("say hi"). n1 has no
+    // purpose, so its title line stays empty — identity lives on the NameLabel
+    // chrome above the card (beautiful = humanized name, verbatim id on the
+    // tooltip).
     await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
-    expect(screen.getByText("done")).toBeTruthy();
+    const nameLabel = screen.getByText("Done");
+    expect(nameLabel.className).toContain("node-name-label");
+    expect(nameLabel.getAttribute("title")).toBe("done");
 
     // Advanced adds the body: the dynamic param's ${ref} connection chip.
     fireEvent.click(screen.getByText("advanced"));
     await waitFor(() => expect(screen.getByText("greet.stdout")).toBeTruthy());
+  });
+
+  it("a markdown purpose renders STRIPPED on the canvas card and RENDERED in the read panel", async () => {
+    // The 2-line-clamped description can't render formatting, so markers are
+    // hidden (stripMarkdown); the read panel one click away renders them.
+    const md: RFGraph = {
+      ...GRAPH,
+      nodes: [{ ...GRAPH.nodes[0]!, purpose: "finds **tensions** in `code`" }, GRAPH.nodes[1]!],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(md);
+    const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("finds tensions in code")).toBeTruthy());
+    expect(container.textContent).not.toContain("**");
+
+    fireEvent.click(screen.getByText("finds tensions in code")); // open the read panel
+    await waitFor(() => expect(container.querySelector(".read-panel")).toBeTruthy());
+    expect(screen.getByText("tensions").tagName).toBe("STRONG");
   });
 
   it("read panel shows the full consumed paths for the clicked producer", async () => {
@@ -158,6 +187,9 @@ describe("GraphView mount", () => {
     fireEvent.click(screen.getByText("say hi")); // select the producer (greet)
     await waitFor(() => expect(screen.getByText("consumed")).toBeTruthy());
     expect(screen.getByText("stdout, result.a.b")).toBeTruthy();
+    // The ReadPanel kind→language wiring pin: the shell node's `command` param
+    // must reach the highlight seam as bash (paramLanguage fed node.kind).
+    expect(highlight).toHaveBeenCalledWith("echo hi", "bash");
   });
 
   it("the panel's consumed list includes plain-param (prompt-body) reads — panel/canvas parity", async () => {

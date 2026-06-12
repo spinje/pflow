@@ -13,6 +13,7 @@ import { useEffect, useRef } from "react";
 import { wrapperPorts } from "../graph/flow";
 import { fullValue, IO_COLOR } from "../utils/format";
 import { Chip } from "./Chip";
+import { Markdown } from "./Markdown";
 import { sourceLabel } from "./ReadPanel";
 import type { RFGraph, RFGroup, RFNode } from "../types";
 
@@ -99,7 +100,13 @@ export function IoPanel({
                 {meta && <span className="io-port-meta">{meta}</span>}
                 {src && <span className="read-param-source">{src}</span>}
               </div>
-              {port.description && <p className="io-port-desc">{port.description}</p>}
+              {/* a <div>: Markdown renders <p> children, and <p>-in-<p> trips
+                  validateDOMNesting. The `default:` line below stays plain. */}
+              {port.description && (
+                <div className="io-port-desc">
+                  <Markdown text={port.description} />
+                </div>
+              )}
               {kind === "input" && port.defaultValue != null && (
                 <p className="io-port-desc">
                   default: <code>{fullValue(port.defaultValue)}</code>

@@ -241,6 +241,18 @@
   navigate with camera follow; `focus=<flat edge id>` deep-links. Selected-shade/halo
   shoot-lab pending; hover highlight is the gated follow-on. Plan:
   `implementation/edge-selection-plan.md`.
+- **Markdown + code rendering (2026-06-12):** authored prose (node/port/catalog
+  descriptions) renders as real markdown in the panels (react-markdown; raw
+  HTML stays text, images alt-only); the catalog is INLINE-only (bold/code,
+  blocks flatten — one row stays one line); canvas description lines + tooltips
+  STRIP markers instead (can't render there; conservative — no intraword
+  pairing, so `2*3`/`snake_case`/globs survive). Param values syntax-highlight
+  through ONE lazy shiki seam (`utils/highlight.ts` — the future source-pane's
+  consumer-to-be): value-type-first language policy (object → json; code →
+  python, shell → bash), fail-closed to plain text. Prompts are colored
+  markdown SOURCE, never rendered (user decision). The EdgePanel `${ref}`
+  highlight survives inside highlighted code, gated on a mark-count match
+  (a tokenizer-split ref falls back to plain — marks never downgrade).
 - **Resizable side panel (2026-06-11):** drag handle between canvas and panel (all
   three panels share `.read-panel`, width rides the `--panel-w` var); default 460px
   (was 360), clamped 300–860 and ≤70% viewport, persisted in localStorage,

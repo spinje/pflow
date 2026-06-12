@@ -27,6 +27,17 @@ export function parseTemplate(value: string): TemplateSegment[] {
   return segments;
 }
 
+/** Whether a `${...}` ref BODY belongs to `highlightRef`. Matching is per
+ *  coalesce OPERAND — `${a.b ?? "fallback"}` matches highlightRef "a.b" (a
+ *  whole-text compare never matched coalesce-authored refs): an operand counts
+ *  when it equals the ref or extends it with a dot path. */
+export function refMatchesHighlight(refBody: string, highlightRef: string): boolean {
+  return refBody
+    .split("??")
+    .map((op) => op.trim())
+    .some((op) => op === highlightRef || op.startsWith(`${highlightRef}.`));
+}
+
 /** Flatten any internal whitespace runs to single spaces (for one-line previews). */
 export function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -35,6 +46,71 @@ export function collapseWhitespace(text: string): string {
 /** Cap a string to `max` chars with a trailing ellipsis. */
 export function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+// stripMarkdown is a display DE-NOISER for surfaces that cannot render formatting
+// (the 2-line canvas description, title= tooltips) — NOT a markdown parser. It
+// hides marker symbols while keeping every character of content; when in doubt it
+// under-strips (a stray `*` on the canvas is noise; "2*3" → "23" is corruption).
+//
+// Emphasis pairing is deliberately MORE conservative than CommonMark:
+// - an OPENER must not sit inside a word (CommonMark allows intraword `*`, so
+//   the panel italicizes "2*3 and 4*5" — but stripping those asterisks would
+//   corrupt arithmetic, and "*.tmp and *.log" must keep its globs);
+// - the captured tail is the rule's own non-delimiter class, never bare \S
+//   ("use *args and **kwargs" must not pair the first `*` into the `**` —
+//   review-caught: \S happily matched a delimiter);
+// - content never crosses a blank line (CommonMark parses inlines per
+//   paragraph, so pairing across paragraphs would hide markers the panel shows);
+// - `_` refuses an intraword CLOSE ("_private_var" keeps its underscores,
+//   exactly as CommonMark renders it).
+const MD_STRIP_RULES: Array<[RegExp, string]> = [
+  [/!\[([^\]]*)\]\([^)]*\)/g, "$1"], // images → alt (before links: same tail shape)
+  [/\[([^\]]+)\]\([^)]*\)/g, "$1"], // links → text
+  [/^[ \t]{0,3}#{1,6}[ \t]+/gm, ""], // ATX heading markers
+  [/^[ \t]*(?:>[ \t]?)+/gm, ""], // blockquote markers (incl. nested >>)
+  [/^[ \t]*(?:[-*+]|\d{1,9}\.)[ \t]+/gm, ""], // list markers
+  [/(?<![\w*])\*\*(?=\S)((?:[^*\n]|\n(?!\s*\n)|\*(?!\*))*?[^\s*])\*\*(?!\*)/g, "$1"], // **strong**
+  [/(?<![\w_])__(?=\S)((?:[^_\n]|\n(?!\s*\n)|_(?!_))*?[^\s_])__(?![\w_])/g, "$1"], // __strong__
+  [/(?<![\w*])\*(?=[^\s*])((?:[^*\n]|\n(?!\s*\n))*[^\s*])\*(?!\*)/g, "$1"], // *emphasis*
+  [/(?<![\w_])_(?=[^\s_])((?:[^_\n]|\n(?!\s*\n))*[^\s_])_(?![\w_])/g, "$1"], // _emphasis_
+];
+
+/** Strip markdown markers for plain-text surfaces (canvas description lines,
+ *  tooltips), keeping all content, then collapse whitespace to one line. Never
+ *  throws; unpaired/ambiguous markers stay verbatim (under-strip by design). */
+export function stripMarkdown(text: string): string {
+  // Code-span CONTENT is shielded first (CommonMark protects it — the marker
+  // rules must never see it: `__init__` keeps its dunders while the backticks
+  // drop). Spans lift out to placeholders, the rules run, the content restores.
+  const spans: string[] = [];
+  let s = text.replace(/`([^`\n]+)`/g, (_m, content: string) => {
+    spans.push(content);
+    return `\u0000${spans.length - 1};`;
+  });
+  for (const [pattern, replacement] of MD_STRIP_RULES) {
+    s = s.replace(pattern, replacement);
+  }
+  s = s.replace(/\u0000(\d+);/g, (_m, i: string) => spans[Number(i)] ?? "");
+  return collapseWhitespace(s);
+}
+
+// What language a param VALUE is, for syntax highlighting — fail-closed: null
+// means "render as plain text, exactly as before". Branch on the value's TYPE
+// first (a dict-authored param ships as a JSON object regardless of name; a
+// name like `output_schema` can legally hold a templated STRING), then on the
+// few (kind, name) pairs whose string content has a known language. Everything
+// else — http bodies, write-file content, mcp params (tool-defined names,
+// unenumerable), templates — stays plain. No content sniffing.
+export function paramLanguage(kind: string, name: string, value: unknown): string | null {
+  if (typeof value === "object" && value !== null) return "json"; // fullValue() renders it as JSON
+  if (typeof value !== "string") return null; // the language rules below describe string content
+  if (kind === "code" && name === "code") return "python";
+  if (kind === "shell" && name === "command") return "bash";
+  // Prompts color as markdown SOURCE (VS Code-style), never rendered (user decision).
+  if (kind === "llm" && (name === "prompt" || name === "system")) return "markdown";
+  if (kind === "claude-code" && (name === "prompt" || name === "system_prompt")) return "markdown";
+  return null;
 }
 
 /** A compact, single-line preview of any JSON-able param value. */

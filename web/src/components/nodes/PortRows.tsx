@@ -18,6 +18,7 @@ import { Handle, Position } from "@xyflow/react";
 
 import type { Port } from "../../graph/flow";
 import { portHandle, portTargetHandle } from "../../graph/handles";
+import { stripMarkdown } from "../../utils/format";
 import { useHoverMarks, useInteraction } from "../interaction";
 
 export type PortRowHandles = "receive" | "feed" | "both";
@@ -25,7 +26,9 @@ export type PortRowHandles = "receive" | "feed" | "both";
 function rowTitle(port: Port): string {
   const type = port.dataType ? `: ${port.dataType}` : "";
   const required = port.required ? " (required)" : "";
-  const description = port.description ? ` — ${port.description}` : "";
+  // Only the description is prose — tooltips can't render markdown, so its
+  // markers strip; name/type/required are not prose and stay verbatim.
+  const description = port.description ? ` — ${stripMarkdown(port.description)}` : "";
   return `${port.name}${type}${required}${description}`;
 }
 

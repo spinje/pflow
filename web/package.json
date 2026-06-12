@@ -12,13 +12,20 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@shikijs/langs": "^4.2.0",
+    "@shikijs/themes": "^4.2.0",
     "@xyflow/react": "^12.3.5",
     "elkjs": "^0.9.3",
+    "hast-util-to-jsx-runtime": "^2.3.6",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.2.0"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
+    "@types/hast": "^3.0.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

@@ -3,8 +3,10 @@
 // contract, so there is no on-demand fetch). Surfaces what the canvas can't: full
 // param values, source file:line, loop/batch/io config.
 
-import { fullValue, parseTemplate } from "../utils/format";
+import { fullValue, paramLanguage } from "../utils/format";
 import { ConnectionSections } from "./Chip";
+import { CodeBlock } from "./CodeBlock";
+import { Markdown } from "./Markdown";
 import type { RFEdge, RFGraph, RFNode, SourceRef } from "../types";
 
 export function sourceLabel(source: SourceRef | null): string | null {
@@ -35,18 +37,21 @@ export function OutcomeTable({ branches, marked }: { branches: RFEdge[]; marked?
 
 /** One param's full detail (name + dynamic badge + source file:line + value).
  *  Shared by ReadPanel (every param) and EdgePanel (the one param a selected data
- *  edge lands on). `highlightRef` marks the `${ref}` segments belonging to that
- *  edge's SOURCE, so a multi-ref prompt shows WHICH reference the clicked line is
+ *  edge lands on). `kind` is the param OWNER's node kind — it picks the syntax
+ *  highlighting via paramLanguage (fail-closed: unknown stays plain text).
+ *  `highlightRef` marks the `${ref}` segments belonging to a selected edge's
+ *  SOURCE, so a multi-ref prompt shows WHICH reference the clicked line is
  *  (matches `ref` exactly or `ref.<path>` — never a different node's refs). */
 export function ParamBlock({
   param,
+  kind,
   highlightRef,
 }: {
   param: RFNode["params"][number];
+  kind: string;
   highlightRef?: string;
 }): JSX.Element {
   const src = sourceLabel(param.source);
-  const text = fullValue(param.value);
   return (
     <div className="read-param">
       <div className="read-param-head">
@@ -54,24 +59,7 @@ export function ParamBlock({
         {param.is_dynamic && <span className="badge badge-dynamic">dynamic</span>}
         {src && <span className="read-param-source">{src}</span>}
       </div>
-      <pre className="read-param-value">
-        {highlightRef
-          ? parseTemplate(text).map((seg, i) => {
-              if (!seg.isRef) return seg.text;
-              // A `${a.b ?? "fallback"}` block matches per coalesce OPERAND — the
-              // whole-text compare never matched coalesce-authored refs.
-              const mine = seg.text
-                .split("??")
-                .map((op) => op.trim())
-                .some((op) => op === highlightRef || op.startsWith(`${highlightRef}.`));
-              return mine ? (
-                <mark className="ref-mark" key={i}>{`\${${seg.text}}`}</mark>
-              ) : (
-                `\${${seg.text}}`
-              );
-            })
-          : text}
-      </pre>
+      <CodeBlock code={fullValue(param.value)} lang={paramLanguage(kind, param.name, param.value)} highlightRef={highlightRef} />
     </div>
   );
 }
@@ -158,7 +146,14 @@ export function ReadPanel({
         </button>
       </header>
 
-      {node.purpose && <p className="read-panel-purpose">{node.purpose}</p>}
+      {/* Authored prose renders as markdown. The markdown CSS hangs off `.md` —
+          NOT off .read-panel-purpose, which EdgePanel shares for app-written
+          plain strings (do not restyle that class). */}
+      {node.purpose && (
+        <div className="read-panel-purpose md-host">
+          <Markdown text={node.purpose} />
+        </div>
+      )}
       {src && <p className="read-panel-source" title={node.source?.file ?? ""}>{src}</p>}
 
       <StructuralFacts node={node} />
@@ -178,7 +173,7 @@ export function ReadPanel({
         <section className="read-panel-params">
           <h3>params</h3>
           {node.params.map((param) => (
-            <ParamBlock param={param} key={param.name} />
+            <ParamBlock param={param} kind={node.kind} key={param.name} />
           ))}
         </section>
       )}

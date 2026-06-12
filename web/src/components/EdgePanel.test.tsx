@@ -8,8 +8,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { bindingParam } from "../graph/flow";
+import { highlight } from "../utils/highlight";
 import { EdgePanel } from "./EdgePanel";
 import type { RFEdge, RFGraph, RFNode } from "../types";
+
+// Keep ParamBlock rendering SYNCHRONOUS: the real shiki load would land its
+// setState after these tests' assertions (act warnings + cross-test bleed
+// through the memoized highlighter promise). highlight → null = the legacy
+// plain-text rendering, whose `.ref-mark` pins below must pass unchanged (the
+// CodeBlock first-paint rule guarantees it).
+vi.mock("../utils/highlight", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/highlight")>();
+  return { ...actual, highlight: vi.fn().mockResolvedValue(null) };
+});
 
 afterEach(cleanup);
 
@@ -111,6 +122,11 @@ describe("EdgePanel — data variant", () => {
     // only THIS edge's ref is marked, not the prompt's other refs
     const marks = [...document.querySelectorAll("mark.ref-mark")].map((m) => m.textContent);
     expect(marks).toEqual(["${repo_dir}"]);
+    // The kind→language WIRING pin (mutation-caught gap): the panel must feed
+    // paramLanguage the param OWNER's kind — a claude-code prompt asks the
+    // highlight seam for markdown. Without this, dropping the `kind` prop
+    // silently kills panel highlighting with every unit test green.
+    expect(highlight).toHaveBeenCalledWith("work in ${repo_dir} on ${chunk.body} using ${plan_path}", "markdown");
   });
 
   it("a role-less (re-anchored/deduped) edge falls back to neutral wording — never an empty heading", () => {

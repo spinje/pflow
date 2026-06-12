@@ -3065,3 +3065,97 @@ language), visualization-requirements.md, the skill's SKILL.md. Honest watch-ite
 fixed: every edge/node component consumes the hover context, so one hover transition
 re-renders them all — cheap renders, but sweep-across-rows on the ~124-edge harness is
 untested; if it janks, the fix is a subscription with selector semantics, not less hover.
+
+### Markdown + code rendering: prose renders, params highlight, canvas strips (2026-06-12) ✅
+
+> Plan: `scratchpads/markdown-code-rendering/implementation-plan.md` (the what/how — three
+> treatments, the shiki seam, the language table). This entry carries only deviations,
+> review outcomes, and learnings. Zero Python changes — `web/` + docs only.
+
+**Deviations from the plan, each with the reason:**
+
+- **`paramLanguage` gained a "non-string scalar → null" gate** the plan's table doesn't
+  have. Rules 2–5 implicitly assume string values; without the gate a non-string scalar
+  (`code: 42`) highlighted "42" as python. Fail-closed extension, caught by my own
+  table-matrix test before review.
+- **The plan's rationale for the `2*3` corruption pin is factually wrong — the pinned
+  behavior stands anyway.** The plan claims react-markdown renders `2*3 and 4*5`
+  LITERALLY; probed: CommonMark allows intraword `*`, so the panel renders it with
+  `<em>` (spec example `5*6*78`). The strip is therefore documented as *deliberately
+  more conservative than the renderer* (under-strip beats corrupting numbers), not as
+  renderer parity. Canvas and panel can legitimately disagree on CHROME for these freak
+  shapes; never on content.
+- **The plan's inline "separator rule" failure mode does not reproduce on
+  react-markdown 10.1.0.** `unwrapDisallowed` does NOT concatenate block boundaries —
+  mdast-to-hast newline text nodes survive unwrapping (my probe + two review agents'
+  independent probes). The `p`/`li` trailing-space mapping shipped anyway: an explicit
+  space beats relying on an upstream formatting detail, and it's plan-locked.
+- **GraphView.test.tsx got the highlight `vi.mock` insulation too** (plan named only
+  EdgePanel.test): its ReadPanel tests mount ParamBlocks whose languages resolve
+  (bash/json) — same real-shiki-under-jsdom bleed mechanism. IoPanel.test followed
+  post-review for symmetry.
+- **`@types/hast` added as a devDep** — highlight.ts imports `Root`/`ElementContent`
+  types; declare what you import, even type-only.
+
+**7-agent review (`/code-review`) — what it caught, all fixed + gated green:**
+
+- **CRITICAL (silent-failures, execution-verified): `stripMarkdown` corrupted
+  code-adjacent prose.** (a) The code-span rule ran BEFORE the emphasis rules, so
+  backtick-protected content got de-shielded then stripped: a backticked dunder
+  like `__init__` lost its underscores, a backticked `*emphasis*` its stars. (b) The
+  emphasis captures' bare `\S` tail happily matched a delimiter: `use *args and
+  **kwargs` became "use args and *kwargs". Fix: code spans now lift out to U+0000
+  placeholders before any rule and restore after (CommonMark's own protection order);
+  capture tails are each rule's non-delimiter class; `_` additionally refuses an
+  intraword CLOSE (`_private_var` stays whole — exactly CommonMark's `_` rule);
+  emphasis never pairs across a blank line (inlines are per-paragraph). Six new
+  corruption pins lock all of it.
+- **Raw NUL BYTES in source (impact + validation, both tripped on it).** The U+0000
+  escape I intended in CodeBlock's cache key landed as a literal 0x00 byte — the file
+  read as binary to git/grep/ripgrep and *hid from the reviewers' own consumer sweeps*
+  (the exact failure class the single-copy audits depend on). Fixed byte-level (raw
+  byte → the six-char escape text, via python, since my tool output re-converts the
+  escape to a raw byte every time); also fixed the same pre-existing 1-byte issue in
+  committed `spine.ts:61`. **Standing learning: never emit the NUL escape directly in
+  agent tool output for this repo — route it through a byte-level python pass.**
+- **The kind-to-language WIRING was unobserved (test-fidelity, mutation-proved: an
+  empty `kind` in ReadPanel passed all 327 tests).** Every suite mocked `highlight`
+  and ignored its args, so dropping the `kind` prop would silently kill all panel
+  highlighting. Added `toHaveBeenCalledWith(prompt, "markdown")` (EdgePanel,
+  claude-code prompt) + `("echo hi", "bash")` (GraphView ReadPanel arm).
+- **Suggestions taken:** a `paramLanguage` outputs-subset-of-`HIGHLIGHT_LANGS` drift
+  pin; oversize-input `console.info` (the one degradation not obvious from context);
+  IoPanel.test mock symmetry. **Disputed and NOT done:** inline heading concatenation
+  (impact lens) — refuted empirically by two other agents and my own probe, see
+  deviation 3. Concurrency + agent-UX + feature-interactions lenses: zero findings
+  (the memo-reset race is unconstructible single-threaded; shiki builds a fresh hast
+  per call so markRefs' in-place mutation can't double-mutate).
+
+**Learnings worth keeping:**
+
+- **`.pflow.md` descriptions reject `-` bullets** (parser: "use `*` for documentation
+  bullets") **and claim any fenced block as a fence-named param** — so authored
+  descriptions can't carry fenced code; the Markdown fence path is real but reaches
+  only via multi-paragraph prose surfaces. `*` bullets are valid markdown, so
+  rendering is unaffected.
+- **The memo-reset retry IS provable under vitest:** wrap `createHighlighterCore` via
+  `vi.mock` + a hoisted `{fail, attempts}` state — the module import always succeeds
+  (no module-cache poisoning); only the factory call fails, so attempt counts
+  discriminate reset-vs-memoized exactly. Order-sensitive (failure tests first,
+  before the memo fills); documented in the test header, loud-not-silent if reordered.
+- **`git checkout -- <file>` to undo a scratch mutation NUKES uncommitted work** — it
+  restores HEAD, not pre-mutation state. Cost: re-applying format.ts by hand
+  mid-session. Mutation checks on dirty files need targeted edit-reverts.
+
+**Gates at close:** web 332/332 (from the 289+1-known-red baseline; the GraphView
+NameLabel test updated to the staying design per the plan's step 0), `tsc --noEmit`
+strict + `npm run build` clean, shiki in its own lazy chunks (core ~30 kB gz + engine
++ 5 grammars + theme, loaded on first highlight), main chunk grows by react-markdown
+only. Browser-verified via the screenshot loop (`/tmp/pflow-shots/md-render-test-*`):
+llm prompt = colored markdown SOURCE with the selected edge's ref marked INSIDE the
+colors; python/json param colors; IoPanel rendered prose (bullets + bold, no raw
+markers); canvas cards stripped; catalog row inline-bold on one line; plan-to-code's
+file-referenced prompt markdown-colored. Residual: a scratch `md-render-test` workflow
+was saved to `~/.pflow/workflows` for the catalog screenshot (removal needs a manual
+`rm -rf ~/.pflow/workflows/md-render-test` — no CLI delete verb; rm was
+permission-denied in session).

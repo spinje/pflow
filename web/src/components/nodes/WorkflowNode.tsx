@@ -14,7 +14,7 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 import type { FlowNode } from "../../graph/flow";
 import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
-import { categoryLabel, collapseWhitespace, humanizeId, nodeColor, parseTemplate, previewValue, truncate } from "../../utils/format";
+import { categoryLabel, collapseWhitespace, humanizeId, nodeColor, parseTemplate, previewValue, stripMarkdown, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
 import type { RFParam } from "../../types";
 import { useHoverMarks, useInteraction } from "../interaction";
@@ -266,7 +266,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
       {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
-      {/* MOCK: the node's name (id) as chrome above the card. */}
+      {/* The node's name (id) as chrome above the card. */}
       <NameLabel name={node.ref.node_id} direction={direction} density={density} />
       {/* Behavior chips (loop/batch) on the top border — the rail (ChipRail.tsx). */}
       <ChipRail node={node} />
@@ -280,12 +280,14 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
         </div>
         <div className="node-titles">
           {/* Type line + description, in BOTH densities. The description (purpose)
-              wraps to ≤2 lines. MOCK: the node_id no longer falls back into the
-              title — identity lives on the NameLabel above the card; a card with
-              no purpose shows just its category. */}
+              wraps to ≤2 lines — markdown markers are STRIPPED (a clamped line
+              can't render formatting; the read panel renders it properly). The
+              node_id does not fall back into the title — identity lives on the
+              NameLabel above the card; a card with no purpose shows just its
+              category. */}
           <span className="node-category">{categoryLabel(node)}</span>
           <span className="node-name" title={node.ref.node_id}>
-            {node.purpose ?? ""}
+            {stripMarkdown(node.purpose ?? "")}
           </span>
         </div>
         {/* The ONE status badge a leaf can carry — inline, like GroupNode's

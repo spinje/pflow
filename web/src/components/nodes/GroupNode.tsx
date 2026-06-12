@@ -32,7 +32,7 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 import { type FlowNode, ioRowsCount } from "../../graph/flow";
 import { NODE_IN, NODE_OUT } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y } from "../../graph/metrics";
-import { BATCH_COLOR, kindColor } from "../../utils/format";
+import { BATCH_COLOR, kindColor, stripMarkdown } from "../../utils/format";
 import { groupIconFor } from "../../utils/icons";
 import type { ContainerKind } from "../../types";
 import { useHoverMarks, useInteraction } from "../interaction";
@@ -148,10 +148,11 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
       <div className="node-titles">
         <span className="node-category">{groupCategory(group.kind, hostNode?.kind)}</span>
         <span className="node-name" title={title}>
-          {/* MOCK: host identity lives on the NameLabel above the box — the title
-              line shows the purpose only; hostless groups (item containers) keep
-              their kind label as before. */}
-          {hostNode ? (hostNode.purpose ?? "") : title}
+          {/* Host identity lives on the NameLabel above the box — the title line
+              shows the purpose only (markdown-stripped: a clamped line can't
+              render formatting); hostless groups (item containers) keep their
+              kind label as before. */}
+          {hostNode ? stripMarkdown(hostNode.purpose ?? "") : title}
         </span>
       </div>
       {unexpanded > 0 && (

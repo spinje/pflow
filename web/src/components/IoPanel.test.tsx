@@ -10,6 +10,14 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { IoPanel } from "./IoPanel";
 import type { RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
+// Same insulation as EdgePanel/GraphView: a port description with a fenced
+// block would mount CodeBlock and run the real shiki load under jsdom —
+// setState after assertions + cross-test bleed through the memoized promise.
+vi.mock("../utils/highlight", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../utils/highlight")>();
+  return { ...actual, highlight: vi.fn().mockResolvedValue(null) };
+});
+
 afterEach(cleanup);
 
 function node(id: string, over: Partial<RFNode> = {}): RFNode {
@@ -134,6 +142,26 @@ describe("IoPanel — inputs", () => {
     // scan can't see it): no chips row, and no affirmative "unused" claim.
     expect(screen.queryByText(/unused/)).toBeNull();
     expect(document.querySelectorAll(".io-port")[1]!.querySelector(".io-port-uses")).toBeNull();
+  });
+
+  it("a markdown-authored description renders as ELEMENTS — no literal markers", () => {
+    const g: RFGraph = {
+      ...graph,
+      nodes: graph.nodes.map((n) => (n.id === "n1" ? { ...n, purpose: "finds **tensions** in `code`" } : n)),
+    };
+    render(
+      <IoPanel
+        group={g.groups[0]!}
+        graph={g}
+        workflowName="lyrics-generator"
+        renderedIds={new Set(g.nodes.map((n) => n.id))}
+        markedPortId={null}
+        onNavigate={noop}
+        onClose={noop}
+      />,
+    );
+    expect(screen.getByText("tensions").tagName).toBe("STRONG");
+    expect(document.body.textContent).not.toContain("**");
   });
 
   it("a consumer hidden inside a collapsed container renders a disabled chip", () => {

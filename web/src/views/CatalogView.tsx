@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 
 import { ApiError, fetchCatalog } from "../api/client";
+import { Markdown } from "../components/Markdown";
 import type { CatalogItem } from "../types";
 
 export function CatalogView({ onOpen }: { onOpen: (workflow: string) => void }): JSX.Element {
@@ -44,7 +45,13 @@ export function CatalogView({ onOpen }: { onOpen: (workflow: string) => void }):
           <li key={item.path}>
             <button className="catalog-item" onClick={() => onOpen(item.name)}>
               <span className="catalog-item-name">{item.name}</span>
-              {item.description && <span className="catalog-item-desc">{item.description}</span>}
+              {/* inline-only markdown: bold/code render, block constructs
+                  flatten — one row must stay one flowing line */}
+              {item.description && (
+                <span className="catalog-item-desc">
+                  <Markdown text={item.description} inline />
+                </span>
+              )}
               <span className="catalog-item-path">{item.path}</span>
             </button>
           </li>

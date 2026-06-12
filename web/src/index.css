@@ -1256,6 +1256,63 @@ button.active {
   overflow: auto;
 }
 
+/* ---- rendered markdown prose (Markdown.tsx, block mode) ------------------ */
+/* white-space FIRST and load-bearing: the host classes (.read-panel-purpose,
+   .io-port-desc) keep pre-wrap as the "respect authored newlines" mechanism for
+   PLAIN strings (EdgePanel shares .read-panel-purpose — never restyle the hosts
+   for markdown). Markdown owns its own paragraphs/lists; inherited pre-wrap
+   would hard-break every soft newline and double the block spacing. */
+.md {
+  white-space: normal;
+}
+.md p {
+  margin: 6px 0;
+}
+.md > p:first-child {
+  margin-top: 0;
+}
+.md > p:last-child {
+  margin-bottom: 0;
+}
+.md ul,
+.md ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.md li {
+  margin: 2px 0;
+}
+/* inline code chip; fenced blocks route to CodeBlock (.read-param-value) and
+   carry no <code> element, so this can't leak into them */
+.md code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+/* headings capped small — a side panel has no room for giant headers */
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.md blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.md a {
+  color: var(--accent);
+}
+
 /* ---- edge selection (EdgePanel + canvas treatment) ---------------------- */
 
 /* A dimmed edge's floating pill dims WITH its line: EdgeLabelRenderer content

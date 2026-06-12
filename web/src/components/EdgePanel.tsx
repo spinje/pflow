@@ -219,7 +219,14 @@ export function EdgePanel({
       {param && (
         <section className="read-panel-params">
           <h3>receives</h3>
-          <ParamBlock param={param} highlightRef={highlightRef} />
+          {/* kind = the param OWNER's kind: an IO-port target's param comes from
+              the sub-workflow HOST (bindingParam above), so the port's own
+              kind ("input") would pick the wrong language. */}
+          <ParamBlock
+            param={param}
+            kind={targetNode?.io ? (targetHost?.kind ?? "") : (targetNode?.kind ?? "")}
+            highlightRef={highlightRef}
+          />
         </section>
       )}
       {edge.kind === "data_flow" && targetNode?.io && (

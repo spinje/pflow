@@ -614,6 +614,38 @@ Tests sit beside their subject.
   focus ring + an un-dim override (must stay after `.node.dimmed` in the
   sheet). GraphView's `onNavigate` clears the hover (the clicked chip unmounts
   with the panel swap — its mouseleave never fires).
+- **Authored text rendering (2026-06-12): three treatments, one per surface
+  class.** (1) RENDER — prose descriptions (`node.purpose` in ReadPanel,
+  `port.description` in IoPanel, catalog `item.description`) render as real
+  markdown via `components/Markdown.tsx` (react-markdown + remark-gfm; raw HTML
+  stays TEXT, images render alt-only — workflows are third-party content, no
+  innerHTML anywhere). The catalog uses INLINE mode (bold/code spans only;
+  blocks flatten to one flowing line — `p`/`li` stay allowed and map to
+  trailing-space fragments so unwrapped boundaries keep their separation).
+  Markdown CSS hangs off `.md` (its `white-space: normal` reset is
+  load-bearing) — NEVER off `.read-panel-purpose`/`.io-port-desc`, which
+  EdgePanel and the `default:` line share for app-written plain strings.
+  (2) HIGHLIGHT — `utils/highlight.ts` is THE shiki seam (the future
+  `.pflow.md` source-pane/diff feature consumes this same module): lazy
+  promise-memoized chunk like ELK, except a REJECTED load resets the memo
+  (transient 404'd chunk ≠ session-dead highlighting); 5 grammars
+  (python/bash/json/yaml/markdown), fail-closed `null` → plain text for
+  unknown langs, >50k chars, or any failure. `paramLanguage` (utils/format.ts)
+  picks the language by VALUE TYPE first (object → json), then kind/name
+  (code/shell/llm/claude-code); prompts color as markdown SOURCE, never
+  rendered (user decision). `components/CodeBlock.tsx` is the one renderer of
+  param values: the synchronous first paint is the legacy text + `.ref-mark`s
+  (EdgePanel tests pin it), the shiki hast swaps in later — and with a
+  `highlightRef`, ONLY if `markRefs` lands exactly the expected mark count (a
+  tokenizer-split `${ref}` falls back to legacy; partial marks would lie).
+  Shiki's `<pre>` never renders — its `<code>` children go inside OUR
+  `.read-param-value` so pre-wrap keeps governing. (3) STRIP — canvas
+  description lines + `title=` tooltips can't render formatting, so
+  `stripMarkdown` (format.ts) hides markers, keeping all content; it is
+  deliberately MORE conservative than CommonMark (no intraword `*`/`_`
+  pairing: `2*3`, `snake_case`, `*.tmp` globs survive — under-strip beats
+  corruption). Tiny truncated pills (condition/loop/field labels) are
+  deliberately untouched: they hold code fragments, not prose.
 - **Errors never blank the canvas.** `useWorkflowGraph`'s `status`
   (`loading`/`ready`/`empty`/`error`) drives a banner; a malformed 200 throws from
   `fetchGraph` (caught), an ELK failure becomes an error (not a stuck spinner), and any

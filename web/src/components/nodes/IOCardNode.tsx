@@ -13,7 +13,7 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 import type { FlowNode } from "../../graph/flow";
 import { NODE_IN, NODE_OUT } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y } from "../../graph/metrics";
-import { IO_COLOR } from "../../utils/format";
+import { IO_COLOR, stripMarkdown } from "../../utils/format";
 import { ioCardIcon } from "../../utils/icons";
 import { useHoverMarks } from "../interaction";
 import { PortRows } from "./PortRows";
@@ -63,8 +63,9 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
   // The leaf convention (description || identity): a single-port card's most
   // informative line is that port's OWN description — the Inputs/Outputs section
   // has no description slot in the format, only individual ports do. Multi-port
-  // cards keep the workflow name; the tooltip always carries it.
-  const soleDescription = ports.length === 1 ? ports[0]!.description : null;
+  // cards keep the workflow name; the tooltip always carries it. Stripped once
+  // here: it feeds the title line AND the tooltip, neither renders formatting.
+  const soleDescription = ports.length === 1 && ports[0]!.description ? stripMarkdown(ports[0]!.description) : null;
   const title = soleDescription ?? workflowName;
   const tooltip = soleDescription ? `${workflowName} — ${soleDescription}` : workflowName;
 
