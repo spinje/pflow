@@ -3159,3 +3159,159 @@ file-referenced prompt markdown-colored. Residual: a scratch `md-render-test` wo
 was saved to `~/.pflow/workflows` for the catalog screenshot (removal needs a manual
 `rm -rf ~/.pflow/workflows/md-render-test` — no CLI delete verb; rm was
 permission-denied in session).
+
+### Source pane: left `.pflow.md` view, click-synced both ways (2026-06-12) ✅
+
+> Plan: `scratchpads/source-pane/implementation-plan.md` (review-hardened; the locked
+> decisions — NO diff view, one-file-at-a-time + breadcrumb, host→parent-file /
+> member→child-file — live there and in web/CLAUDE.md's Source pane bullet). Built by
+> one agent, reviewed + fixed by another the same day; this entry consolidates both
+> plus the two user-driven follow-ups. One Python change: the `/api/source` endpoint.
+
+**What shipped:** `/api/source` (inline-ALL files in one response, file set derived from
+the GraphModel — never the truncation-lossy RFGraph; no client file param → no traversal
+surface; root = first top-level node WITH a source file, the inputs-before-steps trap);
+`SourcePane` (left pane, `source=1` URL param + toolbar toggle, resizable under a
+symmetric two-pane width budget with a 320px canvas floor); pure mapping in
+`utils/sourceMap.ts` (nodeAtLine / breadcrumbFor / nodeBlockRange / wrappableLines);
+click-sync both directions through the existing `onNavigate` + `resolveEndpointFlatId`
+seams. Source FETCH lives in GraphCanvas beside the graph fetch — one snapshot kills the
+deep-link race AND graph/source drift across an agent edit.
+
+**Build decisions that stuck:**
+
+- `resolveEndpointFlatId` gained an io-member→wrapper-group arm so `## Outputs`
+  `source:` lines focus the Outputs card. Side effect, judged an improvement: a
+  `focus=`/`node=` deep link naming a PORT now selects the io card instead of
+  dead-ending.
+- **THE browser-discovered gotcha: real shiki line spans ship `properties.class` (a
+  plain string), NOT `className`** — the pane rendered plain text in real Chrome while
+  every test passed on the array shape. `hastLines` accepts both; the regression test
+  uses the real shape. (Same lesson class as "jsdom renders no edge DOM": test doubles
+  must copy production shapes, not plausible ones.)
+- Sync Starlette route like catalog/graph (no async wrapper around sync disk I/O);
+  `UnicodeDecodeError` handled with `OSError` (same user-visible class).
+
+**4-lens review (the originally-skipped gate, run post-hoc) — bugs found + fixed:**
+
+- `breadcrumbFor` dropped the node's `ref.ancestor_path` and re-derived the chain from
+  the FILE (first invocation in contract order) — a child file invoked from two host
+  steps crumbed and NAVIGATED to the wrong invocation. Fixed to walk the node's own
+  path; the pin's fixture proves the trap (it asserts fileChainFor picks the other host).
+- Stale `activeLine` survived line-less file switches (root crumb, null-line nodes) —
+  the new file scrolled to and marked a meaningless line. Line-less switches now clear.
+- No window-resize re-clamp: both panes are flex no-shrink, so shrinking the window
+  after both widened crushed the canvas to 0 with no recovery. Resize listener added.
+- Smaller: lingering missing-file notice; shiki-upgrade scroll yank (`highlighted`
+  dropped from the scroll effect deps — rows keep positions across the upgrade);
+  `highlight.ts`'s header still promised the REJECTED diff view (doc contradiction
+  with the same changeset's recorded no-diff decision — fixed in 3 places).
+- **11 mutation-verified pins added where review-critical wiring was unobserved**:
+  crumb click-time resolution (a raw-host-id mutant dimmed the whole canvas with all
+  tests green), iterate-until-resolves fall-through, ancestorHost's
+  is_group_host/port filters (same-level io/host name collision), the GraphView
+  clamp-RESERVATION plumbing (the kind-prop lesson repeating: unit-pinned function,
+  unobserved call site — the writer proved the prescribed 1200px viewport could NOT
+  kill the mutant and moved to 1000px where the budget binds), the deep-link race
+  `source` dep, the error-branch hidden toggle, and the server's unreadable-file skip
+  arm (patched at `pflow.ui.server.Path` — a global `read_text` patch 422s during
+  RESOLUTION before the skip arm is ever reached).
+
+**Follow-ups (user-driven, same day):**
+
+- **Block EXTENT:** selecting a node tints its whole authored block barely-visibly
+  (`.src-line-block`, 5% accent vs the heading's 16%). The end derives from the next
+  mapped construct or a `#`/`##` section heading in the TEXT — **fence-aware**, or
+  every prompt's `## Rules` would have truncated its node's block (`nodeBlockRange`).
+- **Prose WRAP:** lines outside ``` fences soft-wrap at the pane width; fenced code AND
+  prompts keep exact layout + the horizontal scrollbar (`wrappableLines` — the fence is
+  the honest discriminator the pane can know). Mechanics: `pre-wrap` alone never wraps
+  inside a `max-content` grid track — the width pin to `var(--source-w)` is
+  load-bearing.
+
+**Judged acceptable, not fixed:** sub-920px viewports floor both panes at 300 and
+squeeze the canvas below 320 (pre-existing in kind); the body-line vs heading-line
+active-mark echo (same gesture, two outcomes — revisit if felt); inline-root invoking
+saved-name subs shows a bare disabled crumb for child files (rare entry path);
+sourceMap.test's absolute fixture paths break LOUDLY on fixture regen; `overflow-wrap:
+anywhere` can break a long unbroken token mid-word at narrow pane widths.
+
+**User-reported "can't see anything on open" — diagnosed, not a code bug:** all three
+flows (path / catalog name / `source=1`) render from a fresh build in a real browser.
+Cause: a stale tab across a rebuild (old index.html → 404'd lazy-chunk hashes → no
+layout) or a stale bundle. Hard refresh after `make ui-build`.
+
+**Gates at close:** web 378/378, server 25/25, build + `make check` clean, bundle
+rebuilt; browser-verified end-to-end (multi-file navigation + breadcrumbs, block tint,
+wrap-vs-fence, the host/member file split on run-from-plan).
+
+### Chip navigation overhaul: port-chip camera fix → deferred follow → navigate-without-opening → pinned selection (2026-06-12, user-driven) ✅
+
+> One arc, four user-caught steps, each fix exposing the next layer — all in `web/`
+> (zero Python). Verified per step in a real browser against the user's own
+> lyrics-generator workflow (128 nodes; NOT in this repo —
+> `~/projects/music-generation/workflows/lyrics-generator/`), driven by a new real
+> CLICK harness (promoted to the skill at close, see last bullet). Parallel to the
+> source-pane workstream — test counts below include their landings.
+
+- **Io-port chip click "zoomed to nowhere" (user-caught).** A ReadPanel reference
+  chip naming a sub-workflow port (`enforce-diversity.concepts`, data edge from the
+  port member node) focused an id that is NEVER a rendered node (io members render
+  as rows on their owner) — TWO silent skips: `onNavigate`'s camera follow no-oped
+  (focus id not in `getNodes()`), and the beautiful expansion re-layout's camera
+  anchor resolved no position so the compensation pan no-oped (the EXACT hole the
+  edge-focus arm already special-cased in `useWorkflowGraph` — ports were missed).
+  At 128 nodes the snap re-layout jumped the canvas out from under a stationary
+  camera. Fix: BOTH spots resolve a port to its OWNER card via `ioOwners` (anchor
+  effect + `onNavigate` fit fallback). New GraphView pin: a port-chip click
+  fitViews the owner.
+- **First click landed wrong, second click right (user-caught after the fix).**
+  `onNavigate` started its 300ms `fitView` at CLICK time, computed against the
+  target's PRE-re-layout position; the expansion re-layout then moved everything
+  (warm sessions hit the cached-layout synchronous arm — deterministic repro). Fix:
+  the camera follow is DEFERRED to the paint the click produces — new `paintEpoch`
+  from `useWorkflowGraph` (bumped after every COMPLETED decoration paint; animated
+  glides bump when they land), `GraphView` arms a pending follow and fires it on
+  the bump. A SAME-focus navigate repaints nothing → fits immediately (the old
+  path). Leaf chips silently had the same race (previously masked by the anchor
+  keeping the target "near where the fit put it").
+- **Chips NAVIGATE WITHOUT OPENING (user decision).** The user liked the port-chip
+  gesture (panel stays, camera centers, connection lights) and asked for it on node
+  chips too: one-line change in the shared `Chip` (`onNavigate(resolved)` — no
+  selectedId), inherited by ALL consumers (ReadPanel ConnectionSections, IoPanel
+  rows, EdgePanel endpoints — the EdgePanel keeps describing its connection while
+  the camera follows an endpoint). A chip answers "where is it / how are we
+  connected?"; click the centered node itself to open it. Two test pins updated to
+  the new call shape (one io-chip pin already encoded it).
+- **The panel's subject card contracted mid-read (user-caught immediately after).**
+  Beautiful expansion derived from FOCUS alone, so chip-navigating to create-songs
+  collapsed build-report's body while its panel stayed open. Root inconsistency: a
+  BATCH sub-workflow's `${x.results}` edges attach at HOST level, which a container
+  focus's port-level scan never reaches (a leaf chip like build-file-list kept the
+  subject open — direct edge; the container chip didn't). Fix at the seam:
+  `expandTargets(graph, focus, pinned)` — the open panel's subject pins its OWN
+  card (leaf body / container io rows) in every arm, SELF only (no neighborhood —
+  focus owns that); `useWorkflowGraph` passes `selectedId` through the new
+  `view.selected`. Empty results return the shared `NO_EXPANSION` constant in ALL
+  arms (the build-memo identity rule — a fresh empty Set per click would re-run
+  build+ELK). flow.test pins: pinned survives any focus, a pinned container pins
+  itself, a pinned edge id pins nothing.
+- **Real-click verification harness PROMOTED to the skill (user decision):**
+  `examples/real-workflows/screenshot-pflow-web-ui/click.pflow.md` (4th workflow,
+  SKILL.md row added) — dispatch a real `click` on a `selector`(+`text`) match,
+  report `{panel, before/after rect of measure_id, visible, transform}` +
+  screenshot. Deep links capture STATES; this captures what a click DOES (camera
+  follow, panel stays-vs-swaps — the gap this whole arc was diagnosed through).
+  Generalized from the bug-specific two-click scratch harness
+  (`scratchpads/io-chip-camera/` — kept as the cached-path race repro precedent).
+  Limitation documented: one click per run (a reload resets in-page state);
+  multi-click sequences need extra steps inside one run.
+
+**Gates at close:** web 387/387, `tsc` strict + build clean, example-validation green
+(click.pflow.md auto-enrolled). Browser-verified end-to-end: the port chip centers
+the enforce-diversity card with its row lit (cold AND warm/cached paths); the
+create-songs chip keeps `panel: "build-report"` while the camera centers its group;
+after the pin fix build-report keeps its expanded body (192px @1.2× = rows rendered)
+while the camera leaves. Docs synced: web/CLAUDE.md (chip bullet —
+navigate-without-opening + owner-resolved deferred follow),
+visualization-requirements.md, the skill's SKILL.md.

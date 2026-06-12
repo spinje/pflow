@@ -5,9 +5,13 @@
 // (the word rides the tooltip; the read panel keeps the canvas→file mapping).
 //
 // Semantics every consumer inherits:
-// - CLICK navigates (resolve-or-disable: an endpoint hidden inside a collapsed
-//   ancestor renders a NON-CLICKABLE chip — visible honesty over a silent no-op).
-//   An IO-port chip uses port-focus semantics (focus the row, keep the panel).
+// - CLICK navigates WITHOUT opening (user decision 2026-06-12): focus moves to
+//   the target (it lights, its connections reveal, the camera follows) but the
+//   open panel never swaps — a chip answers "where is it / how are we
+//   connected?", not "open it" (click the centered node itself to open it).
+//   Resolve-or-disable: an endpoint hidden inside a collapsed ancestor renders
+//   a NON-CLICKABLE chip — visible honesty over a silent no-op. An IO-port
+//   chip focuses its row the same way.
 // - HOVER marks the chip's canvas node (Interaction.hoverNode) — a pure
 //   highlight, no focus/expansion/camera change (user decision 2026-06-11).
 //   Only chips that resolve to a rendered canvas box hover (io ports don't).
@@ -80,7 +84,7 @@ export function Chip({
       style={{ "--chip-c": color } as React.CSSProperties}
       disabled={resolved == null}
       title={resolved == null ? "hidden inside a collapsed container" : categoryLabel(node)}
-      onClick={resolved != null ? () => onNavigate(resolved, resolved) : undefined}
+      onClick={resolved != null ? () => onNavigate(resolved) : undefined}
       onMouseEnter={resolved != null ? () => hoverNode(resolved) : undefined}
       onMouseLeave={resolved != null ? () => hoverNode(null) : undefined}
     >

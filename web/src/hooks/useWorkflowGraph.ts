@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type OnEdgesChange, type OnNodesChange, useEdgesState, useNodesState, useReactFlow } from "@xyflow/react";
 
 import { ApiError, fetchGraph } from "../api/client";
-import { applyFocus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode } from "../graph/flow";
+import { applyFocus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode, ioOwners } from "../graph/flow";
 import { layoutGraph } from "../graph/layout";
 import { assignBackRails, assignDataRails, assignLoopRails } from "../graph/portSides";
 import type { ApiErrorEntry, RFGraph } from "../types";
@@ -25,11 +25,21 @@ export type GraphStatus = "loading" | "ready" | "empty" | "error";
 
 export interface WorkflowGraphView extends Omit<BuildOptions, "expanded"> {
   focus: string | null;
+  // The open panel's subject (selectedId) — pins its card's body in beautiful
+  // (expandTargets `pinned`): chip navigation moves focus away while the panel
+  // stays, and the subject the user is reading must not contract mid-read.
+  selected: string | null;
 }
 
 export interface WorkflowGraphResult {
   nodes: FlowNode[];
   edges: FlowEdge[];
+  // Bumped after every COMPLETED decoration paint (snap: same effect; animated:
+  // when the glide lands on the final snapshot). A camera follow that must aim
+  // at post-re-layout positions keys on this — fitting at click time aims at a
+  // stale spot when the click triggers an expansion re-layout (the "first click
+  // lands wrong, second click works" bug, 2026-06-12).
+  paintEpoch: number;
   // The CURRENT build's edge ids — synchronous with focus-derived expansion,
   // unlike the painted `edges` (which lag behind the async layout). The edge-
   // selection invalidation must consult THIS set: a deep-linked deduped edge
@@ -79,7 +89,7 @@ function absolutePosition(nodes: FlowNode[], id: string): { x: number; y: number
 }
 
 export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): WorkflowGraphResult {
-  const { density, direction, collapsed, focus, workflowName } = view;
+  const { density, direction, collapsed, focus, selected, workflowName } = view;
 
   const [graph, setGraph] = useState<RFGraph | null>(null);
   const [errors, setErrors] = useState<ApiErrorEntry[] | null>(null);
@@ -91,6 +101,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
 
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([]);
+  const [paintEpoch, setPaintEpoch] = useState(0);
   const { getViewport, setViewport } = useReactFlow();
 
   // Layout cache: ELK costs ~150ms on a 100+-node workflow (measured), and HALF of
@@ -126,8 +137,8 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
   // render their advanced body, so the revealed lines land on rows. In advanced
   // every body is already visible — the set stays empty so focus stays layout-free.
   const expanded = useMemo(
-    () => (graph && density === "compact" ? expandTargets(graph, focus) : EMPTY_EXPANSION),
-    [graph, density, focus],
+    () => (graph && density === "compact" ? expandTargets(graph, focus, selected) : EMPTY_EXPANSION),
+    [graph, density, focus, selected],
   );
 
   // 2. Structural build (no positions). Re-runs only on layout-affecting state
@@ -152,12 +163,20 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
   // resolves to no node position (absolutePosition → null), so the camera would
   // silently stop compensating and the clicked line would jump on expansion.
   // The flow edge's `source` (not data.from) is always a rendered id.
+  // An IO-PORT focus (port chip / io row click) has the same hole — io members
+  // are never rendered as nodes — so it anchors on the port's OWNER (the card
+  // carrying its row; same resolution the row landings use).
   const anchorRef = useRef<string | null>(null);
   useEffect(() => {
     if (!focus) return;
     const focusedEdge = built.edges.find((e) => e.id === focus);
-    anchorRef.current = focusedEdge ? focusedEdge.source : focus;
-  }, [focus, built]);
+    if (focusedEdge) {
+      anchorRef.current = focusedEdge.source;
+      return;
+    }
+    const owner = graph ? ioOwners(graph).ports.get(focus) : undefined;
+    anchorRef.current = owner ?? focus;
+  }, [focus, built, graph]);
   // The previous layout + the view it was computed for. Anchoring applies only when
   // the SAME view re-laid out because of an expansion change — a workflow/direction/
   // density/collapse change has its own viewport semantics (GraphView's fit effect).
@@ -294,6 +313,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
         const vp = getViewport();
         setViewport({ zoom: vp.zoom, x: vp.x - pan.dx * vp.zoom, y: vp.y - pan.dy * vp.zoom });
       }
+      setPaintEpoch((e) => e + 1);
       return;
     }
 
@@ -318,6 +338,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
       if (pan) {
         setViewport({ zoom: vp0.zoom, x: vp0.x - pan.dx * vp0.zoom * e, y: vp0.y - pan.dy * vp0.zoom * e });
       }
+      if (t === 1) setPaintEpoch((v) => v + 1); // the glide LANDED — final positions
       animRef.current = t < 1 ? requestAnimationFrame(step) : null;
     };
     animRef.current = requestAnimationFrame(step);
@@ -341,5 +362,5 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
         ? "empty"
         : "ready";
 
-  return { nodes, edges, builtEdgeIds, onNodesChange, onEdgesChange, status, errors, graph };
+  return { nodes, edges, builtEdgeIds, paintEpoch, onNodesChange, onEdgesChange, status, errors, graph };
 }

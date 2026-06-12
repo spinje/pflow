@@ -9,12 +9,13 @@ describe("readViewParams", () => {
   });
 
   it("parses all view params, mapping user-facing density words inward", () => {
-    expect(readViewParams("?direction=TD&density=advanced&node=fetch-data&focus=classify&collapse=all")).toEqual({
+    expect(readViewParams("?direction=TD&density=advanced&node=fetch-data&focus=classify&collapse=all&source=1")).toEqual({
       direction: "TD",
       density: "detailed",
       node: "fetch-data",
       focus: "classify",
       collapse: "all",
+      source: true,
     });
   });
 
@@ -46,6 +47,12 @@ describe("readViewParams", () => {
   it("ignores unrelated params (e.g. the App-owned workflow)", () => {
     expect(readViewParams("?workflow=demo&direction=TD").direction).toBe("TD");
   });
+
+  it("source=1 opens the source pane; every other value is closed", () => {
+    expect(readViewParams("?source=1").source).toBe(true);
+    expect(readViewParams("?source=0").source).toBe(false);
+    expect(readViewParams("").source).toBe(false);
+  });
 });
 
 describe("writeViewParams", () => {
@@ -63,6 +70,11 @@ describe("writeViewParams", () => {
 
   it("never writes the node param (it is read-only)", () => {
     expect(new URLSearchParams(writeViewParams("?node=keep", { direction: "LR" })).get("node")).toBe("keep");
+  });
+
+  it("writes source as a URL-owned open flag", () => {
+    expect(new URLSearchParams(writeViewParams("", { source: true })).get("source")).toBe("1");
+    expect(new URLSearchParams(writeViewParams("?source=1", { source: false })).get("source")).toBe("0");
   });
 });
 
@@ -157,6 +169,16 @@ describe("resolveEndpointFlatId — contract endpoint → rendered flat id (edge
 
   it("a suppressed group host resolves to its representative group (skipping batch shells)", () => {
     expect(resolveEndpointFlatId(graph, new Set(["gwf"]), "n5")).toBe("gwf");
+  });
+
+  it("an IO member resolves to its rendered wrapper group", () => {
+    const ioGraph = {
+      nodes: [{ id: "n_out", ref: { node_id: "report", ancestor_path: [], port: "out" } }],
+      edges: [],
+      groups: [{ id: "g_out", kind: "output_wrapper", host: null, members: ["n_out"] }],
+    } as unknown as RFGraph;
+
+    expect(resolveEndpointFlatId(ioGraph, new Set(["g_out"]), "n_out")).toBe("g_out");
   });
 
   it("returns null when nothing is rendered for the endpoint (the chip must disable, not silently focus)", () => {

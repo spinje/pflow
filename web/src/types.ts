@@ -138,6 +138,11 @@ export interface RFGraph {
   kind_output_types?: Record<string, Record<string, string>>;
 }
 
+export interface SourceFiles {
+  root: string | null;
+  files: Record<string, string>;
+}
+
 export interface CatalogItem {
   name: string;
   description: string;

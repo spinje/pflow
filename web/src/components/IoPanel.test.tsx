@@ -137,7 +137,9 @@ describe("IoPanel — inputs", () => {
     const research = screen.getByText("research");
     expect(screen.getByText("summary-report")).toBeTruthy();
     research.closest("button")!.click();
-    expect(onNavigate).toHaveBeenCalledWith("n4", "n4");
+    // Navigate-without-opening (2026-06-12): no selectedId argument — the
+    // IoPanel stays open; the chip centers + lights its node.
+    expect(onNavigate).toHaveBeenCalledWith("n4");
     // limit has zero data-flow edges (e.g. read only in a loop condition — the
     // scan can't see it): no chips row, and no affirmative "unused" claim.
     expect(screen.queryByText(/unused/)).toBeNull();

@@ -56,6 +56,28 @@ bounded by representative-item truncation, but a deep workflow with large prompt
 can still produce a multi-MB payload. Fine for this local single-user server; a
 future remote / multi-client phase may want a by-ref fetch for large values.
 
+### `GET /api/source?workflow=<name|path>`
+→ `200` `{"root": "<abs path>" | null, "files": {"<abs path>": "<text>", ...}}`
+— raw `.pflow.md` source text for the authored workflow files represented by
+the graph. Status arms mirror `/api/graph`: missing/empty `workflow` is `400`;
+resolution or validation diagnostics are `422`; unexpected pipeline bugs are
+loud `500`s.
+
+The file set is derived from the **GraphModel nodes**, not the React Flow
+render. This is load-bearing: renderer-level representative-batch truncation can
+omit a child file from `RFGraph`, while `GraphModel` still contains every
+expanded level. Only `Node.source.file` participates; `param_sources` may point
+at prompt/code files whose contents already ride inline in `/api/graph` params
+and are not a v1 source-pane concern.
+
+`root` is the source file of the first top-level node that actually has a source
+file. Do not use "first top-level node" blindly: workflows with `## Inputs`
+emit sourceless input nodes before authored steps. Inline-content workflows have
+no source file and return `{"root": null, "files": {}}`. If a file disappears
+or is unreadable after graph construction, the server logs a warning and skips
+that file rather than failing the whole request. A `depth_limit`-unexpanded
+sub-workflow contributes no nodes and therefore no source file.
+
 ### Static bundle (`/` + assets)
 Build the SPA into `src/pflow/ui/static/` (Vite `build.outDir = "../src/pflow/ui/static"`)
 with `base = "./"` (relative asset paths so it serves from `/`). The server

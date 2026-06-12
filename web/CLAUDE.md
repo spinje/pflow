@@ -38,10 +38,13 @@ src/
   utils/             pure helpers — format.ts (${ref} parsing, value previews, kind
                      colors, category label); icons.ts (node-kind/provider → SVG URL);
                      viewParams.ts (URL params, deep-link id resolution, edge-click dispatch);
-                     panelWidth.ts (side-panel width clamp + localStorage persistence)
+                     panelWidth.ts (pane width clamp + localStorage persistence — BOTH
+                     side panes share the symmetric reserved-budget clamp);
+                     sourceMap.ts (source↔canvas mapping: nodeAtLine, breadcrumbs)
   assets/icons/      vendored brand/tool SVGs (Vite bundles them into static/assets)
   views/             the screens App switches between (CatalogView, GraphView)
   components/        reusable UI: Toolbar, ReadPanel, EdgePanel, IoPanel, ErrorBoundary,
+                     SourcePane (the left source view — see the Source pane bullet),
                      Chip.tsx (the shared node chip + ConnectionSections — see the chip bullet),
                      interaction.ts (the click-callback context + the hover-set channel),
                      PanelResizer (the side panel's drag handle — width rides the
@@ -172,6 +175,26 @@ Tests sit beside their subject.
   detaches edges from gliding nodes — rejected, measured reasoning in the progress
   log); the anchoring pan eases in sync; only moved nodes change identity per frame;
   large flows snap; `prefers-reduced-motion` snaps.
+- **Source pane = verbatim authored `.pflow.md`, one file at a time.** `GraphView`
+  fetches `/api/source` beside `/api/graph` and caches both by workflow so line
+  mapping is one consistent snapshot; opening/closing the pane never refetches.
+  The server derives the file map from GraphModel nodes, not the rendered RFGraph
+  (representative-batch truncation can hide child files). Multi-file workflows
+  auto-switch with selection; breadcrumbs describe the invocation chain and resolve
+  host contract ids through `resolveEndpointFlatId` at click time. Host/container
+  selection lands in the parent file at the invoking `### step`; member selection
+  lands in the child file. Line clicks use `nodeAtLine` (greatest authored
+  `source.line <= clicked line`, ignoring null lines), then iterate candidates
+  until one resolves to a rendered id; unresolved clicks still mark the local line.
+  **No diff view belongs here**: this UI is comprehension-only, while the user's
+  IDE/unstaged-diff staging loop is the approval surface. A ROOT io-card
+  selection syncs to its `## Inputs`/`## Outputs` SECTION HEADING found in the
+  root file's TEXT (`sectionHeadingLine`, fence-aware) — io selections carry no
+  node and input ports no `SourceRef`, so the heading is the interface's
+  authored home; reverse output-line clicks focus the Outputs wrapper through
+  the IO-member resolution arm. Remaining v1 gap: individual `### input`
+  declaration lines are unmappable (no `SourceRef` on input ports — a Python
+  `_add_inputs` change would close it).
 - **All edges are ROUNDED-ORTHOGONAL (the Tines language); the components own the
   stroke; no arrowheads; forks differ by direction.** Paths come from
   `getSmoothStepPath` + `railCenter` (GradientEdge): the first turn sits
@@ -580,9 +603,21 @@ Tests sit beside their subject.
   word rides the TOOLTIP (identity by recognition — the canvas teaches the
   icon↔kind map once). Consumers: EdgePanel endpoints, IoPanel consumer/producer
   rows, ReadPanel's `ConnectionSections`. Semantics every consumer inherits:
-  resolve-or-disable (an endpoint hidden in a collapsed ancestor renders
-  non-clickable — never a silent no-op), io-port chips use port-focus, and HOVER
-  marks the chip's canvas node. A NESTED io-port chip is SCOPE-PREFIXED
+  chips NAVIGATE WITHOUT OPENING (user decision 2026-06-12 — `onNavigate(id)`
+  with no selectedId): focus moves to the target (it lights, its connections
+  reveal, the camera follows) but the open panel never swaps — a chip answers
+  "where is it / how are we connected?"; click the centered node itself to
+  open it. Resolve-or-disable (an endpoint hidden in a collapsed ancestor
+  renders non-clickable — never a silent no-op), io-port chips use port-focus,
+  and HOVER marks the chip's canvas node. An io-port chip's camera follow AND the
+  expansion re-layout's anchor both resolve the port to its OWNER card via
+  `ioOwners` (a port id is never a rendered node — unresolved, the follow
+  silently skipped and the anchorless re-layout jumped the canvas to nowhere;
+  fixed 2026-06-12). The follow itself is DEFERRED to the paint the click
+  produces (`paintEpoch` from useWorkflowGraph — bumped after every completed
+  paint, animated glides included): a fit started at click time aims at the
+  target's PRE-re-layout position (first click landed wrong, second landed
+  right). A same-focus navigate repaints nothing and fits immediately. A NESTED io-port chip is SCOPE-PREFIXED
   (`create-songs.concept`, faint prefix — a bare port name loses whose input it
   is; root ports stay bare, the panel names the workflow) and its hover marks
   the PORT id. An IoPanel PORT-producer row drops a field that just repeats the
@@ -625,8 +660,9 @@ Tests sit beside their subject.
   Markdown CSS hangs off `.md` (its `white-space: normal` reset is
   load-bearing) — NEVER off `.read-panel-purpose`/`.io-port-desc`, which
   EdgePanel and the `default:` line share for app-written plain strings.
-  (2) HIGHLIGHT — `utils/highlight.ts` is THE shiki seam (the future
-  `.pflow.md` source-pane/diff feature consumes this same module): lazy
+  (2) HIGHLIGHT — `utils/highlight.ts` is THE shiki seam (the SourcePane's
+  whole-file view consumes this same module; a diff view was REJECTED —
+  see the Source pane bullet): lazy
   promise-memoized chunk like ELK, except a REJECTED load resets the memo
   (transient 404'd chunk ≠ session-dead highlighting); 5 grammars
   (python/bash/json/yaml/markdown), fail-closed `null` → plain text for

@@ -17,7 +17,7 @@ import type { RFGraph } from "../types";
 // error contract (not a fabricated shape) is what the banner test exercises.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn() };
+  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn() };
 });
 // Stub ELK so the component test is deterministic; overridable per-test.
 vi.mock("../graph/layout", () => ({ layoutGraph: vi.fn() }));
@@ -53,7 +53,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
-import { ApiError, fetchGraph } from "../api/client";
+import { ApiError, fetchGraph, fetchSource } from "../api/client";
 import { layoutGraph } from "../graph/layout";
 import { highlight } from "../utils/highlight";
 import { GraphView } from "./GraphView";
@@ -123,6 +123,11 @@ beforeAll(() => installReactFlowJsdomMocks());
 beforeEach(() => {
   cleanup();
   vi.mocked(fetchGraph).mockReset();
+  vi.mocked(fetchSource).mockReset();
+  vi.mocked(fetchSource).mockResolvedValue({
+    root: "/wf.pflow.md",
+    files: { "/wf.pflow.md": "# Demo\n\n### greet\n\nsay hi\n" },
+  });
   vi.mocked(layoutGraph).mockReset();
   vi.mocked(layoutGraph).mockImplementation(layoutStub);
   fitViewSpy.mockClear();
@@ -151,6 +156,69 @@ describe("GraphView mount", () => {
     // Advanced adds the body: the dynamic param's ${ref} connection chip.
     fireEvent.click(screen.getByText("advanced"));
     await waitFor(() => expect(screen.getByText("greet.stdout")).toBeTruthy());
+  });
+
+  it("source toggle mounts the source pane, and node selection marks that node's authored line", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    window.history.replaceState({}, "", "/");
+    try {
+      const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      expect(container.querySelector(".source-pane")).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "source" }));
+      await waitFor(() => expect(container.querySelector(".source-pane")).toBeTruthy());
+
+      const canvasNode = screen.getAllByText("say hi").find((el) => el.className.includes("node-name"));
+      expect(canvasNode).toBeTruthy();
+      fireEvent.click(canvasNode!);
+      await waitFor(() => expect(container.querySelector('.src-line-active[data-line="3"]')).toBeTruthy());
+      expect(container.querySelector(".source-code")?.getAttribute("aria-label")).toBe("/wf.pflow.md");
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("the source pane's clamp RESERVES the other pane's width — both panes + a usable canvas fit the viewport", async () => {
+    // The clamp-reservation wiring (the kind-prop lesson): clampPanelWidth is
+    // unit-pinned in panelWidth.test.ts, but a GraphView call site passing
+    // reserved=0 survived the suite. Pin the invariant the reservation exists
+    // for: sourceW + panelW + CANVAS_MIN_W (320) <= viewport.
+    // Viewport 1000 is LOAD-BEARING: at 1200 with the 460 defaults a reserved=0
+    // mutant converges to (panel 420, source 460) — 420+460+320 = exactly 1200,
+    // coincidentally within budget because the OTHER pane's correct clamp
+    // absorbs the violation. At 1000 the same mutant lands a 300/460 split
+    // (760 > 1000-320 = 680) — observably broken; correct code converges to
+    // 300/300 (600 <= 680).
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 1000, writable: true, configurable: true });
+    // Clear persisted widths so the 460 defaults apply deterministically
+    // (earlier tests' savePanelWidth effects write to the same jsdom storage).
+    window.localStorage.removeItem("pflow-ui:panel-w");
+    window.localStorage.removeItem("pflow-ui:source-w");
+    window.history.replaceState({}, "", "/?source=1");
+    try {
+      vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+      const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(container.querySelector(".source-pane")).toBeTruthy());
+
+      const graphBody = container.querySelector(".graph-body") as HTMLElement;
+      const px = (name: string): number => Number.parseFloat(graphBody.style.getPropertyValue(name));
+      await waitFor(() => {
+        const sourceW = px("--source-w");
+        const panelW = px("--panel-w");
+        // The hard floors hold (PANEL_MIN_W)…
+        expect(sourceW).toBeGreaterThanOrEqual(300);
+        expect(panelW).toBeGreaterThanOrEqual(300);
+        // …and the mutual reservation leaves a usable canvas (CANVAS_MIN_W).
+        expect(sourceW + panelW).toBeLessThanOrEqual(1000 - 320);
+      });
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: originalInnerWidth, writable: true, configurable: true });
+      window.localStorage.removeItem("pflow-ui:panel-w");
+      window.localStorage.removeItem("pflow-ui:source-w");
+      window.history.replaceState({}, "", "/");
+    }
   });
 
   it("a markdown purpose renders STRIPPED on the canvas card and RENDERED in the read panel", async () => {
@@ -222,6 +290,27 @@ describe("GraphView mount", () => {
     vi.mocked(fetchGraph).mockRejectedValue(new ApiError(422, [{ message: "unknown node type 'frob'" }]));
     render(<GraphView workflow="broken" onBack={() => {}} />);
     await waitFor(() => expect(screen.getByText(/unknown node type 'frob'/)).toBeTruthy());
+  });
+
+  it("the error branch's toolbar omits the source toggle; a normal render has it", async () => {
+    // The error arm renders toolbar(false) — there is no canvas/graph-body to
+    // put a source pane beside, so the toggle is gated off. Pin BOTH sides so
+    // the assertion can fail in either direction (toggle leaking into the error
+    // toolbar, or dying everywhere).
+    vi.mocked(fetchGraph).mockRejectedValue(new ApiError(422, [{ message: "unknown node type 'frob'" }]));
+    render(<GraphView workflow="broken" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/unknown node type 'frob'/)).toBeTruthy());
+    // The toolbar itself rendered (density control present) — only the source
+    // toggle is absent, not the whole header.
+    expect(screen.getByText("advanced")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "source" })).toBeNull();
+
+    // A normal render HAS it — the absence above is the error-branch gate.
+    cleanup();
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "source" })).toBeTruthy();
   });
 
   it("container clicks: body SELECTS (read panel, no toggle); the corner button TOGGLES (design D)", async () => {
@@ -421,6 +510,54 @@ describe("GraphView mount", () => {
     } finally {
       window.history.replaceState({}, "", "/");
     }
+  });
+
+  it("io-port chip camera follow: navigating fitViews the port's OWNER card", async () => {
+    // The lyrics-generator bug (2026-06-12): a ReadPanel reference chip naming
+    // a sub-workflow's port (`sub.x`) focused an id that is never a rendered
+    // node (io members render as ROWS on their owner), so the camera follow
+    // silently skipped — and in beautiful the expansion re-layout had no anchor
+    // either, so the canvas jumped away ("zoom to nowhere"). The follow must
+    // resolve the port to its OWNER card.
+    const nested: RFGraph = {
+      nodes: [
+        { ...GRAPH.nodes[0]!, id: "h0", ref: { node_id: "sub", ancestor_path: [], port: null }, kind: "workflow", is_group_host: true, params: [] },
+        { ...GRAPH.nodes[0]!, id: "m0", ref: { node_id: "inner", ancestor_path: [{ node_id: "sub", batch_index: null }], port: null }, purpose: "inner step", parent: "g_wf", params: [] },
+        {
+          ...GRAPH.nodes[0]!,
+          id: "p1",
+          ref: { node_id: "x", ancestor_path: [{ node_id: "sub", batch_index: null }], port: "in" },
+          kind: "input",
+          purpose: "",
+          params: [],
+          io: { data_type: null, required: true, default: null },
+          parent: "g_wf_in",
+          source: null,
+        },
+        { ...GRAPH.nodes[0]!, id: "r0", ref: { node_id: "feeder", ancestor_path: [], port: null }, purpose: "feeds the sub", params: [] },
+      ],
+      edges: [{ id: "e_b", source: "r0", target: "p1", kind: "data_flow", label: null, output_field: "stdout", input_name: "x", shadowed: false, condition: null, output_path: [] }],
+      groups: [
+        { id: "g_wf", kind: "workflow", parent: null, host: "h0", members: ["m0"], nesting_depth: 0, annotations: {} },
+        { id: "g_wf_in", kind: "input_wrapper", parent: "g_wf", host: null, members: ["p1"], nesting_depth: 1, annotations: {} },
+      ],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(nested);
+    const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("feeds the sub")).toBeTruthy());
+
+    // Select the feeder: its ReadPanel's `referenced by` stack carries the
+    // scope-prefixed port chip (`sub.x`).
+    fireEvent.click(screen.getByText("feeds the sub"));
+    await waitFor(() => expect(container.querySelector(".chip-stack .edge-chip")).toBeTruthy());
+
+    fitViewSpy.mockClear();
+    fireEvent.click(container.querySelector(".chip-stack .edge-chip")!);
+    await waitFor(() => expect(fitViewSpy).toHaveBeenCalled());
+    const followed = fitViewSpy.mock.calls.some(
+      (c) => (c[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "g_wf",
+    );
+    expect(followed).toBe(true);
   });
 
   it("surfaces a layout failure as an error banner, not a permanent 'Laying out…' (C1)", async () => {

@@ -733,12 +733,21 @@ export function wrapperPorts(graph: RFGraph, wrapper: RFGroup): Port[] {
 // OWNER to the set: the owner renders its rows and the revealed line lands on the
 // exact row. `focus` may be a leaf id, an individual IO port id, or an IO card /
 // wrapper id (→ all member ports).
-export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet<string> {
-  if (!focus) return NO_EXPANSION;
+//
+// `pinned` is the OPEN PANEL's subject (user decision 2026-06-12): its card keeps
+// its body rendered regardless of where focus goes. Chip navigation moves focus to
+// the chip's target while the panel stays — without the pin the panel's subject
+// contracts mid-read whenever it isn't an endpoint of the new focus's scan
+// (host-level edges — e.g. a batch sub-workflow's `${x.results}` — never surface
+// in a container focus's port-level scan). Self only: the pin does NOT pull in
+// the subject's data neighborhood; focus owns that.
+export function expandTargets(graph: RFGraph, focus: string | null, pinned: string | null = null): ReadonlySet<string> {
+  if (!focus && !pinned) return NO_EXPANSION;
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   // IO port id -> the node carrying its row (ioOwners — the same rule buildFlow
   // resolves edge handles with, so expansion and row emission can't disagree).
-  const ioOwner = ioOwners(graph).ports;
+  const io = ioOwners(graph);
+  const ioOwner = io.ports;
   let focusWrapper: { members: string[] } | null = null;
   for (const g of graph.groups) {
     if ((g.kind === "input_wrapper" || g.kind === "output_wrapper") && g.id === focus) focusWrapper = g;
@@ -757,6 +766,23 @@ export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet
       if (owner) out.add(owner);
     }
   };
+  // The pin first — every arm below (including the early returns) keeps it.
+  // A pinned leaf/port resolves like any endpoint; a pinned CONTAINER or root
+  // IO card adds the card itself (its io rows render — it was selected, so its
+  // panel is open). A pinned edge id resolves to nothing (the matching focus
+  // arm below already expands its endpoints).
+  if (pinned != null) {
+    if (expandable(pinned)) out.add(pinned);
+    else {
+      const owner = ioOwner.get(pinned);
+      if (owner != null) out.add(owner);
+      else if (graph.groups.some((g) => g.id === pinned)) out.add(io.wrappers.get(pinned) ?? pinned);
+    }
+  }
+  // Empty results return the shared constant — the hook's build memo keys on
+  // the set's identity, and a fresh empty Set per click would re-run the build.
+  const settled = (): ReadonlySet<string> => (out.size > 0 ? out : NO_EXPANSION);
+  if (!focus) return settled();
   // Selecting a DATA EDGE (edge-click) expands exactly its two endpoints (owner-
   // aware), so the selected line lands row-to-row. The endpoints go straight into
   // the OUTPUT set — never into `foci`, or the data-flow scan below would expand
@@ -764,10 +790,10 @@ export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet
   // nothing (node-level endpoints already read fine at the trunk).
   const focusEdge = graph.edges.find((e) => e.id === focus);
   if (focusEdge) {
-    if (focusEdge.kind !== "data_flow") return NO_EXPANSION;
+    if (focusEdge.kind !== "data_flow") return settled();
     add(focusEdge.source);
     add(focusEdge.target);
-    return out;
+    return settled();
   }
   // Selecting a CONTAINER (workflow/batch group) expands "just its inputs and
   // outputs" (user-decided 2026-06-10): the focus acts as ALL of its IO ports —
@@ -792,7 +818,7 @@ export function expandTargets(graph: RFGraph, focus: string | null): ReadonlySet
     add(e.source);
     add(e.target);
   }
-  return out;
+  return settled();
 }
 
 /** Decorator-shell batch groups — batch boxes that must NEVER render. The contract

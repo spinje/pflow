@@ -1,7 +1,8 @@
 // THE syntax-highlighting seam: every code-shaped value (params, prompts, fenced
-// blocks in rendered markdown) colors through here, and the future `.pflow.md`
-// source pane / diff view is this module's next consumer — keep it the ONE place
-// that knows shiki. Pure (no React); node-env testable.
+// blocks in rendered markdown, the SourcePane's whole-file view) colors through
+// here — keep it the ONE place that knows shiki. Pure (no React); node-env
+// testable. (A diff view was considered and REJECTED, 2026-06-12 — the user's
+// IDE staging loop is the review surface; do not load the `diff` grammar.)
 //
 // Shiki loads lazily as its own Vite chunk (the lazy-ELK pattern, layout.ts):
 // type-only static imports + a promise-memoized dynamic import awaited inside an
@@ -19,7 +20,7 @@ import type { HighlighterCore } from "shiki/core";
 import { parseTemplate, refMatchesHighlight } from "./format";
 
 /** The grammars the lazy chunk ships. Anything else fails closed to plain text
- *  (`diff` joins when the source pane lands). */
+ *  (the rejected diff view means `diff` stays unloaded). */
 export const HIGHLIGHT_LANGS = ["python", "bash", "json", "yaml", "markdown"] as const;
 
 const THEME = "github-dark-default";

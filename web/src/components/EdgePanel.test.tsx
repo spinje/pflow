@@ -294,7 +294,9 @@ describe("EdgePanel — endpoint chips resolve-or-disable", () => {
     const nav = vi.fn();
     show(g, "e0", ["a", "gwf"], nav);
     fireEvent.click(screen.getByText("ep-host"));
-    expect(nav).toHaveBeenCalledWith("gwf", "gwf");
+    // Navigate-without-opening (2026-06-12): no selectedId — the EdgePanel
+    // keeps describing the connection while the camera follows the group.
+    expect(nav).toHaveBeenCalledWith("gwf");
   });
 
   it("an endpoint hidden inside a collapsed ancestor renders a DISABLED chip — visible honesty, no silent no-op", () => {

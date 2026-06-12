@@ -102,10 +102,17 @@
 > and rejected alternatives: the dated plan docs under `implementation/`.
 
 - Catalog → per-workflow graph; URL params `workflow=` / `node=` / `focus=` (node,
-  container name, or flat edge id) / `collapse=all|none` / `direction=` / `density=` —
+  container name, or flat edge id) / `collapse=all|none` / `direction=` / `density=` /
+  `source=1|0` —
   deep links are also how agents screenshot a specific state.
 - Two densities + LR/TD toggle; collapse/expand containers; focus+context (dim
   non-incident); click-to-read panel (full params/prompts/code, source file:line).
+- **Source pane (2026-06-12):** left pane shows verbatim `.pflow.md` source with
+  markdown highlighting, one file at a time. Canvas selection switches to the
+  selected node's authored file/line; source-line clicks focus the nearest authored
+  node above that line. Multi-file sub-workflows use breadcrumbs for the invocation
+  chain. The pane intentionally has no diff/write surface; edits remain reviewed
+  through the user's IDE unstaged-diff/staging loop.
 - **IO interface panel (2026-06-11):** clicking a root INPUTS/OUTPUTS card selects
   it + opens `IoPanel` — the workflow's API written out (per input: type/required/
   default/description + consumer chips; per output: producer chip + the read field +
@@ -128,6 +135,19 @@
   its node (an io-port chip rings the port's owner + lights its row); a canvas
   param/output/io ROW marks every node its edges touch (`rowTouches` over the
   flow edges — the resolved landings, never a re-derivation).
+- **Chip clicks NAVIGATE WITHOUT OPENING (2026-06-12, user decision):** every
+  panel chip moves focus + camera to its target (it lights, its connections
+  reveal) but the open panel NEVER swaps — click the centered node itself to
+  open it. Three load-bearing mechanics: an io-port chip resolves to its OWNER
+  card for both the camera follow and the re-layout anchor (a port id is never
+  a rendered node — unresolved, the click read as "zoom to nowhere"); the
+  follow is DEFERRED to the paint the click produces (`paintEpoch` — a fit at
+  click time aims at pre-re-layout positions: first click wrong, second right);
+  the open panel's SUBJECT pins its own card in the expansion set
+  (`expandTargets` `pinned` — without it, chip-navigating to a batch
+  sub-workflow contracted the card being read: host-level `${x.results}` edges
+  never surface in a container focus's port-level scan). Verified via the
+  skill's real-click harness (`click.pflow.md`, promoted 2026-06-12).
 - **Tines/n8n visual language** (Phase A + follow-ups, 2026-06-09/10): one leaf
   component; neutral tile + brand/native-color icon (*tile is NOT solid-color —
   user-chosen*; node CARD border stays subtle — *do not thicken/recolor it*);

@@ -9,8 +9,11 @@ interface ToolbarProps {
   groupCount: number;
   openCount: number;
   focused: boolean;
+  sourceOpen?: boolean;
+  showSourceToggle?: boolean;
   onDensity: (d: Density) => void;
   onDirection: (d: Direction) => void;
+  onSourceOpen?: (open: boolean) => void;
   onCollapseAll: () => void;
   onExpandAll: () => void;
   onClearFocus: () => void;
@@ -44,6 +47,14 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
           TD
         </button>
       </div>
+
+      {props.showSourceToggle && props.onSourceOpen && (
+        <div className="toolbar-group" role="group" aria-label="source">
+          <button className={props.sourceOpen ? "active" : ""} onClick={() => props.onSourceOpen?.(!props.sourceOpen)}>
+            source
+          </button>
+        </div>
+      )}
 
       {/* The disabled states carry the extremes (fully open / fully closed); the count
           disambiguates every mixed state in between. */}

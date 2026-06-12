@@ -25,9 +25,12 @@ export interface ViewParams {
   // Absent = AUTO (big workflows open collapsed — see graph/collapse.ts). Read-only,
   // like `node` — collapse is transient interaction state, never written back.
   collapse: "all" | "none" | null;
+  // Source pane open state. The width persists in localStorage; the open/closed
+  // state rides the URL so screenshots/deep links can reproduce it.
+  source: boolean;
 }
 
-export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null, collapse: null };
+export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null, collapse: null, source: false };
 
 // The URL uses the USER-FACING density words (advanced/beautiful); the code uses the
 // internal density (detailed/compact). Keep the mapping in one place so they can't drift.
@@ -43,22 +46,25 @@ export function readViewParams(search: string): ViewParams {
   const node = p.get("node");
   const focus = p.get("focus");
   const collapse = p.get("collapse");
+  const source = p.get("source");
   return {
     direction: dir === "TD" || dir === "LR" ? dir : DEFAULT_VIEW.direction,
     density: (den !== null && PARAM_TO_DENSITY[den]) || DEFAULT_VIEW.density,
     node: node !== null && node.trim() !== "" ? node : null,
     focus: focus !== null && focus.trim() !== "" ? focus : null,
     collapse: collapse === "all" || collapse === "none" ? collapse : null,
+    source: source === "1",
   };
 }
 
 /** A new query string with direction/density set to their user-facing words, every
  *  OTHER param (workflow, node, …) preserved. Used for replaceState write-back on a
  *  toolbar toggle. `node` is read-only, so it is never written here. */
-export function writeViewParams(search: string, patch: { direction?: Direction; density?: Density }): string {
+export function writeViewParams(search: string, patch: { direction?: Direction; density?: Density; source?: boolean }): string {
   const p = new URLSearchParams(search);
   if (patch.direction) p.set("direction", patch.direction);
   if (patch.density) p.set("density", DENSITY_TO_PARAM[patch.density]);
+  if (patch.source !== undefined) p.set("source", patch.source ? "1" : "0");
   return p.toString();
 }
 
@@ -101,6 +107,10 @@ export function resolveEndpointFlatId(
   contractId: string,
 ): string | null {
   if (renderedIds.has(contractId)) return contractId;
+  const ioWrapper = graph.groups.find(
+    (g) => (g.kind === "input_wrapper" || g.kind === "output_wrapper") && g.members.includes(contractId),
+  );
+  if (ioWrapper && renderedIds.has(ioWrapper.id)) return ioWrapper.id;
   const shells = shellBatchIds(graph);
   const representative = graph.groups.find((g) => g.host === contractId && !shells.has(g.id));
   if (representative && renderedIds.has(representative.id)) return representative.id;

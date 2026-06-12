@@ -5,7 +5,7 @@ description: Screenshot or measure the running pflow web UI (the React Flow canv
 
 # pflow web UI: screenshot + inspect
 
-Three workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
+Four workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
 canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
 
 - **`screenshot.pflow.md`** → a settled full-page PNG. Eyeball the rendered canvas.
@@ -21,6 +21,20 @@ canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
     url='http://127.0.0.1:8765/?workflow=<…>&density=advanced&node=<node_id>' \
     row_name='inputs' out_path=/tmp/pflow-shots/hover.png
   ```
+- **`click.pflow.md`** → dispatch a REAL `click` on the first `selector` match
+  (optionally narrowed by exact trimmed `text`), wait for the consequences, return
+  `{panel, before, after, visible, transform}` (`measure_id` = a flat node id to
+  rect-report — e.g. the expected camera-follow target) + screenshot. Deep links
+  capture states; this captures what a click DOES (camera follow, panel
+  stays-vs-swaps, focus/expansion side effects). One click per run (a reload resets
+  in-page state — multi-click sequences need extra steps inside one run). Selectors
+  interpolate into single-quoted JS: use double quotes inside.
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/click.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=<…>&focus=<node_id>' \
+    selector='.chip-stack .edge-chip' text='create-songs' measure_id=g19 \
+    out_path=/tmp/pflow-shots/click.png
+  ```
 
 ## URL params
 
@@ -31,6 +45,8 @@ Base `http://127.0.0.1:<port>/` (default port 8765). Source: `web/src/utils/view
 | `workflow` | saved name, or `.pflow.md` path relative to the server's cwd | required | which workflow |
 | `direction` | `LR` \| `TD` | `LR` | layout direction |
 | `density` | `beautiful` \| `advanced` | `beautiful` | node density |
+| `collapse` | `all` \| `none` | auto | initial container collapse override |
+| `source` | `1` \| `0` | `0` | open the left source pane on load |
 | `node` | a `node_id` (or flat id) | whole graph | frame the camera on one node — needed for small geometry (a connector/handle) |
 | `focus` | a `node_id`, flat id, or flat EDGE id (`e12`) | none | apply the click-focus state on load: dim non-incident, reveal data lines, (beautiful) expand the card + its data-flow endpoints to rows — the only way to capture the focused/expanded state without driving the UI. An EDGE id captures edge SELECTION (bright+halo+elevated line, EdgePanel open); get edge ids from `/api/graph` |
 

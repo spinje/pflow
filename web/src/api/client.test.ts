@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, fetchGraph } from "./client";
+import { ApiError, fetchGraph, fetchSource } from "./client";
 
 function mockFetch(status: number, body: unknown): void {
   globalThis.fetch = vi.fn(async () => ({
@@ -41,5 +41,39 @@ describe("fetchGraph", () => {
       },
     })) as unknown as typeof fetch;
     await expect(fetchGraph("wf")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("fetchSource", () => {
+  it("returns source files on a well-formed 200 and URL-encodes the workflow value", async () => {
+    const source = { root: "/wf.pflow.md", files: { "/wf.pflow.md": "# Workflow\n" } };
+    mockFetch(200, source);
+
+    await expect(fetchSource("folder/wf name.pflow.md")).resolves.toEqual(source);
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/source?workflow=folder%2Fwf%20name.pflow.md");
+  });
+
+  it("throws ApiError on a malformed 200 instead of letting the pane render a lie", async () => {
+    mockFetch(200, { root: 42, files: [] });
+    await expect(fetchSource("wf")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("surfaces server diagnostics on a 422", async () => {
+    mockFetch(422, { errors: [{ message: "invalid workflow" }] });
+    await expect(fetchSource("wf")).rejects.toMatchObject({
+      status: 422,
+      errors: [{ message: "invalid workflow" }],
+    });
+  });
+
+  it("degrades a non-JSON error body to a generic entry, never throwing raw", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => {
+        throw new Error("not json");
+      },
+    })) as unknown as typeof fetch;
+    await expect(fetchSource("wf")).rejects.toBeInstanceOf(ApiError);
   });
 });

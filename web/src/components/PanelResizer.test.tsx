@@ -10,10 +10,10 @@ import { PanelResizer } from "./PanelResizer";
 
 afterEach(cleanup);
 
-function renderResizer() {
+function renderResizer(side?: "left" | "right") {
   const onResize = vi.fn();
   const onReset = vi.fn();
-  const { container } = render(<PanelResizer onResize={onResize} onReset={onReset} />);
+  const { container } = render(<PanelResizer onResize={onResize} onReset={onReset} side={side} />);
   const handle = container.querySelector(".panel-resizer")!;
   return { handle, onResize, onReset };
 }
@@ -25,6 +25,14 @@ describe("PanelResizer", () => {
     fireEvent.pointerDown(handle, { pointerId: 1, clientX: 800 });
     fireEvent.pointerMove(handle, { pointerId: 1, clientX: 700 });
     expect(onResize).toHaveBeenCalledWith(500);
+  });
+
+  it("reports pointer x directly for a left-side panel", () => {
+    const { handle, onResize } = renderResizer("left");
+    window.innerWidth = 1200;
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 300 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 420 });
+    expect(onResize).toHaveBeenCalledWith(420);
   });
 
   it("stops reporting after pointerup", () => {

@@ -1216,6 +1216,19 @@ describe("buildFlow — IO ports are rows on their OWNER node (group / root IO c
     // focusing a single port expands the owner + the consumer on the far end
     expect(expandTargets(graph, "inA")).toEqual(new Set(["g_wf", "body", "feeder"]));
   });
+
+  it("expandTargets: `pinned` (the open panel's subject) stays in the set wherever focus goes", () => {
+    // The 2026-06-12 chip-navigation bug: focus moves to the chip's target while
+    // the panel stays on the old subject — without the pin, the card being read
+    // contracted mid-read whenever the new focus's scan didn't reach it.
+    // Self only: the pin adds the subject's card, never its neighborhood.
+    expect(expandTargets(graph, "feeder", "body")).toEqual(new Set(["feeder", "g_wf", "body"]));
+    // A pinned CONTAINER pins the card itself (its io rows render — it was
+    // selected, so its panel is open).
+    expect(expandTargets(graph, null, "g_wf")).toEqual(new Set(["g_wf"]));
+    // A pinned EDGE id pins nothing (the matching focus arm expands endpoints).
+    expect(expandTargets(graph, null, "e0").size).toBe(0);
+  });
 });
 
 describe("buildFlow — ROOT IO wrappers become standalone IO cards", () => {

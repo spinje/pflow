@@ -24,7 +24,7 @@ from starlette.testclient import TestClient
 from pflow.cli.commands.ui import ui_cmd
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.ui.server import _json, create_app
-from tests.shared.markdown_utils import write_workflow_file
+from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 _VALID_IR = {
     "nodes": [
@@ -140,6 +140,182 @@ class TestGraphEndpoint:
             response = client.get("/api/graph", params={"workflow": str(workflow_path)})
 
         assert response.status_code == 500
+
+
+class TestSourceEndpoint:
+    def test_valid_workflow_returns_source_files_with_root_after_inputs(self, tmp_path: Path) -> None:
+        """A valid workflow returns its source text and root despite input nodes.
+
+        Regression guard: GraphModel input nodes are top-level and sourceless, so
+        deriving ``root`` from the first top-level node would return ``None`` for
+        common workflows with ``## Inputs``.
+        """
+        workflow_ir = {
+            "inputs": {"name": {"description": "Name to greet.", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "greet",
+                    "type": "shell",
+                    "params": {"command": "echo ${name}"},
+                }
+            ],
+            "outputs": {"greeting": {"description": "Greeting text.", "source": "${greet.stdout}"}},
+        }
+        workflow_path = tmp_path / "with-inputs.pflow.md"
+        write_workflow_file(workflow_ir, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        payload = response.json()
+        expected_root = str(workflow_path.resolve())
+        assert payload["root"] == expected_root
+        assert payload["files"] == {expected_root: workflow_path.read_text(encoding="utf-8")}
+
+    def test_valid_sub_workflow_returns_parent_and_child_sources_only(self, tmp_path: Path) -> None:
+        """Nested workflow source is inlined; unrelated files are absent."""
+        child_path = tmp_path / "child.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [{"id": "child-step", "type": "shell", "params": {"command": "echo child"}}],
+                "outputs": {"child_out": {"description": "Child output.", "source": "${child-step.stdout}"}},
+            },
+            child_path,
+            title="Child",
+        )
+        parent_path = tmp_path / "parent.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [
+                    {
+                        "id": "call-child",
+                        "type": "workflow",
+                        "params": {"workflow": f"./{child_path.name}"},
+                    }
+                ],
+                "outputs": {"result": {"description": "Parent output.", "source": "${call-child.child_out}"}},
+            },
+            parent_path,
+            title="Parent",
+        )
+        unrelated_path = tmp_path / "unrelated.pflow.md"
+        unrelated_path.write_text("# Unrelated\n", encoding="utf-8")
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": str(parent_path)})
+
+        assert response.status_code == 200
+        payload = response.json()
+        parent_key = str(parent_path.resolve())
+        child_key = str(child_path.resolve())
+        assert payload["root"] == parent_key
+        assert payload["files"] == {
+            child_key: child_path.read_text(encoding="utf-8"),
+            parent_key: parent_path.read_text(encoding="utf-8"),
+        }
+        assert str(unrelated_path.resolve()) not in payload["files"]
+
+    def test_unreadable_child_source_file_is_skipped_not_500(self, tmp_path: Path) -> None:
+        """A child file that becomes unreadable after graph build is skipped.
+
+        The producer arm of the skip contract: ``source()`` catches
+        OSError/UnicodeDecodeError per file (logger.warning) so one vanished
+        child never 500s the request or drops the readable parent. Patching
+        ``pflow.ui.server.Path`` (the read loop's seam) simulates the
+        between-resolve-and-read vanish — resolution itself still reads the
+        real child file via graph_service, so the workflow builds fine.
+        """
+        child_path = tmp_path / "child.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [{"id": "child-step", "type": "shell", "params": {"command": "echo child"}}],
+                "outputs": {"child_out": {"description": "Child output.", "source": "${child-step.stdout}"}},
+            },
+            child_path,
+            title="Child",
+        )
+        parent_path = tmp_path / "parent.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [
+                    {
+                        "id": "call-child",
+                        "type": "workflow",
+                        "params": {"workflow": f"./{child_path.name}"},
+                    }
+                ],
+                "outputs": {"result": {"description": "Parent output.", "source": "${call-child.child_out}"}},
+            },
+            parent_path,
+            title="Parent",
+        )
+        parent_key = str(parent_path.resolve())
+        child_key = str(child_path.resolve())
+
+        class _UnreadablePath:
+            def read_text(self, *args: object, **kwargs: object) -> str:
+                raise OSError("simulated: file vanished after graph build")
+
+        def _fake_path(arg: object) -> object:
+            return _UnreadablePath() if str(arg) == child_key else Path(str(arg))
+
+        client = TestClient(create_app())
+        with patch("pflow.ui.server.Path", _fake_path):
+            response = client.get("/api/source", params={"workflow": str(parent_path)})
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["root"] == parent_key
+        assert payload["files"] == {parent_key: parent_path.read_text(encoding="utf-8")}
+        assert child_key not in payload["files"]
+
+    def test_missing_workflow_param_is_400(self) -> None:
+        """No ``workflow`` query param → 400 with a structured error body."""
+        client = TestClient(create_app())
+        response = client.get("/api/source")
+        assert response.status_code == 400
+        assert response.json()["errors"][0]["message"]
+
+    def test_invalid_workflow_is_422_not_500(self, tmp_path: Path) -> None:
+        """A workflow that fails validation → 422 with diagnostics, never a 500."""
+        bad_ir = {"nodes": [{"id": "bad", "type": "nonexistent_type_xyz", "params": {}}], "edges": []}
+        workflow_path = tmp_path / "invalid.pflow.md"
+        write_workflow_file(bad_ir, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 422
+        errors = response.json()["errors"]
+        assert errors and all("message" in e for e in errors)
+
+    def test_unexpected_pipeline_exception_is_loud_500(self, tmp_path: Path) -> None:
+        """An unexpected (non-validation) pipeline exception is a loud 500."""
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app(), raise_server_exceptions=False)
+        with patch(
+            "pflow.ui.server.resolve_validate_build",
+            side_effect=RuntimeError("simulated source builder bug"),
+        ):
+            response = client.get("/api/source", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 500
+
+    def test_inline_content_workflow_returns_empty_source_map(self) -> None:
+        """Inline markdown has no file path, so source refs carry no file."""
+        workflow = ir_to_markdown(
+            {"nodes": [{"id": "inline", "type": "shell", "params": {"command": "echo inline"}}]},
+            title="Inline",
+        )
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": workflow})
+
+        assert response.status_code == 200
+        assert response.json() == {"root": None, "files": {}}
 
 
 class TestJsonSerialization:

@@ -6,6 +6,8 @@ Endpoints:
   (the registry list with ``ir`` stripped).
 - ``GET /api/graph?workflow=<name|path>`` — the React Flow contract
   (``render_react_flow``) for one workflow, as JSON.
+- ``GET /api/source?workflow=<name|path>`` — source text for every authored
+  ``.pflow.md`` file reachable from the built graph.
 - ``/`` (+ assets) — the built frontend bundle, when present. Absent in a
   source checkout (the bundle is gitignored, built by ``make ui-build``); the
   server then serves a clear "not built" message instead of crashing.
@@ -26,6 +28,7 @@ Failure regimes for ``/api/graph`` (kept distinct — do not collapse):
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -43,6 +46,8 @@ from pflow.execution.graph_service import (
     resolve_validate_build,
 )
 from pflow.registry import Registry
+
+logger = logging.getLogger(__name__)
 
 # Sub-workflow expansion depth served to the client. The frontend collapses and
 # expands containers client-side, so the server always ships the full tree.
@@ -101,6 +106,46 @@ def graph(request: Request) -> Response:
     return _json(asdict(render_react_flow(model, kind_output_types=kind_types)))
 
 
+def source(request: Request) -> Response:
+    """Return source text for every file represented in the graph model.
+
+    The file set is derived from ``GraphModel.nodes`` rather than the React Flow
+    render because renderer-level batch truncation can omit child files. A
+    ``depth_limit``-unexpanded sub-workflow contributes no nodes, and therefore
+    no source file, which is the honest boundary for this read-only endpoint.
+    """
+    workflow = request.query_params.get("workflow")
+    if not workflow:
+        return _json(
+            {"errors": [{"message": "Missing required 'workflow' query parameter."}]},
+            status_code=400,
+        )
+
+    try:
+        model = resolve_validate_build(workflow, max_depth=_MAX_DEPTH)
+    except WorkflowGraphValidationError as e:
+        return _json({"errors": [d.to_dict() for d in e.diagnostics]}, status_code=422)
+
+    root = next(
+        (
+            node.source.file
+            for node in model.nodes
+            if not node.id.ancestor_path and node.source is not None and node.source.file
+        ),
+        None,
+    )
+    source_files = sorted({node.source.file for node in model.nodes if node.source and node.source.file})
+
+    files: dict[str, str] = {}
+    for file_path in source_files:
+        try:
+            files[file_path] = Path(file_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            logger.warning("Skipping unreadable workflow source file %s: %s", file_path, e)
+
+    return _json({"root": root, "files": files})
+
+
 class _BundleFiles(StaticFiles):
     """StaticFiles that makes ``index.html`` revalidate on every load.
 
@@ -125,7 +170,7 @@ def _frontend_not_built(request: Request) -> Response:
     """Fallback for any non-API path when the bundle is absent."""
     return PlainTextResponse(
         "pflow UI frontend bundle not found.\n\n"
-        "The API is live at /api/catalog and /api/graph, but the web app has\n"
+        "The API is live at /api/catalog, /api/graph, and /api/source, but the web app has\n"
         "not been built. Build it with `make ui-build` (developers) or install\n"
         "a release wheel that ships the bundle: pip install pflow[ui].\n",
         status_code=503,
@@ -141,6 +186,7 @@ def create_app() -> Starlette:
     routes: list[BaseRoute] = [
         Route("/api/catalog", catalog),
         Route("/api/graph", graph),
+        Route("/api/source", source),
     ]
     if (_STATIC_DIR / "index.html").exists():
         routes.append(Mount("/", app=_BundleFiles(directory=_STATIC_DIR, html=True)))

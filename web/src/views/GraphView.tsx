@@ -19,9 +19,10 @@ import "@xyflow/react/dist/style.css";
 import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
 import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
+import { ApiError, fetchSource } from "../api/client";
 import { nodeColor } from "../utils/format";
 import { edgeClickAction, readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
-import type { RFEdge, RFNode } from "../types";
+import type { RFEdge, RFNode, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -29,6 +30,7 @@ import { IoPanel } from "../components/IoPanel";
 import { nodeTypes } from "../components/nodes";
 import { PanelResizer } from "../components/PanelResizer";
 import { ReadPanel } from "../components/ReadPanel";
+import { SourcePane } from "../components/SourcePane";
 import { Toolbar } from "../components/Toolbar";
 import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_W, savePanelWidth } from "../utils/panelWidth";
 
@@ -36,6 +38,8 @@ interface GraphViewProps {
   workflow: string;
   onBack: () => void;
 }
+
+const SOURCE_WIDTH_KEY = "pflow-ui:source-w";
 
 // MiniMap node fills — REAL color strings, not CSS vars: React Flow paints minimap
 // nodes as SVG fill attributes, where var() does not resolve. Leaves take their
@@ -72,6 +76,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const initialView = useMemo(() => readViewParams(window.location.search), []);
   const [density, setDensity] = useState<Density>(initialView.density);
   const [direction, setDirection] = useState<Direction>(initialView.direction);
+  const [sourceOpen, setSourceOpen] = useState<boolean>(initialView.source);
   const nodeParam = initialView.node;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
@@ -91,26 +96,51 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // extension — the toolbar keeps the full path).
   const workflowName = useMemo(() => workflow.split("/").pop()?.replace(/\.pflow\.md$/, "") ?? workflow, [workflow]);
 
-  const { nodes, edges, builtEdgeIds, onNodesChange, onEdgesChange, status, errors, graph } = useWorkflowGraph(workflow, {
+  const { nodes, edges, builtEdgeIds, paintEpoch, onNodesChange, onEdgesChange, status, errors, graph } = useWorkflowGraph(workflow, {
     density,
     direction,
     collapsed,
     focus,
+    selected: selectedId,
     workflowName,
   });
 
   const { fitView, getNodes } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
 
+  const [sourceFiles, setSourceFiles] = useState<SourceFiles | null>(null);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setSourceFiles(null);
+    setSourceError(null);
+    fetchSource(workflow)
+      .then((source) => {
+        if (!cancelled) setSourceFiles(source);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        const message =
+          e instanceof ApiError
+            ? (e.errors[0]?.message ?? e.errors[0]?.title ?? `Source request failed (${e.status}).`)
+            : String(e);
+        setSourceError(message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workflow]);
+
   // Mirror a density/direction toggle into the URL (replaceState so flips don't spam
   // the back button), preserving every other param (workflow, node).
-  const syncUrl = useCallback((patch: { direction?: Direction; density?: Density }) => {
+  const syncUrl = useCallback((patch: { direction?: Direction; density?: Density; source?: boolean }) => {
     const url = new URL(window.location.href);
     url.search = writeViewParams(window.location.search, patch);
     window.history.replaceState({}, "", url);
   }, []);
   const changeDensity = useCallback((d: Density) => { setDensity(d); syncUrl({ density: d }); }, [syncUrl]);
   const changeDirection = useCallback((d: Direction) => { setDirection(d); syncUrl({ direction: d }); }, [syncUrl]);
+  const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
 
   // Read the contract via a ref so the fit effect doesn't re-run (and cancel its rAF)
   // when focus restyles `nodes` — it must fire only on workflow/direction/node.
@@ -305,13 +335,45 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     [graph, selectedId],
   );
 
-  // The side panel's width, user-resizable via the drag handle and persisted
-  // across sessions. Applied as a CSS var on .graph-body so all three panels
-  // (Read/Edge/Io share .read-panel) follow without prop drilling.
+  // The two side panes share one symmetric clamp: the source pane always
+  // reserves the right panel's persisted width (a later selection can mount it
+  // without a drag), and the right panel reserves the OPEN source pane.
+  const rightPanelOpen = Boolean((graph && (selectedEdge || selectedIoGroup)) || selectedNode);
   const [panelWidth, setPanelWidth] = useState(() => loadPanelWidth(window.innerWidth));
-  const onPanelResize = useCallback((w: number) => setPanelWidth(clampPanelWidth(w, window.innerWidth)), []);
-  const onPanelReset = useCallback(() => setPanelWidth(clampPanelWidth(PANEL_DEFAULT_W, window.innerWidth)), []);
+  const [sourceWidth, setSourceWidth] = useState(() => loadPanelWidth(window.innerWidth, SOURCE_WIDTH_KEY));
+  const panelReserved = sourceOpen ? sourceWidth : 0;
+  const sourceReserved = panelWidth;
+  const onPanelResize = useCallback(
+    (w: number) => setPanelWidth(clampPanelWidth(w, window.innerWidth, panelReserved)),
+    [panelReserved],
+  );
+  const onPanelReset = useCallback(
+    () => setPanelWidth(clampPanelWidth(PANEL_DEFAULT_W, window.innerWidth, panelReserved)),
+    [panelReserved],
+  );
+  const onSourceResize = useCallback(
+    (w: number) => setSourceWidth(clampPanelWidth(w, window.innerWidth, sourceReserved)),
+    [sourceReserved],
+  );
+  const onSourceReset = useCallback(
+    () => setSourceWidth(clampPanelWidth(PANEL_DEFAULT_W, window.innerWidth, sourceReserved)),
+    [sourceReserved],
+  );
   useEffect(() => savePanelWidth(panelWidth), [panelWidth]);
+  useEffect(() => savePanelWidth(sourceWidth, SOURCE_WIDTH_KEY), [sourceWidth]);
+  // Re-clamp whenever either width / the open-state changes AND on window
+  // resize (review-caught: both panes are flex no-shrink, so without a resize
+  // re-clamp a window shrink crushes the canvas to 0 with no recovery short of
+  // re-dragging a handle). Converges: each pass is non-increasing and bounded.
+  useEffect(() => {
+    const reclamp = (): void => {
+      setPanelWidth((prev) => clampPanelWidth(prev, window.innerWidth, sourceOpen ? sourceWidth : 0));
+      setSourceWidth((prev) => clampPanelWidth(prev, window.innerWidth, panelWidth));
+    };
+    reclamp();
+    window.addEventListener("resize", reclamp);
+    return () => window.removeEventListener("resize", reclamp);
+  }, [panelWidth, sourceOpen, sourceWidth]);
 
   // The currently-rendered flat ids — EdgePanel's chips resolve their contract
   // endpoints against this (a suppressed host → its representative group; an
@@ -327,9 +389,24 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // names a selectable subject (an IO-port chip keeps this edge panel open).
   // The camera FOLLOWS (user-caught 2026-06-11): a chip can name a card anywhere
   // on the canvas — selecting it off-screen reads as a dead click. Generous
-  // padding + a zoom cap make it "bring into view", not a hard close-up; in
-  // beautiful the expansion re-layout that may follow anchors on the same id,
-  // so the target stays near where the fit put it.
+  // padding + a zoom cap make it "bring into view", not a hard close-up.
+  //
+  // The follow is DEFERRED to the paint the click produces (user-caught
+  // 2026-06-12): in beautiful a focus change re-layouts (expansion), and a fit
+  // started at click time glides toward the target's PRE-layout position —
+  // first click landed wrong, the second (cached layout, no repaint) landed
+  // right. paintEpoch bumps on every completed paint — the advanced restyle
+  // path follows just as promptly. A SAME-focus navigate repaints nothing, so
+  // it fits immediately (positions are already settled — the old behavior).
+  const pendingFollowRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = pendingFollowRef.current;
+    if (id == null) return;
+    pendingFollowRef.current = null;
+    if (getNodes().some((n) => n.id === id)) {
+      fitView({ nodes: [{ id }], padding: 0.45, maxZoom: 1.2, duration: 300 });
+    }
+  }, [paintEpoch, fitView, getNodes]);
   const onNavigate = useCallback(
     (focusId: string, selected?: string | null) => {
       // The clicked chip may unmount with the panel swap — its mouseleave never
@@ -337,11 +414,20 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       setHovered(NO_HOVER);
       setFocus(focusId);
       if (selected !== undefined) setSelectedId(selected);
-      if (getNodes().some((n) => n.id === focusId)) {
-        fitView({ nodes: [{ id: focusId }], padding: 0.45, maxZoom: 1.2, duration: 300 });
+      // An io-PORT chip names a row, not a node — the camera follows the OWNER
+      // card carrying that row (a port id is never a rendered node, so without
+      // this arm the follow silently skipped and the focus jump read as "nowhere").
+      const rendered = new Set(getNodes().map((n) => n.id));
+      const owner = ioOwnership?.ports.get(focusId);
+      const fitId = rendered.has(focusId) ? focusId : owner != null && rendered.has(owner) ? owner : null;
+      if (fitId == null) return;
+      if (focusId === focus) {
+        fitView({ nodes: [{ id: fitId }], padding: 0.45, maxZoom: 1.2, duration: 300 });
+      } else {
+        pendingFollowRef.current = fitId;
       }
     },
-    [fitView, getNodes],
+    [fitView, getNodes, ioOwnership, focus],
   );
 
   // Collapse-all folds every collapsible container and clears focus (the focused
@@ -355,16 +441,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   }, [collapsibleIds]);
   const onExpandAll = useCallback(() => setCollapsed(new Set()), []);
 
-  const toolbar = (
+  const toolbar = (showSourceToggle: boolean): JSX.Element => (
     <Toolbar
       title={workflow}
       density={density}
       direction={direction}
+      sourceOpen={sourceOpen}
+      showSourceToggle={showSourceToggle}
       groupCount={collapsibleIds.length}
       openCount={collapsibleIds.length - collapsed.size}
       focused={focus !== null}
       onDensity={changeDensity}
       onDirection={changeDirection}
+      onSourceOpen={changeSourceOpen}
       onCollapseAll={onCollapseAll}
       onExpandAll={onExpandAll}
       onClearFocus={() => setFocus(null)}
@@ -375,7 +464,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   if (status === "error") {
     return (
       <div className="graph-view">
-        {toolbar}
+        {toolbar(false)}
         <div className="banner error">
           <strong>This workflow could not be rendered.</strong>
           <ul>
@@ -392,8 +481,23 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     <InteractionProvider value={interaction}>
       <HoverMarksProvider value={hovered}>
       <div className="graph-view">
-        {toolbar}
-        <div className="graph-body" style={{ "--panel-w": `${panelWidth}px` } as React.CSSProperties}>
+        {toolbar(true)}
+        <div className="graph-body" style={{ "--panel-w": `${panelWidth}px`, "--source-w": `${sourceWidth}px` } as React.CSSProperties}>
+          {sourceOpen && (
+            <>
+              <SourcePane
+                source={sourceFiles}
+                sourceError={sourceError}
+                graph={graph}
+                selectedNode={selectedNode}
+                selectedIoKind={selectedIoGroup ? (selectedIoGroup.kind === "input_wrapper" ? "input" : "output") : null}
+                renderedIds={renderedIds}
+                workflowName={workflowName}
+                onNavigate={onNavigate}
+              />
+              <PanelResizer side="left" onResize={onSourceResize} onReset={onSourceReset} />
+            </>
+          )}
           <div className="canvas">
           {status === "loading" && <div className="canvas-overlay">Laying out…</div>}
           {status === "empty" && <div className="canvas-overlay">This workflow has no visible structure.</div>}
@@ -424,7 +528,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             <MiniMap pannable zoomable nodeColor={minimapNodeColor} nodeStrokeColor="transparent" nodeBorderRadius={3} />
           </ReactFlow>
           </div>
-          {((graph && (selectedEdge || selectedIoGroup)) || selectedNode) && (
+          {rightPanelOpen && (
             <PanelResizer onResize={onPanelResize} onReset={onPanelReset} />
           )}
           {graph && selectedEdge && (
