@@ -88,6 +88,15 @@ export type Port = {
   // The authored description (the contract's `purpose`), inputs and outputs
   // alike. Surfaced as the row tooltip and the IoPanel entry.
   description: string | null;
+  // Per-SIDE connection facts — something binds INTO the port (receives: an
+  // edge targets it) / something reads FROM it (feeds: an edge sources it).
+  // PortRows picks the side(s) its location presents (the `handles` prop) to
+  // decide the wired styling: a sub-workflow output every caller ignores must
+  // read grey on the collapsed card even though its INNER producer edge exists
+  // (user-caught 2026-06-12). Canvas-truthful, never a consumption claim
+  // (loop-condition reads form no edges — the quiet≠unconsumed rule).
+  receives: boolean;
+  feeds: boolean;
 };
 
 // A ROOT workflow's inputs (or outputs) as a standalone node card: tile + INPUTS/
@@ -119,6 +128,7 @@ export type GroupData = {
   collapsed: boolean;
   showTitle: boolean;
   direction: Direction;
+  density: Density; // MOCK: the NameLabel picks humanized (beautiful) vs verbatim (advanced)
   // Control-edge incidence (drives the connector flares, same as LeafData): the
   // collapsed card draws top+bottom; the expanded region draws its TOP flare (the
   // trunk enters through the region's tile like any node's). Computed in a
@@ -226,19 +236,53 @@ export type FlowEdge = Edge<EdgeData>;
 // reads the same values as injected CSS vars); the widths/paddings below are
 // TS-only (CSS doesn't pin them). Re-tune live against the real DOM if it drifts.
 export const DETAILED_WIDTH = 320;
-export const COMPACT_WIDTH = 230;
+// MOCK trial (2026-06-11): 230 → 258 → 280 — longer compact cards (more room for
+// the 2-line description; the name label above gains runway too). The collapsed
+// container / IO cards grow in step (below) to keep their width lead over a
+// plain step — the hierarchy must not invert.
+export const COMPACT_WIDTH = 280;
 export const HEADER_HEIGHT = METRICS.nodeHeaderH; // tile + small padding (both densities)
 export const ROW_HEIGHT = METRICS.rowH;
 export const ROW_PADDING = 14;
 export const END_SIZE = 46;
 // The root IO card with rows visible (single column, slightly wider than compact
-// so long port names breathe).
-export const IO_CARD_WIDTH = 260;
-// A collapsed group card showing its two-column IO area (inputs left, outputs right).
-export const GROUP_IO_WIDTH = 380;
+// so long port names breathe). MOCK trial: 260 → 300, in step with COMPACT_WIDTH.
+export const IO_CARD_WIDTH = 300;
+// A collapsed group card showing its IO area sizes to CONTENT (MOCK, 2026-06-11 —
+// replaced the fixed 380): wide enough that no row truncates, but never narrower
+// than the plain collapsed card and never past the max. Mono rows make the
+// estimate exact — counting characters IS measuring a fixed-advance font.
+export const GROUP_IO_MAX_WIDTH = 480;
+// 12px var(--mono) advance ≈ 0.6em. Verified against the real DOM via inspect.
+const IO_CHAR_W = 7.2;
+// Row chrome around the text: row side padding (8×2) + the required-star gap+glyph.
+const IO_ROW_CHROME = 26;
+
+/** Pixels one IO column needs so its longest `name: type *` row renders untruncated. */
+function ioColNeed(ports: Port[]): number {
+  if (ports.length === 0) return 0;
+  const chars = Math.max(
+    ...ports.map((p) => p.name.length + (p.dataType ? p.dataType.length + 2 : 0) + (p.required ? 2 : 0)),
+  );
+  return chars * IO_CHAR_W + IO_ROW_CHROME;
+}
+
+/** Width of a collapsed group card with IO rows: both columns' content + the
+ *  column gap + the area's side padding, clamped to
+ *  [COLLAPSED_GROUP_WIDTH, GROUP_IO_MAX_WIDTH] — "prefer the unexpanded card's
+ *  width when possible" (user decision 2026-06-11). */
+export function groupIoWidth(io: { inputs: Port[]; outputs: Port[] }): number {
+  const inNeed = ioColNeed(io.inputs);
+  const outNeed = ioColNeed(io.outputs);
+  const gap = inNeed > 0 && outNeed > 0 ? 16 : 0;
+  const padding = 12 + 4; // .io-rows side padding (6×2) + card border (2×2)
+  const needed = Math.ceil(inNeed + outNeed + gap + padding);
+  return Math.min(GROUP_IO_MAX_WIDTH, Math.max(COLLAPSED_GROUP_WIDTH, needed));
+}
 // The collapsed group renders as a leaf-anatomy CARD (GroupNode): compact height,
 // slightly wider than a leaf so the count pill fits beside the titles.
-export const COLLAPSED_GROUP_WIDTH = 260;
+// MOCK trial: 260 → 300, keeping the lead over COMPACT_WIDTH (280).
+export const COLLAPSED_GROUP_WIDTH = 300;
 export const COLLAPSED_GROUP_HEIGHT = HEADER_HEIGHT;
 
 /** Row count of a two-column IO area. Outputs are BOTTOM-ANCHORED, at least one
@@ -625,6 +669,27 @@ export function ioOwners(graph: RFGraph): { wrappers: Map<string, string>; ports
   return { wrappers, ports };
 }
 
+/** The hover marks for a ROW: every edge landing on it PLUS each edge's far-end
+ *  node (edge ids light their line, node ids ring their box — one set, disjoint
+ *  id namespaces). Reads the FLOW edges, not the contract: a flow edge's handles
+ *  ARE its resolved row landing — re-anchoring, dict-key walks, owner resolution
+ *  and dedupe already applied — so this can never disagree with what's drawn.
+ *  A self-edge's far end is skipped (ringing the hovered node says nothing),
+ *  but its line still lights. */
+export function rowTouches(edges: readonly FlowEdge[], nodeId: string, handles: readonly string[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const e of edges) {
+    if (e.source === nodeId && e.sourceHandle != null && handles.includes(e.sourceHandle)) {
+      out.add(e.id);
+      if (e.target !== nodeId) out.add(e.target);
+    } else if (e.target === nodeId && e.targetHandle != null && handles.includes(e.targetHandle)) {
+      out.add(e.id);
+      if (e.source !== nodeId) out.add(e.source);
+    }
+  }
+  return out;
+}
+
 /** A wrapper's IO members as row models, in member order. THE single copy:
  *  buildFlow's row areas (cards/regions) and the IoPanel's port entries both
  *  consume it, so canvas rows and panel entries can never disagree.
@@ -652,6 +717,8 @@ export function wrapperPorts(graph: RFGraph, wrapper: RFGroup): Port[] {
       required: m.io!.required,
       defaultValue: m.io!.default ?? null,
       description: m.purpose || null,
+      receives: graph.edges.some((e) => e.kind === "data_flow" && e.target === m.id),
+      feeds: graph.edges.some((e) => e.kind === "data_flow" && e.source === m.id),
     }));
 }
 
@@ -967,7 +1034,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     // A collapsed card showing its IO grows a two-column row area (and widens to
     // fit both columns); without rows it keeps the fixed compact card box.
     const collapsedSize = ioRowsVisible
-      ? { width: GROUP_IO_WIDTH, height: HEADER_HEIGHT + ioAreaHeight(io.inputs.length, io.outputs.length) }
+      ? { width: groupIoWidth(io), height: HEADER_HEIGHT + ioAreaHeight(io.inputs.length, io.outputs.length) }
       : { width: COLLAPSED_GROUP_WIDTH, height: COLLAPSED_GROUP_HEIGHT };
     flowNodes.push({
       id: g.id,
@@ -981,6 +1048,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
         collapsed: isCollapsed,
         showTitle,
         direction: view.direction,
+        density: view.density,
         // Filled by the control-incidence post-pass below (needs the flow edges,
         // which don't exist yet — re-anchoring decides what touches this group).
         hasIncoming: false,

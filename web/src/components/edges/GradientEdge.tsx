@@ -21,6 +21,7 @@ import { memo, type CSSProperties } from "react";
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, Position, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
+import { useHoverMarks } from "../interaction";
 import { EdgeHalo } from "./EdgeHalo";
 import { ICON_COL_X, METRICS } from "../../graph/metrics";
 import { truncate } from "../../utils/format";
@@ -201,11 +202,16 @@ export const GradientEdge = memo(function GradientEdge({
     ...(centerY !== undefined ? { centerY } : {}),
   });
   const gradientId = `grad-${id}`;
+  const hoverLit = useHoverMarks().has(id);
   const from = data?.sourceColor ?? "var(--accent)";
   const to = data?.targetColor ?? "var(--accent)";
   const chordLen = Math.hypot(targetX - sourceX, targetY - sourceY);
   const stops = gradientStops(data?.kind, from, to, chordLen);
   const isBranchPill = data?.kind === "branch" && label != null;
+  // MOCK (name-label exploration): branch OUTCOME labels are suppressed — a pflow
+  // outcome IS the target's node id, which the target's NameLabel now spells at
+  // exactly the entry the outcome label used to occupy. Conditions still render.
+  const showLabel = label != null && !isBranchPill;
   const anchor = isBranchPill
     ? labelAnchor({ targetX, targetY, targetPosition, pathX: labelX, pathY: labelY })
     : { x: labelX, y: labelY, selfTranslate: "translate(-50%, -50%)" };
@@ -223,20 +229,21 @@ export const GradientEdge = memo(function GradientEdge({
       </defs>
       {/* SELECTED (edge-click, applyFocus-written data.selected — RF's native
           `selected` prop is deliberately unused: deep links select too, and two
-          styling truths drift). */}
-      {data?.selected && <EdgeHalo path={edgePath} stroke={`url(#${gradientId})`} />}
+          styling truths drift) — or ROW-HOVERED (the hover-marks set; halo only,
+          no elevation: hover is transient, tunneling relief is selection's job). */}
+      {(data?.selected || hoverLit) && <EdgeHalo path={edgePath} stroke={`url(#${gradientId})`} />}
       <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: METRICS.edgeStroke }} />
       {/* A SELECTED edge suppresses its own floating pills: it is elevated above
           the EdgeLabelRenderer layer (it would strike through them), and the read
           panel carries the full outcome/condition anyway. */}
-      {(label || showCondition) && !data?.selected && (
+      {(showLabel || showCondition) && !data?.selected && (
         <EdgeLabelRenderer>
           {/* The pill's FILL takes its edge's color via --label-c (error = the semantic
               red, else the target node's color — the line's color where it arrives);
               text stays white. A BRANCH pill additionally gets the `branch` class:
               its ordinal number + border speak the condition orange (--decision — the
               fork is the condition node's act) while the fill stays node-colored. */}
-          {label && (
+          {showLabel && (
             <div
               className={`edge-label nodrag nopan${isBranchPill ? " branch" : ""}${data?.dimmed ? " label-dimmed" : ""}`}
               style={

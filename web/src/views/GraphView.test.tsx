@@ -234,7 +234,7 @@ describe("GraphView mount", () => {
           id: "p_in",
           ref: { node_id: "topic", ancestor_path: [], port: "in" },
           kind: "input",
-          purpose: "",
+          purpose: "What to research.",
           params: [],
           io: { data_type: "string", required: true, default: null },
           parent: "g_in",
@@ -265,11 +265,16 @@ describe("GraphView mount", () => {
     try {
       const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
       await waitFor(() => expect(screen.getByText("1 input")).toBeTruthy());
+      // A SINGLE-port card's title line is that port's description (the leaf
+      // description||identity convention — the section itself has none).
+      expect(screen.getByText("What to research.")).toBeTruthy();
 
       // Click the card: panel opens AND (beautiful) the rows focus-expand.
       fireEvent.click(screen.getByText("INPUTS"));
       await waitFor(() => expect(screen.getByText("workflow inputs")).toBeTruthy());
       await waitFor(() => expect(container.querySelector(".io-row")).toBeTruthy());
+      // Rows speak the leaf output-row grammar: `name: type` (one vocabulary).
+      expect(container.querySelector(".io-row")!.textContent).toContain("topic: string");
 
       // A second click KEEPS it open — the old toggle-close is gone. (Two "INPUTS"
       // texts exist now: the card category + the expanded rows' column caption.)
@@ -305,8 +310,12 @@ describe("GraphView mount", () => {
           parent: "g_wf_in",
           source: null,
         },
+        // A root step binding the port — a NO-edge nested port is click-INERT
+        // (the into-nowhere gate, 2026-06-12), so the focus-only assertion
+        // needs a genuinely wired row.
+        { ...GRAPH.nodes[0]!, id: "r0", ref: { node_id: "feeder", ancestor_path: [], port: null }, params: [] },
       ],
-      edges: [],
+      edges: [{ id: "e_b", source: "r0", target: "p1", kind: "data_flow", label: null, output_field: "stdout", input_name: "x", shadowed: false, condition: null, output_path: [] }],
       groups: [
         { id: "g_wf", kind: "workflow", parent: null, host: "h0", members: ["m0"], nesting_depth: 0, annotations: {} },
         { id: "g_wf_in", kind: "input_wrapper", parent: "g_wf", host: null, members: ["p1"], nesting_depth: 1, annotations: {} },
@@ -323,6 +332,18 @@ describe("GraphView mount", () => {
     // nested row's owner panel is the host ReadPanel, a different gesture.
     await waitFor(() => expect(container.querySelector(".io-row.focused")).toBeTruthy());
     expect(container.querySelector(".read-panel")).toBeNull();
+
+    // The into-nowhere gate (2026-06-12): a nested port with NO line in view
+    // is click-INERT — focusing it would dim the whole canvas and reveal
+    // nothing. Same fixture minus the binding edge.
+    cleanup();
+    vi.mocked(fetchGraph).mockResolvedValue({ ...nested, edges: [] });
+    const inert = render(<GraphView workflow="demo" onBack={() => {}} />);
+    fireEvent.click(screen.getByText("advanced"));
+    await waitFor(() => expect(inert.container.querySelector(".io-row")).toBeTruthy());
+    fireEvent.click(inert.container.querySelector(".io-row")!);
+    expect(inert.container.querySelector(".io-row.focused")).toBeNull();
+    expect(inert.container.querySelector(".node.dimmed")).toBeNull();
   });
 
   it("an unexpanded leaf renders its badge — the ONE badge a leaf can carry", async () => {

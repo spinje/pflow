@@ -2953,3 +2953,115 @@ existing label-word vocabulary (`feeds`/`consumed`/…): a faint `from` heads th
 (`from [build-report · TRANSFORM] .result` — one phrase) and `used by` heads the consumer
 chips. web **267** green (label-word + canvas-row assertions updated), tsc + build clean;
 browser-verified — the OUTPUTS card row and the panel both read `report str`.
+
+**Round 4 (user-caught, same day): the two row grammars unify; a single-port card titles
+itself with the port's description.** (1) "why are these styled differently?" — `report str`
+(io row) vs `result: str` (leaf output row): same 12px base (`.react-flow__node`) and the same
+`--row-h`, but TWO components — PortRows predates type display entirely (io types only arrived
+with today's derivation), so it had a detached 10px `.io-type` and no colon while WorkflowNode's
+output rows render the full-size faint `: type` suffix. PortRows now uses the SAME `.row-type`
+suffix (one "name: type" vocabulary wherever rows render); `.io-type` deleted. (2) "shouldn't
+we show the description instead of 'lyrics-generator' if it's only 1 output?" — yes, and the
+user's premise is exactly right: the Inputs/Outputs SECTION has no description slot in the
+format, only individual ports do — so a SINGLE-port card now titles itself with that port's
+description (the leaf `description || identity` convention; multi-port keeps the workflow
+name; the tooltip always carries `workflowName — description`). web **267** green (row-grammar
++ sole-description pins added to the GraphView io test), tsc + build clean; browser-verified —
+the OUTPUTS card reads `Summary of the run — songs created…` / `report: str`, matching the
+transform's `result: str` two inches above it.
+
+### Name labels MOCK: node ids as floating chrome + adaptive IO width (2026-06-11, user-driven) (uncommitted, MOCK — not productionized)
+
+> Design exploration, user-judged via the screenshot loop; all code marked `MOCK`. Tests/docs
+> deliberately NOT updated — pins on TD outcome labels and the title id-fallback will fail
+> until the design is locked and hardened. A parallel agent works the same files (hover
+> feature); slices coexist, one transient clobber scare proved false on re-grep.
+
+- **NameLabel** (WorkflowNode, reused by GroupNode): the node's name (node_id, the `${ref}`
+  key) floats above the card as border chrome — like the chip rail, so it dims/selects/
+  animates with the card for free and ELK doesn't know. TD: right of the incoming line
+  (`ICON_COL_X + 10`, 7px up); LR: above-left (`left: 8`, 6px up) — the BELOW variant
+  (n8n-style) was mocked and REJECTED: an inner leaf's label collides with its region's
+  outputs strip. Beautiful = `humanizeId()` ("My nice node" — first-char uppercase only,
+  rest-casing preserved); advanced = verbatim mono id. Groups: primary host groups only,
+  both fold states; IO cards skip (no `${ref}` identity). The in-card title no longer falls
+  back to node_id (category-only when purpose is absent).
+- **TD outcome labels DIED** (GradientEdge suppresses branch pills): a pflow outcome IS the
+  target's node id (`_structural_edge` label = `str(action)` = the `next` value), so the
+  target's NameLabel spells the same string at the same entry. Conditions + error pills
+  stay; LR BranchPorts rows stay (the condition home). This amends the "forks labeled at
+  the target's entry" hard-requirement MECHANISM, not its intent — update
+  visualization-requirements.md when productionizing. The "end" outcome dot now carries no
+  text (condition still rides the END edge) — looked fine, revisit if missed.
+- **Widths**: COMPACT_WIDTH 230 → 280 (user-tuned through 248/258 — fitView masks width
+  changes in screenshots, proven by inspect: 258 CSS px measured while "not noticing");
+  COLLAPSED_GROUP_WIDTH/IO_CARD_WIDTH 260 → 300 in step (containers must keep their width
+  lead or the hierarchy inverts).
+- **Adaptive group-IO width** (user-caught truncation: execute-plan's `max_review_rounds:
+  in…`): TWO causes — the `.io-rows-cols` 50/50 `flex: 1 1 0` split capped a long input row
+  at half the card even beside an EMPTY outputs band, and `GROUP_IO_WIDTH = 380` was fixed
+  both ways. Fix: columns size to content + `space-between` (dots stay on the borders);
+  `groupIoWidth()` (flow.ts) predicts width from the longest `name: type *` row per column —
+  mono rows make char-count exact (`IO_CHAR_W = 7.2`) — clamped
+  [COLLAPSED_GROUP_WIDTH, 480]: "prefer the unexpanded card's width when possible" (user
+  decision). GROUP_IO_WIDTH deleted. Verified: execute-plan renders all 13 input rows
+  untruncated. Residual: the root IO card stays fixed-width (same treatment applies if
+  wanted).
+
+Shots: /tmp/pflow-shots/*mockname*. Gates run: `make ui-build` (tsc strict) only — web test
+failures are EXPECTED at this stage (see above).
+
+### Panel chips → shared avatar component + connection sections + the HOVER system (2026-06-11/12, user-driven) ✅
+
+> One arc across a session, parallel to another agent's workstream (their files left
+> alone except surgical touches; their pre-existing GraphView.test failure is NOT ours).
+> Every visual claim below browser-verified via the screenshot loop; hover via the NEW
+> hover.pflow.md (see last bullet).
+
+- **Chip restyle (user-designed):** panel chips became mini node AVATARS — 28px canvas
+  tile (kind-color border + native icon) + name, no wrapper box; category word on the
+  tooltip. Extracted to `web/src/components/Chip.tsx` (EdgePanel's export had a third
+  consumer coming — the seam got real): Chip + ChipStack + ConnectionSections +
+  producersOf/consumersOf (one private dataNeighbors). A NESTED io-port chip is
+  SCOPE-PREFIXED (`create-songs.concept` — a bare port name loses whose input it is,
+  user-caught); root ports stay bare. IoPanel port-producer rows drop a field that just
+  repeats the port name (`pr_url .pr_url` said it twice).
+- **ReadPanel tail = `references (N)` + `referenced by (N)`** (upstream first — data
+  flows in→out). Contract edges only, BY DECISION: the plain-param edge gap is being
+  fixed at the model (scratchpads/param-ref-data-flow-edges/proposal.md — that doc was
+  TRIGGERED by this feature's under-report finding); both sections complete for free
+  when it lands. Empty direction → no section (no-claims).
+- **HOVER = mark a SET of canvas subjects, a PURE highlight** (no focus change, no
+  expansion, NO camera move — user decision). Chip hover marks its resolved node; ROW
+  hover (param/output/io rows) marks every edge landing on the row + each far end —
+  `rowTouches` over the FLOW edges (the resolved landings; a contract re-derivation was
+  the first plan, killed by the user's final-simplicity directive). One
+  `useHoverMarks` set, two readers by id namespace: nodes ring (`.hover-mark` =
+  focus ring + un-dim), edges light with the SELECTED treatment (EdgeHalo + bright)
+  minus elevation. Marks wiped on any focus/selection/structure change (a click can
+  unmount the hovered source — its mouseleave never fires).
+- **ALL rows speak ONE connection language (user-caught drift):** wired = teal name +
+  live dot; static/unwired = muted + quiet dot — dynamic params, read outputs, and io
+  rows identically. THREE real drift bugs fixed: `.port-handle`'s teal was silently
+  overridden by the LATER generic `.handle` rule (CSS order, equal specificity); io
+  text inset was 14px vs the leaf 10px (io rows now ARE the leaf row geometry); io
+  dots floated inside the card (now ON the border — `--io-inset` beside each region
+  padding; cards need none). Io wiring is SIDE-AWARE (`Port.receives`/`feeds`,
+  PortRows picks per `handles`): a sub-workflow output no caller reads is grey even
+  though its inner producer edge exists (user-caught on `segments`); a nested port
+  with no line in view is click-INERT (the into-nowhere click, user-caught — root
+  card rows always click, the panel is the payoff).
+- **hover.pflow.md (NEW, the verification gap closed):** the screenshot skill gained a
+  third workflow — dispatch a real `mouseover` on a named row via chrome-devtools
+  evaluate_script (React's onMouseEnter delegates through native mouseover), return
+  `{ringedNodes, haloedEdges}` counts + screenshot. First run: hovering curate-briefs'
+  `inputs` → 3 ringed / 3 haloed, matching its three refs — the production hover path
+  verified in a real browser, ending the "hover is the one thing we can't see" residual.
+
+Gates at close: web 290 tests / 289 pass (the 1 = the parallel workstream's pre-existing
+GraphView.test case), tsc strict + build clean, example-validation green (the new
+.pflow.md auto-enrolled). Docs synced: web/CLAUDE.md (chip bullet, HOVER bullet, row
+language), visualization-requirements.md, the skill's SKILL.md. Honest watch-item, not
+fixed: every edge/node component consumes the hover context, so one hover transition
+re-renders them all — cheap renders, but sweep-across-rows on the ~124-edge harness is
+untested; if it janks, the fix is a subscription with selector semantics, not less hover.

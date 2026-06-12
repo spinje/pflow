@@ -18,7 +18,7 @@ import { Handle, Position } from "@xyflow/react";
 
 import type { Port } from "../../graph/flow";
 import { portHandle, portTargetHandle } from "../../graph/handles";
-import { useInteraction } from "../interaction";
+import { useHoverMarks, useInteraction } from "../interaction";
 
 export type PortRowHandles = "receive" | "feed" | "both";
 
@@ -33,6 +33,7 @@ export function PortRows({
   ports,
   kind,
   handles,
+  ownerId,
   focusedPortId,
   label,
   staggerRows = 0,
@@ -40,6 +41,9 @@ export function PortRows({
   ports: Port[];
   kind: "input" | "output";
   handles: PortRowHandles;
+  // The flat id of the node these rows render ON (io card / group) — the id the
+  // rows' edges anchor to; row hover marks that anchor's touch set.
+  ownerId: string;
   focusedPortId: string | null;
   label?: string; // the small INPUTS/OUTPUTS column caption (two-column areas)
   // Rows to push this column DOWN in a two-column area: outputs are BOTTOM-ANCHORED
@@ -48,8 +52,14 @@ export function PortRows({
   // stagger left a 3-output column hugging the top of a 13-input card).
   staggerRows?: number;
 }): JSX.Element {
-  const { focusPort } = useInteraction();
+  const { focusPort, hoverRow } = useInteraction();
+  const hovered = useHoverMarks(); // a hovered panel chip lights its port's row
   const classes = ["io-col", `io-col-${kind}`];
+  // The wired styling follows the SIDE this location presents (`handles`): a
+  // collapsed card's output column shows the FEED side, so an output no caller
+  // reads stays grey even though its inner producer edge exists.
+  const isWired = (port: Port): boolean =>
+    handles === "receive" ? port.receives : handles === "feed" ? port.feeds : port.receives || port.feeds;
   return (
     <div
       className={classes.join(" ")}
@@ -59,12 +69,16 @@ export function PortRows({
       {ports.map((port) => (
         <div
           key={port.id}
-          className={`io-row${kind === "output" ? " io-row-out" : ""}${focusedPortId === port.id ? " focused" : ""}`}
+          className={`io-row${kind === "output" ? " io-row-out" : ""}${isWired(port) ? " wired" : ""}${focusedPortId === port.id ? " focused" : ""}${hovered.has(port.id) ? " hover-mark" : ""}`}
           title={rowTitle(port)}
           onClick={(e) => {
             e.stopPropagation(); // row click drives port focus, not whole-node focus
             focusPort(port.id);
           }}
+          // Row hover marks the nodes this port's edges touch (an io row carries
+          // BOTH handles — edges may land on either role).
+          onMouseEnter={() => hoverRow({ nodeId: ownerId, handles: [portHandle(port.id), portTargetHandle(port.id)] })}
+          onMouseLeave={() => hoverRow(null)}
         >
           <Handle
             id={portTargetHandle(port.id)}
@@ -72,9 +86,14 @@ export function PortRows({
             position={Position.Left}
             className={`handle port-handle${handles === "feed" ? " quiet" : ""}`}
           />
-          <span className="io-name">{port.name}</span>
+          {/* Same text grammar as a leaf's output rows (`result: str` — the
+              faint .row-type suffix): one vocabulary for "name: type" wherever
+              rows render (user-caught divergence 2026-06-11). */}
+          <span className="io-name">
+            {port.name}
+            {port.dataType && <span className="row-type">: {port.dataType}</span>}
+          </span>
           {port.required && <span className="io-required">*</span>}
-          {port.dataType && <span className="io-type">{port.dataType}</span>}
           <Handle
             id={portHandle(port.id)}
             type="source"

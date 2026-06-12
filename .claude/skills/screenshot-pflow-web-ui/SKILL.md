@@ -5,13 +5,22 @@ description: Screenshot or measure the running pflow web UI (the React Flow canv
 
 # pflow web UI: screenshot + inspect
 
-Two workflows. Both drive the chrome-devtools MCP Chrome and **wait until the React Flow
+Three workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
 canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
 
 - **`screenshot.pflow.md`** → a settled full-page PNG. Eyeball the rendered canvas.
 - **`inspect.pflow.md`** → JSON geometry: every node's box/tile/connector/handle rect +
   every edge's path rect + the viewport `scale`. Measure exact pixels (e.g. does an edge
   endpoint land on its target handle? is a connector flush with the tile?).
+- **`hover.pflow.md`** → dispatch a REAL `mouseover` on the first row whose text starts
+  with `row_name` (React's onMouseEnter delegates through native mouseover, so this
+  drives the production hover path — the state `focus=` deep links cannot capture),
+  return `{ringedNodes, haloedEdges}` counts, and screenshot the hovered state:
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/hover.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=<…>&density=advanced&node=<node_id>' \
+    row_name='inputs' out_path=/tmp/pflow-shots/hover.png
+  ```
 
 ## URL params
 

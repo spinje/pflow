@@ -5,15 +5,13 @@
 // condition are frequently null on re-anchored or truncated edges — the panel
 // shows what exists and falls back to neutral wording, never an empty heading.
 //
-// Endpoint CHIPS navigate: a chip resolves its contract endpoint to the RENDERED
-// flat id (resolveEndpointFlatId — a suppressed group host resolves to its
-// representative group). An endpoint hidden inside a collapsed ancestor renders
-// as a NON-CLICKABLE chip — visible honesty over a silent no-op focus (R2). An IO
-// port chip uses port-focus semantics (focus the row, keep this panel).
+// Endpoint CHIPS (components/Chip.tsx, the shared module) navigate: resolve to
+// the RENDERED flat id or render non-clickable; hover marks the canvas node; an
+// IO port chip uses port-focus semantics (focus the row, keep this panel).
 
 import { bindingParam } from "../graph/flow";
-import { categoryLabel, nodeColor } from "../utils/format";
-import { resolveEndpointFlatId } from "../utils/viewParams";
+import { nodeColor } from "../utils/format";
+import { Chip } from "./Chip";
 import { OutcomeTable, ParamBlock } from "./ReadPanel";
 import type { RFEdge, RFGraph, RFNode } from "../types";
 
@@ -24,49 +22,6 @@ const KIND_TINT: Record<string, string> = {
   error: "var(--danger)",
   end: "var(--text-faint)",
 };
-
-// Exported for IoPanel (the same endpoint-chip semantics: resolve-or-disable,
-// io ports get port-focus) — the ReadPanel-exports precedent, not a shared module.
-export function Chip({
-  node,
-  graph,
-  renderedIds,
-  onNavigate,
-}: {
-  node: RFNode | undefined;
-  graph: RFGraph;
-  renderedIds: ReadonlySet<string>;
-  onNavigate: (focus: string, selectedId?: string | null) => void;
-}): JSX.Element | null {
-  if (!node) return null;
-  if (node.kind === "end") {
-    return <span className="edge-chip edge-chip-static">end</span>;
-  }
-  const color = nodeColor(node);
-  if (node.io) {
-    // Port-focus semantics: focus the row (its lines reveal, the row highlights),
-    // keep this panel open — a port has no panel of its own.
-    return (
-      <button className="edge-chip" style={{ "--chip-c": color } as React.CSSProperties} onClick={() => onNavigate(node.id)}>
-        <span className="edge-chip-name">{node.ref.node_id}</span>
-        <span className="edge-chip-kind">io port</span>
-      </button>
-    );
-  }
-  const resolved = resolveEndpointFlatId(graph, renderedIds, node.id);
-  return (
-    <button
-      className="edge-chip"
-      style={{ "--chip-c": color } as React.CSSProperties}
-      disabled={resolved == null}
-      title={resolved == null ? "hidden inside a collapsed container" : undefined}
-      onClick={resolved != null ? () => onNavigate(resolved, resolved) : undefined}
-    >
-      <span className="edge-chip-name">{node.ref.node_id}</span>
-      <span className="edge-chip-kind">{categoryLabel(node)}</span>
-    </button>
-  );
-}
 
 /** The node that AUTHORED a binding into an IO port. A line into a sub-workflow's
  *  input port carries its `${...}` text on the sub-workflow STEP (`inputs: {key:

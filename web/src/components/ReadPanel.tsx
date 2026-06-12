@@ -4,7 +4,8 @@
 // param values, source file:line, loop/batch/io config.
 
 import { fullValue, parseTemplate } from "../utils/format";
-import type { RFEdge, RFNode, SourceRef } from "../types";
+import { ConnectionSections } from "./Chip";
+import type { RFEdge, RFGraph, RFNode, SourceRef } from "../types";
 
 export function sourceLabel(source: SourceRef | null): string | null {
   if (!source?.file) return null;
@@ -116,6 +117,9 @@ export function ReadPanel({
   node,
   branches = [],
   reads = [],
+  graph,
+  renderedIds,
+  onNavigate,
   onClose,
 }: {
   node: RFNode;
@@ -127,6 +131,12 @@ export function ReadPanel({
   // the FIRST path segment (D7); the panel is the untruncated home — a
   // `${gen.result.a.b}` read shows here as `result.a.b`.
   reads?: string[];
+  // The references / referenced-by chip sections need the contract + chip
+  // semantics — optional so the panel stays renderable on its own (the
+  // sections simply don't appear without them).
+  graph?: RFGraph | null;
+  renderedIds?: ReadonlySet<string>;
+  onNavigate?: (focus: string, selectedId?: string | null) => void;
   onClose: () => void;
 }): JSX.Element {
   const src = sourceLabel(node.source);
@@ -171,6 +181,10 @@ export function ReadPanel({
             <ParamBlock param={param} key={param.name} />
           ))}
         </section>
+      )}
+
+      {graph && renderedIds && onNavigate && (
+        <ConnectionSections node={node} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
       )}
     </aside>
   );

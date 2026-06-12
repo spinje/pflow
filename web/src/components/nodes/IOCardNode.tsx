@@ -15,6 +15,7 @@ import { NODE_IN, NODE_OUT } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y } from "../../graph/metrics";
 import { IO_COLOR } from "../../utils/format";
 import { ioCardIcon } from "../../utils/icons";
+import { useHoverMarks } from "../interaction";
 import { PortRows } from "./PortRows";
 import { Connector } from "./WorkflowNode";
 
@@ -50,11 +51,22 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
   // `.node.compact/.detailed`, and `.node.expanded` would add a header divider on
   // top of the `.io-rows` one (the double-divider bug). The rows area carries its
   // own divider, like the collapsed group card.
+  const hovered = useHoverMarks();
   const classes = ["node", "compact", "io-card", `io-card-${kind}`];
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
+  // Hover marks this card — directly, or via one of ITS ports (the port-chip
+  // rule, see GroupNode): ring the box so the port is findable with rows hidden.
+  if (hovered.has(id) || ports.some((p) => hovered.has(p.id))) classes.push("hover-mark");
   const kindStyle = { "--kind": IO_COLOR } as CSSProperties;
   const count = `${ports.length} ${kind}${ports.length === 1 ? "" : "s"}`;
+  // The leaf convention (description || identity): a single-port card's most
+  // informative line is that port's OWN description — the Inputs/Outputs section
+  // has no description slot in the format, only individual ports do. Multi-port
+  // cards keep the workflow name; the tooltip always carries it.
+  const soleDescription = ports.length === 1 ? ports[0]!.description : null;
+  const title = soleDescription ?? workflowName;
+  const tooltip = soleDescription ? `${workflowName} — ${soleDescription}` : workflowName;
 
   return (
     <div className={classes.join(" ")} style={kindStyle}>
@@ -74,8 +86,8 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
         </div>
         <div className="node-titles">
           <span className="node-category">{kind === "input" ? "INPUTS" : "OUTPUTS"}</span>
-          <span className="node-name" title={workflowName}>
-            {workflowName}
+          <span className="node-name" title={tooltip}>
+            {title}
           </span>
         </div>
       </div>
@@ -89,6 +101,7 @@ export const IOCardNode = memo(function IOCardNode({ id, data }: NodeProps<IOCar
             // The root has only the outer scope: inputs FEED consumers, outputs
             // RECEIVE from producers (there is no parent to bind from / feed to).
             handles={kind === "input" ? "feed" : "receive"}
+            ownerId={id}
             focusedPortId={focusedPortId}
             // The column caption keeps this card's row GRID identical to a group
             // card's IO columns (header + chrome + label + rows) — so when the LR

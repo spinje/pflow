@@ -292,6 +292,15 @@ button.active {
 .node.focused {
   box-shadow: 0 0 0 2px var(--kind, var(--accent));
 }
+/* A hovered panel CHIP marks its canvas node (components/Chip.tsx → hoverNode):
+   the focus ring's look, plus an opacity override so a DIMMED node still lights
+   (must stay after .node.dimmed — equal specificity, order decides). Pure
+   highlight: no focus change, no expansion, no camera move. */
+.node.hover-mark,
+.group.hover-mark {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
+}
 
 /* card shell — colored BY TYPE: the kind color in the border + a faint kind-tinted
    bg (the same color the node's edges use). Option B keeps the tile/icon native, so
@@ -421,6 +430,33 @@ button.active {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* MOCK (name-label exploration, 2026-06-11): the node's name (its node_id — the
+   ${ref} key) floats above the card as border chrome, like the chip rail. TD: right
+   of the incoming line at the icon column (it REPLACES the TD outcome labels, which
+   spelled the same string); LR: above-left (a below-variant flag lives in
+   WorkflowNode). Beautiful = humanized sans; advanced = verbatim mono id. The
+   text-shadow halo matches the old outcome labels (text must read over edge lines). */
+.node-name-label {
+  position: absolute;
+  z-index: 5;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  color: #dfe5ec;
+  text-shadow:
+    0 0 3px rgb(0 0 0 / 0.95),
+    0 0 6px rgb(0 0 0 / 0.8);
+  pointer-events: none;
+}
+.node-name-label.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+}
 .param-rows {
   display: flex;
   flex-direction: column;
@@ -445,6 +481,18 @@ button.active {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Param rows speak the output rows' connection language (user-decided
+   2026-06-12): a DYNAMIC param (`is_dynamic` — refs land here) gets the
+   data-teal name + the live dot, like a READ output row; a static config
+   param keeps its muted name and gets the quiet dot. The static VALUE stays
+   full-strength — config is real info, unlike an unread output shape. */
+.param-row.dynamic .param-name {
+  color: var(--data-edge);
+}
+.param-row:not(.dynamic) .react-flow__handle.param-handle {
+  background: var(--text-faint);
+  opacity: 0.45;
 }
 .param-name.out {
   color: var(--data-edge);
@@ -580,17 +628,26 @@ button.active {
    table. `io-*` classes are constructed in PortRows.tsx (rows/columns), IOCardNode.tsx
    (the root Inputs/Outputs cards, .io-card) and GroupNode.tsx (.io-rows areas,
    .group-io-in sidebar / .group-io-out strip). */
+/* NO horizontal padding — io rows use the LEAF row geometry exactly (.param-row's
+   0 10px text inset, dots at the row edge == the card border); a container inset
+   here re-opens the padding drift (user-caught 2026-06-12). */
 .io-rows {
   border-top: 1px solid var(--border);
   margin-top: 4px;
-  padding: 6px 6px 4px;
+  padding: 6px 0 4px;
 }
+/* MOCK (adaptive IO width, 2026-06-11): columns size to their CONTENT and push
+   apart (inputs hug the left border, outputs the right — the visible handle dots
+   stay on the card borders). The old `flex: 1 1 0` 50/50 split truncated a long
+   input row at half the card even when the outputs band beside it was empty;
+   flow.ts groupIoWidth() now predicts the card wide enough for both columns. */
 .io-rows-cols {
   display: flex;
   gap: 16px;
+  justify-content: space-between;
 }
 .io-rows-cols .io-col {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-width: 0;
 }
 /* the outputs column is BOTTOM-ANCHORED via an inline margin-top (PortRows
@@ -599,7 +656,7 @@ button.active {
   height: var(--io-label-h);
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 10px; /* == the row inset */
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: 0.08em;
@@ -615,7 +672,7 @@ button.active {
   align-items: center;
   gap: 6px;
   height: var(--row-h);
-  padding: 0 8px;
+  padding: 0 10px; /* == .param-row — one row geometry everywhere */
   cursor: pointer;
   font-family: var(--mono);
   font-size: 12px;
@@ -627,6 +684,10 @@ button.active {
 .io-row.focused {
   background: var(--accent-soft);
 }
+/* a hovered panel chip lights its port's row (the focus treatment, hover-scoped) */
+.io-row.hover-mark {
+  background: var(--accent-soft);
+}
 .io-row-out {
   justify-content: flex-end;
 }
@@ -635,21 +696,20 @@ button.active {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* the leaf rows' connection language (one vocabulary for ALL rows): a WIRED
+   port (data edges touch it) gets the teal name, like a dynamic param / read
+   output; unwired keeps the muted row color (+ the quiet dot — handles section) */
+.io-row.wired .io-name {
+  color: var(--data-edge);
+}
 .io-required {
   color: var(--warn);
 }
-.io-type {
-  color: var(--text-faint);
-  font-size: 10px;
-}
-.react-flow__handle.port-handle {
-  background: var(--data-edge);
-}
-/* a row's role-less side: the handle stays (React Flow drops an edge whose named
-   handle is missing — the silent-drop bug class) but shows no dot */
-.react-flow__handle.port-handle.quiet {
-  opacity: 0;
-}
+/* (io rows type their name via the shared `: type` suffix — .row-type above —
+   the same grammar as a leaf's output rows; the old 10px .io-type died.
+   .port-handle paint lives in the HANDLES section — it must come after the
+   generic .handle rule or the base grey wins, which is exactly how the io
+   dots silently drifted grey, user-caught 2026-06-12.) */
 
 /* Expanded region IO: the inputs SIDEBAR (ELK reserves the column as left padding —
    layout.ts groupPadding — so the body lays out beside it) and the outputs strip at
@@ -662,6 +722,7 @@ button.active {
   top: calc(var(--group-header-h) + 10px);
   left: 10px;
   width: var(--io-sidebar-w);
+  --io-inset: 10px; /* == the sidebar's left offset — the receive dots sit ON the region border */
 }
 .group-io-out {
   position: absolute;
@@ -673,6 +734,7 @@ button.active {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  --io-inset: 10px; /* == the horizontal padding — the feed dots sit ON the region border */
 }
 /* strip rows HUG their content: a full-width row with right-aligned text leaves the
    left (receive) dot floating mid-strip, far from its label — the producer line
@@ -933,6 +995,33 @@ button.active {
 .react-flow__handle.out-handle {
   background: var(--data-edge);
 }
+/* io-row dots — AFTER the generic .handle rule above (equal specificity: the
+   later rule wins; defined earlier they silently render grey). Same language
+   as param dots: live teal on a wired row, quiet on an unwired one. */
+.react-flow__handle.port-handle {
+  background: var(--data-edge);
+}
+.io-row:not(.wired) .react-flow__handle.port-handle {
+  background: var(--text-faint);
+  opacity: 0.45;
+}
+/* a row's role-less side: the handle stays (React Flow drops an edge whose named
+   handle is missing — the silent-drop bug class) but shows no dot */
+.react-flow__handle.port-handle.quiet {
+  opacity: 0;
+}
+/* The OUTER io dot centers on the CARD/REGION border, like every leaf row's dot
+   (the containers inset their rows, so the row-edge default sat the dot inside
+   the card — drift, user-caught 2026-06-12). --io-inset is defined NEXT TO each
+   container's padding; -4px is the handle's stock row-edge offset. */
+.io-col-input .react-flow__handle-left,
+.io-card .io-col-output .react-flow__handle-left {
+  left: calc(-4px - var(--io-inset, 0px));
+}
+.io-col-output .react-flow__handle-right,
+.io-card .io-col-input .react-flow__handle-right {
+  right: calc(-4px - var(--io-inset, 0px));
+}
 /* the ↻ loop-rule row's landing dot — amber, the loop language */
 .react-flow__handle.loop-row-handle {
   background: var(--loop);
@@ -1046,13 +1135,38 @@ button.active {
 
 
 /* ---------- read panel ---------- */
+/* Width rides --panel-w, set inline on .graph-body by GraphView (user-resizable
+   via .panel-resizer, persisted; default in utils/panelWidth.ts). */
 .read-panel {
-  flex: 0 0 360px;
-  max-width: 360px;
+  flex: 0 0 var(--panel-w, 460px);
+  max-width: var(--panel-w, 460px);
   overflow-y: auto;
   padding: 16px;
   background: var(--bg-raised);
   border-left: 1px solid var(--border);
+}
+/* The drag handle between canvas and panel: zero net width in the flex row
+   (negative margins straddle the panel's left border), a 9px col-resize hit
+   area on top of it. Hover/drag paints a thin accent line on the divider. */
+.panel-resizer {
+  flex: 0 0 9px;
+  margin: 0 -5px 0 -4px;
+  position: relative;
+  z-index: 6;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+.panel-resizer:hover::after,
+.panel-resizer:active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0.6;
 }
 .read-panel-header {
   display: flex;
@@ -1199,24 +1313,40 @@ button.active {
   color: var(--text-faint);
   flex: 0 0 auto;
 }
+/* A chip is a mini node avatar: the canvas tile in miniature + the name, no box
+   around the pair (the tile carries the kind color; the category word rides the
+   tooltip — identity by recognition, matching the canvas). */
 .edge-chip {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  align-items: center;
+  gap: 7px;
   min-width: 0;
-  flex: 1 1 0;
-  padding: 6px 9px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--chip-c, var(--text)) 8%, var(--bg-node));
-  border: 1px solid color-mix(in srgb, var(--chip-c, var(--text)) 30%, transparent);
+  flex: 0 1 auto;
+  padding: 0;
+  background: none;
+  border: none;
   color: var(--text);
   cursor: pointer;
   text-align: left;
   font: inherit;
 }
-.edge-chip:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--chip-c, var(--text)) 60%, transparent);
+.edge-chip-tile {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  border: 2px solid var(--chip-c, var(--text-faint));
+}
+.edge-chip-tile img {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+}
+.edge-chip:hover:not(:disabled) .edge-chip-name {
+  text-decoration: underline;
 }
 .edge-chip:disabled {
   cursor: default;
@@ -1231,18 +1361,25 @@ button.active {
   white-space: nowrap;
   max-width: 100%;
 }
-.edge-chip-kind {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: color-mix(in srgb, var(--chip-c, var(--text-faint)) 80%, var(--text));
+/* a nested io port's scope prefix ("create-songs." before "concept") — fainter,
+   so the port name stays the subject */
+.edge-chip-scope {
+  color: var(--text-muted);
+  font-weight: 500;
 }
 .edge-chip-static {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text-faint);
-  border-style: dashed;
   cursor: default;
+}
+/* references / referenced-by (ReadPanel, via components/Chip.tsx): one neighbor
+   chip per row — a vertical stack, not the EdgePanel's inline endpoint pair. */
+.chip-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
 }
 
 /* The workflow-interface panel (IoPanel.tsx): one entry per input/output. */
@@ -1269,11 +1406,6 @@ button.active {
 .io-port-uses {
   margin: 6px 0 0;
   flex-wrap: wrap;
-}
-/* In these rows a chip is one word of a phrase ("from [build-report] .result"),
-   not a stretched endpoint slot — un-stretch so the field path sits snug. */
-.io-port-uses .edge-chip {
-  flex: 0 1 auto;
 }
 /* The relationship word ("used by" / "from") — the panel's faint label-word
    vocabulary (feeds/consumed/…), clearer than a bare arrow. */

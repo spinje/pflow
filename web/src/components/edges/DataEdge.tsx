@@ -21,6 +21,7 @@ import { memo, type CSSProperties } from "react";
 import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
+import { useHoverMarks } from "../interaction";
 import { EdgeHalo } from "./EdgeHalo";
 import { LANE_COUNT } from "../../graph/flow";
 import { METRICS } from "../../graph/metrics";
@@ -66,6 +67,9 @@ export const DataEdge = memo(function DataEdge({
     centerX: (data?.railX ?? (sourceX + targetX) / 2) + rail,
     centerY: (data?.railY ?? (sourceY + targetY) / 2) + rail,
   });
+  // Row hover lights this line like a selection (halo + bright stroke), minus
+  // the elevation — hover is transient; tunneling relief stays selection's job.
+  const hoverLit = useHoverMarks().has(id);
   const focusEnd = data?.focusEnd;
   const gradientId = `data-grad-${id}`;
   // Gradient axis runs FROM the clicked end TO the far end (solid → hint-faded).
@@ -75,7 +79,7 @@ export const DataEdge = memo(function DataEdge({
   // selected edge, so both ends draw solid). RF's native `selected` prop is
   // deliberately unused: applyFocus-written data.selected is the single styling
   // truth (deep links select too).
-  const stroke = data?.selected ? "var(--data-edge-selected)" : focusEnd ? `url(#${gradientId})` : "var(--data-edge)";
+  const stroke = data?.selected || hoverLit ? "var(--data-edge-selected)" : focusEnd ? `url(#${gradientId})` : "var(--data-edge)";
   return (
     <>
       {focusEnd && (
@@ -86,7 +90,7 @@ export const DataEdge = memo(function DataEdge({
           </linearGradient>
         </defs>
       )}
-      {data?.selected && <EdgeHalo path={edgePath} stroke="var(--data-edge-selected)" />}
+      {(data?.selected || hoverLit) && <EdgeHalo path={edgePath} stroke="var(--data-edge-selected)" />}
       <BaseEdge id={id} path={edgePath} style={{ stroke, strokeWidth: METRICS.edgeStroke }} />
       {/* A SELECTED edge suppresses its own label (it is elevated above the
           EdgeLabelRenderer layer; the read panel names the fields); a dimmed

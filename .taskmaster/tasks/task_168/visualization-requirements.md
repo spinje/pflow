@@ -115,6 +115,19 @@
   one Mermaid golden updated to the truthful `(string, required)` label). Card
   click = select everywhere (the io toggle died); root row click opens the panel
   with its entry marked.
+- **Shared node CHIP + connection sections + hover-set (2026-06-11/12):** panel
+  chips are mini node avatars (28px canvas tile + name, no box; category word on
+  the tooltip) in ONE shared component (`web/src/components/Chip.tsx` —
+  EdgePanel/IoPanel/ReadPanel all consume it); a nested io-port chip is
+  scope-prefixed (`create-songs.concept`). Every ReadPanel ends with
+  `references (N)` (upstream) + `referenced by (N)` (downstream) chip stacks
+  (contract data-flow edges only — completes for free when
+  scratchpads/param-ref-data-flow-edges lands; an empty direction → no section,
+  the no-claims rule). HOVER = mark a set of canvas subjects, a PURE highlight
+  (no focus change, no expansion, no camera move — user decision): a chip marks
+  its node (an io-port chip rings the port's owner + lights its row); a canvas
+  param/output/io ROW marks every node its edges touch (`rowTouches` over the
+  flow edges — the resolved landings, never a re-derivation).
 - **Tines/n8n visual language** (Phase A + follow-ups, 2026-06-09/10): one leaf
   component; neutral tile + brand/native-color icon (*tile is NOT solid-color —
   user-chosen*; node CARD border stays subtle — *do not thicken/recolor it*);
@@ -228,6 +241,10 @@
   navigate with camera follow; `focus=<flat edge id>` deep-links. Selected-shade/halo
   shoot-lab pending; hover highlight is the gated follow-on. Plan:
   `implementation/edge-selection-plan.md`.
+- **Resizable side panel (2026-06-11):** drag handle between canvas and panel (all
+  three panels share `.read-panel`, width rides the `--panel-w` var); default 460px
+  (was 360), clamped 300–860 and ≤70% viewport, persisted in localStorage,
+  double-click resets. Drag verified end-to-end in real Chrome.
 
 ## Wanted / planned (NOT yet built)
 

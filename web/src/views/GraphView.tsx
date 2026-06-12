@@ -17,18 +17,20 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
-import { consumedReadPaths, ioOwners, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { nodeColor } from "../utils/format";
 import { edgeClickAction, readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
 import type { RFEdge, RFNode } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
-import { InteractionProvider } from "../components/interaction";
+import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
 import { IoPanel } from "../components/IoPanel";
 import { nodeTypes } from "../components/nodes";
+import { PanelResizer } from "../components/PanelResizer";
 import { ReadPanel } from "../components/ReadPanel";
 import { Toolbar } from "../components/Toolbar";
+import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_W, savePanelWidth } from "../utils/panelWidth";
 
 interface GraphViewProps {
   workflow: string;
@@ -74,6 +76,16 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
+  // node, a canvas row marks its edges + their far ends. Pure highlight, no
+  // focus / expansion / camera change (user decision 2026-06-11). Own context
+  // so only node/edge components re-render on hover.
+  const [hovered, setHovered] = useState<ReadonlySet<string>>(NO_HOVER);
+  // Marks never outlive an interaction: a click can unmount the hovered source
+  // (panel swap, focus-expansion re-layout, collapse) so its mouseleave never
+  // fires and the marks would stick. Any focus/selection/structure change wipes
+  // them; the next real mouseenter re-marks.
+  useEffect(() => setHovered(NO_HOVER), [focus, selectedId, collapsed, density, direction]);
 
   // The root IO cards' title line: the workflow's display name (basename, no
   // extension — the toolbar keeps the full path).
@@ -104,6 +116,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // when focus restyles `nodes` — it must fire only on workflow/direction/node.
   const graphRef = useRef(graph);
   graphRef.current = graph;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
 
   // Initial collapse state, applied ONCE per workflow when its contract arrives: big
   // workflows open as an overview (everything collapsed), small ones fully expanded;
@@ -233,14 +247,32 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const interaction = useMemo(
     () => ({
       focusPort: (portId: string) => {
-        setFocus(portId);
         const owner = ioOwnership?.ports.get(portId);
         const ownerGroup = owner != null ? graphRef.current?.groups.find((g) => g.id === owner) : undefined;
-        if (ownerGroup && ownerGroup.parent == null && (ownerGroup.kind === "input_wrapper" || ownerGroup.kind === "output_wrapper")) {
-          setSelectedId(owner!);
+        const isRootWrapper =
+          ownerGroup != null &&
+          ownerGroup.parent == null &&
+          (ownerGroup.kind === "input_wrapper" || ownerGroup.kind === "output_wrapper");
+        // A NESTED port with no line in the current view: focusing would dim the
+        // whole canvas and reveal nothing — the into-nowhere click (user-caught
+        // 2026-06-12; e.g. an output no caller reads, its inner producer edge
+        // self-loop-dropped on the collapsed card). Root rows always click — the
+        // interface panel is the payoff regardless of lines.
+        if (!isRootWrapper) {
+          const touched = edgesRef.current.some(
+            (e) => e.source === portId || e.target === portId || e.data?.from === portId || e.data?.to === portId,
+          );
+          if (!touched) return;
         }
+        setFocus(portId);
+        if (isRootWrapper) setSelectedId(owner!);
       },
       toggleGroup,
+      hoverNode: (flatId: string | null) => setHovered(flatId != null ? new Set([flatId]) : NO_HOVER),
+      // A hovered row marks its touch set — derived from the FLOW edges (the
+      // resolved row landings), read via a ref so the callbacks stay stable.
+      hoverRow: (row: { nodeId: string; handles: readonly string[] } | null) =>
+        setHovered(row != null ? rowTouches(edgesRef.current, row.nodeId, row.handles) : NO_HOVER),
     }),
     [ioOwnership, toggleGroup],
   );
@@ -273,6 +305,14 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     [graph, selectedId],
   );
 
+  // The side panel's width, user-resizable via the drag handle and persisted
+  // across sessions. Applied as a CSS var on .graph-body so all three panels
+  // (Read/Edge/Io share .read-panel) follow without prop drilling.
+  const [panelWidth, setPanelWidth] = useState(() => loadPanelWidth(window.innerWidth));
+  const onPanelResize = useCallback((w: number) => setPanelWidth(clampPanelWidth(w, window.innerWidth)), []);
+  const onPanelReset = useCallback(() => setPanelWidth(clampPanelWidth(PANEL_DEFAULT_W, window.innerWidth)), []);
+  useEffect(() => savePanelWidth(panelWidth), [panelWidth]);
+
   // The currently-rendered flat ids — EdgePanel's chips resolve their contract
   // endpoints against this (a suppressed host → its representative group; an
   // endpoint hidden in a collapsed ancestor → a non-clickable chip).
@@ -292,6 +332,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // so the target stays near where the fit put it.
   const onNavigate = useCallback(
     (focusId: string, selected?: string | null) => {
+      // The clicked chip may unmount with the panel swap — its mouseleave never
+      // fires, so the hover mark would stick. Clear it here.
+      setHovered(NO_HOVER);
       setFocus(focusId);
       if (selected !== undefined) setSelectedId(selected);
       if (getNodes().some((n) => n.id === focusId)) {
@@ -347,9 +390,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
 
   return (
     <InteractionProvider value={interaction}>
+      <HoverMarksProvider value={hovered}>
       <div className="graph-view">
         {toolbar}
-        <div className="graph-body">
+        <div className="graph-body" style={{ "--panel-w": `${panelWidth}px` } as React.CSSProperties}>
           <div className="canvas">
           {status === "loading" && <div className="canvas-overlay">Laying out…</div>}
           {status === "empty" && <div className="canvas-overlay">This workflow has no visible structure.</div>}
@@ -380,6 +424,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             <MiniMap pannable zoomable nodeColor={minimapNodeColor} nodeStrokeColor="transparent" nodeBorderRadius={3} />
           </ReactFlow>
           </div>
+          {((graph && (selectedEdge || selectedIoGroup)) || selectedNode) && (
+            <PanelResizer onResize={onPanelResize} onReset={onPanelReset} />
+          )}
           {graph && selectedEdge && (
             <EdgePanel
               edge={selectedEdge}
@@ -419,11 +466,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                 // path segment (D7); the panel shows the whole dotted path.
                 readPaths?.get(selectedNode.id) ?? []
               }
+              graph={graph}
+              renderedIds={renderedIds}
+              onNavigate={onNavigate}
               onClose={() => setSelectedId(null)}
             />
           )}
         </div>
       </div>
+      </HoverMarksProvider>
     </InteractionProvider>
   );
 }

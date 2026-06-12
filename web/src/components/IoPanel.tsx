@@ -12,7 +12,7 @@
 import { useEffect, useRef } from "react";
 import { wrapperPorts } from "../graph/flow";
 import { fullValue, IO_COLOR } from "../utils/format";
-import { Chip } from "./EdgePanel";
+import { Chip } from "./Chip";
 import { sourceLabel } from "./ReadPanel";
 import type { RFGraph, RFGroup, RFNode } from "../types";
 
@@ -118,14 +118,19 @@ export function IoPanel({
               )}
               {producerEdges.map((e) => {
                 // Reads as one phrase: "from build-report.result" — the chip is
-                // the node, the dot-prefixed code its field (snug beside the
-                // chip; these rows un-stretch .edge-chip, see .io-port-uses).
+                // the node, the dot-prefixed code its field snug beside it. A
+                // PORT producer whose field just repeats the port's name shows
+                // no field (`from execute-plan.pr_url .pr_url` said it twice —
+                // reading the port IS the field; user-caught 2026-06-11); a
+                // deeper sub-path still shows.
+                const producer = nodeById.get(e.source);
                 const fieldPath = e.output_field ? [e.output_field, ...e.output_path].join(".") : null;
+                const showField = fieldPath != null && !(producer?.io && fieldPath === producer.ref.node_id);
                 return (
                   <div className="edge-chips io-port-uses" key={e.id}>
                     <span className="io-port-uses-label">from</span>
-                    <Chip node={nodeById.get(e.source)} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
-                    {fieldPath && <code className="io-port-path">.{fieldPath}</code>}
+                    <Chip node={producer} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
+                    {showField && <code className="io-port-path">.{fieldPath}</code>}
                   </div>
                 );
               })}

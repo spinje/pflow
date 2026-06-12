@@ -14,6 +14,7 @@ import {
   HEADER_HEIGHT,
   outputRowsFor,
   rowAnchorsFor,
+  rowTouches,
   SELECTED_EDGE_Z,
 } from "./flow";
 import {
@@ -2196,5 +2197,36 @@ describe("expandTargets — edge focus expands exactly the two endpoints", () =>
       groups: [group("w_in", { kind: "input_wrapper", members: ["p"] })],
     };
     expect([...expandTargets(g, "e_pb")].sort()).toEqual(["b", "w_in"]);
+  });
+});
+
+describe("rowTouches — the row-hover touch set (reads FLOW edges, not the contract)", () => {
+  const flowEdges = [
+    { id: "e1", source: "n1", target: "n2", sourceHandle: outputHandle("result"), targetHandle: paramHandle("inputs") },
+    { id: "e2", source: "n1", target: "n3", sourceHandle: outputHandle("result"), targetHandle: NODE_IN },
+    { id: "e3", source: "n0", target: "n1", sourceHandle: NODE_OUT, targetHandle: paramHandle("prompt") },
+    // a loop's self-edge: hovering the loop row must not ring the node itself
+    { id: "e4", source: "n1", target: "n1", sourceHandle: NODE_OUT, targetHandle: LOOP_ROW },
+  ] as FlowEdge[];
+
+  it("an output row marks every consumer its edges reach AND the edges themselves", () => {
+    expect([...rowTouches(flowEdges, "n1", [outputHandle("result")])].sort()).toEqual(["e1", "e2", "n2", "n3"]);
+  });
+
+  it("a param row marks its producer + the line", () => {
+    expect([...rowTouches(flowEdges, "n1", [paramHandle("prompt")])].sort()).toEqual(["e3", "n0"]);
+  });
+
+  it("an io row matches on EITHER of its two handles", () => {
+    const ioEdges = [
+      { id: "a", source: "g1", target: "x", sourceHandle: portHandle("p9"), targetHandle: NODE_IN },
+      { id: "b", source: "y", target: "g1", sourceHandle: NODE_OUT, targetHandle: portTargetHandle("p9") },
+    ] as FlowEdge[];
+    expect([...rowTouches(ioEdges, "g1", [portHandle("p9"), portTargetHandle("p9")])].sort()).toEqual(["a", "b", "x", "y"]);
+  });
+
+  it("a self-edge's LINE lights but its far end never rings; a handle with no edges marks nothing", () => {
+    expect([...rowTouches(flowEdges, "n1", [LOOP_ROW])]).toEqual(["e4"]);
+    expect(rowTouches(flowEdges, "n1", [paramHandle("ghost")]).size).toBe(0);
   });
 });

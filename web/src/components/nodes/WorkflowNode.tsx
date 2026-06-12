@@ -14,9 +14,10 @@ import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflo
 import type { FlowNode } from "../../graph/flow";
 import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
-import { categoryLabel, collapseWhitespace, nodeColor, parseTemplate, previewValue, truncate } from "../../utils/format";
+import { categoryLabel, collapseWhitespace, humanizeId, nodeColor, parseTemplate, previewValue, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
 import type { RFParam } from "../../types";
+import { useHoverMarks, useInteraction } from "../interaction";
 import { BranchPorts } from "./BranchPorts";
 import { ChipRail } from "./ChipRail";
 
@@ -76,6 +77,41 @@ const CONNECTOR_LEFT = [
 // edge; subtracting sink+apron drops the landing line baseSink px inside the border
 // and keeps the apron's far end (sink+apron) px in — clear of the dark face.
 const CONN_ANCHOR = `calc(100% + ${METRICS.tileBorder - CONN.baseSink - CONN.baseApron}px)`;
+
+// MOCK (name-label exploration, 2026-06-11): flip to compare LR placements in
+// screenshots — false = above the card (consistent with TD), true = below it
+// (n8n-style; uncontested space in LR, where the loop rail + chip rail live above).
+const LR_NAME_BELOW = false;
+
+// The node's NAME (its node_id — the `${ref}` key) as floating chrome straddling
+// the card border, like the chip rail: it dims/selects/moves with the card for
+// free and ELK doesn't know (same accepted straddle). TD: right of the incoming
+// line (the icon column) — this REPLACES the TD outcome labels, which were
+// redundant with it (a branch outcome IS the target's node id in pflow).
+// Beautiful shows the humanized name; advanced the verbatim id (mono). The
+// verbatim id always rides the tooltip. Exported for GroupNode.
+export function NameLabel({
+  name,
+  direction,
+  density,
+}: {
+  name: string;
+  direction: "LR" | "TD";
+  density: string;
+}): JSX.Element {
+  const detailed = density === "detailed";
+  const pos: CSSProperties =
+    direction === "TD"
+      ? { bottom: "calc(100% + 7px)", left: ICON_COL_X + 10 }
+      : LR_NAME_BELOW
+        ? { top: "calc(100% + 6px)", left: 8 }
+        : { bottom: "calc(100% + 6px)", left: 8 };
+  return (
+    <span className={`node-name-label${detailed ? " mono" : ""}`} style={pos} title={name}>
+      {detailed ? name : humanizeId(name)}
+    </span>
+  );
+}
 
 function ParamValue({ param }: { param: RFParam }): JSX.Element {
   if (param.is_dynamic && typeof param.value === "string") {
@@ -184,6 +220,8 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   // React Flow caches handle positions; moving them (LR↔TD flips the border handles
   // from the sides to the icon column; focus-expansion adds/removes the per-row
   // handles) needs a re-measure or edges use stale coords and fly to the origin.
+  const hovered = useHoverMarks();
+  const { hoverRow } = useInteraction();
   const updateNodeInternals = useUpdateNodeInternals();
   useEffect(() => {
     updateNodeInternals(id);
@@ -212,6 +250,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (expanded) classes.push("expanded"); // focus-expanded beautiful card (shares the body styling)
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
+  if (hovered.has(id)) classes.push("hover-mark"); // a panel chip / row hover marks this node
   if (node.is_terminal) classes.push("terminal");
   if (node.unexpanded) classes.push("unexpanded");
   if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
@@ -227,6 +266,8 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
       {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
+      {/* MOCK: the node's name (id) as chrome above the card. */}
+      <NameLabel name={node.ref.node_id} direction={direction} density={density} />
       {/* Behavior chips (loop/batch) on the top border — the rail (ChipRail.tsx). */}
       <ChipRail node={node} />
 
@@ -238,12 +279,13 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
           {leftConnector && <Connector side="left" />}
         </div>
         <div className="node-titles">
-          {/* Type line + description, in BOTH densities. The description (purpose, or
-              node_id when absent) wraps to ≤2 lines; node_id (the ${ref} key) is on
-              the tooltip + in the read panel. */}
+          {/* Type line + description, in BOTH densities. The description (purpose)
+              wraps to ≤2 lines. MOCK: the node_id no longer falls back into the
+              title — identity lives on the NameLabel above the card; a card with
+              no purpose shows just its category. */}
           <span className="node-category">{categoryLabel(node)}</span>
           <span className="node-name" title={node.ref.node_id}>
-            {node.purpose || node.ref.node_id}
+            {node.purpose ?? ""}
           </span>
         </div>
         {/* The ONE status badge a leaf can carry — inline, like GroupNode's
@@ -265,8 +307,18 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
               feed from the RIGHT (the node-graph convention; user decision over
               shortest-path sides). A line from the "wrong" side wraps around the
               card; its rail clears the nodes via the data-rail hint (DataEdge). */}
+          {/* Row hover marks the nodes the row's edges touch — a pure highlight
+              (the hover-set channel, see interaction.ts). */}
+          {/* Param rows speak the output rows' connection language: a DYNAMIC
+              param (refs land here) gets the data-teal name + live dot, a
+              static config param a muted name + quiet dot (index.css). */}
           {node.params.map((param) => (
-            <div className="param-row" key={param.name}>
+            <div
+              className={`param-row${param.is_dynamic ? " dynamic" : ""}`}
+              key={param.name}
+              onMouseEnter={() => hoverRow({ nodeId: id, handles: [paramHandle(param.name)] })}
+              onMouseLeave={() => hoverRow(null)}
+            >
               <Handle
                 id={paramHandle(param.name)}
                 type="target"
@@ -289,6 +341,8 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
             <div
               className={`param-row output-row${row.nested ? " nested" : ""}${row.quiet ? " quiet" : ""}`}
               key={`o:${row.field}`}
+              onMouseEnter={() => hoverRow({ nodeId: id, handles: [outputHandle(row.field)] })}
+              onMouseLeave={() => hoverRow(null)}
             >
               {/* The title carries field AND type: a long label ellipsizes the
                   faint `: type` suffix away, so hover must recover both. */}

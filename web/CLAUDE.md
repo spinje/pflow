@@ -37,11 +37,17 @@ src/
   hooks/             useWorkflowGraph: fetch → build → layout → focus → RF state + status
   utils/             pure helpers — format.ts (${ref} parsing, value previews, kind
                      colors, category label); icons.ts (node-kind/provider → SVG URL);
-                     viewParams.ts (URL params, deep-link id resolution, edge-click dispatch)
+                     viewParams.ts (URL params, deep-link id resolution, edge-click dispatch);
+                     panelWidth.ts (side-panel width clamp + localStorage persistence)
   assets/icons/      vendored brand/tool SVGs (Vite bundles them into static/assets)
   views/             the screens App switches between (CatalogView, GraphView)
-  components/        reusable UI: Toolbar, ReadPanel, EdgePanel, ErrorBoundary,
-                     interaction.ts (the click-callback context), nodes/, edges/
+  components/        reusable UI: Toolbar, ReadPanel, EdgePanel, IoPanel, ErrorBoundary,
+                     Chip.tsx (the shared node chip + ConnectionSections — see the chip bullet),
+                     interaction.ts (the click-callback context + the hover-set channel),
+                     PanelResizer (the side panel's drag handle — width rides the
+                     --panel-w var GraphView sets on .graph-body; all three panels share
+                     .read-panel so they follow for free; double-click resets),
+                     nodes/, edges/
   test/              rf-jsdom.ts — React Flow jsdom mocks; fixtures/contracts/ — real
                      /api/graph payloads, drift-guarded by a Python test (regen command
                      in its failure message)
@@ -469,9 +475,14 @@ Tests sit beside their subject.
   `PortRows` component on their OWNER; the IO member nodes are NOT emitted. Three
   locations, one anatomy: (1) a ROOT wrapper becomes a standalone **IO card**
   (`IOCardNode`, RF type `"io"`, id = the wrapper's group id — focus/deep-link ids
-  stay stable): tile + INPUTS/OUTPUTS category + the workflow name + a `"14 inputs"`
-  pill; compact in beautiful, rows under the leaf `showBody` rule (advanced /
-  focus-expanded) — and clicking the card SELECTS like every other node
+  stay stable): tile + INPUTS/OUTPUTS category + a title line (the leaf
+  `description || identity` convention: a SINGLE-port card shows that port's own
+  description — the section has no description slot, only ports do; multi-port
+  shows the workflow name; tooltip carries both) + a `"14 inputs"` pill; compact
+  in beautiful, rows under the leaf `showBody` rule (advanced / focus-expanded).
+  IO rows speak the SAME text grammar as leaf output rows — `name: type` via the
+  shared `.row-type` faint suffix (PortRows; the old detached 10px `.io-type`
+  died, user-caught 2026-06-11) — and clicking the card SELECTS like every other node
   (2026-06-11, the toggle died when the card got a panel): focus + **IoPanel**
   (components/IoPanel.tsx), the workflow's interface written out — per input:
   type/required/`default:`/full description + consumer chips under a faint
@@ -487,7 +498,7 @@ Tests sit beside their subject.
   so the canvas io rows show `report str` identically to the panel. Ports come
   from the exported `wrapperPorts` (flow.ts — the SAME single copy the canvas
   rows render from); consumers/producers derive inline from contract data-flow
-  edges; chips are EdgePanel's exported `Chip`. An input with
+  edges; chips are the shared `Chip` (components/Chip.tsx). An input with
   NO data-flow edges shows no "used by" row at all — never an "unused" claim
   (loop-condition reads form no edges: the quiet≠unconsumed rule). A ROOT
   card's row click ALSO opens the panel with that entry marked (`focusPort` in
@@ -532,7 +543,19 @@ Tests sit beside their subject.
   (`portHandle`) RIGHT — sides are structural, never flipped post-layout. Both
   handles always
   render (an edge naming a missing handle is silently dropped — the recurring bug
-  class); the role-less side's dot is hidden via `.port-handle.quiet`. Edge handle
+  class); the role-less side's dot is hidden via `.port-handle.quiet`. **ALL rows
+  speak ONE connection language (2026-06-12):** wired = teal name + live teal
+  dot, unwired/static = muted name + quiet dot — a dynamic param (`is_dynamic`),
+  a read output, and a wired io row all render identically. An io row's wiring
+  is SIDE-AWARE (`Port.receives`/`Port.feeds`; PortRows picks the side its
+  location presents via `handles`) — a sub-workflow output no caller reads is
+  grey on the collapsed card even though its INNER producer edge exists, and a
+  NESTED row whose port has no line in the current view is click-INERT (the
+  into-nowhere gate in GraphView's focusPort; root card rows always click —
+  the panel is the payoff). Io paint gotcha: `.port-handle` color must live AFTER the generic
+  `.handle` rule in index.css (equal specificity — defined earlier it silently
+  renders grey, the 2026-06-12 drift). The OUTER io dot offsets onto the
+  card/region border via `--io-inset` (defined beside each container's padding). Edge handle
   resolution is owner-aware (`ioNodeToOwner` + `rowsVisible(owner)`): rows hidden →
   node-level, never a handle that doesn't render. `expandTargets` pulls an IO
   endpoint's OWNER into the expansion set, so focusing a consumer expands the owner
@@ -551,6 +574,46 @@ Tests sit beside their subject.
   what flows (`output_field → input_name`) — but an IO-touching binding carries NO
   label (the port rows name the fields, and a binding label often single-names one
   side; user-caught 2026-06-10), and any line landing row-to-row drops it too.
+- **The node CHIP is one shared component (components/Chip.tsx, 2026-06-11) — a
+  mini node avatar:** the canvas tile in miniature (kind-color border +
+  native-color icon via `nodeColor`/`iconFor`) + the name, no box; the category
+  word rides the TOOLTIP (identity by recognition — the canvas teaches the
+  icon↔kind map once). Consumers: EdgePanel endpoints, IoPanel consumer/producer
+  rows, ReadPanel's `ConnectionSections`. Semantics every consumer inherits:
+  resolve-or-disable (an endpoint hidden in a collapsed ancestor renders
+  non-clickable — never a silent no-op), io-port chips use port-focus, and HOVER
+  marks the chip's canvas node. A NESTED io-port chip is SCOPE-PREFIXED
+  (`create-songs.concept`, faint prefix — a bare port name loses whose input it
+  is; root ports stay bare, the panel names the workflow) and its hover marks
+  the PORT id. An IoPanel PORT-producer row drops a field that just repeats the
+  port's name (`from execute-plan.pr_url .pr_url` said it twice); deeper
+  sub-paths still show. **`ConnectionSections`** (the ReadPanel's tail): the
+  node's data-flow neighborhood as chip stacks — `references (N)` (upstream,
+  first: data flows in→out) then `referenced by (N)` (downstream), from
+  `producersOf`/`consumersOf` (deduped, edge order); an EMPTY direction renders
+  NOTHING (no-claims rule). Derived from contract edges ONLY: plain-param
+  sibling refs form no edges today
+  (scratchpads/param-ref-data-flow-edges/proposal.md) — both directions
+  complete for free when that model fix lands.
+- **HOVER is one concept: mark a SET of canvas subjects — a PURE highlight**
+  (no focus change, no expansion, NO camera move; user decision 2026-06-11).
+  Two producers: a panel CHIP marks its one resolved node
+  (`Interaction.hoverNode`); a canvas ROW (param/output rows on leaves, io rows
+  via PortRows) marks every edge landing on it AND each edge's far-end node
+  (`Interaction.hoverRow` → GraphView derives the set with `rowTouches` over
+  the FLOW edges — the resolved row landings, never a contract re-derivation,
+  so the marks can't disagree with what's drawn; flow edges are read via a ref
+  so the callbacks stay stable). The marked set rides `useHoverMarks` — ONE set,
+  two readers by disjoint id namespace: NODE ids ring their box (leaves on
+  `hovered.has(id)`; GroupNode/IOCardNode also ring when a hovered PORT id is
+  theirs — findable with rows hidden; PortRows lights the matching row), EDGE
+  ids light their line in DataEdge/GradientEdge with the SELECTED treatment
+  (EdgeHalo + bright/gradient stroke) minus the zIndex elevation — hover is
+  transient, tunneling relief stays a selection concern. Hidden beautiful data
+  edges stay hidden (revealing is click/focus territory). `.hover-mark` = the
+  focus ring + an un-dim override (must stay after `.node.dimmed` in the
+  sheet). GraphView's `onNavigate` clears the hover (the clicked chip unmounts
+  with the panel swap — its mouseleave never fires).
 - **Errors never blank the canvas.** `useWorkflowGraph`'s `status`
   (`loading`/`ready`/`empty`/`error`) drives a banner; a malformed 200 throws from
   `fetchGraph` (caught), an ELK failure becomes an error (not a stuck spinner), and any

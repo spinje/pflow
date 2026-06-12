@@ -35,10 +35,10 @@ import { ICON_COL_X, ICON_ROW_Y } from "../../graph/metrics";
 import { BATCH_COLOR, kindColor } from "../../utils/format";
 import { groupIconFor } from "../../utils/icons";
 import type { ContainerKind } from "../../types";
-import { useInteraction } from "../interaction";
+import { useHoverMarks, useInteraction } from "../interaction";
 import { ChipRail } from "./ChipRail";
 import { PortRows } from "./PortRows";
-import { Connector } from "./WorkflowNode";
+import { Connector, NameLabel } from "./WorkflowNode";
 
 // A1 arrows-out / arrows-in (maximize/restore language, 12×12) — the corner
 // toggle's glyphs, user-picked via the mockup lab (expand-btn-lab, 2026-06-10).
@@ -89,6 +89,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
     collapsed,
     showTitle,
     direction,
+    density,
     hasIncoming,
     hasOutgoing,
     memberCount,
@@ -102,6 +103,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
   const { toggleGroup } = useInteraction();
+  const hovered = useHoverMarks();
 
   // Collapse toggles move the control handles (region border-center ↔ card icon
   // column), and IO rows appearing/disappearing adds/removes per-row handles;
@@ -146,7 +148,10 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
       <div className="node-titles">
         <span className="node-category">{groupCategory(group.kind, hostNode?.kind)}</span>
         <span className="node-name" title={title}>
-          {hostNode?.purpose || title}
+          {/* MOCK: host identity lives on the NameLabel above the box — the title
+              line shows the purpose only; hostless groups (item containers) keep
+              their kind label as before. */}
+          {hostNode ? (hostNode.purpose ?? "") : title}
         </span>
       </div>
       {unexpanded > 0 && (
@@ -169,12 +174,20 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   if (ioRowsVisible) classes.push("has-io"); // full-width dividers + row areas
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
+  // Hover marks this container — directly, or via one of ITS io ports (an
+  // io-port chip marks the port id; the owner box rings so the port is
+  // findable even when its rows aren't rendered).
+  if (hovered.has(id) || inputs.some((p) => hovered.has(p.id)) || outputs.some((p) => hovered.has(p.id)))
+    classes.push("hover-mark");
 
   return (
     <div className={classes.join(" ")} style={kindStyle}>
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
       {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
+      {/* MOCK: the host's name (id) as chrome above the box — only the primary
+          group draws identity chrome (same rule as the chip rail). */}
+      {showTitle && hostNode && <NameLabel name={hostNode.ref.node_id} direction={direction} density={density} />}
       {header}
       {/* The border rail: the host's behavior chips (loop/batch — only the primary
           group draws identity chrome) + the merged COUNT-EXPANDER (the count pill
@@ -216,13 +229,14 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
       {ioRowsVisible && collapsed && (
         <div className="io-rows io-rows-cols">
           {inputs.length > 0 && (
-            <PortRows ports={inputs} kind="input" handles="receive" focusedPortId={focusedPortId} label="INPUTS" />
+            <PortRows ports={inputs} kind="input" handles="receive" ownerId={id} focusedPortId={focusedPortId} label="INPUTS" />
           )}
           {outputs.length > 0 && (
             <PortRows
               ports={outputs}
               kind="output"
               handles="feed"
+              ownerId={id}
               focusedPortId={focusedPortId}
               label="OUTPUTS"
               staggerRows={ioRowsCount(inputs.length, outputs.length) - outputs.length}
@@ -232,12 +246,12 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
       )}
       {ioRowsVisible && !collapsed && inputs.length > 0 && (
         <div className="group-io-in">
-          <PortRows ports={inputs} kind="input" handles="both" focusedPortId={focusedPortId} label="INPUTS" />
+          <PortRows ports={inputs} kind="input" handles="both" ownerId={id} focusedPortId={focusedPortId} label="INPUTS" />
         </div>
       )}
       {ioRowsVisible && !collapsed && outputs.length > 0 && (
         <div className="group-io-out">
-          <PortRows ports={outputs} kind="output" handles="both" focusedPortId={focusedPortId} label="OUTPUTS" />
+          <PortRows ports={outputs} kind="output" handles="both" ownerId={id} focusedPortId={focusedPortId} label="OUTPUTS" />
         </div>
       )}
     </div>

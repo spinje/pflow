@@ -143,3 +143,13 @@ export function categoryLabel(node: RoleFacts): string {
   if (isTransform(node)) return "TRANSFORM";
   return node.kind.replace(/-/g, " ").toUpperCase();
 }
+
+/** A node_id presented as a human name (beautiful density): `my-nice-node` →
+ *  "My nice node". Dumb and reversible — dashes/underscores become spaces, only
+ *  the FIRST character uppercases, all other casing is preserved (`fetch-HTML` →
+ *  "Fetch HTML", never "Fetch Html"). Advanced shows the id verbatim (the exact
+ *  `${ref}` key); the verbatim id always rides the label's tooltip. */
+export function humanizeId(id: string): string {
+  const spaced = id.replace(/[-_]+/g, " ").trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
