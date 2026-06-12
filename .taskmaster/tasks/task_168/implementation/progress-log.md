@@ -3316,3 +3316,64 @@ after the pin fix build-report keeps its expanded body (192px @1.2× = rows rend
 while the camera leaves. Docs synced: web/CLAUDE.md (chip bullet —
 navigate-without-opening + owner-resolved deferred follow),
 visualization-requirements.md, the skill's SKILL.md.
+
+### Sub-workflow ConnectionSections were EMPTY — group hosts aggregate their ports (2026-06-12, user-caught) ✅
+
+- **The gap:** selecting a sub-workflow (execute-plan) showed NO `references` /
+  `referenced by` — `dataNeighbors` (Chip.tsx) walked edges touching the HOST id,
+  but a sub-workflow's data flow lives on its io-PORT members (bindings target
+  input ports, reads leave output ports; only batch `${x.results}` reads attach
+  host-level — which is why create-songs showed a partial section and execute-plan
+  showed none).
+- **Fix — the host aggregates as a BLACK BOX:** subjects widen to host + its
+  direct wrappers' port members; far ends are listed only when OUTSIDE the
+  container subtree (an input's inner consumer / an output's inner producer is
+  the body's wiring, not the unit's neighborhood). Leaf behavior byte-identical
+  (subjects = {id}, internal = ∅). Verified on run-from-plan: execute-plan now
+  shows `references (10)` (resolve-repo + the root input ports it binds) +
+  `referenced by (2)` (pr_url, summary — the parent outputs reading it).
+- Chip.test pin: host lists external feeder/reader + host-level batch read,
+  never internals; the inner member's own sections stay port-scoped. Docs:
+  web/CLAUDE.md ConnectionSections bullet. Gates: web 388/388, build clean,
+  browser-verified.
+
+### In-card row hover + io-dot centering (2026-06-12, user-caught) ✅
+
+- **"No hover state" on io/workflow card rows — the system worked, the PAINT was
+  invisible.** Investigated with the hover harness first: row hover marked
+  1 ringed + 1 haloed in every state (advanced, beautiful-focused) — the
+  hover-set channel was fine. The user meant IN-CARD feedback: the only row
+  :hover anywhere was `.io-row`'s 4% white (imperceptible), and leaf
+  param/output rows had NONE. Fix: ONE shared rule (`.param-row:not(.loop-row)
+  :hover, .io-row:hover` at 7%) — every interactive row reads hot under the
+  cursor; inert loop-rule rows stay quiet; `.focused`/`.hover-mark`
+  (accent-soft) still win by sheet order.
+- **Io dots sat ~4px OUTSIDE their card border (cards AND regions) — a
+  double-offset.** Measured via a new scratch geometry harness
+  (`scratchpads/io-row-geometry/measure.pflow.md`: wrapper/card/row/handle
+  rects + computed styles): React Flow's base handle style ALREADY translates
+  a left/right handle by ∓50% of its own width, so the stock "centered on the
+  row edge" offset is `left: 0` (a leaf param handle computes exactly that) —
+  the io rules' `-4px` pushed every dot out by 4px on top of it. Fix: the two
+  rules become `calc(0px - var(--io-inset))`. Verified: card dots ±0.5 screen
+  px from the border (== the leaf's), region sidebar dot +0.1 px through its
+  10px `--io-inset`.
+- Learning worth keeping: **don't infer handle geometry from authored CSS —
+  React Flow's base sheet composes transforms under it.** Computed-style +
+  rect measurement (the geometry harness) settles it in one run.
+
+Gates: web 388/388 (CSS-only), build clean, browser-verified (hovered row
+visibly tinted + its line haloed; dots on the border at leaf parity).
+
+### IO-card text hugs its connection side (2026-06-12, user-proposed) ✅
+
+Root Inputs card rows right-align, root Outputs card rows left-align — the one
+place that broke the app-wide "text sits beside its dot" convention (leaf output
+rows right-align with right dots; an Inputs card FEEDS so its dots are right,
+yet its text hugged the far left). Mechanism: alignment keys on which side
+carries the LIVE handle (`alignRight = feed || (both && output)` → `.io-col-right`
+in PortRows), NOT on input/output kind — so the collapsed group card's
+two-column area and region sidebar/strip are untouched (their live side already
+matched their alignment). `.io-row-out` died (alignment was its only job).
+Browser-verified: both root cards flipped, group card byte-identical. Web
+388/388, build clean.

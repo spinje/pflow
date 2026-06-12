@@ -473,6 +473,15 @@ button.active {
 .param-row:last-child {
   border-bottom: none;
 }
+/* In-card row hover — ONE visible treatment for every interactive row
+   (param/output rows here, io rows below; user-caught 2026-06-12: the only
+   hover was .io-row's 4% white, imperceptible — rows that mark connections
+   and take clicks must read as hot under the cursor). Loop-rule rows are
+   inert (no hover/click behavior) and stay quiet. */
+.param-row:not(.loop-row):hover,
+.io-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
 .param-name {
   font-family: var(--mono);
   color: var(--text-muted);
@@ -663,7 +672,9 @@ button.active {
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.io-col-output .io-col-label {
+/* alignment keys on .io-col-right (the LIVE-handle side, set by PortRows) —
+   text hugs its connection side, never bare input/output kind */
+.io-col-right .io-col-label {
   justify-content: flex-end;
 }
 .io-row {
@@ -678,9 +689,7 @@ button.active {
   font-size: 12px;
   color: var(--text-muted);
 }
-.io-row:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
+/* :hover lives with .param-row's (one shared in-card row-hover rule). */
 .io-row.focused {
   background: var(--accent-soft);
 }
@@ -688,7 +697,7 @@ button.active {
 .io-row.hover-mark {
   background: var(--accent-soft);
 }
-.io-row-out {
+.io-col-right .io-row {
   justify-content: flex-end;
 }
 .io-name {
@@ -1013,14 +1022,18 @@ button.active {
 /* The OUTER io dot centers on the CARD/REGION border, like every leaf row's dot
    (the containers inset their rows, so the row-edge default sat the dot inside
    the card — drift, user-caught 2026-06-12). --io-inset is defined NEXT TO each
-   container's padding; -4px is the handle's stock row-edge offset. */
+   container's padding. The stock row-edge offset is 0px, NOT -4px: React Flow's
+   base handle style already translates a left/right handle by -/+50% of its own
+   width, so `left: 0` IS "centered on the row edge" (a leaf param handle
+   computes to exactly that). The old -4px double-offset pushed every io dot
+   ~4px OUTSIDE its border (measured; user-caught 2026-06-12). */
 .io-col-input .react-flow__handle-left,
 .io-card .io-col-output .react-flow__handle-left {
-  left: calc(-4px - var(--io-inset, 0px));
+  left: calc(0px - var(--io-inset, 0px));
 }
 .io-col-output .react-flow__handle-right,
 .io-card .io-col-input .react-flow__handle-right {
-  right: calc(-4px - var(--io-inset, 0px));
+  right: calc(0px - var(--io-inset, 0px));
 }
 /* the ↻ loop-rule row's landing dot — amber, the loop language */
 .react-flow__handle.loop-row-handle {

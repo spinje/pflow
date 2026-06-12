@@ -57,7 +57,14 @@ export function PortRows({
 }): JSX.Element {
   const { focusPort, hoverRow } = useInteraction();
   const hovered = useHoverMarks(); // a hovered panel chip lights its port's row
-  const classes = ["io-col", `io-col-${kind}`];
+  // Text hugs its CONNECTION side (the leaf-row convention — a name sits beside
+  // its dot, user decision 2026-06-12): alignment keys on which side carries
+  // the LIVE handle, not on input/output kind. A root Inputs card FEEDS (dots
+  // right) → right-aligned; a root Outputs card RECEIVES (dots left) →
+  // left-aligned; two-column/region rows ("both") fall back to their column's
+  // natural side (inputs left, outputs right — unchanged).
+  const alignRight = handles === "feed" || (handles === "both" && kind === "output");
+  const classes = ["io-col", `io-col-${kind}`, ...(alignRight ? ["io-col-right"] : [])];
   // The wired styling follows the SIDE this location presents (`handles`): a
   // collapsed card's output column shows the FEED side, so an output no caller
   // reads stays grey even though its inner producer edge exists.
@@ -72,7 +79,7 @@ export function PortRows({
       {ports.map((port) => (
         <div
           key={port.id}
-          className={`io-row${kind === "output" ? " io-row-out" : ""}${isWired(port) ? " wired" : ""}${focusedPortId === port.id ? " focused" : ""}${hovered.has(port.id) ? " hover-mark" : ""}`}
+          className={`io-row${isWired(port) ? " wired" : ""}${focusedPortId === port.id ? " focused" : ""}${hovered.has(port.id) ? " hover-mark" : ""}`}
           title={rowTitle(port)}
           onClick={(e) => {
             e.stopPropagation(); // row click drives port focus, not whole-node focus

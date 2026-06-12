@@ -626,7 +626,12 @@ Tests sit beside their subject.
   node's data-flow neighborhood as chip stacks — `references (N)` (upstream,
   first: data flows in→out) then `referenced by (N)` (downstream), from
   `producersOf`/`consumersOf` (deduped, edge order); an EMPTY direction renders
-  NOTHING (no-claims rule). Derived from contract edges ONLY: plain-param
+  NOTHING (no-claims rule). A GROUP HOST aggregates as a BLACK BOX
+  (2026-06-12): its data flow lives on its io-PORT members, not its own id
+  (only batch `${x.results}` reads attach host-level), so `dataNeighbors`
+  widens the subject to host + direct wrappers' ports and lists EXTERNAL far
+  ends only — an input's inner consumer / an output's inner producer is the
+  body's wiring, never the unit's neighborhood. Derived from contract edges ONLY: plain-param
   sibling refs form no edges today
   (scratchpads/param-ref-data-flow-edges/proposal.md) — both directions
   complete for free when that model fix lands.

@@ -100,15 +100,50 @@ export function Chip({
  *  direction, deduped, in edge order (the IoPanel consumer rule). Derived from
  *  contract edges ONLY: plain-param sibling refs form no edges today (the model
  *  gap in scratchpads/param-ref-data-flow-edges/proposal.md) — when that fix
- *  lands both directions complete with zero change here. */
+ *  lands both directions complete with zero change here.
+ *
+ *  A GROUP HOST's data flow lives on its io PORTS, not its own id (bindings
+ *  target input-port members, reads leave output-port members; only batch-level
+ *  reads like `${x.results}` attach host-level) — so a sub-workflow's sections
+ *  rendered EMPTY (user-caught 2026-06-12). The host aggregates as a BLACK BOX:
+ *  subjects = the host + its direct wrappers' ports; neighbors = far ends
+ *  OUTSIDE the container (an input's inner consumer / an output's inner
+ *  producer is the body's wiring, not the unit's neighborhood). */
 function dataNeighbors(graph: RFGraph, nodeId: string, direction: "out" | "in"): RFNode[] {
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const subjects = new Set([nodeId]);
+  const internal = new Set<string>();
+  if (nodeById.get(nodeId)?.is_group_host) {
+    // The host's groups (a batched sub-workflow carries batch AND workflow
+    // groups), then the full group subtree → the internal node set.
+    const hostGroups = new Set(graph.groups.filter((g) => g.host === nodeId).map((g) => g.id));
+    const subtree = new Set(hostGroups);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const g of graph.groups) {
+        if (g.parent != null && subtree.has(g.parent) && !subtree.has(g.id)) {
+          subtree.add(g.id);
+          grew = true;
+        }
+      }
+    }
+    for (const n of graph.nodes) {
+      if (n.parent != null && subtree.has(n.parent)) internal.add(n.id);
+    }
+    // The unit's OWN interface: ports of wrappers directly under the host's groups.
+    for (const g of graph.groups) {
+      if ((g.kind === "input_wrapper" || g.kind === "output_wrapper") && g.parent != null && hostGroups.has(g.parent)) {
+        for (const m of g.members) subjects.add(m);
+      }
+    }
+  }
   const out: RFNode[] = [];
   const seen = new Set<string>();
   for (const e of graph.edges) {
     if (e.kind !== "data_flow") continue;
-    const far = direction === "out" ? (e.source === nodeId ? e.target : null) : e.target === nodeId ? e.source : null;
-    if (far == null || seen.has(far)) continue;
+    const far = direction === "out" ? (subjects.has(e.source) ? e.target : null) : subjects.has(e.target) ? e.source : null;
+    if (far == null || far === nodeId || seen.has(far) || internal.has(far)) continue;
     seen.add(far);
     const n = nodeById.get(far);
     if (n) out.push(n);

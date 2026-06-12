@@ -73,6 +73,46 @@ describe("consumersOf / producersOf", () => {
   it("a node with no outgoing data-flow edges has no consumers", () => {
     expect(consumersOf(graph, "n2")).toEqual([]);
   });
+
+  it("a GROUP HOST aggregates its io ports as a black box: external neighbors only", () => {
+    // The 2026-06-12 gap: a sub-workflow's bindings target its input-PORT
+    // members and reads leave its output-PORT members — nothing touches the
+    // host id, so its sections rendered empty. The host must list the ports'
+    // EXTERNAL far ends and never its own internals (inner consumer/producer).
+    const sub = (over: Partial<RFNode> = {}): Partial<RFNode> => ({
+      ref: { node_id: String(over.id ?? "x"), ancestor_path: [{ node_id: "exec", batch_index: null }], port: null },
+      ...over,
+    });
+    const hostGraph: RFGraph = {
+      nodes: [
+        node("h0", { ref: { node_id: "exec", ancestor_path: [], port: null }, kind: "workflow", is_group_host: true }),
+        node("p_in", { ...sub({ id: "p_in" }), kind: "input", io: { data_type: null, required: true, default: null }, parent: "g_in", ref: { node_id: "plan", ancestor_path: [{ node_id: "exec", batch_index: null }], port: "in" } }),
+        node("p_out", { ...sub({ id: "p_out" }), kind: "output", io: { data_type: null, required: false, default: null }, parent: "g_out", ref: { node_id: "pr_url", ancestor_path: [{ node_id: "exec", batch_index: null }], port: "out" } }),
+        node("m0", { ...sub({ id: "m0" }), parent: "g_wf", ref: { node_id: "inner", ancestor_path: [{ node_id: "exec", batch_index: null }], port: null } }),
+        node("f0", { ref: { node_id: "feeder", ancestor_path: [], port: null } }),
+        node("r0", { ref: { node_id: "reader", ancestor_path: [], port: null } }),
+        node("rb", { ref: { node_id: "batch-reader", ancestor_path: [], port: null } }),
+      ],
+      edges: [
+        edge("b0", "f0", "p_in", "data_flow"), // external binding INTO an input port
+        edge("i0", "p_in", "m0", "data_flow"), // internal: input's inner consumer
+        edge("i1", "m0", "p_out", "data_flow"), // internal: output's inner producer
+        edge("d0", "p_out", "r0", "data_flow"), // external read FROM an output port
+        edge("d1", "h0", "rb", "data_flow"), // host-level read (the batch ${x.results} shape)
+      ],
+      groups: [
+        { id: "g_wf", kind: "workflow", parent: null, host: "h0", members: ["m0"], nesting_depth: 0, annotations: {} },
+        { id: "g_in", kind: "input_wrapper", parent: "g_wf", host: null, members: ["p_in"], nesting_depth: 1, annotations: {} },
+        { id: "g_out", kind: "output_wrapper", parent: "g_wf", host: null, members: ["p_out"], nesting_depth: 1, annotations: {} },
+      ],
+    };
+    expect(producersOf(hostGraph, "h0").map((n) => n.ref.node_id)).toEqual(["feeder"]);
+    expect(consumersOf(hostGraph, "h0").map((n) => n.ref.node_id)).toEqual(["reader", "batch-reader"]);
+    // The inner member's view is untouched: it reads the input port and feeds
+    // the output port (the body's wiring stays the body's).
+    expect(producersOf(hostGraph, "m0").map((n) => n.ref.node_id)).toEqual(["plan"]);
+    expect(consumersOf(hostGraph, "m0").map((n) => n.ref.node_id)).toEqual(["pr_url"]);
+  });
 });
 
 describe("ConnectionSections", () => {
