@@ -3302,10 +3302,11 @@ wrap-vs-fence, the host/member file split on run-from-plan).
   report `{panel, before/after rect of measure_id, visible, transform}` +
   screenshot. Deep links capture STATES; this captures what a click DOES (camera
   follow, panel stays-vs-swaps — the gap this whole arc was diagnosed through).
-  Generalized from the bug-specific two-click scratch harness
-  (`scratchpads/io-chip-camera/` — kept as the cached-path race repro precedent).
-  Limitation documented: one click per run (a reload resets in-page state);
-  multi-click sequences need extra steps inside one run.
+  Generalized from a bug-specific two-click scratch harness
+  (`scratchpads/io-chip-camera/`, deleted after promotion — the cached-path race
+  repro = a second click step in the SAME run, since a reload resets in-page
+  state; copy the `click` step for any multi-click sequence). Limitation
+  documented: one click per run.
 
 **Gates at close:** web 387/387, `tsc` strict + build clean, example-validation green
 (click.pflow.md auto-enrolled). Browser-verified end-to-end: the port chip centers
