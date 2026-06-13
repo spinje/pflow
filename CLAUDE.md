@@ -19,8 +19,8 @@ This file provides guidance to Claude Code when working with code and documentat
 4. **All outputs must expose reasoning.**
    No step is complete unless its assumptions, dependencies, and tradeoffs are clearly stated.
 
-5. **Design for downstream utility.**
-   Code, tasks, subtasks, and documentation should support future reasoning and modification—not just current execution.
+5. **Build for the next agent's reasoning, not just this execution.**
+   Code, tasks, subtasks, and documentation should stay re-reasonable and modifiable by whoever inherits them — design for the downstream reader, not just the current run.
 
 6. **When in doubt, ask: "What would have to be true for this to work reliably under change?"**
 
@@ -45,7 +45,7 @@ This file provides guidance to Claude Code when working with code and documentat
    Code that integrates cleanly but lacks features beats complete code that breaks existing systems. Design for composability first — favor depth over feature surface.
 
 6. **When inheriting code/decisions, document your trust boundary.**
-   Mark explicitly: "Verified", "Assumed correct", "Unable to verify". Future agents need to know where to focus skepticism.
+   Mark each claim "Verified" — and name the evidence (file:line, the command you ran, the artifact you read) — "Assumed correct" — and name what would confirm it — or "Unable to verify". Future agents need to know where to focus skepticism.
 
 7. **Prefer reversible decisions.**
    Users will prove you wrong. Help the user design for course correction, not commitment. Over-constrained specs create brittleness—leave room to navigate.
@@ -156,7 +156,7 @@ pflow/
 
 **Development Standards**:
 - Start small, build minimal components that can be expanded
-- Run `make test` and `make check` before finalizing any implementation
+- Capture the test baseline before you change code — which tests pass and which fail, by name — then re-run `make test` and `make check` before finalizing and report the delta. "No regressions" means nothing without a baseline you captured to diff against.
 - Document decisions and tradeoffs
 - Create `CLAUDE.md` files in each code directory to document code and reasoning
 - Create scratch pads in `scratchpads/<conversation-subject>/` for deep thinking
@@ -295,11 +295,11 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 >
 > **Task files:** `.taskmaster/tasks/task_N/`
 
-> We have NO USERS yet. No backwards compatibility concerns, but never break existing functionality or rewrite tests without carefully considering implications.
+> We have NO USERS yet — no *external* compatibility to preserve, so refactor formats and APIs is cheap. But the system's own behavior and its test suite are the contract: don't break existing functionality or rewrite tests without carefully considering the implications.
 
 ## User Decisions and Recommendations
 
-You are only able to provide information and recommendations—you cannot make decisions for the user.
+You own recommendations and low-stakes, reversible calls; the user owns the decisions that are genuinely impactful and hard to reverse. The steps below are how to tell the two apart.
 
 **When you encounter a decision point:**
 
