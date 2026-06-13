@@ -5,7 +5,7 @@ description: Screenshot or measure the running pflow web UI (the React Flow canv
 
 # pflow web UI: screenshot + inspect
 
-Four workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
+Five workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
 canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
 
 - **`screenshot.pflow.md`** → a settled full-page PNG. Eyeball the rendered canvas.
@@ -35,6 +35,26 @@ canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
     selector='.chip-stack .edge-chip' text='create-songs' measure_id=g19 \
     out_path=/tmp/pflow-shots/click.png
   ```
+- **`visual-invariants.pflow.md`** → assert the geometry invariants no vitest suite can
+  observe (jsdom renders no edge DOM and fictional rects): (1) every bordered io dot
+  centers within 2 CSS px of its owner card/region border (mirrors the `--io-inset`
+  CSS selectors); (2) every `/api/graph` contract edge is rendered, extras only
+  `loop:`/`io-flow:` (needs `density=advanced&collapse=none`; self-skips otherwise);
+  (3) no two leaf node boxes overlap (>1 CSS px = ELK laid out on a lie). Returns a
+  JSON verdict (`passed` + per-invariant counts/violations — the key is deliberately
+  NOT `ok`: pflow's API-warning detector trusts explicit failure flags like
+  `ok: false` on MCP-node outputs, and the verdict transits an MCP evaluate_script
+  node; GH #508 fixed the same false-positive on code nodes, but for MCP nodes the
+  inspection is intended behavior) + screenshot. Run on demand before merging
+  visual work — not CI:
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/visual-invariants.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=<…>&density=advanced&collapse=none' \
+    -p -o verdict | jq
+  ```
+  Fixture URLs that exercise all three invariants: the plan-to-code harness
+  (`examples/agent-orchestration/plan-to-code/run-from-plan.pflow.md`) and
+  `examples/nested/deep-research/deep-research.pflow.md`.
 
 ## URL params
 

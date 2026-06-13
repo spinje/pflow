@@ -318,7 +318,7 @@ All emitters wrap the callback in `contextlib.suppress(Exception)` so rendering 
 
 ### `api_warning_detector.py`
 
-Classifies node output as API warning based on explicit failure flags, error codes, and resource/validation message patterns. See `runtime/CLAUDE.md` "Error Categorization" for the pattern categories and ambiguity rule. Key function: `detect_api_warning(node_id, shared, *, node_type_name=None) → Optional[str]`. Pass `node_type_name` from the compiled node config so canonical `result` wrapper inspection is limited to MCP nodes.
+Classifies node output as API warning based on explicit failure flags, error codes, and resource/validation message patterns. See `runtime/CLAUDE.md` "Error Categorization" for the pattern categories and ambiguity rule. Key function: `detect_api_warning(node_id, shared, *, node_type_name=None) → Optional[str]`. Pass `node_type_name` from the compiled node config so `result` wrapper inspection is limited to MCP nodes — BOTH arms (dict result AND JSON-string result) share the gate (GH #508: the string arm originally bypassed it, so a successful code node returning the JSON string `{"ok": false, ...}` as data — e.g. a verification verdict — was failed as an API error; identical data as a dict was safe). Top-level explicit failure flags stay type-agnostic by design. Related: GH #301 (message-pattern hijack of `error_action` — a different mechanism in the same module).
 
 ### `template_errors.py`
 

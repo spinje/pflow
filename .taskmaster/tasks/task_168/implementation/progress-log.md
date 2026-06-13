@@ -3377,3 +3377,125 @@ two-column area and region sidebar/strip are untouched (their live side already
 matched their alignment). `.io-row-out` died (alignment was its only job).
 Browser-verified: both root cards flipped, group card byte-identical. Web
 388/388, build clean.
+
+### Visual-invariants harness + CSS-order tripwire (2026-06-12, architecture-review candidate 5) ✅
+
+> First candidate executed from the architecture work order (the 2026-06-12
+> handoff HTML; chosen order 5 → 3 → 4, with flow.ts-touching candidates 2/1
+> DEFERRED until the param-ref-data-flow-edges agent lands — candidate 2 moves
+> `scanParamReads` into `graph/scan.ts`, a head-on move-vs-edit collision).
+> Zero production change; both parts are pure verification surface.
+
+- **Part A — `visual-invariants.pflow.md`** (5th skill workflow,
+  `examples/real-workflows/screenshot-pflow-web-ui/`): open-and-settle + one
+  evaluate_script + screenshot, returning a JSON verdict. Three invariants:
+  (1) every bordered io DOT centers within 2 CSS px of its owner card/region
+  border — the check `matches()` the SAME four `--io-inset` CSS selector
+  groups production uses, never re-deriving which side a row connects on
+  (region rows' inner-scope dots sit at the row edge by design and are
+  excluded by construction); (2) every `/api/graph` contract edge id appears
+  in the DOM, extras must be `loop:`/`io-flow:` — coverage by IDENTITY, not a
+  re-derived count of the synthesis rules; self-skips with a reason unless
+  `density=advanced&collapse=none` (hidden/re-anchored edges are design, not
+  drops); (3) no two leaf node rects overlap >1 CSS px (regions excluded —
+  children render inside them by design).
+- **Verified on both fixture workflows** (plan-to-code `run-from-plan`:
+  53 dots / 27 leaves / 153 contract edges all rendered (+3 synthesized);
+  `deep-research`: 17/11/37) and **mutation-tested end-to-end**: re-adding the
+  historical `-4px` dot offset → rebuilt → `passed:false` with 53 violations
+  at 3 CSS px; restored → green; `git diff` empty.
+- **THE pflow gotcha this surfaced: a code node whose output JSON carries
+  `ok: false` is FAILED by the engine's API-warning detector**
+  (`api_warning_detector._check_boolean_error_flags` — it JSON-parses string
+  results; the same class as the GH #301 error_action caveat). The verdict's
+  first run with `ok:false` died at the `clean` step with a misleading
+  "API error: API request failed". Verdict key renamed `ok` → `passed`
+  (avoid `ok`/`success`/`succeeded`/`status`/`errors`/`error` as top-level
+  output keys in ANY pflow workflow that reports failures as data). Noted in
+  the skill's SKILL.md.
+- **Part B — `web/src/cssOrder.test.ts`** (node-env, runs in CI): pins the two
+  equal-specificity rule pairs where source order decides paint —
+  `.react-flow__handle.handle` BEFORE `.port-handle`, `.node.dimmed` BEFORE
+  `.node.hover-mark` — with failure messages explaining the cascade rule.
+  Both pairs mutation-verified (swapped → exactly the right test fails with
+  the explanatory message → restored byte-identical). Comments are stripped
+  before matching so prose mentioning a selector can't shadow its rule.
+- **Deviation from the handoff's sketch:** the test reads `index.css` via
+  `node:fs` (+ `@types/node` devDep, the @types/hast precedent), NOT the
+  cleaner-looking `import raw from "./index.css?raw"` — PROBED: vitest's CSS
+  stub intercepts `.css` imports before Vite's `?raw` handling and returns an
+  EMPTY string (compiles everywhere, asserts nothing — the vacuous-pass class
+  the lossless suite exists to kill). `@types/node` checked safe first: the
+  only timer-handle typing is `ReturnType<typeof setTimeout>` (overload-shift
+  immune).
+
+Gates at close: web 390/390 (388 + 2), `tsc` strict + build clean,
+example-validation green (the new .pflow.md auto-enrolled), both fixtures
+`passed:true` in a real browser. Docs synced: SKILL.md (5th workflow + the
+`ok`-key warning), web/CLAUDE.md (CSS-order tripwire bullet + the ?raw trap).
+
+### GH #508 filed + fixed: the api-warning detector's un-gated JSON-string unwrap (2026-06-13) ✅
+
+> Spin-off from the visual-invariants harness (previous entry): tracing the
+> "successful clean node failed as API error" gotcha to its exact code path
+> revealed a gating BUG, not just an aggressive heuristic — filed as
+> https://github.com/spinje/pflow/issues/508 (user-decided: new issue
+> cross-linked to #301, not a #301 comment — separable, surgical fix vs #301's
+> non-trivial pattern redesign) and fixed on this branch.
+
+- **Root cause, pinned:** `unwrap_mcp_response` already encodes the decision
+  "result-wrapper inspection is limited to MCP nodes" (`inspect_result`,
+  threaded from `config.node_type_name`) — but only the DICT-result arm was
+  gated; `_parse_mcp_json_result` (the JSON-STRING-result arm) ran
+  unconditionally first. The smoking-gun asymmetry: a code node returning
+  `result = {"ok": False}` as a dict was SAFE; the identical data
+  `json.dumps`'d was parsed, promoted to "the API response", flag-checked,
+  and the node FAILED with "API error: API request failed". Same data,
+  different serialization, opposite fate.
+- **Fix:** both arms now share the one `if inspect_result:` gate
+  (api_warning_detector.py). Deliberately NOT changed, both pre-pinned by
+  existing tests: top-level explicit failure flags stay type-agnostic
+  (`test_top_level_explicit_failure_flags_remain_type_agnostic`), and MCP
+  string-result inspection stays fully alive (the Slack channel_not_found
+  scenario).
+- **4 regression tests** (test_api_warning_system.py): the observed code-node
+  shape → None; the dict/string symmetry pin; MCP string-result still warns
+  under an explicit `node_type_name="MCPNode"`. Mutation-verified: reverting
+  the gate fails exactly the two non-MCP tests, MCP test stays green.
+- **Our-side note recorded in the skill:** the harness verdicts keep avoiding
+  `ok`/`success`-style keys regardless — they also transit MCP
+  evaluate_script nodes, where flag inspection is INTENDED behavior; the
+  whole skill family survives detection today only because chrome-devtools
+  wraps results in prose that fails `json.loads` (luck, not design).
+
+Gates: full `make test` 7850 passed / 1 skipped, `make check` clean (mypy 235
+files, deptry, ruff). Docs synced: engine/CLAUDE.md (detector bullet — both
+arms gated, #508/#301 cross-refs), SKILL.md (the `ok`-key note now states the
+post-fix truth).
+
+### The `?raw` CSS trap: upstream status settled, NOT filed (2026-06-13, user decision)
+
+> Follow-up question on the candidate-5 deviation: "is this fixed in a newer
+> vitest?" Answer pinned by probes so nobody re-runs them: NO.
+
+- **Probed standalone** (clean two-file repro, zero config, default settings —
+  scratch project, outside the repo): `?raw` on `.txt` returns content; `?raw`
+  on `.css` returns vitest's empty CSS stub. Reproduces on **4.1.8 (the
+  latest stable — what we run)** AND **5.0.0-beta.4 (the newest published
+  version, period)**. `test.css: true` restores real content (the
+  interception point is the default `css: false` stub, confirmed via a probe
+  config in-repo, deleted after).
+- **Untracked upstream:** `gh search` over vitest-dev issues AND PRs finds
+  nothing for the `?raw`+CSS combination; the sibling `?inline` query was
+  fixed in vitest#3954 (closed COMPLETED, 2023) — `?raw` never got the same
+  treatment.
+- **User decision: do NOT file upstream.** Repo coverage verified instead:
+  zero `?raw` usage in `web/src` (the only mention is cssOrder.test.ts's
+  warning comment); the test reads via `node:fs` and its presence assertions
+  make an empty read fail loudly ("rule is missing"), so a vacuous pass is
+  impossible by construction; web/CLAUDE.md's tripwire bullet now carries the
+  full precision (versions probed, `test.css: true` workaround REJECTED —
+  enabling CSS processing for every test to prettify one import). Honest
+  residual: a future unrelated `.css?raw` import elsewhere would hit the trap
+  fresh — documentation is the only guard; a lint ban was judged machinery
+  the deletion test doesn't justify.

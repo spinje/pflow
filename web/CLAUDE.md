@@ -702,6 +702,14 @@ Tests sit beside their subject.
   with `base:"./"`. `npm run build` runs `tsc --noEmit` first (strict).
 - **Test:** `npx vitest run`. `graph/`/`utils/`/`api/` are node-env; `GraphView.test.tsx`
   is jsdom (`// @vitest-environment jsdom`) using `test/rf-jsdom.ts`.
+- **CSS-order tripwire:** `src/cssOrder.test.ts` pins the two equal-specificity rule
+  pairs where SOURCE ORDER decides paint (`.handle` before `.port-handle`;
+  `.node.dimmed` before `.hover-mark`) — jsdom computes no cascade, so asserting the
+  source text is the only CI-observable surface. It reads `index.css` via `node:fs`,
+  NOT `import ... from "./index.css?raw"`: vitest's CSS stub intercepts `.css` imports
+  before Vite's `?raw` handling and returns an empty string (compiles everywhere,
+  asserts nothing). Real-browser geometry invariants (dots-on-border, edge coverage,
+  no-overlap) live in the screenshot skill's `visual-invariants.pflow.md` instead.
 - **Packaging gotcha:** the bundle is gitignored and hatchling honors `.gitignore`, so
   `pyproject.toml` needs `[tool.hatch.build.targets.wheel] artifacts =
   ["src/pflow/ui/static/**/*"]` to ship it in the wheel — don't remove it.
