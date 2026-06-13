@@ -3785,3 +3785,38 @@ touched — still clear of the param-ref workstream.
   `make check` clean. Browser-verified: multi-chunk card shows ×3 + three
   per-chunk rows each receiving its own line; single-chunk flat row;
   panel template block with prose + ${var}; visual-invariants PASS.
+
+### Per-ref binding sub-rows — paramRowsFor unifies the left column (2026-06-13, user-designed) ✅
+
+> The user asked why multi-ref params don't show their refs like cache chunks
+> now do — and the simplicity directive pointed at the consolidation: the left
+> column gets its `outputRowsFor` mirror, and the cache special-casing
+> DISSOLVES into it. Net: more capability, fewer mechanisms. Frontend-only.
+
+- **`paramRowsFor(node, refRows)` (flow.ts)** assembles the ordered
+  `ParamRowItem[]` left column — params · the cached-prefix group before
+  `prompt` · per-ref sub-rows under any param receiving ≥2 refs — consumed by
+  WorkflowNode/leafSize/rowAnchorsFor (`LeafData.paramRows`). DELETED into it:
+  `cacheRows` LeafData field, the cache-block JSX, `emitCacheAnchors`, the
+  cacheRowCount sizing arm, `cacheHandle` (→ generalized
+  `bindingRowHandle(input_name, ref)`, one "bind:" prefix).
+- **One derivation, one landing rule:** `refRowsByNode` groups data edges by
+  the parent they land under (the containing param via `bindingParam` —
+  covering interpolated refs AND dict-key bindings — or "prompt_cache");
+  `targetHandleFor` reads the SAME map: cache edges always land on their chunk
+  row; param edges land on their ref's sub-row only when the group has ≥2
+  (single ref keeps the param row — no sub-row noise on the common case).
+  Sub-row labels render as the established `ref-chip`; dict-key rows prepend
+  their key; `·` kept as the one nesting glyph (user decisions).
+- **CSS fix found in browser:** the `.param-name` 42% width cap truncated a
+  ref chip to "…" against an empty value column — `.ref-row .param-name
+  { max-width: 100% }`, the exact exemption output rows already had.
+- **Rewritten pin:** "two refs land on the SAME prompt handle" (flow.test) —
+  the old truth this feature deliberately changes; now pins per-ref landings,
+  anchor order below the param row, the single-ref no-sub-row arm, and
+  dict-key rows. Web 421/421, Python 3120, make check clean.
+- **Browser-verified:** multi-chunk card (3 chips, 3 landings); harness
+  invariants PASS (181/181 edges, 0 overlaps) with sane leaf heights (densest
+  leaf `implement` 500px — its `inputs` dict now shows 5 per-key rows, each
+  with its own line, instead of 5 lines merging into one row);
+  lyrics-generator renders sane.

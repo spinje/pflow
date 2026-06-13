@@ -124,8 +124,9 @@ item / progress-log entry — read those before rendering chips/groups/batches):
   this edge is the dependency's only visibility. No PARAM row exists for it:
   present it as the cached prompt prefix (`bindingLabel` in utils/format.ts,
   the EdgePanel "cached context" variant), never as a binding. The canvas gives
-  each chunk its own synthesized row on the consumer card (derived from the
-  edges themselves; `cacheHandle` landings — see web/CLAUDE.md). A cache edge
+  each chunk its own synthesized sub-row on the consumer card (derived from the
+  edges themselves — the same per-ref sub-row mechanism multi-ref params use;
+  see web/CLAUDE.md's left-column bullet). A cache edge
   counts as a READ of the producer's field (un-quiets its output row) — intended.
 - **`RFNode.cached_prefix`** (2026-06-13): the consumer's cached system prefix
   as authored TEMPLATE text — per consumed chunk (declaration order),

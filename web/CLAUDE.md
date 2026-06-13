@@ -483,24 +483,31 @@ Tests sit beside their subject.
   ref is forbidden in the consumer's prompt, so this edge is the dependency's
   only visibility). ALL binding-name surfaces route through `bindingLabel`
   (utils/format.ts — `prompt_cache` → "cached prefix"): the beautiful edge
-  label (`dataFlowLabel`), the panel's interpolated/bundle facts. On the CANVAS
-  the consumer's body renders PER-CHUNK rows (`LeafData.cacheRows`, derived from
-  incoming prompt_cache edges — wired by construction, so they take the dynamic
-  row language; the loop-row pattern: authored config as rows — without them the
-  lines merged invisibly into the control trunk at NODE_IN, user-caught
-  2026-06-13). Each row's key/label is the chunk's authored ref text rebuilt
-  from its edge (`cacheChunkKey` — the parser enforces chunk name == var, so
-  `extract.response` IS the `prompt_cache:` entry); each edge lands on ITS row's
-  `cacheHandle(key)`. Rows sit immediately BEFORE the `prompt` param
-  (`cacheInsertIndex` — request order: system → cached prefix → prompt); N>1
-  adds a handle-less "cached prefix ×N" label row and the chunk rows take the
-  nested `·` text; a single chunk is one flat row with the ref as its value.
-  All four row consumers move in lockstep: WorkflowNode (render), leafSize,
-  rowAnchorsFor, targetHandleFor; rows hidden → NODE_IN fallback. The
+  label (`dataFlowLabel`), the panel's interpolated/bundle facts. The
   ReadPanel additionally shows `RFNode.cached_prefix` — the `## Cache` block's
   assembled template (prose + ${var}, prefix order, baked in Python with the
-  runtime's own assembly rule) — as a `cached prefix` block placed by the same
+  runtime's own assembly rule) — as a `cached prefix` block placed by
   `cacheInsertIndex` before `prompt`, colored as markdown SOURCE like prompts.
+- **The LEFT column has ONE source of truth: `paramRowsFor` (flow.ts,
+  2026-06-13) — the `outputRowsFor` mirror.** It assembles the ordered
+  `ParamRowItem[]` list (params in authored order · the cached-prefix group
+  before `prompt` via `cacheInsertIndex` — request order: system → cached
+  prefix → prompt · per-ref binding SUB-ROWS) that WorkflowNode (render),
+  `leafSize` (height) and `rowAnchorsFor` (LR ELK ports) all consume, so the
+  three can't drift. SUB-ROWS (user design 2026-06-13): a param receiving ≥2
+  refs (an interpolated prompt, a dict of bindings) grows one nested `·` row
+  per ref — label = the authored ref text rebuilt from the edge (`refText`;
+  rendered as the established ref-chip; a dict-key row prepends its key) —
+  and each edge lands on ITS row's `bindingRowHandle(input_name, ref)`; a
+  single ref keeps landing on the param row itself (no sub-row noise on the
+  common case). Cache chunks are the same mechanism with parent group
+  "prompt_cache": one chunk = a flat `cached prefix` row, several = a
+  handle-less `cached prefix ×N` label row + nested rows — and cache edges
+  ALWAYS land on their chunk row (no param row exists for them; without one
+  they merged invisibly into the control trunk at NODE_IN). The landing rule
+  lives in `targetHandleFor` reading the SAME `refRowsByNode` derivation, so
+  rows and landings can't disagree. Rows hidden (beautiful) → NODE_IN
+  fallback unchanged.
   Endpoint CHIPS navigate via `resolveEndpointFlatId` (host → representative group)
   and render NON-CLICKABLE when the endpoint isn't rendered — never a silent no-op
   focus. RF native selection stays inert: components ignore the `selected` prop,

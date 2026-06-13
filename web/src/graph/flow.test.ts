@@ -19,7 +19,7 @@ import {
 } from "./flow";
 import {
   branchHandle,
-  cacheHandle,
+  bindingRowHandle,
   handleType,
   LOOP_ROW,
   NODE_IN,
@@ -755,8 +755,11 @@ describe("buildFlow — plain-param reads correct the quiet claim (no edges, no 
   });
 });
 
-describe("buildFlow — two refs into one param yield two lines", () => {
-  // "${a.x} and ${b.y}" produces two data-flow edges, both landing on the same row.
+describe("buildFlow — two refs into one param yield two lines on per-ref sub-rows", () => {
+  // "${a.x} and ${b.y}" produces two data-flow edges. A param receiving >=2
+  // refs grows a sub-row per ref and each edge lands on ITS row (user design
+  // 2026-06-13 — both-on-one-handle made the lines indistinguishable); a
+  // single ref keeps landing on the param row itself.
   const graph: RFGraph = {
     nodes: [
       node("a"),
@@ -770,11 +773,53 @@ describe("buildFlow — two refs into one param yield two lines", () => {
     groups: [],
   };
 
-  it("keeps both edges, both on the prompt handle", () => {
+  it("each edge lands on its own ref sub-row under the prompt", () => {
     const { edges } = buildFlow(graph, DETAILED);
-    const onPrompt = edges.filter((e) => e.target === "t" && e.targetHandle === paramHandle("prompt"));
-    expect(onPrompt).toHaveLength(2);
-    expect(new Set(onPrompt.map((e) => e.source))).toEqual(new Set(["a", "b"]));
+    expect(edges.find((e) => e.id === "e0")?.targetHandle).toBe(bindingRowHandle("prompt", "a.x"));
+    expect(edges.find((e) => e.id === "e1")?.targetHandle).toBe(bindingRowHandle("prompt", "b.y"));
+  });
+
+  it("the sub-rows anchor LEFT directly below the prompt row, in ref order", () => {
+    const { nodes: ns } = buildFlow(graph, DETAILED);
+    const anchors = rowAnchorsFor(ns.find((n) => n.id === "t")!);
+    const byHandle = new Map(anchors.map((a) => [a.handle, a]));
+    expect(byHandle.get(paramHandle("prompt"))?.y).toBe(HEADER_HEIGHT + 13);
+    expect(byHandle.get(bindingRowHandle("prompt", "a.x"))?.y).toBe(HEADER_HEIGHT + 26 + 13);
+    expect(byHandle.get(bindingRowHandle("prompt", "b.y"))?.y).toBe(HEADER_HEIGHT + 2 * 26 + 13);
+  });
+
+  it("a single-ref param keeps landing on the param row (no sub-row)", () => {
+    const single: RFGraph = {
+      nodes: [node("a"), node("t", { params: [{ name: "prompt", value: "${a.x}", is_dynamic: true, source: null }] })],
+      edges: [edge("e0", "a", "t", "data_flow", { output_field: "x", input_name: "prompt" })],
+      groups: [],
+    };
+    const { nodes: ns, edges } = buildFlow(single, DETAILED);
+    expect(edges.find((e) => e.id === "e0")?.targetHandle).toBe(paramHandle("prompt"));
+    // and no sub-row anchor exists
+    const anchors = rowAnchorsFor(ns.find((n) => n.id === "t")!);
+    expect(anchors.some((a) => a.handle === bindingRowHandle("prompt", "a.x"))).toBe(false);
+  });
+
+  it("dict-key bindings into one param get per-key sub-rows named by their key", () => {
+    const dict: RFGraph = {
+      nodes: [
+        node("a"),
+        node("b"),
+        node("t", {
+          kind: "code",
+          params: [{ name: "inputs", value: { text: "${a.x}", cfg: "${b.y}" }, is_dynamic: true, source: null }],
+        }),
+      ],
+      edges: [
+        edge("e0", "a", "t", "data_flow", { output_field: "x", input_name: "text" }),
+        edge("e1", "b", "t", "data_flow", { output_field: "y", input_name: "cfg" }),
+      ],
+      groups: [],
+    };
+    const { edges } = buildFlow(dict, DETAILED);
+    expect(edges.find((e) => e.id === "e0")?.targetHandle).toBe(bindingRowHandle("text", "a.x"));
+    expect(edges.find((e) => e.id === "e1")?.targetHandle).toBe(bindingRowHandle("cfg", "b.y"));
   });
 });
 
@@ -1687,13 +1732,13 @@ describe("the cached-prefix rows — `## Cache` chunk lines land on visible per-
 
   it("advanced: the cache edge lands on ITS chunk's row, anchored LEFT immediately before the prompt param", () => {
     const { nodes: ns, edges: es } = buildFlow(cacheGraph(), DETAILED);
-    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(cacheHandle("ex.response"));
+    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(bindingRowHandle("prompt_cache", "ex.response"));
     const anchors = rowAnchorsFor(ns.find((n) => n.id === "sum")!);
     const byHandle = new Map(anchors.map((a) => [a.handle, a]));
     // rows: 0 model · 1 the cache row (BEFORE prompt — request order) · 2 prompt
     expect(byHandle.get(paramHandle("model"))?.y).toBe(HEADER_HEIGHT + 13);
-    expect(byHandle.get(cacheHandle("ex.response"))).toEqual({
-      handle: cacheHandle("ex.response"),
+    expect(byHandle.get(bindingRowHandle("prompt_cache", "ex.response"))).toEqual({
+      handle: bindingRowHandle("prompt_cache", "ex.response"),
       side: "left",
       y: HEADER_HEIGHT + 26 + 13,
     });
@@ -1711,13 +1756,13 @@ describe("the cached-prefix rows — `## Cache` chunk lines land on visible per-
 
   it("multi-chunk: each edge lands on its own row, in prefix (edge) order below the label row", () => {
     const { nodes: ns, edges: es } = buildFlow(multiGraph(), DETAILED);
-    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(cacheHandle("ex.response"));
-    expect(es.find((e) => e.id === "ec2")?.targetHandle).toBe(cacheHandle("kb.stdout"));
+    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(bindingRowHandle("prompt_cache", "ex.response"));
+    expect(es.find((e) => e.id === "ec2")?.targetHandle).toBe(bindingRowHandle("prompt_cache", "kb.stdout"));
     const anchors = rowAnchorsFor(ns.find((n) => n.id === "sum")!);
     const byHandle = new Map(anchors.map((a) => [a.handle, a]));
     // rows: 0 model · 1 "cached prefix ×2" (no handle) · 2-3 chunk rows · 4 prompt
-    expect(byHandle.get(cacheHandle("ex.response"))?.y).toBe(HEADER_HEIGHT + 2 * 26 + 13);
-    expect(byHandle.get(cacheHandle("kb.stdout"))?.y).toBe(HEADER_HEIGHT + 3 * 26 + 13);
+    expect(byHandle.get(bindingRowHandle("prompt_cache", "ex.response"))?.y).toBe(HEADER_HEIGHT + 2 * 26 + 13);
+    expect(byHandle.get(bindingRowHandle("prompt_cache", "kb.stdout"))?.y).toBe(HEADER_HEIGHT + 3 * 26 + 13);
     expect(byHandle.get(paramHandle("prompt"))?.y).toBe(HEADER_HEIGHT + 4 * 26 + 13);
   });
 
@@ -1728,7 +1773,7 @@ describe("the cached-prefix rows — `## Cache` chunk lines land on visible per-
 
   it("beautiful focus-expansion: the expanded consumer's cache edge lands on its row", () => {
     const { edges: es } = buildFlow(cacheGraph(), { ...COMPACT, expanded: new Set(["sum", "ex"]) });
-    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(cacheHandle("ex.response"));
+    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(bindingRowHandle("prompt_cache", "ex.response"));
   });
 });
 

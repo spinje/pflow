@@ -16,14 +16,16 @@ export const NODE_OUT = "__out"; // source
 // arrow lands here when the row renders ("iteration re-enters under this rule"),
 // instead of NODE_IN. One row per node, so a constant id suffices.
 export const LOOP_ROW = "loop:row";
-// Per-chunk "cached prefix" rows on a prompt_cache consumer's expanded body —
-// TARGET: each `## Cache` chunk's edge lands on its OWN row (without them the
-// lines merged invisibly into the control trunk at NODE_IN — user-caught
-// 2026-06-13). The key is the chunk's authored ref text rebuilt from the edge
-// (`cacheChunkKey` in flow.ts — the parser enforces chunk name == var, so this
-// IS the entry the author wrote in `prompt_cache:`).
-const CACHE = "cache:";
-export const cacheHandle = (chunkKey: string): string => CACHE + chunkKey;
+// Per-ref binding sub-rows on a leaf's expanded body — TARGET: when a param
+// receives ≥2 refs (an interpolated prompt, a dict of bindings) or the node
+// consumes `## Cache` chunks, each edge lands on its OWN sub-row instead of
+// the shared parent row (without one, parallel lines merge indistinguishably —
+// cache edges even vanished into the control trunk; user-caught 2026-06-13).
+// Keyed by input_name + the ref text rebuilt from the edge (`refText` in
+// flow.ts — the SAME helper derives the rows), unique per row: build dedup
+// collapses identical (input_name, ref) edges to one.
+const BIND = "bind:";
+export const bindingRowHandle = (inputName: string, ref: string): string => BIND + inputName + ":" + ref;
 
 // Prefixes — kept as constants so the constructors and `handleType` can't drift.
 const PARAM = "p:"; // param row — TARGET (a node input slot, receives)
@@ -67,7 +69,7 @@ export function handleType(handleId: string): "source" | "target" {
   if (
     handleId === NODE_IN ||
     handleId === LOOP_ROW ||
-    handleId.startsWith(CACHE) ||
+    handleId.startsWith(BIND) ||
     handleId.startsWith(PARAM) ||
     handleId.startsWith(PORT_TARGET)
   ) {

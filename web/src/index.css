@@ -499,6 +499,12 @@ button.active {
 .param-row.dynamic .param-name {
   color: var(--data-edge);
 }
+/* A nested ref sub-row has no value column — like output rows, the label gets
+   the whole row before ellipsizing (the 42% cap truncated a ref chip against
+   empty space). The flat single-chunk cache row keeps the default split. */
+.ref-row .param-name {
+  max-width: 100%;
+}
 .param-row:not(.dynamic) .react-flow__handle.param-handle {
   background: var(--text-faint);
   opacity: 0.45;

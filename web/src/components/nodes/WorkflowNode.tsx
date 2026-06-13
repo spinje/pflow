@@ -11,8 +11,8 @@
 import { type CSSProperties, memo, useEffect, useRef } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
-import { cacheInsertIndex, type FlowNode } from "../../graph/flow";
-import { cacheHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
+import type { FlowNode } from "../../graph/flow";
+import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
 import { categoryLabel, collapseWhitespace, humanizeId, nodeColor, parseTemplate, previewValue, stripMarkdown, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
@@ -178,7 +178,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     density,
     direction,
     outputRows,
-    cacheRows,
+    paramRows,
     branchLabels,
     branchConditions,
     revealedConditions,
@@ -256,8 +256,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (node.unexpanded) classes.push("unexpanded");
   if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
   const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
-  const hasBody = showBody && (node.params.length > 0 || cacheRows.length > 0 || outputRows.length > 0 || node.loop != null);
-  const cacheAt = cacheInsertIndex(node.params);
+  const hasBody = showBody && (paramRows.length > 0 || outputRows.length > 0 || node.loop != null);
   const paramRow = (param: RFParam): JSX.Element => (
     <div
       className={`param-row${param.is_dynamic ? " dynamic" : ""}`}
@@ -330,47 +329,48 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
           {/* Param rows speak the output rows' connection language: a DYNAMIC
               param (refs land here) gets the data-teal name + live dot, a
               static config param a muted name + quiet dot (index.css).
-              The cached-prefix rows (one per ## Cache chunk, wired by
-              construction — they derive from incoming prompt_cache edges) sit
-              immediately BEFORE the `prompt` row, mirroring the real request
-              order (cacheInsertIndex; rowAnchorsFor's y math matches). N>1
-              adds a "cached prefix ×N" label row and the chunk rows take the
-              nested `·` text, like nested output rows; a single chunk is one
-              flat row with the chunk ref as its value. */}
-          {node.params.slice(0, cacheAt).map(paramRow)}
-          {cacheRows.length > 1 && (
-            <div className="param-row cache-row" key="c:label">
-              <span className="param-name" title="Cached system prefix — ## Cache chunks consumed via prompt_cache:, in prefix order">
-                cached prefix
-              </span>
-              <span className="param-value">×{cacheRows.length}</span>
-            </div>
-          )}
-          {cacheRows.map((chunk) => (
-            <div
-              className="param-row dynamic cache-row"
-              key={`c:${chunk}`}
-              onMouseEnter={() => hoverRow({ nodeId: id, handles: [cacheHandle(chunk)] })}
-              onMouseLeave={() => hoverRow(null)}
-            >
-              <Handle id={cacheHandle(chunk)} type="target" position={Position.Left} className="handle param-handle" />
-              {cacheRows.length > 1 ? (
-                <span className="param-name" title={chunk}>
-                  · {chunk}
+              The list comes assembled from paramRowsFor (flow.ts) — params in
+              authored order, the cached prefix before `prompt`, and per-ref
+              sub-rows under any param receiving ≥2 refs — the same list
+              leafSize and rowAnchorsFor consume, so render, height and ports
+              cannot drift. A "ref" row's line lands on IT (its handle), shown
+              as the established ref-chip; a "label" row is handle-less. */}
+          {paramRows.map((row) =>
+            row.kind === "param" ? (
+              paramRow(row.param)
+            ) : row.kind === "label" ? (
+              <div className="param-row cache-row" key={`l:${row.text}`}>
+                <span className="param-name" title="Cached system prefix — ## Cache chunks consumed via prompt_cache:, in prefix order">
+                  {row.text}
                 </span>
-              ) : (
-                <>
-                  <span className="param-name" title="Cached system prefix — ## Cache chunk consumed via prompt_cache:">
-                    cached prefix
+                <span className="param-value">×{row.count}</span>
+              </div>
+            ) : (
+              <div
+                className="param-row dynamic ref-row"
+                key={row.handle}
+                onMouseEnter={() => hoverRow({ nodeId: id, handles: [row.handle] })}
+                onMouseLeave={() => hoverRow(null)}
+              >
+                <Handle id={row.handle} type="target" position={Position.Left} className="handle param-handle" />
+                {row.nested ? (
+                  <span className="param-name" title={`\${${row.ref}}`}>
+                    ·{row.name != null && ` ${row.name}`}{" "}
+                    <span className="ref-chip">{row.ref}</span>
                   </span>
-                  <span className="param-value" title={chunk}>
-                    {chunk}
-                  </span>
-                </>
-              )}
-            </div>
-          ))}
-          {node.params.slice(cacheAt).map(paramRow)}
+                ) : (
+                  <>
+                    <span className="param-name" title="Cached system prefix — ## Cache chunk consumed via prompt_cache:">
+                      {row.name}
+                    </span>
+                    <span className="param-value" title={`\${${row.ref}}`}>
+                      <span className="ref-chip">{row.ref}</span>
+                    </span>
+                  </>
+                )}
+              </div>
+            ),
+          )}
           {/* Output rows (outputRowsFor, flow.ts): name + faint `: type` (D1).
               A NESTED row indents under its parent (the wholesale-read case);
               a QUIET row is authored-but-unread — faint, grey dot, and no line

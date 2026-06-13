@@ -13,10 +13,10 @@
 
 import type { Edge, Node } from "@xyflow/react";
 
-import { branchHandle, cacheHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
+import { bindingRowHandle, branchHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
 import { METRICS } from "./metrics";
 import { IO_COLOR, bindingLabel, kindColor, nodeColor } from "../utils/format";
-import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
+import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode, RFParam } from "../types";
 
 export type Density = "detailed" | "compact";
 export type Direction = "LR" | "TD";
@@ -47,12 +47,11 @@ export type LeafData = {
   density: Density;
   direction: Direction;
   outputRows: OutputRow[];
-  // The `## Cache` chunks this node consumes, in PREFIX order (the builder
-  // emits cache edges in `prompt_cache:` list order == declaration order).
-  // Each entry is the chunk's authored ref text (`cacheChunkKey`) — its body
-  // row's label AND handle key, so each chunk's line lands on its own row
-  // (the loop-row pattern: authored node config as rows). Empty = no cache.
-  cacheRows: string[];
+  // The assembled left-column row list (paramRowsFor) — params, the cached
+  // prefix, and per-ref binding sub-rows in one ordered list. THE single
+  // source the render (WorkflowNode), height (leafSize) and ports
+  // (rowAnchorsFor) all consume, mirroring outputRowsFor on the right.
+  paramRows: ParamRowItem[];
   branchLabels: string[]; // decision fork outcomes — labeled handles on the border
   // Outcome label → the extracted condition selecting it ("if len(items) > 5").
   // In LR the BranchPorts ROW is the condition's home (mid-path pills clipped
@@ -312,21 +311,61 @@ export function ioAreaHeight(nIn: number, nOut: number): number {
 /** Where the cached-prefix rows sit in a leaf body: immediately BEFORE the
  *  `prompt` param row — the real request order is system → cached prefix →
  *  prompt (a `system` param authored before `prompt` stays above for free).
- *  Shared by render (WorkflowNode), size (leafSize) and ports (rowAnchorsFor)
- *  so the three can't drift. */
+ *  Shared by paramRowsFor and the ReadPanel so canvas and panel can't drift. */
 export function cacheInsertIndex(params: RFNode["params"]): number {
   const i = params.findIndex((p) => p.name === "prompt");
   return i === -1 ? params.length : i;
 }
 
-/** A cache edge's chunk key — the authored `prompt_cache:` entry rebuilt from
- *  the edge (the parser enforces chunk name == var, so `extract.response` IS
- *  what the author wrote). Row label + handle suffix; the SAME helper derives
- *  the rows (buildFlow) and lands the edges (targetHandleFor), so a line can
- *  never miss its row. */
-function cacheChunkKey(edge: RFEdge, nodeById: Map<string, RFNode>): string {
+/** An edge's ref as authored text, rebuilt from its resolved endpoints
+ *  (`extract.response` — for cache chunks the parser enforces chunk name ==
+ *  var, so this IS the `prompt_cache:` entry). Sub-row label + handle key;
+ *  the SAME helper derives the rows (buildFlow) and lands the edges
+ *  (targetHandleFor), so a line can never miss its row. */
+function refText(edge: RFEdge, nodeById: Map<string, RFNode>): string {
   const root = nodeById.get(edge.source)?.ref.node_id ?? edge.source;
   return [root, ...(edge.output_field ? [edge.output_field, ...edge.output_path] : [])].join(".");
+}
+
+// One per-ref binding sub-row, derived from a data edge (buildFlow's edge
+// pass): `name` is the binding-level key when it differs from the parent
+// param's name (a dict-key binding), null for an interpolated ref.
+export type RefRow = { handle: string; name: string | null; ref: string };
+
+// One left-column row on a leaf card. paramRowsFor assembles the full ordered
+// list; "label" is the handle-less "cached prefix ×N" heading; "ref" rows are
+// the per-ref landings (nested under their parent, except the flat
+// single-chunk cache row, which carries its own name).
+export type ParamRowItem =
+  | { kind: "param"; param: RFParam }
+  | { kind: "label"; text: string; count: number }
+  | { kind: "ref"; handle: string; name: string | null; ref: string; nested: boolean };
+
+/** Assemble a leaf's LEFT column: params in authored order, the cached-prefix
+ *  group before `prompt`, and per-ref sub-rows under any param that receives
+ *  TWO or more refs (one ref keeps landing on the param row itself — no
+ *  sub-row noise on the common case). The cache group mirrors the same rule:
+ *  one chunk is a flat row, several get a label row + nested rows. */
+export function paramRowsFor(node: RFNode, refRows: ReadonlyMap<string, RefRow[]> | undefined): ParamRowItem[] {
+  const rows: ParamRowItem[] = [];
+  const cacheAt = cacheInsertIndex(node.params);
+  const emitCache = (): void => {
+    const chunks = refRows?.get("prompt_cache") ?? [];
+    if (chunks.length === 1) {
+      rows.push({ kind: "ref", ...chunks[0]!, name: "cached prefix", nested: false });
+    } else if (chunks.length > 1) {
+      rows.push({ kind: "label", text: "cached prefix", count: chunks.length });
+      rows.push(...chunks.map((c): ParamRowItem => ({ kind: "ref", ...c, nested: true })));
+    }
+  };
+  node.params.forEach((param, i) => {
+    if (i === cacheAt) emitCache();
+    rows.push({ kind: "param", param });
+    const subs = refRows?.get(param.name) ?? [];
+    if (subs.length >= 2) rows.push(...subs.map((s): ParamRowItem => ({ kind: "ref", ...s, nested: true })));
+  });
+  if (cacheAt >= node.params.length) emitCache();
+  return rows;
 }
 
 function leafSize(
@@ -334,7 +373,7 @@ function leafSize(
   density: Density,
   direction: Direction,
   outputRows: OutputRow[],
-  cacheRows: string[],
+  paramRows: ParamRowItem[],
   branchLabels: string[],
   expanded: boolean,
 ): { width: number; height: number } {
@@ -353,10 +392,7 @@ function leafSize(
   // The ↻ loop-rule rows a looped leaf renders in its body (WorkflowNode): the
   // condition row (the U's landing) + a cap row when one is set.
   const loopRows = node.loop ? (node.loop.cap != null ? 2 : 1) : 0;
-  // Cached-prefix rows: one per chunk, plus the "cached prefix ×N" label row
-  // when there is more than one (a single chunk renders as one flat row).
-  const cacheRowCount = cacheRows.length + (cacheRows.length > 1 ? 1 : 0);
-  const rows = node.params.length + cacheRowCount + outputRows.length + branchRows + loopRows;
+  const rows = paramRows.length + outputRows.length + branchRows + loopRows;
   return { width, height: HEADER_HEIGHT + rows * ROW_HEIGHT + ROW_PADDING };
 }
 
@@ -631,24 +667,17 @@ export type RowAnchor = { handle: string; side: "left" | "right"; y: number };
 export function rowAnchorsFor(n: FlowNode): RowAnchor[] {
   const mid = ROW_HEIGHT / 2;
   if (n.type === "node") {
-    const { node, density, direction, outputRows, cacheRows, branchLabels, expanded } = n.data;
+    const { node, density, direction, outputRows, paramRows, branchLabels, expanded } = n.data;
     const anchors: RowAnchor[] = [];
     let row = 0;
     if (density === "detailed" || expanded) {
-      // Cached-prefix rows sit immediately before the `prompt` param
-      // (cacheInsertIndex — request order); the ×N label row carries no handle.
-      const insertAt = cacheInsertIndex(node.params);
-      const emitCacheAnchors = (): void => {
-        if (cacheRows.length > 1) row++;
-        for (const key of cacheRows) {
-          anchors.push({ handle: cacheHandle(key), side: "left", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
-        }
-      };
-      node.params.forEach((p, i) => {
-        if (i === insertAt) emitCacheAnchors();
-        anchors.push({ handle: paramHandle(p.name), side: "left", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
-      });
-      if (insertAt >= node.params.length) emitCacheAnchors();
+      // The left column in paramRowsFor order — a "label" row counts but
+      // carries no handle.
+      for (const r of paramRows) {
+        const y = HEADER_HEIGHT + row++ * ROW_HEIGHT + mid;
+        if (r.kind === "param") anchors.push({ handle: paramHandle(r.param.name), side: "left", y });
+        else if (r.kind === "ref") anchors.push({ handle: r.handle, side: "left", y });
+      }
       for (const r of outputRows) {
         anchors.push({ handle: outputHandle(r.field), side: "right", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
       }
@@ -701,7 +730,6 @@ export const CONTROL_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["sequenti
 
 const NO_EXPANSION: ReadonlySet<string> = new Set();
 const NO_CONDITIONS: Record<string, string> = {};
-const NO_CACHE_ROWS: string[] = [];
 
 /** IO ownership — which flow node carries a wrapper's rows: the root IO card
  *  (the wrapper's own id) or the enclosing workflow group, reparented past
@@ -991,17 +1019,29 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   const branchLabelsByNode = new Map<string, string[]>();
   // Outcome label → extracted condition, per decision node (LeafData.branchConditions).
   const branchConditionsByNode = new Map<string, Record<string, string>>();
-  // Per-consumer `## Cache` chunk rows (LeafData.cacheRows), derived from the
-  // edges — which exist iff the node authored `prompt_cache:` with a declared
-  // chunk — in contract order == prefix order (the builder emits them in
-  // `prompt_cache:` list order, validator-pinned to declaration order).
-  const cacheRowsByNode = new Map<string, string[]>();
+  // Per-target binding groups (RefRow[]), keyed by the PARENT each edge lands
+  // under: the containing param's name (interpolated refs AND dict-key
+  // bindings, via bindingParam) or "prompt_cache" (`## Cache` chunks). Contract
+  // order == authored order (text/dict/`prompt_cache:` list order). Feeds
+  // paramRowsFor (the sub-rows) and targetHandleFor (the ≥2 landing rule) —
+  // one derivation, so rows and landings can't disagree.
+  const refRowsByNode = new Map<string, Map<string, RefRow[]>>();
   for (const e of graph.edges) {
-    if (e.kind === "data_flow" && e.input_name === "prompt_cache") {
-      const rows = cacheRowsByNode.get(e.target) ?? [];
-      const key = cacheChunkKey(e, nodeById);
-      if (!rows.includes(key)) rows.push(key);
-      cacheRowsByNode.set(e.target, rows);
+    if (e.kind === "data_flow" && e.input_name) {
+      const target = nodeById.get(e.target);
+      const groupName =
+        e.input_name === "prompt_cache" ? "prompt_cache" : target?.io == null ? bindingParam(target, e.input_name)?.name : undefined;
+      if (groupName != null) {
+        const groups = refRowsByNode.get(e.target) ?? new Map<string, RefRow[]>();
+        const rows = groups.get(groupName) ?? [];
+        const ref = refText(e, nodeById);
+        const handle = bindingRowHandle(e.input_name, ref);
+        if (!rows.some((r) => r.handle === handle)) {
+          rows.push({ handle, name: e.input_name === groupName || groupName === "prompt_cache" ? null : e.input_name, ref });
+        }
+        groups.set(groupName, rows);
+        refRowsByNode.set(e.target, groups);
+      }
     }
     if (e.kind === "data_flow" && e.output_field) {
       const fields = observedReadsByNode.get(e.source) ?? new Map<string, FieldReads>();
@@ -1189,8 +1229,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       // Same visibility rule as the edge pill: advanced always, else focus-expanded.
       const showsRows = view.density === "detailed" || isExpanded;
       const branchConditions = showsRows ? (branchConditionsByNode.get(n.id) ?? NO_CONDITIONS) : NO_CONDITIONS;
-      const cacheRows = cacheRowsByNode.get(n.id) ?? NO_CACHE_ROWS;
-      const size = leafSize(n, view.density, view.direction, outputRows, cacheRows, branchLabels, isExpanded);
+      const paramRows = paramRowsFor(n, refRowsByNode.get(n.id));
+      const size = leafSize(n, view.density, view.direction, outputRows, paramRows, branchLabels, isExpanded);
       flowNodes.push({
         id: n.id,
         type: "node", // one leaf component at two densities; density rides in data
@@ -1204,7 +1244,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
           density: view.density,
           direction: view.direction,
           outputRows,
-          cacheRows,
+          paramRows,
           branchLabels,
           branchConditions,
           hasIncoming: false, // filled by the control-incidence post-pass (flow edges)
@@ -1312,7 +1352,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     if (source === target) continue; // collapsed/host self-loop — a correct drop
 
     const sourceHandle = sourceHandleFor(e, source, rowsVisible(e.source), view.direction, outputRowsByNode, nodeById, ioNodeToOwner);
-    const targetHandle = targetHandleFor(e, target, rowsVisible(e.target), nodeById, ioNodeToOwner);
+    const targetHandle = targetHandleFor(e, target, rowsVisible(e.target), nodeById, ioNodeToOwner, refRowsByNode);
 
     const key = `${source}->${target}|${e.kind}|${e.label ?? ""}|${sourceHandle}|${targetHandle}`;
     if (seen.has(key)) continue;
@@ -1586,6 +1626,7 @@ function targetHandleFor(
   rowsVisible: boolean, // the target node renders its body rows (advanced, or focus-expanded; an IO endpoint checks its OWNER)
   nodeById: Map<string, RFNode>,
   ioNodeToOwner: Map<string, string>,
+  refRowsByNode: Map<string, Map<string, RefRow[]>>,
 ): string {
   const node = nodeById.get(edge.target);
   if (node?.io != null) {
@@ -1596,14 +1637,17 @@ function targetHandleFor(
   }
   const isRealTarget = target === edge.target;
   if (rowsVisible && isRealTarget && edge.kind === "data_flow" && edge.input_name) {
-    // A cache edge lands on ITS chunk's row — which exists by construction:
-    // this edge is what makes the target render it (cacheRows derive from
-    // incoming prompt_cache edges via the SAME cacheChunkKey). No param row
-    // can match the reserved name (prompt_cache is node config, parser-lifted
-    // out of params).
-    if (edge.input_name === "prompt_cache") return cacheHandle(cacheChunkKey(edge, nodeById));
+    // The per-ref landing rule, mirroring paramRowsFor's sub-row rule (both
+    // read refRowsByNode, so rows and landings can't disagree): a cache edge
+    // ALWAYS lands on its chunk row (the flat single-chunk row carries the
+    // handle too); a param edge lands on its ref's sub-row only when the
+    // param receives ≥2 refs — a single ref keeps the param row itself.
+    if (edge.input_name === "prompt_cache") return bindingRowHandle("prompt_cache", refText(edge, nodeById));
     const p = bindingParam(node, edge.input_name);
-    if (p) return paramHandle(p.name);
+    if (p) {
+      const subs = refRowsByNode.get(edge.target)?.get(p.name) ?? [];
+      return subs.length >= 2 ? bindingRowHandle(edge.input_name, refText(edge, nodeById)) : paramHandle(p.name);
+    }
   }
   return NODE_IN;
 }
