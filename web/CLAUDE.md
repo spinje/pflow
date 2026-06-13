@@ -34,7 +34,10 @@ src/
                      injects before first paint
     lossless.test.ts the no-information-loss invariant, swept over synthetic shapes +
                      real committed contracts (test/fixtures/contracts/)
-  hooks/             useWorkflowGraph: fetch → build → layout → focus → RF state + status
+  hooks/             useWorkflowGraph (fetch → build → layout → focus → RF state +
+                     status); useCameraNavigation (view fits, node=/focus= deep links,
+                     chip navigation + the paint-deferred follow); usePanelPair (the
+                     two side panes' widths: clamp, persistence, symmetric re-clamp)
   utils/             pure helpers — format.ts (${ref} parsing, value previews, kind
                      colors, category label); icons.ts (node-kind/provider → SVG URL);
                      viewParams.ts (URL params, deep-link id resolution, edge-click dispatch);
@@ -88,12 +91,16 @@ Tests sit beside their subject.
   `graph.kind_output_types[kind]` (the registry's declared interface — types
   existing rows, never creates one; authored shapes win). The landing ladder, one level deeper than H6:
   sub-key ref → its exact key row (`o:result.ok`) → the field's parent row →
-  `NODE_OUT`. Quiet is kept truthful by `scanParamReads` (flow.ts): plain-param
-  refs (`prompt: ${gen.result.ok}`) form NO data-flow edges, so the scan merges
-  sibling param-text reads into the observed set — scope-aware (same-parent
-  node_id only), batch-alias-skipping, and it NEVER creates a new field row or
-  a line (no edge + no shape → no row; lines come only from edges — D5).
-  Residual: refs outside params (loop conditions) are not scanned.
+  `NODE_OUT`. Quiet is kept truthful by `scanParamReads` (flow.ts): the scan
+  merges sibling param-text reads into the observed set — scope-aware
+  (same-parent node_id only), batch-alias-skipping, grammar-gated (mirrors
+  scope.py: escaped `$${x}` and spaced operands are never reads), and it NEVER
+  creates a new field row or a line (no edge + no shape → no row; lines come
+  only from edges — D5). KEPT after the unified-edge model fix (2026-06-13,
+  every authored `${ref}` now draws a contract edge): build-time dedup still
+  collapses two same-param sub-key refs (`Edge.output_path` is compare=False) —
+  the scan recovers those lost reads. Residual: refs outside params (loop
+  conditions) are not scanned.
 - **Edges are additive.** An endpoint hidden by collapse or a suppressed group-host
   re-anchors to a visible ancestor — never dropped. A missing anchor is a bug and
   `flow.ts` warns instead of dropping it.
@@ -141,8 +148,10 @@ Tests sit beside their subject.
   re-propose without it.
 - **Density controls edges, not just node detail.** *Advanced* shows every edge.
   *Beautiful* shows only the control-flow skeleton: data-flow (`${ref}`) edges are built
-  but `hidden`, and `applyFocus` reveals just the clicked node's data lines (hidden
-  ones are also excluded from ELK so the layout stays tight). `applyFocus` reveals any
+  but `hidden`, and `applyFocus` reveals just the clicked node's data lines. Hidden
+  data edges still go to ELK (only self-loops are excluded — layout.ts), so the layout
+  reflects ALL structure in both densities; more model edges shift layouts everywhere —
+  expected. `applyFocus` reveals any
   default-hidden edge incident to the focus, so it needs no density flag — only
   `buildFlow` sets the default.
 - **Focus-expansion (beautiful): clicking a node expands it — and this is the ONE focus
@@ -449,7 +458,10 @@ Tests sit beside their subject.
   (elevation strikes through the label layer; the panel carries the info) — a
   selected LR branch instead reveals its condition on the source's row. `applyFocus`
   clears `focusEnd` on the selected edge (both ends solid — the ternary would default
-  one end faded) and strips `edge-shadowed` (35% opacity vs bright). In beautiful, a
+  one end faded). The `shadowed` FACT still rides EdgeData but no density dims for
+  it anymore (2026-06-13: with one edge per `${ref}` most of the sequential spine
+  is shadowed — the old advanced 35% dim erased the control skeleton; user-gated
+  removal via browser before/after). In beautiful, a
   selected DATA edge expands exactly its two endpoint owners (`expandTargets` edge
   arm — endpoints go into the OUTPUT set, never `foci`, or both neighborhoods would
   expand) so the line lands row-to-row. The click dispatch is pure
@@ -464,6 +476,31 @@ Tests sit beside their subject.
   counts), branch/decision-end (OutcomeTable with the row marked; discriminate a
   decision's end by the SOURCE's `is_decision`, never condition presence —
   extraction is fail-closed), error, static-end, sequential (surfaces `shadowed`).
+  The data variant has a CACHE arm (`input_name === "prompt_cache"`, the
+  contract's reserved name for a `## Cache` chunk dependency): kind line
+  "cached context", title `field → cached prompt prefix`, a purpose line naming
+  the `## Cache` block — never a param binding (the chunk's
+  ref is forbidden in the consumer's prompt, so this edge is the dependency's
+  only visibility). ALL binding-name surfaces route through `bindingLabel`
+  (utils/format.ts — `prompt_cache` → "cached prefix"): the beautiful edge
+  label (`dataFlowLabel`), the panel's interpolated/bundle facts. On the CANVAS
+  the consumer's body renders PER-CHUNK rows (`LeafData.cacheRows`, derived from
+  incoming prompt_cache edges — wired by construction, so they take the dynamic
+  row language; the loop-row pattern: authored config as rows — without them the
+  lines merged invisibly into the control trunk at NODE_IN, user-caught
+  2026-06-13). Each row's key/label is the chunk's authored ref text rebuilt
+  from its edge (`cacheChunkKey` — the parser enforces chunk name == var, so
+  `extract.response` IS the `prompt_cache:` entry); each edge lands on ITS row's
+  `cacheHandle(key)`. Rows sit immediately BEFORE the `prompt` param
+  (`cacheInsertIndex` — request order: system → cached prefix → prompt); N>1
+  adds a handle-less "cached prefix ×N" label row and the chunk rows take the
+  nested `·` text; a single chunk is one flat row with the ref as its value.
+  All four row consumers move in lockstep: WorkflowNode (render), leafSize,
+  rowAnchorsFor, targetHandleFor; rows hidden → NODE_IN fallback. The
+  ReadPanel additionally shows `RFNode.cached_prefix` — the `## Cache` block's
+  assembled template (prose + ${var}, prefix order, baked in Python with the
+  runtime's own assembly rule) — as a `cached prefix` block placed by the same
+  `cacheInsertIndex` before `prompt`, colored as markdown SOURCE like prompts.
   Endpoint CHIPS navigate via `resolveEndpointFlatId` (host → representative group)
   and render NON-CLICKABLE when the endpoint isn't rendered — never a silent no-op
   focus. RF native selection stays inert: components ignore the `selected` prop,
@@ -706,9 +743,12 @@ Tests sit beside their subject.
   pairs where SOURCE ORDER decides paint (`.handle` before `.port-handle`;
   `.node.dimmed` before `.hover-mark`) — jsdom computes no cascade, so asserting the
   source text is the only CI-observable surface. It reads `index.css` via `node:fs`,
-  NOT `import ... from "./index.css?raw"`: vitest's CSS stub intercepts `.css` imports
-  before Vite's `?raw` handling and returns an empty string (compiles everywhere,
-  asserts nothing). Real-browser geometry invariants (dots-on-border, edge coverage,
+  NOT `import ... from "./index.css?raw"`: vitest's default `css: false` stubs `.css`
+  imports to an empty string EVEN under the `?raw` query (probed on vitest 4.1.8;
+  `?raw` on non-CSS files works, and `test.css: true` restores it — rejected here:
+  enabling CSS processing for every test to prettify one import is the tail wagging
+  the dog; upstream fixed the sibling `?inline` query in vitest#3954 but not `?raw`).
+  Real-browser geometry invariants (dots-on-border, edge coverage,
   no-overlap) live in the screenshot skill's `visual-invariants.pflow.md` instead.
 - **Packaging gotcha:** the bundle is gitignored and hatchling honors `.gitignore`, so
   `pyproject.toml` needs `[tool.hatch.build.targets.wheel] artifacts =

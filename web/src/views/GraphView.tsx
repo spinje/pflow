@@ -1,7 +1,9 @@
 // The per-workflow canvas: pure presentation + interaction. All data/effect logic
-// (fetch -> build -> ELK layout -> focus) lives in useWorkflowGraph; this component
-// owns the view state (density/direction/collapse/focus/selection), the React Flow
-// surface, and the toolbar/read panel.
+// (fetch -> build -> ELK layout -> focus) lives in useWorkflowGraph; the camera
+// (view fits, deep links, chip-navigation follow) in useCameraNavigation; the two
+// side panes' widths in usePanelPair. This component owns the view state
+// (density/direction/collapse/focus/selection), the React Flow surface, and the
+// toolbar/read panel.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -11,17 +13,17 @@ import {
   type Node,
   ReactFlow,
   ReactFlowProvider,
-  useNodesInitialized,
-  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
 import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
 import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { useCameraNavigation } from "../hooks/useCameraNavigation";
+import { usePanelPair } from "../hooks/usePanelPair";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { ApiError, fetchSource } from "../api/client";
 import { nodeColor } from "../utils/format";
-import { edgeClickAction, readViewParams, resolveNodeFlatId, writeViewParams } from "../utils/viewParams";
+import { edgeClickAction, readViewParams, writeViewParams } from "../utils/viewParams";
 import type { RFEdge, RFNode, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
@@ -32,14 +34,11 @@ import { PanelResizer } from "../components/PanelResizer";
 import { ReadPanel } from "../components/ReadPanel";
 import { SourcePane } from "../components/SourcePane";
 import { Toolbar } from "../components/Toolbar";
-import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_W, savePanelWidth } from "../utils/panelWidth";
 
 interface GraphViewProps {
   workflow: string;
   onBack: () => void;
 }
-
-const SOURCE_WIDTH_KEY = "pflow-ui:source-w";
 
 // MiniMap node fills — REAL color strings, not CSS vars: React Flow paints minimap
 // nodes as SVG fill attributes, where var() does not resolve. Leaves take their
@@ -77,7 +76,6 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const [density, setDensity] = useState<Density>(initialView.density);
   const [direction, setDirection] = useState<Direction>(initialView.direction);
   const [sourceOpen, setSourceOpen] = useState<boolean>(initialView.source);
-  const nodeParam = initialView.node;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -104,9 +102,6 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     selected: selectedId,
     workflowName,
   });
-
-  const { fitView, getNodes } = useReactFlow();
-  const nodesInitialized = useNodesInitialized();
 
   const [sourceFiles, setSourceFiles] = useState<SourceFiles | null>(null);
   const [sourceError, setSourceError] = useState<string | null>(null);
@@ -142,8 +137,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const changeDirection = useCallback((d: Direction) => { setDirection(d); syncUrl({ direction: d }); }, [syncUrl]);
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
 
-  // Read the contract via a ref so the fit effect doesn't re-run (and cancel its rAF)
-  // when focus restyles `nodes` — it must fire only on workflow/direction/node.
+  // Read the contract/edges via refs so the interaction callbacks (focusPort,
+  // hoverRow) stay stable while focus restyles `nodes`/`edges`.
   const graphRef = useRef(graph);
   graphRef.current = graph;
   const edgesRef = useRef(edges);
@@ -160,54 +155,6 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     const initial = initialCollapsed(graph, initialView.collapse, [initialView.node, initialView.focus]);
     if (initial.size > 0) setCollapsed(initial);
   }, [graph, workflow, initialView]);
-
-  // Apply a focus= deep link once the graph is rendered — the exact state a click
-  // produces (dim + reveal + beautiful expansion), resolved like node= (node_id
-  // first, flat id fallback). Read-once: later clicks own the focus from there.
-  const focusParam = initialView.focus;
-  const focusParamApplied = useRef(false);
-  useEffect(() => {
-    // Wait for React Flow to have MEASURED nodes (same race as the fit effect):
-    // at status "ready" the store can still be empty, which would resolve to null
-    // and burn the one-shot flag.
-    if (focusParamApplied.current || !focusParam || status !== "ready" || !nodesInitialized) return;
-    focusParamApplied.current = true;
-    const rendered = new Set(getNodes().map((n) => n.id));
-    const flatId = resolveNodeFlatId(graphRef.current, rendered, focusParam);
-    if (flatId) {
-      setFocus(flatId);
-      setSelectedId(flatId);
-      return;
-    }
-    // Flat EDGE id fallback (the deterministic escape hatch, like node='s flat-id
-    // arm): `focus=e12` selects that connection — the screenshot/inspect loop and
-    // Task 169 agents can capture an edge-selection state without driving a
-    // click. STABLE edge addressing (source→target:input) stays deferred.
-    if (graphRef.current?.edges.some((e) => e.id === focusParam)) {
-      setFocus(focusParam);
-      setSelectedId(focusParam);
-    }
-  }, [status, focusParam, nodesInitialized, getNodes]);
-
-  // Refit on a new workflow, a direction flip, or a node= deep link (layout shape
-  // changes wholesale); keep the user's viewport for collapse/density tweaks. With a
-  // resolvable node=, frame just that node (a close-up); else fit the whole graph.
-  const fitKey = `${workflow}|${direction}|${nodeParam ?? ""}`;
-  const lastFit = useRef<string>("");
-  useEffect(() => {
-    // Fit only once React Flow has MEASURED the laid-out nodes (real positions + sizes).
-    // A raw rAF after "ready" races the layout→store sync, so a single-node fit lands on
-    // a stale near-origin position (the whole-graph fit hid it; one node exposes it).
-    // useNodesInitialized is RF's "all nodes measured" signal — it re-arms after a
-    // re-layout (direction flip); the lastFit guard keeps it to one fit per view.
-    if (status !== "ready" || !nodesInitialized) return;
-    if (lastFit.current === fitKey) return;
-    lastFit.current = fitKey;
-    const rendered = new Set(getNodes().map((n) => n.id));
-    const flatId = nodeParam ? resolveNodeFlatId(graphRef.current, rendered, nodeParam) : null;
-    if (flatId) fitView({ nodes: [{ id: flatId }], padding: 0.5, maxZoom: 1.5, duration: 200 });
-    else fitView({ padding: 0.2, duration: 200 });
-  }, [status, fitKey, fitView, nodeParam, nodesInitialized, getNodes]);
 
   const toggleGroup = useCallback((groupId: string) => {
     setCollapsed((prev) => {
@@ -335,45 +282,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     [graph, selectedId],
   );
 
-  // The two side panes share one symmetric clamp: the source pane always
-  // reserves the right panel's persisted width (a later selection can mount it
-  // without a drag), and the right panel reserves the OPEN source pane.
   const rightPanelOpen = Boolean((graph && (selectedEdge || selectedIoGroup)) || selectedNode);
-  const [panelWidth, setPanelWidth] = useState(() => loadPanelWidth(window.innerWidth));
-  const [sourceWidth, setSourceWidth] = useState(() => loadPanelWidth(window.innerWidth, SOURCE_WIDTH_KEY));
-  const panelReserved = sourceOpen ? sourceWidth : 0;
-  const sourceReserved = panelWidth;
-  const onPanelResize = useCallback(
-    (w: number) => setPanelWidth(clampPanelWidth(w, window.innerWidth, panelReserved)),
-    [panelReserved],
-  );
-  const onPanelReset = useCallback(
-    () => setPanelWidth(clampPanelWidth(PANEL_DEFAULT_W, window.innerWidth, panelReserved)),
-    [panelReserved],
-  );
-  const onSourceResize = useCallback(
-    (w: number) => setSourceWidth(clampPanelWidth(w, window.innerWidth, sourceReserved)),
-    [sourceReserved],
-  );
-  const onSourceReset = useCallback(
-    () => setSourceWidth(clampPanelWidth(PANEL_DEFAULT_W, window.innerWidth, sourceReserved)),
-    [sourceReserved],
-  );
-  useEffect(() => savePanelWidth(panelWidth), [panelWidth]);
-  useEffect(() => savePanelWidth(sourceWidth, SOURCE_WIDTH_KEY), [sourceWidth]);
-  // Re-clamp whenever either width / the open-state changes AND on window
-  // resize (review-caught: both panes are flex no-shrink, so without a resize
-  // re-clamp a window shrink crushes the canvas to 0 with no recovery short of
-  // re-dragging a handle). Converges: each pass is non-increasing and bounded.
-  useEffect(() => {
-    const reclamp = (): void => {
-      setPanelWidth((prev) => clampPanelWidth(prev, window.innerWidth, sourceOpen ? sourceWidth : 0));
-      setSourceWidth((prev) => clampPanelWidth(prev, window.innerWidth, panelWidth));
-    };
-    reclamp();
-    window.addEventListener("resize", reclamp);
-    return () => window.removeEventListener("resize", reclamp);
-  }, [panelWidth, sourceOpen, sourceWidth]);
+  // The two panes' widths + drag/reset/persistence/symmetric re-clamp live in
+  // the hook (usePanelPair); the pure clamp math stays in utils/panelWidth.ts.
+  const { panelWidth, sourceWidth, onPanelResize, onPanelReset, onSourceResize, onSourceReset } =
+    usePanelPair(sourceOpen);
 
   // The currently-rendered flat ids — EdgePanel's chips resolve their contract
   // endpoints against this (a suppressed host → its representative group; an
@@ -385,50 +298,22 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // contradictory facts about a binding (review-caught 2026-06-11).
   const readPaths = useMemo(() => (graph ? consumedReadPaths(graph) : null), [graph]);
 
-  // Chip navigation: focus always moves; the panel swaps only when the chip
-  // names a selectable subject (an IO-port chip keeps this edge panel open).
-  // The camera FOLLOWS (user-caught 2026-06-11): a chip can name a card anywhere
-  // on the canvas — selecting it off-screen reads as a dead click. Generous
-  // padding + a zoom cap make it "bring into view", not a hard close-up.
-  //
-  // The follow is DEFERRED to the paint the click produces (user-caught
-  // 2026-06-12): in beautiful a focus change re-layouts (expansion), and a fit
-  // started at click time glides toward the target's PRE-layout position —
-  // first click landed wrong, the second (cached layout, no repaint) landed
-  // right. paintEpoch bumps on every completed paint — the advanced restyle
-  // path follows just as promptly. A SAME-focus navigate repaints nothing, so
-  // it fits immediately (positions are already settled — the old behavior).
-  const pendingFollowRef = useRef<string | null>(null);
-  useEffect(() => {
-    const id = pendingFollowRef.current;
-    if (id == null) return;
-    pendingFollowRef.current = null;
-    if (getNodes().some((n) => n.id === id)) {
-      fitView({ nodes: [{ id }], padding: 0.45, maxZoom: 1.2, duration: 300 });
-    }
-  }, [paintEpoch, fitView, getNodes]);
-  const onNavigate = useCallback(
-    (focusId: string, selected?: string | null) => {
-      // The clicked chip may unmount with the panel swap — its mouseleave never
-      // fires, so the hover mark would stick. Clear it here.
-      setHovered(NO_HOVER);
-      setFocus(focusId);
-      if (selected !== undefined) setSelectedId(selected);
-      // An io-PORT chip names a row, not a node — the camera follows the OWNER
-      // card carrying that row (a port id is never a rendered node, so without
-      // this arm the follow silently skipped and the focus jump read as "nowhere").
-      const rendered = new Set(getNodes().map((n) => n.id));
-      const owner = ioOwnership?.ports.get(focusId);
-      const fitId = rendered.has(focusId) ? focusId : owner != null && rendered.has(owner) ? owner : null;
-      if (fitId == null) return;
-      if (focusId === focus) {
-        fitView({ nodes: [{ id: fitId }], padding: 0.45, maxZoom: 1.2, duration: 300 });
-      } else {
-        pendingFollowRef.current = fitId;
-      }
-    },
-    [fitView, getNodes, ioOwnership, focus],
-  );
+  // Camera ownership (fit-on-view-change, the node=/focus= deep links, chip
+  // navigation + the paint-deferred follow) lives in useCameraNavigation.
+  const clearHover = useCallback(() => setHovered(NO_HOVER), []);
+  const { onNavigate } = useCameraNavigation({
+    status,
+    paintEpoch,
+    graph,
+    workflow,
+    direction,
+    initialView,
+    ioPorts: ioOwnership?.ports ?? null,
+    focus,
+    setFocus,
+    setSelectedId,
+    clearHover,
+  });
 
   // Collapse-all folds every collapsible container and clears focus (the focused
   // node is about to disappear into a box — a ring on a hidden node is meaningless).

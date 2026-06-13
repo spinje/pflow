@@ -1050,7 +1050,7 @@ button.active {
 /* the `edge-*` classes are CONSTRUCTED, so grep the sites not the literals:
    `edge-${kind}` in flow.ts toFlowEdge (sequential | branch | data_flow | error | end),
    literal `edge-loop` on the synthesized loop arcs (flow.ts buildFlow),
-   `edge-shadowed` in toFlowEdge, `edge-dimmed` added/stripped by applyFocus. */
+   `edge-dimmed` added/stripped by applyFocus. */
 .react-flow__edge .react-flow__edge-path {
   stroke-width: var(--edge-stroke);
 }
@@ -1067,10 +1067,6 @@ button.active {
 .react-flow__edge.edge-end .react-flow__edge-path {
   stroke-dasharray: 2 3;
 }
-.react-flow__edge.edge-shadowed .react-flow__edge-path {
-  opacity: 0.35;
-}
-
 /* loop-back U (synthesized from LoopSpec; rail from assignLoopRails) — full edge
    weight: it speaks the same rounded-orthogonal language as the control edges */
 .react-flow__edge.edge-loop .react-flow__edge-path {

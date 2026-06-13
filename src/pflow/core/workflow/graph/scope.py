@@ -8,8 +8,9 @@ import re
 # tail (``.field.sub.deeper`` — zero or more segments).  Handles coalesce
 # (``${a.x ?? b.y}`` — two refs per block) in any template context (bindings and
 # output sources alike — ``??`` is a general-purpose template operator, not
-# output-only).  Handles bare refs (``${data}`` — no field).
-_BRACE_BLOCK_RE = re.compile(r"\$\{([^}]*)\}")
+# output-only).  Handles bare refs (``${data}`` — no field).  The ``(?<!\$)``
+# lookbehind skips escaped templates (``$${x}`` resolves to literal ``${x}``).
+_BRACE_BLOCK_RE = re.compile(r"(?<!\$)\$\{([^}]*)\}")
 _REF_IN_BLOCK_RE = re.compile(r"(?:^|[\s?])([a-zA-Z0-9_-]+)((?:\.[a-zA-Z0-9_-]+)*)")
 
 
@@ -46,6 +47,13 @@ def refs_with_path_in(value: str) -> list[tuple[str, str | None, tuple[str, ...]
         # ref (it would draw a spurious edge from a node coincidentally named x).
         for operand in TemplateResolver.split_coalesce_operands(block.group(1)):
             if TemplateResolver.is_literal_operand(operand.strip()):
+                continue
+            # Grammar gate: only operands the runtime can actually resolve count
+            # as refs. Deliberately UNtrimmed — `${ a.x }` must fail (the runtime
+            # never resolves it); coalesce operands arrive pre-stripped from
+            # split_coalesce_operands. The pattern includes bracket segments, so
+            # `${data[0].x}` passes (its root keeps an edge).
+            if not re.fullmatch(TemplateResolver._VAR_NAME_PATTERN, operand):
                 continue
             for m in _REF_IN_BLOCK_RE.finditer(operand):
                 # Group 2 is the dotted tail (".b.c") or the EMPTY STRING on a

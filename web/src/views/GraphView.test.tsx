@@ -79,6 +79,7 @@ const GRAPH: RFGraph = {
       is_group_host: false,
     is_transform: false,
     output_shape: null,
+    cached_prefix: null,
       unexpanded: null,
       annotations: {},
     },
@@ -98,6 +99,7 @@ const GRAPH: RFGraph = {
       is_group_host: false,
     is_transform: false,
     output_shape: null,
+    cached_prefix: null,
       unexpanded: null,
       annotations: {},
     },
@@ -258,6 +260,42 @@ describe("GraphView mount", () => {
     // The ReadPanel kind→language wiring pin: the shell node's `command` param
     // must reach the highlight seam as bash (paramLanguage fed node.kind).
     expect(highlight).toHaveBeenCalledWith("echo hi", "bash");
+  });
+
+  it("read panel shows the cached prefix template before the prompt (request order)", async () => {
+    // RFNode.cached_prefix is the ## Cache block's authored template assembled
+    // per consumer (prose + ${var}, prefix order) — the panel shows the prompt
+    // as the model will receive it: cached prefix block, THEN prompt.
+    const cached: RFGraph = {
+      ...GRAPH,
+      nodes: [
+        { ...GRAPH.nodes[0]! },
+        {
+          ...GRAPH.nodes[1]!,
+          kind: "llm",
+          purpose: "summarize it",
+          cached_prefix: "Context:\n${greet.stdout}",
+          params: [
+            { name: "model", value: "anthropic/x", is_dynamic: false, source: null },
+            { name: "prompt", value: "Summarize.", is_dynamic: false, source: null },
+          ],
+        },
+      ],
+      edges: [
+        { ...GRAPH.edges[0]! },
+        { ...GRAPH.edges[0]!, id: "ec", kind: "data_flow", output_field: "stdout", input_name: "prompt_cache" },
+      ],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(cached);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("summarize it")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("summarize it")); // select the consumer
+    await waitFor(() => expect(screen.getAllByText("cached prefix").length).toBeGreaterThan(0));
+    expect(screen.getByText(/Context:/)).toBeTruthy(); // the assembled template text
+    // Panel block order = request order: model, cached prefix, prompt.
+    const names = [...document.querySelectorAll(".read-param-name")].map((el) => el.textContent);
+    expect(names).toEqual(["model", "cached prefix", "prompt"]);
   });
 
   it("the panel's consumed list includes plain-param (prompt-body) reads — panel/canvas parity", async () => {

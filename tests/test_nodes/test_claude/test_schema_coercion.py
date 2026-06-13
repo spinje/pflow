@@ -74,7 +74,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"confidence": "0.95", "score": "42"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["confidence"] == 0.95
         assert coerced["score"] == 42.0

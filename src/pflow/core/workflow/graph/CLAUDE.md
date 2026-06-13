@@ -108,22 +108,56 @@ batch `Container.annotations["unexpanded_items"] = {index: reason}`, mirroring t
 a failed sub-workflow item distinguishable from a genuine leaf item (the "no
 information loss" bar) even though Mermaid renders both as a leaf box.
 
-A `DATA_FLOW` edge's `input_name`/`output_field` attributes are **best-effort**:
-when one source feeds a target through multiple roles (e.g. a `params.inputs`
-binding *and* `loop.max_iterations`), the `(source, target)` dedup keeps a single
-edge and only the first role's `input_name` survives. The structural dependency is
-always preserved; only the role label is lossy in that rare multi-role case.
+**Every `${ref}` the language enforces as a dependency is one DATA_FLOW edge**
+(2026-06-13, the unified-edge consolidation). ONE general-purpose emitter —
+`_add_ref_edges`, full-equality dedup, `_resolve_ref`'s inputs-first resolution —
+serves plain params (any depth: dicts AND lists, validator parity), `inputs:`
+bindings, batch `items:`, the templated loop cap, and `## Cache` chunks. A node
+reading the same input in two params gets TWO edges (distinct `input_name`s) —
+the old `(source, target)` pair-dedup is gone. `_params_strings`' `shallow` flag
+keeps a deep dict ref from claiming a same-named child-input port (it attaches
+host-level). Deliberately still edge-less: loop `while`/`until`/`carry` refs
+(recorded Task 155 decision), refs inside literal `batch.items` VALUES (the
+validator doesn't enforce them), escaped `$${x}`, and operands failing the
+runtime grammar (`${ a.x }` — scope.py gates on `_VAR_NAME_PATTERN` fullmatch;
+bracket refs like `${data[0].x}` keep a root-only edge, role-lossy not absent).
 
+**`_connect_source_expression` (output `source:`) stays a SEPARATE emitter** —
+its no-dedup is load-bearing: two sub-key refs in one output `source:` must keep
+both edges (react_flow re-keys on `output_path` there).
+
+**Cache edges** (`_add_cache_edges`): a node's `prompt_cache: [chunk]` draws one
+edge from each chunk var's producer, `input_name="prompt_cache"` (a reserved
+name — no param row exists). The chunk's ref is FORBIDDEN in the consumer's
+prompt body, so this edge is the dependency's only visibility. Per-file scoping
+(`## Cache` never crosses sub-workflow levels); one ref per chunk by
+construction; a cache edge COUNTS AS A READ of the producer's field (intended —
+the field genuinely is read through the cached prefix). The same pass assembles
+`Node.cached_prefix` — the consumer's cached system prefix as authored TEMPLATE
+text (`prose_before + ${var}` per consumed chunk, declaration order — the
+runtime's assembly rule, core/prompt_cache.py `build_cache_system_blocks`).
+`render_mermaid` ignores it; the React Flow contract ships it for the panel's
+"what will the prompt look like" view.
+
+Residual role lossiness is now ONLY the same-param sub-key collapse:
 `Edge.output_path` (the ref's sub-path below `output_field`: `${gen.result.ok}`
 → `("ok",)`) is declared `compare=False` — **load-bearing, do not "fix"**: edge
 dedup is full dataclass equality, so putting the path in identity would turn two
 same-`input_name` sub-key refs into two edges and change Mermaid's edge count
-(goldens break). Out of identity, dedup is byte-identical to before the field
-existed; the first ref's path winning under dedup is the same documented
-lossiness as `input_name` above. Only emission sites 1 (`_add_one_param_input_edges`)
-and 2 (`_connect_source_expression`) set it, behind two guards: never through
-the batch alias, and only when the resolved `output_field` equals the ref's
-first segment.
+(goldens break). The first ref's path wins under dedup; the web's param-text
+scan recovers the lost reads. Only `_add_ref_edges` and
+`_connect_source_expression` set it, behind two guards: never through the batch
+alias, and only when the resolved `output_field` equals the ref's first segment.
+
+Consequences a reader must expect (all BY-DESIGN, 2026-06-13): input-rooted
+bindings on literal-batch hosts land per-item (the host-level fallback died); a
+workflow input literally named `item`/`__iteration__` draws no plain-param edges
+(`_resolve_ref` reserves those roots); `is_terminal`/`shadowed` flips caused by
+a new edge are correct drift, not bugs (a node gaining a data out-edge stops
+being terminal). Mermaid dedups identical rendered arrow LINES per diagram
+(presentation only — the model keeps every edge) and its literal-batch
+fork-coverage suppression excludes input-kind sources (input fan-in must never
+delete an execution-order arrow).
 
 ## Renderer Notes
 

@@ -89,6 +89,12 @@ class Node:
     source: SourceRef | None = None
     param_sources: dict[str, SourceRef] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
+    # The node's cached system prefix as authored TEMPLATE text: for each
+    # ``## Cache`` chunk its ``prompt_cache:`` consumes (declaration order),
+    # ``prose_before + ${var}`` concatenated — the same assembly rule the
+    # runtime applies to the real values (core/prompt_cache.py
+    # build_cache_system_blocks). None when the node consumes no chunks.
+    cached_prefix: str | None = None
     unexpanded: UnexpandedReason | None = None
     annotations: dict[str, Any] = field(default_factory=dict)
 

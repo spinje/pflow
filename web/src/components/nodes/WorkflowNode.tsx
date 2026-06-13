@@ -11,8 +11,8 @@
 import { type CSSProperties, memo, useEffect, useRef } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
-import type { FlowNode } from "../../graph/flow";
-import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
+import { cacheInsertIndex, type FlowNode } from "../../graph/flow";
+import { cacheHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
 import { categoryLabel, collapseWhitespace, humanizeId, nodeColor, parseTemplate, previewValue, stripMarkdown, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
@@ -178,6 +178,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     density,
     direction,
     outputRows,
+    cacheRows,
     branchLabels,
     branchConditions,
     revealedConditions,
@@ -255,7 +256,22 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (node.unexpanded) classes.push("unexpanded");
   if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
   const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
-  const hasBody = showBody && (node.params.length > 0 || outputRows.length > 0 || node.loop != null);
+  const hasBody = showBody && (node.params.length > 0 || cacheRows.length > 0 || outputRows.length > 0 || node.loop != null);
+  const cacheAt = cacheInsertIndex(node.params);
+  const paramRow = (param: RFParam): JSX.Element => (
+    <div
+      className={`param-row${param.is_dynamic ? " dynamic" : ""}`}
+      key={param.name}
+      onMouseEnter={() => hoverRow({ nodeId: id, handles: [paramHandle(param.name)] })}
+      onMouseLeave={() => hoverRow(null)}
+    >
+      <Handle id={paramHandle(param.name)} type="target" position={Position.Left} className="handle param-handle" />
+      <span className="param-name">{param.name}</span>
+      <span className="param-value">
+        <ParamValue param={param} />
+      </span>
+    </div>
+  );
 
   return (
     <div ref={rootRef} className={classes.join(" ")} style={kindStyle}>
@@ -313,26 +329,48 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
               (the hover-set channel, see interaction.ts). */}
           {/* Param rows speak the output rows' connection language: a DYNAMIC
               param (refs land here) gets the data-teal name + live dot, a
-              static config param a muted name + quiet dot (index.css). */}
-          {node.params.map((param) => (
+              static config param a muted name + quiet dot (index.css).
+              The cached-prefix rows (one per ## Cache chunk, wired by
+              construction — they derive from incoming prompt_cache edges) sit
+              immediately BEFORE the `prompt` row, mirroring the real request
+              order (cacheInsertIndex; rowAnchorsFor's y math matches). N>1
+              adds a "cached prefix ×N" label row and the chunk rows take the
+              nested `·` text, like nested output rows; a single chunk is one
+              flat row with the chunk ref as its value. */}
+          {node.params.slice(0, cacheAt).map(paramRow)}
+          {cacheRows.length > 1 && (
+            <div className="param-row cache-row" key="c:label">
+              <span className="param-name" title="Cached system prefix — ## Cache chunks consumed via prompt_cache:, in prefix order">
+                cached prefix
+              </span>
+              <span className="param-value">×{cacheRows.length}</span>
+            </div>
+          )}
+          {cacheRows.map((chunk) => (
             <div
-              className={`param-row${param.is_dynamic ? " dynamic" : ""}`}
-              key={param.name}
-              onMouseEnter={() => hoverRow({ nodeId: id, handles: [paramHandle(param.name)] })}
+              className="param-row dynamic cache-row"
+              key={`c:${chunk}`}
+              onMouseEnter={() => hoverRow({ nodeId: id, handles: [cacheHandle(chunk)] })}
               onMouseLeave={() => hoverRow(null)}
             >
-              <Handle
-                id={paramHandle(param.name)}
-                type="target"
-                position={Position.Left}
-                className="handle param-handle"
-              />
-              <span className="param-name">{param.name}</span>
-              <span className="param-value">
-                <ParamValue param={param} />
-              </span>
+              <Handle id={cacheHandle(chunk)} type="target" position={Position.Left} className="handle param-handle" />
+              {cacheRows.length > 1 ? (
+                <span className="param-name" title={chunk}>
+                  · {chunk}
+                </span>
+              ) : (
+                <>
+                  <span className="param-name" title="Cached system prefix — ## Cache chunk consumed via prompt_cache:">
+                    cached prefix
+                  </span>
+                  <span className="param-value" title={chunk}>
+                    {chunk}
+                  </span>
+                </>
+              )}
             </div>
           ))}
+          {node.params.slice(cacheAt).map(paramRow)}
           {/* Output rows (outputRowsFor, flow.ts): name + faint `: type` (D1).
               A NESTED row indents under its parent (the wholesale-read case);
               a QUIET row is authored-but-unread — faint, grey dot, and no line

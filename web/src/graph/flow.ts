@@ -13,9 +13,9 @@
 
 import type { Edge, Node } from "@xyflow/react";
 
-import { branchHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
+import { branchHandle, cacheHandle, LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
 import { METRICS } from "./metrics";
-import { IO_COLOR, kindColor, nodeColor } from "../utils/format";
+import { IO_COLOR, bindingLabel, kindColor, nodeColor } from "../utils/format";
 import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 
 export type Density = "detailed" | "compact";
@@ -47,6 +47,12 @@ export type LeafData = {
   density: Density;
   direction: Direction;
   outputRows: OutputRow[];
+  // The `## Cache` chunks this node consumes, in PREFIX order (the builder
+  // emits cache edges in `prompt_cache:` list order == declaration order).
+  // Each entry is the chunk's authored ref text (`cacheChunkKey`) — its body
+  // row's label AND handle key, so each chunk's line lands on its own row
+  // (the loop-row pattern: authored node config as rows). Empty = no cache.
+  cacheRows: string[];
   branchLabels: string[]; // decision fork outcomes — labeled handles on the border
   // Outcome label → the extracted condition selecting it ("if len(items) > 5").
   // In LR the BranchPorts ROW is the condition's home (mid-path pills clipped
@@ -303,11 +309,32 @@ export function ioAreaHeight(nIn: number, nOut: number): number {
   return rows === 0 ? 0 : METRICS.ioLabelH + rows * ROW_HEIGHT + ROW_PADDING;
 }
 
+/** Where the cached-prefix rows sit in a leaf body: immediately BEFORE the
+ *  `prompt` param row — the real request order is system → cached prefix →
+ *  prompt (a `system` param authored before `prompt` stays above for free).
+ *  Shared by render (WorkflowNode), size (leafSize) and ports (rowAnchorsFor)
+ *  so the three can't drift. */
+export function cacheInsertIndex(params: RFNode["params"]): number {
+  const i = params.findIndex((p) => p.name === "prompt");
+  return i === -1 ? params.length : i;
+}
+
+/** A cache edge's chunk key — the authored `prompt_cache:` entry rebuilt from
+ *  the edge (the parser enforces chunk name == var, so `extract.response` IS
+ *  what the author wrote). Row label + handle suffix; the SAME helper derives
+ *  the rows (buildFlow) and lands the edges (targetHandleFor), so a line can
+ *  never miss its row. */
+function cacheChunkKey(edge: RFEdge, nodeById: Map<string, RFNode>): string {
+  const root = nodeById.get(edge.source)?.ref.node_id ?? edge.source;
+  return [root, ...(edge.output_field ? [edge.output_field, ...edge.output_path] : [])].join(".");
+}
+
 function leafSize(
   node: RFNode,
   density: Density,
   direction: Direction,
   outputRows: OutputRow[],
+  cacheRows: string[],
   branchLabels: string[],
   expanded: boolean,
 ): { width: number; height: number } {
@@ -326,7 +353,10 @@ function leafSize(
   // The ↻ loop-rule rows a looped leaf renders in its body (WorkflowNode): the
   // condition row (the U's landing) + a cap row when one is set.
   const loopRows = node.loop ? (node.loop.cap != null ? 2 : 1) : 0;
-  const rows = node.params.length + outputRows.length + branchRows + loopRows;
+  // Cached-prefix rows: one per chunk, plus the "cached prefix ×N" label row
+  // when there is more than one (a single chunk renders as one flat row).
+  const cacheRowCount = cacheRows.length + (cacheRows.length > 1 ? 1 : 0);
+  const rows = node.params.length + cacheRowCount + outputRows.length + branchRows + loopRows;
   return { width, height: HEADER_HEIGHT + rows * ROW_HEIGHT + ROW_PADDING };
 }
 
@@ -452,9 +482,21 @@ export function outputRowsFor(
 // space INSIDE the literal satisfies the root prefix class — without the skip,
 // `gen`'s `result` row would read as ACTIVE with zero real readers (the inverse
 // of the lie quiet rows exist to prevent; review-caught 2026-06-11).
-const REF_BLOCK_RE = /\$\{([^}]*)\}/g;
+// The (?<!\$) lookbehind skips escaped templates ($${x} resolves to literal ${x}).
+const REF_BLOCK_RE = /(?<!\$)\$\{([^}]*)\}/g;
 const REF_IN_BLOCK_RE = /(?:^|[\s?])([a-zA-Z0-9_-]+)((?:\.[a-zA-Z0-9_-]+)*)/g;
 const COALESCE_SPLIT_RE = /\s*\?\?\s*/;
+// Fullmatch of TemplateResolver._VAR_NAME_PATTERN — the grammar gate scope.py
+// applies: only operands the runtime can actually resolve count as reads.
+const VAR_NAME_RE = /^[a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?$/;
+
+/** Mirrors TemplateResolver.split_coalesce_operands: no `??` → the single
+ *  operand UNtrimmed (so the grammar gate rejects `${ a.x }`, which the runtime
+ *  never resolves); with `??` → operands arrive stripped, like the runtime's. */
+function splitCoalesceOperands(expr: string): string[] {
+  if (!expr.includes("??")) return [expr];
+  return expr.split(COALESCE_SPLIT_RE).map((op) => op.trim());
+}
 
 /** Mirrors TemplateResolver.is_literal_operand (the skip scope.py applies before
  *  extracting refs): literals start with one of `{ [ " -` or a digit, or are
@@ -478,6 +520,11 @@ function stringLeaves(value: unknown): string[] {
 // scans would drift; review-caught 2026-06-11): scope-aware (same-parent node_id
 // only), batch-alias-skipping, coalesce-literal-skipping; a bare `${gen}` names
 // no field and never counts.
+//
+// KEPT after the unified-edge model fix (2026-06-13, every authored ${ref} now
+// draws a contract edge): build-time edge dedup still collapses two same-param
+// sub-key refs (`Edge.output_path` is compare=False in the model) — this scan
+// recovers the reads those lost edges would have carried.
 type ParamRead = { producer: RFNode; segments: string[] };
 
 function paramTextReads(graph: RFGraph): ParamRead[] {
@@ -491,10 +538,12 @@ function paramTextReads(graph: RFGraph): ParamRead[] {
     for (const param of reader.params) {
       for (const leaf of stringLeaves(param.value)) {
         for (const block of leaf.matchAll(REF_BLOCK_RE)) {
-          for (const operand of (block[1] ?? "").split(COALESCE_SPLIT_RE)) {
-            const trimmed = operand.trim();
-            if (isLiteralOperand(trimmed)) continue;
-            for (const m of trimmed.matchAll(REF_IN_BLOCK_RE)) {
+          for (const operand of splitCoalesceOperands(block[1] ?? "")) {
+            if (isLiteralOperand(operand.trim())) continue;
+            // Grammar gate (mirrors scope.py): gate the UNtrimmed operand —
+            // trimming first would admit `${ a.x }`, which never resolves.
+            if (!VAR_NAME_RE.test(operand)) continue;
+            for (const m of operand.matchAll(REF_IN_BLOCK_RE)) {
               const root = m[1];
               const tail = m[2] ?? "";
               if (root == null || root === alias) continue; // the per-item batch alias, never a sibling
@@ -582,13 +631,24 @@ export type RowAnchor = { handle: string; side: "left" | "right"; y: number };
 export function rowAnchorsFor(n: FlowNode): RowAnchor[] {
   const mid = ROW_HEIGHT / 2;
   if (n.type === "node") {
-    const { node, density, direction, outputRows, branchLabels, expanded } = n.data;
+    const { node, density, direction, outputRows, cacheRows, branchLabels, expanded } = n.data;
     const anchors: RowAnchor[] = [];
     let row = 0;
     if (density === "detailed" || expanded) {
-      for (const p of node.params) {
+      // Cached-prefix rows sit immediately before the `prompt` param
+      // (cacheInsertIndex — request order); the ×N label row carries no handle.
+      const insertAt = cacheInsertIndex(node.params);
+      const emitCacheAnchors = (): void => {
+        if (cacheRows.length > 1) row++;
+        for (const key of cacheRows) {
+          anchors.push({ handle: cacheHandle(key), side: "left", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
+        }
+      };
+      node.params.forEach((p, i) => {
+        if (i === insertAt) emitCacheAnchors();
         anchors.push({ handle: paramHandle(p.name), side: "left", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
-      }
+      });
+      if (insertAt >= node.params.length) emitCacheAnchors();
       for (const r of outputRows) {
         anchors.push({ handle: outputHandle(r.field), side: "right", y: HEADER_HEIGHT + row++ * ROW_HEIGHT + mid });
       }
@@ -641,6 +701,7 @@ export const CONTROL_KINDS: ReadonlySet<EdgeKind> = new Set<EdgeKind>(["sequenti
 
 const NO_EXPANSION: ReadonlySet<string> = new Set();
 const NO_CONDITIONS: Record<string, string> = {};
+const NO_CACHE_ROWS: string[] = [];
 
 /** IO ownership — which flow node carries a wrapper's rows: the root IO card
  *  (the wrapper's own id) or the enclosing workflow group, reparented past
@@ -930,7 +991,18 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
   const branchLabelsByNode = new Map<string, string[]>();
   // Outcome label → extracted condition, per decision node (LeafData.branchConditions).
   const branchConditionsByNode = new Map<string, Record<string, string>>();
+  // Per-consumer `## Cache` chunk rows (LeafData.cacheRows), derived from the
+  // edges — which exist iff the node authored `prompt_cache:` with a declared
+  // chunk — in contract order == prefix order (the builder emits them in
+  // `prompt_cache:` list order, validator-pinned to declaration order).
+  const cacheRowsByNode = new Map<string, string[]>();
   for (const e of graph.edges) {
+    if (e.kind === "data_flow" && e.input_name === "prompt_cache") {
+      const rows = cacheRowsByNode.get(e.target) ?? [];
+      const key = cacheChunkKey(e, nodeById);
+      if (!rows.includes(key)) rows.push(key);
+      cacheRowsByNode.set(e.target, rows);
+    }
     if (e.kind === "data_flow" && e.output_field) {
       const fields = observedReadsByNode.get(e.source) ?? new Map<string, FieldReads>();
       const reads = fields.get(e.output_field) ?? { bare: false, subKeys: [] };
@@ -1117,7 +1189,8 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
       // Same visibility rule as the edge pill: advanced always, else focus-expanded.
       const showsRows = view.density === "detailed" || isExpanded;
       const branchConditions = showsRows ? (branchConditionsByNode.get(n.id) ?? NO_CONDITIONS) : NO_CONDITIONS;
-      const size = leafSize(n, view.density, view.direction, outputRows, branchLabels, isExpanded);
+      const cacheRows = cacheRowsByNode.get(n.id) ?? NO_CACHE_ROWS;
+      const size = leafSize(n, view.density, view.direction, outputRows, cacheRows, branchLabels, isExpanded);
       flowNodes.push({
         id: n.id,
         type: "node", // one leaf component at two densities; density rides in data
@@ -1131,6 +1204,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
           density: view.density,
           direction: view.direction,
           outputRows,
+          cacheRows,
           branchLabels,
           branchConditions,
           hasIncoming: false, // filled by the control-incidence post-pass (flow edges)
@@ -1522,6 +1596,12 @@ function targetHandleFor(
   }
   const isRealTarget = target === edge.target;
   if (rowsVisible && isRealTarget && edge.kind === "data_flow" && edge.input_name) {
+    // A cache edge lands on ITS chunk's row — which exists by construction:
+    // this edge is what makes the target render it (cacheRows derive from
+    // incoming prompt_cache edges via the SAME cacheChunkKey). No param row
+    // can match the reserved name (prompt_cache is node config, parser-lifted
+    // out of params).
+    if (edge.input_name === "prompt_cache") return cacheHandle(cacheChunkKey(edge, nodeById));
     const p = bindingParam(node, edge.input_name);
     if (p) return paramHandle(p.name);
   }
@@ -1552,9 +1632,12 @@ export function bindingParam(target: RFNode | null | undefined, inputName: strin
 
 // What flows on a data-flow line, e.g. "stdout → data". Shown as the edge label in
 // beautiful mode only (advanced shows the field names as node rows, so a label there
-// would just duplicate them).
+// would just duplicate them). input_name routes through bindingLabel: a cache edge
+// can never land row-to-row (no param row exists for it), so without the mapping the
+// raw `prompt_cache` sentinel would always show.
 function dataFlowLabel(edge: RFEdge): string | undefined {
-  const { output_field: out, input_name: inp } = edge;
+  const out = edge.output_field;
+  const inp = edge.input_name == null ? edge.input_name : bindingLabel(edge.input_name);
   if (out && inp) return `${out} → ${inp}`;
   return out ?? inp ?? undefined;
 }
@@ -1582,9 +1665,6 @@ function toFlowEdge(
   // shadow opacity are CSS, via the className.
   const isControl = CONTROL_KINDS.has(edge.kind);
   const classes = [`edge-${edge.kind}`];
-  // Advanced DIMS a control edge a data line already covers; beautiful hides the
-  // data lines, so its control edges show full-strength (not shadow-dimmed).
-  if (edge.shadowed && detailed) classes.push("edge-shadowed");
   // Branch labels: in TD the forks fan from the icon column, so the label always
   // rides the edge (rendered at the target's entry). In LR the labeled BranchPorts
   // row is the outcome's home, so the edge label shows only when the source's rows
@@ -1643,7 +1723,6 @@ function toFlowEdge(
 }
 
 const DIMMED_EDGE_CLASS = "edge-dimmed";
-const SHADOWED_EDGE_CLASS = "edge-shadowed";
 
 // The z-index applyFocus writes onto a SELECTED edge so it paints above the cards
 // it crosses (React Flow otherwise renders all edges behind nodes — the tunneling
@@ -1787,16 +1866,7 @@ export function applyFocus(
     // writes — so re-processing decorated output can't misread a revealed edge.
     const defaultHidden = e.data?.defaultHidden === true;
     const hidden = defaultHidden && !incident;
-    const stripped = stripDim(e.className);
-    // A SELECTED shadowed structural edge renders full-strength: the build's
-    // edge-shadowed class (35% opacity) would fight the bright+halo treatment.
-    // Safe and reversible — this pass always re-runs on the pristine laid snapshot.
-    const base = selected
-      ? stripped
-          .split(" ")
-          .filter((c) => c && c !== SHADOWED_EDGE_CLASS)
-          .join(" ")
-      : stripped;
+    const base = stripDim(e.className);
     const dim = focus != null && !incident;
     const className = dim ? `${base} ${DIMMED_EDGE_CLASS}`.trim() : base;
     // EdgeLabelRenderer pills live OUTSIDE .react-flow__edge, so the CSS dim can't

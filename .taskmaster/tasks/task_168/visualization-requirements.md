@@ -128,8 +128,8 @@
   EdgePanel/IoPanel/ReadPanel all consume it); a nested io-port chip is
   scope-prefixed (`create-songs.concept`). Every ReadPanel ends with
   `references (N)` (upstream) + `referenced by (N)` (downstream) chip stacks
-  (contract data-flow edges only — completes for free when
-  scratchpads/param-ref-data-flow-edges lands; an empty direction → no section,
+  (contract data-flow edges only — COMPLETE since the 2026-06-13 unified-edge
+  model fix; an empty direction → no section,
   the no-claims rule). HOVER = mark a set of canvas subjects, a PURE highlight
   (no focus change, no expansion, no camera move — user decision): a chip marks
   its node (an io-port chip rings the port's owner + lights its row); a canvas
@@ -277,6 +277,21 @@
   three panels share `.read-panel`, width rides the `--panel-w` var); default 460px
   (was 360), clamped 300–860 and ≤70% viewport, persisted in localStorage,
   double-click resets. Drag verified end-to-end in real Chrome.
+
+- **Every `${ref}` is an edge + prompt-cache edges (2026-06-13):** the model
+  emits one DATA_FLOW edge per validator-enforced `${ref}` — plain-param sibling
+  refs (`prompt: ${gen.response}`), multi-param same-input reads (one edge PER
+  ref; the old pair-dedup died), full-depth dict/list refs, and `## Cache`
+  chunks (`input_name="prompt_cache"`, the reserved name: the chunk's ref is
+  forbidden in the consumer's prompt, so the edge is the dependency's only
+  visibility — presented as "cached context"/"cached prefix" via `bindingLabel`,
+  never a binding; the consumer card renders ONE "cached prefix" ROW the chunk
+  lines land on — without it they merged invisibly into the control trunk,
+  user-caught same day). Corpus 656 → ~830 data edges; `is_dynamic ⟺ edge` is now
+  true on the wire. Advanced no longer dims shadowed structural edges (the
+  richer edge set shadowed most of the spine — the dim erased the control
+  skeleton; user-gated via browser before/after). Plan:
+  `implementation/unified-data-flow-edges-plan.md`.
 
 ## Wanted / planned (NOT yet built)
 

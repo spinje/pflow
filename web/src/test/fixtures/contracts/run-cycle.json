@@ -24,6 +24,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -51,6 +52,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -87,6 +89,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -123,6 +126,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -216,6 +220,7 @@
           }
         ]
       },
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -264,6 +269,7 @@
         "data_type": "int",
         "keys": null
       },
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -314,6 +320,7 @@
       "is_group_host": true,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -425,6 +432,7 @@
           }
         ]
       },
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -457,6 +465,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -489,6 +498,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -521,6 +531,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -643,6 +654,7 @@
           }
         ]
       },
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -696,6 +708,7 @@
         "data_type": "int",
         "keys": null
       },
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -812,6 +825,7 @@
           }
         ]
       },
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -840,6 +854,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -875,6 +890,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -910,6 +926,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -945,6 +962,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -980,6 +998,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -1003,6 +1022,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -1033,6 +1053,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     },
@@ -1063,6 +1084,7 @@
       "is_group_host": false,
       "is_transform": false,
       "output_shape": null,
+      "cached_prefix": null,
       "unexpanded": null,
       "annotations": {}
     }
@@ -1118,6 +1140,30 @@
     },
     {
       "id": "e4",
+      "source": "n8",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "issue",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e5",
+      "source": "n9",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "base_branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e6",
       "source": "n11",
       "target": "n12",
       "kind": "data_flow",
@@ -1131,7 +1177,7 @@
       ]
     },
     {
-      "id": "e5",
+      "id": "e7",
       "source": "n11",
       "target": "n13",
       "kind": "data_flow",
@@ -1145,7 +1191,7 @@
       ]
     },
     {
-      "id": "e6",
+      "id": "e8",
       "source": "n11",
       "target": "n13",
       "kind": "data_flow",
@@ -1159,7 +1205,19 @@
       ]
     },
     {
-      "id": "e7",
+      "id": "e9",
+      "source": "n9",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "base_branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e10",
       "source": "n8",
       "target": "n11",
       "kind": "data_flow",
@@ -1171,55 +1229,55 @@
       "output_path": []
     },
     {
-      "id": "e8",
-      "source": "n9",
-      "target": "n11",
-      "kind": "data_flow",
-      "label": null,
-      "output_field": null,
-      "input_name": "prompt",
-      "shadowed": false,
-      "condition": null,
-      "output_path": []
-    },
-    {
-      "id": "e9",
-      "source": "n10",
-      "target": "n11",
-      "kind": "data_flow",
-      "label": null,
-      "output_field": null,
-      "input_name": "cwd",
-      "shadowed": false,
-      "condition": null,
-      "output_path": []
-    },
-    {
-      "id": "e10",
-      "source": "n9",
-      "target": "n13",
-      "kind": "data_flow",
-      "label": null,
-      "output_field": null,
-      "input_name": "prompt",
-      "shadowed": false,
-      "condition": null,
-      "output_path": []
-    },
-    {
       "id": "e11",
-      "source": "n10",
-      "target": "n13",
+      "source": "n9",
+      "target": "n11",
       "kind": "data_flow",
       "label": null,
       "output_field": null,
-      "input_name": "cwd",
+      "input_name": "prompt",
       "shadowed": false,
       "condition": null,
       "output_path": []
     },
     {
       "id": "e12",
+      "source": "n10",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "cwd",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e13",
+      "source": "n9",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e14",
+      "source": "n10",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "cwd",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e15",
       "source": "n11",
       "target": "n15",
       "kind": "data_flow",
@@ -1233,7 +1291,7 @@
       ]
     },
     {
-      "id": "e13",
+      "id": "e16",
       "source": "n11",
       "target": "n16",
       "kind": "data_flow",
@@ -1247,7 +1305,7 @@
       ]
     },
     {
-      "id": "e14",
+      "id": "e17",
       "source": "n13",
       "target": "n17",
       "kind": "data_flow",
@@ -1261,7 +1319,7 @@
       ]
     },
     {
-      "id": "e15",
+      "id": "e18",
       "source": "n11",
       "target": "n18",
       "kind": "data_flow",
@@ -1275,7 +1333,7 @@
       ]
     },
     {
-      "id": "e16",
+      "id": "e19",
       "source": "n2",
       "target": "n3",
       "kind": "sequential",
@@ -1287,7 +1345,7 @@
       "output_path": []
     },
     {
-      "id": "e17",
+      "id": "e20",
       "source": "n3",
       "target": "n4",
       "kind": "sequential",
@@ -1299,7 +1357,7 @@
       "output_path": []
     },
     {
-      "id": "e18",
+      "id": "e21",
       "source": "n4",
       "target": "n5",
       "kind": "sequential",
@@ -1311,7 +1369,7 @@
       "output_path": []
     },
     {
-      "id": "e19",
+      "id": "e22",
       "source": "n5",
       "target": "n6",
       "kind": "branch",
@@ -1323,7 +1381,7 @@
       "output_path": []
     },
     {
-      "id": "e20",
+      "id": "e23",
       "source": "n6",
       "target": "n7",
       "kind": "sequential",
@@ -1335,7 +1393,7 @@
       "output_path": []
     },
     {
-      "id": "e21",
+      "id": "e24",
       "source": "n5",
       "target": "n19",
       "kind": "end",
@@ -1347,7 +1405,7 @@
       "output_path": []
     },
     {
-      "id": "e22",
+      "id": "e25",
       "source": "n3",
       "target": "n4",
       "kind": "data_flow",
@@ -1359,7 +1417,19 @@
       "output_path": []
     },
     {
-      "id": "e23",
+      "id": "e26",
+      "source": "n1",
+      "target": "n4",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "max_issues",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e27",
       "source": "n4",
       "target": "n5",
       "kind": "data_flow",
@@ -1373,7 +1443,7 @@
       ]
     },
     {
-      "id": "e24",
+      "id": "e28",
       "source": "n4",
       "target": "n8",
       "kind": "data_flow",
@@ -1385,43 +1455,7 @@
       "output_path": []
     },
     {
-      "id": "e25",
-      "source": "n2",
-      "target": "n10",
-      "kind": "data_flow",
-      "label": null,
-      "output_field": "stdout",
-      "input_name": "repo_dir",
-      "shadowed": false,
-      "condition": null,
-      "output_path": []
-    },
-    {
-      "id": "e26",
-      "source": "n6",
-      "target": "n7",
-      "kind": "data_flow",
-      "label": null,
-      "output_field": "results",
-      "input_name": "results",
-      "shadowed": false,
-      "condition": null,
-      "output_path": []
-    },
-    {
-      "id": "e27",
-      "source": "n1",
-      "target": "n4",
-      "kind": "data_flow",
-      "label": null,
-      "output_field": null,
-      "input_name": "prompt",
-      "shadowed": false,
-      "condition": null,
-      "output_path": []
-    },
-    {
-      "id": "e28",
+      "id": "e29",
       "source": "n0",
       "target": "n9",
       "kind": "data_flow",
@@ -1433,7 +1467,55 @@
       "output_path": []
     },
     {
-      "id": "e29",
+      "id": "e30",
+      "source": "n2",
+      "target": "n10",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "stdout",
+      "input_name": "repo_dir",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e31",
+      "source": "n6",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "results",
+      "input_name": "results",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e32",
+      "source": "n0",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "base_branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e33",
+      "source": "n1",
+      "target": "n4",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e34",
       "source": "n0",
       "target": "n7",
       "kind": "data_flow",
@@ -1445,7 +1527,19 @@
       "output_path": []
     },
     {
-      "id": "e30",
+      "id": "e35",
+      "source": "n2",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "stdout",
+      "input_name": "cwd",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e36",
       "source": "n4",
       "target": "n20",
       "kind": "data_flow",
@@ -1459,7 +1553,7 @@
       ]
     },
     {
-      "id": "e31",
+      "id": "e37",
       "source": "n7",
       "target": "n21",
       "kind": "data_flow",

@@ -202,6 +202,7 @@ function rfnode(id: string, over: Partial<RFNode> = {}): RFNode {
     is_terminal: false,
     is_transform: false,
     output_shape: null,
+    cached_prefix: null,
     is_group_host: false,
     unexpanded: null,
     annotations: {},

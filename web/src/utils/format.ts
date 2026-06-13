@@ -113,6 +113,13 @@ export function paramLanguage(kind: string, name: string, value: unknown): strin
   return null;
 }
 
+/** Present an edge's input_name as a binding label. `prompt_cache` is the
+ *  contract's reserved name for a `## Cache` chunk dependency — no param row
+ *  exists for it, so the raw sentinel must never reach the user. */
+export function bindingLabel(inputName: string): string {
+  return inputName === "prompt_cache" ? "cached prefix" : inputName;
+}
+
 /** A compact, single-line preview of any JSON-able param value. */
 export function previewValue(value: unknown): string {
   if (value === null) return "null";

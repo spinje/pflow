@@ -3499,3 +3499,289 @@ post-fix truth).
   residual: a future unrelated `.css?raw` import elsewhere would hit the trap
   fresh — documentation is the only guard; a lint ban was judged machinery
   the deletion test doesn't justify.
+
+### Every `${ref}` is an edge — unified data-flow emission + prompt-cache edges (2026-06-13) ✅
+
+> Plan: `implementation/unified-data-flow-edges-plan.md` (review-hardened; the three
+> landmines, locked decisions, and expected numbers live there — this entry carries
+> only deviations, verification outcomes, and learnings). Context handoff:
+> `starting-context/braindump-unified-data-flow-edges.md`. All five phases landed in
+> one sitting, gates in plan order.
+
+**What shipped (plan-conformant):** `_add_one_param_input_edges` → `_add_ref_edges`
+(THE emitter; the `elif root in level.inputs: continue` deletion is the whole semantic
+change), `_add_declared_input_edges` + the `connected` pair-dedup deleted,
+`_params_strings` deepened to validator parity with the `shallow` flag,
+react_flow's `_string_leaves` in lockstep (H5), scope.py `(?<!\$)` lookbehind +
+`_VAR_NAME_PATTERN` fullmatch grammar gate, Mermaid landmine-3 input-source filter +
+per-diagram rendered-line dedup, `_add_cache_edges` (`input_name="prompt_cache"`),
+ONE fixture regen, frontend: advanced shadow-dim removed, `bindingLabel` helper
+(dataFlowLabel + EdgePanel cache arm + interpolated/bundle facts), grammar mirror in
+`paramTextReads` (`splitCoalesceOperands` + `VAR_NAME_RE`, gate the UNtrimmed single
+operand), docs synced (graph/CLAUDE.md, ui/CLAUDE.md, web/CLAUDE.md,
+visualization-requirements.md, proposal status).
+
+**Deviations from the plan, each with the reason:**
+
+- **ONE Mermaid golden regenerated in Phase 1 (generate-changelog LR) — an
+  ORDER-only delta the plan's "all 9 byte-identical" verification missed.** Root
+  cause: `slack_channel` feeds two nodes through `inputs:` dicts (now emitted by the
+  FIRST walk, `_add_child_input_data_flow`, since the input-skip died) and one node
+  through a plain param (the later params walk) — the rendered input-edge lines
+  swapped order. Verified safe before regen: sorted line MULTISETS byte-identical
+  (`diff <(sort old) <(sort new)` empty), so content is unchanged — not a landmine
+  (the landmine section's shapes all checked clean). The other 8 goldens stayed
+  byte-identical as predicted.
+- **`test_param_is_dynamic_uses_ref_extractor_not_str_repr` pinned the OLD one-level
+  walk** (`nested: False`) — the plan's "deltas verified unpinned by any test" sweep
+  missed it. Updated to the new truth (`nested`/`listed` True) — squarely the H5
+  lockstep, not a weakened assertion.
+- **The purity guard rejected the word "position" in my `_params_strings` docstring**
+  (render-token scan over build.py). Reworded. Good guard.
+- **EdgePanel's "interpolated" fact also routes through `bindingLabel`** (plan named
+  only bundle entries): a 3-chunk consumer would read "one of 3 references into
+  `prompt_cache`" — the raw sentinel the helper exists to hide.
+- **Pre-existing RUF059 in `test_schema_coercion.py` fixed in passing** (unused
+  unpack `coerced_fields` → `_coerced_fields`) — committed file, blocked `make check`
+  for everyone, unrelated to this work.
+- **Mermaid's line dedup keys on the arrow text WITHOUT the indent** (plan said
+  "line string"): the same logical arrow at two indents would still dedup —
+  strictly safer; behaviorally identical on the corpus (the exactly-once pin +
+  byte-identical goldens prove no double-render site existed anyway).
+
+**Verification outcomes:**
+
+- Python: full `tests/test_core/` 3118 green; `make test` 7867 green; `make check`
+  clean. New pins: 8 build tests (sibling/plain-param, interpolated multi-ref,
+  list param, deep-dict shallow guard, opaque-batch input edge, alias no-edge,
+  literal operands + coalesce, escaped/spaced extractor cases), 6 cache tests
+  (incl. the real multi-chunk example: 3 producers × 2 consumers = 6 edges,
+  level-local sub-workflow cache, malformed shapes), 2 Mermaid tests (landmine-3
+  arrow survival — MUTATION-VERIFIED by disabling the filter; same-pair line dedup).
+- Contract fixtures: ONE regen, diff READ — run-cycle +6 edges (all explained:
+  multi-param same-input reads + plain-param sibling refs), deep-research and
+  conditional-branching edge multisets IDENTICAL (id renumbering only), zero
+  node-set/group/fact flips. `prompt-caching-multi-chunk` enrolled (pins cache
+  edges in the drift guard + the frontend lossless sweep).
+- Web: 392/392, tsc strict + build clean.
+- Corpus sweep: 65 built / 14 skipped (the unchanged baseline), 885 data edges
+  (plan predicted ~830 EXCLUDING cache edges + two examples added since the
+  measurement), build time unchanged.
+- Browser (screenshot skill): changelog-simple advanced — new lines land on their
+  param rows (get-latest-tag.stdout → get-commits.command verified in-frame), trunk
+  full-strength; prompt-caching — three cache lines, EdgePanel "cached context /
+  response → cached prompt prefix", extract's ReadPanel `referenced by (3)` (the
+  braindump's open thread, closed); beautiful reveal labeled `response → cached
+  prefix`; visual-invariants PASS on plan-to-code (181/181 contract edges rendered,
+  0 violations) AND deep-research; lyrics-generator renders sane.
+- **The shadow-dim USER GATE artifact:** `/tmp/pflow-shots/shadow-dim-comparison.png`
+  (left = dim re-added via temp edits + rebuild, right = shipped). The before state
+  dims 11 of changelog-simple's sequential spine segments to near-invisibility —
+  the predicted "advanced dims most of the spine". Presented to the user with the
+  implementation report; the agreed fallback (dim only when NO same-pair data edge
+  exists) remains available if they want the middle option.
+
+**Learnings worth keeping:**
+
+- **`git checkout -- <file>` after a mutation test NUKED the uncommitted
+  landmine-3 filter** — the braindump warned about EXACTLY this and it still
+  happened (cost: one re-apply). Mutation checks on dirty files need targeted
+  edit-reverts, never git restore. (Second occurrence in this task's history —
+  treat as a standing rule.)
+- **A stale browser page CAN defeat the `&v=` cache-buster once**: the first
+  "before" screenshot showed no dim despite the bundle on disk having it; the
+  live-DOM diagnostic (`check-shadow` scratch workflow: count `.edge-shadowed`,
+  read computed opacity) proved the dim WAS live, and a retake matched. For
+  paint-vs-bundle doubt, query the DOM — don't re-stare at pixels.
+- **A 0.35-opacity delta on ONE short trunk segment is invisible at screenshot
+  thumbnail scale** — pixel-diff (`ImageChops.difference(...).getbbox()`) found the
+  5×121px changed strip instantly and proved the dim was rendering. Crops lie at
+  low zoom; diffs don't.
+- The `pflow ui` server must be RESTARTED after Python changes (it answered with
+  11 data edges from pre-change code; the catalog probe happily reused it).
+
+### Paint-pipeline tests for useWorkflowGraph (2026-06-13, architecture-review candidate 3) ✅
+
+> Second candidate executed from the 2026-06-12 architecture work order, Route A
+> as locked: tests through the hook's EXISTING interface — ZERO production
+> change (the hook's diff is empty; only the test file is new). The layout
+> cache, stale-paint guard, camera anchoring, paintEpoch, the animated glide,
+> and mid-flight cancellation execute under tests for the first time — the
+> machinery where the last three user-caught bugs lived.
+
+- **The harness (web/src/hooks/useWorkflowGraph.test.tsx, jsdom):** renderHook
+  inside `ReactFlowProvider`; `fetchGraph` mocked KEEPING the real `ApiError`
+  (the hook's catch arm discriminates `instanceof` — a factory dropping the
+  class crashes the error path instead of testing it); `layoutGraph` mocked as
+  a CONTROLLABLE DEFERRED (`pendingLayouts` resolved/rejected on cue inside
+  `act`, each resolve choosing per-node positions) — never an instant stub, so
+  every ordering claim holds while a layout is genuinely in flight;
+  `@xyflow/react` partial-mocked to observe `setViewport` and serve a
+  test-controlled viewport (zoom-scaling assertable).
+- **All 11 handoff sequences pinned:** stale-paint guard (a focus mid-flight
+  paints nothing — `nodes` keeps identity, paintEpoch flat — and the resolve is
+  exactly ONE paint already carrying the focus); layout cache (ELK exactly
+  twice across focus/unfocus/refocus; cached applies land synchronously);
+  eviction bound (>24 states evict oldest, recent states hit — the cache keys
+  on the derived string, a fresh equal-content Set still hits); paintEpoch
+  glide semantics (bumps when the glide LANDS, not when it starts; mid-glide
+  interpolation observed at t=0.5; the skipped stale paint never bumps);
+  camera anchoring leaf/io-port/edge arms (pan = anchor delta, zoom-scaled
+  against the current viewport); NO pan on direction/density changes (those
+  transitions own their viewport via GraphView's fit); pinned-subject survival
+  (chip-navigating focus to a container keeps the selected leaf expanded);
+  workflow switch mid-layout discards the stale resolve (no paint from the old
+  workflow); layout rejection → status "error" with the message, never a stuck
+  "loading".
+- **Mutation-verified per the handoff's done-when:** reverting the port-anchor
+  fix (`owner ?? focus` → `focus` in the anchor effect) fails EXACTLY the
+  io-port anchoring test — setViewport never fires, the silent no-op the
+  2026-06-12 "zoom to nowhere" bug shipped as — and nothing else; restored
+  byte-identical (git diff empty).
+- **THE harness gotcha (cost one 335s worker kill, worth the entry on its
+  own): a partial-mock of `useReactFlow` MUST memoize its returned instance.**
+  `getViewport`/`setViewport` sit in the decoration effect's dep array; fresh
+  function identities per render re-fire the effect after its own paint
+  (setNodes → render → new fns → effect → setNodes…) — an infinite microtask
+  loop that starves the worker so thoroughly no vitest timeout can fire (the
+  fork is killed from outside). The real `useReactFlow` memoizes; the mock now
+  `useMemo`s on `[inst]`. GraphView.test's `fitView` wrapper survives
+  unmemoized only because `fitView` sits in no effect deps there — copy THIS
+  file's pattern for any future hook-level RF mock.
+- **Path levers, as the handoff prescribed:** anchoring tests force the snap
+  path by overriding matchMedia to prefers-reduced-motion (restored per test);
+  the glide test stubs rAF into a manual frame queue + pins `performance.now`,
+  driving mid-glide and landing frames explicitly. Candidate 4's extracted
+  hooks (`usePanelPair`/`useCameraNavigation`) should reuse this harness.
+- **Two pins beyond the handoff's 11 (self-review loose ends):**
+  (a) `builtEdgeIds` — the ONE returned-interface member the 11 sequences left
+  uncovered, and it exists exactly for a race: two parallel bindings dedupe to
+  one node-level line unexpanded; focusing the deduped edge id (the deep-link
+  gesture) puts it back in the SAME build the focus triggers — builtEdgeIds
+  carries it synchronously while the painted `edges` lag one layout
+  round-trip (GraphView's invalidation reading the painted set is how the
+  2026-06-11 deep-link cancellation shipped). (b) the glide-interruption
+  cleanup: a direction change mid-glide lands the EXACT final snapshot, no
+  paintEpoch bump (the glide never landed) — without it, interpolated
+  positions strand on screen for the whole next-layout window.
+
+Gates at close: web 405/405 (24 files — the 392 baseline + 13), `npm run
+build` clean (tsc strict first), zero production change. flow.ts untouched —
+no collision surface with the param-ref-data-flow-edges workstream.
+
+### GraphView slimmed: usePanelPair + useCameraNavigation extracted (2026-06-13, architecture-review candidate 4) ✅
+
+> Third candidate executed from the 2026-06-12 architecture work order — the two
+> state machines that had outgrown GraphView's wiring move to `hooks/`, exactly
+> the handoff's scoped pair (its "do NOT slice further" lock honored — the rest
+> is legitimate wiring). Zero behavior change: every moved line and comment
+> travels verbatim; GraphView 585 → 467 lines.
+
+- **`usePanelPair(sourceOpen)`** — the two pane widths, the four drag/reset
+  callbacks, the persistence effects, and the symmetric re-clamp including the
+  review-derived window-resize arm (comment moved with it). `SOURCE_WIDTH_KEY`
+  moved too; the pure clamp math stays in `utils/panelWidth.ts`. The
+  mutant-calibrated clamp test (GraphView.test, the 1000px viewport) passes
+  unchanged.
+- **`useCameraNavigation({status, paintEpoch, graph, workflow, direction,
+  initialView, ioPorts, focus, setFocus, setSelectedId, clearHover})`** — the
+  fit-on-view-change effect (fitKey/lastFit/nodesInitialized gating), the
+  one-shot `focus=` deep link (its nodesInitialized gate + the burn-the-flag
+  comment moved verbatim — the handoff's named trap), `onNavigate` with the
+  io-port→owner resolution, and the pending-follow ref consumed on
+  `paintEpoch`. Calls `useReactFlow`/`useNodesInitialized` itself (GraphView
+  no longer does). Two interface deviations from the handoff's sketch, both
+  narrowing: the hook takes `ioPorts` (the ports map — its only use), not the
+  whole ioOwners result; and a `clearHover` callback instead of the raw
+  `setHovered` setter (the hook needs "wipe transient marks", not `NO_HOVER`
+  knowledge — the appendix's "keep the setHovered(NO_HOVER) calls" intent
+  holds, the call just lives behind a GraphView-memoized callback).
+- GraphView keeps `graphRef`/`edgesRef` (the interaction callbacks still need
+  them); the hook mints its own internal graphRef — two refs over one value,
+  invisible. GraphView's ref comment updated to its remaining purpose.
+- **Focused hook tests added (the handoff's conditional taken — candidate 3's
+  harness exists):** `useCameraNavigation.test.tsx` pins what the component
+  tests can't DISCRIMINATE — a NEW-focus navigate fits on the NEXT paintEpoch,
+  never at click time (the 2026-06-12 "first click landed wrong" regression,
+  directly observable here because paintEpoch is a plain prop); same-focus =
+  immediate fit; port→owner follow; an unresolvable target arms nothing; one
+  view-fit per workflow|direction|node key. The mock applies the candidate-3
+  gotcha: a STABLE module-level `useReactFlow` instance (fitView/getNodes sit
+  in effect dep arrays — fresh identities per render would consume the pending
+  follow before the epoch bump it waits for). `usePanelPair.test.tsx` pins the
+  window-resize re-clamp (the crushed-canvas-to-0 bug — previously untestable
+  wiring: the component test sets innerWidth BEFORE mount and never fires the
+  resize listener), persistence of the re-clamped widths, and the
+  open-vs-closed reservation ceiling (620 vs 860 at a 1400 viewport).
+
+Gates at close: web 412/412 (26 files — 405 + 7 new), `npm run build` clean
+(tsc strict first), GraphView tests pass UNEDITED (the extraction is invisible
+through the component interface — the done-when). Docs synced: web/CLAUDE.md
+`hooks/` tree line, GraphView's header comment. No `flow.ts` / Python surface
+touched — still clear of the param-ref workstream.
+
+### The "cached prefix" row — cache edges get a visible landing (2026-06-13, user-caught) ✅
+
+> Follow-up to the unified-edge entry above, same day. The user opened the
+> prompt-caching view and asked "I can't see it?" — geometry confirmed the cache
+> edge's pathRect terminated at the EXACT pixel of the control trunk's NODE_IN
+> entry (no param row exists for `prompt_cache`, so `targetHandleFor` fell back
+> node-level and the line merged invisibly into the spine). Hard requirement #1
+> ("edges land on the EXACT handle") had no handle to land on.
+
+- **Fix = the loop-row pattern, frontend-only:** consumer cards render ONE
+  `cached prefix` row (`LeafData.cacheRow`, derived from incoming
+  `input_name="prompt_cache"` edges — wired by construction → the dynamic row
+  language for free via `param-row dynamic`), between params and outputs. New
+  `CACHE_ROW` target handle (handles.ts, registered in `handleType`); all four
+  row consumers moved in lockstep: WorkflowNode (render), `leafSize` (+1 row),
+  `rowAnchorsFor` (left anchor, shifts outputs down), `targetHandleFor`
+  (the prompt_cache arm lands BEFORE bindingParam — which can never match the
+  reserved name anyway: the parser lifts `prompt_cache` out of params,
+  verified). Rows hidden (beautiful) → NODE_IN fallback unchanged; multiple
+  chunks fan onto the one row via the existing lane machinery; row hover marks
+  far ends through `rowTouches` for free.
+- 4 new flow.test pins (CACHE_ROW landing in advanced, anchor position between
+  params/outputs, +1 ROW_HEIGHT height, NODE_IN in beautiful + CACHE_ROW on
+  focus-expansion); the HANDLE-TYPE INVARIANT sweeps the new handle
+  automatically. Web 416/416, tsc + build clean.
+- Browser-verified: prompt-caching — the selected cache line lands ON the row
+  (all three consumers show theirs); multi-chunk — three laned lines fan onto
+  summarize's single row; visual-invariants PASS (15/15 contract edges).
+- Docs synced: web/CLAUDE.md (EdgePanel/cache bullet grew the canvas-row
+  mechanism), ui/CLAUDE.md (reserved-name bullet), visualization-requirements.
+
+### Per-chunk cache rows + the rendered cached-prefix block (2026-06-13, user-designed) ✅
+
+> Follow-up refining the single "cached prefix" row (previous entry) into the
+> user's design: SHOW the chunks. Two surfaces, one data rule.
+
+- **Contract (small, the only way to get prose):** `Node.cached_prefix` /
+  `RFNode.cached_prefix` — the consumer's cached system prefix as authored
+  TEMPLATE text, assembled in `_add_cache_edges` (already iterating exactly
+  this data) with the runtime's own rule (`build_cache_system_blocks`:
+  `prose_before + ${var}`, declaration order, consumed chunks only). Mermaid
+  ignores it; goldens stay; one fixture regen (additive: `cached_prefix: null`
+  ×65 + two assembled values).
+- **Canvas:** `LeafData.cacheRow: boolean` → `cacheRows: string[]` (per-chunk,
+  prefix order). Row key/label = the chunk's authored ref text rebuilt from its
+  edge (`cacheChunkKey` — safe as a label because the parser enforces chunk
+  name == var; the SAME helper derives rows and lands edges, so a line can
+  never miss its row — no positional name↔edge join, which dedup/self-skip
+  could misalign). N>1 → a handle-less `cached prefix ×N` label row + nested
+  `·` chunk rows; single chunk → one flat row with the ref as value. Rows sit
+  immediately BEFORE the `prompt` param (`cacheInsertIndex`, shared by render/
+  size/anchors — request order: system → cached prefix → prompt; the user's
+  call, confirmed). `CACHE_ROW` constant → `cacheHandle(key)` prefix scheme
+  ("cache:", target type).
+- **ReadPanel:** `CachedPrefixBlock` — the assembled template rendered like a
+  prompt param (markdown SOURCE coloring), placed by the same
+  `cacheInsertIndex` before `prompt`. The user reads the panel top-to-bottom
+  as the model receives the request.
+- Tests: 2 new Python pins (assembly matches prose+vars in declaration order
+  on the real multi-chunk example; subset-only assembly), the 4 cache-row
+  flow pins rewritten + a multi-chunk landing/anchor pin, a GraphView panel
+  pin (block order model → cached prefix → prompt). Python 3120 / web 418,
+  `make check` clean. Browser-verified: multi-chunk card shows ×3 + three
+  per-chunk rows each receiving its own line; single-chunk flat row;
+  panel template block with prose + ${var}; visual-invariants PASS.

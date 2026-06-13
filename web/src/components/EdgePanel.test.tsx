@@ -40,6 +40,7 @@ function node(id: string, over: Partial<RFNode> = {}): RFNode {
     is_terminal: false,
     is_transform: false,
     output_shape: null,
+    cached_prefix: null,
     is_group_host: false,
     unexpanded: null,
     annotations: {},
@@ -137,6 +138,28 @@ describe("EdgePanel — data variant", () => {
     };
     show(g, "ex");
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("data connection");
+  });
+
+  it("a cache edge reads as cached context, never a param binding (no 'receives' section)", () => {
+    // input_name="prompt_cache" is the contract's reserved name for a ## Cache
+    // chunk dependency — the chunk's ref is FORBIDDEN in the consumer's prompt,
+    // so this edge is the dependency's only visibility. No param row exists for
+    // it: the panel must present the cached prefix, never the raw sentinel.
+    const g: RFGraph = {
+      nodes: [
+        node("n1", { ref: { node_id: "extract", ancestor_path: [], port: null }, kind: "llm" }),
+        node("n2", { ref: { node_id: "summarize", ancestor_path: [], port: null }, kind: "llm" }),
+      ],
+      edges: [edge("ec", "n1", "n2", "data_flow", { output_field: "response", input_name: "prompt_cache" })],
+      groups: [],
+    };
+    show(g, "ec");
+    expect(screen.getByText("cached context")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("response → cached prompt prefix");
+    expect(screen.getByText(/cached system prefix/)).toBeTruthy();
+    expect(screen.queryByText("receives")).toBeNull();
+    expect(screen.queryByText(/prompt_cache/)).toBeTruthy(); // the purpose line MAY name the authored field…
+    expect(screen.queryByText("data flow")).toBeNull(); // …but the kind line never shows the generic wording
   });
 
   it("parallel bindings between the same pair surface as a bundle count (the rendered line can be a dedupe survivor)", () => {

@@ -37,6 +37,9 @@ WORKFLOWS: dict[str, str] = {
     "conditional-branching": "examples/core/conditional-branching.pflow.md",
     "run-cycle": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
     "deep-research": "examples/nested/deep-research/deep-research.pflow.md",
+    # prompt-cache edges (input_name="prompt_cache") — pins them in the Python
+    # drift guard AND enrolls them in the frontend lossless real-contract sweep.
+    "prompt-caching-multi-chunk": "examples/core/prompt-caching-multi-chunk.pflow.md",
 }
 
 # Matches the `pflow ui` server's depth (graph_service default path).

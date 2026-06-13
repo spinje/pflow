@@ -114,6 +114,11 @@ class RFNode:
     # transform's; display policy is the frontend's) and for schema'd
     # claude-code/llm. None whenever nothing is provable.
     output_shape: RFOutputShape | None
+    # The node's cached system prefix as authored TEMPLATE text (the model's
+    # ``Node.cached_prefix``): per consumed ``## Cache`` chunk, declaration
+    # order, ``prose_before + ${var}`` — display-ready for "what will the
+    # prompt look like". None when the node consumes no chunks.
+    cached_prefix: str | None
     unexpanded: str | None
     annotations: dict[str, Any]
 
@@ -244,6 +249,7 @@ class _ReactFlowRenderer:
             is_group_host=self._is_group_host(node),
             is_transform=self._is_transform(node),
             output_shape=self._output_shape(node),
+            cached_prefix=node.cached_prefix,
             unexpanded=node.unexpanded,
             annotations=dict(node.annotations),
         )
@@ -280,7 +286,10 @@ class _ReactFlowRenderer:
         """Emit every edge, re-anchoring any endpoint hidden by batch truncation.
 
         Edges are **additive** — including DATA_FLOW edges with ``input_name=None``
-        (output-source / batch-items / multi-role-dedup), which attach at node level.
+        (output-source / batch-items / truncation re-anchoring), which attach at
+        node level. ``input_name="prompt_cache"`` is reserved: a ``## Cache``
+        chunk dependency (no param row exists for it — present it as the cached
+        prompt prefix, never a binding).
         Truncation removes hidden batch-item bodies, but the batch **host** stands in
         for the collapsed remainder: an edge crossing the truncation boundary (one
         kept endpoint, one hidden) re-attaches to the hidden side's host rather than
@@ -435,10 +444,11 @@ def _param_is_dynamic(value: Any) -> bool:
     """Whether an authored param value carries a runtime template ref.
 
     Runs the shared ``source_refs_in`` extractor over the value's string leaves
-    (the value itself if a string, else a dict's string values — one level,
-    mirroring build.py's ``_params_strings`` so this can never disagree with the
-    DATA_FLOW edges). Using the extractor rather than a raw ``${`` substring check
-    means literal operands like ``${5}`` correctly read as NOT dynamic.
+    (recursing dicts AND lists to any depth, mirroring build.py's
+    ``_params_strings`` so this can never disagree with the DATA_FLOW edges:
+    ``is_dynamic=True`` ⟺ a DATA_FLOW edge exists for this param's refs). Using
+    the extractor rather than a raw ``${`` substring check means literal
+    operands like ``${5}`` correctly read as NOT dynamic.
     """
     return any(source_refs_in(leaf) for leaf in _string_leaves(value))
 
@@ -447,7 +457,9 @@ def _string_leaves(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
     if isinstance(value, dict):
-        return [leaf for leaf in value.values() if isinstance(leaf, str)]
+        return [leaf for nested in value.values() for leaf in _string_leaves(nested)]
+    if isinstance(value, list):
+        return [leaf for item in value for leaf in _string_leaves(item)]
     return []
 
 

@@ -117,8 +117,29 @@ frontend MUST honor or it loses information (each traces to a Task-168 review
 item / progress-log entry — read those before rendering chips/groups/batches):
 
 - **`RFEdge.input_name=None` is COMMON, not rare** (output-`source:` edges,
-  batch-`items:` edges, multi-role dedup). → attach the data-flow line at
+  batch-`items:` edges, truncation re-anchoring). → attach the data-flow line at
   **node level**, never drop it. (H6.)
+- **`input_name="prompt_cache"` is RESERVED** (2026-06-13): a `## Cache` chunk
+  dependency — the chunk's ref is forbidden in the consumer's prompt body, so
+  this edge is the dependency's only visibility. No PARAM row exists for it:
+  present it as the cached prompt prefix (`bindingLabel` in utils/format.ts,
+  the EdgePanel "cached context" variant), never as a binding. The canvas gives
+  each chunk its own synthesized row on the consumer card (derived from the
+  edges themselves; `cacheHandle` landings — see web/CLAUDE.md). A cache edge
+  counts as a READ of the producer's field (un-quiets its output row) — intended.
+- **`RFNode.cached_prefix`** (2026-06-13): the consumer's cached system prefix
+  as authored TEMPLATE text — per consumed chunk (declaration order),
+  `prose_before + ${var}`, assembled in `build.py` with the runtime's own rule
+  (core/prompt_cache.py `build_cache_system_blocks`) so the panel can show the
+  prompt as the model receives it. Null when the node consumes no chunks.
+  Rendered as a `cached prefix` block before the `prompt` param (request order:
+  system → cached prefix → prompt).
+- **Every validator-enforced `${ref}` is one DATA_FLOW edge** (2026-06-13):
+  plain-param sibling refs, multi-param same-input reads (one edge PER ref —
+  the old pair-dedup died), full-depth dict/list refs, and cache chunks all
+  draw edges now. Advanced no longer dims shadowed structural edges (most of
+  the sequential spine is shadowed under the richer edge set — the dim erased
+  the control skeleton; user-gated via browser before/after, 2026-06-13).
 - **`RFNode.io` carries the full interface fact (2026-06-11):**
   `{data_type, required, default}`. An input that omits `required:` ships
   `required=True` — the ir_schema default every runtime reader applies (the

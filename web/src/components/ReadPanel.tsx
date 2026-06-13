@@ -3,6 +3,7 @@
 // contract, so there is no on-demand fetch). Surfaces what the canvas can't: full
 // param values, source file:line, loop/batch/io config.
 
+import { cacheInsertIndex } from "../graph/flow";
 import { fullValue, paramLanguage } from "../utils/format";
 import { ConnectionSections } from "./Chip";
 import { CodeBlock } from "./CodeBlock";
@@ -60,6 +61,23 @@ export function ParamBlock({
         {src && <span className="read-param-source">{src}</span>}
       </div>
       <CodeBlock code={fullValue(param.value)} lang={paramLanguage(kind, param.name, param.value)} highlightRef={highlightRef} />
+    </div>
+  );
+}
+
+/** The node's cached system prefix as the prompt will carry it: the `## Cache`
+ *  block's authored template (prose + ${var} per consumed chunk, prefix order),
+ *  assembled in Python with the runtime's own rule (RFNode.cached_prefix).
+ *  Rendered like a prompt param — colored markdown SOURCE, never rendered
+ *  prose — and placed before `prompt` so the panel reads in request order. */
+function CachedPrefixBlock({ text }: { text: string }): JSX.Element {
+  return (
+    <div className="read-param">
+      <div className="read-param-head">
+        <span className="read-param-name">cached prefix</span>
+        <span className="badge badge-dynamic">cached</span>
+      </div>
+      <CodeBlock code={text} lang="markdown" />
     </div>
   );
 }
@@ -169,10 +187,14 @@ export function ReadPanel({
 
       <OutcomeTable branches={branches} />
 
-      {node.params.length > 0 && (
+      {(node.params.length > 0 || node.cached_prefix != null) && (
         <section className="read-panel-params">
           <h3>params</h3>
-          {node.params.map((param) => (
+          {node.params.slice(0, cacheInsertIndex(node.params)).map((param) => (
+            <ParamBlock param={param} kind={node.kind} key={param.name} />
+          ))}
+          {node.cached_prefix != null && <CachedPrefixBlock text={node.cached_prefix} />}
+          {node.params.slice(cacheInsertIndex(node.params)).map((param) => (
             <ParamBlock param={param} kind={node.kind} key={param.name} />
           ))}
         </section>

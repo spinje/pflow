@@ -16,6 +16,14 @@ export const NODE_OUT = "__out"; // source
 // arrow lands here when the row renders ("iteration re-enters under this rule"),
 // instead of NODE_IN. One row per node, so a constant id suffices.
 export const LOOP_ROW = "loop:row";
+// Per-chunk "cached prefix" rows on a prompt_cache consumer's expanded body —
+// TARGET: each `## Cache` chunk's edge lands on its OWN row (without them the
+// lines merged invisibly into the control trunk at NODE_IN — user-caught
+// 2026-06-13). The key is the chunk's authored ref text rebuilt from the edge
+// (`cacheChunkKey` in flow.ts — the parser enforces chunk name == var, so this
+// IS the entry the author wrote in `prompt_cache:`).
+const CACHE = "cache:";
+export const cacheHandle = (chunkKey: string): string => CACHE + chunkKey;
 
 // Prefixes — kept as constants so the constructors and `handleType` can't drift.
 const PARAM = "p:"; // param row — TARGET (a node input slot, receives)
@@ -56,7 +64,13 @@ export const portTargetHandle = (ioNodeId: string): string => PORT_TARGET + ioNo
  *  honor: sourceHandle resolves to "source", targetHandle to "target". Throws on an
  *  unknown id so a new handle scheme can't slip past the invariant test untyped. */
 export function handleType(handleId: string): "source" | "target" {
-  if (handleId === NODE_IN || handleId === LOOP_ROW || handleId.startsWith(PARAM) || handleId.startsWith(PORT_TARGET)) {
+  if (
+    handleId === NODE_IN ||
+    handleId === LOOP_ROW ||
+    handleId.startsWith(CACHE) ||
+    handleId.startsWith(PARAM) ||
+    handleId.startsWith(PORT_TARGET)
+  ) {
     return "target";
   }
   if (handleId === NODE_OUT || handleId.startsWith(OUTPUT) || handleId.startsWith(BRANCH) || handleId.startsWith(PORT_SOURCE)) {

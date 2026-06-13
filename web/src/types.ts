@@ -92,6 +92,11 @@ export interface RFNode {
   // Ships for ALL code nodes (not just transforms); null on non-code nodes and
   // whenever nothing is provable.
   output_shape: RFOutputShape | null;
+  // The cached system prefix as authored TEMPLATE text: per consumed `## Cache`
+  // chunk (declaration order), prose_before + ${var} — the runtime's assembly
+  // rule, so the panel can show the prompt as the model receives it. Null when
+  // the node consumes no chunks.
+  cached_prefix: string | null;
   unexpanded: UnexpandedReason | null;
   annotations: Record<string, unknown>;
 }

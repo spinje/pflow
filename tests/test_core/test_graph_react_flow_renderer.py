@@ -238,9 +238,10 @@ def test_truncation_re_anchored_source_clears_output_path() -> None:
 
 
 def test_param_is_dynamic_uses_ref_extractor_not_str_repr() -> None:
-    # is_dynamic runs source_refs_in over string leaves — never str(value). Two traps
-    # the str(value) anti-pattern fails: a literal `${5}` reads as a ref (the `nested`
-    # case below), and a ref BELOW the one-level leaf walk would false-positive (H5).
+    # is_dynamic runs source_refs_in over string leaves — never str(value). The trap
+    # the str(value) anti-pattern fails: a literal `${5}` reads as a ref. The leaf
+    # walk recurses dicts AND lists to any depth, mirroring build.py's
+    # `_params_strings` (H5) — a deep ref IS dynamic because it now has an edge.
     graph = build_graph({
         "nodes": [
             {
@@ -249,7 +250,8 @@ def test_param_is_dynamic_uses_ref_extractor_not_str_repr() -> None:
                 "params": {
                     "binding": {"text": "${a.x}"},  # dict leaf has a ref -> dynamic
                     "schema": {"type": "string"},  # dict, no ref -> static
-                    "nested": {"schema": {"deep": "${x}"}},  # ref below leaf level: str(value) would FALSE-positive
+                    "nested": {"schema": {"deep": "${x}"}},  # deep ref -> dynamic (full-depth walk)
+                    "listed": ["echo ${a.stdout}"],  # list item ref -> dynamic (full-depth walk)
                     "literal_num": "${5}",  # literal operand -> static (str(value) would false-positive)
                     "plain": "hello",  # literal -> static
                     "ref": "${topic}",  # ref -> dynamic
@@ -260,13 +262,14 @@ def test_param_is_dynamic_uses_ref_extractor_not_str_repr() -> None:
     rf = render_react_flow(graph)
 
     flags = {param.name: param.is_dynamic for param in _rf_node(rf, "n").params}
-    # `nested` is False: the one-level leaf walk doesn't descend past the first dict
-    # level, matching build_graph's `_params_strings` so is_dynamic can never disagree
-    # with the DATA_FLOW edges. `str(value)` would wrongly flag it True.
+    # `nested`/`listed` are True: the leaf walk recurses to any depth, matching
+    # build_graph's `_params_strings` so is_dynamic can never disagree with the
+    # DATA_FLOW edges (deep refs draw node-level edges now).
     assert flags == {
         "binding": True,
         "schema": False,
-        "nested": False,
+        "nested": True,
+        "listed": True,
         "literal_num": False,
         "plain": False,
         "ref": True,

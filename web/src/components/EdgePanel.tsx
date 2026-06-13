@@ -10,7 +10,7 @@
 // IO port chip uses port-focus semantics (focus the row, keep this panel).
 
 import { bindingParam } from "../graph/flow";
-import { nodeColor } from "../utils/format";
+import { bindingLabel, nodeColor } from "../utils/format";
 import { Chip } from "./Chip";
 import { OutcomeTable, ParamBlock } from "./ReadPanel";
 import type { RFEdge, RFGraph, RFNode } from "../types";
@@ -73,10 +73,17 @@ export function EdgePanel({
   // fail-closed, so a real decision's end edge can ship condition-less).
   const isDecisionEnd = edge.kind === "end" && sourceNode?.is_decision === true;
   const isOutcome = edge.kind === "branch" || isDecisionEnd;
+  // The reserved `prompt_cache` input_name: a `## Cache` chunk dependency. The
+  // chunk's ref is FORBIDDEN in the consumer's prompt body, so this edge is the
+  // only visibility the dependency has — present it as the cached prefix, never
+  // as a param binding (no such param row exists).
+  const isCache = edge.kind === "data_flow" && edge.input_name === "prompt_cache";
 
   const kindLine =
     edge.kind === "data_flow"
-      ? "data flow"
+      ? isCache
+        ? "cached context"
+        : "data flow"
       : edge.kind === "branch"
         ? "branch · outcome"
         : edge.kind === "error"
@@ -97,7 +104,11 @@ export function EdgePanel({
   const fieldPath = edge.output_field ? [edge.output_field, ...edge.output_path].join(".") : null;
   const left = fieldPath ?? (sourceNode?.io ? sourceName : null);
   const right = edge.input_name ?? (targetNode?.io ? targetName : null);
-  const dataTitle = left && right ? `${left} → ${right}` : (left ?? right ?? "data connection");
+  const dataTitle = isCache
+    ? `${left ?? "data"} → cached prompt prefix`
+    : left && right
+      ? `${left} → ${right}`
+      : (left ?? right ?? "data connection");
   const title =
     edge.kind === "data_flow"
       ? dataTitle
@@ -178,6 +189,12 @@ export function EdgePanel({
       {edge.kind === "sequential" && edge.shadowed && (
         <p className="read-panel-purpose">This ordering is also implied by a data dependency between the two steps.</p>
       )}
+      {isCache && (
+        <p className="read-panel-purpose">
+          Feeds this node's cached system prefix — declared in the workflow's <code>## Cache</code> block, consumed via{" "}
+          <code>prompt_cache:</code>.
+        </p>
+      )}
 
       {isOutcome && (
         <dl className="facts">
@@ -200,7 +217,7 @@ export function EdgePanel({
             <div className="fact">
               <dt>interpolated</dt>
               <dd>
-                one of {refSiblings} references into <code>{edge.input_name}</code>
+                one of {refSiblings} references into <code>{edge.input_name ? bindingLabel(edge.input_name) : edge.input_name}</code>
               </dd>
             </div>
           )}
@@ -209,7 +226,12 @@ export function EdgePanel({
               <dt>bundle</dt>
               <dd>
                 one of {bundle.length} bindings between these nodes:{" "}
-                {bundle.map((b) => `${b.output_field ? [b.output_field, ...b.output_path].join(".") : "?"} → ${b.input_name ?? "?"}`).join(", ")}
+                {bundle
+                  .map(
+                    (b) =>
+                      `${b.output_field ? [b.output_field, ...b.output_path].join(".") : "?"} → ${b.input_name ? bindingLabel(b.input_name) : "?"}`,
+                  )
+                  .join(", ")}
               </dd>
             </div>
           )}

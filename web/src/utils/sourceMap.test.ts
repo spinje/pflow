@@ -35,6 +35,7 @@ function node(overrides: Partial<RFNode>): RFNode {
     is_group_host: false,
     is_transform: false,
     output_shape: null,
+    cached_prefix: null,
     unexpanded: null,
     annotations: {},
     ...overrides,

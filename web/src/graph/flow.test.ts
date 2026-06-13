@@ -19,6 +19,7 @@ import {
 } from "./flow";
 import {
   branchHandle,
+  cacheHandle,
   handleType,
   LOOP_ROW,
   NODE_IN,
@@ -51,6 +52,7 @@ function node(id: string, over: Partial<RFNode> = {}): RFNode {
     is_terminal: false,
     is_transform: false,
     output_shape: null,
+    cached_prefix: null,
     is_group_host: false,
     unexpanded: null,
     annotations: {},
@@ -655,6 +657,29 @@ describe("buildFlow — plain-param reads correct the quiet claim (no edges, no 
     expect(leaf.data.outputRows.every((r) => r.quiet)).toBe(true);
   });
 
+  it("an escaped template and a spaced operand are never reads (the grammar gate)", () => {
+    // Runtime parity (mirrors scope.py): `$${gen.result.ok}` resolves to the
+    // literal text `${gen.result.ok}`, and `${ gen.result.ok }` never resolves
+    // at all — neither may un-quiet a row.
+    const g: RFGraph = {
+      nodes: [
+        node("gen", { output_shape: shaped }),
+        node("use", {
+          params: [
+            { name: "a", value: "$${gen.result.ok}", is_dynamic: false, source: null },
+            { name: "b", value: "${ gen.result.ok }", is_dynamic: false, source: null },
+          ],
+        }),
+      ],
+      edges: [],
+      groups: [],
+    };
+    const { nodes } = buildFlow(g, DETAILED);
+    const leaf = nodes.find((n) => n.id === "gen");
+    if (leaf?.type !== "node") throw new Error("expected gen");
+    expect(leaf.data.outputRows.every((r) => r.quiet)).toBe(true);
+  });
+
   it("a ref in the NON-literal coalesce operand IS a read (positive control)", () => {
     const g: RFGraph = {
       nodes: [
@@ -786,6 +811,17 @@ describe("buildFlow — density governs edge density (beautiful = control skelet
     };
     expect(buildFlow(g, COMPACT).edges.find((e) => e.id === "df")?.label).toBe("stdout → data");
     expect(buildFlow(g, DETAILED).edges.find((e) => e.id === "df")?.label).toBeUndefined();
+  });
+
+  it("a cache edge's label presents the reserved prompt_cache name as the cached prefix", () => {
+    // A cache edge can never land row-to-row (no param row exists for it), so
+    // the beautiful label always shows — the raw sentinel must never reach it.
+    const g: RFGraph = {
+      nodes: [node("a"), node("b")],
+      edges: [edge("df", "a", "b", "data_flow", { output_field: "response", input_name: "prompt_cache" })],
+      groups: [],
+    };
+    expect(buildFlow(g, COMPACT).edges.find((e) => e.id === "df")?.label).toBe("response → cached prefix");
   });
 });
 
@@ -1613,6 +1649,89 @@ describe("loop U — row landing + label policy (2026-06-10 loop-row design)", (
   });
 });
 
+describe("the cached-prefix rows — `## Cache` chunk lines land on visible per-chunk handles", () => {
+  // Without the rows, cache edges fell back to NODE_IN and merged invisibly into
+  // the control trunk at the icon-row entry (user-caught 2026-06-13). The rows
+  // derive from incoming input_name="prompt_cache" edges (wired by construction);
+  // each row's key is the chunk's authored ref text rebuilt from its edge.
+  const cacheGraph = (consumerOver: Partial<RFNode> = {}): RFGraph => ({
+    nodes: [
+      node("ex", { kind: "llm", params: [{ name: "prompt", value: "extract", is_dynamic: false, source: null }] }),
+      node("sum", {
+        kind: "llm",
+        params: [
+          { name: "model", value: "anthropic/x", is_dynamic: false, source: null },
+          { name: "prompt", value: "summarize", is_dynamic: false, source: null },
+        ],
+        ...consumerOver,
+      }),
+    ],
+    edges: [
+      edge("seq", "ex", "sum", "sequential"),
+      edge("ec", "ex", "sum", "data_flow", { output_field: "response", input_name: "prompt_cache" }),
+    ],
+    groups: [],
+  });
+  const multiGraph = (): RFGraph => {
+    const g = cacheGraph();
+    return {
+      ...g,
+      nodes: [...g.nodes, node("kb", { kind: "shell" })],
+      edges: [
+        edge("seq", "ex", "sum", "sequential"),
+        edge("ec", "ex", "sum", "data_flow", { output_field: "response", input_name: "prompt_cache" }),
+        edge("ec2", "kb", "sum", "data_flow", { output_field: "stdout", input_name: "prompt_cache" }),
+      ],
+    };
+  };
+
+  it("advanced: the cache edge lands on ITS chunk's row, anchored LEFT immediately before the prompt param", () => {
+    const { nodes: ns, edges: es } = buildFlow(cacheGraph(), DETAILED);
+    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(cacheHandle("ex.response"));
+    const anchors = rowAnchorsFor(ns.find((n) => n.id === "sum")!);
+    const byHandle = new Map(anchors.map((a) => [a.handle, a]));
+    // rows: 0 model · 1 the cache row (BEFORE prompt — request order) · 2 prompt
+    expect(byHandle.get(paramHandle("model"))?.y).toBe(HEADER_HEIGHT + 13);
+    expect(byHandle.get(cacheHandle("ex.response"))).toEqual({
+      handle: cacheHandle("ex.response"),
+      side: "left",
+      y: HEADER_HEIGHT + 26 + 13,
+    });
+    expect(byHandle.get(paramHandle("prompt"))?.y).toBe(HEADER_HEIGHT + 2 * 26 + 13);
+  });
+
+  it("a single chunk adds one ROW_HEIGHT; multiple chunks add the ×N label row too (leafSize counts what renders)", () => {
+    const plain: RFGraph = { ...cacheGraph(), edges: [edge("seq", "ex", "sum", "sequential")] };
+    const without = buildFlow(plain, DETAILED).nodes.find((n) => n.id === "sum")!;
+    const one = buildFlow(cacheGraph(), DETAILED).nodes.find((n) => n.id === "sum")!;
+    expect((one.height ?? 0) - (without.height ?? 0)).toBe(26);
+    const two = buildFlow(multiGraph(), DETAILED).nodes.find((n) => n.id === "sum")!;
+    expect((two.height ?? 0) - (without.height ?? 0)).toBe(3 * 26); // label row + 2 chunk rows
+  });
+
+  it("multi-chunk: each edge lands on its own row, in prefix (edge) order below the label row", () => {
+    const { nodes: ns, edges: es } = buildFlow(multiGraph(), DETAILED);
+    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(cacheHandle("ex.response"));
+    expect(es.find((e) => e.id === "ec2")?.targetHandle).toBe(cacheHandle("kb.stdout"));
+    const anchors = rowAnchorsFor(ns.find((n) => n.id === "sum")!);
+    const byHandle = new Map(anchors.map((a) => [a.handle, a]));
+    // rows: 0 model · 1 "cached prefix ×2" (no handle) · 2-3 chunk rows · 4 prompt
+    expect(byHandle.get(cacheHandle("ex.response"))?.y).toBe(HEADER_HEIGHT + 2 * 26 + 13);
+    expect(byHandle.get(cacheHandle("kb.stdout"))?.y).toBe(HEADER_HEIGHT + 3 * 26 + 13);
+    expect(byHandle.get(paramHandle("prompt"))?.y).toBe(HEADER_HEIGHT + 4 * 26 + 13);
+  });
+
+  it("beautiful: rows hidden → the cache edge lands node-level (never a handle that doesn't render)", () => {
+    const { edges: es } = buildFlow(cacheGraph(), COMPACT);
+    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(NODE_IN);
+  });
+
+  it("beautiful focus-expansion: the expanded consumer's cache edge lands on its row", () => {
+    const { edges: es } = buildFlow(cacheGraph(), { ...COMPACT, expanded: new Set(["sum", "ex"]) });
+    expect(es.find((e) => e.id === "ec")?.targetHandle).toBe(cacheHandle("ex.response"));
+  });
+});
+
 describe("rowAnchorsFor — row-port geometry (the LR alignment's source of truth)", () => {
   it("leaf body rows: params (left) then outputs (right), branch rows after loop rows (LR)", () => {
     const g: RFGraph = {
@@ -2136,18 +2255,6 @@ describe("applyFocus — selecting an EDGE (edge-click selection, 2026-06-10)", 
     const sel = find(applyFocus(built.nodes, built.edges, "e_ab1"), "e_ab1");
     expect(sel.data?.selected).toBe(true);
     expect(sel.data?.focusEnd).toBeUndefined();
-  });
-
-  it("a selected shadowed edge sheds edge-shadowed (35% opacity would fight bright+halo) — and gets it back on clear", () => {
-    const g: RFGraph = {
-      nodes: [node("a"), node("b")],
-      edges: [edge("e_sh", "a", "b", "sequential", { shadowed: true })],
-      groups: [],
-    };
-    const built = buildFlow(g, DETAILED);
-    expect(find({ edges: built.edges }, "e_sh").className).toContain("edge-shadowed");
-    expect(find(applyFocus(built.nodes, built.edges, "e_sh"), "e_sh").className).not.toContain("edge-shadowed");
-    expect(find(applyFocus(built.nodes, built.edges, null), "e_sh").className).toContain("edge-shadowed");
   });
 
   it("beautiful: a default-hidden data edge stays revealed under its OWN focus; siblings stay hidden", () => {
