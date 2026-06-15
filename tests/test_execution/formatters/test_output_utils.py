@@ -5,11 +5,15 @@ both CLI text and JSON/MCP paths. A regression here silently changes
 what users and agents see — no error, just different data.
 """
 
+import pytest
+
 from pflow.execution.formatters.output_utils import (
+    OutputMode,
     _find_in_namespaces,
     _is_valid_output_value,
     find_auto_output,
     find_only_output,
+    select_output_mode,
 )
 
 
@@ -451,3 +455,46 @@ class TestAutoDetectionWarning:
         assert "extract" in err
         # Internal keys filtered.
         assert "__execution__" not in err
+
+
+# Fixtures for the precedence table below (module-level so they are not
+# mutable class attributes — RUF012).
+_DECLARED_IR = {"outputs": {"summary": "${node.summary}"}}
+_ONLY_SHARED = {"__execution__": {"only_node": "fetch"}}
+
+
+class TestSelectOutputMode:
+    """Precedence table for the single output-selection authority.
+
+    Both the CLI text path and the JSON/MCP path dispatch on
+    ``select_output_mode``. This table is the one place the precedence is
+    asserted — before the classifier existed, the two paths encoded the same
+    rule with *different* branch orderings (text checked --only before
+    declared; JSON checked declared-with-a-not-only_node-guard first), so the
+    equivalence was never tested. Mirrors ``test_plan_classify.py``.
+    """
+
+    @pytest.mark.parametrize(
+        ("output_key", "workflow_ir", "shared", "expected"),
+        [
+            # -o wins everywhere — even under --only, even with declared outputs.
+            ("result", None, {}, OutputMode.EXPLICIT_KEY),
+            ("result", _DECLARED_IR, _ONLY_SHARED, OutputMode.EXPLICIT_KEY),
+            # --only is decided BEFORE declared (the divergence the old two
+            # encodings papered over with a `not only_node` guard).
+            (None, _DECLARED_IR, _ONLY_SHARED, OutputMode.ONLY),
+            (None, None, _ONLY_SHARED, OutputMode.ONLY),
+            # Declared outputs for full runs without -o / --only.
+            (None, _DECLARED_IR, {}, OutputMode.DECLARED),
+            # Auto-detect is the floor.
+            (None, None, {}, OutputMode.AUTO),
+            (None, {}, {}, OutputMode.AUTO),
+            (None, {"outputs": {}}, {}, OutputMode.AUTO),  # empty outputs ≠ declared
+        ],
+    )
+    def test_precedence(self, output_key, workflow_ir, shared, expected):
+        assert select_output_mode(output_key, workflow_ir, shared) is expected
+
+    def test_empty_string_output_key_is_not_explicit(self):
+        """A falsy output_key must not trigger EXPLICIT_KEY (matches `if output_key`)."""
+        assert select_output_mode("", None, {}) is OutputMode.AUTO

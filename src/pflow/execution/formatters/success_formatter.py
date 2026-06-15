@@ -193,47 +193,51 @@ def _collect_outputs(
     """
 
     from pflow.core.json_utils import parse_json_or_original
+    from pflow.execution.formatters.output_utils import (
+        OutputMode,
+        find_auto_output,
+        find_only_output,
+        select_output_mode,
+    )
 
     result = {}
 
-    if output_key:
+    # Output precedence lives in the shared classifier so this JSON/MCP path
+    # and the CLI text path can never disagree on *which* branch applies. They
+    # render the decision differently — text streams one value, this path
+    # collects a dict (all declared outputs) — but the precedence is shared.
+    mode = select_output_mode(output_key, workflow_ir, shared_storage)
+
+    if mode is OutputMode.EXPLICIT_KEY:
         # Specific key requested. Supports dotted paths (e.g.
         # ``batch.success_count``, ``items[0].title``) via ``TemplateResolver`` —
         # the same primitive used by CLI text mode and ``${...}`` templates
         # inside workflows. ``variable_exists`` distinguishes "path missing"
         # from "path resolved to None" so a legitimately-None value is
         # preserved in the JSON output.
+        assert output_key is not None, "EXPLICIT_KEY ⇒ output_key truthy"  # type narrowing for mypy  # noqa: S101
         if TemplateResolver.variable_exists(output_key, shared_storage):
             resolved: Any = TemplateResolver.resolve_value(output_key, shared_storage)
             result[output_key] = compact_batch_output_value(parse_json_or_original(resolved))
 
-    elif (
-        workflow_ir
-        and "outputs" in workflow_ir
-        and workflow_ir["outputs"]
-        and not shared_storage.get("__execution__", {}).get("only_node")
-    ):
-        # Collect ALL declared outputs. --only is handled in the next branch
-        # because its stdout contract is target-scoped, not full-run scoped.
-        declared = workflow_ir["outputs"]
-
-        for output_name in declared:
-            if output_name in shared_storage:
-                result[output_name] = compact_batch_output_value(parse_json_or_original(shared_storage[output_name]))
-
-    elif only_node := shared_storage.get("__execution__", {}).get("only_node"):
+    elif mode is OutputMode.ONLY:
         # --only is target-scoped: declared full-run outputs and unrelated
         # root priority keys must not shadow the requested node/sub-workflow.
-        from pflow.execution.formatters.output_utils import find_only_output
-
+        # (Decided before DECLARED by the classifier — no guard needed here.)
+        only_node = shared_storage.get("__execution__", {}).get("only_node")
         key_found, value = find_only_output(shared_storage, only_node if isinstance(only_node, str) else None)
         if key_found:
             result[key_found] = compact_batch_output_value(parse_json_or_original(value))
 
-    else:
-        # Auto-detect output for full runs without declared outputs.
-        from pflow.execution.formatters.output_utils import find_auto_output
+    elif mode is OutputMode.DECLARED:
+        # Collect ALL declared outputs (full-run JSON contract; text mode
+        # streams just one). --only is already handled above.
+        for output_name in workflow_ir["outputs"]:
+            if output_name in shared_storage:
+                result[output_name] = compact_batch_output_value(parse_json_or_original(shared_storage[output_name]))
 
+    else:  # OutputMode.AUTO
+        # Auto-detect output for full runs without declared outputs.
         key_found, value = find_auto_output(shared_storage)
         if key_found:
             result[key_found] = compact_batch_output_value(parse_json_or_original(value))

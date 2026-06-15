@@ -18,7 +18,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 | `registry_search_formatter` | Node search results | str |
 | `history_formatter` | Execution history (compact/detailed) | str or None |
 | `field_output_formatter` | Field retrieval results (read-fields) | str or dict |
-| `output_utils` | Full-run auto-detection and target-scoped `--only` output selection | tuple |
+| `output_utils` | Output-mode precedence (`select_output_mode`/`OutputMode` — single authority for CLI text + JSON/MCP), full-run auto-detection, target-scoped `--only` selection | enum/tuple |
 | `batch_errors` | Compact batch failure rendering (failure shape sanitization) | str/list |
 | `registry_error_helpers` | Shared error helpers for registry-related formatters | str |
 | `plan_formatter` | Dry-run plan text rendering | str |

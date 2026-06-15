@@ -116,11 +116,12 @@ Routing is TTY-agnostic: data always goes to stdout, diagnostics always go to st
 
 ### Declared vs `--only` Output Contract
 
-Precedence is explicit and load-bearing:
+Precedence is explicit and load-bearing, and lives in ONE place: `select_output_mode(output_key, workflow_ir, shared) -> OutputMode` in `execution/formatters/output_utils.py`. Both the CLI text path (`_handle_text_output`) and the JSON/MCP path (`success_formatter._collect_outputs`) dispatch on the returned `OutputMode` — they render the chosen branch differently but never re-encode the precedence (which is how they previously drifted). Mirrors `plan.py`'s `Transition` classify-then-dispatch idiom; pinned by `TestSelectOutputMode` in `tests/test_execution/formatters/test_output_utils.py`.
 
-1. `-o/--output-key` wins in text and JSON.
-2. Full runs without `-o` use workflow-declared outputs first. Text mode streams one output (`stdout: true`, single output, or first-with-warning); JSON emits all declared outputs.
-3. `--only` runs without `-o` skip workflow-declared outputs and use `find_only_output(shared, only_node)`. Flat targets unwrap common result keys from `shared[target]`. This prevents full-run outputs or unrelated root `result` keys from shadowing the node the user explicitly targeted. (Dotted `--only parent.child` is rejected at the engine layer — issue #443 snapshot semantics; nested targeting is a deferred feature. The dotted branches of `find_only_output` and the compact-summary path are dormant display logic the deferred feature would reuse.)
+1. `EXPLICIT_KEY` — `-o/--output-key` wins in text and JSON, even under `--only`.
+2. `ONLY` — `--only` runs without `-o` skip workflow-declared outputs and use `find_only_output(shared, only_node)`. Flat targets unwrap common result keys from `shared[target]`. This prevents full-run outputs or unrelated root `result` keys from shadowing the node the user explicitly targeted. (Dotted `--only parent.child` is rejected at the engine layer — issue #443 snapshot semantics; nested targeting is a deferred feature. The dotted branches of `find_only_output` and the compact-summary path are dormant display logic the deferred feature would reuse.) Decided *before* `DECLARED`, so no `not only_node` guard is needed in either renderer.
+3. `DECLARED` — full runs without `-o`/`--only` use workflow-declared outputs. Text mode streams one output (`stdout: true`, single output, or first-with-warning); JSON emits all declared outputs.
+4. `AUTO` — the floor: auto-detect via `find_auto_output`.
 
 ### Output Auto-Detection (`find_auto_output`)
 
