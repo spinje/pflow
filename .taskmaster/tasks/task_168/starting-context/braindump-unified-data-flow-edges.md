@@ -1,7 +1,7 @@
 # Braindump: Unified Data-Flow Edges + Prompt-Cache Edges (handoff to implementer)
 
 > For the agent implementing
-> `.taskmaster/tasks/task_168/implementation/unified-data-flow-edges-plan.md`.
+> `.taskmaster/tasks/task_168/implementation/sub-plans/unified-data-flow-edges-plan.md`.
 > The plan is APPROVED, review-hardened (one structural plan-review pass + one
 > feature-interactions pass, findings folded in), and designed to be executable in
 > isolation. This document carries what the plan deliberately does NOT: the journey,
@@ -173,9 +173,9 @@ function names, which the plan always gives.
 
 ## Relevant Files & References
 
-- THE PLAN: `.taskmaster/tasks/task_168/implementation/unified-data-flow-edges-plan.md`
+- THE PLAN: `.taskmaster/tasks/task_168/implementation/sub-plans/unified-data-flow-edges-plan.md`
 - Origin proposal (problem evidence, Option A/B framing):
-  `scratchpads/param-ref-data-flow-edges/proposal.md` (+ the preserved measurement scripts beside it)
+  `.taskmaster/tasks/task_168/implementation/sub-plans/proposal.md` (the measurement scripts that informed it remain in `scratchpads/param-ref-data-flow-edges/`)
 - The code you'll live in: `src/pflow/core/workflow/graph/build.py` (emitters),
   `graph/scope.py`, `graph/renderers/react_flow.py` (`_string_leaves`, `_resolve_edges`),
   `graph/renderers/mermaid.py` (`_render_data_flow_edges`, `_render_data_flow_batch_targets`,

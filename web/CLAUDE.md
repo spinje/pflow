@@ -698,10 +698,11 @@ Tests sit beside their subject.
   (only batch `${x.results}` reads attach host-level), so `dataNeighbors`
   widens the subject to host + direct wrappers' ports and lists EXTERNAL far
   ends only — an input's inner consumer / an output's inner producer is the
-  body's wiring, never the unit's neighborhood. Derived from contract edges ONLY: plain-param
-  sibling refs form no edges today
-  (scratchpads/param-ref-data-flow-edges/proposal.md) — both directions
-  complete for free when that model fix lands.
+  body's wiring, never the unit's neighborhood. Derived from contract edges ONLY —
+  COMPLETE since the 2026-06-13 unified-edge model fix (every validator-enforced
+  `${ref}`, incl. plain-param sibling refs, now draws a DATA_FLOW edge; the original
+  design is recorded in
+  .taskmaster/tasks/task_168/implementation/sub-plans/proposal.md).
 - **HOVER is one concept: mark a SET of canvas subjects — a PURE highlight**
   (no focus change, no expansion, NO camera move; user decision 2026-06-11).
   Two producers: a panel CHIP marks its one resolved node

@@ -40,8 +40,8 @@
   `npm run build` in `web/` after frontend changes, and **restart the server after any
   Python change** (it serves old Python otherwise — documented gotcha).
 - Useful background: `.taskmaster/tasks/task_168/implementation/progress-log.md` (the
-  journey), `implementation/transform-l2-plan.md` and `implementation/batch-chip-rail-plan.md`
-  (workstream B's plans), `implementation/edge-selection-plan.md` (workstream A's).
+  journey), `implementation/sub-plans/transform-l2-plan.md` and `implementation/sub-plans/batch-chip-rail-plan.md`
+  (workstream B's plans), `implementation/sub-plans/edge-selection-plan.md` (workstream A's).
 
 ---
 

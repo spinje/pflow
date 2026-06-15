@@ -10,10 +10,6 @@
 > (~90k tokens, mostly history). For CURRENT behavior the CLAUDE.mds + `visualization-requirements.md`
 > are canonical; this log is the why/journey, and reversed decisions carry *(superseded …)* markers —
 > check for one before acting on any rule you find here.
->
-> **Meta-state (2026-06-07):** design + plan + a 4-lens plan review are complete; the plan is approved.
-> **Implementation is being carried out by a separate agent.** This log *seeds* the journey with the
-> pre-implementation design story; the implementing agent appends the live build narrative below the line.
 
 ## The design journey (2026-06-06 → 06-07)
 
@@ -111,9 +107,6 @@ design: large prompt/code values are **already inline** in the IR and there is *
 
 ## Current state & open threads (2026-06-07)
 
-- **Implementation:** in progress by a separate agent. Live build notes go below the line.
-- **Open — H13 spec follow-up:** `task-168.md` still reads "large values lazy-fetched"; it must be
-  updated to the decided **inline-all** approach so spec and plan agree. *(Not yet done.)*
 - **Parallel work — Task 133:** cleared to proceed alongside — disjoint file sets (168 =
   `graph/` + `cli/` + `ui/` + `web/`; 133 = `runtime/trace` + `cache` + `instrumentation`). Two shared
   touch-points to coordinate: `graph/CLAUDE.md` (both may edit, different sections) and the **read-only
@@ -123,12 +116,6 @@ design: large prompt/code values are **already inline** in the IR and there is *
 ---
 
 ## Implementation log
-
-<!-- Implementing agent: append dated entries below as phases land. Capture DEVIATIONS from the plan,
-     surprises, bugs, and decisions — not a restatement of the plan's steps. -->
-
-_(No implementation entries yet — seeded 2026-06-07. Phase order per the plan: Node.params →
-render_react_flow → pflow ui server + [ui] extra → web/ frontend → docs/purity/E2E.)_
 
 ### Phase 1 — `Node.params` model extension (2026-06-07) ✅
 
@@ -150,7 +137,6 @@ deferred to Phase 2 (the renderer doesn't exist yet). Phase 1 covers the guard a
 **Verified:** insertion mid-dataclass is positional-safe (audited all `Node(...)` sites in src+tests —
 none construct past `kind` positionally; `mermaid.py` only reads `Node`). Mermaid goldens **byte-identical**
 (`test_mermaid_golden.py` + `test_graph_mermaid_renderer.py` green — params are Mermaid-invisible).
-`test_graph_build.py` 42 passed; ruff + mypy clean on both changed files.
 
 ### Phase 2 — `render_react_flow` translator + typed contract (2026-06-07) ✅
 
@@ -158,8 +144,7 @@ New `renderers/react_flow.py` (`RFRef/RFParam/RFNode/RFEdge/RFGroup/RFGraph` fro
 `render_react_flow`), registered in both `__init__.py`s. Consumes only GraphModel + its derived views;
 loop/batch/io/source emitted as plain dicts via `asdict()` on the frozen model sub-dataclasses (matches the
 contract's `dict | None` typing, DRY). `shadowed` emits the model's **general** `graph.shadowed(edge)` fact,
-never Mermaid's narrower `_edge_shadowed_for_render`. 17 new tests + mypy/ruff clean; Mermaid goldens still
-byte-identical (77 graph tests green).
+never Mermaid's narrower `_edge_shadowed_for_render`. Mermaid goldens still byte-identical.
 
 **Deviation 1 — `is_dynamic` mirrors `_params_strings` EXACTLY (str + dict-of-str leaves; NO list descent),
 not the plan prose's "dict/list" (H5).** The load-bearing invariant is "can never disagree with the
@@ -215,8 +200,7 @@ expanded-body rule keeps it a leaf with a badge. Now locked.
 - *Deeply-nested (>1 level) param refs read `is_dynamic=False`* — but this AGREES with the edge builder
   (`_params_strings` is also one-level), so the invariant holds; the raw value still shows the `${...}` text.
 
-**Final state:** full `tests/test_core/` green (**3068 passed**); Mermaid goldens byte-identical; mypy + ruff
-clean; renderer import-purity verified (model/scope only). Phases 1–2 are complete and I'm confident in them.
+**Final state:** Mermaid goldens byte-identical; renderer import-purity verified (model/scope only). Phases 1–2 are complete and I'm confident in them.
 
 ### 3-lens AI review + fixes (2026-06-07) ✅
 
@@ -252,15 +236,13 @@ smell). Three real findings, all fixed:
 biconditional matrix test (the nested-dict fixture already pins the trap); merging the two `unexpanded` tests
 (both cover distinct code paths — the dynamic-batch one is the sole pin for Deviation 2).
 
-**Post-review state:** full `tests/test_core/` green (**3071 passed**, +3); Mermaid goldens byte-identical;
-full-tree mypy clean (231 files); ruff clean. Contract is now reviewed + hardened — ready to freeze for Phase 3.
+**Post-review state:** Mermaid goldens byte-identical. Contract is now reviewed + hardened — ready to freeze for Phase 3.
 
 ### Phase 3 — `pflow ui` command + Starlette server + `[ui]` extra (2026-06-08) ✅
 
 New files: `execution/graph_service.py` (the H11 helper), `ui/__init__.py`, `ui/server.py`,
 `cli/commands/ui.py`, `tests/test_cli/test_ui.py` (12 tests). Edited: `cli/main.py` (register `ui_cmd`),
-`pyproject.toml` (`[ui]` extra + dev deps), `.gitignore` (`src/pflow/ui/static/`). Full suite **7794
-passed, 1 skipped**; `make check` clean (pre-commit/mypy/deptry); Mermaid goldens untouched. Real Task 163
+`pyproject.toml` (`[ui]` extra + dev deps), `.gitignore` (`src/pflow/ui/static/`). Mermaid goldens untouched. Real Task 163
 harness renders through `/api/graph`: 82 nodes / 153 edges / 14 groups / 131 KB (matches Phase 2 numbers).
 
 **The load-bearing surprise — starlette + uvicorn are ALREADY base deps (transitive via `mcp[cli]`).**
@@ -315,8 +297,7 @@ server/CLI/extra/packaging slice only, per the plan's phasing.
 ### Phase 3 adversarial verification + 3-lens AI review (2026-06-08) ✅
 
 Ran 3 read-only review agents (concurrency / silent-failures / simplicity, scoped to the **unstaged**
-Phase-3 files only) in parallel with hands-on break attempts. Two real fixes landed; final suite **7796
-passed, 1 skipped**, `make check` clean.
+Phase-3 files only) in parallel with hands-on break attempts. Two real fixes landed.
 
 **THE last-20% find — cold-registry concurrency race (fixed at server level).** My green suite + an earlier
 *warm* concurrency stress (60 concurrent reqs, all 200, deterministic) both MISSED it because they warmed the
@@ -393,7 +374,7 @@ localhost single-user tool, a startup-warm once the registry is atomically safe 
 pin the property without testing implementation: a *failed* write leaves the previous registry intact and
 leaves no `.tmp` debris (the old truncate-and-write destroys the file mid-write). Mutation check confirmed:
 reverting `_write_atomic` to the old `open(...,"w")` makes the test fail (original not preserved → file
-truncated to `{"nodes": {"bad":`). Full suite **7801 passed**; `make check` clean; 119 registry tests green.
+truncated to `{"nodes": {"bad":`).
 
 **Net:** the bug is fixed properly for ALL registry consumers (not just `pflow ui`), the server is *simpler*
 than before the bug was found, and the fix is locked by a load-bearing test.
@@ -429,7 +410,7 @@ Reliable because uvicorn binds the listening socket only *after* lifespan startu
 completes — so a successful connect means fully-ready-to-serve. Falls back to opening after a 15s timeout so a
 stuck probe never silently skips the browser. 3 deterministic tests (helper waits-then-opens against a real
 late-binding socket; fallback-opens when nothing listens; command wires the readiness thread with the right
-host/port/url — guards against tested-but-unwired). Full suite 7799 passed; `make check` clean.
+host/port/url — guards against tested-but-unwired).
 
 ### Phase 4 — `web/` frontend (Vite + React + React Flow + ELK) (2026-06-08) ✅
 
@@ -439,7 +420,7 @@ Modules mirror the plan: `types.ts` (hand-mirrored contract) → `api.ts` (the s
 (Detailed/Compact/Group/End components) → `CatalogView`/`GraphView`/`ReadPanel`/`Toolbar`/`App`. All advertised
 interactions implemented: collapse/expand (re-layout), focus+context (no re-layout), density toggle, LR/TD toggle,
 click-to-read. `npm run build` → 1.79 MB bundle (ELK dominates, as the plan's Risks§ predicted); served + harness
-renders (82 nodes) through the real Phase-3 server. tsc strict clean; 17 frontend tests (15 flow/format + 2 wiring).
+renders (82 nodes) through the real Phase-3 server.
 
 **THE load-bearing find — the plan's packaging claim was WRONG; the `[ui]` wheel shipped an EMPTY bundle.** The plan
 (and H1) asserted "No wheel-inclusion change needed: the bundle ships via `packages=["src/pflow"]`". Built a wheel and
@@ -488,8 +469,7 @@ the CLAUDE.md updates, and the full `make check`/`make test` final gate. Everyth
 
 Ran 4 review agents in parallel (simplicity / silent-failures / feature-interactions / test-fidelity) scoped to the
 unstaged Phase-4 files, with hands-on verification alongside. Simplicity returned a near-clean bill (one dedup). The
-other three surfaced real, fixable gaps — all addressed. Final: web **24 tests** (4 files) + Python **17 ui tests**
-green; tsc strict + production build clean; wheel still bundles `index.html`+`assets/`.
+other three surfaced real, fixable gaps — all addressed. The wheel still bundles `index.html`+`assets/`.
 
 **Silent-failures (the consequential ones — "never crash / never a silent blank canvas"):**
 - *C1 — unhandled `layoutGraph()` rejection → permanent "Laying out…".* The ELK effect had no `.catch`; an ELK throw
@@ -533,7 +513,7 @@ most-imported module).
 
 ### Visual iteration: loop arcs + density-governed edges (2026-06-08, user-driven)
 
-Two design changes after a user review of the running UI. Both are **pure frontend visual policy — zero contract change.** web **30 tests** (+6); tsc + build clean.
+Two design changes after a user review of the running UI. Both are **pure frontend visual policy — zero contract change.**
 
 **Loops were only a text badge — now a synthesized loop-back arc.** A loop is a `LoopSpec` on a node, not an edge, so `flow.ts` synthesizes a self-loop edge per looped node, anchored to the node — or to its **group** when it's a looped sub-workflow host (the arc wraps the container). A new `LoopEdge` custom edge draws a smooth amber arc (bulge perpendicular to the source→target chord, so it reads in both LR and TD) labeled `↻ while/until <condition> ≤ cap`. Self-loops are filtered out of ELK (`layout.ts`) — ELK never routes them; LoopEdge owns the path. The redundant loop *badge* was removed (the arc + read-panel carry it). Skips a loop whose node is hidden inside a *collapsed ancestor* (only draws on the box that actually loops). Chosen over a loop-frame/stacked-deck after putting the options to the user (mockups) — arc won as the most universally legible.
 
@@ -541,7 +521,7 @@ Two design changes after a user review of the running UI. Both are **pure fronte
 
 ### Visual iteration 2: readability batch — spacing, color, forks, IO pills (2026-06-08, user-driven)
 
-After the user reviewed the running UI on the harness (everything cramped on one line, blending together, forks unclear). Diagnosis: the "line" is honest (a linear pipeline IS a line) — the real bugs were **tight spacing + monochrome nodes + IO-card bloat**. User chose (via mockups) the readability batch, keep LR, defer gradient edges. web **34 tests** (+4); tsc + build clean. All visual policy — **zero contract change.**
+After the user reviewed the running UI on the harness (everything cramped on one line, blending together, forks unclear). Diagnosis: the "line" is honest (a linear pipeline IS a line) — the real bugs were **tight spacing + monochrome nodes + IO-card bloat**. User chose (via mockups) the readability batch, keep LR, defer gradient edges. All visual policy — **zero contract change.**
 
 - **Spacing doubled** (`layout.ts`): `nodeNodeBetweenLayers` 64→130, `nodeNode` 36→64, + `NETWORK_SIMPLEX` placement. A cramped pipeline reads as a smear; this gives it air.
 - **Color nodes by type** (`utils/format.kindColor` + a `--kind` CSS var on each node): the node's identity color (shell=emerald, http=sky, llm/claude=violet, code=amber, …) on the left border + glyph. **Control edges take their source node's type color** (inline `style.stroke` + matching arrowhead) — the stepping stone to the deferred source→target gradient. error/end/data/loop keep semantic colors. This is what kills "blends together."
@@ -553,7 +533,7 @@ Pinned by tests: branch edges use `branchHandle(label)` and the node carries `br
 
 ### Visual iteration 4: IO ports → one consolidated "table" node (2026-06-08, user-driven, planned)
 
-User insight: the clutter wasn't *that* inputs are shown, it's that **each input was its own node**. Fix (the React Flow table-node pattern): `input_wrapper`/`output_wrapper` → ONE **Inputs**/**Outputs** node with a **row + handle per port**, shown in **both** densities; row-level focus preserves "click an input → see its connections." Planned first (the user approved the plan), then built. web **37 tests**; tsc + build clean. Pure frontend — zero contract change. *(The ports table itself was later replaced wholesale by IO-rows-on-the-workflow-node, 2026-06-10 — see that entry; the row-level-focus and dual-handle ideas survive there.)*
+User insight: the clutter wasn't *that* inputs are shown, it's that **each input was its own node**. Fix (the React Flow table-node pattern): `input_wrapper`/`output_wrapper` → ONE **Inputs**/**Outputs** node with a **row + handle per port**, shown in **both** densities; row-level focus preserves "click an input → see its connections." Planned first (the user approved the plan), then built. Pure frontend — zero contract change. *(The ports table itself was later replaced wholesale by IO-rows-on-the-workflow-node, 2026-06-10 — see that entry; the row-level-focus and dual-handle ideas survive there.)*
 
 **What survives of the build** *(the deleted table's mechanics trimmed 2026-06-11 — they described
 dead code)*: **row-level focus was born here** — every edge carries `data.from`/`data.to` (its
@@ -566,7 +546,7 @@ callback-free. Both mechanisms are live today (PortRows / applyFocus).
 
 ### Visual iteration 3: IO-in-beautiful + layout philosophy resolved (2026-06-08, user-driven)
 
-Reviewing the running UI, the user hit two layout problems, both now resolved. web **35 tests**; tsc + build clean.
+Reviewing the running UI, the user hit two layout problems, both now resolved.
 
 - **IO ports float in beautiful + sub-workflows look empty.** Root cause: IO nodes connect ONLY via data-flow, which beautiful hid AND `layout.ts` excluded from ELK → disconnected islands ELK parked off to the side. Fix (two parts): (1) **hide IO ports + their wrapper groups in beautiful** (shown in advanced, where they read fine — the user's call; IO-touching edges are dropped silently, before `renderAnchor`, so it's not mistaken for a broken-anchor warn); (2) **feed data-flow edges to ELK for layout even when they render hidden** — layout reflects ALL structure so a data-only node never floats; density decides only what's *drawn*. Pinned by a test (advanced shows the IO pill + wrapper; beautiful hides port + wrapper + its edge, body still renders).
 
@@ -586,13 +566,13 @@ User clicked `fetch-data` in beautiful and asked where `stdout` went. Cause: out
 
 ### Finalize verification + a real test-quality pass (2026-06-08)
 
-**Ran the full gates** (hadn't since Phase 3): `make test` **7802 passed / 1 skipped**; `make check` clean (lock, pre-commit, mypy 235 files, deptry). *Gotcha surfaced:* once `web/` is staged, pre-commit's `pretty-format-json` reformats `web/` JSON (it expanded `tsconfig.json`'s inline arrays); it auto-fixes on first run, then converges. `package.json`/`package-lock.json` were already compliant.
+**Ran the full gates** (hadn't since Phase 3) — green. *Gotcha surfaced:* once `web/` is staged, pre-commit's `pretty-format-json` reformats `web/` JSON (it expanded `tsconfig.json`'s inline arrays); it auto-fixes on first run, then converges. `package.json`/`package-lock.json` were already compliant.
 
 **Test-quality pass (the bar is "passing the *right* thing", not "passing").** A probe revealed the load-bearing fact: **React Flow renders ZERO edge DOM under jsdom** and logs no handle error — so the existing GraphView "no edge/handle errors" assertion was **theater** (passed because no edges exist, not because they're correct). Acted:
 - **Removed** that theater assertion (kept the mount test's real parts: pipeline mounts, nodes + `${ref}` chip render) and **removed** a tautological "edges take the source color" change-detector.
 - **Added the HANDLE-TYPE INVARIANT** — the recurring bug was always a handle-*type* mismatch (a `sourceHandle` that's secretly target-type → React Flow silently drops the edge; it bit us twice). Made `handleType` authoritative in `handles.ts` (each id scheme → "source"/"target", throws on unknown); a pure `flow.test.ts` test asserts every edge's `sourceHandle` is source-type and `targetHandle` is target-type across a graph exercising all schemes (ports/branch/param/output/node-level). **Mutation-verified:** reverting the port-binding fix makes it fail. This is the only reliable catch for the silent-drop class — jsdom can't, so edge integrity is a pure test, never a render test.
 
-**Honest residual (stated, not hidden):** built blind (no canvas) — a *component* rendering the wrong handle type, or visual/layout ugliness, still rests on the user's eyes; the *build-side* logic where the real bugs lived is now locked. Known-deferred: the **smart edge-router** (skip/loop edges overlap nodes in dense graphs — biggest quality gap) and **gradient edges**. Final: web **38 tests**, tsc strict + build clean; Python **7802** + `make check` clean.
+**Honest residual (stated, not hidden):** built blind (no canvas) — a *component* rendering the wrong handle type, or visual/layout ugliness, still rests on the user's eyes; the *build-side* logic where the real bugs lived is now locked. Known-deferred: the **smart edge-router** (skip/loop edges overlap nodes in dense graphs — biggest quality gap) and **gradient edges**.
 
 ### Phase 5 — docs + model-purity guard + final gates (2026-06-08) ✅
 
@@ -606,7 +586,7 @@ User clicked `fetch-data` in beautiful and asked where `stdout` went. Cause: out
 - **H12 word-boundary precision:** alphanumeric tokens match on `\b…\b` (case-insensitive) so `position` flags but `decomposition`/`composition` don't; `:::` (punctuation, no word boundary) matches as a substring. Mutation-checked the helpers directly (standalone `position`/`ClassDef`/`elk`/`:::` flag with correct line numbers; `decomposition`/`composition` don't; a `mermaid` import and a non-allowed graph import are both caught).
 - **Deviation from plan-prose, justified:** scanned **model.py + build.py only** (the two files the plan names + the two where render syntax could plausibly creep — `scope.py` is already a pure regex extractor, out of the named set). Scoped the import-purity check to **react_flow.py only** (not a symmetric mermaid check) — the plan keeps `mermaid.py` untouched, and `mermaid.py` legitimately imports `scope.refs_in` too, so a symmetric assertion would add nothing.
 
-**Gates (the Phase-5 deliverable):** `make check` clean (ruff, ruff-format, mypy **235 files**, deptry, pre-commit); `make test` **7804 passed / 1 skipped** (+2 purity tests). No production code touched, so Mermaid goldens are inherently byte-identical and the server/contract runtime is unchanged from committed Phase 4 — re-verification of runtime behavior would be redundant.
+**Gates (the Phase-5 deliverable):** No production code touched, so Mermaid goldens are inherently byte-identical and the server/contract runtime is unchanged from committed Phase 4 — re-verification of runtime behavior would be redundant.
 
 **Not re-run (stated, not skipped):** the browser E2E (plan steps 3–5: `pflow ui` renders the harness + six patterns) and `make ui-build` were verified by the Phase-4 agent (the 131 KB harness render, the empty-wheel `artifacts` fix). Phase 5 changed zero runtime/frontend code, so those outcomes can't have regressed; re-driving a browser here adds no signal — the one genuinely un-re-verified item is the *visual* "no information loss" bar, which rests on the user's eyes (the build-side contract logic is locked by tests).
 
@@ -629,7 +609,7 @@ The verification pass surfaced one genuinely shallow assertion (the bar is *pass
 
 Fix (not new coverage — a missing assertion on an existing test): added `_assert_no_dropped_edges(graph, rf)` — match each model node to its RF node by **structural ref**, then assert every model edge whose both endpoints survive is present, across ALL edge kinds; truncation-hidden endpoints are skipped (their re-anchoring stays pinned by the synthetic W1 test). Renamed the test to `…_without_information_loss`. This is exactly the model→RF check my corpus sweep did manually, made permanent on the 6 representative shapes.
 
-**Mutation-verified (the only thing that makes it worth keeping):** injected an edge-drop into the renderer's `_resolve_edges` (skip `branch` edges) → the test **fails on both `conditional-branching` and the harness** with a precise message (`check-validate -[branch]-> fix-tests … silently dropped`). The old integrity-only assertion passed that same mutation. Reverted clean; full suite **7804 passed**, `make check` clean.
+**Mutation-verified (the only thing that makes it worth keeping):** injected an edge-drop into the renderer's `_resolve_edges` (skip `branch` edges) → the test **fails on both `conditional-branching` and the harness** with a precise message (`check-validate -[branch]-> fix-tests … silently dropped`). The old integrity-only assertion passed that same mutation.
 
 Considered and **rejected** as low-value: expanding the test to all 58 examples (the 6 are deliberately chosen for structural variety — the rest are redundant shapes, i.e. coverage-padding); a real-data W1 boundary check (reimplements `_visible_anchor` in the test for marginal gain over the strong synthetic pin); browser-based CI tests (high-maintenance/flaky — manual browser verification is the right level for the visual layer).
 
@@ -645,7 +625,7 @@ Wrote `task-review.md` (the knowledge-transfer doc for future agents: deviations
 
 Evaluated an external code review of PR #496 (4 findings, no criticals). The headline: the **one item flagged "fix before merge" was a false positive.** Reviewer claimed `handles.ts`'s `PORT_SOURCE = "io:"` is a strict prefix of `PORT_TARGET = "iot:"`, making `handleType` order-dependent (reorder → IO targets mis-typed as source → React Flow silently drops the edge). **Disputed:** the trailing colon breaks it — `"iot:x".startsWith("io:")` is `false`, so the two are already disjoint and no string starts with both; reordering the branches is a no-op. Verified empirically + exhaustively across every prefix pair. Also disproved the secondary claim (the HANDLE-TYPE invariant fixture *does* exercise an `iot:` handle in a target slot, so a genuine type bug fails it). Left a defensive comment instead of the proposed rename — neutralizes the misread (and the real footgun: dropping a colon would make bare `"io"` prefix `"iot"`) without churning correct, well-tested constants.
 
-The other three were valid low-priority polish, applied (all non-behavioral): (a) **no-CORS security tripwire** comment in `server.py::create_app` — the absent `Access-Control-Allow-Origin` is load-bearing (binds 127.0.0.1, read-only GET, so a cross-origin page can't read the 422 body that may echo a source line); a future `CORSMiddleware`/mutating endpoint must revisit the file-content exposure; (b) **inline-all payload-size** forward-compat note in `ui/CLAUDE.md` (multi-MB payloads are fine local single-user; remote/multi-client may want a by-ref fetch); (c) renamed `test_build_bug_on_validated_ir_is_loud_500` → `test_unexpected_pipeline_exception_is_loud_500` (it patches `resolve_validate_build` wholesale, so the name overstated the validate/build boundary). 4 files, +28/−6. `test_ui.py` 17 passed; ruff + mypy clean. Uncommitted.
+The other three were valid low-priority polish, applied (all non-behavioral): (a) **no-CORS security tripwire** comment in `server.py::create_app` — the absent `Access-Control-Allow-Origin` is load-bearing (binds 127.0.0.1, read-only GET, so a cross-origin page can't read the 422 body that may echo a source line); a future `CORSMiddleware`/mutating endpoint must revisit the file-content exposure; (b) **inline-all payload-size** forward-compat note in `ui/CLAUDE.md` (multi-MB payloads are fine local single-user; remote/multi-client may want a by-ref fetch); (c) renamed `test_build_bug_on_validated_ir_is_loud_500` → `test_unexpected_pipeline_exception_is_loud_500` (it patches `resolve_validate_build` wholesale, so the name overstated the validate/build boundary). 4 files, +28/−6. Uncommitted.
 
 ---
 
@@ -655,7 +635,7 @@ The other three were valid low-priority polish, applied (all non-behavioral): (a
 > Tines/n8n/Flowise look — done across one long iterative session, **building blind** (the
 > implementing agent has no canvas; the user reviewed each iteration via screenshots). Spec/
 > design for Phase A: `../research/visual-redesign-knowledge.md` (the KB — Flowise teardown,
-> gradient technique, gotchas) + `implementation/phase-a-plan.md`. At handoff time all Phase A
+> gradient technique, gotchas) + `implementation/sub-plans/phase-a-plan.md`. At handoff time all Phase A
 > work was uncommitted and one piece — the icon *connector stub* — was unfinished; it was SOLVED
 > in the 2026-06-09 entries below (the handoff's problem statement is kept, compressed, for the
 > confirmed-hypothesis history).
@@ -689,8 +669,7 @@ the deleted `DetailedNode`+`CompactNode`), `components/nodes/index.ts`, new
    `LeafData`, to drive the connector stubs.
 7. **Favicon** wired.
 
-Gates after every step: **`tsc --noEmit` clean, `vitest` 39 passing, `npm run build` clean.** The
-mount test (`GraphView.test.tsx`) and `flow.test.ts` (incl. a new TD-fork test + the HANDLE-TYPE
+The mount test (`GraphView.test.tsx`) and `flow.test.ts` (incl. a new TD-fork test + the HANDLE-TYPE
 invariant) are green.
 
 ## Critical learnings & insights (the GOLD — origin record; CURRENT canonical versions live in `web/CLAUDE.md`)
@@ -922,7 +901,7 @@ All six (`WorkflowNode`/`PortsNode`/`GroupNode`/`EndNode`/`GradientEdge`/`LoopEd
 registries ("every registered component must be memo()'d"). This is the RF-documented practice that
 *composes* with `applyFocus`'s identity preservation — which was previously wasted: every store churn
 (pan/zoom/any focus click) re-rendered all nodes; now only nodes whose data identity changed render.
-Behavior-neutral by construction; gates green (vitest 53, tsc strict + build); real-browser screenshot of
+Behavior-neutral by construction; real-browser screenshot of
 `conditional-branching` TD/beautiful identical. Remaining batch (in order): lazy-ELK dynamic import →
 class-name grep comments → `metrics.ts` consolidation → `defaultHidden`.
 
@@ -951,15 +930,13 @@ mirror would drift; (2) extending `GradientEdge` beat a separate `FadeEdge` unde
 **Side effect (accepted):** the error label now renders as the bordered `.edge-label` chip (it rides
 the custom edge), consistent with TD branch labels.
 
-**Verified:** 60 web tests (5 new pin the stop geometry; a flow test pins all-control-kinds→gradient —
-a regression to `"default"` would render INVISIBLY since CSS no longer strokes those kinds); tsc
-strict + build clean; real-browser screenshots confirm red→green landing on the error handler's
+**Verified:** 5 new tests pin the stop geometry; a flow test pins all-control-kinds→gradient —
+a regression to `"default"` would render INVISIBLY since CSS no longer strokes those kinds. Real-browser screenshots confirm red→green landing on the error handler's
 connector and the green→grey dotted exit. `FADE_PX = 26` is the tuning knob.
 
 ### Best-practices batch 2 — lazy ELK + metrics single-source + defaultHidden + tripwire (2026-06-09) ✅
 
-The rest of the fresh-eyes review's leverage list, in one pass. Gates green throughout (vitest **60**,
-tsc strict + build); geometry verified **pixel-identical** via `inspect` after the CSS-var migration
+The rest of the fresh-eyes review's leverage list, in one pass. Geometry verified **pixel-identical** via `inspect` after the CSS-var migration
 (tile 84×84, connector 21×17, same coordinates); both densities screenshot correctly through the real
 server.
 
@@ -1042,7 +1019,7 @@ advanced exactly). Control-only neighbors stay compact. Design decisions, in ord
 
 Verified in the real browser both TD and LR via `focus=` screenshots (expansion, row-landing, label
 rules, anchoring, flares, dimming, kind ring). +8 pins (expandTargets/expanded-build/
-row-to-row+label/half-expanded/advanced-ignores/ports-focus + 2 viewParams); tsc strict + build clean.
+row-to-row+label/half-expanded/advanced-ignores/ports-focus + 2 viewParams).
 Files: `flow.ts` (expandTargets, BuildOptions.expanded, per-endpoint handles, label rule),
 `WorkflowNode.tsx`, `useWorkflowGraph.ts` (expansion derivation + anchoring), `GraphView.tsx` +
 `viewParams.ts` (focus=), `index.css`, `web/CLAUDE.md`, SKILL.md (focus param), this doc +
@@ -1068,7 +1045,7 @@ through `nodeColor`); icon is a data-URI SVG generated from `CONDITION_COLOR` (c
 `.branch-label` → color-mix on the var); decision badge deleted (loop-badge precedent); ReadPanel shows
 `code · condition` (canvas↔`type: code` mappability). Kind gate (`kind === "code"`) is defensive for a
 future where branching extends. +4 pins (condition presentation ×3, condition edge color);
-tsc + build clean; verified on canvas (conditional-branching TD/beautiful screenshot).
+verified on canvas (conditional-branching TD/beautiful screenshot).
 
 ### Tines edge language: rounded-orthogonal paths + ELK ports (2026-06-09, user-driven) ✅
 
@@ -1110,8 +1087,7 @@ handle offset that beziers had hidden and orthogonal exposed honestly. Fixes:
 - **Geometry single-sourced:** `METRICS.headerPad`/`edgeRadius` + derived `ICON_COL_X` (was a
   hardcoded `left:34` in WorkflowNode and a number ELK never knew); `--header-pad` CSS var.
 
-**Verified:** tests (type-pin updated: data_flow → smoothstep + radius) + tsc + build
-clean; screenshots TD/LR/advanced/harness; `inspect` proves alignment numerically — trunk column
+**Verified:** tests updated (type-pin: data_flow → smoothstep + radius); screenshots TD/LR/advanced/harness; `inspect` proves alignment numerically — trunk column
 x=506/506/506, merge 141→141, end dot 871→870 (1px = dot-center rounding). The harness's backward
 cycle edge (validate→decide) now draws as the clean orthogonal U from the Tines reference. **Known
 residuals:** LR merge target sits ~8px off the straight row (no LR ports yet); loop arcs (LoopEdge)
@@ -1214,7 +1190,7 @@ un-focus recompute of the already-seen base layout). Two fixes, both in the esta
   positions (updated once), so nodes would glide while edges snap — detached lines; the correct
   per-frame store interpolation is the genuinely costly option. Don't revisit without measuring.
 
-Tests green (the ELK smoke test exercises the node fallback path); tsc + build clean.
+The ELK smoke test exercises the node fallback path.
 
 **Cache-click "shake" fixed (user-caught): the stale-paint guard.** On a cached click the two
 effects fire in the same commit, and the decoration effect ran FIRST with the new focus against the
@@ -1243,7 +1219,7 @@ In `useWorkflowGraph` effect 4:
 - **Gates:** `ANIMATE_MAX_NODES = 60` flow nodes (per-frame edge recompute is the real cost — the
   128-node lyrics-generator snaps as before; conditional-branching glides), `prefers-reduced-motion`
   → snap, mid-glide interruption (view change/unmount) lands on the final state in cleanup.
-Tuning knobs: `ANIMATE_MAX_NODES` / `ANIMATE_MS` (hook top). Gates green; end-state verified
+Tuning knobs: `ANIMATE_MAX_NODES` / `ANIMATE_MS` (hook top). End-state verified
 pixel-identical via the `focus=` screenshot (that load path exercises the
 animation: base layout → focus applied → animated expansion → settle). *(Two transient flow-test
 failures during this round were the OTHER agent's in-flight smoothstep→DataEdge-lanes conversion —
@@ -1262,9 +1238,7 @@ lab finding that SURVIVES: **full node-color gradients on data lines are rejecte
 same-endpoint bundles get IDENTICAL gradients exactly where disambiguation is needed, and the
 teal=data semantic dies. Verified on the harness seg-gate crop: lanes parallel and traceable.
 
-**User verdict: animation KEPT** ("this looks great"). Recorded as accepted in
-`visualization-requirements.md` (Implemented → "Click perf + motion") and `web/CLAUDE.md`
-(focus-expansion bullet now carries the cache/worker/guard/animation rules). Open calibration
+**User verdict: animation KEPT** ("this looks great"). Open calibration
 question parked for later: is `ANIMATE_MAX_NODES = 60` the right cap, or can the per-frame cost
 comfortably carry 100+? Measure before raising.
 
@@ -1310,11 +1284,9 @@ distinct rails where there was one.
 
 ### Docs synced + corner radius tuned 18 → 24 → 20 (2026-06-10)
 
-The edge-language arc was user-accepted ("great work"); synced the two sibling docs that had gone
-stale: `web/CLAUDE.md` (the edges bullet — was still claiming data_flow is a CSS-stroked built-in,
-which is now an INVISIBLE-regression trap — + a new layout-policy bullet + the ports-node
-sideways rules) and `visualization-requirements.md` (edge-disambiguation batch under Implemented;
-sideways-rows/lanes principles).
+The edge-language arc was user-accepted ("great work"); synced the sibling docs — notably the
+`web/CLAUDE.md` edges bullet was still claiming data_flow is a CSS-stroked built-in, now an
+INVISIBLE-regression trap.
 
 **Corner radius — user-tuned twice, settled at 20.** `METRICS.edgeRadius` 18 → 24 → **20** (one
 constant, both edge components); DataEdge `STUB_BASE` 16 → 24. The honest answer to "are all
@@ -1343,7 +1315,7 @@ no containers). Implementation:
 - **Verified in the browser:** lyrics-generator opens as a ~17-box pipeline ("0/23 open",
   collapse-all disabled); `node=fetch-youtube` deep link opens with exactly its 2-group ancestor
   chain expanded ("2/23 open") and frames the node; small workflows (no groups) show no control.
-  +9 pins (7 collapse policy, 2 viewParams); tsc + build clean.
+  +9 pins (7 collapse policy, 2 viewParams).
 
 ### Row-side semantics settled: strict param/output sides + gap-centered wrap rails (2026-06-10) ✅
 
@@ -1366,8 +1338,7 @@ card). Post-layout edge decoration is now TWO passes chained in the hook
 (`graph/portSides.ts`): `assignFacingSides` (ports rows, handle-x comparison) → `assignDataRails`
 (rail hints; clears ENDPOINT nodes only — third-party nodes remain the smart-router's job). Pins:
 param-never-flips + 3 assignDataRails cases. Verified: stdout→inputs wraps to the LEFT handle with
-its rail mid-gap, ~55px clear of both nodes. Final row-side model recorded in
-`visualization-requirements.md` → Design principles.
+its rail mid-gap, ~55px clear of both nodes.
 
 ### Session close (THE close — earlier per-arc closes were merged here) (2026-06-10)
 
@@ -1398,7 +1369,7 @@ math, not a knob). Bigger arcs: search/jump-to-node (⌘K); the live-run observa
 > sub-workflow node FIRST* (both states) — the U wraps the box, so the box defines the loop's
 > geometry. All `web/` — zero contract/Python change. Decisions made via a shoot-lab
 > (`/tmp/subwf-lab/index.html`, three sections) + AskUserQuestion; all three recommendations
-> accepted. web **109 tests** (+7); tsc + build clean; verified in the real browser on the
+> accepted. Verified in the real browser on the
 > tournament (TD expanded/collapsed, LR), run-cycle (batch deck), orchestrate (nested + the U
 > around a whole region).
 
@@ -1479,8 +1450,7 @@ loop anchor, and the deck (`hostNode.batch` → `.batched` class on the collapse
 WORKFLOW group; `collapse.ts collapsibleGroupIds` excludes shells (untogglable, and they inflated
 the N/M count — run-cycle went 0/2 → 0/1 open). The OLD H8 test pinned the old policy (edge lands
 on the outermost = batch shell) — rewritten to the new one (shell absent, edge → workflow group,
-title on it) + 2 new pins (batched-leaf shell never renders; collapse excludes shells). web **111
-tests**; tsc + build clean. Verified in browser: batch-test (leaf with deck + ×N badge, no empty
+title on it) + 2 new pins (batched-leaf shell never renders; collapse excludes shells). Verified in browser: batch-test (leaf with deck + ×N badge, no empty
 box), run-cycle collapsed (magenta SUB-WORKFLOW card + deck, one click into the body) and expanded
 (ONE region, batch badge in its header — no nested batch box).
 
@@ -1525,7 +1495,7 @@ ONLY inside the decision node's Python — so this is AST extraction, and the de
   `rowsVisible(e.source)` — expansion already re-runs the build, so no new mechanism).
 - **Verified:** wire (curl: conditions on branch edges, None on error), browser all three states
   (beautiful hidden / focus=classify reveals + panel table / advanced always) + the harness's
-  4-outcome check-groups. Gates: 104 Python (goldens byte-identical, purity green), 112 web, tsc.
+  4-outcome check-groups. Goldens byte-identical; purity green.
 
 ### Container header parity across the fold (2026-06-10, user-driven) ✅ (uncommitted)
 
@@ -1554,7 +1524,7 @@ now fills ALL groups, not just collapsed.
 Also fixed: the loop edge's `zIndex: 20` (a relic of the bezier arc that had to paint above the
 boxes it crossed) lifted the U above the EdgeLabelRenderer layer and struck through its own label
 pill — removed; the U wraps OUTSIDE its box so elevation serves nothing. The pill bg also went
-opaque (`color-mix` over `--bg`). web **113 tests**; tsc + build clean; verified in browser:
+opaque (`color-mix` over `--bg`). Verified in browser:
 tournament expanded/collapsed are pixel-parallel (same tile/text/pill, arrow into the tile in
 both), run-cycle's region takes the branch trunk into its tile with the `parallel batch ×N`
 badge in the header.
@@ -1571,15 +1541,13 @@ clean mid-run spot. (3) **Ordinal numbers removed** same-day after trying them �
 layout they were redundant. The whole spatial-ordinal machinery went with them (deletion test:
 `EdgeData.branchIndex`, the buildFlow seed, `assignBranchOrdinals` + 4 tests, `.edge-label-num`
 CSS); the branch-pill marker is now just `kind === "branch" && label != null`. Condition pills are
-standard `.edge-label` pills (white text, orange tint via `--label-c`). Net: 117 web tests, docs synced.
+standard `.edge-label` pills (white text, orange tint via `--label-c`).
 
 ### Session close — branch-label + condition-label batch (2026-06-10)
 
-**Everything from "Branch labels: entry-anchored…" down is ONE UNCOMMITTED batch, again interleaved
-with the second agent's parallel work** (their loop-arc→orthogonal-U + collapsed-group-card arc:
-LoopEdge, GroupNode, loop/subworkflow icons, collapse.ts, assignLoopRails — shared files: flow.ts,
-layout.ts, portSides.ts, useWorkflowGraph.ts, index.css, web/CLAUDE.md). A per-author split is again
-impractical; commit as one batch after a joint gate run.
+**One uncommitted batch again, interleaved with the second agent's parallel work** (their
+loop-arc→orthogonal-U + collapsed-group-card arc — shared files: flow.ts, layout.ts, portSides.ts,
+useWorkflowGraph.ts, index.css, web/CLAUDE.md); per-author split impractical (standing precedent).
 
 **This agent's slice** = the three entries above (entry-anchored TD labels, code-order fork
 layout, the branch-CONDITION feature end-to-end) + the same-day ordinal removal. Phase-0
@@ -1617,7 +1585,7 @@ for the group-advanced case only; leaves never float a label again. The earlier
 strike-through the user kept seeing was their browser's stale-cache bundle (no `Cache-Control` —
 the known gotcha), not a regression. Pinned by 4 new flow tests (row landing advanced/expanded,
 bare-U beautiful, group label policy) + the legacy loop pin updated (data.loop is now the label
-switch, never on leaf edges). web **121 tests**; tsc + build clean; verified on execute-plan in
+switch, never on leaf edges). Verified on execute-plan in
 the browser: quiet bare U unfocused; focus-expanded card shows the amber rule row at the body's
 end with the U's arrow landing on it; ReadPanel carries the full spec as before.
 
@@ -1644,8 +1612,7 @@ design (recorded so nobody tries).
 
 ### Condition pills edge-colored + the LR settlement: row conditions + back rails (2026-06-10, user-driven) ✅ (uncommitted)
 
-Three changes from one review session, all `web/` — zero contract/Python change. web **125 tests** (+4);
-tsc + build clean; verified in the real browser (conditional-branching advanced crop; execute-plan
+Three changes from one review session, all `web/` — zero contract/Python change. Verified in the real browser (conditional-branching advanced crop; execute-plan
 check-groups LR advanced + beautiful focus-expanded).
 
 **1. Condition pills take their EDGE's color** (user accepted my observation against their n8n/Tines
@@ -1703,9 +1670,7 @@ branch per target entry); the old "straight child only" descent gate + `LONE_RUN
 the side branch's "clean mid-run" preference didn't survive 4-outcome forks. T3 (condition rows on
 TD cards) was considered and REJECTED with the user: TD forks fan from the icon column, so a row
 would be a routing row no wire touches (the loop CAP row is annotation, but routing rows invite
-edge-matching), and it would duplicate the target-entry outcome label. web **127 tests** (+2:
-sibling-distinct-anchors, backward-approach; the old midpoint pins rewritten); tsc + build clean;
-verified on check-groups TD: each pill stacks above its own target (`elif is_last and cap != 0` →
+edge-matching), and it would duplicate the target-entry outcome label. +2 pins (sibling-distinct-anchors, backward-approach; old midpoint pins rewritten); verified on check-groups TD: each pill stacks above its own target (`elif is_last and cap != 0` →
 `review-round` → node).
 
 **Residual (stated):** two branches re-anchoring to the SAME collapsed target would stack their
@@ -1722,13 +1687,11 @@ on branch edges whose target / `data.to` is the focus (identity-checked like `fo
 unfocus restores object identity). GradientEdge renders on `conditionShown || conditionRevealed`.
 With the final-approach anchor the revealed pill lands stacked above the clicked node's outcome
 label — exactly where the eye is. Works in both directions (in LR the source's rows aren't visible
-when only the target is clicked, so the edge pill is the only honest home). web **128 tests** (+1
-reveal pin; the build pins moved from condition-presence to `conditionShown`); tsc + build clean;
-verified in the browser (`focus=process-large`: pill above the clicked node, dimmed sibling bare).
+when only the target is clicked, so the edge pill is the only honest home). +1 reveal pin (build pins moved from condition-presence to `conditionShown`); verified in the browser (`focus=process-large`: pill above the clicked node, dimmed sibling bare).
 
 ### IO rows on the workflow node — the ports table dies (2026-06-10, user-driven) ✅ (uncommitted)
 
-> Plan: `implementation/io-rows-plan.md` (locked design + deletions inventory). Spec deltas
+> Plan: `implementation/sub-plans/io-rows-plan.md` (locked design + deletions inventory). Spec deltas
 > folded into `visualization-requirements.md`; the how into `web/CLAUDE.md` → "IO is ROWS…".
 > Triggered by the execute-plan screenshot: a 14-row floating INPUTS table, visibly connected
 > to nothing in beautiful. Frame that won: a leaf already renders its inputs as rows ON the
@@ -1779,9 +1742,9 @@ carried over untouched.
   hook pipeline (build-with-expansion THEN applyFocus) instead of decorating an unexpanded
   build — the first drafts encoded the bypass and failed honestly.
 
-**Verified:** web 127 tests (incl. new pins: nested-wrapper rows on group data + row
+**Verified:** new pins — nested-wrapper rows on group data + row
 handles + per-owner visibility; root IO cards + description surfacing + expansion path;
-owner-aware expandTargets; sidebar-padding layout test) + tsc strict + build; real browser:
+owner-aware expandTargets; sidebar-padding layout test. Real browser:
 execute-plan beautiful (quiet 13-inputs card heading the chain — the before/after of the
 motivating screenshot), focus=g0 (card expands to 13 rows, lane-staggered teal lines fan to
 consumers), run-cycle advanced (region sidebar + body beside it + bottom strip;
@@ -1828,9 +1791,9 @@ DOM probe then showed the simplify card neither expanded nor focused: **execute-
 parallel GraphView/useWorkflowGraph rework or an auto-collapse interaction — **flagged as an
 open thread for the IO-rows agent's territory, not chased into their in-flight files.**
 
-**Verified:** web 128 tests (LR-labels pin; the reveal test now covers both arms — TD edge
-pill, LR row + clearing restores; labelAnchor/conditionAnchor pins updated to the above-line
-anchors) + tsc + build clean; real browser: execute-plan LR focus=check-groups (bare-text
+**Verified:** pins — LR-labels; the reveal test covers both arms (TD edge
+pill, LR row + clearing restores); labelAnchor/conditionAnchor pins updated to the above-line
+anchors. Real browser: execute-plan LR focus=check-groups (bare-text
 `review-round` above its target's entry), conditional-branching LR focus=process-large (the
 condition appears on the source's row beside the outcome pill; clicked card expands; DOM probe
 confirms exactly one `.branch-cond`).
@@ -1846,7 +1809,7 @@ shell entirely — its class list said `node expanded` but the shell (radius/bg/
 on `.node.compact/.detailed`, and `.node.expanded` stacked a second divider on the
 `.io-rows` one. Fix: the io card is ALWAYS `compact`. (3) clicking an open io card now
 TOGGLES it closed (GraphView treats `type:"io"` like a container — focus IS its open state).
-web 129 tests; verified in browser (run-cycle beautiful: sidebar + strip visible, no lines;
+Verified in browser (run-cycle beautiful: sidebar + strip visible, no lines;
 execute-plan focus=g0: rounded shell, single divider).
 
 **Strip-row hug + the "wrong handle" non-bug (user-raised, 2026-06-10):** the outputs strip's
@@ -1874,7 +1837,7 @@ work everywhere; only the deep-link path on execute-plan freezes (worked at 11:1
 regression). Remaining delta: the Vite-bundled worker chunk vs the raw artifact, transport
 timing, or a send-side elk-api issue. **Full findings, repro kit, next 3 experiments, the
 left-in-place `[dbg]` instrumentation (strip before commit!), and a ship-regardless watchdog
-workaround: `implementation/handoff-focus-deeplink-worker-hang.md`.**
+workaround: `implementation/sub-plans/handoff-focus-deeplink-worker-hang.md`.**
 
 ### Root IO cards join the control skeleton (2026-06-10, user-driven) ✅ (uncommitted)
 
@@ -1907,12 +1870,11 @@ into the first node; same for outputs but reversed."* All `web/`; zero contract/
   `end: "in" | "out"` param. An implicit discriminator that happens to correlate is not a
   discriminator.
 
-web **133 tests** (+4: skeleton edges both densities + incidence flags; terminal-host anchors on
-group; cycle fallback; zero-IO unchanged); tsc strict + build clean. Verified in the real browser
++4 pins (skeleton edges both densities + incidence flags; terminal-host anchors on
+group; cycle fallback; zero-IO unchanged). Verified in the real browser
 on run-from-plan: TD beautiful (cards head/tail the spine, teal flare out of INPUTS into
 resolve-repo's top flare, magenta→teal into OUTPUTS), LR (clean horizontal pipeline), TD advanced
-(skeleton edge lands on the icon column among the data lines). Docs synced: `web/CLAUDE.md` (IO
-bullet), `visualization-requirements.md` (Implemented). *(Parallel-agent note: built alongside
+(skeleton edge lands on the icon column among the data lines). *(Parallel-agent note: built alongside
 the focus-deeplink worker-hang investigation — their `[dbg]` instrumentation in layout.ts
 createElk was left untouched; my layout.ts edit is the `portable` set only.)*
 
@@ -1925,13 +1887,13 @@ bottom. Fix is a strict generalization, not a re-litigation: `PortRows.stagger` 
 equals), and the card's bottom-right corner when inputs dominate. `ioRowsCount`/ELK sizing
 unchanged → zero layout drift; the `.io-col.stagger` CSS rule deleted. Matches the expanded
 region's design (outputs strip at the bottom-right — "the collapsed diagonal stretched around
-the body"). 133 web tests, tsc + build clean; verified via zoomed crop on run-from-plan
+the body"). Verified via zoomed crop on run-from-plan
 (collapse=all, advanced TD): outputs end at the last row, lines exit at the corner toward the
 OUTPUTS card.
 
 ### Focus-deep-link worker hang: CLOSED — defended, root cause environmental (2026-06-10) ✅ (uncommitted)
 
-Continued `handoff-focus-deeplink-worker-hang.md` (full verdict written into its status header —
+Continued `sub-plans/handoff-focus-deeplink-worker-hang.md` (full verdict written into its status header —
 not restated here). The short of it: completed the evidence matrix the handoff left open — the
 **Vite-built worker chunk is innocent** (driven headlessly in plain node against the captured
 message sequence: terminates fine; the esbuild re-minify + `"use strict"` wrap changes nothing),
@@ -1962,8 +1924,7 @@ plausible mechanism class (occluded/backgrounded long-lived instance), unproven.
 - **All `[dbg]` instrumentation stripped** (layout.ts, useWorkflowGraph.ts) per the handoff's
   cleanup note; repro worktree removed.
 
-Gates: web **136 passed** (tsc strict + build clean), `test_ui.py` 18 passed, mypy/ruff clean on
-touched files. Deep-link verified live on the final cleaned build (execute-plan, LR/beautiful,
+Deep-link verified live on the final cleaned build (execute-plan, LR/beautiful,
 focus=simplify → expanded card + 12 dimmed). *(Parallel-agent note: built alongside the io-flow
 skeleton agent in layout.ts/web-CLAUDE.md — their `portable` io-card change untouched.)*
 
@@ -1995,7 +1956,7 @@ for the worker hang can no longer form.
 ### Container SELECT vs corner-button TOGGLE — design D shipped (2026-06-10, user-driven) ✅ (uncommitted)
 
 > Plan (locked design, facts, decisions, rejected alternatives):
-> `implementation/container-select-plan.md`. Design chosen via THREE shoot-lab mockup rounds
+> `implementation/sub-plans/container-select-plan.md`. Design chosen via THREE shoot-lab mockup rounds
 > (`/tmp/expand-btn-lab/`): V2 corner button (over border-button/split-pill/pill-as-button) ·
 > A1 arrows-out/in glyphs (over unfold/chevron/plus) · R1 full-button-at-rest (over quiet/
 > tinted/hover-only — user picked after the labs were opened IN their browser, a worthwhile
@@ -2025,10 +1986,10 @@ TOGGLE** (`zoomOnDoubleClick` off; the button's stopPropagation is load-bearing 
 - **Muscle-memory note:** "click card to open" is GONE (the one behavior change users feel);
   the always-visible button + dblclick cover it.
 
-web **143 tests** (+10: applyFocus unit ×3, viewParams host-resolution ×3, GraphView
-click-semantics jsdom ×1 — body selects + button toggles + stays-collapsed-on-select, the
-isolated-GroupNode test was correctly skipped per plan since Handle requires node context);
-tsc strict + build clean. Verified in the real browser on run-from-plan:
++10 pins (applyFocus unit ×3, viewParams host-resolution ×3, GraphView
+click-semantics jsdom ×1 — body selects + button toggles + stays-collapsed-on-select; the
+isolated-GroupNode test was correctly skipped per plan since Handle requires node context).
+Verified in the real browser on run-from-plan:
 `focus=execute-plan` deep-link selects the collapsed card (kind ring, corner button rendered,
 read panel with the host's bindings dict, revealed teal binding lines incl. the labeled
 pr_url line, unrelated nodes dimmed) and with `collapse=none` selects the expanded region
@@ -2049,10 +2010,10 @@ leaf focus-expansion (cached/animated/anchored) — the plan's "pure restyle v1"
 superseded the same day by the user's better call. (2) The floating pills on IO bindings
 (`base_branch`, `plan_path`, …) duplicated what the named rows already say — IO-touching
 data lines now carry NO label ever (`ioBinding` in the edge loop → toFlowEdge); leaf-to-leaf
-lines keep `stdout → data`. web **145 tests** (+2: container expandTargets incl. far ends;
-io-label suppression with a leaf-to-leaf keep); tsc + build clean; verified in browser
+lines keep `stdout → data`. +2 pins (container expandTargets incl. far ends;
+io-label suppression with a leaf-to-leaf keep); verified in browser
 (focus=execute-plan: 13 named rows, row-landed lines, bottom-anchored outputs composing,
-zero pills). Docs synced (web/CLAUDE.md container + label bullets).
+zero pills).
 
 ### LR row PORTS: binding bundles run straight (2026-06-10, user-driven) ✅ (uncommitted)
 
@@ -2079,9 +2040,8 @@ Fix (the TD icon-column principle extended to LR rows):
 
 **Verified in the real browser** (inspect): both cards' rows now at IDENTICAL y's
 (193,219,245,…) — the 52px offset is gone; screenshot shows the 13-line bundle dead flat,
-each line leaving its row dot and running straight into its named row. web **148 tests**
-(+3: rowAnchorsFor leaf ordering incl. loop-row offsets; io-card chrome + bottom-anchored
-group outputs + region-none; the real-ELK ≤1px alignment pin); tsc + build clean. Honest
+each line leaving its row dot and running straight into its named row. +3 pins (rowAnchorsFor leaf ordering incl. loop-row offsets; io-card chrome + bottom-anchored
+group outputs + region-none; the real-ELK ≤1px alignment pin). Honest
 residual: rows can only align where orderings/pitches allow — a row feeding two places, or
 differing row orders, still jogs (correct geometry); the LR merge ~8px node-level residual
 is untouched (different anchor class).
@@ -2126,8 +2086,7 @@ is untouched (different anchor class).
   with the `if ok · else` pill above the end dot; LR shows both fork rows
   (`elif round < cap → fix-tests`, `if ok · else → end` faint) with each line leaving its own
   row handle. *Gotcha re-confirmed: the already-running `pflow ui` server serves OLD Python —
-  restart it after a model/renderer change (the bundle rebuild is not enough).*
-  Gates: test_core 3078 passed; web 153 passed (+5 pins); tsc + build clean.
+  restart it after a model/renderer change (the bundle rebuild is not enough).* +5 pins.
 - **Spawned, not yet built:** the TRANSFORM pseudo-kind itself (sweep verdict: 10/20 unique
   corpus code nodes are pure transforms, 0 false positives with exception-constructors
   whitelisted; 6/10 have literal result dicts for a future Level-2 output-shape extraction).
@@ -2161,10 +2120,8 @@ different-height cards and the spine wandered. The fix is the TD icon-column pri
 **Verified in the real browser** (inspect, focus-expanded run-from-plan LR): ALL five spine
 tiles at y=98 — including the previously-stray preflight and outputs card — AND the g0↔g1
 binding rows identical (199,225,251,…): spine straight + bundle straight at once. Zoomed
-crops: the left flares are seamless (cove into each tile, gradient through). web **154
-tests** (+1 spine pin for different-height leaves; the card↔card alignment pin rewritten to
-the parity guarantee + a header-alignment assert); tsc + build clean. Docs synced
-(web/CLAUDE.md layout + flare bullets, requirements).
+crops: the left flares are seamless (cove into each tile, gradient through). +1 spine pin for different-height leaves; the card↔card alignment pin rewritten to
+the parity guarantee + a header-alignment assert.
 
 **Exit-gap fix (user-caught, same session): no new shape needed — tuck the terminus.** The LR
 OUT edge started ~2px OUTSIDE the card border (RF anchors a right-side handle at its own
@@ -2175,7 +2132,7 @@ UNDER the card — edges render behind nodes, so the line emerges through the bo
 by construction (the same reason `left: 5` already made flare-less LEFT entries clean). All
 three card components; rejected adding a visible dot/shape — the "clean lines into borders"
 language stays. Verified by zoomed crop: line flush with the border on exit, into the flare
-on entry. web 154 tests, tsc + build clean.
+on entry.
 
 ### TRANSFORM pseudo-kind shipped (2026-06-10, user-driven) ✅
 
@@ -2208,9 +2165,8 @@ on entry. web 154 tests, tsc + build clean.
   Level-2 result-shape extraction (6/10 corpus transforms have literal result dicts).
 - **Verified:** real browser on deep-research TD/beautiful — all five transforms (prepare/
   normalize/compile/combine/final-report) wear the cyan shuffle identity, edges blend to
-  cyan, clearly apart from magenta/violet/teal neighbors. Gates: web 158 (+5 pins incl. the
-  defensive CONDITION-wins and kind-gate cases), Python renderer matrix (+2 tests, 14 cases),
-  tsc + build clean.
+  cyan, clearly apart from magenta/violet/teal neighbors. +5 web pins (incl. the
+  defensive CONDITION-wins and kind-gate cases) + a Python renderer matrix (+2 tests, 14 cases).
 
 **Finalization (same session):** ruff C901 forced the classifier into small per-concern
 helpers (`_assigned_names` / `_bound_names` / `_transform_disqualifies` — a net readability
@@ -2219,8 +2175,7 @@ SIM114 auto-MERGES adjacent `elif` branches with identical bodies, and the merge
 fails mypy** (`FunctionDef|ClassDef` or-ed with `ExceptHandler and n.name` widens `n.name`
 to `str | None`) — a fixer-vs-checker fight where `make check` can never converge. Fix:
 make the bodies structurally different (`bound.update({n.name} if n.name else ())`),
-comment pinned in react_flow.py. Final gates: `make test` **7812 passed**, `make check`
-clean, web **158**, tsc strict + build clean. Both arcs of this session — the
+comment pinned in react_flow.py. Both arcs of this session — the
 `is_decision` end-route fix and the TRANSFORM pseudo-kind — are complete, browser-verified,
 and uncommitted on the branch alongside the parallel agent's LR row-ports work.
 
@@ -2234,8 +2189,7 @@ border is 1.5px subtle). Pure decoration on all three card components; the invis
 handle stays the real connection point. **The correctness subtlety:** `hasOutgoing` became
 HANDLE-aware (incidence counts only edges leaving NODE_OUT) — an LR decision's outcomes
 leave their BranchPorts rows (which have their own dots), so a pure decider must not light
-an icon-row exit; in TD forks fan from NODE_OUT, so nothing changes there (pinned). web
-**159 tests** (+1); tsc + build clean; verified by zoomed crop (yellow dots on the code
+an icon-row exit; in TD forks fan from NODE_OUT, so nothing changes there (pinned). Verified by zoomed crop (yellow dots on the code
 cards' exits, line into the next tile's flare).
 
 ### TRANSFORM Level 2 planned + plan-reviewed — ready for a fresh implementer (2026-06-10)
@@ -2247,7 +2201,7 @@ quiet-dot unread keys, the no-line-without-a-read invariant, one-level depth, an
 Half B's observed-usage generalization to all kinds. Tines' transform sub-modes were
 mapped and consciously deferred (recorded in visualization-requirements.md).
 
-**Plan:** `implementation/transform-l2-plan.md` — hardened for handoff (a fresh agent,
+**Plan:** `implementation/sub-plans/transform-l2-plan.md` — hardened for handoff (a fresh agent,
 no conversation context): 9 locked decisions, 12 verified facts with symbol anchors,
 atomic steps with done-whens, anti-goals, per-phase gates. The two load-bearing
 technical calls, both code-verified: the sub-path dies at the ref REGEX (scope.py:12,
@@ -2274,7 +2228,7 @@ Phases 1–2 are Python-only and start anytime; Phase 3 carries a HARD entry gat
 ### Batch/loop CHIP RAIL: the batch pill dies, the corner chrome unifies (2026-06-10, user-driven) ✅ (uncommitted)
 
 > Design locked via a 3-round shoot-lab (`/tmp/batch-chip-lab/`), Tines corner-chips as the
-> user's reference. Plan + the per-round picks: `implementation/batch-chip-rail-plan.md`.
+> user's reference. Plan + the per-round picks: `implementation/sub-plans/batch-chip-rail-plan.md`.
 > Round 1: **A3** (tinted capsule, icon + count) · **B3** (dynamic shows `×N`; I flagged the
 > fake-number concern, user overrode — source rides the tooltip) · **C2** (loop chip, same
 > vocabulary). Round 2 (user idea): EVERYTHING moves to the top border as one rail; the
@@ -2305,21 +2259,17 @@ uselessness ("Genera… a pe…") while DUPLICATING the deck — violating Badge
   home — status joins leftmost, outranks modifiers. Dynamic `×N` is exactly the slot a
   per-run real count fills.
 
-**Verified:** web **165 tests** (+6 ChipRail pins: literal ×3 / dynamic ×N + tooltip /
-sequential naming / loop+batch order / expander slot / chip-less null) + tsc strict +
-build clean. Real browser (headless loop): batch-test TD/beautiful (leaf chip + deck,
+**Verified:** +6 ChipRail pins (literal ×3 / dynamic ×N + tooltip /
+sequential naming / loop+batch order / expander slot / chip-less null). Real browser (headless loop): batch-test TD/beautiful (leaf chip + deck,
 description full width), run-cycle collapsed card (`[⧉ ×N] [3 ⤢]` rail) AND open region
 (same rail across the fold), execute-plan review-round advanced (amber ↻ chip on a
 detailed card — the overflow fix at work; clean CLAUDE CODE category), io card pill
-parity (zoomed crops). Docs synced: web/CLAUDE.md (new rail bullet + 4 amendments),
-visualization-requirements.md (Implemented). Zero Python/contract change.
+parity (zoomed crops). Zero Python/contract change.
 
 ### TRANSFORM Level 2 — result shape + per-key edge landing (2026-06-10) ✅ (uncommitted)
 
-> Plan: `implementation/transform-l2-plan.md` (approved + review-folded). Built phase-by-phase
-> per the plan; this entry records the DEVIATIONS and surprises only. web **188 tests** (incl.
-> the parallel agent's edge-selection work in the same tree); Python **7820 passed**; `make
-> check` clean; **corpus Mermaid diff EMPTY** (56/56, before/after via a HEAD worktree — run
+> Plan: `implementation/sub-plans/transform-l2-plan.md` (approved + review-folded). Built phase-by-phase
+> per the plan; this entry records the DEVIATIONS and surprises only. **Corpus Mermaid diff EMPTY** (56/56, before/after via a HEAD worktree — run
 > twice: post-Phase-2 and on the final tree); browser-verified on all four plan cases.
 
 **Built as planned (no restating):** `RFResultShape`/`_result_shape_from_code` (Half A),
@@ -2386,12 +2336,12 @@ by a test: scope-aware (same-parent `node_id` only — a name reused in another 
 can't be mis-marked), the reader's batch alias is skipped, and a param read NEVER creates a
 new top-level field row (no edge + no shape → no row = no claim) nor a line (D5 intact — the
 un-quieted test also asserts zero data-flow edges). Residual: refs outside params (loop
-conditions) are not scanned. web **215 tests** (+4); the parallel agent's transient
+conditions) are not scanned. The parallel agent's transient
 `__scratch.test.ts` is the only tsc noise on the shared tree (theirs to clean).
 
 ### Edge SELECTION (click) + EdgePanel shipped (2026-06-10, user-driven) ✅ (uncommitted)
 
-> Plan + the 4-lens plan review (R1–R16 hardening): `implementation/edge-selection-plan.md`.
+> Plan + the 4-lens plan review (R1–R16 hardening): `implementation/sub-plans/edge-selection-plan.md`.
 > Design converged in conversation: edge-click chosen over hover-first (sticky, touch,
 > agent-verifiable, deep-linkable, panel content — hover is the gated follow-on on the same
 > machinery); selection = "the loud version of yourself" (hue carries identity, brightness
@@ -2449,11 +2399,9 @@ no natural card-crossing case found in the framed shots, so elevation-over-card 
 hit-band remain visually unproven (zIndex confirmed applied; worst case = old behavior);
 the selected-shade × halo-weight shoot-lab is pending the user's pick.
 
-Gates: web **215 passed** (+27 over pre-feature: 10 flow edge-focus/expand pins, 6
-viewParams dispatch/resolution, 13 EdgePanel variants incl. dict-key + role-less + bundle
-fixtures, 1 collapse edge-protect — counts interleave with the parallel agent's suite),
-tsc strict + build clean. Docs synced: web/CLAUDE.md (edges-select bullet),
-visualization-requirements.md (Implemented), the screenshot skill's `focus=` row.
+New pins: 10 flow edge-focus/expand, 6
+viewParams dispatch/resolution, 13 EdgePanel variants (incl. dict-key + role-less + bundle
+fixtures), 1 collapse edge-protect.
 *(Parallel-agent note: their output-rows/chip-rail work landed in the same files
 (flow.ts/types.ts/ReadPanel) throughout — all my edits re-read fresh; their ReadPanel
 result_shape facts and my ParamBlock/OutcomeTable extraction compose cleanly.)*
@@ -2464,9 +2412,8 @@ under-delivered plan item (Phase 3.2's ">1-level paths"): GraphView now passes `
 (`output_field[.output_path…]`, deduped) — and the panel renders a `consumed` fact
 (`result.ok, result.round` on run-validate, verified in-browser via the focus deep-link).
 Unblocked because the parallel agent finished their GraphView/ReadPanel rework (and removed
-their `__scratch.test.ts` — tsc + the full gated `npm run build` are clean again). web **216
-tests** (+1: clicking a producer surfaces the full-depth consumed paths, incl. a 2-deep
-`result.a.b`).
+their `__scratch.test.ts`). +1 pin: clicking a producer surfaces the full-depth consumed paths, incl. a 2-deep
+`result.a.b`.
 
 **Output-schema shapes + the result_shape → output_shape generalization (same day, user-driven).**
 The user's screenshot question ("why does the ship card show a bare `→ result` + `· pr_url`?")
@@ -2483,8 +2430,7 @@ each source's OWN vocabulary (Python names from annotations, "string"/"number" f
 authored text, never normalized. Frontend: `outputRowsFor`/`scanParamReads`/ReadPanel all follow
 `shape.field`. Execute-plan now ships shapes on all 5 schema'd claude-code nodes (probed: ship →
 pr_url/summary: string). Also same session: the row tooltip carries `field: type` (a long label
-ellipsizes the faint type suffix away — user question exposed it). Python 7822 + make check; web
-217 (+1 response-field pin); goldens untouched (renderer-only).
+ellipsizes the faint type suffix away — user question exposed it). +1 response-field pin; goldens untouched (renderer-only).
 
 **Post-entry verification + decisions from the Q&A round (2026-06-10, late):**
 - **llm response-shape verified LIVE on corpus** (the output-shape entry predated this):
@@ -2533,28 +2479,28 @@ name), and the io fact now words the port honestly by direction ("sub-workflow i
 song-creator" / "workflow input" / "workflow output" — it previously said "workflow output"
 for every io target). Pinned by a jsdom fixture mirroring the user's exact shape; verified
 live on run-from-plan e66 (group-tick.result → execute-plan's delta port: the `inputs` dict
-renders with only `${group-tick.result.delta}` marked). web 220 tests; tsc + build clean.
+renders with only `${group-tick.result.delta}` marked).
 
 **Chip-click camera follow (user-caught, 2026-06-11).** A chip naming an off-screen card
 selected it invisibly — the panel swapped but the canvas looked dead. `onNavigate` now also
 `fitView`s the target (padding 0.45, maxZoom 1.2, 300ms — "bring into view", not a close-up;
 in beautiful the expansion re-layout that may follow anchors on the same id, so the target
 stays near where the fit put it). Verified via a DOM-click probe on run-from-plan e66:
-camera transform changed + panel swapped to the chip's node. web 218 tests; tsc + build clean.
+camera transform changed + panel swapped to the chip's node.
 
 **Outcome-table layout fix (user-caught, 2026-06-11).** The shared facts table's fixed 76px
 label column (sized for "loop cap") wrapped outcome names mid-word and orphaned the arrow
 ("→\nprocess-\nlarge"). OutcomeTable now carries `facts outcomes`: labels one-line
 (min 76px, ellipsis past 55% with title tooltip), rows padded 4px and baseline-aligned;
 `.fact-marked` keeps just the bg (spacing moved to the row rule). Screenshot-verified on the
-user's exact case (conditional-branching e2). web 218; build clean.
+user's exact case (conditional-branching e2).
 
 ### 4-lens deep review of `d8e4a3a9..HEAD` + my-side fixes (2026-06-11) ✅
 
 > Reviewed the COMMITTED merge of both parallel workstreams (edge selection × output
 > rows/L2/chip rail) with 4 scoped lenses (feature-interactions / silent-failures /
 > simplicity / test-fidelity). Workstream-B + shared items handed off with full repro/DoD:
-> `implementation/review-fixes-handoff.md` (9 issues — headlined by the CRITICAL
+> `implementation/sub-plans/review-fixes-handoff.md` (9 issues — headlined by the CRITICAL
 > pre-existing literal-`items:` batch hole: host=True + memberless batch group → node
 > invisible, spine dropped; repro verified live, screenshot in /tmp/pflow-shots). My-side
 > items fixed in the same session:
@@ -2578,11 +2524,11 @@ user's exact case (conditional-branching e2). web 218; build clean.
   an id↔name confusion now fails ~10 formerly-blind assertions).
 - Deferred with full spec into the handoff doc: the camera-follow regression pin (test-W2).
 
-Gates: web **223 passed** (+5), tsc strict + build clean; bundle rebuilt + live probes green.
+Bundle rebuilt; live probes green.
 
 ### Review-fixes batch: all 9 handoff issues closed (2026-06-11) ✅
 
-> Worked `implementation/review-fixes-handoff.md` start to finish — every issue verified
+> Worked `implementation/sub-plans/review-fixes-handoff.md` start to finish — every issue verified
 > against the live code/contract BEFORE fixing (workstream-A's items were confirmed
 > already landed in `e7f2bd7b`). One issue grew: the rest matched the doc exactly.
 
@@ -2651,15 +2597,8 @@ batches still render") would have passed while leaving it broken. Two-sided fix:
   Covers the `focus=<edge id>` GraphView arm too (previously untested). MUTATION-VERIFIED
   (deleting the `fitView` call in `onNavigate` → red).
 
-**Docs synced:** web/CLAUDE.md (the shell bullet rewritten around `shellBatchIds`; deep-link
-bullet), ui/CLAUDE.md (`is_group_host` H8 bullet), visualization-requirements.md
-(Implemented), the handoff doc's status header.
-
-**Gates:** `make test` **7831 passed / 1 skipped**; mypy + ruff clean on changed files;
-Mermaid goldens byte-identical (model.py/build.py untouched — the Python changes are
-RF-renderer-only); web **245 passed** (+22 over the batch's start; counts interleave with
-the parallel agent's spine work — their in-flight tsc error in `spine.ts` resolved on
-their side mid-session), tsc strict clean, bundle rebuilt, server restarted (the
+**Gates:** Mermaid goldens byte-identical (model.py/build.py untouched — the Python changes are
+RF-renderer-only); bundle rebuilt, server restarted (the
 serves-old-Python gotcha), final advanced-density screenshot green.
 
 **Still deferred (unchanged from the handoff's deferred section):** the flow.ts
@@ -2678,9 +2617,8 @@ its anchors to its HEAD's, per scope, both directions; shifts that would crowd a
 deep-research's Outputs card stays off-spine correctly (6 terminals → merge sink) *(changed
 2026-06-11: the sink-derivation fix leaves deep-research ONE sink, so its Outputs card now joins
 the spine — the multi-source merge rule still applies where real merges exist)*. 12 pins in
-`spine.test.ts` incl. a real-ELK integration test, mutation-verified (unwiring → red). Gates:
-web 245, tsc, build. Zero contract/Python change; flow.ts untouched (parallel handoff agent's
-file). Rules + LR binding-jog residual: web/CLAUDE.md spine bullet.
+`spine.test.ts` incl. a real-ELK integration test, mutation-verified (unwiring → red). Zero contract/Python change; flow.ts untouched (parallel handoff agent's
+file).
 
 ### The frontend LOSSLESSNESS invariant + real-contract fixtures (2026-06-11, user-prompted) ✅
 
@@ -2733,8 +2671,6 @@ for `paramTextReads` beyond the coalesce pins (the residuals — bracket refs, l
 conditions — are documented and both sides agree by construction today); browser CI
 (established decision); more unit pins for their own sake.
 
-Gates: web **256 passed** (+10), tsc strict clean; Python drift guard 3 passed.
-
 **Literal-batch card category → "BATCH-WORKFLOW" (2026-06-11, user-decided; first cut
 "SUB-WORKFLOW · BATCH" was revised to the compact form the same session).** The
 newly-rendering literal batch container said bare "BATCH" (the GROUP's kind) while its
@@ -2742,14 +2678,13 @@ dynamic sibling says "SUB-WORKFLOW" + chip — the same authored step changed id
 items-authoring style, and the batch fact appeared twice (label + chip). Now
 `groupCategory` (GroupNode) composes identity-first for a batch container with a
 workflow-kind host; other batch shapes keep the plain label. Both states (header parity —
-one markup). Verified on song-creator; web 256 + tsc + build clean.
+one markup). Verified on song-creator.
 
 ### Session close — review-fixes batch + losslessness invariant + label (2026-06-11)
 
-**ONE UNCOMMITTED BATCH again, interleaved with the parallel spine-alignment agent**
-(their slice: `spine.ts` + `spine.test.ts` + `layout.ts` + the web/CLAUDE.md spine bullet —
-untouched by this workstream; the per-author split is impractical per the standing branch
-precedent). **This agent's slice** = the three entries above (the 9-issue review-fixes batch,
+**One uncommitted batch again, interleaved with the parallel spine-alignment agent**
+(their slice: `spine.ts` + `spine.test.ts` + `layout.ts` — untouched here; per-author split
+impractical per the standing precedent). **This agent's slice** = the three entries above (the 9-issue review-fixes batch,
 the losslessness invariant + real-contract fixtures, the BATCH-WORKFLOW label): the Python
 renderer + the new drift guard, the web flow/collapse/viewParams/components changes + tests,
 and the doc sync. *(Landed as `70fc42c7`.)*
@@ -2791,11 +2726,9 @@ deletion test — the frontend already holds the edges.
 **Verified:** corpus sink-set diff (old vs new): lyrics-generator `[] → [build-report]`,
 deep-research `[] → [final-report]`, run-from-plan/conditional-branching unchanged. Real
 browser TD/beautiful: lyrics-generator + deep-research both render one continuous spine
-Inputs → … → Outputs. web **257 tests** (+1 pin: the exact bug shape — final leaf feeds a
+Inputs → … → Outputs. +1 pin (the exact bug shape — final leaf feeds a
 declared output with `is_terminal: false`, asserts the io-flow edge exists and the
-mid-chain step gets none; the cycle test extended with the Outputs-side fallback); tsc
-strict + build clean. Docs synced: web/CLAUDE.md (skeleton bullet),
-visualization-requirements.md (Implemented bullet). Zero Python/contract change.
+mid-chain step gets none; the cycle test extended with the Outputs-side fallback). Zero Python/contract change.
 
 ### Output-shape typing extended: locals + certainties + branch dicts + kind shapes (2026-06-11, user-driven) ✅ (uncommitted)
 
@@ -2851,8 +2784,7 @@ kind→type table (registry drift). Decisions a future agent needs:
 - The map effectively serves shell/http/file/mcp only — llm/claude-code/code always carry an
   authored shape, which wins by fallback order.
 
-Gates: renderer/registry/ui suites green (web 259, Python 3242 across test_core+ui+registry),
-fixtures regen'd (all three gain the field), tsc + build clean; browser-verified —
+Fixtures regen'd (all three gain the field); browser-verified —
 conditional-branching's shell card shows `→ stdout: str`.
 
 **Self-audit catch (same session):** the frontend fallback was pinned unit-level only — the
@@ -2863,7 +2795,7 @@ read panel's facts (panels show authored text only — revisit only if it confus
 
 ### IO interface panel: the io card's dead click gets its panel (2026-06-11, user-driven) ✅ (uncommitted)
 
-> Plan (locked decisions D1–D7, verified facts, steps): `implementation/io-panel-plan.md`.
+> Plan (locked decisions D1–D7, verified facts, steps): `implementation/sub-plans/io-panel-plan.md`.
 > Trigger: the user's screenshot — clicking the OUTPUTS card does nothing in advanced
 > (GraphView's own comment called the missing panel "a parked knob"). Three searcher passes
 > verified the wiring before planning; built phase-by-phase per the plan. This entry records
@@ -2914,15 +2846,11 @@ INPUTS beautiful focus=g0 → card expands to rows, lines reveal, panel shows `s
 and `output_base` with `default: ./output`. Wire probed: `purpose`/`required: true`/`default`
 all ship.
 
-**Gates:** test_core 3101 passed (incl. the new build pin + the updated io wire-shape
-assertion); contract drift guard 3 passed; web **266 passed** (+7: 5 IoPanel jsdom + 2
-GraphView click-semantics pins — the old toggle had NO jsdom pin, a known gap, so nothing
-was rewritten); tsc strict + `npm run build` clean; Mermaid goldens green (1 intentional
-regen, above). Docs synced: web/CLAUDE.md (io bullet rewritten around the panel; container
-bullet's "no panel" parenthetical corrected), ui/CLAUDE.md (the `RFNode.io` contract bullet
-incl. the do-not-revert polarity note), visualization-requirements.md (hard-requirement +
-Implemented). Full `make check`/`make test` deferred to the joint batch close (parallel
-agent mid-flight — the standing branch precedent).
+**Gates:** +7 pins (5 IoPanel jsdom + 2
+GraphView click-semantics — the old toggle had NO jsdom pin, a known gap, so nothing
+was rewritten); Mermaid goldens green (1 intentional regen, above); the do-not-revert
+`required`-polarity note went into ui/CLAUDE.md. Full `make check`/`make test` deferred to
+the joint batch close (parallel agent mid-flight — the standing branch precedent).
 
 **Same-day follow-ups (user-caught, 2026-06-11): the "any" filler dies; the producer row
 reads as a phrase.** Two screenshot catches on the new panel. (1) `report any` — but the
@@ -2937,9 +2865,8 @@ only. ReadPanel's identical `?? "any"` io fact → the in-file "—" convention.
 anywhere — absent beats wrong. (2) `← [chip]………result` — the field floated to the row's far
 edge (`.edge-chip` is `flex: 1 1 0`, the EdgePanel two-endpoint layout); in these rows a chip
 is one WORD of a phrase, so `.io-port-uses .edge-chip` un-stretches and the field renders
-dot-prefixed snug beside it: `← [build-report · TRANSFORM] .result`. Gates: web **267**
-(IoPanel fixture now exercises the derivation: untyped output + shaped producer → `str`,
-`queryByText("any")` null), tsc + build clean; browser-verified on the same lyrics-generator
+dot-prefixed snug beside it: `← [build-report · TRANSFORM] .result`. The IoPanel fixture now exercises the derivation (untyped output + shaped producer → `str`,
+`queryByText("any")` null); browser-verified on the same lyrics-generator
 deep link — `report str` + the one-phrase producer row.
 
 **Round 3 (user-caught, same day): the derived type moves INTO `wrapperPorts`; arrows become
@@ -2951,8 +2878,7 @@ derivation block was deleted — one copy, three surfaces (io card row, group-ca
 (2) "should we say 'data coming from'?" — the bare ←/→ arrows were replaced with the panel's
 existing label-word vocabulary (`feeds`/`consumed`/…): a faint `from` heads the producer row
 (`from [build-report · TRANSFORM] .result` — one phrase) and `used by` heads the consumer
-chips. web **267** green (label-word + canvas-row assertions updated), tsc + build clean;
-browser-verified — the OUTPUTS card row and the panel both read `report str`.
+chips. Browser-verified — the OUTPUTS card row and the panel both read `report str`.
 
 **Round 4 (user-caught, same day): the two row grammars unify; a single-port card titles
 itself with the port's description.** (1) "why are these styled differently?" — `report str`
@@ -2965,8 +2891,7 @@ we show the description instead of 'lyrics-generator' if it's only 1 output?" �
 user's premise is exactly right: the Inputs/Outputs SECTION has no description slot in the
 format, only individual ports do — so a SINGLE-port card now titles itself with that port's
 description (the leaf `description || identity` convention; multi-port keeps the workflow
-name; the tooltip always carries `workflowName — description`). web **267** green (row-grammar
-+ sole-description pins added to the GraphView io test), tsc + build clean; browser-verified —
+name; the tooltip always carries `workflowName — description`). Browser-verified —
 the OUTPUTS card reads `Summary of the run — songs created…` / `report: str`, matching the
 transform's `result: str` two inches above it.
 
@@ -3008,8 +2933,7 @@ transform's `result: str` two inches above it.
   untruncated. Residual: the root IO card stays fixed-width (same treatment applies if
   wanted).
 
-Shots: /tmp/pflow-shots/*mockname*. Gates run: `make ui-build` (tsc strict) only — web test
-failures are EXPECTED at this stage (see above).
+Shots: /tmp/pflow-shots/*mockname*. Web test failures are EXPECTED at this stage (MOCK, see above).
 
 ### Panel chips → shared avatar component + connection sections + the HOVER system (2026-06-11/12, user-driven) ✅
 
@@ -3028,7 +2952,7 @@ failures are EXPECTED at this stage (see above).
   repeats the port name (`pr_url .pr_url` said it twice).
 - **ReadPanel tail = `references (N)` + `referenced by (N)`** (upstream first — data
   flows in→out). Contract edges only, BY DECISION: the plain-param edge gap is being
-  fixed at the model (scratchpads/param-ref-data-flow-edges/proposal.md — that doc was
+  fixed at the model (.taskmaster/tasks/task_168/implementation/sub-plans/proposal.md — that doc was
   TRIGGERED by this feature's under-report finding); both sections complete for free
   when it lands. Empty direction → no section (no-claims).
 - **HOVER = mark a SET of canvas subjects, a PURE highlight** (no focus change, no
@@ -3058,10 +2982,7 @@ failures are EXPECTED at this stage (see above).
   `inputs` → 3 ringed / 3 haloed, matching its three refs — the production hover path
   verified in a real browser, ending the "hover is the one thing we can't see" residual.
 
-Gates at close: web 290 tests / 289 pass (the 1 = the parallel workstream's pre-existing
-GraphView.test case), tsc strict + build clean, example-validation green (the new
-.pflow.md auto-enrolled). Docs synced: web/CLAUDE.md (chip bullet, HOVER bullet, row
-language), visualization-requirements.md, the skill's SKILL.md. Honest watch-item, not
+Gates green (example-validation included — the new .pflow.md auto-enrolled). Honest watch-item, not
 fixed: every edge/node component consumes the hover context, so one hover transition
 re-renders them all — cheap renders, but sweep-across-rows on the ~124-edge harness is
 untested; if it janks, the fix is a subscription with selector semantics, not less hover.
@@ -3147,9 +3068,7 @@ untested; if it janks, the fix is a subscription with selector semantics, not le
   restores HEAD, not pre-mutation state. Cost: re-applying format.ts by hand
   mid-session. Mutation checks on dirty files need targeted edit-reverts.
 
-**Gates at close:** web 332/332 (from the 289+1-known-red baseline; the GraphView
-NameLabel test updated to the staying design per the plan's step 0), `tsc --noEmit`
-strict + `npm run build` clean, shiki in its own lazy chunks (core ~30 kB gz + engine
+**Gates at close:** shiki in its own lazy chunks (core ~30 kB gz + engine
 + 5 grammars + theme, loaded on first highlight), main chunk grows by react-markdown
 only. Browser-verified via the screenshot loop (`/tmp/pflow-shots/md-render-test-*`):
 llm prompt = colored markdown SOURCE with the selected edge's ref marked INSIDE the
@@ -3241,8 +3160,7 @@ flows (path / catalog name / `source=1`) render from a fresh build in a real bro
 Cause: a stale tab across a rebuild (old index.html → 404'd lazy-chunk hashes → no
 layout) or a stale bundle. Hard refresh after `make ui-build`.
 
-**Gates at close:** web 378/378, server 25/25, build + `make check` clean, bundle
-rebuilt; browser-verified end-to-end (multi-file navigation + breadcrumbs, block tint,
+**Gates at close:** browser-verified end-to-end (multi-file navigation + breadcrumbs, block tint,
 wrap-vs-fence, the host/member file split on run-from-plan).
 
 ### Chip navigation overhaul: port-chip camera fix → deferred follow → navigate-without-opening → pinned selection (2026-06-12, user-driven) ✅
@@ -3308,14 +3226,11 @@ wrap-vs-fence, the host/member file split on run-from-plan).
   state; copy the `click` step for any multi-click sequence). Limitation
   documented: one click per run.
 
-**Gates at close:** web 387/387, `tsc` strict + build clean, example-validation green
-(click.pflow.md auto-enrolled). Browser-verified end-to-end: the port chip centers
+**Gates at close:** browser-verified end-to-end: the port chip centers
 the enforce-diversity card with its row lit (cold AND warm/cached paths); the
 create-songs chip keeps `panel: "build-report"` while the camera centers its group;
 after the pin fix build-report keeps its expanded body (192px @1.2× = rows rendered)
-while the camera leaves. Docs synced: web/CLAUDE.md (chip bullet —
-navigate-without-opening + owner-resolved deferred follow),
-visualization-requirements.md, the skill's SKILL.md.
+while the camera leaves.
 
 ### Sub-workflow ConnectionSections were EMPTY — group hosts aggregate their ports (2026-06-12, user-caught) ✅
 
@@ -3333,9 +3248,7 @@ visualization-requirements.md, the skill's SKILL.md.
   shows `references (10)` (resolve-repo + the root input ports it binds) +
   `referenced by (2)` (pr_url, summary — the parent outputs reading it).
 - Chip.test pin: host lists external feeder/reader + host-level batch read,
-  never internals; the inner member's own sections stay port-scoped. Docs:
-  web/CLAUDE.md ConnectionSections bullet. Gates: web 388/388, build clean,
-  browser-verified.
+  never internals; the inner member's own sections stay port-scoped. Browser-verified.
 
 ### In-card row hover + io-dot centering (2026-06-12, user-caught) ✅
 
@@ -3362,7 +3275,7 @@ visualization-requirements.md, the skill's SKILL.md.
   React Flow's base sheet composes transforms under it.** Computed-style +
   rect measurement (the geometry harness) settles it in one run.
 
-Gates: web 388/388 (CSS-only), build clean, browser-verified (hovered row
+CSS-only; browser-verified (hovered row
 visibly tinted + its line haloed; dots on the border at leaf parity).
 
 ### IO-card text hugs its connection side (2026-06-12, user-proposed) ✅
@@ -3375,8 +3288,7 @@ carries the LIVE handle (`alignRight = feed || (both && output)` → `.io-col-ri
 in PortRows), NOT on input/output kind — so the collapsed group card's
 two-column area and region sidebar/strip are untouched (their live side already
 matched their alignment). `.io-row-out` died (alignment was its only job).
-Browser-verified: both root cards flipped, group card byte-identical. Web
-388/388, build clean.
+Browser-verified: both root cards flipped, group card byte-identical.
 
 ### Visual-invariants harness + CSS-order tripwire (2026-06-12, architecture-review candidate 5) ✅
 
@@ -3429,10 +3341,8 @@ Browser-verified: both root cards flipped, group card byte-identical. Web
   only timer-handle typing is `ReturnType<typeof setTimeout>` (overload-shift
   immune).
 
-Gates at close: web 390/390 (388 + 2), `tsc` strict + build clean,
-example-validation green (the new .pflow.md auto-enrolled), both fixtures
-`passed:true` in a real browser. Docs synced: SKILL.md (5th workflow + the
-`ok`-key warning), web/CLAUDE.md (CSS-order tripwire bullet + the ?raw trap).
+Gates at close: example-validation green (the new .pflow.md auto-enrolled), both fixtures
+`passed:true` in a real browser.
 
 ### GH #508 filed + fixed: the api-warning detector's un-gated JSON-string unwrap (2026-06-13) ✅
 
@@ -3468,11 +3378,6 @@ example-validation green (the new .pflow.md auto-enrolled), both fixtures
   whole skill family survives detection today only because chrome-devtools
   wraps results in prose that fails `json.loads` (luck, not design).
 
-Gates: full `make test` 7850 passed / 1 skipped, `make check` clean (mypy 235
-files, deptry, ruff). Docs synced: engine/CLAUDE.md (detector bullet — both
-arms gated, #508/#301 cross-refs), SKILL.md (the `ok`-key note now states the
-post-fix truth).
-
 ### The `?raw` CSS trap: upstream status settled, NOT filed (2026-06-13, user decision)
 
 > Follow-up question on the candidate-5 deviation: "is this fixed in a newer
@@ -3502,7 +3407,7 @@ post-fix truth).
 
 ### Every `${ref}` is an edge — unified data-flow emission + prompt-cache edges (2026-06-13) ✅
 
-> Plan: `implementation/unified-data-flow-edges-plan.md` (review-hardened; the three
+> Plan: `implementation/sub-plans/unified-data-flow-edges-plan.md` (review-hardened; the three
 > landmines, locked decisions, and expected numbers live there — this entry carries
 > only deviations, verification outcomes, and learnings). Context handoff:
 > `starting-context/braindump-unified-data-flow-edges.md`. All five phases landed in
@@ -3551,8 +3456,7 @@ visualization-requirements.md, proposal status).
 
 **Verification outcomes:**
 
-- Python: full `tests/test_core/` 3118 green; `make test` 7867 green; `make check`
-  clean. New pins: 8 build tests (sibling/plain-param, interpolated multi-ref,
+- Python: new pins — 8 build tests (sibling/plain-param, interpolated multi-ref,
   list param, deep-dict shallow guard, opaque-batch input edge, alias no-edge,
   literal operands + coalesce, escaped/spaced extractor cases), 6 cache tests
   (incl. the real multi-chunk example: 3 producers × 2 consumers = 6 edges,
@@ -3563,7 +3467,6 @@ visualization-requirements.md, proposal status).
   conditional-branching edge multisets IDENTICAL (id renumbering only), zero
   node-set/group/fact flips. `prompt-caching-multi-chunk` enrolled (pins cache
   edges in the drift guard + the frontend lossless sweep).
-- Web: 392/392, tsc strict + build clean.
 - Corpus sweep: 65 built / 14 skipped (the unchanged baseline), 885 data edges
   (plan predicted ~830 EXCLUDING cache edges + two examples added since the
   measurement), build time unchanged.
@@ -3665,8 +3568,7 @@ visualization-requirements.md, proposal status).
   paintEpoch bump (the glide never landed) — without it, interpolated
   positions strand on screen for the whole next-layout window.
 
-Gates at close: web 405/405 (24 files — the 392 baseline + 13), `npm run
-build` clean (tsc strict first), zero production change. flow.ts untouched —
+Gates at close: zero production change. flow.ts untouched —
 no collision surface with the param-ref-data-flow-edges workstream.
 
 ### GraphView slimmed: usePanelPair + useCameraNavigation extracted (2026-06-13, architecture-review candidate 4) ✅
@@ -3714,10 +3616,8 @@ no collision surface with the param-ref-data-flow-edges workstream.
   resize listener), persistence of the re-clamped widths, and the
   open-vs-closed reservation ceiling (620 vs 860 at a 1400 viewport).
 
-Gates at close: web 412/412 (26 files — 405 + 7 new), `npm run build` clean
-(tsc strict first), GraphView tests pass UNEDITED (the extraction is invisible
-through the component interface — the done-when). Docs synced: web/CLAUDE.md
-`hooks/` tree line, GraphView's header comment. No `flow.ts` / Python surface
+Gates at close: GraphView tests pass UNEDITED (the extraction is invisible
+through the component interface — the done-when). No `flow.ts` / Python surface
 touched — still clear of the param-ref workstream.
 
 ### The "cached prefix" row — cache edges get a visible landing (2026-06-13, user-caught) ✅
@@ -3744,12 +3644,10 @@ touched — still clear of the param-ref workstream.
 - 4 new flow.test pins (CACHE_ROW landing in advanced, anchor position between
   params/outputs, +1 ROW_HEIGHT height, NODE_IN in beautiful + CACHE_ROW on
   focus-expansion); the HANDLE-TYPE INVARIANT sweeps the new handle
-  automatically. Web 416/416, tsc + build clean.
+  automatically.
 - Browser-verified: prompt-caching — the selected cache line lands ON the row
   (all three consumers show theirs); multi-chunk — three laned lines fan onto
   summarize's single row; visual-invariants PASS (15/15 contract edges).
-- Docs synced: web/CLAUDE.md (EdgePanel/cache bullet grew the canvas-row
-  mechanism), ui/CLAUDE.md (reserved-name bullet), visualization-requirements.
 
 ### Per-chunk cache rows + the rendered cached-prefix block (2026-06-13, user-designed) ✅
 
@@ -3781,8 +3679,7 @@ touched — still clear of the param-ref workstream.
 - Tests: 2 new Python pins (assembly matches prose+vars in declaration order
   on the real multi-chunk example; subset-only assembly), the 4 cache-row
   flow pins rewritten + a multi-chunk landing/anchor pin, a GraphView panel
-  pin (block order model → cached prefix → prompt). Python 3120 / web 418,
-  `make check` clean. Browser-verified: multi-chunk card shows ×3 + three
+  pin (block order model → cached prefix → prompt). Browser-verified: multi-chunk card shows ×3 + three
   per-chunk rows each receiving its own line; single-chunk flat row;
   panel template block with prose + ${var}; visual-invariants PASS.
 
@@ -3814,7 +3711,7 @@ touched — still clear of the param-ref workstream.
 - **Rewritten pin:** "two refs land on the SAME prompt handle" (flow.test) —
   the old truth this feature deliberately changes; now pins per-ref landings,
   anchor order below the param row, the single-ref no-sub-row arm, and
-  dict-key rows. Web 421/421, Python 3120, make check clean.
+  dict-key rows.
 - **Browser-verified:** multi-chunk card (3 chips, 3 landings); harness
   invariants PASS (181/181 edges, 0 overlaps) with sane leaf heights (densest
   leaf `implement` 500px — its `inputs` dict now shows 5 per-key rows, each
@@ -3885,10 +3782,4 @@ touched — still clear of the param-ref workstream.
   **byte-identical** on both fixtures: run-from-plan (31 nodes,
   advanced+collapse=none) and deep-research (16 nodes). visual-invariants PASS
   on both (181/181 and 37/37 contract edges rendered, 0 dot violations,
-  0 overlaps). Gates: web 425/425 (30 files — 421 + 4), `tsc --noEmit` strict +
-  `npm run build` clean, zero Python changes.
-- Docs synced: web/CLAUDE.md ("Where things live" tree — the five graph modules
-  + testFixtures + the façade/DAG note; the output-row bullet generalized to
-  the nodeRows body bullet; moved-symbol references re-pointed to
-  graph/io.ts / graph/rows.ts). WorkflowNode's dev tripwire message re-points
-  at graph/rows.ts.
+  0 overlaps). Zero Python changes.

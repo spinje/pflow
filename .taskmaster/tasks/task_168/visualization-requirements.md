@@ -169,7 +169,7 @@
   (`${gen.result.ok}`) lands on its exact key row; quiet rows truthfully mean "no
   reader at all" (a param-text scan covers refs that form no edges; loop-condition
   refs are the unscanned residual); wholesale sends never decompose. Plan:
-  `implementation/transform-l2-plan.md`.
+  `implementation/sub-plans/transform-l2-plan.md`.
 - **Output-shape TYPING extended (2026-06-11):** result-dict key types resolve
   through module locals + Python-semantics certainties (`_TypeScope`,
   react_flow.py — corpus 17%→65% typed, still fail-closed: uncertain ships
@@ -184,7 +184,7 @@
   `any` entries dropped. Fixture generator mirrors the server injection.
 - **IO rows on the workflow node (2026-06-10):** root IO cards + collapsed-card
   two-column IO + region sidebar/outputs strip — replaced the floating ports table
-  wholesale. Plan: `implementation/io-rows-plan.md`.
+  wholesale. Plan: `implementation/sub-plans/io-rows-plan.md`.
 - **Root IO cards join the control skeleton:** synthesized `io-flow:` edges — Inputs
   card → entry step(s); control SINK step(s) → Outputs card (sinks derived from
   sequential/branch contract edges, NOT the contract's `is_terminal`, which counts
@@ -211,14 +211,14 @@
   (whole-UNIT focus + read panel via the host node; in beautiful, selection also
   expands the container's IO rows so revealed bindings land row-to-row — node-level
   they DEDUPE into one mislabeled line); the rail's count-expander and double-click
-  are the only toggles. Plan: `implementation/container-select-plan.md`.
+  are the only toggles. Plan: `implementation/sub-plans/container-select-plan.md`.
 - **Batch/loop CHIP RAIL (2026-06-10):** behavior modifiers are 22px chips straddling
   the top border — loop = amber ↻; batch = `⧉ ×{count}` literal / `⧉ ×N` dynamic (the
   count is statically unknowable: the iterated source rides the tooltip, NEVER a
   guessed number; the future run overlay fills the real count); groups append the
   merged count-expander (round chip = info, square = button). The rail is the
   RESERVED home for live-overlay status chips (status joins leftmost). Plan:
-  `implementation/batch-chip-rail-plan.md`.
+  `implementation/sub-plans/batch-chip-rail-plan.md`.
 - **Loops:** an orthogonal U wrapping the box, carrying the app's ONE arrowhead at
   the re-entry; a looped leaf with rows shows amber LOOP-RULE rows (the condition row
   is the U's landing; the cap on its OWN row — authored loop config, deliberately NOT
@@ -260,7 +260,7 @@
   (5 variants, incl. the `shadowed` fact's first user surfacing); endpoint chips
   navigate with camera follow; `focus=<flat edge id>` deep-links. Selected-shade/halo
   shoot-lab pending; hover highlight is the gated follow-on. Plan:
-  `implementation/edge-selection-plan.md`.
+  `implementation/sub-plans/edge-selection-plan.md`.
 - **Markdown + code rendering (2026-06-12):** authored prose (node/port/catalog
   descriptions) renders as real markdown in the panels (react-markdown; raw
   HTML stays text, images alt-only); the catalog is INLINE-only (bold/code,
@@ -291,7 +291,7 @@
   true on the wire. Advanced no longer dims shadowed structural edges (the
   richer edge set shadowed most of the spine — the dim erased the control
   skeleton; user-gated via browser before/after). Plan:
-  `implementation/unified-data-flow-edges-plan.md`.
+  `implementation/sub-plans/unified-data-flow-edges-plan.md`.
 
 ## Wanted / planned (NOT yet built)
 

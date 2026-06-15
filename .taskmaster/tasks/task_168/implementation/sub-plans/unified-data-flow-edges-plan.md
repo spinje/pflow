@@ -23,7 +23,7 @@ a dependency is one DATA_FLOW edge.* One general-purpose emitter in `build.py` (
 deleted), the `is_dynamic ⟺ edge` invariant becomes true on the wire, and the UI's canvas lines +
 `references / referenced by` panel sections complete from contract edges alone.
 
-**Origin.** `scratchpads/param-ref-data-flow-edges/proposal.md` (Option A, user-approved),
+**Origin.** `.taskmaster/tasks/task_168/implementation/sub-plans/proposal.md` (Option A, user-approved),
 extended by user decisions: (a) consolidate to a single emitter — one-edge-per-distinct-ref,
 inputs included; (b) include the prompt-cache arm; (c) dedup Mermaid's duplicate rendered lines;
 (d) stop dimming shadowed control edges in advanced density (browser before/after as the
@@ -447,7 +447,7 @@ Via the screenshot-pflow-web-ui skill (deep links; `inspect` for geometry, crops
   EdgePanel cache arm.
 - `.taskmaster/tasks/task_168/visualization-requirements.md`: references-sections completeness →
   Implemented; add cache-edge + one-edge-per-ref bullets.
-- `scratchpads/param-ref-data-flow-edges/proposal.md`: prepend "Status: IMPLEMENTED" noting the
+- `.taskmaster/tasks/task_168/implementation/sub-plans/proposal.md`: prepend "Status: IMPLEMENTED" noting the
   A2 consolidation extension + the cache arm.
 - Progress log entry (`.taskmaster/tasks/task_168/implementation/progress-log.md`): deviations,
   review outcomes, learnings, per the established format.

@@ -1,6 +1,13 @@
 # Plain-param sibling refs form no DATA_FLOW edges — analysis + fix proposal
 
-**Status:** proposal, not implemented. **Date:** 2026-06-11.
+**Status: IMPLEMENTED (2026-06-13)** — as Option A, extended to the A2
+consolidation (one general-purpose emitter `_add_ref_edges`; the inputs-only
+`_add_declared_input_edges` + pair-dedup deleted) plus the prompt-cache arm
+(`input_name="prompt_cache"` edges from `## Cache` chunks). Plan + guards:
+`.taskmaster/tasks/task_168/implementation/sub-plans/unified-data-flow-edges-plan.md`;
+journey: the task-168 progress log (2026-06-13 entry).
+
+**Original status:** proposal, not implemented. **Date:** 2026-06-11.
 **Trigger:** designing a "Referenced by" panel section (who consumes this node's
 output) revealed that consumer lists derived from contract edges under-report —
 which led to the underlying model gap this doc is about.
