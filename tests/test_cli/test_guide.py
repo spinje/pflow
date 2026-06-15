@@ -202,6 +202,97 @@ def test_compose_separator_between_chunks() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Read-completeness header + end-marker (topic path only)
+# ---------------------------------------------------------------------------
+
+
+def _end_marker(n: int) -> str:
+    return f"⟨END OF GUIDE — {n} section{'' if n == 1 else 's'}⟩"
+
+
+# Framing only fires above _FRAME_THRESHOLD_BYTES (20KB). `core` (~33KB) is the
+# smallest single topic that exceeds it; small topics like `http` stay unframed.
+
+
+def test_large_topic_output_starts_with_header() -> None:
+    """Large topic output leads with the read-completeness header (survives
+    preview truncation, which keeps the start)."""
+    result = compose_guide(["core"])
+    assert result.startswith("> **1 guide section below")
+    assert "Read each to the END before building" in result
+    # Advises reading the preserved full output, not re-fetching.
+    assert "don't re-run this command" in result
+    assert "the full text is preserved" in result
+
+
+def test_large_topic_output_ends_with_marker() -> None:
+    result = compose_guide(["core"])
+    assert result.rstrip().endswith(_end_marker(1))
+
+
+def test_small_topic_output_is_not_framed() -> None:
+    """A single small topic stays below the truncation-risk threshold and gets
+    no header/marker — framing it would be pure overhead."""
+    result = compose_guide(["http"])
+    assert not result.startswith(">")
+    assert "END OF GUIDE" not in result
+    assert "Read each to the END" not in result
+    # Real content is still present and intact.
+    assert "# HTTP Node" in result
+
+
+def test_marker_count_is_section_count_despite_interface_divider() -> None:
+    """A node topic injects its own ``---`` divider for the dynamic interface, so
+    a naive divider count over-counts. The marker count must be the resolved topic
+    count, proving completeness is divider-independent. ``core http`` exceeds the
+    framing threshold and ``http`` contributes an extra interface divider."""
+    result = compose_guide(["core", "http"])
+    # Dividers: core↔http join + http's interface + the pre-marker divider ≥ 3.
+    assert result.count("\n\n---\n\n") >= 3
+    # ...but the section count is the number of topics (2), not dividers.
+    assert _end_marker(2) in result
+    assert _end_marker(3) not in result
+
+
+def test_multi_topic_marker_count_matches_resolved_topics() -> None:
+    result = compose_guide(["core", "http", "llm"])
+    assert result.startswith("> **3 guide sections below")
+    assert result.rstrip().endswith(_end_marker(3))
+
+
+def test_marker_count_uses_deduped_topic_count() -> None:
+    """Count is the deduped topic count — a repeated topic doesn't inflate it."""
+    result = compose_guide(["core", "core"])
+    assert result.startswith("> **1 guide section below")
+    assert result.rstrip().endswith(_end_marker(1))
+
+
+def test_header_appears_within_first_kilobyte() -> None:
+    """The header must fit inside a typical preview window."""
+    result = compose_guide(["core"])
+    assert _end_marker(1) in result[:1024]
+
+
+def test_header_and_marker_pluralization_agree() -> None:
+    """The marker text quoted in the header equals the actual trailing line —
+    they're generated from one local, so they can't drift on plural."""
+    for topics, n in (["core"], 1), (["core", "http"], 2):
+        result = compose_guide(topics)
+        marker = _end_marker(n)
+        # Header quotes the exact marker as the completeness check.
+        assert f"reach the last line `{marker}`" in result
+        assert result.rstrip().endswith(marker)
+
+
+def test_no_args_output_has_no_header_or_marker() -> None:
+    """The entry path (no args / ``pflow --help``) is untouched."""
+    result = compose_guide([])
+    assert result == render_entry_content()
+    assert "END OF GUIDE" not in result
+    assert "Read each to the END" not in result
+
+
+# ---------------------------------------------------------------------------
 # Dynamic node interface injection
 # ---------------------------------------------------------------------------
 

@@ -7,6 +7,15 @@ from pathlib import Path
 GUIDE_DIR = Path(__file__).parent
 PROMPT_CACHING_TOPIC = "prompt-caching"
 
+# Topic output gets the read-completeness header + end-marker only when it's
+# large enough that a calling tool might truncate it. Small fetches (a single
+# small topic) are not truncated in practice, so framing them is pure overhead.
+# 20KB sits above every single small topic and below `core` and all multi-topic
+# output — the failure class where an agent silently misses a whole section.
+# Tunable risk dial: lower = safer against aggressive truncators, higher = less
+# overhead on mid-size output.
+_FRAME_THRESHOLD_BYTES = 20_000
+
 # Backward-compatible topic aliases. Keep aliases out of auto-detection and
 # menu text so generated guide pointers use the clearest public topic name.
 _TOPIC_ALIASES: dict[str, str] = {
@@ -91,7 +100,37 @@ def compose_guide(args: list[str]) -> str:
 
         parts.append(content)
 
-    return "\n\n---\n\n".join(parts) + "\n"
+    body = "\n\n---\n\n".join(parts)
+    if len(body) < _FRAME_THRESHOLD_BYTES:
+        return body + "\n"
+    return _frame_topics(body, len(topics))
+
+
+def _frame_topics(body: str, n: int) -> str:
+    """Frame composed topic content with a read-completeness header and end-marker.
+
+    Only called for output large enough to risk truncation (see
+    ``_FRAME_THRESHOLD_BYTES``). The header goes at the very top because calling
+    tools that truncate large output keep the *start* and drop the *end* — a
+    trailing reminder would be in the region that gets cut. It tells the agent that
+    a preview means the tool has preserved the full text elsewhere (file/pagination)
+    to be read there rather than re-fetched, and points at the end-marker as the
+    completeness check. The marker's absence proves the output was truncated.
+
+    ``marker`` is computed once so the header's claim and the trailing line cannot
+    drift on pluralization.
+    """
+    sections = "section" if n == 1 else "sections"
+    marker = f"⟨END OF GUIDE — {n} {sections}⟩"
+    header = (
+        f"> **{n} guide {sections} below, split by `---`. Read each to the END before building** "
+        "— they're condensed, so skimming means wrong format rules.\n"
+        "> Output is long: if you see only a **preview**, the full text is preserved elsewhere "
+        "(a file your tool names, or pagination) — open and read it there. "
+        "Don't build from the preview, and don't re-run this command.\n"
+        f"> Done only when you reach the last line `{marker}` — if you're not there, you haven't read it all."
+    )
+    return f"{header}\n\n{body}\n\n---\n\n{marker}\n"
 
 
 def list_topics() -> list[str]:
