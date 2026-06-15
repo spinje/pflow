@@ -157,6 +157,21 @@ class TestCriticalAPIWarningScenarios:
 
         assert warning is None
 
+    def test_json_string_result_not_unwrapped_for_non_mcp_nodes(self):
+        """GH #508: a JSON-string ``result`` is payload, not an API response.
+
+        The string arm of ``unwrap_mcp_response`` used to bypass the MCP-only
+        gate, so a successful code node returning a JSON failure report (e.g. a
+        verdict ``{"ok": false}``) was misclassified as a failed API call. This
+        pins the string case to match the dict case above — both stay payload
+        for non-MCP nodes.
+        """
+        shared = {"calc": {"result": json.dumps({"ok": False, "violations": ["x"]})}}
+
+        warning = detect_api_warning("calc", shared, node_type_name="PythonCodeNode")
+
+        assert warning is None
+
     def test_top_level_explicit_failure_flags_remain_type_agnostic(self):
         shared = {"calc": {"status": "error", "message": "Invalid input format"}}
 
