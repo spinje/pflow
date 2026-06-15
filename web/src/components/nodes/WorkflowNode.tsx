@@ -12,7 +12,7 @@ import { type CSSProperties, memo, useEffect, useRef } from "react";
 import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
 
 import type { FlowNode } from "../../graph/flow";
-import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle } from "../../graph/handles";
+import { NODE_IN, NODE_OUT } from "../../graph/handles";
 import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
 import { categoryLabel, collapseWhitespace, humanizeId, nodeColor, parseTemplate, previewValue, stripMarkdown, truncate } from "../../utils/format";
 import { iconFor } from "../../utils/icons";
@@ -177,8 +177,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     node,
     density,
     direction,
-    outputRows,
-    paramRows,
+    rows,
     branchLabels,
     branchConditions,
     revealedConditions,
@@ -239,7 +238,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     const el = rootRef.current;
     if (el && el.clientHeight > 0 && el.scrollHeight > el.clientHeight + 1) {
       console.warn(
-        `pflow UI: node ${id} content is ${el.scrollHeight}px but leafSize predicted ${el.clientHeight}px — update METRICS / leafSize (flow.ts) or ELK lays out on a lie`,
+        `pflow UI: node ${id} content is ${el.scrollHeight}px but leafSize predicted ${el.clientHeight}px — update METRICS / leafSize (graph/rows.ts) or ELK lays out on a lie`,
       );
     }
   });
@@ -256,15 +255,15 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (node.unexpanded) classes.push("unexpanded");
   if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
   const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
-  const hasBody = showBody && (paramRows.length > 0 || outputRows.length > 0 || node.loop != null);
-  const paramRow = (param: RFParam): JSX.Element => (
+  const hasBody = showBody && rows.length > 0;
+  const paramRow = (param: RFParam, handle: string): JSX.Element => (
     <div
       className={`param-row${param.is_dynamic ? " dynamic" : ""}`}
       key={param.name}
-      onMouseEnter={() => hoverRow({ nodeId: id, handles: [paramHandle(param.name)] })}
+      onMouseEnter={() => hoverRow({ nodeId: id, handles: [handle] })}
       onMouseLeave={() => hoverRow(null)}
     >
-      <Handle id={paramHandle(param.name)} type="target" position={Position.Left} className="handle param-handle" />
+      <Handle id={handle} type="target" position={Position.Left} className="handle param-handle" />
       <span className="param-name">{param.name}</span>
       <span className="param-value">
         <ParamValue param={param} />
@@ -326,95 +325,104 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
               card; its rail clears the nodes via the data-rail hint (DataEdge). */}
           {/* Row hover marks the nodes the row's edges touch — a pure highlight
               (the hover-set channel, see interaction.ts). */}
-          {/* Param rows speak the output rows' connection language: a DYNAMIC
+          {/* The body is ONE switch over the assembled row list (nodeRows,
+              graph/rows.ts): the left column (params in authored order, the
+              cached prefix before `prompt`, per-ref sub-rows under any param
+              receiving ≥2 refs), then output rows, then the ↻ loop-rule rows —
+              the same list leafSize and rowAnchorsFor consume, so render,
+              height and ports cannot drift. Handles arrive ON the rows.
+              Param rows speak the output rows' connection language: a DYNAMIC
               param (refs land here) gets the data-teal name + live dot, a
-              static config param a muted name + quiet dot (index.css).
-              The list comes assembled from paramRowsFor (flow.ts) — params in
-              authored order, the cached prefix before `prompt`, and per-ref
-              sub-rows under any param receiving ≥2 refs — the same list
-              leafSize and rowAnchorsFor consume, so render, height and ports
-              cannot drift. A "ref" row's line lands on IT (its handle), shown
-              as the established ref-chip; a "label" row is handle-less. */}
-          {paramRows.map((row) =>
-            row.kind === "param" ? (
-              paramRow(row.param)
-            ) : row.kind === "label" ? (
-              <div className="param-row cache-row" key={`l:${row.text}`}>
-                <span className="param-name" title="Cached system prefix — ## Cache chunks consumed via prompt_cache:, in prefix order">
-                  {row.text}
-                </span>
-                <span className="param-value">×{row.count}</span>
-              </div>
-            ) : (
-              <div
-                className="param-row dynamic ref-row"
-                key={row.handle}
-                onMouseEnter={() => hoverRow({ nodeId: id, handles: [row.handle] })}
-                onMouseLeave={() => hoverRow(null)}
-              >
-                <Handle id={row.handle} type="target" position={Position.Left} className="handle param-handle" />
-                {row.nested ? (
-                  <span className="param-name" title={`\${${row.ref}}`}>
-                    ·{row.name != null && ` ${row.name}`}{" "}
-                    <span className="ref-chip">{row.ref}</span>
-                  </span>
-                ) : (
-                  <>
-                    <span className="param-name" title="Cached system prefix — ## Cache chunk consumed via prompt_cache:">
-                      {row.name}
+              static config param a muted name + quiet dot (index.css). A "ref"
+              row's line lands on IT (its handle), shown as the established
+              ref-chip; a "label" row is handle-less.
+              Output rows: name + faint `: type` (D1). A NESTED row indents
+              under its parent (the wholesale-read case); a QUIET row is
+              authored-but-unread — faint, grey dot, and no line can reach it
+              (lines come only from edges). Every output row still renders its
+              handle: the landing ladder only names rows that exist, and a
+              quiet row never receives an edge by construction (D4/D5).
+              Loop rows style as a LOOP RULE (amber), not a data param (they
+              parameterize the loop mechanism, not the node's inputs): the
+              CONDITION row carries the loop-back U's landing handle
+              ("iteration re-enters under this rule" — the rail already runs on
+              the right); the CAP gets its own row below (one row truncated
+              both operands into mush — user-caught). */}
+          {rows.map((row) => {
+            switch (row.kind) {
+              case "param":
+                return paramRow(row.param, row.targetHandle);
+              case "label":
+                return (
+                  <div className="param-row cache-row" key={`l:${row.text}`}>
+                    <span className="param-name" title="Cached system prefix — ## Cache chunks consumed via prompt_cache:, in prefix order">
+                      {row.text}
                     </span>
-                    <span className="param-value" title={`\${${row.ref}}`}>
-                      <span className="ref-chip">{row.ref}</span>
+                    <span className="param-value">×{row.count}</span>
+                  </div>
+                );
+              case "ref":
+                return (
+                  <div
+                    className="param-row dynamic ref-row"
+                    key={row.handle}
+                    onMouseEnter={() => hoverRow({ nodeId: id, handles: [row.handle] })}
+                    onMouseLeave={() => hoverRow(null)}
+                  >
+                    <Handle id={row.handle} type="target" position={Position.Left} className="handle param-handle" />
+                    {row.nested ? (
+                      <span className="param-name" title={`\${${row.ref}}`}>
+                        ·{row.name != null && ` ${row.name}`}{" "}
+                        <span className="ref-chip">{row.ref}</span>
+                      </span>
+                    ) : (
+                      <>
+                        <span className="param-name" title="Cached system prefix — ## Cache chunk consumed via prompt_cache:">
+                          {row.name}
+                        </span>
+                        <span className="param-value" title={`\${${row.ref}}`}>
+                          <span className="ref-chip">{row.ref}</span>
+                        </span>
+                      </>
+                    )}
+                  </div>
+                );
+              case "output":
+                return (
+                  <div
+                    className={`param-row output-row${row.row.nested ? " nested" : ""}${row.row.quiet ? " quiet" : ""}`}
+                    key={`o:${row.row.field}`}
+                    onMouseEnter={() => hoverRow({ nodeId: id, handles: [row.sourceHandle] })}
+                    onMouseLeave={() => hoverRow(null)}
+                  >
+                    {/* The title carries field AND type: a long label ellipsizes the
+                        faint `: type` suffix away, so hover must recover both. */}
+                    <span className="param-name out" title={row.row.dataType ? `${row.row.field}: ${row.row.dataType}` : row.row.field}>
+                      {row.row.nested ? "·" : "→"} {row.row.label}
+                      {row.row.dataType != null && <span className="row-type">: {row.row.dataType}</span>}
                     </span>
-                  </>
-                )}
-              </div>
-            ),
-          )}
-          {/* Output rows (outputRowsFor, flow.ts): name + faint `: type` (D1).
-              A NESTED row indents under its parent (the wholesale-read case);
-              a QUIET row is authored-but-unread — faint, grey dot, and no line
-              can reach it (lines come only from edges). Every row still renders
-              its handle: the landing ladder only names rows that exist, and a
-              quiet row never receives an edge by construction (D4/D5). */}
-          {outputRows.map((row) => (
-            <div
-              className={`param-row output-row${row.nested ? " nested" : ""}${row.quiet ? " quiet" : ""}`}
-              key={`o:${row.field}`}
-              onMouseEnter={() => hoverRow({ nodeId: id, handles: [outputHandle(row.field)] })}
-              onMouseLeave={() => hoverRow(null)}
-            >
-              {/* The title carries field AND type: a long label ellipsizes the
-                  faint `: type` suffix away, so hover must recover both. */}
-              <span className="param-name out" title={row.dataType ? `${row.field}: ${row.dataType}` : row.field}>
-                {row.nested ? "·" : "→"} {row.label}
-                {row.dataType != null && <span className="row-type">: {row.dataType}</span>}
-              </span>
-              <Handle id={outputHandle(row.field)} type="source" position={Position.Right} className="handle out-handle" />
-            </div>
-          ))}
-          {/* The ↻ loop-rule rows — the node's authored loop config as rows, styled
-              as a LOOP RULE (amber), not a data param (it parameterizes the loop
-              mechanism, not the node's inputs). The CONDITION row carries the
-              loop-back U's landing handle ("iteration re-enters under this rule" —
-              the rail already runs on the right); the CAP gets its own row below
-              (one row truncated both operands into mush — user-caught). leafSize
-              counts both. */}
-          {node.loop && (
-            <div className="param-row loop-row">
-              <span className="loop-rule" title={`${node.loop.polarity} ${node.loop.condition}`}>
-                ↻ {node.loop.polarity} {truncate(collapseWhitespace(node.loop.condition), 34)}
-              </span>
-              <Handle id={LOOP_ROW} type="target" position={Position.Right} className="handle loop-row-handle" />
-            </div>
-          )}
-          {node.loop && node.loop.cap != null && (
-            <div className="param-row loop-row">
-              <span className="loop-rule" title={`at most ${node.loop.cap} iterations`}>
-                ≤ {truncate(String(node.loop.cap), 34)}
-              </span>
-            </div>
-          )}
+                    <Handle id={row.sourceHandle} type="source" position={Position.Right} className="handle out-handle" />
+                  </div>
+                );
+              case "loop-condition":
+                return (
+                  <div className="param-row loop-row" key="loop-condition">
+                    <span className="loop-rule" title={`${row.loop.polarity} ${row.loop.condition}`}>
+                      ↻ {row.loop.polarity} {truncate(collapseWhitespace(row.loop.condition), 34)}
+                    </span>
+                    <Handle id={row.targetHandle} type="target" position={Position.Right} className="handle loop-row-handle" />
+                  </div>
+                );
+              case "loop-cap":
+                return (
+                  <div className="param-row loop-row" key="loop-cap">
+                    <span className="loop-rule" title={`at most ${row.loop.cap} iterations`}>
+                      ≤ {truncate(String(row.loop.cap), 34)}
+                    </span>
+                  </div>
+                );
+            }
+          })}
         </div>
       )}
 

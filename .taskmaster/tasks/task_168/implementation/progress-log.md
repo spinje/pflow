@@ -3820,3 +3820,75 @@ touched — still clear of the param-ref workstream.
   leaf `implement` 500px — its `inputs` dict now shows 5 per-key rows, each
   with its own line, instead of 5 lines merging into one row);
   lyrics-generator renders sane.
+
+### flow.ts split + the nodeRows row model (2026-06-13, architecture-review candidates 2 + 1) ✅
+
+> The last two candidates from the 2026-06-12 architecture work order — executed
+> AFTER the param-ref-data-flow-edges workstream landed, exactly as the deferral
+> intended (candidate 2 moves `scanParamReads`, which that agent was editing).
+> The handoff's manifests were ADAPTED to the post-handoff code: paramRowsFor /
+> RefRow / cacheInsertIndex (none existed on 2026-06-12) land in `rows.ts`, and
+> scan.ts carries the unified-edge grammar mirrors (`splitCoalesceOperands`,
+> `VAR_NAME_RE`). All five work-order candidates are now done.
+
+**Candidate 2 — `graph/flow.ts` split along its seams (1,965 → 1,017 lines):**
+
+- Four new modules, `flow.ts` stays the package FAÇADE (`export *` re-exports —
+  ZERO import churn outside `graph/`): `scan.ts` (param-text read scan +
+  `producedTypeOf`, `consumedReadPaths`, `FieldReads`/`EMPTY_READS`); `io.ts`
+  (`ioOwners`, `wrapperPorts`, `shellBatchIds`, `Port`); `rows.ts` (row models +
+  ALL sizing: size constants, `groupIoWidth`/`ioRowsCount`/`ioAreaHeight`,
+  `cacheInsertIndex`, `paramRowsFor`, `outputRowsFor`, `leafSize` (now exported),
+  `rowAnchorsFor`); `focus.ts` (`applyFocus`, `expandTargets`, `rowTouches`,
+  `SELECTED_EDGE_Z`, `NO_EXPANSION`). Dependency DAG holds: scan → io → rows →
+  focus/flow; rows/focus take flow's types TYPE-only (TS-erased, no runtime
+  cycle); the ONE `NO_EXPANSION` instance lives in focus.ts and buildFlow
+  imports it (the build-memo identity rule kept single-copy).
+- **Test split with ZERO assertion edits** (the candidate's done-when): shared
+  fixture builders → `graph/testFixtures.ts` (non-.test name); the
+  outputRowsFor + rowAnchorsFor describes → `rows.test.ts`; plain-param-read +
+  consumedReadPaths describes → `scan.test.ts`; the three IO describes →
+  `io.test.ts`; applyFocus/expandTargets/rowTouches describes → `focus.test.ts`;
+  build/landing/HANDLE-TYPE/ELK-smoke/loop/cache describes stay in
+  `flow.test.ts` (2,397 → ~1,390 lines). 421/421 green at the split's stop
+  point; lossless/spine/portSides/layout suites untouched.
+
+**Candidate 1 — `nodeRows`: a leaf's WHOLE body as one handle-carrying list:**
+
+- `NodeRow` (rows.ts) = ParamRowItem variants (param rows gain their
+  `targetHandle`) → `output` rows (with `sourceHandle`) → `loop-condition`
+  (LOOP_ROW) → `loop-cap` (only when set). `nodeRows` COMPOSES
+  paramRowsFor/outputRowsFor — their D-rules and tests are untouched. The four
+  hand-mirrored consumers became mechanical walks: `WorkflowNode` = one switch
+  over `row.kind` (handles arrive ON the rows — the component no longer imports
+  paramHandle/outputHandle/LOOP_ROW); `leafSize` body count = `rows.length`
+  (signature simplified — the loop-row arithmetic dissolved into the list);
+  `rowAnchorsFor` = every row advances y, only handle-bearing rows emit an
+  anchor (the "loop rows advance but don't anchor" trap is now structural);
+  `sourceHandleFor`'s ladder consults `rowsByNode` (the generalized
+  `outputRowsByNode`). **The S1 scenario ("add a row kind") now touches
+  `rows.ts` + one JSX branch.**
+- **The ONE interface change:** `LeafData.paramRows` + `outputRows` →
+  `LeafData.rows` (keeping both representations would have re-opened the drift
+  this candidate closes). 10 test sites reading `leaf.data.outputRows` updated
+  MECHANICALLY via a `leafOutputRows` helper — every expected array
+  byte-identical (shape-only edits; the handoff's must-pass-unchanged list —
+  rowAnchorsFor geometry, spine ≤1px, HANDLE-TYPE, leafSize heights, lossless —
+  all pass without edits). 4 new pins (rows.test.ts): body order, handle
+  attachment, the loop-cap presence rule, and the leafSize/anchor lockstep now
+  asserted mechanically against `nodeRows().length`.
+
+**Verification (the geometric-identity bar, both candidates):**
+
+- Before-geometry captured PRE-split via the inspect workflow; after BOTH
+  candidates the full geometry JSON (every node/tile/handle/edge rect) is
+  **byte-identical** on both fixtures: run-from-plan (31 nodes,
+  advanced+collapse=none) and deep-research (16 nodes). visual-invariants PASS
+  on both (181/181 and 37/37 contract edges rendered, 0 dot violations,
+  0 overlaps). Gates: web 425/425 (30 files — 421 + 4), `tsc --noEmit` strict +
+  `npm run build` clean, zero Python changes.
+- Docs synced: web/CLAUDE.md ("Where things live" tree — the five graph modules
+  + testFixtures + the façade/DAG note; the output-row bullet generalized to
+  the nodeRows body bullet; moved-symbol references re-pointed to
+  graph/io.ts / graph/rows.ts). WorkflowNode's dev tripwire message re-points
+  at graph/rows.ts.

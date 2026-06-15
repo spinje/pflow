@@ -22,16 +22,32 @@ src/
   types.ts           the wire contract (mirrors react_flow.py) — imported everywhere
   api/               server communication (client.ts: fetch + ApiError; a live /events
                      subscription would go here)
-  graph/             PURE contract → React Flow transform; NO React (tests run node-env)
-    flow.ts          buildFlow (nodes/edges) + applyFocus + expandTargets; size constants
+  graph/             PURE contract → React Flow transform; NO React (tests run node-env).
+                     flow.ts is the package FAÇADE (it re-exports the siblings, so
+                     consumers import everything from "../graph/flow"); the DAG is
+                     scan → io → rows → focus/flow (rows/focus take flow's types
+                     TYPE-only — no runtime cycle)
+    flow.ts          buildFlow (nodes/edges, edge construction + handle ladders) +
+                     the RF data types (LeafData/GroupData/EdgeData/FlowNode/…)
+    scan.ts          param-text read scanning (the scope.py grammar mirror):
+                     scanParamReads, consumedReadPaths, producedTypeOf
+    io.ts            IO ownership + suppression single-copies: ioOwners, wrapperPorts,
+                     shellBatchIds, the Port row model
+    rows.ts          the leaf ROW MODEL + sizing: nodeRows (the whole body as one
+                     handle-carrying list), paramRowsFor, outputRowsFor, leafSize,
+                     rowAnchorsFor, the size constants
+    focus.ts         the restyle pass + expansion policy: applyFocus, expandTargets,
+                     rowTouches, NO_EXPANSION
     layout.ts        ELK positioning (the only async step; lazy-loads elkjs as its own chunk)
     portSides.ts     post-layout edge decoration (data rails, loop rails, back rails)
     spine.ts         post-layout sequential-chain re-alignment (the SPINE bullet)
     collapse.ts      initial-collapse policy (auto-collapse budget, URL overrides)
     handles.ts       handle-id scheme (each id encodes its source/target type)
-    metrics.ts       layout-coupled geometry constants — the single source for flow.ts
+    metrics.ts       layout-coupled geometry constants — the single source for rows.ts
                      sizes, the connector/edge geometry, and the :root CSS vars main.tsx
                      injects before first paint
+    testFixtures.ts  shared fixture builders (node/group/edge + view consts) for the
+                     graph tests — non-.test name so vitest doesn't collect it
     lossless.test.ts the no-information-loss invariant, swept over synthetic shapes +
                      real committed contracts (test/fixtures/contracts/)
   hooks/             useWorkflowGraph (fetch → build → layout → focus → RF state +
@@ -78,29 +94,37 @@ Tests sit beside their subject.
   HANDLE-TYPE INVARIANT test (`flow.test.ts`) enforces this — **jsdom CANNOT** (React
   Flow renders no edge DOM under jsdom, so any "no edge errors" assertion there is
   theater). Edge integrity is a pure `flow.ts` test, never a render test.
-- **Output rows have ONE source of truth: `outputRowsFor` (TRANSFORM L2,
-  2026-06-10).** The `OutputRow[]` list it composes — authored shape
-  (`RFNode.output_shape` — its `field` names the port: result/response) ∪ observed reads (edge `output_field` + first
-  `output_path` segment) — is the SAME array consumed by `WorkflowNode`
-  (render), `leafSize` (height), `rowAnchorsFor` (LR ELK ports), and
-  `sourceHandleFor` (the landing ladder via `outputRowsByNode`), so render,
-  size, ports and handles cannot drift. Composition: a bare read or unknown
-  keys → parent row + nested key rows (D2); no bare read + keys known → flat
-  full-dotted-path rows, no parent (D3); `quiet` = no reading edge (D4 — grey
-  dot, faint, no line can exist). A field-level row's type falls back to
-  `graph.kind_output_types[kind]` (the registry's declared interface — types
-  existing rows, never creates one; authored shapes win). The landing ladder, one level deeper than H6:
-  sub-key ref → its exact key row (`o:result.ok`) → the field's parent row →
-  `NODE_OUT`. Quiet is kept truthful by `scanParamReads` (flow.ts): the scan
-  merges sibling param-text reads into the observed set — scope-aware
-  (same-parent node_id only), batch-alias-skipping, grammar-gated (mirrors
-  scope.py: escaped `$${x}` and spaced operands are never reads), and it NEVER
-  creates a new field row or a line (no edge + no shape → no row; lines come
-  only from edges — D5). KEPT after the unified-edge model fix (2026-06-13,
-  every authored `${ref}` now draws a contract edge): build-time dedup still
-  collapses two same-param sub-key refs (`Edge.output_path` is compare=False) —
-  the scan recovers those lost reads. Residual: refs outside params (loop
-  conditions) are not scanned.
+- **A leaf's BODY has ONE source of truth: `nodeRows` (graph/rows.ts, 2026-06-13 —
+  the row-model generalization of the original `outputRowsFor` consolidation).**
+  The `NodeRow[]` list it assembles — the left column (`paramRowsFor`: params in
+  authored order, the cached-prefix group before `prompt`, per-ref sub-rows under
+  a ≥2-ref param) → output rows (`outputRowsFor`) → the ↻ loop-rule rows
+  (condition; cap only when set) — rides `LeafData.rows`, each row CARRYING its
+  own handle, and is the SAME list consumed by `WorkflowNode` (one switch over
+  `row.kind`), `leafSize` (body height = `rows.length`), `rowAnchorsFor` (LR ELK
+  ports — every row advances the y counter; only handle-bearing rows emit an
+  anchor: label/loop rows anchor nothing, the self-loop never enters ELK), and
+  `sourceHandleFor` (the landing ladder via `rowsByNode`) — so render, size,
+  ports and handles cannot drift; adding a row kind touches `rows.ts` + one JSX
+  branch. `outputRowsFor` composition (TRANSFORM L2, 2026-06-10): authored shape
+  (`RFNode.output_shape` — its `field` names the port: result/response) ∪
+  observed reads (edge `output_field` + first `output_path` segment); a bare
+  read or unknown keys → parent row + nested key rows (D2); no bare read + keys
+  known → flat full-dotted-path rows, no parent (D3); `quiet` = no reading edge
+  (D4 — grey dot, faint, no line can exist). A field-level row's type falls
+  back to `graph.kind_output_types[kind]` (the registry's declared interface —
+  types existing rows, never creates one; authored shapes win). The landing
+  ladder, one level deeper than H6: sub-key ref → its exact key row
+  (`o:result.ok`) → the field's parent row → `NODE_OUT`. Quiet is kept truthful
+  by `scanParamReads` (graph/scan.ts): the scan merges sibling param-text reads
+  into the observed set — scope-aware (same-parent node_id only),
+  batch-alias-skipping, grammar-gated (mirrors scope.py: escaped `$${x}` and
+  spaced operands are never reads), and it NEVER creates a new field row or a
+  line (no edge + no shape → no row; lines come only from edges — D5). KEPT
+  after the unified-edge model fix (2026-06-13, every authored `${ref}` now
+  draws a contract edge): build-time dedup still collapses two same-param
+  sub-key refs (`Edge.output_path` is compare=False) — the scan recovers those
+  lost reads. Residual: refs outside params (loop conditions) are not scanned.
 - **Edges are additive.** An endpoint hidden by collapse or a suppressed group-host
   re-anchors to a visible ancestor — never dropped. A missing anchor is a bug and
   `flow.ts` warns instead of dropping it.
@@ -288,7 +312,7 @@ Tests sit beside their subject.
   height, so the trunk passes straight THROUGH the node), with matching fixed
   ports; different-height cards then sit header-to-header on one line, bodies
   hanging below. **LR also declares ROW ports**: every visible param/output/
-  branch/IO row gets a fixed port at its exact (side, y) — `flow.ts rowAnchorsFor`
+  branch/IO row gets a fixed port at its exact (side, y) — `rows.ts rowAnchorsFor`
   owns the y math (mirrors the components' render order + `METRICS.ioRowsChrome`).
   Ports only make alignment POSSIBLE; straightness priorities make ELK pay for
   it, and they are WEIGHTS, not constraints: the control trunk carries **100**
@@ -488,13 +512,12 @@ Tests sit beside their subject.
   assembled template (prose + ${var}, prefix order, baked in Python with the
   runtime's own assembly rule) — as a `cached prefix` block placed by
   `cacheInsertIndex` before `prompt`, colored as markdown SOURCE like prompts.
-- **The LEFT column has ONE source of truth: `paramRowsFor` (flow.ts,
-  2026-06-13) — the `outputRowsFor` mirror.** It assembles the ordered
-  `ParamRowItem[]` list (params in authored order · the cached-prefix group
-  before `prompt` via `cacheInsertIndex` — request order: system → cached
-  prefix → prompt · per-ref binding SUB-ROWS) that WorkflowNode (render),
-  `leafSize` (height) and `rowAnchorsFor` (LR ELK ports) all consume, so the
-  three can't drift. SUB-ROWS (user design 2026-06-13): a param receiving ≥2
+- **The LEFT column has ONE source of truth: `paramRowsFor` (graph/rows.ts,
+  2026-06-13) — the `outputRowsFor` mirror, composed into `nodeRows` (the body
+  bullet above).** It assembles the ordered `ParamRowItem[]` list (params in
+  authored order · the cached-prefix group before `prompt` via
+  `cacheInsertIndex` — request order: system → cached prefix → prompt · per-ref
+  binding SUB-ROWS). SUB-ROWS (user design 2026-06-13): a param receiving ≥2
   refs (an interpolated prompt, a dict of bindings) grows one nested `·` row
   per ref — label = the authored ref text rebuilt from the edge (`refText`;
   rendered as the established ref-chip; a dict-key row prepends its key) —
@@ -517,7 +540,7 @@ Tests sit beside their subject.
   `focus=<flat edge id>` works (the deterministic escape hatch — agents/screenshot
   loop); `initialCollapsed` protects BOTH endpoints' ancestor chains for an edge
   target. Stable edge ADDRESSING (`source→target:input`) stays deferred (Task 169).
-- **A decorator-SHELL batch group is never rendered — and `shellBatchIds` (flow.ts)
+- **A decorator-SHELL batch group is never rendered — and `shellBatchIds` (graph/io.ts)
   is the ONE copy of what counts as a shell.** The contract models "batched X" as
   batch-wrapping-X, but presentationally batch is a MODIFIER (deck + ×N chip), not a
   box to travel through (user decision 2026-06-10): a DYNAMIC batch group is always
@@ -563,7 +586,7 @@ Tests sit beside their subject.
   via `producedTypeOf` (the same shape→registry resolution order the canvas
   output rows use), else null — and the derivation lives IN `wrapperPorts`,
   so the canvas io rows show `report str` identically to the panel. Ports come
-  from the exported `wrapperPorts` (flow.ts — the SAME single copy the canvas
+  from the exported `wrapperPorts` (graph/io.ts — the SAME single copy the canvas
   rows render from); consumers/producers derive inline from contract data-flow
   edges; chips are the shared `Chip` (components/Chip.tsx). An input with
   NO data-flow edges shows no "used by" row at all — never an "unused" claim
