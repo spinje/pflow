@@ -138,15 +138,17 @@ def unwrap_mcp_response(output: Any, *, inspect_result: bool = True) -> Optional
     if not isinstance(output, dict):
         return None
 
-    # Try to unwrap MCP JSON string result
-    parsed = _parse_mcp_json_result(output)
-    if parsed is not None:
-        return parsed
+    # Canonical MCP ``result`` wrapper — JSON-string or dict form. Both are
+    # gated on ``inspect_result`` so this unwrapping stays limited to MCP nodes
+    # (a non-MCP node's ``result`` is payload data, not an API response).
+    if inspect_result:
+        parsed = _parse_mcp_json_result(output)
+        if parsed is not None:
+            return parsed
 
-    # Handle canonical MCP node output: {"result": {...}}.
-    if inspect_result and isinstance(output.get("result"), dict):
-        result = output["result"]
-        return _unwrap_successful_data(result) or result
+        if isinstance(output.get("result"), dict):
+            result = output["result"]
+            return _unwrap_successful_data(result) or result
 
     # Handle MCP dict with nested data
     data = _unwrap_successful_data(output)
