@@ -195,10 +195,11 @@ def extract_code_annotation_type(code: str, key: str) -> Optional[str]:
 
     Returns None as a skip-check signal when the code is malformed, the key is
     not annotated at module scope, or the annotation resolves to an
-    unknown/non-S1 type. Uses top-level extraction — a function-local
-    ``y: int`` does not shadow a missing or different top-level ``y`` binding.
+    unknown/non-S1 type. Uses top-level *input* extraction — a function-local
+    ``y: int`` does not shadow a missing or different top-level ``y`` binding,
+    and a local ``y: int = ...`` is not an input whose type we'd check.
     """
-    annotations = extract_top_level_annotations(code)
+    annotations = extract_top_level_input_annotations(code)
     type_str = annotations.get(key)
     if type_str is None:
         return None
@@ -206,15 +207,23 @@ def extract_code_annotation_type(code: str, key: str) -> Optional[str]:
     return _get_outer_type_name(type_str)
 
 
-def extract_top_level_annotations(code: str) -> dict[str, str]:
-    """Like ``_extract_annotations`` but scoped to module-level names only.
+def extract_top_level_input_annotations(code: str) -> dict[str, str]:
+    """Module-level **bare** annotations — a code node's input declarations.
 
-    ``_extract_annotations`` uses ``ast.walk`` which descends into function
-    and class bodies. For Pass 9's boundary checks (missing-input, orphan
-    annotation) we want ONLY the module-level annotations — a helper function
-    like ``def helper(): y: int = 1`` is a legitimate local variable, not a
-    candidate code-node input. Treating it as one produces spurious orphan
-    errors that block valid workflows.
+    Two filters narrow ``ast.AnnAssign`` to exactly the input-declaration
+    candidates that Pass 9's boundary checks (missing-input, orphan annotation)
+    care about:
+
+    1. **Bare only** (``node.value is None``). A *bare* annotation ``x: T`` is an
+       unbound name whose value the engine injects from ``inputs:`` — that is an
+       input declaration. An *annotated assignment* ``x: T = expr`` binds its own
+       value, so it is a local variable (issue #331), NOT an input. ``result``
+       and ``next`` are likewise annotated assignments and so are excluded here;
+       they are outputs/routing, checked separately via ``_extract_annotations``.
+
+    2. **Module scope only**. ``_extract_annotations`` uses ``ast.walk`` and
+       descends into function/class bodies; we don't — a helper-local like
+       ``def helper(): y: int`` is not a candidate code-node input.
 
     Scope boundaries (skipped, not descended into):
     ``FunctionDef``, ``AsyncFunctionDef``, ``ClassDef``, ``Lambda``.
@@ -236,7 +245,7 @@ def extract_top_level_annotations(code: str) -> dict[str, str]:
         node = stack.pop()
         if isinstance(node, _SCOPE_BOUNDARIES):
             continue  # Don't descend into new scopes.
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        if isinstance(node, ast.AnnAssign) and node.value is None and isinstance(node.target, ast.Name):
             annotations[node.target.id] = ast.unparse(node.annotation)
         stack.extend(ast.iter_child_nodes(node))
     return annotations

@@ -1480,12 +1480,13 @@ class TestCodeNodeInputAnnotationValidation:
         assert any("Add 'y' to the inputs dict" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
         assert not any("Remove" in s for s in diagnostic.suggestions or []), diagnostic.suggestions
 
-    def test_orphan_annotation_assigned_suggests_remove_or_add(self, test_registry):
-        """Orphan annotation that is ALSO assigned is a local — offer remove (lead) or add.
+    def test_annotated_assignment_local_is_not_flagged_as_orphan(self, test_registry):
+        """A typed local (`x: T = expr`) is not an input declaration — no orphan error (#331).
 
-        Removing the annotation is safe because the name carries a value, so both
-        fixes are valid. Contrast with the read-but-unassigned case above, where
-        removing would leave the name unbound and only "add" is offered.
+        ``all_items: list = [x]`` binds its own value, so it is a local variable,
+        not an injected input. Only a BARE annotation (``x: T``) declares an input,
+        so the validator must leave valued assignments alone. Contrast with the
+        bare-orphan cases above, which still error.
         """
         workflow_ir = {
             "nodes": [
@@ -1493,7 +1494,7 @@ class TestCodeNodeInputAnnotationValidation:
                     "id": "consumer",
                     "type": "code",
                     "params": {
-                        # all_items is annotated AND assigned -> a local, not an input.
+                        # all_items is an annotated assignment -> a local, not an input.
                         "code": "x: dict\nall_items: list = [x]\nresult: int = len(all_items)",
                         "inputs": {"x": "literal_value"},
                     },
@@ -1503,16 +1504,41 @@ class TestCodeNodeInputAnnotationValidation:
         }
 
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
-        annotation_errors = [
-            d for d in errors if "has no corresponding entry in 'inputs'" in d.message and "all_items" in d.message
-        ]
-        assert len(annotation_errors) == 1
-        suggestions = annotation_errors[0].suggestions or []
-        # Both fixes present...
-        assert any("Remove the annotation 'all_items" in s and "local variable" in s for s in suggestions), suggestions
-        assert any("add 'all_items' to the inputs dict" in s.lower() for s in suggestions), suggestions
-        # ...and the local reading leads.
-        assert "Remove" in suggestions[0], suggestions
+        annotation_errors = [d for d in errors if "has no corresponding entry in 'inputs'" in d.message]
+        assert annotation_errors == [], [d.message for d in annotation_errors]
+
+    def test_typed_locals_not_in_inputs_are_not_flagged(self, test_registry):
+        """Issue #331 repro — typed intermediates produce zero validation errors.
+
+        The original failure: every ``name: type = expr`` intermediate was flagged
+        ``has no corresponding entry in 'inputs'``. Here ``rewrite_output`` is the
+        only real input (bare); ``deliberation`` / ``lyrics`` are typed locals and
+        ``result`` is the output. The whole node must validate clean.
+        """
+        code = (
+            "rewrite_output: str\n"
+            "lines = rewrite_output.split('\\n')\n"
+            "deliberation: str = '\\n'.join(lines[:1]).strip()\n"
+            "lyrics: str = '\\n'.join(lines[1:]).strip()\n"
+            'result: dict = {"deliberation": deliberation, "lyrics": lyrics}'
+        )
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "split",
+                    "type": "code",
+                    "params": {
+                        "code": code,
+                        "inputs": {"rewrite_output": "some text"},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        orphan_errors = [d for d in errors if "has no corresponding entry in 'inputs'" in d.message]
+        assert orphan_errors == [], [d.message for d in orphan_errors]
 
     def test_orphan_annotation_conditional_assignment_is_not_safe_local(self, test_registry):
         """Orphan assigned only inside `if` may be unbound at runtime — add, don't lead with remove (C1)."""
@@ -1579,6 +1605,10 @@ class TestCodeNodeInputAnnotationValidation:
         suggestions = ann[0].suggestions or []
         assert any("Remove the annotation 'helper" in s and "local variable" in s for s in suggestions), suggestions
         assert "Remove" in suggestions[0], suggestions
+        # #331: the suggestion must not claim locals can't be annotated, and should
+        # point to the typed-local value form instead.
+        assert not any("take annotations" in s for s in suggestions), suggestions
+        assert any("helper: Any = ..." in s for s in suggestions), suggestions
 
     def test_orphan_batch_alias_assigned_preserves_alias_suggestion(self, test_registry):
         """An assigned batch alias still needs `item: ${item}` — the alias isn't injected into exec (C3)."""

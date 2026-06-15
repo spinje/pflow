@@ -18,7 +18,7 @@ from pflow.nodes.python.python_code import (
     extract_code_assigned_names,
     extract_code_load_references,
     extract_optional_input_keys,
-    extract_top_level_annotations,
+    extract_top_level_input_annotations,
     s1_type_to_python_display,
 )
 
@@ -544,9 +544,20 @@ def helper():
 x: dict
 result: int = helper()
 """
-        annotations = extract_top_level_annotations(code)
-        assert annotations == {"x": "dict", "result": "int"}
+        annotations = extract_top_level_input_annotations(code)
+        # Only the bare module-level annotation `x: dict` is an input declaration.
+        # `y` is a function local; `result: int = ...` is a valued assignment
+        # (an output, not an input) — both excluded.
+        assert annotations == {"x": "dict"}
         assert "y" not in annotations
+        assert "result" not in annotations
+
+    def test_top_level_annotations_excludes_valued_assignments(self):
+        """Annotated assignments (`x: T = expr`) are locals, not inputs (issue #331)."""
+        code = "rewrite_output: str\nseen: set = set()\ncandidates: list = []\nresult: dict = {}"
+        annotations = extract_top_level_input_annotations(code)
+        # Only the bare `rewrite_output: str` declares an input.
+        assert annotations == {"rewrite_output": "str"}
 
     def test_top_level_annotations_excludes_class_body(self):
         """Class body annotations must not surface at module scope."""
@@ -557,7 +568,7 @@ class Config:
 
 x: dict
 """
-        annotations = extract_top_level_annotations(code)
+        annotations = extract_top_level_input_annotations(code)
         assert annotations == {"x": "dict"}
         assert "timeout" not in annotations
         assert "name" not in annotations
@@ -567,20 +578,21 @@ x: dict
         code = """
 import os
 if os.environ.get("FLAG"):
-    y: int = 1
+    y: int
 else:
-    y: str = "2"
+    y: str
 
 x: dict
 """
-        annotations = extract_top_level_annotations(code)
+        annotations = extract_top_level_input_annotations(code)
         # `y` appears twice at module scope (one branch of `if`); last-write wins.
-        # The important fact: `y` is included because `if` is not a scope boundary.
+        # The important fact: `y` (a bare annotation) is included because `if`
+        # is not a scope boundary.
         assert "x" in annotations
         assert "y" in annotations
 
     def test_top_level_annotations_malformed_returns_empty(self):
-        assert extract_top_level_annotations("x: dict =") == {}
+        assert extract_top_level_input_annotations("x: dict =") == {}
 
     def test_python_to_s1_canonical_is_injective(self):
         """Reverse mapping from S1 to Python requires injectivity.
