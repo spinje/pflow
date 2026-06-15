@@ -259,6 +259,7 @@ class MCPRegistrar:
             "class_name": "MCPNode",
             "module": "pflow.nodes.mcp.node",
             "file_path": "virtual://mcp",  # Virtual path for MCP nodes
+            "type": "mcp",  # Mirrors core/user nodes — keeps the data self-describing
             "interface": {
                 "description": tool.get("description", f"MCP tool from {server_name}"),
                 "inputs": [],  # MCP tools don't read from shared store, only from params

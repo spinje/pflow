@@ -75,15 +75,6 @@ class InterfaceSchema(TypedDict, total=False):
     mcp_metadata: dict[str, Any]
 
 
-class RegistryEntry(TypedDict):
-    """Registry entry for MCP nodes."""
-
-    class_name: str
-    module: str
-    file_path: str
-    interface: InterfaceSchema
-
-
 # JSON Schema types
 JSONSchemaType = str | list[str]  # Can be string or union type like ["string", "null"]
 JSONSchemaValue = None | bool | int | float | str | list | dict[str, Any]
