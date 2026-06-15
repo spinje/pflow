@@ -777,6 +777,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         _get_outer_type,
         extract_code_assigned_names,
         extract_code_load_references,
+        extract_top_level_annotations,
         extract_top_level_input_annotations,
     )
 
@@ -804,18 +805,24 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         except SyntaxError:
             continue
 
-        # Module-level BARE annotations only — these are the input declarations.
-        # An annotated assignment (``deliberation: str = ...``) binds its own
-        # value, so it is a local, not an input (issue #331); function/class
-        # locals are excluded too. Using ``_extract_annotations`` (walk, all
-        # values) here would flag every typed local as an orphan input.
+        # Two module-level annotation views feed three checks (issue #331):
         #
-        # Edge case — a name bound in ``inputs:`` AND written as a valued local
-        # (``x: dict = {}`` while ``x`` is also an input): ``x`` is absent here,
-        # so the missing-annotation check below reports it. That is correct —
-        # the engine injects inputs before the code runs (``namespace.update``),
-        # so the ``= {}`` clobbers the injected value: the input binding is dead.
-        annotations = extract_top_level_input_annotations(code)
+        #   * ``input_annotations`` — BARE annotations only (``x: T``, no value).
+        #     These are the input *declarations*. The orphan check uses this: an
+        #     annotated assignment (``deliberation: str = ...``) binds its own
+        #     value, so it's a local, not an undeclared input.
+        #   * ``annotations`` — ALL module-level annotations (bare + valued). The
+        #     missing-annotation and type-match checks use this, because they ask
+        #     "does this input carry a type annotation at all" — and they must
+        #     agree with runtime, which reads valued annotations too
+        #     (``_check_input_annotations`` / ``_check_input_types`` walk all
+        #     values). A normalized input like ``text: str = text.strip()`` (with
+        #     ``text`` in ``inputs:``) reads the injected value before reassigning,
+        #     runs clean, and must NOT be flagged "missing annotation".
+        #
+        # Both are module-scope only — function/class locals are never inputs.
+        annotations = extract_top_level_annotations(code)
+        input_annotations = extract_top_level_input_annotations(code)
 
         # Mirror the two prep-time checks in ``python_code.py::prep`` at
         # validate-time:
@@ -892,7 +899,10 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         # fails with "Undefined variable 'item'". Pass 9 correctly flags the
         # missing binding as Class 2 (orphan annotation with Load reference →
         # "Add 'item' to the inputs dict").
-        annotation_keys = {key for key in annotations if key not in {"result", "next"}}
+        # `annotated_keys` (all annotations) drives the missing/type checks;
+        # `bare_keys` (input declarations) drives the orphan check.
+        annotated_keys = {key for key in annotations if key not in {"result", "next"}}
+        bare_keys = {key for key in input_annotations if key not in {"result", "next"}}
         # Load references disambiguate orphan annotations: a name read in the
         # body signals "add to inputs"; an unused annotation is dead code.
         load_refs = extract_code_load_references(code)
@@ -906,12 +916,12 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
 
         diagnostics.extend(
             _build_missing_code_annotation_diagnostics(
-                node_id, input_keys, annotation_keys, inputs, workflow_ir, node_outputs
+                node_id, input_keys, annotated_keys, inputs, workflow_ir, node_outputs
             )
         )
         diagnostics.extend(
             _build_orphan_code_annotation_diagnostics(
-                node_id, input_keys, annotation_keys, annotations, load_refs, assigned_names, batch_alias
+                node_id, input_keys, bare_keys, input_annotations, load_refs, assigned_names, batch_alias
             )
         )
         diagnostics.extend(
@@ -922,7 +932,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
                 code,
                 inputs,
                 annotations,
-                annotation_keys,
+                annotated_keys,
             )
         )
 

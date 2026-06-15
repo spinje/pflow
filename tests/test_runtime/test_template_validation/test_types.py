@@ -1540,6 +1540,37 @@ class TestCodeNodeInputAnnotationValidation:
         orphan_errors = [d for d in errors if "has no corresponding entry in 'inputs'" in d.message]
         assert orphan_errors == [], [d.message for d in orphan_errors]
 
+    def test_input_normalized_in_place_is_not_flagged_missing(self, test_registry):
+        """A valued annotation on an INPUT key (`text: str = text.strip()`) validates clean.
+
+        The RHS reads the injected value before reassigning, so the input is used,
+        not dead — it runs fine at runtime. The missing-annotation check must treat
+        a valued annotation as satisfying the input's type-annotation requirement
+        (matching runtime's ``_check_input_annotations``), not flag "missing".
+        Regression guard for the over-narrowing caught in deep review.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "norm",
+                    "type": "code",
+                    "params": {
+                        "code": "text: str = text.strip()\nresult: str = text.upper()",
+                        "inputs": {"text": "  hello  "},
+                    },
+                },
+            ],
+            "edges": [],
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+        # No "missing annotation" and no "orphan" error — the node is valid.
+        relevant = [
+            d
+            for d in errors
+            if "missing a type annotation" in d.message or "has no corresponding entry in 'inputs'" in d.message
+        ]
+        assert relevant == [], [d.message for d in relevant]
+
     def test_orphan_annotation_conditional_assignment_is_not_safe_local(self, test_registry):
         """Orphan assigned only inside `if` may be unbound at runtime — add, don't lead with remove (C1)."""
         workflow_ir = {
