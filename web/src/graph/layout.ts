@@ -89,18 +89,38 @@ export async function layoutWithWatchdog(elk: ELK, root: ElkNode): Promise<ElkNo
 
 const ELK_DIRECTION: Record<Direction, string> = { LR: "RIGHT", TD: "DOWN" };
 
+// Inner gutter between a region's frame and its body nodes — ELK padding (CSS
+// renders no region padding; the body's position is ELK's). A flat 16 read cramped
+// (user-caught 2026-06-15): body nodes hugged the header divider, the right edge,
+// and the bottom. The TOP carries EXTRA because every node floats a NameLabel ~20px
+// ABOVE its top border (7px offset + the 13px label box — WorkflowNode/index.css);
+// ELK doesn't know it exists, so without the extra the first node's label collides
+// with the header divider. These same gutters drive the nodeSize.minimum math below,
+// so a tall inputs sidebar still can't overflow — keep them the single source.
+// Per-side inner gutter between a region's frame and its body nodes — ELK padding
+// (CSS renders no region padding; the body's position is ELK's). A flat 16 read
+// cramped (user-caught 2026-06-15). The TOP holds the floating NameLabel (~20px
+// above each node's top border — WorkflowNode/index.css) in its upper portion, so
+// its CLEAR space reads ~20px less than the number. LEFT/BOTTOM run more generous
+// than TOP/RIGHT (user-tuned). These same gutters drive the nodeSize.minimum math
+// below, so a tall inputs sidebar still can't overflow — keep them the single source.
+const REGION_TOP = 32; // header divider → first node
+const REGION_RIGHT = 32; // body → right border
+const REGION_LEFT = 48; // inputs sidebar (or bare left border) → body
+const REGION_BOTTOM = 48; // body → outputs strip (or bare bottom border)
+
 // Region padding reserves room for the chrome GroupNode draws around the body:
 // the header (always), the inputs SIDEBAR on the left and the outputs strip at the
 // bottom (when the group renders its IO rows) — so the body's first layer lays out
 // BESIDE the sidebar, not below it, and nothing overlaps the strip.
 function groupPadding(node: FlowNode): string {
-  let left = 16;
-  let bottom = 16;
+  let left = REGION_LEFT;
+  let bottom = REGION_BOTTOM;
   if (node.type === "group" && node.data.ioRowsVisible) {
-    if (node.data.inputs.length > 0) left = METRICS.ioSidebarW + 28;
-    if (node.data.outputs.length > 0) bottom = METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + 28;
+    if (node.data.inputs.length > 0) left = METRICS.ioSidebarW + REGION_LEFT;
+    if (node.data.outputs.length > 0) bottom = METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + REGION_BOTTOM;
   }
-  return `[top=${METRICS.groupHeaderH + 16},left=${left},bottom=${bottom},right=16]`;
+  return `[top=${METRICS.groupHeaderH + REGION_TOP},left=${left},bottom=${bottom},right=${REGION_RIGHT}]`;
 }
 
 // Port ids for the TD icon-column ports (one pair per leaf node). Only minted
@@ -273,10 +293,10 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
       // direction DOWN, elkjs applies nodeSize.minimum in its INTERNAL (transposed)
       // coordinates — pass (minH, minW) in TD, (minW, minH) in LR.
       if (node.type === "group" && node.data.ioRowsVisible && node.data.inputs.length > 0) {
-        const minW = METRICS.ioSidebarW + 28 + 230 + 16;
+        const minW = METRICS.ioSidebarW + REGION_LEFT + 230 + REGION_RIGHT;
         const minH =
-          METRICS.groupHeaderH + 16 + METRICS.ioLabelH + node.data.inputs.length * METRICS.rowH + 16 +
-          (node.data.outputs.length > 0 ? METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + 28 : 16);
+          METRICS.groupHeaderH + REGION_TOP + METRICS.ioLabelH + node.data.inputs.length * METRICS.rowH + REGION_BOTTOM +
+          (node.data.outputs.length > 0 ? METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + REGION_BOTTOM : REGION_BOTTOM);
         elkNode.layoutOptions["elk.nodeSize.constraints"] = "MINIMUM_SIZE";
         elkNode.layoutOptions["elk.nodeSize.minimum"] =
           direction === "TD" ? `(${minH}, ${minW})` : `(${minW}, ${minH})`;
