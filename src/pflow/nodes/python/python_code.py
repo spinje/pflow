@@ -195,8 +195,10 @@ def extract_code_annotation_type(code: str, key: str) -> Optional[str]:
 
     Returns None as a skip-check signal when the code is malformed, the key is
     not annotated at module scope, or the annotation resolves to an
-    unknown/non-S1 type. Uses top-level extraction — a function-local
-    ``y: int`` does not shadow a missing or different top-level ``y`` binding.
+    unknown/non-S1 type. Uses module-level extraction (bare OR valued) so a
+    valued-annotated input (``x: dict = ...``) is still type-checked — matching
+    runtime's ``_check_input_types`` — while a function-local ``y: int`` does not
+    shadow a missing or different top-level ``y`` binding.
     """
     annotations = extract_top_level_annotations(code)
     type_str = annotations.get(key)
@@ -207,23 +209,44 @@ def extract_code_annotation_type(code: str, key: str) -> Optional[str]:
 
 
 def extract_top_level_annotations(code: str) -> dict[str, str]:
-    """Like ``_extract_annotations`` but scoped to module-level names only.
+    """All module-level annotations — bare ``x: T`` AND valued ``x: T = expr``.
 
-    ``_extract_annotations`` uses ``ast.walk`` which descends into function
-    and class bodies. For Pass 9's boundary checks (missing-input, orphan
-    annotation) we want ONLY the module-level annotations — a helper function
-    like ``def helper(): y: int = 1`` is a legitimate local variable, not a
-    candidate code-node input. Treating it as one produces spurious orphan
-    errors that block valid workflows.
+    The "does this name carry a type annotation at all" view. It mirrors what
+    runtime's ``_check_input_annotations`` / ``_check_input_types`` treat as
+    annotated, so validate-time input checks that must agree with runtime —
+    missing-annotation and type-match — stay aligned. For the narrower
+    *input-declaration* view (bare annotations only), use
+    ``extract_top_level_input_annotations``.
 
-    Scope boundaries (skipped, not descended into):
-    ``FunctionDef``, ``AsyncFunctionDef``, ``ClassDef``, ``Lambda``.
+    Scoped to module level (descends ``If``/``For``/``While``/``With``/``Try``,
+    skips ``FunctionDef``/``AsyncFunctionDef``/``ClassDef``/``Lambda``). Returns
+    an empty dict on SyntaxError.
+    """
+    return _walk_top_level_annotations(code, bare_only=False)
 
-    Non-scope structures (descended into) include ``If``, ``For``, ``While``,
-    ``With``, ``Try`` — annotations inside these are still module-scoped per
-    Python's scoping rules (only the four types above introduce new scopes).
 
-    Returns an empty dict on SyntaxError (matches ``_extract_annotations``).
+def extract_top_level_input_annotations(code: str) -> dict[str, str]:
+    """Module-level **bare** annotations — a code node's input declarations.
+
+    A *bare* annotation ``x: T`` is an unbound name whose value the engine injects
+    from ``inputs:`` — that is an input declaration. An *annotated assignment*
+    ``x: T = expr`` binds its own value, so it is a local variable (issue #331),
+    NOT an input; ``result`` and ``next`` are likewise valued assignments and so
+    are excluded here. Used by the orphan-annotation check, which flags input
+    *declarations* with no matching binding.
+
+    Same module-scope rules as ``extract_top_level_annotations`` (skips
+    function/class/lambda bodies). Returns an empty dict on SyntaxError.
+    """
+    return _walk_top_level_annotations(code, bare_only=True)
+
+
+def _walk_top_level_annotations(code: str, *, bare_only: bool) -> dict[str, str]:
+    """Shared module-scope annotation walk; ``bare_only`` drops valued assignments.
+
+    Descends into non-scope structures (``If``/``For``/``While``/``With``/``Try``)
+    but not into ``FunctionDef``/``AsyncFunctionDef``/``ClassDef``/``Lambda`` —
+    only those four introduce new scopes, so their locals aren't module names.
     """
     try:
         tree = ast.parse(code)
@@ -236,7 +259,11 @@ def extract_top_level_annotations(code: str) -> dict[str, str]:
         node = stack.pop()
         if isinstance(node, _SCOPE_BOUNDARIES):
             continue  # Don't descend into new scopes.
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and not (bare_only and node.value is not None)
+        ):
             annotations[node.target.id] = ast.unparse(node.annotation)
         stack.extend(ast.iter_child_nodes(node))
     return annotations

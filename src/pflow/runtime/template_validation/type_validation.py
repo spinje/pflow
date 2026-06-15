@@ -465,20 +465,22 @@ def _build_orphan_code_annotation_diagnostics(
     assigned_names: set[str],
     batch_alias: Optional[str],
 ) -> list[Diagnostic]:
-    """Build diagnostics for annotations with no matching input binding.
+    """Build diagnostics for *bare* annotations with no matching input binding.
 
-    The fix depends on whether the orphan name is *assigned* a value in the body,
+    Only bare annotations (``x: T``) reach here — a valued annotated assignment
+    (``x: T = expr``) is a local and is filtered out upstream (issue #331). The
+    fix for a bare orphan depends on whether the name is *also bound* in the body,
     because that decides which fixes are even safe:
 
-    - Orphan key is assigned (``x: T = ...`` / ``x = ...``) → it's a local. BOTH
-      fixes are valid: drop the annotation (it stays a working local) or, if it
-      was meant as an input, bind it. We list both, leading with the more-likely
-      local reading.
-    - Orphan key is read but never assigned (``ast.Name(ctx=Load())`` only) → the
+    - Orphan key is bound elsewhere (a plain ``x = ...`` / ``def x`` / ``class x``)
+      → it's a local. BOTH fixes are valid: drop the bare annotation (the name
+      stays bound) or, if it was meant as an input, bind it. We list both, leading
+      with the more-likely local reading.
+    - Orphan key is read but never bound (``ast.Name(ctx=Load())`` only) → the
       author expected it bound at runtime. Removing the annotation would leave the
       name unbound, so the only valid fix is "Add to the inputs dict" (or "Rename"
       for a typo-level fuzzy match against an existing input key).
-    - Orphan key is neither read nor assigned → dead annotation; the fix is
+    - Orphan key is neither read nor bound → dead annotation; the fix is
       "Remove the annotation".
 
     ``batch_alias`` (when present) narrows the "add to inputs" suggestion to
@@ -500,10 +502,10 @@ def _build_orphan_code_annotation_diagnostics(
         }
 
         if is_assigned and not (batch_alias and key == batch_alias):
-            # The author binds this name to a value, so it's a local, not an
-            # injected input. Removing the annotation is safe (it stays a working
-            # local); binding it is also valid if it was meant as an input. Offer
-            # both, local first.
+            # The author also binds this name in the body, so it's a local, not an
+            # injected input. Removing the bare annotation is safe (it stays a
+            # working local); binding it is also valid if it was meant as an input.
+            # Offer both, local first.
             #
             # The batch alias is excluded: it is NOT injected into code exec
             # (only into template resolution), so removing its annotation would
@@ -512,7 +514,8 @@ def _build_orphan_code_annotation_diagnostics(
             # `alias: ${alias}` binding.
             fixes = [
                 f"Remove the annotation '{key}: {annotation_str}' — '{key}' is assigned in the code, "
-                f"so it's a local variable (only declared inputs and result/next take annotations).",
+                f"so it's a local variable, not an input. To keep the type on a local, annotate the "
+                f"assignment itself: '{key}: {annotation_str} = ...'.",
                 f"Or add '{key}' to the inputs dict (in params.inputs): {key}: ${{<source>}} "
                 f"— if it's a workflow input.",
             ]
@@ -775,6 +778,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         extract_code_assigned_names,
         extract_code_load_references,
         extract_top_level_annotations,
+        extract_top_level_input_annotations,
     )
 
     diagnostics: list[Diagnostic] = []
@@ -794,17 +798,31 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         # Skip Pass 9 entirely when the code has a SyntaxError — runtime
         # surfaces a clean line-numbered error and Pass 9 emitting extra
         # "missing annotation" / "orphan" diagnostics on top only obscures
-        # the real issue. `extract_top_level_annotations` fails open with
+        # the real issue. `extract_top_level_input_annotations` fails open with
         # `{}`, so without this check Pass 9 would proceed and over-report.
         try:
             _ast.parse(code)
         except SyntaxError:
             continue
 
-        # Module-level annotations only — function/class locals are not
-        # candidate code-node inputs. Using ``_extract_annotations`` here
-        # would flag every ``def helper(): y: int = 1`` as an orphan.
+        # Two module-level annotation views feed three checks (issue #331):
+        #
+        #   * ``input_annotations`` — BARE annotations only (``x: T``, no value).
+        #     These are the input *declarations*. The orphan check uses this: an
+        #     annotated assignment (``deliberation: str = ...``) binds its own
+        #     value, so it's a local, not an undeclared input.
+        #   * ``annotations`` — ALL module-level annotations (bare + valued). The
+        #     missing-annotation and type-match checks use this, because they ask
+        #     "does this input carry a type annotation at all" — and they must
+        #     agree with runtime, which reads valued annotations too
+        #     (``_check_input_annotations`` / ``_check_input_types`` walk all
+        #     values). A normalized input like ``text: str = text.strip()`` (with
+        #     ``text`` in ``inputs:``) reads the injected value before reassigning,
+        #     runs clean, and must NOT be flagged "missing annotation".
+        #
+        # Both are module-scope only — function/class locals are never inputs.
         annotations = extract_top_level_annotations(code)
+        input_annotations = extract_top_level_input_annotations(code)
 
         # Mirror the two prep-time checks in ``python_code.py::prep`` at
         # validate-time:
@@ -881,7 +899,10 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         # fails with "Undefined variable 'item'". Pass 9 correctly flags the
         # missing binding as Class 2 (orphan annotation with Load reference →
         # "Add 'item' to the inputs dict").
-        annotation_keys = {key for key in annotations if key not in {"result", "next"}}
+        # `annotated_keys` (all annotations) drives the missing/type checks;
+        # `bare_keys` (input declarations) drives the orphan check.
+        annotated_keys = {key for key in annotations if key not in {"result", "next"}}
+        bare_keys = {key for key in input_annotations if key not in {"result", "next"}}
         # Load references disambiguate orphan annotations: a name read in the
         # body signals "add to inputs"; an unused annotation is dead code.
         load_refs = extract_code_load_references(code)
@@ -895,12 +916,12 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
 
         diagnostics.extend(
             _build_missing_code_annotation_diagnostics(
-                node_id, input_keys, annotation_keys, inputs, workflow_ir, node_outputs
+                node_id, input_keys, annotated_keys, inputs, workflow_ir, node_outputs
             )
         )
         diagnostics.extend(
             _build_orphan_code_annotation_diagnostics(
-                node_id, input_keys, annotation_keys, annotations, load_refs, assigned_names, batch_alias
+                node_id, input_keys, bare_keys, input_annotations, load_refs, assigned_names, batch_alias
             )
         )
         diagnostics.extend(
@@ -911,7 +932,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
                 code,
                 inputs,
                 annotations,
-                annotation_keys,
+                annotated_keys,
             )
         )
 

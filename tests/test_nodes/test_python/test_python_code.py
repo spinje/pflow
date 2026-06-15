@@ -19,6 +19,7 @@ from pflow.nodes.python.python_code import (
     extract_code_load_references,
     extract_optional_input_keys,
     extract_top_level_annotations,
+    extract_top_level_input_annotations,
     s1_type_to_python_display,
 )
 
@@ -534,8 +535,10 @@ class TestAnnotationExtractionHelper:
         assert _get_outer_type('"dict"') is dict
         assert _get_outer_type("'list[dict]'") is list
 
-    def test_top_level_annotations_excludes_function_locals(self):
-        """Function-local annotations must not surface at module scope."""
+    # --- extract_top_level_annotations: ALL module-level annotations (bare + valued) ---
+
+    def test_top_level_annotations_includes_valued_excludes_function_locals(self):
+        """All module-level annotations (bare AND valued); function locals excluded."""
         code = """
 def helper():
     y: int = 1
@@ -545,6 +548,8 @@ x: dict
 result: int = helper()
 """
         annotations = extract_top_level_annotations(code)
+        # Valued `result: int = ...` IS included (it's a module-level annotation —
+        # runtime reads valued annotations too); function-local `y` is a new scope.
         assert annotations == {"x": "dict", "result": "int"}
         assert "y" not in annotations
 
@@ -557,10 +562,7 @@ class Config:
 
 x: dict
 """
-        annotations = extract_top_level_annotations(code)
-        assert annotations == {"x": "dict"}
-        assert "timeout" not in annotations
-        assert "name" not in annotations
+        assert extract_top_level_annotations(code) == {"x": "dict"}
 
     def test_top_level_annotations_includes_if_scoped(self):
         """Non-scope structures (if/for/while) don't hide module-level annotations."""
@@ -574,13 +576,44 @@ else:
 x: dict
 """
         annotations = extract_top_level_annotations(code)
-        # `y` appears twice at module scope (one branch of `if`); last-write wins.
-        # The important fact: `y` is included because `if` is not a scope boundary.
+        # `if` is not a scope boundary, so `y` surfaces (valued is fine here).
         assert "x" in annotations
         assert "y" in annotations
 
     def test_top_level_annotations_malformed_returns_empty(self):
         assert extract_top_level_annotations("x: dict =") == {}
+
+    # --- extract_top_level_input_annotations: BARE annotations = input declarations ---
+
+    def test_top_level_input_annotations_excludes_valued_assignments(self):
+        """Annotated assignments (`x: T = expr`) are locals, not inputs (issue #331)."""
+        code = "rewrite_output: str\nseen: set = set()\ncandidates: list = []\nresult: dict = {}"
+        # Only the bare `rewrite_output: str` declares an input.
+        assert extract_top_level_input_annotations(code) == {"rewrite_output": "str"}
+
+    def test_top_level_input_annotations_excludes_function_and_class_locals(self):
+        """Bare input view also excludes function/class-scoped annotations."""
+        code = """
+def helper():
+    y: int
+    return 1
+
+class C:
+    z: int
+
+x: dict
+"""
+        assert extract_top_level_input_annotations(code) == {"x": "dict"}
+
+    def test_top_level_input_annotations_includes_bare_if_scoped(self):
+        """A bare annotation inside `if` (not a scope boundary) is still an input decl."""
+        code = "import os\nif os.environ.get('F'):\n    y: int\nelse:\n    y: str\nx: dict"
+        annotations = extract_top_level_input_annotations(code)
+        assert "x" in annotations
+        assert "y" in annotations
+
+    def test_top_level_input_annotations_malformed_returns_empty(self):
+        assert extract_top_level_input_annotations("x: dict =") == {}
 
     def test_python_to_s1_canonical_is_injective(self):
         """Reverse mapping from S1 to Python requires injectivity.
