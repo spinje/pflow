@@ -6,9 +6,51 @@ implementation used by both CLI text mode and JSON/MCP paths, ensuring
 identical results regardless of output format.
 """
 
+from enum import Enum, auto
 from typing import Any
 
 OUTPUT_PRIORITY_KEYS = ["result", "response", "output", "text", "data", "stdout"]
+
+
+class OutputMode(Enum):
+    """Which output-selection branch a finished run takes.
+
+    The single authority for output precedence. Both the CLI text path
+    (``cli/workflow_output.py::_handle_text_output``) and the JSON/MCP path
+    (``success_formatter::_collect_outputs``) dispatch on this — they render
+    the selected output differently (text streams one value with advisories;
+    JSON builds a dict of all declared outputs) but must agree on *which*
+    branch applies. Encoding the precedence once keeps the two paths from
+    drifting (they previously expressed the same rule with different branch
+    orderings). Mirrors the ``Transition`` classify-then-dispatch idiom in
+    ``execution/plan.py``.
+    """
+
+    EXPLICIT_KEY = auto()  # -o/--output-key — wins everywhere, even under --only
+    ONLY = auto()  # --only target — skips declared full-run outputs
+    DECLARED = auto()  # workflow-declared outputs
+    AUTO = auto()  # auto-detect from priority keys
+
+
+def select_output_mode(
+    output_key: str | None,
+    workflow_ir: dict[str, Any] | None,
+    shared: dict[str, Any],
+) -> OutputMode:
+    """Decide which output-selection branch applies for a finished run.
+
+    Precedence (documented in ``cli/CLAUDE.md`` "Declared vs --only Output
+    Contract"): an explicit ``-o`` key wins everywhere; otherwise a ``--only``
+    target takes its scoped output (never shadowed by full-run declared
+    outputs); otherwise workflow-declared outputs; otherwise auto-detect.
+    """
+    if output_key:
+        return OutputMode.EXPLICIT_KEY
+    if shared.get("__execution__", {}).get("only_node"):
+        return OutputMode.ONLY
+    if workflow_ir and workflow_ir.get("outputs"):
+        return OutputMode.DECLARED
+    return OutputMode.AUTO
 
 
 def _is_valid_output_value(value: Any) -> bool:

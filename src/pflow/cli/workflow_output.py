@@ -11,6 +11,7 @@ import click
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.execution.formatters.output_utils import OutputMode, select_output_mode
 from pflow.runtime.template_resolver import TemplateResolver
 
 
@@ -174,11 +175,19 @@ def _handle_text_output(
         trace_path=trace_path,
     )
 
+    # Output precedence lives in the shared classifier (output_utils), so the
+    # CLI text path and the JSON/MCP path can never disagree on *which* branch
+    # applies. This path renders the chosen branch its own way (streams one
+    # value to stdout, emits stderr advisories); the JSON path renders the same
+    # decision as a dict — only the precedence is shared.
+    mode = select_output_mode(output_key, workflow_ir, shared_storage)
+
     # User-specified key takes priority. Supports dotted paths (e.g.
     # ``batch-llm.success_count``, ``items[0].title``) by delegating to
     # ``TemplateResolver``, which is the same primitive used by ``${...}``
     # templates inside workflow files and by ``pflow read-fields``.
-    if output_key:
+    if mode is OutputMode.EXPLICIT_KEY:
+        assert output_key is not None, "EXPLICIT_KEY ⇒ output_key truthy"  # type narrowing for mypy  # noqa: S101
         if TemplateResolver.variable_exists(output_key, shared_storage):
             value = TemplateResolver.resolve_value(output_key, shared_storage)
             _output_with_header(value, print_flag)
@@ -195,7 +204,7 @@ def _handle_text_output(
 
     # --only targets are explicit data-routing requests. Declared workflow
     # outputs describe full runs, so they must not shadow the targeted node.
-    if shared_storage.get("__execution__", {}).get("only_node"):
+    if mode is OutputMode.ONLY:
         _emit_only_output(shared_storage, print_flag)
         return
 
@@ -203,7 +212,7 @@ def _handle_text_output(
     # fail to resolve do NOT fall through to auto-detect — the workflow
     # author's declared contract is authoritative; an unresolved declared
     # output is a workflow-author error, not a cue to guess.
-    if workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
+    if mode is OutputMode.DECLARED:
         _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag, print_flag)
         return
 
