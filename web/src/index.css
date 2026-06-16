@@ -1084,6 +1084,12 @@ button.active {
 .loop-arrow {
   fill: var(--loop);
 }
+/* The backward-sequential loop-back's re-entry arrowhead (GradientEdge, data.loopBack).
+   Fill is set INLINE to the edge's arrival color (the target node's color); this rule
+   is the grep anchor + a fallback. */
+.loopback-arrow {
+  fill: var(--accent);
+}
 .loop-edge-label {
   position: absolute;
   /* OPAQUE tint (mix over --bg, like .edge-label) — the pill rides ON the U's top

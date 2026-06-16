@@ -98,7 +98,7 @@ describe("assignLoopRails — the loop-back U gets a rail OUTSIDE its box", () =
   });
 });
 
-describe("assignBackRails — a backward branch/error edge routes around both boxes", () => {
+describe("assignBackRails — a backward branch/error/loop-back edge routes around both boxes", () => {
   // Without the rail, smoothstep's stock wrap U-turns at the default stub right at
   // the source handle — sibling loop-backs knot (the harness check-groups, LR).
   const branch = (id: string, source: string, target: string, lane?: number): FlowEdge =>
@@ -131,13 +131,47 @@ describe("assignBackRails — a backward branch/error edge routes around both bo
     const [edge] = assignBackRails(nodes, [branch("e", "src", "tgt")], "TD");
     expect(edge!.data!.railX).toBeLessThan(200); // left of both lefts
     expect(edge!.data!.railY).toBeUndefined();
+    expect(edge!.data!.loopBack).toBeUndefined(); // arrow/clearance is for sequential loop-backs only
   });
 
-  it("sequential and data edges are untouched, identity preserved", () => {
+  it("data edges are untouched, identity preserved", () => {
     const nodes = [box("src", 400), box("tgt", 100)];
-    const seq = { id: "s", source: "src", target: "tgt", data: { kind: "sequential" } } as FlowEdge;
     const data = { id: "d", source: "src", target: "tgt", data: { kind: "data_flow" } } as FlowEdge;
-    expect(assignBackRails(nodes, [seq], "LR")[0]).toBe(seq);
     expect(assignBackRails(nodes, [data], "LR")[0]).toBe(data);
+  });
+
+  const seqEdge = (source: string, target: string): FlowEdge =>
+    ({ id: "s", source, target, data: { kind: "sequential" } }) as FlowEdge;
+
+  it("a DEGENERATE (icon-aligned) backward sequential loop-back gets the same back rail", () => {
+    // The validate-fix shape: spine-alignment lands the loop's head and tail on the
+    // SAME icon column (TD) / row (LR), so ELK draws the back-edge as a spike THROUGH
+    // the boxes. Rail it so it wraps the side as a visible return path.
+    // TD: both lefts 200; src below (y 300..400), tgt above (y 0..100).
+    const [td] = assignBackRails([box("src", 200, { y: 300 }), box("tgt", 200, { y: 0 })], [seqEdge("src", "tgt")], "TD");
+    expect(td!.data!.railX).toBeLessThan(200); // left of both lefts
+    expect(td!.data!.railY).toBeUndefined();
+    expect(td!.data!.loopBack).toBe(true); // GradientEdge renders the clearance + re-entry arrow
+    // LR: both tops 0; src ahead (x 400..500), tgt behind (x 100..200).
+    const [lr] = assignBackRails([box("src", 400), box("tgt", 100)], [seqEdge("src", "tgt")], "LR");
+    expect(lr!.data!.railY).toBeGreaterThan(100); // below both bottoms
+    expect(lr!.data!.railX).toBeUndefined();
+    expect(lr!.data!.loopBack).toBe(true);
+  });
+
+  it("an OFF-AXIS backward sequential edge keeps its working L (the run-cycle case, untouched)", () => {
+    // A genuine loop-back whose endpoints sit a row/column apart already renders a
+    // clean L — > BACK_ALIGN_EPS off-axis, so it is left alone.
+    const lr = seqEdge("src", "tgt");
+    expect(assignBackRails([box("src", 400, { y: 0 }), box("tgt", 100, { y: 300 })], [lr], "LR")[0]).toBe(lr);
+    const td = seqEdge("src", "tgt");
+    expect(assignBackRails([box("src", 400, { y: 300 }), box("tgt", 100, { y: 0 })], [td], "TD")[0]).toBe(td);
+  });
+
+  it("a FORWARD sequential edge is untouched even when icon-aligned (the trunk, not a loop-back)", () => {
+    // src above (y 0..100), tgt below (y 300..400), same column — forward, so the
+    // forward guard returns before the alignment check.
+    const fwd = seqEdge("src", "tgt");
+    expect(assignBackRails([box("src", 200, { y: 0 }), box("tgt", 200, { y: 300 })], [fwd], "TD")[0]).toBe(fwd);
   });
 });

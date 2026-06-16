@@ -9,26 +9,12 @@
 // axis) — the rail is load-bearing, not a tweak.
 
 import { memo } from "react";
-import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, Position, type EdgeProps } from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
 
 import type { FlowEdge } from "../../graph/flow";
 import { METRICS } from "../../graph/metrics";
 import { truncate } from "../../utils/format";
-
-// The app draws NO arrowheads (clean lines into borders) — the loop U is the one
-// deliberate exception (user decision 2026-06-10): it's the only edge whose
-// direction the layout doesn't imply, so the re-entry point carries a small arrow.
-// Drawn as our own polygon (themable via CSS --loop; RF's marker objects take only
-// literal colors). Points INTO the box along the final approach: down through the
-// TOP in TD, rightward through the LEFT side in LR — or leftward into the ↻
-// loop-rule ROW's right-side handle when the row renders.
-function arrowPoints(x: number, y: number, into: Position): string {
-  const w = 5; // half-width of the arrow base
-  const len = 9;
-  if (into === Position.Top) return `${x - w},${y - len} ${x + w},${y - len} ${x},${y}`;
-  if (into === Position.Right) return `${x + len},${y - w} ${x + len},${y + w} ${x},${y}`;
-  return `${x - len},${y - w} ${x - len},${y + w} ${x},${y}`;
-}
+import { arrowPoints } from "./arrow";
 
 export const LoopEdge = memo(function LoopEdge({
   id,

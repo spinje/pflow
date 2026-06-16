@@ -9,7 +9,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { bindingParam } from "../graph/flow";
 import { highlight } from "../utils/highlight";
-import { EdgePanel } from "./EdgePanel";
+import { EdgePanel, loopDeciders } from "./EdgePanel";
 import type { RFEdge, RFGraph, RFNode } from "../types";
 
 // Keep ParamBlock rendering SYNCHRONOUS: the real shiki load would land its
@@ -304,6 +304,56 @@ describe("EdgePanel — error / sequential variants", () => {
     };
     show(g, "sq");
     expect(screen.getByText(/also implied by a data dependency/)).toBeTruthy();
+  });
+});
+
+describe("EdgePanel — loop (a control cycle with no LoopSpec — the validate-fix gate)", () => {
+  // run-validate → check-validate → fix-tests → (back to) run-validate; check-validate
+  // also routes to end. The clicked edge (run→check) reads forward as a step, but its
+  // endpoints sit in the cycle — so it's part of a loop, and check-validate decides it.
+  function gateGraph(): RFGraph {
+    return {
+      nodes: [
+        node("run-validate", { kind: "code" }),
+        node("check-validate", { kind: "code", is_decision: true }),
+        node("fix-tests", { kind: "claude-code" }),
+      ],
+      edges: [
+        edge("e_rc", "run-validate", "check-validate", "sequential", { shadowed: true }),
+        edge("e_cf", "check-validate", "fix-tests", "branch", { label: "fix-tests" }),
+        edge("e_fr", "fix-tests", "run-validate", "sequential"),
+        edge("e_ce", "check-validate", "end", "end"),
+      ],
+      groups: [],
+    };
+  }
+
+  it("loopDeciders finds the decision step IN the cycle (not nodes merely reachable); null for a plain chain", () => {
+    const g = gateGraph();
+    expect(loopDeciders(g, g.edges.find((e) => e.id === "e_rc")!)?.map((n) => n.id)).toEqual(["check-validate"]);
+    // fix-tests is reachable from check-validate but the `end` sink is NOT in the
+    // cycle — controlSucc excludes `end` edges, so it can't pollute the deciders.
+    const lin: RFGraph = { nodes: [node("a"), node("b")], edges: [edge("s", "a", "b", "sequential")], groups: [] };
+    expect(loopDeciders(lin, lin.edges[0]!)).toBeNull();
+  });
+
+  it("names it a loop + its controller, REPLACING the bare shadowed data-dependency line", () => {
+    show(gateGraph(), "e_rc");
+    expect(screen.getByText("sequential · loop")).toBeTruthy();
+    expect(screen.getByText(/Part of a loop/)).toBeTruthy();
+    expect(screen.getByText("loop controlled by")).toBeTruthy();
+    // check-validate appears as the TARGET chip AND the loop-controller chip
+    expect(screen.getAllByText("check-validate").length).toBe(2);
+    // the loop framing supersedes the shadowed "data dependency" prose (no inference)
+    expect(screen.queryByText(/also implied by a data dependency/)).toBeNull();
+  });
+
+  it("the controller chip navigates to the decision step (where the conditions live)", () => {
+    const nav = vi.fn();
+    show(gateGraph(), "e_rc", undefined, nav);
+    const chips = screen.getAllByText("check-validate");
+    fireEvent.click(chips[chips.length - 1]!); // the "loop controlled by" chip
+    expect(nav).toHaveBeenCalledWith("check-validate");
   });
 });
 

@@ -51,6 +51,61 @@ export function portIsNested(graph: RFGraph, port: RFNode): boolean {
   );
 }
 
+/** Control SUCCESSOR map — the edges that continue execution (sequential/branch/
+ *  error); data passes no control and `end` terminates, so neither can form a cycle. */
+function controlSucc(graph: RFGraph): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    if (e.kind === "sequential" || e.kind === "branch" || e.kind === "error") {
+      const list = m.get(e.source);
+      if (list) list.push(e.target);
+      else m.set(e.source, [e.target]);
+    }
+  }
+  return m;
+}
+
+function reachable(start: string, succ: Map<string, string[]>): Set<string> {
+  const seen = new Set<string>();
+  const stack = [start];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const next of succ.get(id) ?? []) if (!seen.has(next)) stack.push(next);
+  }
+  return seen;
+}
+
+/** The decision step(s) inside the loop a control edge belongs to, or null if its
+ *  endpoints aren't in a cycle. An edge is "in a loop" when control can return from
+ *  its TARGET back to its SOURCE — so the two sit in one cycle (validate-fix's
+ *  run-validate→check-validate, drawn as the wrap U even though it reads forward as
+ *  a step). We name where the loop is DECIDED (the is_decision steps in the cycle);
+ *  their exit conditions are shown when that step is opened — nothing is inferred
+ *  here (the fail-closed bar: a backward-edge loop has no single authored condition).
+ *  An empty array = a cycle with no decision step (rare); null = not a loop. */
+export function loopDeciders(graph: RFGraph, edge: RFEdge): RFNode[] | null {
+  const succ = controlSucc(graph);
+  const fwd = reachable(edge.target, succ);
+  if (!fwd.has(edge.source)) return null; // target can't return to source → not a loop
+  // Cycle members lie on a target→…→source control path = (reachable from target)
+  // ∩ (can reach source). Build the reversed map once for the can-reach side.
+  const pred = new Map<string, string[]>();
+  for (const [s, targets] of succ) {
+    for (const t of targets) {
+      const list = pred.get(t);
+      if (list) list.push(s);
+      else pred.set(t, [s]);
+    }
+  }
+  const bwd = reachable(edge.source, pred);
+  return [...fwd]
+    .filter((id) => bwd.has(id))
+    .map((id) => graph.nodes.find((n) => n.id === id))
+    .filter((n): n is RFNode => n != null && n.is_decision);
+}
+
 export function EdgePanel({
   edge,
   graph,
@@ -79,6 +134,12 @@ export function EdgePanel({
   // as a param binding (no such param row exists).
   const isCache = edge.kind === "data_flow" && edge.input_name === "prompt_cache";
 
+  // A sequential edge whose endpoints sit in a control cycle is part of a loop (the
+  // validate-fix gate's wrap U). Name it + its decision step — never inferring a
+  // condition (those live on the decision step, shown when it's opened).
+  const loopDecidersList = edge.kind === "sequential" ? loopDeciders(graph, edge) : null;
+  const isLoop = loopDecidersList != null;
+
   const kindLine =
     edge.kind === "data_flow"
       ? isCache
@@ -92,7 +153,9 @@ export function EdgePanel({
             ? isDecisionEnd
               ? "end · outcome"
               : "end"
-            : "sequential";
+            : isLoop
+              ? "sequential · loop"
+              : "sequential";
   const tint = edge.kind === "branch" || edge.kind === "sequential" ? (sourceNode ? nodeColor(sourceNode) : undefined) : KIND_TINT[edge.kind];
 
   // Data title: "output_field[.sub.path] → input_name", each side falling back to
@@ -186,7 +249,23 @@ export function EdgePanel({
         </p>
       )}
       {edge.kind === "end" && !isDecisionEnd && <p className="read-panel-purpose">The workflow's final step.</p>}
-      {edge.kind === "sequential" && edge.shadowed && (
+      {isLoop && (
+        <p className="read-panel-purpose">
+          Part of a loop — control returns through these steps each round
+          {loopDecidersList!.length > 0 ? ", repeating until its decision step stops it." : "."}
+        </p>
+      )}
+      {isLoop && loopDecidersList!.length > 0 && (
+        <section className="read-panel-params">
+          <h3>loop controlled by</h3>
+          <div className="chip-stack">
+            {loopDecidersList!.map((d) => (
+              <Chip key={d.id} node={d} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
+            ))}
+          </div>
+        </section>
+      )}
+      {edge.kind === "sequential" && !isLoop && edge.shadowed && (
         <p className="read-panel-purpose">This ordering is also implied by a data dependency between the two steps.</p>
       )}
       {isCache && (

@@ -199,6 +199,12 @@ export type EdgeData = {
   // the component's midpoint fallback.
   railX?: number;
   railY?: number;
+  // Set by assignBackRails on a DEGENERATE backward SEQUENTIAL edge — a control
+  // cycle's back-edge whose head/tail spine-align onto one icon column/row (the
+  // validate-fix gate). It's a loop-back with no LoopSpec, so GradientEdge renders
+  // it like the loop U: extra stub clearance (the wrap clears the node-name chrome)
+  // and the app's one arrowhead at the re-entry (the direction the layout doesn't imply).
+  loopBack?: boolean;
   // Set by applyFocus on incident data edges: which end the clicked node is on.
   // DataEdge draws the line solid at that end, fading a hint toward the other.
   focusEnd?: "source" | "target";

@@ -23,8 +23,15 @@ import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, Position, type EdgeProp
 import type { FlowEdge } from "../../graph/flow";
 import { useHoverMarks } from "../interaction";
 import { EdgeHalo } from "./EdgeHalo";
+import { arrowPoints } from "./arrow";
 import { ICON_COL_X, METRICS } from "../../graph/metrics";
 import { truncate } from "../../utils/format";
+
+// A degenerate backward-sequential LOOP-BACK (assignBackRails sets data.loopBack)
+// renders like the loop U: a longer stub than the stock 20 so the wrap clears the
+// node-NAME chrome (the top run sat under "Check validate", user-caught), plus the
+// app's one arrowhead at the re-entry (a loop-back's direction the layout can't imply).
+const LOOPBACK_OFFSET = 32;
 
 // Mid-path condition labels can be whole expressions — clamp them; the full text
 // rides the title tooltip and the read panel's outcome table.
@@ -198,6 +205,7 @@ export const GradientEdge = memo(function GradientEdge({
     targetY,
     targetPosition,
     borderRadius: CORNER_RADIUS,
+    ...(data?.loopBack ? { offset: LOOPBACK_OFFSET } : {}),
     ...(centerX !== undefined ? { centerX } : {}),
     ...(centerY !== undefined ? { centerY } : {}),
   });
@@ -233,6 +241,9 @@ export const GradientEdge = memo(function GradientEdge({
           no elevation: hover is transient, tunneling relief is selection's job). */}
       {(data?.selected || hoverLit) && <EdgeHalo path={edgePath} stroke={`url(#${gradientId})`} />}
       <BaseEdge id={id} path={edgePath} style={{ stroke: `url(#${gradientId})`, strokeWidth: METRICS.edgeStroke }} />
+      {/* The loop-back's re-entry arrowhead (LoopEdge's, but in the edge's own
+          arrival color, not amber — it's a control loop-back, not a LoopSpec). */}
+      {data?.loopBack && <polygon className="loopback-arrow" points={arrowPoints(targetX, targetY, targetPosition)} style={{ fill: to }} />}
       {/* A SELECTED edge suppresses its own floating pills: it is elevated above
           the EdgeLabelRenderer layer (it would strike through them), and the read
           panel carries the full outcome/condition anyway. */}
