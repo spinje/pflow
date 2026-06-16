@@ -178,6 +178,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const changeDensity = useCallback((d: Density) => { setDensity(d); syncUrl({ density: d }); }, [syncUrl]);
   const changeDirection = useCallback((d: Direction) => { setDirection(d); syncUrl({ direction: d }); }, [syncUrl]);
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
+  // The read panel's source-link click: open the pane (if closed) and bump a
+  // counter so SourcePane re-scrolls to the selected node's line even when it's
+  // already open (the "jump to source" gesture).
+  const [sourceJump, setSourceJump] = useState(0);
+  const openSourceAt = useCallback(() => { changeSourceOpen(true); setSourceJump((n) => n + 1); }, [changeSourceOpen]);
 
   // Read the contract/edges via refs so the interaction callbacks (focusPort,
   // hoverRow) stay stable while focus restyles `nodes`/`edges`.
@@ -420,6 +425,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                 selectedIoKind={selectedIoGroup ? (selectedIoGroup.kind === "input_wrapper" ? "input" : "output") : null}
                 renderedIds={renderedIds}
                 workflowName={workflowName}
+                jump={sourceJump}
                 onNavigate={onNavigate}
               />
               <PanelResizer side="left" onResize={onSourceResize} onReset={onSourceReset} />
@@ -509,6 +515,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               graph={graph}
               renderedIds={renderedIds}
               onNavigate={onNavigate}
+              onOpenSource={openSourceAt}
               onClose={() => setSelectedId(null)}
             />
           )}

@@ -129,6 +129,15 @@ describe("IoPanel — inputs", () => {
     expect(screen.getByText(/default:/)).toBeTruthy();
   });
 
+  it("the header avatar name navigates to the io card on click (re-center)", () => {
+    const onNavigate = vi.fn();
+    show("g0", { onNavigate });
+    // The name is the panel <h2>; clicking it focuses the io card itself
+    // (group id = the rendered card's flat id) — no selectedId, the panel stays.
+    screen.getByRole("heading", { level: 2 }).querySelector("button")!.click();
+    expect(onNavigate).toHaveBeenCalledWith("g0");
+  });
+
   it("lists consumer chips (deduped) under a 'used by' label and navigates on click; an input with no edges makes NO claim", () => {
     const onNavigate = vi.fn();
     show("g0", { onNavigate });

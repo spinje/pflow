@@ -90,6 +90,7 @@ function renderPane(props: Partial<Parameters<typeof SourcePane>[0]> = {}) {
       selectedIoKind={null}
       renderedIds={new Set(["n1", "n2", "n3", "g_child"])}
       workflowName="root"
+      jump={0}
       onNavigate={onNavigate}
       {...props}
     />,
@@ -189,6 +190,7 @@ describe("SourcePane", () => {
         selectedIoKind={null}
         renderedIds={new Set(["n1", "n2", "n3", "g_child"])}
         workflowName="root"
+        jump={0}
         onNavigate={onNavigate}
       />,
     );
@@ -217,6 +219,7 @@ describe("SourcePane", () => {
         selectedIoKind={null}
         renderedIds={new Set(["n1", "n2", "n3", "g_child"])}
         workflowName="root"
+        jump={0}
         onNavigate={onNavigate}
       />,
     );
@@ -302,6 +305,7 @@ describe("SourcePane", () => {
         selectedIoKind={null}
         renderedIds={new Set(["n1", "n2", "n3", "g_child"])}
         workflowName="root"
+        jump={0}
         onNavigate={onNavigate}
       />,
     );
@@ -324,6 +328,31 @@ describe("SourcePane", () => {
     expect(screen.getByLabelText(ROOT_FILE)).toBeTruthy();
     expect(container.querySelector(".src-line-active")).toBeNull();
     expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("a source-link JUMP re-asserts the selected node's line after the mark moved", () => {
+    // The read panel's source link bumps `jump`; the pane returns to the
+    // selected node's line even when the user has clicked elsewhere since.
+    const onNavigate = vi.fn();
+    const props = {
+      source,
+      sourceError: null,
+      graph,
+      selectedNode: firstNode, // ROOT_FILE line 5
+      selectedIoKind: null as "input" | "output" | null,
+      renderedIds: new Set(["n1", "n2", "n3", "g_child"]),
+      workflowName: "root",
+      onNavigate,
+    };
+    const { container, rerender } = render(<SourcePane {...props} jump={0} />);
+    expect(sourceLine(container, 5).className).toContain("src-line-active");
+    // The user clicks another line — the mark leaves the node's line.
+    fireEvent.click(sourceLine(container, 9));
+    expect(sourceLine(container, 9).className).toContain("src-line-active");
+    expect(sourceLine(container, 5).className).not.toContain("src-line-active");
+    // A jump returns the mark to the node's line (selectedNode unchanged).
+    rerender(<SourcePane {...props} jump={1} />);
+    expect(sourceLine(container, 5).className).toContain("src-line-active");
   });
 });
 
@@ -378,6 +407,7 @@ describe("io card selection", () => {
         selectedIoKind="output"
         renderedIds={new Set(["n1", "n2", "n3", "g_child"])}
         workflowName="root"
+        jump={0}
         onNavigate={onNavigate}
       />,
     );

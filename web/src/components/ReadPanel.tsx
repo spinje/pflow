@@ -7,11 +7,14 @@ import { useState } from "react";
 
 import { cacheInsertIndex } from "../graph/flow";
 import { resolveBatchItems } from "../utils/batchItems";
-import { fullValue, paramLanguage } from "../utils/format";
+import { fullValue, nodeColor, paramLanguage } from "../utils/format";
+import { iconFor } from "../utils/icons";
+import { resolveEndpointFlatId } from "../utils/viewParams";
 import { BatchItemsBlock } from "./BatchItems";
 import { ConnectionSections } from "./Chip";
 import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
+import { PanelHeader } from "./PanelHeader";
 import type { BatchSpec, RFEdge, RFGraph, RFNode, SourceRef } from "../types";
 
 export function sourceLabel(source: SourceRef | null): string | null {
@@ -161,6 +164,7 @@ export function ReadPanel({
   graph,
   renderedIds,
   onNavigate,
+  onOpenSource,
   onClose,
 }: {
   node: RFNode;
@@ -178,26 +182,29 @@ export function ReadPanel({
   graph?: RFGraph | null;
   renderedIds?: ReadonlySet<string>;
   onNavigate?: (focus: string, selectedId?: string | null) => void;
+  // Opens the source pane (if closed) and scrolls it to this node's file:line.
+  // Absent → the source line renders as plain text (standalone render).
+  onOpenSource?: () => void;
   onClose: () => void;
 }): JSX.Element {
   const src = sourceLabel(node.source);
+  // The avatar name navigates to this node on the canvas (re-centers the camera),
+  // resolving a container HOST to its rendered group representative — exactly the
+  // Chip's resolve-or-disable rule. Absent graph/onNavigate → a non-clickable name.
+  const navId = graph && renderedIds ? resolveEndpointFlatId(graph, renderedIds, node.id) : null;
+  // The canvas shows the ROLE (CONDITION/TRANSFORM); this eyebrow keeps it mappable
+  // back to the file's `type: code`.
+  const eyebrow = node.is_decision ? `${node.kind} · condition` : node.is_transform ? `${node.kind} · transform` : node.kind;
   return (
     <aside className="read-panel">
-      <header className="read-panel-header">
-        <div>
-          {/* The authored truth: the canvas presents a decision code node as
-              CONDITION, so the panel is where `type: code` stays mappable. */}
-          <span className="read-panel-kind">
-            {/* the canvas shows the ROLE (CONDITION/TRANSFORM); this line keeps it
-                mappable back to the file's `type: code` */}
-            {node.is_decision ? `${node.kind} · condition` : node.is_transform ? `${node.kind} · transform` : node.kind}
-          </span>
-          <h2>{node.ref.node_id}</h2>
-        </div>
-        <button className="icon-button" onClick={onClose} title="Close">
-          ✕
-        </button>
-      </header>
+      <PanelHeader
+        icon={iconFor(node)}
+        color={nodeColor(node)}
+        eyebrow={eyebrow}
+        name={node.ref.node_id}
+        onNavigate={navId != null && onNavigate ? () => onNavigate(navId) : undefined}
+        onClose={onClose}
+      />
 
       {/* Authored prose renders as markdown. The markdown CSS hangs off `.md` —
           NOT off .read-panel-purpose, which EdgePanel shares for app-written
@@ -207,7 +214,16 @@ export function ReadPanel({
           <Markdown text={node.purpose} />
         </div>
       )}
-      {src && <p className="read-panel-source" title={node.source?.file ?? ""}>{src}</p>}
+      {src &&
+        (onOpenSource ? (
+          <button className="read-panel-source read-panel-source-btn" title={node.source?.file ?? ""} onClick={onOpenSource}>
+            {src}
+          </button>
+        ) : (
+          <p className="read-panel-source" title={node.source?.file ?? ""}>
+            {src}
+          </p>
+        ))}
 
       <StructuralFacts node={node} />
 

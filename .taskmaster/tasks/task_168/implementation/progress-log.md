@@ -3931,3 +3931,29 @@ to the user + run in background + it live-updates as you build.
 
 Gates: `make check` clean (mypy 235); rename/guide/ui/docs suites green; Mermaid goldens
 untouched (CLI-only rename — `generate_mermaid` unchanged).
+
+### Panel header avatar + clickable source link (2026-06-16, user-driven) ✅
+
+Two small panel polish items; frontend-only, zero Python/contract change.
+
+- **Single-subject panel header → a large node AVATAR** (new shared
+  `components/PanelHeader.tsx`): kind-colored tile (`iconFor`/`nodeColor`,
+  CONDITION/TRANSFORM-aware) + category eyebrow + the name as a NAVIGATE button
+  that re-centers the camera (the Chip's navigate-without-opening gesture, just
+  bigger). Used by ReadPanel (leaf nodes AND sub-workflow/container HOST panels —
+  coherent for free, since a container select renders ReadPanel on its host) and
+  IoPanel (avatar = the io card, name → the card). EdgePanel keeps its connection
+  header (two endpoint chips — no single subject). The name stays the panel `<h2>`
+  with an inner nav button, so the existing `getByRole("heading")` tests held
+  unchanged. +6 pins (PanelHeader ×4 incl. navigate + heading-survives; IoPanel
+  header-navigates; ReadPanel renders via the shared header).
+- **Read-panel source link `file:line` is now clickable** → opens the source pane
+  (if closed) AND scrolls it to that line. Closed→open scrolls via SourcePane's
+  existing selectedNode effect; an already-open re-scroll rides a new `jump`
+  counter (GraphView bumps it on the link click → SourcePane re-asserts the
+  selected node's file/line and scrolls, covering "scrolled away" + "browsed to
+  another file via breadcrumb"). +2 pins (SourcePane jump re-assert; ReadPanel
+  source-link button-vs-plain).
+
+Gates: tsc clean; full web suite 475 (+8); bundle rebuilt + served. Visual layer
+rests on the user's eyes (browser tooling not wired in this worktree).

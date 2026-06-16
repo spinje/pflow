@@ -28,6 +28,12 @@ interface SourcePaneProps {
   selectedIoKind: "input" | "output" | null;
   renderedIds: ReadonlySet<string>;
   workflowName: string;
+  // A monotonic counter GraphView bumps when the read panel's source link is
+  // clicked: re-assert the selected node's file/line and scroll to it, even
+  // when the pane already shows it (the user scrolled away) or browsed to
+  // another file via a breadcrumb. The closed→open case is the selectedNode
+  // effect's job (the pane mounts already pointed at the node).
+  jump: number;
   onNavigate: (focus: string, selectedId?: string | null) => void;
 }
 
@@ -44,6 +50,7 @@ export function SourcePane({
   selectedIoKind,
   renderedIds,
   workflowName,
+  jump,
   onNavigate,
 }: SourcePaneProps): JSX.Element {
   const [currentFile, setCurrentFile] = useState<string | null>(null);
@@ -52,6 +59,7 @@ export function SourcePane({
   const [highlighted, setHighlighted] = useState<{ file: string; text: string; lines: ReactNode[] } | null>(null);
   const highlightCache = useRef(new Map<string, HighlightCacheEntry>());
   const lineRefs = useRef(new Map<number, HTMLDivElement>());
+  const prevJump = useRef(jump);
 
   const files = source?.files ?? {};
   const availableFiles = useMemo(() => Object.keys(files).sort(), [files]);
@@ -101,6 +109,26 @@ export function SourcePane({
     setCurrentFile(root);
     setActiveLine(sectionHeadingLine(source.files[root]!, selectedIoKind));
   }, [selectedIoKind, source]);
+
+  // The read panel's source-link JUMP (GraphView bumps `jump`): re-assert the
+  // selected node's file + line and scroll to it. The guard makes it act ONLY
+  // when `jump` actually changed (the other deps re-run it harmlessly). A
+  // SAME-file jump sets no new state, so the scroll effect below won't re-fire
+  // — scroll directly (lineRefs are current); a file CHANGE re-renders and the
+  // scroll effect (keyed on displayedFile) does the scroll.
+  useEffect(() => {
+    if (jump === prevJump.current) return;
+    prevJump.current = jump;
+    const ref = selectedNode?.source;
+    if (!source || !ref?.file || !hasFile(source.files, ref.file)) return;
+    setMissingFile(null);
+    const fileChanged = currentFile !== ref.file;
+    setCurrentFile(ref.file);
+    setActiveLine(ref.line);
+    if (!fileChanged && ref.line != null) {
+      lineRefs.current.get(ref.line)?.scrollIntoView?.({ block: "center" });
+    }
+  }, [jump, source, selectedNode, currentFile]);
 
   useEffect(() => {
     if (!displayedFile || text == null) return;

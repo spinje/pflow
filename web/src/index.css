@@ -1349,6 +1349,62 @@ button.active {
   color: var(--text-faint);
   text-transform: lowercase;
 }
+/* The single-subject panel header avatar (PanelHeader.tsx — ReadPanel + IoPanel):
+   a LARGER node chip than the references/referenced-by stack (.edge-chip-tile is
+   28px) — kind-colored tile + category eyebrow + the name as a navigate button
+   (re-centers the camera). EdgePanel keeps the plain text header (the rules
+   above). */
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.panel-head-tile {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  border: 2px solid var(--chip-c, var(--text-faint));
+}
+.panel-head-tile img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+.panel-head-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+/* the name stays the <h2> (size/mono from .read-panel-header h2); kill its top
+   margin in the column (specificity beats that rule) and ellipsize the nav button */
+.read-panel-header .panel-head-name {
+  margin: 0;
+  min-width: 0;
+}
+.panel-head-nav {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel-head-nav:hover {
+  text-decoration: underline;
+}
 .read-panel-purpose {
   color: var(--text-muted);
   margin: 10px 0;
@@ -1359,6 +1415,20 @@ button.active {
   font-size: 11px;
   color: var(--accent);
   margin: 0 0 12px;
+}
+/* The clickable variant (ReadPanel: opens the source pane at this file:line).
+   Color/font/margin come from .read-panel-source; reset the button chrome and
+   underline on hover so it reads as a link. */
+.read-panel-source-btn {
+  display: inline-block;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+.read-panel-source-btn:hover {
+  text-decoration: underline;
 }
 .facts {
   margin: 0 0 14px;

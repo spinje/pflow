@@ -12,8 +12,10 @@
 import { useEffect, useRef } from "react";
 import { wrapperPorts } from "../graph/flow";
 import { fullValue, IO_COLOR } from "../utils/format";
+import { ioCardIcon } from "../utils/icons";
 import { Chip } from "./Chip";
 import { Markdown } from "./Markdown";
+import { PanelHeader } from "./PanelHeader";
 import { sourceLabel } from "./ReadPanel";
 import type { RFGraph, RFGroup, RFNode } from "../types";
 
@@ -49,17 +51,17 @@ export function IoPanel({
 
   return (
     <aside className="read-panel">
-      <header className="read-panel-header">
-        <div>
-          <span className="read-panel-kind" style={{ color: IO_COLOR }}>
-            workflow {kind}s
-          </span>
-          <h2>{workflowName}</h2>
-        </div>
-        <button className="icon-button" onClick={onClose} title="Close">
-          ✕
-        </button>
-      </header>
+      {/* The avatar is the io card itself; its name navigates back to the card
+          on canvas (the card's flat id IS its group id — it is the rendered node). */}
+      <PanelHeader
+        icon={ioCardIcon(kind)}
+        color={IO_COLOR}
+        eyebrow={`workflow ${kind}s`}
+        eyebrowColor={IO_COLOR}
+        name={workflowName}
+        onNavigate={() => onNavigate(group.id)}
+        onClose={onClose}
+      />
 
       <section className="read-panel-params">
         <h3>
