@@ -3803,3 +3803,96 @@ resolved value). Two additions on that data:
   per-param view above.
 Browser-verified on lyrics-generator's `analyze` (6 specialist prompts, sizes
 1.5–3.7 KB). +16 web pins; zero Python/contract change.
+
+### Live source auto-update: the canvas updates in place as the `.pflow.md` is edited (2026-06-16, user-driven) ✅ (staged)
+
+> Plan: `scratchpads/ui-live-source-update/plan.md`. Remaining DOC work + full
+> context handed off: `implementation/sub-plans/handoff-live-source-update-docs.md`.
+> Born from a CLI-exposure discussion (how `pflow ui`/`visualize` surface to
+> agents) → the user's idea: make the UI auto-update when the `.pflow.md` source is
+> edited, so an AGENT builds a workflow while the USER watches it take shape. The
+> interactive agent↔user loop gets richer in Task 169; this is its baseline.
+
+**The decision that shaped it — poll now, NOT SSE.** The server is already
+stateless and re-parses per request, so the data is fresh on the next fetch; only
+the *trigger* was missing. Split the feature into DETECTION (how the browser learns
+of a change) and REACTION (re-fetch + rebuild in place). Detection = a client
+**poll** of a new `GET /api/version` fingerprint; reaction = an in-place re-fetch
+that preserves view state. SSE is Task 169's transport (agent→browser commands +
+user-event channel); building it here would duplicate/pre-empt it. The poll is a
+COMPLETE solution (1.5s on localhost, visibility-gated), not a stopgap — when 169's
+SSE lands it can call the same reaction trigger via a push, with nothing downstream
+changing. On by default; `pflow ui --no-watch` (→ `?watch=0`) freezes it. The
+"swaps cleanly for SSE" framing is in the handoff; user confirmed the no-reload
+mechanic (in-place React reconcile, not `location.reload()`) before build.
+
+**What shipped (5 phases, all browser-verified):** `GET /api/version` +
+`_source_files_for` fallback chain (build files → entry file → saved-name path →
+literal path → `[]`; ALWAYS 200 so an invalid mid-edit never breaks the poll);
+`fetchVersion`; `useSourceWatch` (poll: seeds a baseline, fires only on a CHANGE,
+visibility-gated, swallows transient errors, in-flight-guarded); the `reload`
+re-fetch path in `useWorkflowGraph` (distinguishes workflow-change=full-reset from
+same-workflow-reload=in-place via `prevWorkflowRef`; a SEPARATE `reloadError`
+channel keeps the last-good canvas + a non-blocking banner on a mid-edit 422 rather
+than the full-screen error — status machine untouched); the `watch` view param +
+`--no-watch` flag. **Invalid edits never advance the UI** — the canvas holds the
+last valid render + a "Source has errors — showing the last valid version" banner
+(first diagnostic only; full list deferred — a one-line widen if wanted), the source
+pane holds the last valid source (`/api/source` also 422s when invalid), and both
+resume on the next valid save. Verified live: valid edit 2→3 nodes viewport-identical;
+`--no-watch` frozen; invalid → banner + last-good, no full-screen.
+
+**3-agent Opus review (`review-silent-failures` / `review-concurrency-safety` /
+`review-feature-interactions`) on the staged diff → 5 fixes (A–E), all landed:**
+- **Concurrency: clean** (no races; the `cancelled`-closure + `key={workflow}`
+  remount primitives hold across every interleaving, incl. StrictMode double-invoke).
+- **A** — *source pane was stale on reload* (`fetchSource` keyed on `[workflow]`
+  only → stale text + WRONG line→node mapping). Now keys on `[workflow, reload]`,
+  keeps last-good (no blank flash), silent on a failed reload (the canvas banner
+  signals it). Browser-verified (inserted marker appears in the pane).
+- **B (load-bearing)** — *preserved selection/focus/collapse re-pointed after a
+  STRUCTURAL edit.* Flat ids `n{i}`/`g{j}` are POSITIONAL (renderer `enumerate`), so
+  an insert/delete/reorder (NOT an append) re-numbers them → a held flat id pointed
+  at the WRONG node (silent) or a vanished one dimmed the whole canvas (the `:217`
+  invalidation guarded edges, not nodes). Fix: `web/src/graph/remap.ts` — remap
+  through the STABLE structural ref (`node_id` + `ancestor_path` + `port`, the
+  contract's own overlay join key) in a GraphView `useLayoutEffect` (pre-paint → no
+  flicker); identity-preserving so an append is a no-op (no build churn).
+  Browser-verified: focus FOLLOWS `done` through an insert-before, never jumps to the
+  inserted node. +9 remap pins.
+- **C** — saved-by-NAME workflows (the catalog default) stopped tracking
+  edits-while-parse-broken (the literal-path fallback only fires for path args). Now
+  resolves the name to its entry path directly via `WorkflowManager.get_path`.
+- **D** — `/api/version` could 500 on a validated-but-unbuildable IR (the `/api/graph`
+  500 regime). The first `try` now catches any exception → falls through → never 500
+  (the poll must not break).
+- **E** — overlapping out-of-order polls could fire a redundant reload (both
+  reviewers); added an `inFlight` guard.
+
+**Gates:** `make check` clean (mypy 235); Python ui suite 34; web suite 467
+(+remap/poll/reload/watch pins); Mermaid goldens untouched (no model/contract
+change — this is the server + frontend only).
+
+**Tooling graduated (user-decided):** the three scratch same-page-across-edit
+verification harnesses were CONSOLIDATED into one verdict-returning skill workflow,
+`examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md` (+ a SKILL.md
+row) — the screenshot skill's 6th workflow and its ONLY same-page-across-edit check
+(every other reopens the page per run). It self-seeds a throwaway workflow, drives
+append/insert-before-focused/corrupt on one open page, and returns `{passed, checks}`
+(in-place/viewport/remap/source-refresh/invalid-held — all `passed:true` on verify).
+It's the regression guard for the live-reload path AND the same-page-react primitive
+Task 169 extends. The scratch trio was removed (`plan.md` kept).
+
+**Known limitation (reviewers agreed not worth fixing):** a workflow that's
+mid-edit-invalid in a SUB-WORKFLOW file tracks only the entry file's mtime until it
+parses again — recovery still works on the fixing save.
+
+**What's LEFT (documentation only — handoff written):** the user-facing/agent docs
+were drafted + held pending verification (now done). Per the handoff: `entry.md`
+capability block + Features topic line; new `pflow guide visualization` topic (+
+`RESERVED_WORKFLOW_NAMES`); `docs/reference/cli/index.mdx` `pflow ui` section + card
++ visualize↔ui cross-links; a `task_169` poll→push coordination note; and the
+canonical current-behavior docs (`ui/CLAUDE.md` `/api/version`, `web/CLAUDE.md` the
+poll/reload/remap, `visualization-requirements.md` the live-update feature + limit).
+Framing the user owns: `visualize` = the agent's own structural read; `ui` = OFFER
+to the user + run in background + it live-updates as you build.

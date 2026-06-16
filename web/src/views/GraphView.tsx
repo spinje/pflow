@@ -5,7 +5,7 @@
 // (density/direction/collapse/focus/selection), the React Flow surface, and the
 // toolbar/read panel.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -18,13 +18,15 @@ import "@xyflow/react/dist/style.css";
 
 import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
 import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { remapCollapsed, remapSelection } from "../graph/remap";
 import { useCameraNavigation } from "../hooks/useCameraNavigation";
 import { usePanelPair } from "../hooks/usePanelPair";
+import { useSourceWatch } from "../hooks/useSourceWatch";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { ApiError, fetchSource } from "../api/client";
 import { nodeColor } from "../utils/format";
 import { edgeClickAction, readViewParams, writeViewParams } from "../utils/viewParams";
-import type { RFEdge, RFNode, SourceFiles } from "../types";
+import type { RFEdge, RFGraph, RFNode, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -94,27 +96,67 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // extension — the toolbar keeps the full path).
   const workflowName = useMemo(() => workflow.split("/").pop()?.replace(/\.pflow\.md$/, "") ?? workflow, [workflow]);
 
-  const { nodes, edges, builtEdgeIds, paintEpoch, onNodesChange, onEdgesChange, status, errors, graph } = useWorkflowGraph(workflow, {
-    density,
-    direction,
-    collapsed,
-    focus,
-    selected: selectedId,
-    workflowName,
-  });
+  // Live source watch: poll /api/version and bump `reload` when the .pflow.md
+  // changes on disk, so the graph re-fetches and rebuilds IN PLACE (no page
+  // reload — view state is preserved). On unless `pflow ui --no-watch` opened
+  // with watch=0. Detection only; the in-place reaction lives in the hook.
+  const [reload, setReload] = useState(0);
+  const onSourceChanged = useCallback(() => setReload((n) => n + 1), []);
+  useSourceWatch(workflow, initialView.watch, onSourceChanged);
+
+  const { nodes, edges, builtEdgeIds, paintEpoch, onNodesChange, onEdgesChange, status, errors, reloadError, graph } = useWorkflowGraph(
+    workflow,
+    {
+      density,
+      direction,
+      collapsed,
+      focus,
+      selected: selectedId,
+      workflowName,
+    },
+    reload,
+  );
+
+  // Live reload swaps `graph` for the SAME workflow (App keys GraphView on
+  // workflow, so a workflow change remounts). Flat ids are POSITIONAL, so a
+  // structural edit re-numbers them — remap the preserved selection/focus/collapse
+  // through the stable structural ref BEFORE paint (useLayoutEffect → no one-frame
+  // flicker of a wrong selection or an un-collapsed container). An append doesn't
+  // renumber, so the remaps are no-ops and React bails out (no extra render).
+  const prevGraphRef = useRef<RFGraph | null>(null);
+  useLayoutEffect(() => {
+    const prev = prevGraphRef.current;
+    prevGraphRef.current = graph;
+    if (!prev || !graph || prev === graph) return;
+    setFocus((f) => remapSelection(prev, graph, f));
+    setSelectedId((s) => remapSelection(prev, graph, s));
+    setCollapsed((c) => remapCollapsed(prev, graph, c));
+  }, [graph]);
 
   const [sourceFiles, setSourceFiles] = useState<SourceFiles | null>(null);
   const [sourceError, setSourceError] = useState<string | null>(null);
+  // Re-fetch the source pane on a live reload too (NOT just on workflow change),
+  // or the pane shows stale text and its line→node mapping silently resolves
+  // against the old file. Mirror the in-place regime: on a reload keep the
+  // last-good source on screen (don't blank → no flash; a failed reload keeps it,
+  // the canvas's reload banner already signals the invalid edit).
+  const sourcePrevWorkflowRef = useRef<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setSourceFiles(null);
-    setSourceError(null);
+    const isReload = sourcePrevWorkflowRef.current === workflow;
+    sourcePrevWorkflowRef.current = workflow;
+    if (!isReload) {
+      setSourceFiles(null);
+      setSourceError(null);
+    }
     fetchSource(workflow)
       .then((source) => {
-        if (!cancelled) setSourceFiles(source);
+        if (cancelled) return;
+        setSourceError(null);
+        setSourceFiles(source);
       })
       .catch((e: unknown) => {
-        if (cancelled) return;
+        if (cancelled || isReload) return; // a failed reload keeps the last-good source
         const message =
           e instanceof ApiError
             ? (e.errors[0]?.message ?? e.errors[0]?.title ?? `Source request failed (${e.status}).`)
@@ -124,7 +166,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [workflow]);
+  }, [workflow, reload]);
 
   // Mirror a density/direction toggle into the URL (replaceState so flips don't spam
   // the back button), preserving every other param (workflow, node).
@@ -386,6 +428,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           <div className="canvas">
           {status === "loading" && <div className="canvas-overlay">Laying out…</div>}
           {status === "empty" && <div className="canvas-overlay">This workflow has no visible structure.</div>}
+          {reloadError && (
+            // The source changed on disk but the new version is invalid. Keep the
+            // last-good canvas interactive; surface the error as a non-blocking
+            // strip that clears on the next valid save.
+            <div className="reload-banner" role="alert">
+              <strong>Source has errors</strong> — showing the last valid version.
+              {reloadError[0]?.message ? ` ${reloadError[0].message}` : ""}
+            </div>
+          )}
           <ReactFlow<FlowNode, FlowEdge>
             nodes={nodes}
             edges={edges}

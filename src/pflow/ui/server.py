@@ -8,6 +8,9 @@ Endpoints:
   (``render_react_flow``) for one workflow, as JSON.
 - ``GET /api/source?workflow=<name|path>`` — source text for every authored
   ``.pflow.md`` file reachable from the built graph.
+- ``GET /api/version?workflow=<name|path>`` — a cheap change-fingerprint over
+  the workflow's source files, so the frontend can poll it and re-fetch the
+  graph in place (no page reload) when the author edits the ``.pflow.md``.
 - ``/`` (+ assets) — the built frontend bundle, when present. Absent in a
   source checkout (the bundle is gitignored, built by ``make ui-build``); the
   server then serves a clear "not built" message instead of crashing.
@@ -27,6 +30,7 @@ Failure regimes for ``/api/graph`` (kept distinct — do not collapse):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import asdict
@@ -45,6 +49,7 @@ from pflow.execution.graph_service import (
     WorkflowGraphValidationError,
     resolve_validate_build,
 )
+from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
 
 logger = logging.getLogger(__name__)
@@ -146,6 +151,84 @@ def source(request: Request) -> Response:
     return _json({"root": root, "files": files})
 
 
+def _source_files_for(workflow: str) -> list[str]:
+    """The ``.pflow.md`` files a workflow's graph touches — best-effort.
+
+    A full build yields every authored file (the set ``/api/source`` uses). When
+    the workflow is **mid-edit invalid** the build fails, so fall back through
+    progressively cruder sources so the fingerprint still tracks the file being
+    edited:
+
+    1. the built graph's source files (the complete set, the happy path);
+    2. the resolvable entry file (validation failed but the reference resolves);
+    3. a saved NAME's entry path looked up directly (the file won't PARSE, so
+       resolution fails — but the catalog / ``pflow ui <name>`` pass a name, and
+       the agent is editing a real file on disk);
+    4. the literal ``workflow`` arg if it is an existing file (a parse-broken
+       PATH argument).
+
+    Anything still unresolved (an inline-content workflow with no files, or a
+    deleted file) yields ``[]`` → a constant fingerprint, and the poll keeps
+    running until the file is valid again. The first ``try`` catches **any**
+    exception (not just validation) because ``/api/version`` must NEVER 500 —
+    a build-stage producer bug on validated IR (the ``/api/graph`` 500 regime)
+    must still fall through here rather than break the client's poll loop.
+    """
+    try:
+        files = sorted({
+            n.source.file
+            for n in resolve_validate_build(workflow, max_depth=_MAX_DEPTH).nodes
+            if n.source and n.source.file
+        })
+    except Exception:
+        files = []  # validation OR a build-stage bug — fall through; never 500 the poll
+    if files:
+        return files
+    try:
+        entry = resolve_workflow(workflow).file_path
+    except Exception:
+        entry = None  # resolution itself failed (a parse error) — try the name, then the raw path
+    if entry:
+        return [entry]
+    try:
+        name_path = WorkflowManager().get_path(workflow)
+    except Exception:
+        name_path = None  # not a saved name (or the lookup failed)
+    if name_path and Path(name_path).is_file():
+        return [name_path]
+    return [workflow] if Path(workflow).is_file() else []
+
+
+def version(request: Request) -> Response:
+    """A cheap change-fingerprint over a workflow's source files.
+
+    The frontend polls this; when the fingerprint changes it re-fetches
+    ``/api/graph`` and rebuilds the canvas **in place** (no page reload). The
+    digest is over each source file's path + mtime, so an edit (or an
+    added/removed sub-workflow file) moves it.
+
+    Always ``200`` except ``400`` on a missing ``workflow`` param — a mid-edit
+    INVALID workflow must NOT error the poll. Its entry file's mtime still
+    changes the fingerprint, so the triggered ``/api/graph`` re-fetch surfaces
+    the ``422`` as a banner and recovers when the edit is fixed.
+    """
+    workflow = request.query_params.get("workflow")
+    if not workflow:
+        return _json(
+            {"errors": [{"message": "Missing required 'workflow' query parameter."}]},
+            status_code=400,
+        )
+
+    parts: list[str] = []
+    for file_path in _source_files_for(workflow):
+        try:
+            parts.append(f"{file_path}:{Path(file_path).stat().st_mtime_ns}")
+        except OSError:
+            parts.append(f"{file_path}:missing")
+    digest = hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
+    return _json({"fingerprint": digest})
+
+
 class _BundleFiles(StaticFiles):
     """StaticFiles that makes ``index.html`` revalidate on every load.
 
@@ -187,6 +270,7 @@ def create_app() -> Starlette:
         Route("/api/catalog", catalog),
         Route("/api/graph", graph),
         Route("/api/source", source),
+        Route("/api/version", version),
     ]
     if (_STATIC_DIR / "index.html").exists():
         routes.append(Mount("/", app=_BundleFiles(directory=_STATIC_DIR, html=True)))

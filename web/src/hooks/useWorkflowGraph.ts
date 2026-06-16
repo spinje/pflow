@@ -52,6 +52,12 @@ export interface WorkflowGraphResult {
   onEdgesChange: OnEdgesChange<FlowEdge>;
   status: GraphStatus;
   errors: ApiErrorEntry[] | null;
+  // A failure from a LIVE-RELOAD re-fetch (the source changed on disk and the
+  // new version is invalid) while a last-good graph is still on screen. Kept
+  // SEPARATE from `errors` so the status machine is untouched: the canvas stays
+  // up (status "ready") and the caller shows this as a non-blocking overlay,
+  // never the full-screen error. Cleared by the next successful (re-)load.
+  reloadError: ApiErrorEntry[] | null;
   graph: RFGraph | null;
 }
 
@@ -88,16 +94,23 @@ function absolutePosition(nodes: FlowNode[], id: string): { x: number; y: number
   return { x, y };
 }
 
-export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): WorkflowGraphResult {
+export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, reload = 0): WorkflowGraphResult {
   const { density, direction, collapsed, focus, selected, workflowName } = view;
 
   const [graph, setGraph] = useState<RFGraph | null>(null);
   const [errors, setErrors] = useState<ApiErrorEntry[] | null>(null);
+  const [reloadError, setReloadError] = useState<ApiErrorEntry[] | null>(null);
   // Nodes + edges are laid out and stored as ONE paired snapshot from the same
   // build, so the focus pass never decorates new edges against stale node ids.
   // `key` is the layout-state the snapshot was computed for — the decoration effect
   // paints ONLY a matching snapshot (see the stale-paint note there).
   const [laid, setLaid] = useState<{ nodes: FlowNode[]; edges: FlowEdge[]; key: string } | null>(null);
+  // Mirror `laid` for the fetch effect's catch arm: a reload failure with a
+  // last-good canvas on screen (laidRef !== null) is non-blocking, otherwise it
+  // is the full-screen error. Read in the async catch, where the closed-over
+  // `laid` would be stale.
+  const laidRef = useRef(laid);
+  laidRef.current = laid;
 
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([]);
@@ -113,25 +126,50 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
   const layoutCacheRef = useRef(new Map<string, FlowNode[]>());
   const LAYOUT_CACHE_MAX = 24;
 
-  // 1. Fetch the contract whenever the workflow changes. Reset derived state.
+  // 1. Fetch the contract. Two regimes, distinguished by `prevWorkflowRef`:
+  //    - WORKFLOW CHANGED → full reset (clear graph/errors/laid + the layout
+  //      cache), then fetch. A failure is the full-screen error.
+  //    - SAME workflow, `reload` bumped (the source changed on disk) → re-fetch
+  //      and rebuild IN PLACE: keep the last-good graph + ALL view state
+  //      (focus/collapse/viewport) on screen; only swap the data. The layout
+  //      cache (keyed on view state, not graph identity) is cleared on SUCCESS
+  //      since the structure may have changed. A failure with a last-good canvas
+  //      up is the non-blocking `reloadError` overlay, never a blank screen.
+  const prevWorkflowRef = useRef<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    setGraph(null);
-    setErrors(null);
-    setLaid(null);
-    layoutCacheRef.current.clear();
+    const isReload = prevWorkflowRef.current === workflow;
+    prevWorkflowRef.current = workflow;
+
+    if (!isReload) {
+      setGraph(null);
+      setErrors(null);
+      setReloadError(null);
+      setLaid(null);
+      layoutCacheRef.current.clear();
+    }
+
     fetchGraph(workflow)
       .then((g) => {
-        if (!cancelled) setGraph(g);
+        if (cancelled) return;
+        if (isReload) layoutCacheRef.current.clear(); // structure may have changed
+        setErrors(null);
+        setReloadError(null);
+        setGraph(g);
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setErrors(e instanceof ApiError ? e.errors : [{ message: String(e) }]);
+        const entries = e instanceof ApiError ? e.errors : [{ message: String(e) }];
+        // A reload failure while a graph is on screen is non-blocking (keep the
+        // last-good canvas + an overlay). With nothing rendered yet it is the
+        // full-screen error.
+        if (isReload && laidRef.current !== null) setReloadError(entries);
+        else setErrors(entries);
       });
     return () => {
       cancelled = true;
     };
-  }, [workflow]);
+  }, [workflow, reload]);
 
   // Focus-expansion (beautiful only): the focused leaf + its data-flow endpoints
   // render their advanced body, so the revealed lines land on rows. In advanced
@@ -362,5 +400,5 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView): Wor
         ? "empty"
         : "ready";
 
-  return { nodes, edges, builtEdgeIds, paintEpoch, onNodesChange, onEdgesChange, status, errors, graph };
+  return { nodes, edges, builtEdgeIds, paintEpoch, onNodesChange, onEdgesChange, status, errors, reloadError, graph };
 }

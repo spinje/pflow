@@ -16,7 +16,14 @@ describe("readViewParams", () => {
       focus: "classify",
       collapse: "all",
       source: true,
+      watch: true,
     });
+  });
+
+  it("watch is on by default and only watch=0 disables it (pflow ui --no-watch)", () => {
+    expect(readViewParams("").watch).toBe(true);
+    expect(readViewParams("?watch=1").watch).toBe(true);
+    expect(readViewParams("?watch=0").watch).toBe(false);
   });
 
   it("collapse= accepts only all/none; anything else means AUTO (null)", () => {

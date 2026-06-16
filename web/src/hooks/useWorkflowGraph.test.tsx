@@ -62,7 +62,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 });
 
 import { ReactFlowProvider } from "@xyflow/react";
-import { fetchGraph } from "../api/client";
+import { ApiError, fetchGraph } from "../api/client";
 import { layoutGraph } from "../graph/layout";
 import { useWorkflowGraph, type WorkflowGraphView } from "./useWorkflowGraph";
 
@@ -561,5 +561,74 @@ describe("useWorkflowGraph — lifecycle", () => {
     expect(h.result.current.status).toBe("error");
     expect(h.result.current.errors?.[0]?.message).toContain("Could not lay out this workflow");
     expect(h.result.current.errors?.[0]?.message).toContain("elk exploded");
+  });
+});
+
+describe("useWorkflowGraph — live reload (same workflow, source changed)", () => {
+  // The DETECTION (the /api/version poll) lives in useSourceWatch; here the
+  // REACTION is pinned: a `reload` bump on the SAME workflow re-fetches and
+  // rebuilds IN PLACE, distinct from the workflow-change full reset.
+  function renderReloadable(graph: RFGraph, v: WorkflowGraphView = view()) {
+    vi.mocked(fetchGraph).mockResolvedValue(graph);
+    return renderHook(({ workflow, view: vv, reload }) => useWorkflowGraph(workflow, vv, reload), {
+      initialProps: { workflow: "wf", view: v, reload: 0 },
+      wrapper,
+    });
+  }
+
+  it("a reload bump re-fetches and rebuilds IN PLACE — no loading flash, no camera move", async () => {
+    const h = renderReloadable(DATA_GRAPH);
+    await waitFor(() => expect(pendingLayouts.length).toBe(1));
+    await resolveLayout(0, at({ a: { x: 0, y: 0 }, b: { x: 100, y: 0 } }));
+    expect(h.result.current.status).toBe("ready");
+    setViewportSpy.mockClear();
+
+    // The source changed on disk → a NEW graph object comes back, reload bumps.
+    const next: RFGraph = { ...DATA_GRAPH };
+    vi.mocked(fetchGraph).mockResolvedValue(next);
+    await act(async () => {
+      h.rerender({ workflow: "wf", view: view(), reload: 1 });
+    });
+
+    // A FRESH layout is requested (the cache was cleared — the structure may
+    // differ), but the OLD canvas stays painted: status never flashed to
+    // "loading" and the camera was never panned (a reload is not an expansion).
+    await waitFor(() => expect(pendingLayouts.length).toBe(2));
+    expect(h.result.current.status).toBe("ready");
+    expect(setViewportSpy).not.toHaveBeenCalled();
+
+    await resolveLayout(1, at({ a: { x: 0, y: 0 }, b: { x: 100, y: 0 } }));
+    expect(h.result.current.status).toBe("ready");
+    expect(h.result.current.graph).toBe(next);
+    expect(setViewportSpy).not.toHaveBeenCalled();
+  });
+
+  it("a reload that fails (mid-edit invalid) keeps the last-good graph + sets reloadError, never the full-screen error", async () => {
+    const h = renderReloadable(DATA_GRAPH);
+    await waitFor(() => expect(pendingLayouts.length).toBe(1));
+    await resolveLayout(0);
+    const goodGraph = h.result.current.graph;
+    expect(h.result.current.status).toBe("ready");
+
+    vi.mocked(fetchGraph).mockRejectedValue(new ApiError(422, [{ message: "unknown node type" }]));
+    await act(async () => {
+      h.rerender({ workflow: "wf", view: view(), reload: 1 });
+    });
+
+    expect(h.result.current.status).toBe("ready"); // canvas stays up — NOT "error"
+    expect(h.result.current.graph).toBe(goodGraph); // last-good preserved
+    expect(h.result.current.reloadError).toEqual([{ message: "unknown node type" }]);
+    expect(h.result.current.errors).toBeNull();
+
+    // A subsequent VALID save clears reloadError and swaps in the new graph.
+    const fixed: RFGraph = { ...DATA_GRAPH };
+    vi.mocked(fetchGraph).mockResolvedValue(fixed);
+    await act(async () => {
+      h.rerender({ workflow: "wf", view: view(), reload: 2 });
+    });
+    await waitFor(() => expect(pendingLayouts.length).toBe(2));
+    await resolveLayout(1);
+    expect(h.result.current.reloadError).toBeNull();
+    expect(h.result.current.graph).toBe(fixed);
   });
 });

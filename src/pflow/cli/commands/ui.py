@@ -53,12 +53,23 @@ def _open_browser_when_ready(host: str, port: int, url: str, *, timeout: float =
 @click.argument("workflow", required=False)
 @click.option("--port", default=8765, type=int, help="Port to serve on (default: 8765).")
 @click.option("--no-open", is_flag=True, default=False, help="Do not open a browser window.")
+@click.option(
+    "--no-watch",
+    is_flag=True,
+    default=False,
+    help="Freeze the view: don't live-update the canvas when the .pflow.md source changes.",
+)
 @click.pass_context
-def ui_cmd(ctx: click.Context, workflow: str | None, port: int, no_open: bool) -> None:
+def ui_cmd(ctx: click.Context, workflow: str | None, port: int, no_open: bool, no_watch: bool) -> None:
     """Serve a browser UI for seeing and understanding a workflow's structure.
 
     With WORKFLOW (a saved name or a .pflow.md path), opens straight to it.
     Without it, opens the catalog of saved workflows.
+
+    The canvas LIVE-UPDATES in place (no page reload) as you edit the workflow's
+    .pflow.md on disk — so an agent can build a workflow while the user watches it
+    take shape. Pass --no-watch to freeze it. Leave the server running in the
+    background while you edit (the command blocks until Ctrl+C).
 
     Examples:
 
@@ -67,6 +78,8 @@ def ui_cmd(ctx: click.Context, workflow: str | None, port: int, no_open: bool) -
         pflow ui my-saved-workflow --port 9000
 
         pflow ui --no-open
+
+        pflow ui workflow.pflow.md --no-watch
     """
     # Only the extra's OWN packages go under the install-hint guard. Importing
     # the server module separately means a genuine ImportError inside it (a real
@@ -103,10 +116,15 @@ def ui_cmd(ctx: click.Context, workflow: str | None, port: int, no_open: bool) -
 
     app = create_app()
     url = f"http://{host}:{port}/"
+    query: dict[str, str] = {}
     if workflow:
+        query["workflow"] = workflow
+    if no_watch:
+        query["watch"] = "0"
+    if query:
         from urllib.parse import urlencode
 
-        url += f"?{urlencode({'workflow': workflow})}"
+        url += f"?{urlencode(query)}"
 
     if not no_open:
         import threading

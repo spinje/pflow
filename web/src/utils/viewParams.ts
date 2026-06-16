@@ -28,9 +28,13 @@ export interface ViewParams {
   // Source pane open state. The width persists in localStorage; the open/closed
   // state rides the URL so screenshots/deep links can reproduce it.
   source: boolean;
+  // Live source watch: poll for `.pflow.md` edits and re-fetch the graph in
+  // place. On by default; `pflow ui --no-watch` opens with `watch=0` to freeze
+  // the view. Read-only (a session preference), like the other view params.
+  watch: boolean;
 }
 
-export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null, collapse: null, source: false };
+export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null, collapse: null, source: false, watch: true };
 
 // The URL uses the USER-FACING density words (advanced/beautiful); the code uses the
 // internal density (detailed/compact). Keep the mapping in one place so they can't drift.
@@ -54,6 +58,7 @@ export function readViewParams(search: string): ViewParams {
     focus: focus !== null && focus.trim() !== "" ? focus : null,
     collapse: collapse === "all" || collapse === "none" ? collapse : null,
     source: source === "1",
+    watch: p.get("watch") !== "0", // on unless explicitly disabled (pflow ui --no-watch)
   };
 }
 

@@ -68,6 +68,23 @@ export async function fetchGraph(workflow: string): Promise<RFGraph> {
   return body;
 }
 
+/** A cheap change-fingerprint over the workflow's source files. The frontend
+ *  polls this; when it changes, the graph is re-fetched in place (no reload).
+ *  The server never errors this for an invalid workflow (it falls back to the
+ *  entry file), so a non-200 here is a genuine transport failure — the caller
+ *  (the poll loop) swallows it and keeps polling. */
+export async function fetchVersion(workflow: string): Promise<string> {
+  const response = await fetch(`/api/version?workflow=${encodeURIComponent(workflow)}`);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+  const body = (await response.json()) as { fingerprint?: unknown };
+  if (typeof body.fingerprint !== "string") {
+    throw new ApiError(response.status, [{ message: "The server returned an unexpected version shape." }]);
+  }
+  return body.fingerprint;
+}
+
 export async function fetchSource(workflow: string): Promise<SourceFiles> {
   const response = await fetch(`/api/source?workflow=${encodeURIComponent(workflow)}`);
   if (!response.ok) {

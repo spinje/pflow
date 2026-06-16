@@ -5,7 +5,7 @@ description: Screenshot or measure the running pflow web UI (the React Flow canv
 
 # pflow web UI: screenshot + inspect
 
-Five workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
+Six workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
 canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
 
 - **`screenshot.pflow.md`** → a settled full-page PNG. Eyeball the rendered canvas.
@@ -55,6 +55,26 @@ canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
   Fixture URLs that exercise all three invariants: the plan-to-code harness
   (`examples/agent-orchestration/plan-to-code/run-from-plan.pflow.md`) and
   `examples/nested/deep-research/deep-research.pflow.md`.
+- **`live-reload.pflow.md`** → the ONLY same-page-across-an-edit check (every other
+  workflow reopens the page per run). Keeps one page open and edits the `.pflow.md`
+  under it, asserting `pflow ui`'s live source auto-update in one session: (1) append
+  a node → canvas grows IN PLACE, viewport byte-identical (no reload, no camera jump);
+  (2) insert a node BEFORE a focused one → focus FOLLOWS it (the structural-ref remap),
+  not the inserted node; (3) the source pane refreshes (not stale); (4) corrupt the
+  source → the last valid canvas holds under a non-blocking banner, NOT the full-screen
+  error. Returns a JSON `verdict` (`passed` + per-check booleans + node counts — `passed`
+  not `ok`, the API-warning-detector convention). It OWNS `wf_file`: writes a seed there,
+  edits it, deletes it — the caller only supplies a throwaway path + a URL pointing at it
+  (the URL MUST carry `&focus=done&source=1&density=advanced&collapse=none` — it focuses
+  the seed's `done` node, opens the source pane, and needs every node rendered). Re-run
+  before merging any change to the live-reload path (`useSourceWatch`, the `reload` arm of
+  `useWorkflowGraph`, `graph/remap.ts`, the `/api/version` endpoint); it's also the
+  same-page-react primitive Task 169 (agent→browser push) extends. On demand, not CI:
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=/tmp/lr-probe.pflow.md&focus=done&source=1&density=advanced&collapse=none' \
+    wf_file=/tmp/lr-probe.pflow.md -p -o verdict | jq
+  ```
 
 ## URL params
 

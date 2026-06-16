@@ -228,6 +228,30 @@ button.active {
   padding-left: 18px;
 }
 
+/* Live-reload error (GraphView reload-banner): the source changed on disk but the
+   new version is invalid. The last-good canvas stays interactive underneath; this
+   is a non-blocking strip (pointer-events: none), NOT the full-screen .banner.error,
+   and it clears on the next valid save. */
+.reload-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: 80%;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 45%);
+}
+.reload-banner strong {
+  color: var(--danger);
+}
+
 /* ---------- react flow surface ---------- */
 .react-flow {
   background: var(--bg);

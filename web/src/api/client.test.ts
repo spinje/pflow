@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, fetchGraph, fetchSource } from "./client";
+import { ApiError, fetchGraph, fetchSource, fetchVersion } from "./client";
 
 function mockFetch(status: number, body: unknown): void {
   globalThis.fetch = vi.fn(async () => ({
@@ -75,5 +75,23 @@ describe("fetchSource", () => {
       },
     })) as unknown as typeof fetch;
     await expect(fetchSource("wf")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("fetchVersion", () => {
+  it("returns the fingerprint on a 200 and URL-encodes the workflow value", async () => {
+    mockFetch(200, { fingerprint: "abc123" });
+    await expect(fetchVersion("folder/wf name.pflow.md")).resolves.toBe("abc123");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/version?workflow=folder%2Fwf%20name.pflow.md");
+  });
+
+  it("throws ApiError on a malformed 200 (so the poll loop swallows it, never trusts a non-string)", async () => {
+    mockFetch(200, { fingerprint: 42 });
+    await expect(fetchVersion("wf")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("throws ApiError on a transport failure (the poll loop catches and keeps polling)", async () => {
+    mockFetch(503, {});
+    await expect(fetchVersion("wf")).rejects.toBeInstanceOf(ApiError);
   });
 });

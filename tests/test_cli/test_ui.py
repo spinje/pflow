@@ -318,6 +318,137 @@ class TestSourceEndpoint:
         assert response.json() == {"root": None, "files": {}}
 
 
+class TestVersionEndpoint:
+    """``/api/version`` — the cheap change-fingerprint the frontend polls.
+
+    Contract: always ``200`` with a ``fingerprint`` (except ``400`` on a missing
+    param), the fingerprint MOVES when a source file changes, and a mid-edit
+    INVALID workflow still yields a ``200`` (entry-file fallback) so the client's
+    poll loop never breaks.
+    """
+
+    def test_valid_workflow_returns_a_fingerprint(self, tmp_path: Path) -> None:
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/version", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        fingerprint = response.json()["fingerprint"]
+        assert isinstance(fingerprint, str) and fingerprint
+
+    def test_fingerprint_is_stable_across_identical_reads(self, tmp_path: Path) -> None:
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app())
+        first = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        second = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        assert first == second
+
+    def test_fingerprint_changes_when_the_source_file_changes(self, tmp_path: Path) -> None:
+        """An edit (here: a forced mtime bump) moves the fingerprint — the whole
+        point: it is what triggers the client's in-place re-fetch."""
+        import os
+
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app())
+        before = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+
+        # Force a distinct mtime (deterministic across fast test runs).
+        stat = workflow_path.stat()
+        os.utime(workflow_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+        after = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        assert before != after
+
+    def test_missing_workflow_param_is_400(self) -> None:
+        client = TestClient(create_app())
+        response = client.get("/api/version")
+        assert response.status_code == 400
+        assert response.json()["errors"][0]["message"]
+
+    def test_invalid_workflow_still_returns_200_so_the_poll_survives(self, tmp_path: Path) -> None:
+        """A mid-edit invalid workflow must NOT error the poll. The entry file's
+        mtime still rides the fingerprint, so the triggered ``/api/graph``
+        re-fetch (not this endpoint) surfaces the 422 and recovers on the fix."""
+        bad_ir = {"nodes": [{"id": "bad", "type": "nonexistent_type_xyz", "params": {}}], "edges": []}
+        workflow_path = tmp_path / "invalid.pflow.md"
+        write_workflow_file(bad_ir, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/version", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        assert response.json()["fingerprint"]
+
+    def test_parse_broken_file_tracks_its_literal_path_so_edits_while_broken_are_seen(self, tmp_path: Path) -> None:
+        """A PARSE error makes even resolution fail — but the agent is editing a
+        real file. The literal-path fallback tracks it, so an edit-while-broken
+        still moves the fingerprint (the fix is then noticed immediately)."""
+        workflow_path = tmp_path / "broken.pflow.md"
+        # Missing the required node description → a parse error (resolution fails,
+        # not just validation).
+        workflow_path.write_text("# Broken\n\n## Steps\n\n### greet\n\n```shell\necho hi\n```\n", encoding="utf-8")
+
+        client = TestClient(create_app())
+        before = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+
+        import os
+
+        stat = workflow_path.stat()
+        os.utime(workflow_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+        after = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        assert before != after
+
+    def test_deleted_workflow_returns_200_constant_so_the_poll_survives(self) -> None:
+        """If even resolution fails (the file is gone), the fingerprint is a
+        stable constant — the poll keeps running until the file returns."""
+        client = TestClient(create_app())
+        response = client.get("/api/version", params={"workflow": "no-such-workflow-xyz"})
+        assert response.status_code == 200
+        assert response.json()["fingerprint"]
+
+    def test_saved_NAME_opened_workflow_tracks_edits_while_parse_broken(self) -> None:
+        """A workflow opened by saved NAME (the catalog default) whose file is
+        PARSE-broken still tracks edits: resolution fails, but the name resolves
+        to its entry path directly, so the fingerprint moves on a save. Without
+        this, a name-opened workflow froze the fingerprint while broken."""
+        _save_workflow("demo")
+        path = Path(WorkflowManager().get_path("demo"))
+        # Corrupt the saved file into a PARSE error (missing the node description).
+        path.write_text("# Demo\n\n## Steps\n\n### greet\n\n```shell\necho hi\n```\n", encoding="utf-8")
+
+        client = TestClient(create_app())
+        before = client.get("/api/version", params={"workflow": "demo"}).json()["fingerprint"]
+
+        import os
+
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+        after = client.get("/api/version", params={"workflow": "demo"}).json()["fingerprint"]
+        assert before != after  # the broken-while-editing save moved the fingerprint
+
+    def test_build_stage_failure_returns_200_not_500(self, tmp_path: Path) -> None:
+        """A producer bug on validated IR makes ``/api/graph`` a loud 500 — but
+        ``/api/version`` must NEVER 500 (it would break the poll). It falls
+        through to the entry-file fallback and returns 200 with a fingerprint."""
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app(), raise_server_exceptions=False)
+        with patch("pflow.ui.server.resolve_validate_build", side_effect=RuntimeError("boom")):
+            response = client.get("/api/version", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        assert response.json()["fingerprint"]
+
+
 class TestJsonSerialization:
     def test_exotic_param_values_are_stringified_not_500(self) -> None:
         """The JSON seam tolerates non-JSON-native values via ``default=str``.
