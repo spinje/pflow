@@ -142,7 +142,7 @@ def _render_entries(entries: list[PlanEntry], indent_level: int, boundary_shown:
         show_boundary = (
             not boundary_shown[0]
             and entry.status in ("execute", "opaque")
-            and entry.cause != "downstream"
+            and entry.cause not in ("downstream", "downstream_batch")
             and ((indent_level == 0 and (any_cached or _has_any_cached_above(entries, entry))) or indent_level > 0)
         )
         if show_boundary:

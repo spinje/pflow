@@ -1093,6 +1093,13 @@ def _plan_sub_workflow(
 
     if config.batch_config:
         if downstream:
+            # Run the shared depth / dynamic-ref guard first — parity with the
+            # non-batch path (just below) and with runtime: an over-depth batch
+            # must surface the max-depth error, and a templated `workflow: ${var}`
+            # batch the "dynamic" opaque, not a clean downstream-batch opaque.
+            guard_entry = _precheck_sub_workflow(curr, config, depth=depth)
+            if guard_entry is not None:
+                return guard_entry
             # Post-boundary (after the parent's first cache miss) the batch item
             # count is unreliable — items usually depend on dirty upstream output.
             # Planning a single iteration here reports 1/N of the real cost, a
@@ -2472,7 +2479,7 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
         if _represents_work(entry):
             execute_count += 1
             execute_by_type[entry.node_type] = execute_by_type.get(entry.node_type, 0) + 1
-            if cache_boundary is None and entry.cause != "downstream":
+            if cache_boundary is None and entry.cause not in ("downstream", "downstream_batch"):
                 cache_boundary = entry.node_id
 
         # issue #445: a loop node's single-pass estimate is multiplied by its

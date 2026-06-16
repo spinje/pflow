@@ -2732,3 +2732,58 @@ def test_plan_cost_downstream_batch_subworkflow_is_honest(tmp_path, mock_llm_cli
     # entry should see the real reason (issue #506 review).
     assert fanout.cause == "downstream_batch"
     assert "batch downstream, item count unreliable" in format_plan_text(plan)
+
+
+def test_plan_downstream_batch_respects_depth_guard(tmp_path, monkeypatch) -> None:
+    """A downstream batch at max nesting depth must error, not emit clean opaque.
+
+    The opaque early-return for downstream batches must still run the shared
+    depth guard (`_precheck_sub_workflow`) — parity with the non-batch path and
+    with runtime, which both fail loudly at `MAX_DEPTH_DEFAULT`. Without it, an
+    over-depth batch silently plans as a successful opaque node. MAX_DEPTH is
+    patched to 0 so a top-level downstream batch (depth 0) trips it on a fresh
+    plan — no deep nesting needed (Codex review, PR #517).
+
+    Mutation: drop the `_precheck_sub_workflow` call in `_plan_sub_workflow`'s
+    downstream-batch branch → fanout returns opaque, the depth diagnostic
+    disappears → fails.
+    """
+    from pflow.runtime.workflow_executor import WorkflowExecutor
+
+    monkeypatch.setattr(WorkflowExecutor, "MAX_DEPTH_DEFAULT", 0)
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [{"id": "echo", "type": "shell", "cache": True, "params": {"command": "printf ${value}"}}],
+            "edges": [],
+            "outputs": {"out": {"source": "${echo.stdout}", "description": "o"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "inputs": {"items": {"type": "array"}},
+            "nodes": [
+                {"id": "upstream", "type": "shell", "cache": True, "params": {"command": "printf go"}},
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"value": "${item}"}},
+                    "batch": {"items": "${items}"},
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "fanout"}],
+        },
+        parent_path,
+    )
+
+    # Fresh plan: `upstream` is a miss → BFS reaches `fanout` downstream at
+    # depth 0, which equals the patched MAX_DEPTH → must surface the depth error,
+    # not a clean opaque node.
+    plan = _runner_plan(parent_path, {"items": ["a", "b"]})
+
+    fanout = next(e for e in plan.entries if e.node_id == "fanout")
+    assert fanout.status != "opaque", "downstream batch at max depth must error, not emit clean opaque"
+    assert any("Max sub-workflow depth" in d.message for d in plan.diagnostics)
