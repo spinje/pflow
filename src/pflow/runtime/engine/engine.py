@@ -77,6 +77,10 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 # for itself, and must not be second-guessed by the detector. See GH #301 / #474.
 # "end" counts as clean-success: it is an intentional-termination directive, not a
 # failure acknowledgement, so a silent API error in its output should still surface.
+# The gate covers ANY non-clean action, not only the "error"/"continue" cases #301/#474
+# named — a deliberate verdict of any kind wins. Safe today because no node returns a
+# custom routing action together with detector-matchable output (HTTP/MCP/Slack/GraphQL
+# payloads only ever ride "default"/"error"); revisit this gate if a future node does.
 _CLEAN_SUCCESS_ACTIONS = frozenset({"", "default", "end"})
 
 # Read-only empty mapping used to restore ``__pflow_prompt_cache__`` after a
