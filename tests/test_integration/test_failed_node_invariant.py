@@ -346,17 +346,20 @@ def test_shell_error_without_on_error_preserves_shell_data_in_failure_record():
     assert data.get("command") == 'echo "from stderr" >&2; exit 1'
     assert "from stderr" in data.get("stderr", "")
 
-    # Routing warning is still surfaced via __warnings__
+    # No routing hint is written for a terminal node failure (GH #437): the real
+    # shell failure already stands on its own in __failures__, so a generic
+    # "add on-error" hint would only outrank the real fix and train agents to route
+    # the failure instead of fixing its cause.
     warnings = shared.get("__warnings__", {})
-    assert "broken" in warnings
-    assert "no successor edge matches" in warnings["broken"]
+    assert "broken" not in warnings, (
+        f"Terminal node failure should not emit a routing hint, got: {warnings.get('broken')!r}"
+    )
 
     # The user-visible top-line error message must be the authoritative shell
-    # failure, NOT the routing hint. Pre-fix, _extract_error_info gave the
-    # __warnings__ mirror priority and returned "no successor edge matches..."
-    # as the primary error message — hiding the actual "Command failed with
-    # exit code 1". The rich shell data survived in context either way, but
-    # the headline was misleading.
+    # failure. (Historically _handle_no_successor wrote a "no successor edge
+    # matches" routing hint to __warnings__ that, when given priority, masked the
+    # real "Command failed with exit code 1"; GH #437 stopped writing that hint
+    # for error-action nodes, so the shell failure is now the only signal.)
     errors = [d for d in result.diagnostics if d.severity == Severity.ERROR]
     assert errors, "Expected at least one ERROR diagnostic for the failed workflow"
     primary_error = errors[0]

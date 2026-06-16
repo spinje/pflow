@@ -69,6 +69,16 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
     "LLMNode": FAILURE_CATEGORY_LLM,
 }
 
+# Actions that represent a clean-success verdict — the node made no failure or
+# routing decision of its own. The api_warning detector only UPGRADES these into
+# failures (a node that returned "default" but whose output betrays a silent API
+# error, e.g. Slack ok:false in a 200). Any other action — an "error", or a
+# deliberate custom route like error_action's "continue" — is the node speaking
+# for itself, and must not be second-guessed by the detector. See GH #301 / #474.
+# "end" counts as clean-success: it is an intentional-termination directive, not a
+# failure acknowledgement, so a silent API error in its output should still surface.
+_CLEAN_SUCCESS_ACTIONS = frozenset({"", "default", "end"})
+
 # Read-only empty mapping used to restore ``__pflow_prompt_cache__`` after a
 # child engine.run completes when the parent had no value installed. Module
 # level so deeply-nested sub-workflow restores don't allocate per call.
@@ -936,32 +946,23 @@ class WorkflowEngine:
         if is_clean_termination(last_action, curr.successors):
             return last_action  # Intentional termination or no forward path
 
-        # Unmatched action — either a node failure with no error handler,
-        # or a routing error (code returned action not in declared targets)
-        is_node_failure = isinstance(last_action, str) and last_action.startswith("error")
-        suggestion = (
-            "Add '- on-error: <handler-node>' to handle errors."
-            if is_node_failure
-            else 'Use next: str = "end" to terminate intentionally.'
-        )
+        # A node that FAILED (action="error") is already archived in __failures__ with
+        # its real error + remedy (engine step 17.5 / handle_api_warning). Emitting a
+        # generic "add on-error" routing hint here would visually outrank that real fix
+        # and train agents to route the failure instead of fixing its cause (GH #437).
+        # The failure already stands on its own; just propagate "error". (This branch is
+        # reachable only for action="error" — only that path archives into __failures__.)
+        if get_node_failure(shared, node_id) is not None:
+            return "error"
+
+        # A custom (non-error) action with no matching successor IS a genuine routing
+        # bug — surface it. Roll back the success bookkeeping cache_result added and
+        # archive as a routing failure.
         warning_msg = (
             f"Node '{node_id}' returned action '{last_action}' "
             f"but no successor edge matches. Available: {list(curr.successors)}. "
-            f"{suggestion}"
+            'Use next: str = "end" to terminate intentionally.'
         )
-
-        # If step 17.5 already archived this node (action started with "error"),
-        # the failure record holds the real failure data and category (e.g.
-        # shell_failure with exit_code/stderr/command). Don't overwrite it —
-        # just surface the routing hint via __warnings__. Without this guard,
-        # mark_node_failed's shared.pop() returns None, replacing rich data
-        # with an empty-data routing_error record.
-        if get_node_failure(shared, node_id) is not None:
-            shared.setdefault("__warnings__", {})[node_id] = warning_msg
-            return "error"
-
-        # Non-error action with no matching successor: roll back success
-        # bookkeeping added by cache_result and archive as a routing failure.
         invalidate_cache(node_id, shared)
         mark_node_failed(
             shared,
@@ -1105,8 +1106,16 @@ class WorkflowEngine:
                 if config.node_type_name == "WorkflowExecutor":
                     child_trace_events = getattr(node, "_child_trace_events", None)
 
-            # 10. API warning detection
-            warning = detect_api_warning(config.node_id, shared, node_type_name=config.node_type_name)
+            # 10. API warning detection. Only run it on a clean-success verdict — see
+            # _CLEAN_SUCCESS_ACTIONS. A node that returned an error action (GH #474) or a
+            # deliberate custom route like error_action's "continue" (GH #301) has already
+            # spoken; the detector must not override its routing or relabel its failure.
+            # error-action failures fall through to step 17.5, which writes the on_error_recovery
+            # diagnostic (with handler) or a plain node failure (terminal) — consistent across
+            # all node types, independent of whether the error text matches a pattern.
+            warning = None
+            if action is None or str(action) in _CLEAN_SUCCESS_ACTIONS:
+                warning = detect_api_warning(config.node_id, shared, node_type_name=config.node_type_name)
             if warning:
                 # Drain the per-item buffer even though ``handle_api_warning``
                 # discards batch items today (pre-existing, see W2 in PR #405

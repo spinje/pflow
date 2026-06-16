@@ -377,3 +377,74 @@ class TestErrorFormattingSurfacesWarnings:
         assert len(errors) >= 1
         assert "Rate limit exceeded" in errors[0].message
         assert "HTTP request failed" not in errors[0].message
+
+
+class TestApiWarningSuggestionsAreRecoveredAware:
+    """GH #235 slice: handle_api_warning suggestions must be recovered-aware.
+
+    handle_api_warning now fires ONLY for SILENT failures (a clean-success action
+    whose output matches an API-error shape). When the node already HAS an on-error
+    handler (recovered=True), the suggestions must NOT advise adding one.
+    """
+
+    def test_recovered_suggestions_do_not_advise_adding_on_error(self):
+        shared = {"api": {"status": "error", "error": "boom"}}
+        handle_api_warning(
+            "api",
+            shared,
+            "API error: boom",
+            None,  # metrics
+            None,  # trace_collector
+            time.perf_counter(),  # start_time
+            set(),  # shared_keys_before
+            "HTTPNode",  # node_type_name
+            {},  # node_params
+            recovered=True,
+        )
+        diagnostic = shared["__warnings__"]["api"]
+        joined = " ".join(diagnostic.suggestions).lower()
+        assert "add '- on-error" not in joined, (
+            f"Recovered node already has a handler; must not advise adding one. Got: {diagnostic.suggestions}"
+        )
+
+    def test_non_recovered_suggestions_advise_adding_on_error(self):
+        shared = {"api": {"status": "error", "error": "boom"}}
+        handle_api_warning(
+            "api",
+            shared,
+            "API error: boom",
+            None,  # metrics
+            None,  # trace_collector
+            time.perf_counter(),  # start_time
+            set(),  # shared_keys_before
+            "HTTPNode",  # node_type_name
+            {},  # node_params
+            recovered=False,
+        )
+        diagnostic = shared["__warnings__"]["api"]
+        joined = " ".join(diagnostic.suggestions).lower()
+        assert "add '- on-error" in joined, (
+            f"Non-recovered node should be advised to route via on-error. Got: {diagnostic.suggestions}"
+        )
+
+
+class TestBatchAggregateDoesNotTriggerApiWarning:
+    """Pins the accidental-safety property: a batch partial-failure aggregate does
+    NOT trigger an api_warning (see PLAN §0.2). The top-level ``errors`` list enters
+    _check_graphql_errors, but batch error records have no ``message`` key (they use
+    ``error``), so it yields the non-matching ``"GraphQL error"`` default → None.
+
+    If a future change gives batch error records a ``message`` key (or changes the
+    fallback), this test fails loudly.
+    """
+
+    def test_partial_failure_batch_aggregate_returns_none(self):
+        aggregate = {
+            "results": [{"ok": True}],
+            "count": 2,
+            "success_count": 1,
+            "error_count": 1,
+            "errors": [{"index": 0, "item": {"channel": "x"}, "error": "channel not found"}],
+            "batch_metadata": {"parallel": False, "max_concurrent": 1},
+        }
+        assert detect_api_warning("fanout", {"fanout": aggregate}) is None

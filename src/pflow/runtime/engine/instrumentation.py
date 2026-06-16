@@ -796,6 +796,12 @@ def handle_api_warning(
         error=Exception(warning),
     )
 
+    # Emit node_complete so progress UIs stop showing this node as still running
+    # (GH #249). Must run BEFORE mark_node_failed moves the data into __failures__,
+    # matching the happy path's step-17 → step-17.5 order. node_warning (above) +
+    # node_complete render as two clean lines in OutputController.
+    call_completion_callback(node_id, shared, "error", duration_ms)
+
     # LAST STEP: archive the node's data to __failures__.
     #
     # The post-detector warning text (``warning``) is the authoritative
@@ -810,13 +816,25 @@ def handle_api_warning(
     # of category — ``_extract_error_info`` in the runner just reads it.
     from pflow.runtime.node_state import FAILURE_CATEGORY_API_WARNING, mark_node_failed
 
+    # Suggestions name the SILENT nature (the node reported success; the failure was
+    # detected from its output) and stay recovered-aware: never advise "add on-error"
+    # when the node already HAS one (recovered=True) — that is the same misdirection
+    # #437 removes on the no-successor path.
+    detected = (
+        f"'{node_id}' returned a success action, but its output matched an API-error "
+        "response — the engine flagged a failure the node itself did not report."
+    )
+    follow_up = (
+        "It was routed to the on-error handler; inspect that handler's result to confirm the recovery is what you want."
+        if recovered
+        else "If the call really failed, add '- on-error: <handler>' to route it, or fix the "
+        "upstream request. If the output is valid data the detector misread (a heuristic "
+        "false positive), route past it with '- on-error:'."
+    )
     warning_diagnostic = Diagnostic(
         severity=Severity.WARNING,
         message=warning,
-        suggestions=[
-            f"Inspect '{node_id}' upstream inputs and output to verify the warning is expected.",
-            "If unintended, fix the upstream data or add error handling to this node.",
-        ],
+        suggestions=[detected, follow_up],
         node_id=node_id,
         source="runtime",
         context={"type": "api_warning", "recovered": recovered},
