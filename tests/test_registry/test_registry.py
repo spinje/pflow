@@ -559,11 +559,13 @@ class TestRegistryVersionRefresh:
                 assert registry2._core_nodes_outdated(nodes) is True
 
     def test_refresh_preserves_user_nodes(self):
-        """When core nodes are refreshed, user and MCP nodes must survive.
+        """When core nodes are refreshed, every non-core node must survive.
 
-        We write a registry containing both core nodes and user/MCP nodes,
-        then call _refresh_core_nodes. The returned dict must still contain
-        the user and MCP entries.
+        We write a registry containing core nodes plus user/MCP nodes, then
+        call _refresh_core_nodes. The returned dict must still contain the
+        user and MCP entries — including a legacy MCP entry with NO type field
+        (synced before issue #462's fix stamped type="mcp"), which the fail-safe
+        "preserve everything that isn't core" predicate must self-heal.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             registry_path = Path(tmpdir) / "registry.json"
@@ -586,6 +588,13 @@ class TestRegistryVersionRefresh:
                     "class_name": "McpNode",
                     "type": "mcp",
                 },
+                # Legacy MCP entry as the registrar built it BEFORE the fix:
+                # no "type" field, identified only by the virtual path.
+                "mcp-legacy-tool": {
+                    "module": "pflow.nodes.mcp.node",
+                    "class_name": "MCPNode",
+                    "file_path": "virtual://mcp",
+                },
             }
             registry._save_with_metadata(mixed_nodes)
 
@@ -601,10 +610,54 @@ class TestRegistryVersionRefresh:
             assert refreshed["my-custom-node"]["type"] == "user"
             assert "mcp-tool" in refreshed
             assert refreshed["mcp-tool"]["type"] == "mcp"
+            # Untyped legacy MCP entry must self-heal through the refresh,
+            # with its payload intact (the merge must not mutate it).
+            assert "mcp-legacy-tool" in refreshed
+            assert refreshed["mcp-legacy-tool"] == mixed_nodes["mcp-legacy-tool"]
 
             # Core nodes should be present (from real auto-discovery)
             core_nodes = {name: data for name, data in refreshed.items() if data.get("type") == "core"}
             assert len(core_nodes) > 0, "Refresh should have discovered core nodes"
+
+    def test_refresh_does_not_shadow_core_node_with_untyped_entry(self):
+        """A stale untyped entry sharing a core node's name must not shadow it.
+
+        The fail-safe denylist preserves untyped entries, but fresh core metadata
+        must win on a name collision (issue #462 review): a legacy untyped "shell"
+        entry (e.g. left by the removed `registry scan` CLI) must be overridden by
+        the freshly-discovered core node, never resurrected over it. A non-colliding
+        untyped entry must still self-heal.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            stale_nodes = {
+                # Untyped entry colliding with a real core node name.
+                "shell": {
+                    "module": "stale.shell",
+                    "class_name": "StaleShellNode",
+                    "file_path": "/stale/shell.py",
+                },
+                # Untyped MCP entry that does NOT collide — must self-heal.
+                "mcp-legacy-tool": {
+                    "module": "pflow.nodes.mcp.node",
+                    "class_name": "MCPNode",
+                    "file_path": "virtual://mcp",
+                },
+            }
+            registry._save_with_metadata(stale_nodes)
+
+            registry2 = Registry(registry_path)
+            nodes = registry2._load_from_file()
+            refreshed = registry2._refresh_core_nodes(nodes)
+
+            # Fresh core "shell" wins — the stale untyped entry must not shadow it.
+            assert refreshed["shell"]["type"] == "core"
+            assert refreshed["shell"]["module"] == "pflow.nodes.shell.shell"
+            assert refreshed["shell"]["class_name"] == "ShellNode"
+            # Non-colliding untyped entry still self-heals through the refresh.
+            assert "mcp-legacy-tool" in refreshed
 
 
 class TestRegistrySourceMtimeRefresh:

@@ -141,6 +141,8 @@ class TestMCPRegistrarCritical:
             assert entry["class_name"] == "MCPNode"
             assert entry["module"] == "pflow.nodes.mcp.node"
             assert entry["file_path"] == "virtual://mcp"
+            # type="mcp" so the entry survives core-node refresh (issue #462)
+            assert entry["type"] == "mcp"
 
             # Interface MUST have these exact fields
             interface = entry["interface"]

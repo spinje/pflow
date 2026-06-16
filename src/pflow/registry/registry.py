@@ -462,9 +462,23 @@ class Registry:
             return False
 
     def _refresh_core_nodes(self, nodes: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Refresh core nodes while preserving user and MCP nodes."""
-        # Preserve non-core nodes
-        preserved = {name: data for name, data in nodes.items() if data.get("type") in ("user", "mcp")}
+        """Refresh core nodes while preserving every non-core node.
+
+        The refresh re-discovers core nodes, so everything that isn't core (user,
+        mcp, or an untyped legacy entry) must survive. Keyed on "not core" rather
+        than an allowlist of known types so it fails safe: an entry we don't
+        recognize is kept, never silently dropped. This also self-heals MCP
+        entries synced before they were stamped with type="mcp" — their absent
+        type is not "core", so they're preserved.
+
+        Freshly-discovered core metadata wins on a name collision: preserved
+        entries are merged *under* the fresh scan, not over it. So a stale entry
+        sharing a core node's name (e.g. an untyped "shell" left by the removed
+        `registry scan` CLI) can neither resurrect nor shadow a core node — the
+        broadened predicate can only add non-core names, never override core ones.
+        """
+        # Preserve every non-core node (see docstring: fail-safe, self-healing).
+        preserved = {name: data for name, data in nodes.items() if data.get("type") != "core"}
 
         # Re-discover core nodes — _auto_discover_core_nodes stamps
         # last_core_scan with a PRE-scan timestamp (race-safe).
@@ -473,8 +487,11 @@ class Registry:
         # Reload — populates self._registry_last_scan from the pre-scan stamp.
         refreshed = self._load_from_file()
 
-        # Merge preserved nodes back in
-        refreshed.update(preserved)
+        # Merge preserved nodes UNDER the fresh core scan: setdefault adds a
+        # preserved entry only when its name is free, so fresh core metadata
+        # always wins a name collision (see docstring).
+        for name, data in preserved.items():
+            refreshed.setdefault(name, data)
 
         # Save the merged result, propagating the pre-scan timestamp so the
         # race-safety is preserved through the final merge write. Without this,
