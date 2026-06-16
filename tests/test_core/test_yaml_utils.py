@@ -51,6 +51,31 @@ class TestNoOpForTemplateFreeContent:
         assert load(text) == yaml.safe_load(text)
 
 
+class TestQuotedScalarEscaping:
+    """Issue #518 review (finding A): templates inside quoted scalars are NOT masked.
+
+    Masking inside a quoted scalar strips YAML's escape processing, so
+    ``"${a ?? \\"x\\"}"`` would restore with literal backslashes and the resolver
+    would reject it. Quoted scalars are YAML's job — leave them alone.
+    """
+
+    def test_escaped_string_literal_in_quoted_flow_value(self) -> None:
+        # Outer double-quotes force ``\"``; YAML must unescape so the resolver sees a
+        # valid coalesce string literal (``"DEF"``), not ``\"DEF\"``.
+        assert load('{ fb: "${a ?? \\"DEF\\"}" }') == {"fb": '${a ?? "DEF"}'}
+
+    def test_quoted_equals_unquoted_for_escaped_literal(self) -> None:
+        assert load('{ fb: "${a ?? \\"DEF\\"}" }') == load('{ fb: ${a ?? "DEF"} }')
+
+    def test_quoted_scalar_alongside_bare_template(self) -> None:
+        # The quoted scalar (with a ``:`` that would otherwise confuse flow parsing)
+        # is left for YAML; the bare template is still shielded.
+        assert load('{ a: "hi: there", b: ${y} }') == {"a": "hi: there", "b": "${y}"}
+
+    def test_single_quoted_template_preserved(self) -> None:
+        assert load("{ fb: '${a ?? 1}' }") == {"fb": "${a ?? 1}"}
+
+
 class TestBraceAwareTemplates:
     """C2: a coalesce operand with an object/array literal is captured whole.
 
