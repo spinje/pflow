@@ -159,6 +159,19 @@ class TestResolveFileReferences:
         assert batch["parallel"] is True
         assert ir["nodes"][0]["_source_files"]["batch"] == "./batch.yaml"
 
+    def test_batch_file_flow_style_unquoted_template(self, tmp_path: Path) -> None:
+        """Issue #482: an external batch file using flow-style with an unquoted template parses.
+
+        Previously raised a YAML error because the `{` in `${candidate}` was read as a
+        nested flow mapping — the same bug as inline params, now fixed at this surface too.
+        """
+        (tmp_path / "batch.yaml").write_text("items:\n  - { contender: ${candidate} }\n")
+
+        ir = _make_ir([{"id": "n1", "type": "llm", "batch": "./batch.yaml", "params": {}}])
+        resolve_file_references(ir, tmp_path)
+
+        assert ir["nodes"][0]["batch"]["items"] == [{"contender": "${candidate}"}]
+
     def test_batch_items_resolution(self, tmp_path: Path) -> None:
         """File references inside inline batch items resolved."""
         prompts_dir = tmp_path / "prompts"

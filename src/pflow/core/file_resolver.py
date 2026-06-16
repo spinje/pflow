@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import yaml
+from pflow.core.yaml_utils import safe_load_preserving_templates
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,9 @@ def resolve_file_references(ir_dict: dict[str, Any], base_dir: Path) -> dict[str
     Walks all node params and batch items. When a value matches the
     file reference heuristic and the file exists, reads the file and
     substitutes its content. For YAML params (batch, output_schema,
-    headers), the file content is parsed with yaml.safe_load().
+    headers), the file content is parsed with
+    ``yaml_utils.safe_load_preserving_templates`` so unquoted ``${...}``
+    templates in flow style parse like block form (issue #482).
 
     Args:
         ir_dict: The workflow IR dict (modified in place)
@@ -143,7 +145,7 @@ def resolve_file_references(ir_dict: dict[str, Any], base_dir: Path) -> dict[str
             if is_file_reference(value):
                 content = _read_file(value, base_dir, node_id, key)
                 if key in YAML_PARSED_PARAMS:
-                    params[key] = yaml.safe_load(content)
+                    params[key] = safe_load_preserving_templates(content)
                 else:
                     params[key] = content
                 node.setdefault("_source_files", {})[key] = value
@@ -173,7 +175,7 @@ def _resolve_batch_file_references(
     if isinstance(batch, str) and is_file_reference(batch):
         original_value = batch
         content = _read_file(batch, base_dir, node_id, "batch")
-        node["batch"] = yaml.safe_load(content)
+        node["batch"] = safe_load_preserving_templates(content)
         node.setdefault("_source_files", {})["batch"] = original_value
         logger.debug(f"Resolved file reference: node '{node_id}', batch <- {original_value}")
         batch = node["batch"]  # Update local var for B2 fall-through
@@ -190,7 +192,7 @@ def _resolve_batch_file_references(
                         if is_file_reference(value):
                             content = _read_file(value, base_dir, node_id, f"batch.items[{i}].{key}")
                             if key in YAML_PARSED_PARAMS:
-                                item[key] = yaml.safe_load(content)
+                                item[key] = safe_load_preserving_templates(content)
                             else:
                                 item[key] = content
                             provenance_key = f"batch.items[{i}].{key}"

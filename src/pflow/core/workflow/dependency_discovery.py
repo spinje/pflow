@@ -15,6 +15,7 @@ import yaml
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.file_resolver import FILE_RESOLVABLE_PARAMS, is_file_reference, is_workflow_file_reference
 from pflow.core.markdown_parser import parse_markdown
+from pflow.core.yaml_utils import safe_load_preserving_templates
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ def _collect_batch_deps(
         # Parse batch YAML to find file refs in items
         try:
             batch_content = resolved.read_text(encoding="utf-8")
-            batch_data = yaml.safe_load(batch_content)
+            batch_data = safe_load_preserving_templates(batch_content)
             if isinstance(batch_data, dict):
                 _collect_batch_item_deps(batch_data, base_dir, node_id, deps)
         except yaml.YAMLError:

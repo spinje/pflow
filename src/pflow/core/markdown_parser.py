@@ -27,6 +27,7 @@ from pflow.core.cache_ttl import cache_ttl_syntax_hint, is_valid_cache_ttl
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.suggestion_utils import find_similar_items
+from pflow.core.yaml_utils import safe_load_preserving_templates
 
 # --- Result dataclass ---
 
@@ -932,10 +933,11 @@ def _coerce_yaml_scalar(value: str) -> Any:
         quote_type = "double" if value[0] == '"' else "single"
         raise ValueError(f"Unterminated {quote_type}-quoted string: {value}")
 
-    # Flow-style YAML mapping or sequence → parse with yaml.safe_load
+    # Flow-style YAML mapping or sequence → parse with yaml.safe_load, shielding
+    # ``${...}`` templates so unquoted ones parse like block form.
     # Let yaml.YAMLError propagate — caller converts to MarkdownParseError
     if value.startswith(("{", "[")):
-        return yaml.safe_load(value)
+        return safe_load_preserving_templates(value)
 
     # Null
     if value in _YAML_NULL:
@@ -959,7 +961,7 @@ def _coerce_yaml_scalar(value: str) -> Any:
 def _parse_multiline_yaml_item(item: str, entity: _Entity, merged: dict[str, Any]) -> str | None:
     """Parse a multi-line YAML item and merge results into ``merged``."""
     try:
-        parsed = yaml.safe_load(item)
+        parsed = safe_load_preserving_templates(item)
     except yaml.YAMLError as exc:
         raise _enhance_yaml_error(exc, entity) from exc
 
@@ -1124,10 +1126,10 @@ def _validate_code_blocks(entity: _Entity) -> None:
                     suggestion=f"Fix the Python syntax in the code block starting at line {block.start_line}.",
                 ) from exc
 
-        # YAML config validation
+        # YAML config validation (shielding ${...} templates — same as param values)
         if block.is_yaml_config:
             try:
-                yaml.safe_load(block.content)
+                safe_load_preserving_templates(block.content)
             except yaml.YAMLError as exc:
                 raise MarkdownParseError(
                     f"YAML syntax error in '{block.tag}' block: {exc}",
@@ -1184,16 +1186,16 @@ def _route_code_blocks_to_node(entity: _Entity, node: dict[str, Any], params: di
     for block in entity.code_blocks:
         if block.param_name == "batch":
             if block.is_yaml_config:
-                node["batch"] = yaml.safe_load(block.content)
+                node["batch"] = safe_load_preserving_templates(block.content)
             else:
                 node["batch"] = block.content
         elif block.param_name == "loop":
             # `loop:` is a top-level node field (sibling to `batch`), not a param.
             # Always YAML-parse — a loop block is a `while:`/`max_iterations:` mapping.
-            node["loop"] = yaml.safe_load(block.content) if block.is_yaml_config else block.content
+            node["loop"] = safe_load_preserving_templates(block.content) if block.is_yaml_config else block.content
         elif block.param_name:
             if block.is_yaml_config:
-                params[block.param_name] = yaml.safe_load(block.content)
+                params[block.param_name] = safe_load_preserving_templates(block.content)
             else:
                 params[block.param_name] = block.content
                 # Carry source line so runtime errors can reference the .pflow.md file.
