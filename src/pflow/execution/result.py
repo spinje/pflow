@@ -109,6 +109,7 @@ class PlanEntry:
         "cache_disabled",
         "template_error",
         "dynamic",
+        "downstream_batch",
         "routing_error",
     ]
     # Predicted cache_key from the planner's plan_node call. None when this

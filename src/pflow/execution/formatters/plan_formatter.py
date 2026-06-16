@@ -142,7 +142,7 @@ def _render_entries(entries: list[PlanEntry], indent_level: int, boundary_shown:
         show_boundary = (
             not boundary_shown[0]
             and entry.status in ("execute", "opaque")
-            and entry.cause != "downstream"
+            and entry.cause not in ("downstream", "downstream_batch")
             and ((indent_level == 0 and (any_cached or _has_any_cached_above(entries, entry))) or indent_level > 0)
         )
         if show_boundary:
@@ -225,7 +225,10 @@ def _render_entry_line(entry: PlanEntry, indent: str) -> str:
         return f"{indent}▸ {entry.node_id}  [sub-workflow '{ref}' ({count} node{suffix})]"
 
     if entry.status == "opaque":
-        return f"{indent}▸ {entry.node_id}  [sub-workflow: dynamic, cannot plan]"
+        reason = (
+            "batch downstream, item count unreliable" if entry.cause == "downstream_batch" else "dynamic, cannot plan"
+        )
+        return f"{indent}▸ {entry.node_id}  [sub-workflow: {reason}]"
 
     if entry.status == "routing_error":
         return f"{indent}▸ {entry.node_id}{tag}  [routing error]"

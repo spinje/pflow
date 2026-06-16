@@ -1091,7 +1091,21 @@ def _plan_sub_workflow(
     node_type = config.node_type_name
     downstream = cause == "downstream"
 
-    if config.batch_config and not downstream:
+    if config.batch_config:
+        if downstream:
+            # Run the shared depth / dynamic-ref guard first — parity with the
+            # non-batch path (just below) and with runtime: an over-depth batch
+            # must surface the max-depth error, and a templated `workflow: ${var}`
+            # batch the "dynamic" opaque, not a clean downstream-batch opaque.
+            guard_entry = _precheck_sub_workflow(curr, config, depth=depth)
+            if guard_entry is not None:
+                return guard_entry
+            # Post-boundary (after the parent's first cache miss) the batch item
+            # count is unreliable — items usually depend on dirty upstream output.
+            # Planning a single iteration here reports 1/N of the real cost, a
+            # silent underestimate for a cost gate. Surface an honest "unknown"
+            # (opaque, counted in summary.opaque_count) instead. See issue #506.
+            return _opaque_sub_workflow_entry(node_id, node_type, cause="downstream_batch")
         return _plan_batch_sub_workflow(
             curr,
             config,
@@ -2099,13 +2113,23 @@ def _merged_sub_workflow_params(curr: Any, config: NodeConfig, planned: NodePlan
     return merged
 
 
-def _opaque_sub_workflow_entry(node_id: str, node_type: str) -> PlanEntry:
-    """Entry for a sub-workflow we can't resolve at plan time."""
+def _opaque_sub_workflow_entry(
+    node_id: str,
+    node_type: str,
+    cause: Literal["dynamic", "downstream_batch"] = "dynamic",
+) -> PlanEntry:
+    """Entry for a sub-workflow we can't plan at plan time.
+
+    `cause="dynamic"` (default) — the workflow path is templated
+    (`workflow: ${var}`) or otherwise unresolvable. `cause="downstream_batch"`
+    — a batch sub-workflow reached post-boundary, where the item count is
+    unreliable so we refuse to emit a single-iteration estimate (issue #506).
+    """
     return PlanEntry(
         node_id=node_id,
         node_type=node_type,
         status="opaque",
-        cause="dynamic",
+        cause=cause,
     )
 
 
@@ -2455,7 +2479,7 @@ def _compute_totals(entries: list[PlanEntry]) -> _Totals:
         if _represents_work(entry):
             execute_count += 1
             execute_by_type[entry.node_type] = execute_by_type.get(entry.node_type, 0) + 1
-            if cache_boundary is None and entry.cause != "downstream":
+            if cache_boundary is None and entry.cause not in ("downstream", "downstream_batch"):
                 cache_boundary = entry.node_id
 
         # issue #445: a loop node's single-pass estimate is multiplied by its
