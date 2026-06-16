@@ -1091,7 +1091,14 @@ def _plan_sub_workflow(
     node_type = config.node_type_name
     downstream = cause == "downstream"
 
-    if config.batch_config and not downstream:
+    if config.batch_config:
+        if downstream:
+            # Post-boundary (after the parent's first cache miss) the batch item
+            # count is unreliable — items usually depend on dirty upstream output.
+            # Planning a single iteration here reports 1/N of the real cost, a
+            # silent underestimate for a cost gate. Surface an honest "unknown"
+            # (opaque, counted in summary.opaque_count) instead. See issue #506.
+            return _opaque_sub_workflow_entry(node_id, node_type)
         return _plan_batch_sub_workflow(
             curr,
             config,

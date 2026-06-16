@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from pflow.execution.plan import build_plan
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -40,6 +42,31 @@ def _runner_plan(path: Path, params: dict | None = None):
 
 def _runner_run(path: Path, params: dict | None = None):
     return WorkflowRunner().run(str(path), params or {}, RunnerConfig())
+
+
+def _engine_cost(result) -> float:
+    """Engine-actual total LLM cost from a real run — the cost-parity oracle.
+
+    Read from the trace's own accumulator (`collect_llm_calls` walks executed
+    LLM leaves and excludes cached subtrees), a completely different code path
+    from the planner's rollup. That independence is what makes a plan-vs-engine
+    comparison a real cross-check rather than a tautology.
+    """
+    llm_calls = result.trace.collect_llm_calls()
+    return result.metrics.get_summary(llm_calls)["total_cost_usd"]
+
+
+def _plan_cost(plan) -> float:
+    """Plan's agent-facing total predicted cost (the cost-gating field).
+
+    Mirrors how an agent gates: prefer `estimated_cost_usd_including_nested`
+    (the rollup over sub-workflows) and fall back to the flat
+    `estimated_cost_usd` for workflows with no nesting.
+    """
+    summary = plan.summary
+    if summary.estimated_cost_usd_including_nested is not None:
+        return summary.estimated_cost_usd_including_nested
+    return summary.estimated_cost_usd
 
 
 def test_plan_matches_execution_for_fresh_workflow(tmp_path) -> None:
@@ -2383,3 +2410,317 @@ def test_plan_batch_sub_workflow_output_shape_matches_engine(tmp_path) -> None:
             assert result["item"] == item, f"{side} results[{idx}] item mismatch"
             assert result["original_index"] == idx, f"{side} results[{idx}] original_index mismatch"
             assert "out" in result, f"{side} results[{idx}] missing declared child output 'out'"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cost parity — plan-predicted cost vs engine-actual spend (issue #506)
+#
+# The drift suite pinned control-flow and output shape but never compared a
+# plan's predicted cost to what the engine actually spent. These tests close
+# that blind spot: run a workflow for real (mock LLM with a fixed cost_usd),
+# capture engine-actual cost from the trace, build the plan for the same
+# workflow, and assert under the plan's declared cost_basis:
+#   - "exact"       → predicted == engine-actual
+#   - "upper_bound" → predicted >= engine-actual  (a bound below actual is the bug)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_plan_cost_matches_engine_linear_exact(tmp_path, mock_llm_client) -> None:
+    """Linear LLM workflow: plan-predicted cost == engine-actual cost (exact).
+
+    Simplest shape, the canonical agent scenario: run once, edit the first
+    prompt, then `--dry-run` to estimate the next run's spend. `b` reads
+    `${a.response}`, so invalidating `a` cascades to `b` — a full re-execution,
+    which is exactly what the plan predicts (a=boundary, b=downstream BFS).
+
+    Mutation: break `_lookup_last_run_stats` / `_read_stats_from_output` so the
+    planner reads $0 (or a wrong number) → predicted drifts from engine-actual
+    → this assertion fails.
+    """
+    cost = 0.002
+    mock_llm_client.set_response("*", None, {"response": "x"}, cost_usd=cost)
+    path = tmp_path / "linear.pflow.md"
+
+    def _write(first_prompt: str) -> None:
+        write_workflow_file(
+            {
+                "nodes": [
+                    {"id": "a", "type": "llm", "params": {"prompt": first_prompt, "model": "gpt-4o-mini"}},
+                    {
+                        "id": "b",
+                        "type": "llm",
+                        "params": {"prompt": "Summarize: ${a.response}", "model": "gpt-4o-mini"},
+                    },
+                ],
+                "edges": [{"from": "a", "to": "b"}],
+            },
+            path,
+        )
+
+    _write("draft v1")
+    run = _runner_run(path)
+    assert run.success
+    actual = _engine_cost(run)
+    assert actual == pytest.approx(2 * cost)
+
+    # Agent edits the first prompt → `a`'s cache key changes (boundary), and the
+    # plan enumerates `b` downstream. Both would-execute, both carry historical
+    # cost from the first run.
+    _write("draft v2")
+    plan = _runner_plan(path)
+
+    assert plan.summary.cost_basis == "exact"
+    assert _plan_cost(plan) == pytest.approx(actual)
+
+
+def test_plan_cost_matches_engine_nested_rollup_exact(tmp_path, mock_llm_client) -> None:
+    """Nested sub-workflow: predicted `_including_nested` cost == engine-actual.
+
+    `test_plan_cost_nested_rollup` pins the planner's internal rollup arithmetic
+    against the seeded cost; this pins the rollup against what the engine
+    actually SPENT — the gap issue #506 closes. The Task 162 review named
+    nested cost as exactly where the planner under-report hid.
+
+    Mutation: drop the child's contribution from `_summarize`'s nested rollup
+    loop → predicted falls below engine-actual → fails.
+    """
+    cost = 0.0015
+    mock_llm_client.set_response("*", None, {"response": "x"}, cost_usd=cost)
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    def _write_child(prompt_text: str) -> None:
+        write_workflow_file(
+            {
+                "nodes": [
+                    {"id": "think", "type": "llm", "params": {"prompt": prompt_text, "model": "gpt-4o-mini"}},
+                ],
+                "edges": [],
+                "outputs": {"out": {"source": "${think.response}", "description": "llm output"}},
+            },
+            child_path,
+        )
+
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "call-child", "type": "workflow", "params": {"workflow": str(child_path), "inputs": {}}},
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+
+    _write_child("Consider alpha")
+    run = _runner_run(parent_path)
+    assert run.success
+    actual = _engine_cost(run)
+    assert actual == pytest.approx(cost)
+
+    # Edit the child's prompt → its LLM is a miss at plan time → the plan
+    # predicts execute and rolls the historical cost up to the parent.
+    _write_child("Consider beta")
+    plan = _runner_plan(parent_path)
+
+    assert plan.summary.cost_basis == "exact"
+    assert _plan_cost(plan) == pytest.approx(actual)
+
+
+def test_plan_cost_loop_subworkflow_cache_not_underreported(tmp_path, mock_llm_client) -> None:
+    """Loop x sub-workflow x cache: predicted cost must not under-report re-execution.
+
+    The Task 162 shape. The inner LLM node is `cache: true`, but the engine's
+    `__loop_active__` guard forces re-execution every iteration — so a cap-hit
+    loop of 3 spends 3x the inner cost. The planner mirrors this via the
+    `__loop_active__` seed; without it the inner node plans as `cached` (~$0)
+    and the loop's cost is silently under-reported. cost_basis is `upper_bound`
+    (a loop is never exact), so the load-bearing contract is predicted >= actual.
+
+    Mutation: drop the `_loop_active` seed in `create_planner_shared` /
+    `_plan_sub_workflow` (plan.py ~537 / ~1141) → inner plans as `cached` →
+    predicted collapses below engine-actual → fails.
+    """
+    cost = 0.002
+    mock_llm_client.set_response("*", None, {"response": "x"}, cost_usd=cost)
+
+    # `inner` is the cost-bearing cached LLM (the node the bug mis-plans as
+    # cached). `gate` is a deterministic code node that emits the loop's truthy
+    # signal — an LLM response is a string, and the engine rejects string
+    # truthiness for loop conditions, so the condition must read an int.
+    write_workflow_file(
+        {
+            "nodes": [
+                {
+                    "id": "inner",
+                    "type": "llm",
+                    "cache": True,
+                    "params": {"prompt": "Think.", "model": "gpt-4o-mini"},
+                },
+                {
+                    "id": "gate",
+                    "type": "code",
+                    "cache": True,
+                    "params": {"code": "result: int = 1"},
+                },
+            ],
+            "edges": [],
+            "outputs": {"keep": {"source": "${gate.result}", "description": "truthy int → loop to cap"}},
+        },
+        tmp_path / "body.pflow.md",
+    )
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        """# Loop over a sub-workflow body
+
+Cap-hit loop; the body has a cached inner LLM the engine re-executes each iteration.
+
+## Steps
+
+### run-body
+
+The loop body — a whole sub-workflow re-run each iteration.
+
+- type: workflow
+- workflow: ./body.pflow.md
+- loop:
+    while: ${run-body.keep}
+    max_iterations: 3
+""",
+        encoding="utf-8",
+    )
+
+    run = _runner_run(parent)
+    assert run.success
+    actual = _engine_cost(run)
+    # Cap-hit: 3 iterations, the cached inner re-executes each → 3x the inner cost.
+    assert actual == pytest.approx(3 * cost)
+
+    plan = _runner_plan(parent)
+
+    assert plan.summary.cost_basis == "upper_bound"
+    predicted = _plan_cost(plan)
+    assert predicted >= actual, f"predicted {predicted} under-reports engine-actual {actual}"
+    # Cap-hit makes the upper bound tight (actual iterations == max_iterations).
+    assert predicted == pytest.approx(actual)
+
+
+def test_plan_cost_matches_engine_batch_subworkflow_exact(tmp_path, mock_llm_client) -> None:
+    """Pre-boundary batch sub-workflow: predicted cost == engine-actual (Nx per item).
+
+    Guards the correct path: a batch sub-workflow at the start plans one child
+    per item, so the rollup must equal the engine's N LLM calls. Regression pin
+    that the per-item path keeps matching real spend.
+
+    Mutation: collapse the per-item recursion to a single iteration → predicted
+    becomes 1/N → fails.
+    """
+    cost = 0.0011
+    mock_llm_client.set_response("*", None, {"response": "x"}, cost_usd=cost)
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [
+                {"id": "think", "type": "llm", "params": {"prompt": "Process ${value}", "model": "gpt-4o-mini"}},
+            ],
+            "edges": [],
+            "outputs": {"out": {"source": "${think.response}", "description": "out"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "inputs": {"items": {"type": "array"}},
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"value": "${item}"}},
+                    "batch": {"items": "${items}"},
+                },
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+
+    run = _runner_run(parent_path, {"items": ["a", "b", "c"]})
+    assert run.success
+    actual = _engine_cost(run)
+    assert actual == pytest.approx(3 * cost)
+
+    # Plan a run over FRESH items so each child is a miss (would execute); the
+    # per-item planner must roll up N x the historical per-item cost.
+    plan = _runner_plan(parent_path, {"items": ["x", "y", "z"]})
+
+    assert plan.summary.cost_basis == "exact"
+    assert _plan_cost(plan) == pytest.approx(actual)
+
+
+def test_plan_cost_downstream_batch_subworkflow_is_honest(tmp_path, mock_llm_client) -> None:
+    """A batch sub-workflow reached downstream is flagged opaque, never 1/N.
+
+    Issue #506 / task 157: post-boundary the batch was planned as a single
+    iteration, reporting 1/N of the real cost — a silent underestimate for a
+    cost gate. The fix surfaces an honest "unknown" (opaque, counted in
+    `summary.opaque_count`) instead of a wrong number.
+
+    Mutation: revert `_plan_sub_workflow` to plan downstream batches as a single
+    force-downstream iteration → `fanout` becomes a `sub_workflow` entry with
+    ~1/N cost and `opaque_count` drops to 0 → fails.
+    """
+    cost = 0.0011
+    mock_llm_client.set_response("*", None, {"response": "x"}, cost_usd=cost)
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [
+                {"id": "think", "type": "llm", "params": {"prompt": "Process ${value}", "model": "gpt-4o-mini"}},
+            ],
+            "edges": [],
+            "outputs": {"out": {"source": "${think.response}", "description": "out"}},
+        },
+        child_path,
+    )
+
+    def _write_parent(upstream_cmd: str) -> None:
+        write_workflow_file(
+            {
+                "inputs": {"items": {"type": "array"}},
+                "nodes": [
+                    {"id": "upstream", "type": "shell", "cache": True, "params": {"command": upstream_cmd}},
+                    {
+                        "id": "fanout",
+                        "type": "workflow",
+                        "params": {"workflow": str(child_path), "inputs": {"value": "${item}"}},
+                        "batch": {"items": "${items}"},
+                    },
+                ],
+                "edges": [{"from": "upstream", "to": "fanout"}],
+            },
+            parent_path,
+        )
+
+    _write_parent("printf v1")
+    run = _runner_run(parent_path, {"items": ["a", "b", "c"]})
+    assert run.success
+    # The engine fans out over all 3 items — so a single-iteration plan is 3x low.
+    assert _engine_cost(run) == pytest.approx(3 * cost)
+
+    # Edit upstream → the parent boundaries at `upstream`; BFS reaches the batch
+    # `fanout` via the downstream path. Items come from a param so they ARE
+    # resolvable here (task 157's "rare resolvable" case) — yet the plan must
+    # still refuse to emit a single-iteration cost.
+    _write_parent("printf v2")
+    plan = _runner_plan(parent_path, {"items": ["a", "b", "c"]})
+
+    fanout = next(e for e in plan.entries if e.node_id == "fanout")
+    assert fanout.status == "opaque", (
+        f"downstream batch must be honest-opaque, not a 1/N estimate; got {fanout.status!r}"
+    )
+    assert plan.summary.opaque_count >= 1
