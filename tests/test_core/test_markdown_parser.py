@@ -4990,6 +4990,92 @@ class TestRawStringParsing:
         assert node["params"]["inputs"]["text"] == "${fetch.stdout}"
         assert node["params"]["inputs"]["count"] == 10
 
+    def test_flow_style_dict_unquoted_template_parsed(self) -> None:
+        """Issue #482: an inline flow map with an *unquoted* ${...} template parses.
+
+        Previously raised ``MarkdownParseError`` ("expected ',' or '}', but got '{'")
+        because PyYAML read the ``{`` in ``${...}`` as a nested flow mapping. The
+        inline form must now behave exactly like the block and quoted forms.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs code.
+
+            - type: code
+            - inputs: { contenders: ${candidates} }
+
+            ```python code
+            print(inputs["contenders"])
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["inputs"] == {"contenders": "${candidates}"}
+
+    def test_flow_style_nested_template_in_multiline_item_parsed(self) -> None:
+        """Issue #482: an unquoted ${...} inside a nested flow map in a multi-line item parses."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs code.
+
+            - type: code
+            - inputs:
+                data: { x: ${y} }
+
+            ```python code
+            print(inputs["data"])
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["inputs"] == {"data": {"x": "${y}"}}
+
+    def test_yaml_config_code_block_with_unquoted_template_parsed(self) -> None:
+        """Issue #482: a ```yaml batch``` block with an unquoted template parses.
+
+        The fenced YAML-config surface (batch/stdin/loop/output_schema/headers) is
+        routed through the same shielding helper as inline param values.
+        """
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs a command per item.
+
+            - type: shell
+
+            ```yaml batch
+            items:
+              - { contender: ${candidate} }
+            ```
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["batch"] == {"items": [{"contender": "${candidate}"}]}
+
     def test_flow_style_list_parsed(self) -> None:
         """Flow-style YAML lists on single lines are parsed as lists."""
         content = _md("""\
@@ -5188,6 +5274,14 @@ class TestCoerceYamlScalar:
     def test_flow_style_list(self) -> None:
         result = _coerce_yaml_scalar("[x, y, z]")
         assert result == ["x", "y", "z"]
+
+    def test_flow_style_dict_with_unquoted_template(self) -> None:
+        """Issue #482: coerce routes flow values through template-shielding.
+
+        Exhaustive mechanism coverage lives in test_yaml_utils.py; this pins that
+        ``_coerce_yaml_scalar`` delegates flow-style values to the shielding helper.
+        """
+        assert _coerce_yaml_scalar("{ x: ${y} }") == {"x": "${y}"}
 
     def test_unterminated_double_quote_raises(self) -> None:
         """Unterminated double-quoted string raises ValueError."""

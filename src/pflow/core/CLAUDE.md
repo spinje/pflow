@@ -16,6 +16,7 @@ src/pflow/core/
 ├── ir_schema.py             # IR schema definition and validation
 ├── types.py                 # TypeSpec, CANONICAL_TYPES, PYTHON_ALIASES_AT_S1 — single source of truth for S1 vocabulary
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
+├── yaml_utils.py            # safe_load_preserving_templates — YAML load that shields ${...} templates (issue #482)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection
 ├── llm_client.py            # pflow LiteLLM adapter (single seam for all LLM calls)
 ├── llm_providers.py         # Canonical provider metadata (prefixes, env vars)
@@ -178,6 +179,8 @@ Returns `MarkdownParseResult(ir, title, description, metadata, source)`.
 
 **Parameter parsing** (`_parse_yaml_items`): Two parsing paths based on syntax. Single-line items use `_coerce_yaml_scalar` (raw string + YAML-like scalar coercion for bools, ints, floats, null, quoted strings, flow-style `{}`/`[]`). Multi-line items (indented continuations) use `yaml.safe_load()`. This eliminates YAML structural bugs (`: ` splitting, `#` comment stripping) while preserving type coercion. Intentionally diverges from PyYAML for edge cases (octal, hex, dates, scientific notation). Unterminated quotes error; inline `#` comments are NOT stripped.
 
+**Template shielding in flow-style YAML** (issue #482): every site that YAML-parses author content that can carry `${...}` templates — `_coerce_yaml_scalar` (single-line flow values), `_parse_multiline_yaml_item`, the fenced `yaml`-config blocks in `_validate_code_blocks`/`_route_code_blocks_to_node`, plus `file_resolver`/`dependency_discovery` for external files — goes through `yaml_utils.safe_load_preserving_templates`, NOT raw `yaml.safe_load`. PyYAML reads the `{` in an unquoted `${...}` as a nested flow mapping, so `{ x: ${y} }` would otherwise fail where block/quoted forms parse. The helper masks templates → parses → restores, so inline ≡ block ≡ quoted everywhere. Frontmatter (`markdown_parser`/`manager`) stays on raw `yaml.safe_load` — it carries system metadata, never templates. New author-content YAML sites must use the shared helper or they reopen the bug.
+
 **Multi-line item continuation**: a line continues the current `- key:` item if it is **blank OR indented ≥ the bullet's content column**. Blank lines are preserved verbatim so `|`/`>` block scalars with internal blank-line separators round-trip correctly through `yaml.safe_load`. Termination is only: dedented non-blank line, new `- ` bullet, heading, code-fence, or EOF. `_flush_yaml_item` strips trailing blanks before joining so single-line items stay on the `_coerce_yaml_scalar` fast path (preserving the PyYAML divergences noted above).
 
 **Routing syntax**: `- next: node-id` (static routing), `- next: end` (terminal), `- on-error: node-id` (error routing). These are extracted from params into routing metadata during `_build_node_dict()` and used by `_build_edges()` to generate edges with action fields. Python code blocks are AST-scanned for `next: str = "literal"` assignments to generate additional routing edges.
@@ -327,7 +330,7 @@ Detects file path references in node params and batch items, reads the files, an
 
 **Detection heuristic**: starts with `./` or `../`, or contains `/` with recognized extension (.md, .txt, .py, .sh, .yaml, .yml, .json). Must not contain `${`, newlines, or `://` (URLs excluded).
 
-**YAML-parsed params**: batch, output_schema, headers — file content is `yaml.safe_load()`'d. All other params get raw text content.
+**YAML-parsed params**: batch, output_schema, headers — file content is parsed with `yaml_utils.safe_load_preserving_templates` (shields `${...}` in flow style — issue #482). All other params get raw text content.
 
 **Batch handling**: `node["batch"]` is at the node top level (NOT in params). If it's a string file reference, reads and YAML-parses. If it's a dict with inline items, walks items for file references in their values.
 
