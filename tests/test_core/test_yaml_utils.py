@@ -52,10 +52,13 @@ class TestNoOpForTemplateFreeContent:
 
 
 class TestBraceAwareTemplates:
-    """C2: coalesce operands with object/array literals are captured whole.
+    """C2: a coalesce operand with an object/array literal is captured whole.
 
-    These are valid templates per TemplateResolver, so the inline flow form must
-    parse them — not truncate at the first ``}``.
+    This is parser-level capture only — the masking regex tolerates one level of
+    nested ``{}`` so the inline flow form parses these rather than truncating at the
+    first ``}``. ``${a ?? {}}`` / ``${a ?? []}`` are valid runtime templates;
+    ``${a ?? {"k": 1}}`` is captured here but rejected at runtime as a malformed
+    literal operand (the regex is intentionally broader than the resolver grammar).
     """
 
     def test_empty_object_literal_operand(self) -> None:
@@ -65,6 +68,8 @@ class TestBraceAwareTemplates:
         assert load("{ x: ${a ?? []} }") == {"x": "${a ?? []}"}
 
     def test_object_literal_operand_with_content(self) -> None:
+        # Captured whole at parse time (broader than the runtime grammar); the
+        # resolver rejects it later as a malformed literal operand.
         assert load('{ x: ${a ?? {"k": 1}} }') == {"x": '${a ?? {"k": 1}}'}
 
     def test_inline_matches_block_for_object_operand(self) -> None:

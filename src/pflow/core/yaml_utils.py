@@ -21,9 +21,15 @@ from typing import Any
 
 import yaml
 
-# A ``${...}`` template, tolerating one level of nested ``{}`` so coalesce operands
-# with object/array literals (e.g. ``${a ?? {}}``) are captured whole — the same
-# extent the runtime TemplateResolver accepts. We only shield braces from YAML's
+# A ``${...}`` template, tolerating one level of nested ``{}`` so a coalesce operand
+# with an object/array literal (e.g. ``${a ?? {}}``) is captured whole rather than
+# truncated at its first ``}``. This is *at least* the extent the runtime
+# TemplateResolver accepts, and deliberately a bit broader: it also captures content
+# the runtime rejects (e.g. ``${a ?? {"k": 1}}`` — only empty ``{}``/``[]`` are valid
+# operands there). Over-capturing is harmless because the mask/restore round-trip is
+# verbatim. Deeper-than-one-level nesting (``${a ?? {"k": {...}}}``) is NOT matched,
+# so its ``{`` reaches YAML and surfaces as a normal YAML error — acceptable, since
+# those aren't valid runtime templates either. We only shield braces from YAML's
 # flow tokenizer, so there is no ``$$`` escape handling here (a literal ``$${y}``
 # still needs its ``{`` protected just the same).
 _TEMPLATE_RE = re.compile(r"\$\{(?:[^{}]|\{[^{}]*\})*\}")
