@@ -1098,7 +1098,7 @@ def _plan_sub_workflow(
             # Planning a single iteration here reports 1/N of the real cost, a
             # silent underestimate for a cost gate. Surface an honest "unknown"
             # (opaque, counted in summary.opaque_count) instead. See issue #506.
-            return _opaque_sub_workflow_entry(node_id, node_type)
+            return _opaque_sub_workflow_entry(node_id, node_type, cause="downstream_batch")
         return _plan_batch_sub_workflow(
             curr,
             config,
@@ -2106,13 +2106,23 @@ def _merged_sub_workflow_params(curr: Any, config: NodeConfig, planned: NodePlan
     return merged
 
 
-def _opaque_sub_workflow_entry(node_id: str, node_type: str) -> PlanEntry:
-    """Entry for a sub-workflow we can't resolve at plan time."""
+def _opaque_sub_workflow_entry(
+    node_id: str,
+    node_type: str,
+    cause: Literal["dynamic", "downstream_batch"] = "dynamic",
+) -> PlanEntry:
+    """Entry for a sub-workflow we can't plan at plan time.
+
+    `cause="dynamic"` (default) — the workflow path is templated
+    (`workflow: ${var}`) or otherwise unresolvable. `cause="downstream_batch"`
+    — a batch sub-workflow reached post-boundary, where the item count is
+    unreliable so we refuse to emit a single-iteration estimate (issue #506).
+    """
     return PlanEntry(
         node_id=node_id,
         node_type=node_type,
         status="opaque",
-        cause="dynamic",
+        cause=cause,
     )
 
 

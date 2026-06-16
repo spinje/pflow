@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from pflow.execution.formatters.plan_formatter import format_plan_text
 from pflow.execution.plan import build_plan
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -2600,7 +2601,9 @@ The loop body — a whole sub-workflow re-run each iteration.
     assert plan.summary.cost_basis == "upper_bound"
     predicted = _plan_cost(plan)
     assert predicted >= actual, f"predicted {predicted} under-reports engine-actual {actual}"
-    # Cap-hit makes the upper bound tight (actual iterations == max_iterations).
+    # `>=` above is the load-bearing invariant. The `==` below is an incidental
+    # tightness check for this cap-hit shape (actual iterations == max_iterations);
+    # it would not hold if the planner ever deliberately over-estimated loops.
     assert predicted == pytest.approx(actual)
 
 
@@ -2724,3 +2727,8 @@ def test_plan_cost_downstream_batch_subworkflow_is_honest(tmp_path, mock_llm_cli
         f"downstream batch must be honest-opaque, not a 1/N estimate; got {fanout.status!r}"
     )
     assert plan.summary.opaque_count >= 1
+    # Carries an accurate cause/message, not the generic "dynamic" reason used
+    # for templated `workflow: ${var}` paths — an agent inspecting the opaque
+    # entry should see the real reason (issue #506 review).
+    assert fanout.cause == "downstream_batch"
+    assert "batch downstream, item count unreliable" in format_plan_text(plan)

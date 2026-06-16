@@ -225,7 +225,10 @@ def _render_entry_line(entry: PlanEntry, indent: str) -> str:
         return f"{indent}▸ {entry.node_id}  [sub-workflow '{ref}' ({count} node{suffix})]"
 
     if entry.status == "opaque":
-        return f"{indent}▸ {entry.node_id}  [sub-workflow: dynamic, cannot plan]"
+        reason = (
+            "batch downstream, item count unreliable" if entry.cause == "downstream_batch" else "dynamic, cannot plan"
+        )
+        return f"{indent}▸ {entry.node_id}  [sub-workflow: {reason}]"
 
     if entry.status == "routing_error":
         return f"{indent}▸ {entry.node_id}{tag}  [routing error]"
