@@ -30,7 +30,7 @@ The specific comprehension gaps:
   across params/files; the wiring they imply is invisible in the text. (This is exactly where a
   text-first tool differs from a draw-by-hand builder like Flowise: in pflow the connections are
   *derived from code*, so a viewer's job is to *reveal* structure the author created implicitly.)
-- **Mermaid (`pflow visualize`) is the $0 baseline but static text** — it cannot collapse/expand a
+- **Mermaid (`pflow mermaid`) is the $0 baseline but static text** — it cannot collapse/expand a
   deep sub-workflow tree interactively, nor let a user click a node to read its prompt/params.
 - No way to *see* params, the dynamic-vs-hardcoded distinction, or per-node template connections.
 
@@ -199,7 +199,7 @@ holds the wire-contract rationale). The decisions specific to this task:
 - **Forward-compat check (for the later overlay, recorded now):** the structural `ref` emitted in the
   contract must be the exact join key the Task 133 JSONL events key on — align against
   `graph/CLAUDE.md` → "Runtime Overlay Join Contract" when the contract is pinned.
-- The detailed `pflow visualize` Mermaid view (`--depth 5 --descriptions`) is the $0 baseline and a
+- The detailed `pflow mermaid` Mermaid view (`--depth 5 --descriptions`) is the $0 baseline and a
   useful cross-check while building.
 
 ## Verification

@@ -223,7 +223,7 @@ Use these MCP tools to discover what you need:
 
 If the file is missing:
 1. Check if `~/.pflow/instructions/` directory exists
-2. Reinstall pflow: `pip install --upgrade pflow`
+2. Reinstall pflow: `pip install --upgrade pflow-cli`
 3. File an issue if problem persists: https://github.com/spinje/pflow/issues
 
 ## Troubleshooting

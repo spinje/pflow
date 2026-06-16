@@ -1,9 +1,9 @@
-"""Visualize workflow as a Mermaid flowchart diagram."""
+"""``pflow mermaid`` — emit a workflow as a Mermaid flowchart diagram."""
 
 import click
 
 
-@click.command("visualize")
+@click.command("mermaid")
 @click.argument("workflow")
 @click.option("--depth", type=click.IntRange(min=0), default=5, help="Sub-workflow expansion depth (0 = no expansion)")
 @click.option(
@@ -26,10 +26,14 @@ import click
     help="Add first sentence of node descriptions to labels",
 )
 @click.pass_context
-def visualize(
+def mermaid_cmd(
     ctx: click.Context, workflow: str, depth: int, direction: str, output: str | None, descriptions: bool
 ) -> None:
     """Generate a Mermaid flowchart from a workflow.
+
+    A niche output for humans who want a rendered diagram (or to paste one into a
+    markdown doc) — NOT needed to understand a workflow: the .pflow.md source is
+    self-describing. Use this only when explicitly asked for a Mermaid/markdown diagram.
 
     Validates the workflow first (same checks as --validate-only).
     On validation failure, shows diagnostics and exits with code 1.
@@ -37,13 +41,13 @@ def visualize(
 
     Examples:
 
-        pflow visualize workflow.pflow.md
+        pflow mermaid workflow.pflow.md
 
-        pflow visualize my-saved-workflow --depth 2
+        pflow mermaid my-saved-workflow --depth 2
 
-        pflow visualize workflow.pflow.md -o diagram.md
+        pflow mermaid workflow.pflow.md -o diagram.md
 
-        pflow visualize workflow.pflow.md --direction TD --descriptions
+        pflow mermaid workflow.pflow.md --direction TD --descriptions
     """
     from pathlib import Path
 
@@ -105,7 +109,7 @@ def visualize(
     if output:
         content = mermaid
         if output.endswith(".md"):
-            title = resolved.title or Path(workflow).stem
+            title = resolved.title or Path(resolved.file_path or workflow).stem
             desc = f"\n{resolved.description}\n" if resolved.description else ""
             content = f"# {title}\n{desc}\n```mermaid\n{mermaid}```\n"
         Path(output).write_text(content, encoding="utf-8")

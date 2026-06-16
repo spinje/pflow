@@ -2,8 +2,8 @@
 
 The single entry point every graph *renderer's* caller reaches for. ``pflow ui``
 (React Flow) needs "a workflow reference turned into a validated graph"; so does
-``pflow visualize`` (Mermaid). Owning the three-step pipeline once keeps ``ui``
-from being the third literal copy of it (Task 168 plan, H11). ``visualize``
+``pflow mermaid`` (Mermaid). Owning the three-step pipeline once keeps ``ui``
+from being the third literal copy of it (Task 168 plan, H11). ``mermaid``
 adopting this helper is a deliberate later follow-up — not done here, to avoid
 perturbing the Mermaid goldens.
 
@@ -76,7 +76,7 @@ def resolve_validate_build(workflow: str, *, max_depth: int = 5) -> GraphModel:
     except Exception as e:
         # A programming bug inside validation propagates out of validate()
         # (runner.py only swallows expected validation-phase errors). Mirror
-        # `visualize`: render it as a diagnostic, not a raw traceback — same
+        # `mermaid`: render it as a diagnostic, not a raw traceback — same
         # regime as "the workflow is invalid."
         raise WorkflowGraphValidationError(list(exception_to_diagnostics(e))) from e
 

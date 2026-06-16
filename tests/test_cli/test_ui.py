@@ -2,7 +2,7 @@
 
 Covers the three ``/api/graph`` failure arms (H2: 400 missing param, 422
 resolution/validation failure, 500 build/render bug → never a 200-with-empty-
-graph), the catalog endpoint, the ``pip install pflow[ui]`` hint when the extra
+graph), the catalog endpoint, the ``uv tool install 'pflow-cli[ui]'`` hint when the extra
 is absent (H4), and the lazy-import boundary that keeps the base CLI loading
 without the web stack.
 
@@ -572,7 +572,7 @@ class TestUiCommand:
         with patch.dict(sys.modules, {"uvicorn": None}):
             result = runner.invoke(ui_cmd, [])
         assert result.exit_code == 1
-        assert "pip install pflow[ui]" in result.output
+        assert "pflow-cli[ui]" in result.output
 
     def test_serves_without_opening_browser(self, tmp_path: Path) -> None:
         """``--no-open`` starts the server without a browser; uvicorn.run is invoked.

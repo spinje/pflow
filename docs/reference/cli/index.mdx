@@ -37,8 +37,11 @@ pflow [command] [options] [arguments]
   <Card title="pflow settings" icon="file-cog" href="/reference/cli/settings">
     Configure API keys and node filtering
   </Card>
-  <Card title="pflow visualize" icon="git-graph" href="#visualize-command">
-    Generate Mermaid flowchart from a workflow
+  <Card title="pflow ui" icon="app-window" href="#ui-command">
+    Interactive browser canvas for a workflow
+  </Card>
+  <Card title="pflow mermaid" icon="git-graph" href="#mermaid-command">
+    Generate a Mermaid flowchart from a workflow
   </Card>
   <Card title="pflow guide" icon="book-open" href="/reference/cli/guide">
     Get AI agent entry guidance
@@ -469,26 +472,48 @@ marker.
 
 Disable traces with `--no-trace` for faster execution (the `--report` flag overrides `--no-trace`).
 
-## Visualize command
+## UI command
 
-Generate a [Mermaid](https://mermaid.js.org/) flowchart from a workflow. Shows the graph topology — nodes, edges, conditional branches, error routes, inputs, outputs — that's otherwise scattered across individual node directives in the `.pflow.md` file.
+Serve an interactive browser canvas for a workflow — the visual counterpart to [`pflow mermaid`](#mermaid-command). Where `mermaid` emits static text, `pflow ui` opens a local browser canvas: collapsible sub-workflow, batch, and loop containers, click-to-read prompts and params, `${ref}` data-flow lines, and a source pane.
 
 ```bash
-pflow visualize workflow.pflow.md
-pflow visualize my-saved-workflow
+pflow ui workflow.pflow.md          # open straight to a workflow
+pflow ui my-saved-workflow          # a saved workflow by name
+pflow ui                            # the catalog of saved workflows
+```
+
+The canvas updates in place — no page reload — as the workflow's `.pflow.md` is edited on disk, so you can watch it take shape (while keeping the current zoom and selection) as you, or an AI agent, build it. An edit that doesn't validate is held: the last valid version stays on screen with an error banner until the source parses again. The server blocks until `Ctrl+C`, so run it in the background while you edit.
+
+Runs on a standard install. If `pflow ui` reports a missing dependency, add the server extra: `uv tool install 'pflow-cli[ui]'`.
+
+| Option | Description |
+|--------|-------------|
+| `--port N` | Port to serve on (default: 8765) |
+| `--no-open` | Don't open a browser window |
+| `--no-watch` | Freeze the view — don't live-update when the source changes |
+
+The full view is described by the URL, so you can share or screenshot an exact state — for example `?workflow=<name-or-path>&focus=<node-id>&direction=TD`. `focus=` highlights a node and reveals its connections; `node=` centers the camera on it.
+
+## Mermaid command
+
+Generate a [Mermaid](https://mermaid.js.org/) flowchart from a workflow. Shows the graph topology — nodes, edges, conditional branches, error routes, inputs, outputs — that's otherwise scattered across individual node directives in the `.pflow.md` file. For an interactive, collapsible canvas instead of static text, see the [UI command](#ui-command).
+
+```bash
+pflow mermaid workflow.pflow.md
+pflow mermaid my-saved-workflow
 ```
 
 The command validates the workflow first (same checks as `--validate-only`). On validation failure, it shows diagnostics and exits with code 1. On success, it outputs Mermaid syntax to stdout.
 
 ```bash
 # Save to file (raw Mermaid syntax)
-pflow visualize workflow.pflow.md -o diagram.mmd
+pflow mermaid workflow.pflow.md -o diagram.mmd
 
 # Save as markdown with title, optional description, and fenced mermaid block
-pflow visualize workflow.pflow.md -o diagram.md
+pflow mermaid workflow.pflow.md -o diagram.md
 
 # Or pipe to clipboard
-pflow visualize workflow.pflow.md | pbcopy
+pflow mermaid workflow.pflow.md | pbcopy
 ```
 
 Mermaid renders natively in GitHub, VS Code, and most markdown viewers — no extra tooling needed. The `.md` output wraps the diagram in a markdown document with the workflow's title and description, ready to commit or share.
@@ -504,13 +529,13 @@ Sub-workflow nodes (`type: workflow`) expand into `subgraph` blocks showing thei
 
 ```bash
 # No sub-workflow expansion
-pflow visualize workflow.pflow.md --depth 0
+pflow mermaid workflow.pflow.md --depth 0
 
 # Expand two levels deep, top-down layout
-pflow visualize workflow.pflow.md --depth 2 --direction TD
+pflow mermaid workflow.pflow.md --depth 2 --direction TD
 
 # Include node descriptions in labels
-pflow visualize workflow.pflow.md --descriptions
+pflow mermaid workflow.pflow.md --descriptions
 ```
 
 <Expandable title="Example output">

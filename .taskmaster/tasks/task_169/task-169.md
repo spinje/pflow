@@ -102,6 +102,11 @@ incoming/outgoing edge highlighting the feature wants IS what focus already does
 
 - **Task 168 (Workflow Visualization Web UI) — DONE.** The server, the contract, and the entire
   frontend focus/expand mechanism this reuses.
+- **Source-reload REACTION already ships (Task 168, 2026-06-16).** The in-place rebuild trigger
+  (`useWorkflowGraph`'s `reload`, fed by `useSourceWatch` polling `/api/version`) preserves
+  viewport/focus/collapse. Task 169 MAY replace the DETECTION (the poll) with a push on its SSE
+  channel via the `web/src/api/` seam — the reaction trigger is unchanged, so nothing downstream
+  of the seam moves.
 - **Task 133 — NOT a dependency.** The overlay remains deferred; see the schema-decoupling
   decision above.
 

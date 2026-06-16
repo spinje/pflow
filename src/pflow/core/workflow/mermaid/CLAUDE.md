@@ -2,7 +2,7 @@
 
 This package is now a compatibility shim. Its only public symbol is
 `generate_mermaid()`, preserved for existing callers such as
-`pflow visualize`, golden tests, and older imports.
+`pflow mermaid`, golden tests, and older imports.
 
 ## Public API
 

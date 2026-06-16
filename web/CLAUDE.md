@@ -20,8 +20,8 @@ src/
   index.css          all styles (one sheet; theme vars at :root — geometry vars are
                      INJECTED from graph/metrics.ts, never hardcoded here)
   types.ts           the wire contract (mirrors react_flow.py) — imported everywhere
-  api/               server communication (client.ts: fetch + ApiError; a live /events
-                     subscription would go here)
+  api/               server communication (client.ts: fetch + ApiError + fetchVersion,
+                     the source-watch poll; a live /events subscription would go here)
   graph/             PURE contract → React Flow transform; NO React (tests run node-env).
                      flow.ts is the package FAÇADE (it re-exports the siblings, so
                      consumers import everything from "../graph/flow"); the DAG is
@@ -42,6 +42,9 @@ src/
     portSides.ts     post-layout edge decoration (data rails, loop rails, back rails)
     spine.ts         post-layout sequential-chain re-alignment (the SPINE bullet)
     collapse.ts      initial-collapse policy (auto-collapse budget, URL overrides)
+    remap.ts         reload-time remap of preserved selection/focus/collapse through the
+                     stable structural ref (flat ids are positional — a structural edit
+                     renumbers them; see the live source auto-update bullet)
     handles.ts       handle-id scheme (each id encodes its source/target type)
     metrics.ts       layout-coupled geometry constants — the single source for rows.ts
                      sizes, the connector/edge geometry, and the :root CSS vars main.tsx
@@ -51,9 +54,11 @@ src/
     lossless.test.ts the no-information-loss invariant, swept over synthetic shapes +
                      real committed contracts (test/fixtures/contracts/)
   hooks/             useWorkflowGraph (fetch → build → layout → focus → RF state +
-                     status); useCameraNavigation (view fits, node=/focus= deep links,
-                     chip navigation + the paint-deferred follow); usePanelPair (the
-                     two side panes' widths: clamp, persistence, symmetric re-clamp)
+                     status; the in-place `reload` path + `reloadError` banner channel);
+                     useCameraNavigation (view fits, node=/focus= deep links, chip
+                     navigation + the paint-deferred follow); usePanelPair (the two side
+                     panes' widths: clamp, persistence, symmetric re-clamp); useSourceWatch
+                     (polls /api/version → fires the in-place reload on a source change)
   utils/             pure helpers — format.ts (${ref} parsing, value previews, kind
                      colors, category label); icons.ts (node-kind/provider → SVG URL);
                      viewParams.ts (URL params, deep-link id resolution, edge-click dispatch);
@@ -86,6 +91,24 @@ Tests sit beside their subject.
   re-layout**. Collapse / density / direction re-run layout; clicking a node does not.
   `useWorkflowGraph` keeps the laid-out nodes and their edges as one snapshot so focus
   never restyles edges against stale node positions.
+- **Live source auto-update — the canvas reloads in place as the `.pflow.md` is edited.**
+  `useSourceWatch` polls `GET /api/version` (~1.5s, visibility-gated, in-flight-guarded)
+  for a source-file fingerprint; on a CHANGE it triggers `useWorkflowGraph`'s `reload`
+  path, which re-fetches `/api/graph` and rebuilds the canvas **in place** — a React
+  reconcile, NOT `location.reload()` — preserving viewport, focus/selection, collapse, and
+  the source pane (`prevWorkflowRef` distinguishes a workflow CHANGE = full reset from a
+  same-workflow reload = in-place). A mid-edit **invalid** save returns `422`: the reload
+  routes it to a SEPARATE `reloadError` channel (a non-blocking banner over the last-good
+  canvas) instead of the full-screen `errors` view, and recovers on the next valid save.
+  **The remap is load-bearing:** flat ids (`n{i}`/`g{j}`) are POSITIONAL (renderer
+  `enumerate`), so a structural edit (insert/delete/reorder, not an append) renumbers them
+  — `graph/remap.ts` re-points preserved selection/focus/collapse through the STABLE
+  structural ref (`node_id` + `ancestor_path` + `port`, the contract's overlay join key)
+  in a pre-paint `useLayoutEffect`, so focus FOLLOWS a node across an insert instead of
+  jumping. On by default; `--no-watch` (→ `?watch=0`) freezes it. **Detection (the poll)
+  is deliberately separable from reaction (the in-place rebuild):** Task 169's SSE can
+  later replace the poll with a push that calls the same reaction trigger via the `api/`
+  seam, nothing downstream changing.
 - **An edge handle must exist on its node — and be the right TYPE — or React Flow
   silently drops the edge.** This is the recurring bug (it bit us twice). `flow.ts` only
   emits a per-row handle when a matching row exists, else falls back to `NODE_IN`/`NODE_OUT`.

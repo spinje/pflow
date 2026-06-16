@@ -19,7 +19,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | `skills.py` | `pflow skill save\|list\|remove` | `pflow.core.workflow.skill_service` |
 | `settings.py` | `pflow settings ...` | `pflow.core.settings` |
 | `report.py` | `pflow report` | `pflow.core.trace_report` |
-| `visualize.py` | `pflow visualize` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
+| `mermaid.py` | `pflow mermaid` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
 | `analyze_cache.py` | `pflow analyze-cache <workflow> [params]` | `pflow.core.prompt_cache_analysis` |
 
 ## Cross-References Within commands/
@@ -142,5 +142,5 @@ LLM model resolution chain (genuinely hard to discover):
 | `read_fields.py` | `test_read_fields.py` | None |
 | `skills.py` | `test_skills.py` | `pflow.cli.commands.skills.WorkflowManager`, `.create_skill_symlink`, `.enrich_workflow`, `.find_skill_for_workflow`, `.find_pflow_skills`, `.remove_skill_service` |
 | `settings.py` | `test_settings_cli.py` | None |
-| `visualize.py` | `test_visualize.py` | None |
+| `mermaid.py` | `test_mermaid.py` | None |
 | `analyze_cache.py` | `test_analyze_cache.py` | `pflow.cli.commands.analyze_cache.analyze` (lazy import patched in nudge-failure test) |

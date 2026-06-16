@@ -3806,8 +3806,7 @@ Browser-verified on lyrics-generator's `analyze` (6 specialist prompts, sizes
 
 ### Live source auto-update: the canvas updates in place as the `.pflow.md` is edited (2026-06-16, user-driven) ✅ (staged)
 
-> Plan: `scratchpads/ui-live-source-update/plan.md`. Remaining DOC work + full
-> context handed off: `implementation/sub-plans/handoff-live-source-update-docs.md`.
+> Remaining DOC work + full
 > Born from a CLI-exposure discussion (how `pflow ui`/`visualize` surface to
 > agents) → the user's idea: make the UI auto-update when the `.pflow.md` source is
 > edited, so an AGENT builds a workflow while the USER watches it take shape. The
@@ -3896,3 +3895,39 @@ canonical current-behavior docs (`ui/CLAUDE.md` `/api/version`, `web/CLAUDE.md` 
 poll/reload/remap, `visualization-requirements.md` the live-update feature + limit).
 Framing the user owns: `visualize` = the agent's own structural read; `ui` = OFFER
 to the user + run in background + it live-updates as you build.
+
+### CLI exposure + `visualize`→`mermaid` rename + doc surfaces (2026-06-16) ✅
+
+> From "how do `pflow ui`/`visualize` surface to agents?" The user's reframing
+> SUPERSEDES the framing note just above: an agent does NOT need a diagram to
+> understand a workflow — the `.pflow.md` is self-describing, and Mermaid is strictly
+> NOISIER for an LLM (verified side-by-side on conditional-branching: 8 lines of
+> `classDef` chrome + shape syntax, minus the actual branch logic).
+
+- **`pflow visualize` → renamed `pflow mermaid`** (hard rename, no alias — no users).
+  Now niche: run it ONLY on an explicit "give me a mermaid/markdown diagram" ask. Aligns
+  the command with its internal `core/workflow/mermaid` module. File/function/registration/
+  tests/golden-hints + all current-behavior dev-doc refs updated; history (CHANGELOG,
+  `task_*` journals) left accurate.
+- **RESERVED_WORKFLOW_NAMES:** + `mermaid`/`ui`/`analyze-cache` (CLI commands a saved name
+  must not shadow — `ui`/`analyze-cache` were pre-existing gaps) + `visualization` (guide
+  topic); `visualize` freed.
+- **Agent guide (the discoverability fix):** `entry.md` gains ONE Features line → new
+  `guide/features/visualization.md`. `ui` is PRIMARY + user-facing: user signals "see it"
+  → OPEN it (`pflow ui <workflow>` auto-opens their browser); unprompted → OFFER it.
+  `mermaid` is a niche footnote. Dropped the literal `&` (backgrounding is runtime-dependent,
+  not a shell idiom). **Progressive disclosure:** NO `pflow[ui]` line in the guide — the
+  agent meets the extra only IF `pflow ui` errors on a missing dep (~never, since
+  starlette/uvicorn ride `mcp[cli]`).
+- **Docs:** `index.mdx` `## UI command` + card + `Visualize`→`Mermaid` + cross-links. The
+  live-source feature's canonical docs (handoff items) also landed — `/api/version`
+  (`ui/CLAUDE.md`), poll/reload/remap (`web/CLAUDE.md`, verified against real
+  `useSourceWatch.ts`/`remap.ts`), the requirements entry, the `task_169` poll→push note.
+- **Bug found + fixed — the `[ui]` install hint named a nonexistent package.** The
+  missing-extra error printed `pip install pflow[ui]`, but the distribution is `pflow-cli`
+  (no `pflow` dist exists) and `pip` wouldn't reach a `uv tool`-isolated install. Now
+  `→ uv tool install 'pflow-cli[ui]'` (hint + dev doc + pinning test). Two pure-prose
+  `pflow[ui]` shorthands (`ui/__init__.py`, ADR-0005) left pending a decision.
+
+Gates: `make check` clean (mypy 235); rename/guide/ui/docs suites green; Mermaid goldens
+untouched (CLI-only rename — `generate_mermaid` unchanged).

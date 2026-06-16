@@ -255,7 +255,7 @@ def _frontend_not_built(request: Request) -> Response:
         "pflow UI frontend bundle not found.\n\n"
         "The API is live at /api/catalog, /api/graph, and /api/source, but the web app has\n"
         "not been built. Build it with `make ui-build` (developers) or install\n"
-        "a release wheel that ships the bundle: pip install pflow[ui].\n",
+        "a release wheel that ships the bundle: uv tool install 'pflow-cli[ui]'.\n",
         status_code=503,
     )
 

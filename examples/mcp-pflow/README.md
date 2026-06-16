@@ -56,13 +56,13 @@ Once pflow is published to PyPI, installation will be much simpler:
 **Step 1: Install pflow globally**
 ```bash
 # Using uv (recommended)
-uv tool install pflow
+uv tool install pflow-cli
 
 # Or using pipx
-pipx install pflow
+pipx install pflow-cli
 
 # Or using pip
-pip install --user pflow
+pip install --user pflow-cli
 ```
 
 **Step 2: Simple Claude Desktop configuration**
@@ -214,9 +214,9 @@ When pflow is published to PyPI, you can migrate in two steps:
 
 **Step 1: Install globally**
 ```bash
-uv tool install pflow
+uv tool install pflow-cli
 # or
-pipx install pflow
+pipx install pflow-cli
 ```
 
 **Step 2: Simplify config**

@@ -302,7 +302,7 @@ class WorkflowRunner:
             # `_is_degrading_warning`). Filtering INFO out here would make
             # advisories like `cache.routed-provider-degraded` invisible on the
             # trace surface even though they're in `result.diagnostics`. Matches
-            # the precedent at `cli/commands/run.py:365` and `visualize.py:84`.
+            # the precedent at `cli/commands/run.py:365` and `mermaid.py`.
             trace_collector.set_warnings([
                 diagnostic for diagnostic in diagnostics if diagnostic.severity in {Severity.WARNING, Severity.INFO}
             ])

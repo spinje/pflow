@@ -1,6 +1,6 @@
 # pflow Web UI Server (`src/pflow/ui/`)
 
-Local **Starlette** server behind the `pflow[ui]` extra. It serves a typed JSON
+Local **Starlette** server behind the `pflow-cli[ui]` extra. It serves a typed JSON
 contract (the Task 155 GraphModel → `render_react_flow`) plus the built frontend
 bundle. It runs **no workflows** — every request is read-only: resolve →
 validate → `build_graph` → `render_react_flow`.
@@ -78,6 +78,23 @@ or is unreadable after graph construction, the server logs a warning and skips
 that file rather than failing the whole request. A `depth_limit`-unexpanded
 sub-workflow contributes no nodes and therefore no source file.
 
+### `GET /api/version?workflow=<name|path>`
+→ `200` `{"fingerprint": "<sha256>"}` — a cheap change-fingerprint (sha256 over each
+source file's `path:mtime_ns`). The frontend **polls** this (`useSourceWatch`); when the
+digest changes it re-fetches `/api/graph` and rebuilds the canvas **in place** (no page
+reload), so an agent can edit the `.pflow.md` while the user watches it update.
+
+Unlike the other endpoints this one **never `500`s** and only `400`s on a missing
+`workflow` param — the poll must survive a mid-edit *invalid* workflow. The file set comes
+from `_source_files_for()`, a fallback chain so the fingerprint still tracks the edited
+file when the build fails: built-graph files → resolvable entry file → saved-NAME entry
+path (`WorkflowManager.get_path`) → the literal path arg → `[]` (a constant fingerprint;
+the poll keeps running). An invalid edit still moves the entry file's mtime, so the
+triggered `/api/graph` re-fetch surfaces the `422` as a non-blocking banner and recovers
+on the next valid save. **Known limit:** a workflow mid-edit-invalid in a *sub-workflow*
+file tracks only the entry file's mtime until it parses again (recovery still fires on the
+fixing save).
+
 ### Static bundle (`/` + assets)
 Build the SPA into `src/pflow/ui/static/` (Vite `build.outDir = "../src/pflow/ui/static"`)
 with `base = "./"` (relative asset paths so it serves from `/`). The server
@@ -95,7 +112,7 @@ convenience — not an error).
 ## The `pflow ui` command (`cli/commands/ui.py`)
 
 - `pflow ui [workflow] [--port 8765] [--no-open]`. Behind the `[ui]` extra
-  (lazy import of `uvicorn`/`starlette` → prints `pip install pflow[ui]` if
+  (lazy import of `uvicorn`/`starlette` → prints `uv tool install 'pflow-cli[ui]'` if
   absent; a real bug inside the server module surfaces as a loud traceback, not
   the hint).
 - **Opens the browser to `http://127.0.0.1:{port}/?workflow=<urlencoded>`**

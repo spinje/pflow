@@ -1,7 +1,7 @@
 """``pflow ui`` — serve the interactive workflow visualization web UI.
 
 The web stack (Starlette + uvicorn + the built frontend bundle) ships behind the
-``pflow[ui]`` extra. This command imports it **lazily** inside the body so a base
+``pflow-cli[ui]`` extra. This command imports it **lazily** inside the body so a base
 install without the extra still loads the CLI; a missing import prints the
 install hint instead of crashing. Keep the module top free of starlette/uvicorn/
 server imports (it is imported eagerly at ``main.py`` load).
@@ -61,9 +61,10 @@ def _open_browser_when_ready(host: str, port: int, url: str, *, timeout: float =
 )
 @click.pass_context
 def ui_cmd(ctx: click.Context, workflow: str | None, port: int, no_open: bool, no_watch: bool) -> None:
-    """Serve a browser UI for seeing and understanding a workflow's structure.
+    """Open a browser canvas of a workflow FOR THE USER (an agent can't read a browser).
 
-    With WORKFLOW (a saved name or a .pflow.md path), opens straight to it.
+    Use it when the user wants to SEE a workflow, or to let them watch it take shape as
+    you build it. With WORKFLOW (a saved name or a .pflow.md path), opens straight to it.
     Without it, opens the catalog of saved workflows.
 
     The canvas LIVE-UPDATES in place (no page reload) as you edit the workflow's
@@ -90,7 +91,7 @@ def ui_cmd(ctx: click.Context, workflow: str | None, port: int, no_open: bool, n
         import uvicorn
     except ImportError:
         click.echo(
-            "The 'pflow ui' web interface needs extra dependencies.\n→ pip install pflow[ui]",
+            "The 'pflow ui' web interface needs extra dependencies.\n→ uv tool install 'pflow-cli[ui]'",
             err=True,
         )
         ctx.exit(1)

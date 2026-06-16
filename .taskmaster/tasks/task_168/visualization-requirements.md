@@ -293,6 +293,21 @@
   skeleton; user-gated via browser before/after). Plan:
   `implementation/sub-plans/unified-data-flow-edges-plan.md`.
 
+- **Live source auto-update (2026-06-16):** the canvas reloads IN PLACE (no page
+  reload) as the workflow's `.pflow.md` is edited on disk — an agent builds a
+  workflow while the user watches it take shape. `useSourceWatch` polls a new
+  `GET /api/version` fingerprint (~1.5s, visibility-gated); a change re-fetches
+  `/api/graph` and React-reconciles, preserving viewport, focus/selection,
+  collapse, and the source pane. Preserved state survives the positional flat-id
+  renumber a structural edit causes — remapped through the structural ref
+  (`graph/remap.ts`). An invalid mid-edit is HELD (last valid render + a
+  non-blocking "Source has errors — showing the last valid version" banner) and
+  recovers on the next valid save. On by default; `pflow ui --no-watch`
+  (→ `?watch=0`) freezes it. Detection (poll) is separable from reaction (in-place
+  rebuild) — Task 169's SSE can later push the same trigger. Known limit: a
+  workflow mid-edit-invalid in a SUB-workflow file tracks only the entry file's
+  mtime until it parses again.
+
 ## Wanted / planned (NOT yet built)
 
 - **LR merge alignment residual:** the merge target sits ~8px off the straight row in
