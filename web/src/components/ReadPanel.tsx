@@ -3,12 +3,16 @@
 // contract, so there is no on-demand fetch). Surfaces what the canvas can't: full
 // param values, source file:line, loop/batch/io config.
 
+import { useState } from "react";
+
 import { cacheInsertIndex } from "../graph/flow";
+import { resolveBatchItems } from "../utils/batchItems";
 import { fullValue, paramLanguage } from "../utils/format";
+import { BatchItemsBlock } from "./BatchItems";
 import { ConnectionSections } from "./Chip";
 import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
-import type { RFEdge, RFGraph, RFNode, SourceRef } from "../types";
+import type { BatchSpec, RFEdge, RFGraph, RFNode, SourceRef } from "../types";
 
 export function sourceLabel(source: SourceRef | null): string | null {
   if (!source?.file) return null;
@@ -47,20 +51,51 @@ export function ParamBlock({
   param,
   kind,
   highlightRef,
+  batch,
 }: {
   param: RFNode["params"][number];
   kind: string;
   highlightRef?: string;
+  // The owner node's batch, when it has one. A param whose value reads the batch
+  // alias (`${item.prompt}`) expands to its per-item resolved values — already
+  // inline on the contract. Only LITERAL batches expand (a dynamic batch has no
+  // static items). EdgePanel omits this (batch-alias refs draw no edge anyway).
+  batch?: BatchSpec | null;
 }): JSX.Element {
   const src = sourceLabel(param.source);
+  const items = batch && !batch.dynamic ? resolveBatchItems(param.value, batch.as_name, batch.items) : null;
+  const [expanded, setExpanded] = useState(false);
   return (
     <div className="read-param">
       <div className="read-param-head">
         <span className="read-param-name">{param.name}</span>
         {param.is_dynamic && <span className="badge badge-dynamic">dynamic</span>}
         {src && <span className="read-param-source">{src}</span>}
+        {items && (
+          <button
+            className="batch-expand"
+            onClick={() => setExpanded((e) => !e)}
+            aria-expanded={expanded}
+            title={`Resolve \`${batch!.as_name}\` against the ${items.length} batch items`}
+          >
+            {expanded ? "▾" : "▸"} {items.length} items
+          </button>
+        )}
       </div>
       <CodeBlock code={fullValue(param.value)} lang={paramLanguage(kind, param.name, param.value)} highlightRef={highlightRef} />
+      {items && expanded && (
+        // Each item's resolved value, headed by its discriminating field. The
+        // body colors with the SAME language as the raw param (a resolved prompt
+        // is markdown source, like the param itself).
+        <div className="batch-items">
+          {items.map((item, i) => (
+            <div className="batch-item" key={i}>
+              <div className="batch-item-head">{item.label}</div>
+              <CodeBlock code={item.value} lang={paramLanguage(kind, param.name, item.value)} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -176,6 +211,11 @@ export function ReadPanel({
 
       <StructuralFacts node={node} />
 
+      {/* The raw literal batch config — every item, every field. Collapsed; the
+          `${item.x}` ParamBlock expansion above is the per-param view, this is
+          the whole-config view (surfaces item fields no param reads). */}
+      {node.batch && <BatchItemsBlock batch={node.batch} kind={node.kind} />}
+
       {reads.length > 0 && (
         <dl className="facts">
           <div className="fact">
@@ -191,11 +231,11 @@ export function ReadPanel({
         <section className="read-panel-params">
           <h3>params</h3>
           {node.params.slice(0, cacheInsertIndex(node.params)).map((param) => (
-            <ParamBlock param={param} kind={node.kind} key={param.name} />
+            <ParamBlock param={param} kind={node.kind} batch={node.batch} key={param.name} />
           ))}
           {node.cached_prefix != null && <CachedPrefixBlock text={node.cached_prefix} />}
           {node.params.slice(cacheInsertIndex(node.params)).map((param) => (
-            <ParamBlock param={param} kind={node.kind} key={param.name} />
+            <ParamBlock param={param} kind={node.kind} batch={node.batch} key={param.name} />
           ))}
         </section>
       )}

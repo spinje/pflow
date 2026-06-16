@@ -1390,6 +1390,96 @@ button.active {
   overflow: auto;
 }
 
+/* Batch-alias param expander (ReadPanel ParamBlock, batchItems.ts): a value that
+   reads `${item.x}` on a LITERAL batch resolves to its per-item values inline. */
+.batch-expand {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.batch-expand:hover {
+  color: var(--text);
+}
+.batch-items {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.batch-item-head {
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Flat batch-items listing (BatchItems.tsx): every literal item with all its
+   fields — short scalars inline, long values a `▸ name <size>` disclosure. */
+.batch-block {
+  margin: 0 0 12px;
+}
+.batch-block-head,
+.batch-field-head {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+.batch-block-head:hover,
+.batch-field-head:hover {
+  color: var(--text);
+}
+.batch-block-count,
+.batch-field-size {
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+.batch-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.batch-item-index {
+  margin-bottom: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.batch-item-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.batch-field {
+  font-size: 11px;
+}
+.batch-field-name {
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+.batch-field-val {
+  font-family: var(--mono);
+  color: var(--text);
+  word-break: break-word;
+}
+
 /* ---- rendered markdown prose (Markdown.tsx, block mode) ------------------ */
 /* white-space FIRST and load-bearing: the host classes (.read-panel-purpose,
    .io-port-desc) keep pre-wrap as the "respect authored newlines" mechanism for

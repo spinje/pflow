@@ -3783,3 +3783,23 @@ touched — still clear of the param-ref workstream.
   advanced+collapse=none) and deep-research (16 nodes). visual-invariants PASS
   on both (181/181 and 37/37 contract edges rendered, 0 dot violations,
   0 overlaps). Zero Python changes.
+
+### Batch-item values in the ReadPanel (2026-06-16, user-driven) ✅
+
+Frontend-only — literal-batch items already ride the contract: file-reference
+prompts resolve into the IR at the resolver boundary BEFORE the graph is built,
+so `batch.items[i].prompt` is the file's CONTENT, not its path (the `_source_files`
+provenance is NOT carried to the model — so there is no path to surface, only the
+resolved value). Two additions on that data:
+- **ParamBlock `${item.x}` expansion** (`utils/batchItems.ts` resolver): a value
+  reading the batch alias on a LITERAL batch grows a `▸ N items` toggle, expanding
+  in place to its per-item resolved values, each headed by the item's
+  discriminating field (`focus: emotional`). Interpolated values substitute per
+  item; non-alias refs stay verbatim; dynamic batch → no toggle.
+- **Flat `batch items` block** (`components/BatchItems.tsx`): a collapsed
+  disclosure below the structural facts listing every item with all fields —
+  short scalars inline, long values behind a `▸ name <size>` pill. The
+  whole-config view (surfaces item fields no param reads), complementing the
+  per-param view above.
+Browser-verified on lyrics-generator's `analyze` (6 specialist prompts, sizes
+1.5–3.7 KB). +16 web pins; zero Python/contract change.
