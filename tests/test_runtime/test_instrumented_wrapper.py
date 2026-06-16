@@ -20,6 +20,7 @@ from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.instrumentation import (
     call_completion_callback,
     call_start_callback,
+    handle_api_warning,
     initialize_execution_state,
     record_trace,
 )
@@ -538,6 +539,37 @@ class TestProgressCallbacks:
         # These should not raise
         call_start_callback("my_node", shared)
         call_completion_callback("my_node", shared, "default", 100.0)
+
+    def test_handle_api_warning_fires_node_warning_and_node_complete(self):
+        """GH #249: handle_api_warning must fire BOTH node_warning AND node_complete.
+
+        Without node_complete, a progress UI shows the api_warning node as still
+        running forever — only node_warning was emitted before. Both events let the
+        UI close the node's line cleanly (warning, then failed-complete).
+        """
+        import time
+
+        events: list[tuple[str, str]] = []
+
+        def callback(node_id: str, event: str, *args: Any, **kwargs: Any) -> None:
+            events.append((node_id, event))
+
+        shared: dict[str, Any] = {"__progress_callback__": callback}
+        result = handle_api_warning(
+            "api_node",
+            shared,
+            "API error: boom",
+            None,  # metrics
+            None,  # trace_collector
+            time.perf_counter(),  # start_time
+            set(),  # shared_keys_before
+            "HTTPNode",  # node_type_name
+            {},  # node_params
+        )
+
+        assert result == "error"
+        assert ("api_node", "node_warning") in events
+        assert ("api_node", "node_complete") in events
 
 
 # ===========================================================================

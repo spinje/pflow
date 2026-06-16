@@ -146,10 +146,12 @@ def _extract_error_info(action_result: Optional[str], shared_store: dict[str, An
     3. **``__warnings__`` mirror** as a last-resort fallback for legacy paths
        that never populated ``failure.error``.
 
-    The previous order put ``__warnings__`` first, which meant
-    ``_handle_no_successor``'s routing hint (written via ``__warnings__`` to
-    preserve the rich shell failure record — see Task 148 Fix #2) masked the
-    real ``"Command failed with exit code N"`` message.
+    The previous order put ``__warnings__`` first, which meant a routing hint
+    in ``__warnings__`` masked the real ``"Command failed with exit code N"``
+    message. ``_handle_no_successor`` no longer writes that hint for an
+    error-action node (GH #437 — the real failure already stands in
+    ``__failures__``), but this node-level-first ordering remains correct for
+    any other ``__warnings__`` content that could co-exist with a failure.
     """
     failed_node = _get_failed_node(shared_store)
 

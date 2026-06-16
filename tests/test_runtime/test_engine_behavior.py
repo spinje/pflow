@@ -595,8 +595,8 @@ class TestMcpProtocolErrorRouting:
 
         failure = get_node_failure(shared, "create_audio")
         assert failure is not None
-        # Category is message-pattern dependent: resource-like wording is
-        # intercepted earlier by api_warning_detector (pinned below).
+        # An MCP error action always archives as mcp_failure — the detector defers to
+        # the node's verdict, so the category no longer depends on the error wording.
         assert failure["category"] == "mcp_failure"
         assert failure["error"] == "MCP tool failed: connection refused"
         assert failure["data"]["error"] == "MCP tool failed: connection refused"
@@ -605,11 +605,16 @@ class TestMcpProtocolErrorRouting:
             "tool": "studio_create",
             "timeout": False,
         }
-        warning = shared["__warnings__"]["create_audio"]
-        assert "no successor edge matches" in warning
-        assert "on-error" in warning
 
-    def test_mcp_protocol_resource_message_routes_as_api_warning(self):
+    def test_mcp_protocol_resource_message_routes_as_plain_failure(self):
+        """An MCP error action is the node's deliberate verdict — the detector defers.
+
+        Pre-fix, a "repository not found" error text was hijacked by the api_warning
+        detector into an ``api_warning`` failure (while "connection refused" stayed
+        ``mcp_failure``). After action-gating the detector (GH #474), BOTH route as a
+        plain ``mcp_failure`` — the failure category no longer depends on whether the
+        error wording happens to match a resource pattern.
+        """
         from pflow.runtime.node_state import get_node_failure
 
         api = _McpProtocolErrorNode()
@@ -649,21 +654,14 @@ class TestMcpProtocolErrorRouting:
 
         failure = get_node_failure(shared, "create_audio")
         assert failure is not None
-        assert failure["category"] == "api_warning"
-        assert failure["error"] == "API error: MCP tool failed: repository not found"
+        assert failure["category"] == "mcp_failure"
+        assert failure["error"] == "MCP tool failed: repository not found"
         assert failure["data"]["error"] == "MCP tool failed: repository not found"
         assert failure["data"]["error_details"] == {
             "server": "notebooklm",
             "tool": "studio_create",
             "timeout": False,
         }
-
-        # The archived failure keeps the detector's API-warning category/message,
-        # while the public runtime warning for an unhandled error action is the
-        # routing hint that tells the user to add on-error.
-        warning = shared["__warnings__"]["create_audio"]
-        assert "no successor edge matches" in warning
-        assert "on-error" in warning
 
     def test_handled_mcp_protocol_error_routes_to_on_error_handler(self):
         from pflow.runtime.node_state import get_node_failure
@@ -966,3 +964,100 @@ class TestRoutingFailureTraceEventSync:
         assert len(router_events) == 1
         assert router_events[0]["success"] is True
         assert "error" not in router_events[0] or router_events[0]["error"] is None
+
+
+class TestNoSuccessorHintSuppression:
+    """GH #437 — _handle_no_successor must not emit a generic routing hint for a
+    node that already FAILED (action="error"). The real failure record stands on
+    its own; a "add on-error" hint would visually outrank the real fix. A genuine
+    routing bug (a custom non-error action with no matching edge) STILL surfaces.
+    """
+
+    def test_error_action_no_successor_writes_no_routing_hint(self):
+        """An error-action node with a non-error successor → no __warnings__ hint."""
+        from pflow.runtime.node_state import get_node_failure
+
+        api = _McpProtocolErrorNode()
+        api.node_id = "create_audio"
+        downstream = _OutputNode()
+        downstream.node_id = "poll"
+        downstream.set_params({"output_value": "should not run"})
+
+        api >> downstream
+
+        configs = {
+            "create_audio": NodeConfig(
+                node_id="create_audio",
+                node_type_name="MCPNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "poll": NodeConfig(
+                node_id="poll",
+                node_type_name="OutputNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=api, node_configs=configs)
+        shared: dict = {}
+        result = WorkflowEngine().run(workflow, shared)
+
+        assert result == "error"
+        # No routing hint for the failed node — the real failure is authoritative.
+        warnings = shared.get("__warnings__", {})
+        assert "create_audio" not in warnings, (
+            f"Error-action node should not emit a routing hint, got: {warnings.get('create_audio')!r}"
+        )
+        # The real error still lives in the failure record.
+        failure = get_node_failure(shared, "create_audio")
+        assert failure is not None
+        assert failure["error"] == "MCP tool failed: connection refused"
+
+    def test_custom_action_no_successor_still_surfaces_routing_hint(self):
+        """A custom (non-error) action with no matching edge IS a routing bug → hint."""
+        from pflow.runtime.node_state import get_node_failure
+
+        router = _ActionNode()
+        router.node_id = "router"
+        router.set_params({"action": "custom_route"})
+
+        # Non-error successor so is_clean_termination is False → routing path runs.
+        unreachable = _ActionNode()
+        unreachable.node_id = "unreachable"
+        router >> unreachable
+
+        configs = {
+            "router": NodeConfig(
+                node_id="router",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+            "unreachable": NodeConfig(
+                node_id="unreachable",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+        workflow = CompiledWorkflow(start_node=router, node_configs=configs)
+        shared: dict = {}
+        WorkflowEngine().run(workflow, shared)
+
+        failure = get_node_failure(shared, "router")
+        assert failure is not None
+        assert failure["category"] == "routing_error"
+        # The genuine routing bug still gets a hint with the intentional-termination remedy.
+        warning = shared["__warnings__"]["router"]
+        assert "no successor edge matches" in warning
+        assert 'Use next: str = "end"' in warning

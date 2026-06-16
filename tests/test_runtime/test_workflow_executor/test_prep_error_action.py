@@ -19,6 +19,9 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.node import BaseNode
+from pflow.core.workflow.status import WorkflowStatus
+from pflow.execution.result import RunnerConfig
+from pflow.execution.runner import WorkflowRunner
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
@@ -218,16 +221,7 @@ class TestPrepFailureRoutesThroughErrorAction:
         assert get_node_failure(shared, "sub") is None
 
     def test_circular_reference_dispatches_error_action(self, mock_registry, tmp_path):
-        """Prep raises ValueError on circular workflow reference → error_action.
-
-        Note: prep-time failures whose error text matches the engine's
-        api_warning_detector patterns (e.g. "not found", "403", "401") get
-        hijacked back to action="error" regardless of error_action. That's
-        pre-existing engine behavior (GH #301), pinned separately by
-        ``TestApiWarningDetectorHijackIsPinned``. "Circular workflow
-        reference" doesn't match any detector pattern, so error_action
-        routes cleanly here.
-        """
+        """Prep raises ValueError on circular workflow reference → error_action."""
         child = _write_child(
             tmp_path,
             {
@@ -497,30 +491,23 @@ class TestPrepFailureRoutesThroughErrorAction:
         )
 
 
-class TestApiWarningDetectorHijackIsPinned:
-    """Pins the pre-existing api_warning_detector hijack behavior (GH #301).
+class TestErrorActionDefersApiWarning:
+    """The api_warning detector defers to a node's deliberate ``error_action`` route (GH #301).
 
-    When a node's error text matches api_warning_detector patterns
-    ("not found", "403", "401", etc), the detector overrides the action
-    back to "error" regardless of the node's error_action — pre-existing
-    engine behavior that applies to ALL node types, not specific to this
-    fix. Documented in src/pflow/runtime/CLAUDE.md.
-
-    This test PINS that behavior so any future fix to GH #301 forces an
-    explicit re-evaluation (test fails → update docs → unhijack). Without
-    this pin, the CLAUDE.md caveat is unfalsifiable documentation that
-    could silently drift from reality.
+    A prep-time failure whose error text happens to match an api_warning_detector
+    pattern (e.g. "not found") used to be hijacked back to action="error", silently
+    overriding the user's chosen ``error_action``. The detector now runs only on a
+    clean-success action (engine ``_CLEAN_SUCCESS_ACTIONS``), so a deliberate route
+    like ``continue`` survives — the node's verdict is authoritative.
     """
 
-    def test_file_not_found_hijacked_despite_error_action_continue(self, tmp_path):
-        """FileNotFoundError text matches "not found" → detector overrides → action="error".
+    def test_file_not_found_routes_via_error_action_continue(self, tmp_path):
+        """FileNotFoundError text matches "not found" but error_action="continue" still wins.
 
-        When GH #301 is fixed, this test fails. The fix should:
-        1. Update src/pflow/runtime/CLAUDE.md (remove the "not found" caveat from
-           the error_action bullet, reference GH #301 as closed)
-        2. Flip this test to assert result == "continue" (the intended semantic)
-        3. Update the docstring on test_circular_reference_dispatches_error_action
-           (remove the "chose circular because 'not found' hijacks" note)
+        The missing-child prep error contains "not found"; pre-fix the detector
+        overrode the action back to "error". Now the node returns "continue", which
+        (with no matching successor here) clean-terminates — the node is NOT archived
+        as a failure, mirroring ``test_circular_reference_dispatches_error_action``.
         """
         registry = Registry()
         parent_ir = {
@@ -544,16 +531,99 @@ class TestApiWarningDetectorHijackIsPinned:
         engine = WorkflowEngine()
         result = engine.run(workflow, shared)
 
-        # Pre-existing engine hijack: api_warning_detector sees "not found"
-        # in the error text and overrides error_action="continue" → "error".
-        # If this assertion starts failing, GH #301 was fixed — follow the
-        # docstring's migration steps.
-        assert result == "error", (
-            "api_warning_detector hijack behavior changed — see GH #301. "
-            "Update src/pflow/runtime/CLAUDE.md and flip this test's assertion."
-        )
-        # Failure is archived as api_warning category (hijack path), NOT as
-        # node_action_error (which is what error_action dispatch would archive).
-        failure = get_node_failure(shared, "missing_child")
-        assert failure is not None
-        assert failure.get("category") == "api_warning"
+        # The node's deliberate error_action route is authoritative — the detector
+        # no longer second-guesses it even though the error text matches "not found".
+        assert result == "continue"
+        # error_action routed cleanly → no failure archived (matches
+        # test_circular_reference_dispatches_error_action).
+        assert get_node_failure(shared, "missing_child") is None
+
+    def test_error_action_continue_routes_to_continue_successor(self, tmp_path):
+        """GH #301: error_action="continue" with a matching successor runs that successor.
+
+        End-to-end proof the deliberate route is honoured: the missing-child failure
+        (text contains "not found") routes via the ``continue`` edge to a downstream
+        node, which executes. The WorkflowExecutor node is never archived as a failure.
+        """
+        registry = Registry()
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "missing_child",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow": str(tmp_path / "does_not_exist.pflow.md"),
+                        "error_action": "continue",
+                        "inputs": {},
+                    },
+                },
+                {
+                    "id": "after_continue",
+                    "type": "shell",
+                    "params": {"command": "echo continued"},
+                },
+            ],
+            "edges": [{"from": "missing_child", "to": "after_continue", "action": "continue"}],
+        }
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared = dict(workflow.resolved_defaults)
+        shared["__registry__"] = registry
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
+
+        # The continue successor actually ran (its output is present).
+        assert shared.get("after_continue", {}).get("stdout", "").strip() == "continued"
+        # The WorkflowExecutor node routed via error_action, not archived as a failure.
+        assert get_node_failure(shared, "missing_child") is None
+
+
+class TestErrorActionDefersApiWarningEndToEnd:
+    """End-to-end #301 through the FULL WorkflowRunner pipeline (validate → compile →
+    execute), via a DYNAMIC child ref — the only path that reaches runtime error_action
+    dispatch in production.
+
+    Why this exists alongside the engine-level TestErrorActionDefersApiWarning: a STATIC
+    missing-child path (`workflow: ./missing.pflow.md`) is rejected by the runner's
+    sub-workflow validator BEFORE execution, so the engine-level tests (which call
+    engine.run() directly, bypassing validation) exercise a trigger the real pipeline
+    never reaches that way. A TEMPLATED ref (`workflow: ${child_path}`) is opaque to the
+    validator and only fails at RUNTIME, where error_action dispatches and the detector
+    gate must defer. This is the cross-layer integration the unit tests structurally
+    cannot catch (tests/CLAUDE.md gotcha #20) — it would break if validation ever
+    eager-resolved dynamic refs or the detector gate regressed, and nothing else guards it.
+    """
+
+    def test_dynamic_missing_child_continue_routes_through_full_pipeline(self, tmp_path):
+        missing = tmp_path / "missing-child.pflow.md"  # never created
+        ir = {
+            "ir_version": "0.1.0",
+            "inputs": {"child_path": {"type": "string", "required": True}},
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {"workflow": "${child_path}", "error_action": "continue", "inputs": {}},
+                },
+                {
+                    "id": "after",
+                    "type": "shell",
+                    "purpose": "Runs only if error_action: continue is honored end-to-end.",
+                    "params": {"command": "echo continued-via-error-action"},
+                },
+            ],
+            "edges": [{"from": "call-child", "to": "after", "action": "continue"}],
+            "start_node": "call-child",
+        }
+
+        result = WorkflowRunner().run(ir, {"child_path": str(missing)}, config=RunnerConfig())
+
+        # The "not found" runtime prep error is NOT hijacked: error_action: continue is
+        # authoritative, so the run succeeds (a validation rejection or a detector hijack
+        # would both flip this to success=False — this single assert guards both layers).
+        assert result.success is True, [d.message for d in result.diagnostics]
+        assert result.status == WorkflowStatus.SUCCESS
+        # The continue route was actually FOLLOWED through the full pipeline.
+        assert result.shared_after.get("after", {}).get("stdout", "").strip() == "continued-via-error-action"
+        # The WorkflowExecutor node was not archived as a failure (no api_warning hijack).
+        assert "call-child" not in result.shared_after.get("__failures__", {})

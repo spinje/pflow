@@ -171,7 +171,7 @@ node_modules/
 # tasks/
 
 # Scratchpads
-# scratchpads/
+scratchpads/
 
 # Claude data and logs
 .claude/data/

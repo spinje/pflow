@@ -7,7 +7,7 @@ exercise the full pipeline: engine step 17.5 → mark_node_failed →
 __warnings__ → _determine_status → _extract_runtime_warnings.
 """
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import Diagnostic, Severity, normalize_runtime_warning
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -44,6 +44,55 @@ def test_on_error_recovery_reports_degraded_status():
 
     assert result.success is True, "Workflow should still be successful"
     assert result.status == WorkflowStatus.DEGRADED, f"Expected DEGRADED for on-error recovery, got {result.status}"
+
+
+def test_recovered_resource_pattern_failure_renders_as_recovery_not_api_warning(tmp_path):
+    """GH #474: a recovered failure whose error text matches an api_warning pattern
+    must render as on_error_recovery, not api_warning.
+
+    copy-file with a missing source fails with "...does not exist..." (matches the
+    detector's "not found"/"does not exist" pattern) and returns action "error".
+    Pre-fix, the detector hijacked it into an api_warning, never reaching step 17.5's
+    on_error_recovery handling. After action-gating the detector, the error action is
+    the node's authoritative verdict → recovery via the on-error handler.
+    """
+    missing = tmp_path / "nope.txt"  # never created
+    dest = tmp_path / "dest.txt"
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "copy-missing",
+                "type": "copy-file",
+                "purpose": "Copy a file whose source is missing, to trigger a failure.",
+                "params": {"source_path": str(missing), "dest_path": str(dest)},
+                "retry": {"max": 1, "wait": 0},
+            },
+            {
+                "id": "handler",
+                "type": "shell",
+                "purpose": "On-error handler that recovers the copy failure.",
+                "params": {"command": "echo recovered"},
+            },
+        ],
+        "edges": [{"from": "copy-missing", "to": "handler", "action": "error"}],
+        "start_node": "copy-missing",
+    }
+
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+    assert result.status == WorkflowStatus.DEGRADED, f"Expected DEGRADED recovery, got {result.status}"
+    shared = result.shared_after
+
+    # The recovered failure is classified as recovery, NOT api_warning.
+    _message, context = normalize_runtime_warning(shared["__warnings__"]["copy-missing"])
+    assert context["type"] == "on_error_recovery", (
+        f"Expected on_error_recovery, got {context['type']!r} — detector relabelled the failure"
+    )
+
+    # Positive category assertion: copy-file is absent from _NODE_TYPE_FAILURE_CATEGORY,
+    # so it falls back to node_action_error (stronger than just "not api_warning").
+    assert shared["__failures__"]["copy-missing"]["category"] == "node_action_error"
 
 
 def test_on_error_recovery_produces_warning_diagnostic():

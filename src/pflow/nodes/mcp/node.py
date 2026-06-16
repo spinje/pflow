@@ -410,9 +410,10 @@ class MCPNode(Node):
             shared["error"] = result.get("error", "Tool execution failed")
             shared["error_details"] = {"server": prep_res["server"], "tool": prep_res["tool"], "is_tool_error": True}
             logger.debug(f"MCP tool returned error: {shared['error']}", extra=shared["error_details"])
-            # Return "error" so workflow error handling can respond
-            # API warning detection in InstrumentedNodeWrapper may upgrade clear
-            # resource failures into user-facing warnings before execution stops.
+            # Return "error" so workflow error handling can respond. (A tool error is a
+            # deliberate failure verdict — the engine's api_warning detector defers to it
+            # and routes/records it as a normal mcp_failure; it is not relabeled "API
+            # error". See engine _CLEAN_SUCCESS_ACTIONS / GH #474.)
             return "error"
 
         # Store successful result. MCP tools expose one canonical output shape:
