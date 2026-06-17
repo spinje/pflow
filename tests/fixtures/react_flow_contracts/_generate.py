@@ -21,6 +21,7 @@ Regenerate: ``uv run python -m tests.fixtures.react_flow_contracts._generate``
 
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -46,6 +47,32 @@ WORKFLOWS: dict[str, str] = {
 MAX_DEPTH = 5
 
 
+def _relativize_source_files(data: Any) -> Any:
+    """Rewrite every ``source.file`` absolute path to REPO_ROOT-relative, in place.
+
+    The contract carries ABSOLUTE source paths (``build.py`` stores ``str(source_file)``
+    verbatim, resolved for child refs), so a committed fixture would otherwise bake in
+    the generating machine's checkout root — the comparison then fails on every OTHER
+    machine (CI at ``/home/runner/work/...`` vs a dev clone). The path VALUE is
+    environment noise, not contract shape: the web consumer (``lossless.test.ts``)
+    never reads ``source.file``, and the live server keys its source pane on the node,
+    not this string. Normalizing here — the one function feeding both the fixture
+    writer and the drift comparison — makes both sides machine-independent.
+    """
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key == "file" and isinstance(value, str):
+                # ValueError = path outside the repo (shouldn't happen for in-repo fixtures) — leave it
+                with contextlib.suppress(ValueError):
+                    data[key] = Path(value).resolve().relative_to(REPO_ROOT).as_posix()
+            else:
+                _relativize_source_files(value)
+    elif isinstance(data, list):
+        for item in data:
+            _relativize_source_files(item)
+    return data
+
+
 def render_contract(name: str) -> dict[str, Any]:
     """The live renderer's contract for one fixture workflow, as plain JSON data."""
     from pflow.core.workflow.graph import render_react_flow
@@ -58,10 +85,12 @@ def render_contract(name: str) -> dict[str, Any]:
     # whose interfaces live in this repo's docstrings — deterministic across
     # environments (the renderer filters to kinds present in the graph).
     kind_types = Registry().output_types_by_kind()
+    rf = render_react_flow(graph, kind_output_types=kind_types)
     # Round-trip through dumps/loads so the committed file and the comparison
     # both see pure JSON types (tuples -> lists), exactly what the wire carries.
-    rf = render_react_flow(graph, kind_output_types=kind_types)
-    return json.loads(json.dumps(asdict(rf), default=str))  # type: ignore[no-any-return]
+    data = json.loads(json.dumps(asdict(rf), default=str))
+    # Strip the absolute checkout root from source paths so the fixture is portable.
+    return _relativize_source_files(data)  # type: ignore[no-any-return]
 
 
 def main() -> None:

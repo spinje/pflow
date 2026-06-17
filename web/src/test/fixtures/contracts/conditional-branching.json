@@ -15,7 +15,7 @@
           "value": "echo '{\"status\": \"ok\", \"items\": [1, 2, 3]}'",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "file": "examples/core/conditional-branching.pflow.md",
             "line": 15
           }
         }
@@ -25,7 +25,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "file": "examples/core/conditional-branching.pflow.md",
         "line": 8
       },
       "is_decision": false,
@@ -60,7 +60,7 @@
           "value": "data: dict\n\nitems = data.get(\"items\", [])\n\nif len(items) > 5:\n    next: str = \"process-large\"\nelse:\n    next: str = \"process-small\"\nresult: dict = data",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "file": "examples/core/conditional-branching.pflow.md",
             "line": 27
           }
         }
@@ -70,7 +70,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "file": "examples/core/conditional-branching.pflow.md",
         "line": 18
       },
       "is_decision": true,
@@ -101,7 +101,7 @@
           "value": "echo \"Processing small batch\"",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "file": "examples/core/conditional-branching.pflow.md",
             "line": 46
           }
         }
@@ -111,7 +111,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "file": "examples/core/conditional-branching.pflow.md",
         "line": 38
       },
       "is_decision": false,
@@ -138,7 +138,7 @@
           "value": "echo \"Processing large batch\"",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "file": "examples/core/conditional-branching.pflow.md",
             "line": 57
           }
         }
@@ -148,7 +148,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "file": "examples/core/conditional-branching.pflow.md",
         "line": 49
       },
       "is_decision": false,
@@ -175,7 +175,7 @@
           "value": "echo \"Error occurred during classification\" >&2",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "file": "examples/core/conditional-branching.pflow.md",
             "line": 68
           }
         }
@@ -185,7 +185,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "file": "examples/core/conditional-branching.pflow.md",
         "line": 60
       },
       "is_decision": false,
@@ -212,7 +212,7 @@
           "value": "echo \"Processing complete\"",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+            "file": "examples/core/conditional-branching.pflow.md",
             "line": 78
           }
         }
@@ -222,7 +222,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/conditional-branching.pflow.md",
+        "file": "examples/core/conditional-branching.pflow.md",
         "line": 71
       },
       "is_decision": false,

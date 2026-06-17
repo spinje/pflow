@@ -80,7 +80,7 @@
           "value": "docs: list\nfocus: str\n\nresult: list = [{\"text\": d, \"focus\": focus} for d in docs]",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+            "file": "examples/nested/deep-research/deep-research.pflow.md",
             "line": 33
           }
         }
@@ -90,7 +90,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "file": "examples/nested/deep-research/deep-research.pflow.md",
         "line": 23
       },
       "is_decision": false,
@@ -144,7 +144,7 @@
       },
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "file": "examples/nested/deep-research/deep-research.pflow.md",
         "line": 39
       },
       "is_decision": false,
@@ -179,7 +179,7 @@
           "value": "analyses: list\n\nresult: dict = {\"summary\": \"Combined analysis\", \"source_count\": len(analyses)}",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+            "file": "examples/nested/deep-research/deep-research.pflow.md",
             "line": 63
           }
         }
@@ -189,7 +189,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "file": "examples/nested/deep-research/deep-research.pflow.md",
         "line": 54
       },
       "is_decision": false,
@@ -273,7 +273,7 @@
       },
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "file": "examples/nested/deep-research/deep-research.pflow.md",
         "line": 68
       },
       "is_decision": false,
@@ -309,7 +309,7 @@
           "value": "analyses: list\nreviews: list\n\nresult: dict = {\"report\": \"Final research report\", \"analyses\": len(analyses), \"reviews\": len(reviews)}",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+            "file": "examples/nested/deep-research/deep-research.pflow.md",
             "line": 103
           }
         }
@@ -319,7 +319,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "file": "examples/nested/deep-research/deep-research.pflow.md",
         "line": 93
       },
       "is_decision": false,
@@ -441,7 +441,7 @@
       "batch": null,
       "parent": "g2",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "file": "examples/nested/deep-research/analyze-source.pflow.md",
         "line": 22
       },
       "is_decision": false,
@@ -493,7 +493,7 @@
       "batch": null,
       "parent": "g2",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "file": "examples/nested/deep-research/analyze-source.pflow.md",
         "line": 29
       },
       "is_decision": false,
@@ -534,7 +534,7 @@
           "value": "sections: str\nscores: dict\n\nresult: dict = {\"sections\": sections, \"scores\": scores, \"compiled\": True}",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+            "file": "examples/nested/deep-research/analyze-source.pflow.md",
             "line": 49
           }
         }
@@ -544,7 +544,7 @@
       "batch": null,
       "parent": "g2",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "file": "examples/nested/deep-research/analyze-source.pflow.md",
         "line": 39
       },
       "is_decision": false,
@@ -678,7 +678,7 @@
       "batch": null,
       "parent": "g4",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "file": "examples/nested/deep-research/score-section.pflow.md",
         "line": 22
       },
       "is_decision": false,
@@ -726,7 +726,7 @@
           "value": "raw_score: str\n\nresult: dict = {\"score\": 85, \"normalized\": True}",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+            "file": "examples/nested/deep-research/score-section.pflow.md",
             "line": 38
           }
         }
@@ -736,7 +736,7 @@
       "batch": null,
       "parent": "g4",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "file": "examples/nested/deep-research/score-section.pflow.md",
         "line": 29
       },
       "is_decision": false,
@@ -789,7 +789,7 @@
       "batch": null,
       "parent": "g6",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "file": "examples/nested/deep-research/score-section.pflow.md",
         "line": 49
       },
       "is_decision": false,
@@ -829,7 +829,7 @@
       "batch": null,
       "parent": "g6",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md",
+        "file": "examples/nested/deep-research/score-section.pflow.md",
         "line": 55
       },
       "is_decision": false,
@@ -865,7 +865,7 @@
       "batch": null,
       "parent": "g7",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "file": "examples/nested/deep-research/analyze-source.pflow.md",
         "line": 61
       },
       "is_decision": false,
@@ -901,7 +901,7 @@
       "batch": null,
       "parent": "g7",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md",
+        "file": "examples/nested/deep-research/analyze-source.pflow.md",
         "line": 67
       },
       "is_decision": false,
@@ -1006,7 +1006,7 @@
       "batch": null,
       "parent": "g9",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "file": "examples/nested/deep-research/review-aspect.pflow.md",
         "line": 22
       },
       "is_decision": false,
@@ -1046,7 +1046,7 @@
       "batch": null,
       "parent": "g11",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "file": "examples/nested/deep-research/review-aspect.pflow.md",
         "line": 35
       },
       "is_decision": false,
@@ -1151,7 +1151,7 @@
       "batch": null,
       "parent": "g12",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "file": "examples/nested/deep-research/review-aspect.pflow.md",
         "line": 22
       },
       "is_decision": false,
@@ -1191,7 +1191,7 @@
       "batch": null,
       "parent": "g14",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md",
+        "file": "examples/nested/deep-research/review-aspect.pflow.md",
         "line": 35
       },
       "is_decision": false,
@@ -1222,7 +1222,7 @@
       "batch": null,
       "parent": "g15",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md",
+        "file": "examples/nested/deep-research/deep-research.pflow.md",
         "line": 115
       },
       "is_decision": false,

@@ -71,7 +71,7 @@
           "value": "echo \"You are a careful editor. Cite specific terms from the article when answering.\"",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
             "line": 64
           }
         }
@@ -81,7 +81,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
         "line": 57
       },
       "is_decision": false,
@@ -108,7 +108,7 @@
           "value": "echo \"Glossary: 'lede' = first sentence; 'nut graf' = thesis paragraph; 'kicker' = closing line.\"",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
             "line": 74
           }
         }
@@ -118,7 +118,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
         "line": 67
       },
       "is_decision": false,
@@ -145,7 +145,7 @@
           "value": "echo \"Session ${session_id}: editorial style is concise, formal, no emoji.\"",
           "is_dynamic": true,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
             "line": 84
           }
         }
@@ -155,7 +155,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
         "line": 77
       },
       "is_decision": false,
@@ -188,7 +188,7 @@
           "value": "Summarize this article in three sentences, applying the glossary terms\nwhere they fit. Article: ${article}",
           "is_dynamic": true,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
             "line": 96
           }
         }
@@ -198,7 +198,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
         "line": 87
       },
       "is_decision": false,
@@ -235,7 +235,7 @@
           "value": "Translate the article to formal Spanish. Article: ${article}",
           "is_dynamic": true,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
             "line": 110
           }
         }
@@ -245,7 +245,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
         "line": 100
       },
       "is_decision": false,
@@ -280,7 +280,7 @@
       "batch": null,
       "parent": "g1",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
         "line": 119
       },
       "is_decision": false,
@@ -311,7 +311,7 @@
       "batch": null,
       "parent": "g1",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/core/prompt-caching-multi-chunk.pflow.md",
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
         "line": 126
       },
       "is_decision": false,

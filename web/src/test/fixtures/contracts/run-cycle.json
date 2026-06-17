@@ -71,7 +71,7 @@
           "value": "git rev-parse --show-toplevel",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
             "line": 44
           }
         }
@@ -81,7 +81,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 34
       },
       "is_decision": false,
@@ -108,7 +108,7 @@
           "value": "gh issue list --label agent-ready --json number,title,body,labels --limit 50",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
             "line": 55
           }
         }
@@ -118,7 +118,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 47
       },
       "is_decision": false,
@@ -145,7 +145,7 @@
           "value": "You are triaging open GitHub issues for an autonomous implementation swarm.\n\nFrom the issues below, select up to ${max_issues} that are BOTH unblocked and\nworth doing now. Priority and dependencies are NOT stated in the issues \u2014 infer\nthem from what each issue is actually about:\n\n- **Dependencies**: if two issues touch the same component/area, or one must\n  logically land before another, treat the prerequisite as a blocker. Only pick\n  issues whose prerequisites are already done (i.e. not also in this list).\n- **Priority**: judge intrinsic severity/impact (security, data loss, crashes,\n  broken builds rank above features, which rank above cosmetics) and prefer work\n  that unblocks the most downstream issues.\n- **Dedup**: if several issues share a root cause, pick one.\n\nFor each chosen issue, assign a branch name `agent/<short-slug>-<number>` and a\none-line rationale. Return an empty list if nothing is safely unblocked.\n\nOpen issues (JSON):\n${issues}\n",
           "is_dynamic": true,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/prompts/plan.prompt.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/prompts/plan.prompt.md",
             "line": null
           }
         },
@@ -203,7 +203,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 58
       },
       "is_decision": false,
@@ -247,7 +247,7 @@
           "value": "issues: list\nresult: int = len(issues)\nif issues:\n    next: str = \"implement-and-review-each\"\nelse:\n    next: str = \"end\"",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
             "line": 97
           }
         }
@@ -257,7 +257,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 87
       },
       "is_decision": true,
@@ -312,7 +312,7 @@
       },
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 105
       },
       "is_decision": false,
@@ -339,7 +339,7 @@
           "value": "You are finalizing this cycle's work by opening **pull requests** \u2014 do NOT merge\ninto ${base_branch} directly.\n\nPer-issue results (each item has `branch`, `commits_made`, `verdict`, `summary`,\nand `item.number` / `item.title` for the original issue):\n${results}\n\nYou are on ${base_branch} in the main checkout. For each result:\n\n**verdict \"approve\" and commits_made > 0:**\n- `git push -u origin <branch>`\n- `gh pr create --base ${base_branch} --head <branch> --title \"<item.title>\" --body \"Automated implementation of #<item.number>.\\n\\n<summary>\"`\n- `gh issue edit <item.number> --remove-label agent-ready`\n- record `<branch>` under `prs_opened`.\n\n**verdict \"request-changes\" (or commits_made == 0):**\n- `gh issue edit <item.number> --remove-label agent-ready --add-label agent-needs-human`\n- (optional) `gh issue comment <item.number> --body \"<review notes>\"`\n- record `#<item.number>` under `needs_human`.\n\n**Removing the `agent-ready` label is REQUIRED for every issue you touch** \u2014\nit takes the issue out of the candidate pool so the next cycle does not\nre-attempt it and collide on the now-existing branch. This label removal is what\nlets the outer loop converge. Report `prs_opened` and `needs_human`.\n",
           "is_dynamic": true,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/prompts/open-prs.prompt.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/prompts/open-prs.prompt.md",
             "line": null
           }
         },
@@ -411,7 +411,7 @@
       "batch": null,
       "parent": null,
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 124
       },
       "is_decision": false,
@@ -555,7 +555,7 @@
           "value": "Implement GitHub issue #${issue.number}: \"${issue.title}\".\n\nWork in an ISOLATED git worktree so you do not collide with sibling agents\nrunning on the same checkout:\n\n    git worktree add -b ${issue.branch} ../wt-${issue.branch} ${base_branch}\n\nDo all your work inside that worktree directory. Make the smallest correct\nchange, run the most relevant tests, and commit.\n\nSet commits_made to the number of commits you actually created on\n${issue.branch} (0 if you could not complete the work).\n",
           "is_dynamic": true,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/prompts/implement.prompt.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/prompts/implement.prompt.md",
             "line": null
           }
         },
@@ -629,7 +629,7 @@
       "batch": null,
       "parent": "g2",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
         "line": 38
       },
       "is_decision": false,
@@ -686,7 +686,7 @@
           "value": "committed: int\nresult: int = committed\nif committed > 0:\n    next: str = \"review\"\nelse:\n    next: str = \"end\"",
           "is_dynamic": false,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
             "line": 79
           }
         }
@@ -696,7 +696,7 @@
       "batch": null,
       "parent": "g2",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
         "line": 69
       },
       "is_decision": true,
@@ -732,7 +732,7 @@
           "value": "Review branch ${branch} against ${base_branch}.\n\nThe implementer's summary was:\n${summary}\n\nThis is a real review \u2014 read the diff AND the surrounding code it touches\n(callers, tests, related modules), not just the patch in isolation. Run:\n\n    git diff ${base_branch}...${branch}\n\nCheck correctness, missing or broken tests, and regressions in the code paths\nthis change affects. Return verdict \"approve\" only if it is safe to merge as-is;\notherwise \"request-changes\" with specific notes.\n",
           "is_dynamic": true,
           "source": {
-            "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/prompts/review.prompt.md",
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/prompts/review.prompt.md",
             "line": null
           }
         },
@@ -804,7 +804,7 @@
       "batch": null,
       "parent": "g2",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
         "line": 87
       },
       "is_decision": false,
@@ -882,7 +882,7 @@
       "batch": null,
       "parent": "g4",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
         "line": 122
       },
       "is_decision": false,
@@ -918,7 +918,7 @@
       "batch": null,
       "parent": "g4",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
         "line": 128
       },
       "is_decision": false,
@@ -954,7 +954,7 @@
       "batch": null,
       "parent": "g4",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
         "line": 136
       },
       "is_decision": false,
@@ -990,7 +990,7 @@
       "batch": null,
       "parent": "g4",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
         "line": 142
       },
       "is_decision": false,
@@ -1045,7 +1045,7 @@
       "batch": null,
       "parent": "g5",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 163
       },
       "is_decision": false,
@@ -1076,7 +1076,7 @@
       "batch": null,
       "parent": "g5",
       "source": {
-        "file": "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
         "line": 170
       },
       "is_decision": false,
