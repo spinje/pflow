@@ -42,7 +42,10 @@ describe("readViewParams", () => {
   });
 
   it("falls back to defaults on invalid values (no throw)", () => {
-    expect(readViewParams("?direction=sideways").direction).toBe("LR");
+    // An invalid/absent direction means AUTO (null) — direction.ts picks LR/TD from the
+    // graph, exactly as an invalid/absent collapse means AUTO.
+    expect(readViewParams("?direction=sideways").direction).toBeNull();
+    expect(readViewParams("").direction).toBeNull();
     expect(readViewParams("?density=fancy").density).toBe("compact");
   });
 

@@ -10,7 +10,9 @@ import { type Density, type Direction, shellBatchIds } from "../graph/flow";
 import type { RFGraph } from "../types";
 
 export interface ViewParams {
-  direction: Direction;
+  // LR/TD. null = AUTO: dense pipelines open TD (graph/direction.ts), like collapse's
+  // auto. An explicit `direction=` always wins; the toolbar toggle then sets it.
+  direction: Direction | null;
   density: Density;
   // A node to frame the camera on (a node_id, or a flat id as a fallback). null = fit
   // the whole graph. Read-only: a load-time camera instruction, never written back.
@@ -34,7 +36,7 @@ export interface ViewParams {
   watch: boolean;
 }
 
-export const DEFAULT_VIEW: ViewParams = { direction: "LR", density: "compact", node: null, focus: null, collapse: null, source: false, watch: true };
+export const DEFAULT_VIEW: ViewParams = { direction: null, density: "compact", node: null, focus: null, collapse: null, source: false, watch: true };
 
 // The URL uses the USER-FACING density words (advanced/beautiful); the code uses the
 // internal density (detailed/compact). Keep the mapping in one place so they can't drift.

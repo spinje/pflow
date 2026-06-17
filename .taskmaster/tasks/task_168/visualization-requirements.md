@@ -107,6 +107,15 @@
   deep links are also how agents screenshot a specific state.
 - Two densities + LR/TD toggle; collapse/expand containers; focus+context (dim
   non-incident); click-to-read panel (full params/prompts/code, source file:line).
+- **Auto layout direction (Tier 0, 2026-06-17):** with no explicit `direction=`, a
+  workflow opens TD when it is non-trivial (≥16 nodes) AND data-dense (≥1.4 `${ref}`
+  data edges/node), else LR (`graph/direction.ts`). DATA-EDGE DENSITY is the predictor
+  of the "edges drawn through boxes" problem — measured: the plan-to-code harness drew
+  **55% of its edges through an unrelated box in LR vs 8% in TD** (same 183 edges), a
+  clean workflow 0%, and a dense LOOPLESS workflow is as bad as a looped one (so loops
+  are NOT the signal). Applied one-shot-per-workflow (mirrors auto-collapse; frozen so a
+  live-reload never re-rotates the canvas); the LR/TD toggle and an explicit `direction=`
+  always win. The single highest-leverage fix for the through-box problem.
 - **Source pane (2026-06-12):** left pane shows verbatim `.pflow.md` source with
   markdown highlighting, one file at a time. Canvas selection switches to the
   selected node's authored file/line; source-line clicks focus the nearest authored
@@ -313,13 +322,23 @@
 - **LR merge alignment residual:** the merge target sits ~8px off the straight row in
   LR (no LR ports for that anchor class; side-centered handles *mostly* match ELK's
   center anchors). Add LR ports if it bothers.
-- **Smart edge-router** — pathfind edges around nodes, handle-to-handle, so **skip
-  edges** (a dependency jumping over intermediate nodes) and **backward/loop edges**
-  don't draw through boxes or U-turn. React Flow has no node-avoidance (edges are
-  endpoint-only); needs custom A*/orthogonal routing (or `react-flow-smart-edge`).
-  Only needed for the *gnarly tail* (dense agentic harnesses); clean branchy/linear
-  workflows already render fine.
-- Visual polish: tune palette/spacing; possibly a TD-default for branchy flows;
+- **Smart edge-router (Tier 2 — deferred; the cheap shortcut was PROVEN insufficient,
+  2026-06-17).** Pathfind edges around nodes, handle-to-handle, so skip edges (a
+  dependency jumping intermediate nodes) and backward/loop edges don't draw through
+  boxes. The cheap rail-hint approach was prototyped (`assignSkipRails` — reroute a
+  box-crossing data edge to a side gutter) and **REVERTED**: it *regressed* the harness
+  (15→48, then 15→39 even restricted to same-column skips with verified-clear gutters),
+  because a rail moves only ONE segment while the short approach runs + cross-region
+  sprawl add as many crossings as they remove. So this genuinely needs full
+  obstacle-avoiding routing (custom A*/orthogonal, or `react-flow-smart-edge`); the
+  hierarchical obstacle map + the re-layout perf budget are the real risks. BUT after the
+  Tier-0 auto-direction default the residual is ~8% on the harness and **only in
+  advanced + collapse=none** — beautiful hides data lines and big workflows open
+  collapsed, so it is largely invisible in default use. Reads as POLISH, not a need.
+  Before investing, re-measure the crossing rate — a throwaway probe (sample each
+  rendered edge path against every leaf-card box, like `visual-invariants.pflow.md`
+  does for overlaps), or fold a crossings COUNT into that workflow as a reported metric.
+- Visual polish: tune palette/spacing;
   dashed (branch) edges can show a small dash-phase gap right at the connector stem
   tip (first dash starts a few px into the path — tune with `strokeDashoffset` if it
   bothers).

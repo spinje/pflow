@@ -17,6 +17,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
+import { autoDirection } from "../graph/direction";
 import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import { remapCollapsed, remapSelection } from "../graph/remap";
 import { useCameraNavigation } from "../hooks/useCameraNavigation";
@@ -76,7 +77,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // load-time camera instruction (read once, never written).
   const initialView = useMemo(() => readViewParams(window.location.search), []);
   const [density, setDensity] = useState<Density>(initialView.density);
-  const [direction, setDirection] = useState<Direction>(initialView.direction);
+  // Provisional LR until the contract arrives; when the URL carried no explicit
+  // `direction=`, the auto-direction effect below flips a dense pipeline to TD before
+  // the first layout settles (graph/direction.ts).
+  const [direction, setDirection] = useState<Direction>(initialView.direction ?? "LR");
   const [sourceOpen, setSourceOpen] = useState<boolean>(initialView.source);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
@@ -132,6 +136,23 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setSelectedId((s) => remapSelection(prev, graph, s));
     setCollapsed((c) => remapCollapsed(prev, graph, c));
   }, [graph]);
+
+  // Auto layout direction, decided ONCE per workflow when the contract arrives and ONLY
+  // when the URL carried no explicit `direction=` (initialView.direction === null): a
+  // dense pipeline opens TD so its ${ref} data dependencies don't thread horizontally
+  // through the cards (graph/direction.ts — measured 55%→8% edges-through-boxes on the
+  // harness). useLayoutEffect (pre-paint) so the flip lands before the first layout
+  // settles, not after a visible LR pass. The ref freezes the choice per workflow — a
+  // live-reload edit never re-rotates the canvas, and a user toggle (changeDirection,
+  // which sets a concrete value) is never overridden.
+  const autoDirectionFor = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!graph || initialView.direction !== null) return;
+    if (autoDirectionFor.current === workflow) return;
+    autoDirectionFor.current = workflow;
+    const auto = autoDirection(graph);
+    if (auto !== "LR") setDirection(auto); // LR is the seed — only a flip needs a setState
+  }, [graph, workflow, initialView.direction]);
 
   const [sourceFiles, setSourceFiles] = useState<SourceFiles | null>(null);
   const [sourceError, setSourceError] = useState<string | null>(null);

@@ -3957,3 +3957,33 @@ Two small panel polish items; frontend-only, zero Python/contract change.
 
 Gates: tsc clean; full web suite 475 (+8); bundle rebuilt + served. Visual layer
 rests on the user's eyes (browser tooling not wired in this worktree).
+
+### Auto-direction default (Tier 0) + skip-rail prototype REVERTED (2026-06-17, user-driven) ✅
+
+> Attacking "edges drawn THROUGH unrelated boxes" (the deferred smart edge-router).
+> Measured first with a THROWAWAY probe workflow (modeled on `visual-invariants.pflow.md`:
+> sample every rendered edge path against every leaf-card box; count + red-highlight
+> crossings) — used to take the readings below, then removed (not promoted: the metric
+> it serves is for the deferred router, and it overlapped visual-invariants).
+
+- **The reframing finding: DIRECTION dominates, not routing.** The plan-to-code harness
+  drew **55% of edges through a box in LR vs 8% in TD** (same 183 edges); a clean
+  workflow 0%. Predictor is DATA-EDGE DENSITY — a dense LOOPLESS workflow (changelog
+  42%) is as bad as a looped one, a sparse looped one (orchestrate 13%) is fine — split
+  clean at ~1.4 data/node.
+- **Tier 0 — auto-direction (SHIPPED, uncommitted):** `graph/direction.ts autoDirection`
+  opens a non-trivial (≥16 node) data-dense (≥1.4 data/node) workflow TD, else LR. Wired
+  as a one-shot-per-workflow GraphView `useLayoutEffect` mirroring auto-collapse (frozen
+  per workflow → a live-reload never re-rotates; explicit `direction=`/toolbar toggle
+  wins); `viewParams.direction` went nullable (absent = AUTO, like `collapse`). Harness
+  55%→8%, changelog 42%→22%, sparse workflows unchanged (re-measured with no
+  `direction=`). +6 `direction.test.ts` pins; 481 web tests green.
+- **Tier 1 — skip-rail pass PROTOTYPED then REVERTED (negative result, worth recording):**
+  `assignSkipRails` (post-layout, reroute a box-crossing data edge into a side gutter)
+  *regressed* the harness — 15→48 naive, 15→39 even after restricting to same-column
+  skips with verified-clear gutters. A rail hint moves only ONE segment; the short
+  approach RUNS + cross-region sprawl add as many crossings as they remove. The residual
+  genuinely needs full obstacle-avoiding routing (Tier 2) — no cheap rail shortcut.
+  Reverted via `git checkout HEAD --` on the 3 touched files (Tier-1 only; Tier-0 files
+  untouched). At ~8% (advanced+expanded ONLY — hidden by default), Tier 2 reads as polish.
+  Full reasoning + the Tier-2 risks: `visualization-requirements.md` → "Smart edge-router".
