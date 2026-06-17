@@ -188,6 +188,7 @@ class TestCriticalAPIWarningScenarios:
         warning = detect_api_warning("api", shared, node_type_name="MCPNode")
 
         assert warning == "API error: channel_not_found"
+
     def test_top_level_explicit_failure_flags_remain_type_agnostic(self):
         shared = {"calc": {"status": "error", "message": "Invalid input format"}}
 
