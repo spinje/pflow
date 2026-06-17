@@ -105,20 +105,35 @@ const ELK_DIRECTION: Record<Direction, string> = { LR: "RIGHT", TD: "DOWN" };
 // than TOP/RIGHT (user-tuned). These same gutters drive the nodeSize.minimum math
 // below, so a tall inputs sidebar still can't overflow — keep them the single source.
 const REGION_TOP = 32; // header divider → first node
-const REGION_RIGHT = 32; // body → right border
 const REGION_LEFT = 48; // inputs sidebar (or bare left border) → body
 const REGION_BOTTOM = 48; // body → outputs strip (or bare bottom border)
+// Extra breathing room between the inputs SIDEBAR and the body's first node (on top of
+// REGION_LEFT) — applies ONLY when an inputs sidebar is shown (user-tuned 2026-06-17).
+const IO_BODY_GAP = 80;
+// body → right border. Matched to the LEFT breathing gap (REGION_LEFT + IO_BODY_GAP) so
+// an inputs region's body sits with SYMMETRIC left/right margins — the right edge
+// mirrors the sidebar→body gap (user-tuned 2026-06-17).
+const REGION_RIGHT = REGION_LEFT + IO_BODY_GAP;
+
+/** Region LEFT padding: inputs sidebar + gutter (+ breathing room) when the region
+ *  shows an inputs sidebar, else the bare-border gutter. SINGLE SOURCE for groupPadding
+ *  (the ELK reservation), the minW clamp, AND the compactScopes de-center target — they
+ *  MUST agree or the body lands off the gutter. */
+function regionPadLeft(node: FlowNode): number {
+  return node.type === "group" && node.data.ioRowsVisible && node.data.inputs.length > 0
+    ? METRICS.ioSidebarW + REGION_LEFT + IO_BODY_GAP
+    : REGION_LEFT;
+}
 
 // Region padding reserves room for the chrome GroupNode draws around the body:
 // the header (always), the inputs SIDEBAR on the left and the outputs strip at the
 // bottom (when the group renders its IO rows) — so the body's first layer lays out
 // BESIDE the sidebar, not below it, and nothing overlaps the strip.
 function groupPadding(node: FlowNode): string {
-  let left = REGION_LEFT;
+  const left = regionPadLeft(node);
   let bottom = REGION_BOTTOM;
-  if (node.type === "group" && node.data.ioRowsVisible) {
-    if (node.data.inputs.length > 0) left = METRICS.ioSidebarW + REGION_LEFT;
-    if (node.data.outputs.length > 0) bottom = METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + REGION_BOTTOM;
+  if (node.type === "group" && node.data.ioRowsVisible && node.data.outputs.length > 0) {
+    bottom = METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + REGION_BOTTOM;
   }
   return `[top=${METRICS.groupHeaderH + REGION_TOP},left=${left},bottom=${bottom},right=${REGION_RIGHT}]`;
 }
@@ -293,7 +308,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
       // direction DOWN, elkjs applies nodeSize.minimum in its INTERNAL (transposed)
       // coordinates — pass (minH, minW) in TD, (minW, minH) in LR.
       if (node.type === "group" && node.data.ioRowsVisible && node.data.inputs.length > 0) {
-        const minW = METRICS.ioSidebarW + REGION_LEFT + 230 + REGION_RIGHT;
+        const minW = regionPadLeft(node) + 230 + REGION_RIGHT;
         const minH =
           METRICS.groupHeaderH + REGION_TOP + METRICS.ioLabelH + node.data.inputs.length * METRICS.rowH + REGION_BOTTOM +
           (node.data.outputs.length > 0 ? METRICS.ioLabelH + node.data.outputs.length * METRICS.rowH + REGION_BOTTOM : REGION_BOTTOM);
@@ -396,7 +411,67 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   // spine pass re-aligns each pure sequential chain's anchors to its head
   // (graph/spine.ts); running it HERE means the layout cache, camera anchoring
   // and the animation all see the aligned positions.
-  return alignSpine(positioned, edges, direction);
+  return compactScopes(alignSpine(positioned, edges, direction), direction);
+}
+
+/** PROTOTYPE (TD only) — de-center expanded regions.
+ *
+ *  ELK cannot put a fixed port on a compound node (the INCLUDE_CHILDREN crash, see
+ *  above), so it anchors an expanded region's trunk edge at the region's box CENTER,
+ *  not the icon column where the handle renders. A narrow trunk node above a WIDE
+ *  region is therefore centered OVER it — pushed right by ~half the region's width —
+ *  and alignSpine then aligns the region to that pushed column, slamming its right edge
+ *  into the parent border. Net: dead space on the left, content touching the right
+ *  (measured on run-from-plan: execute-plan body 770px from its left border, only
+ *  ~209px of it the inputs sidebar).
+ *
+ *  This pass removes the per-scope dead space AFTER alignSpine has straightened the
+ *  trunk: per expanded-region scope (DEEPEST first, so a parent sees its child regions
+ *  at their already-shrunk widths), shift every body child left so the leftmost sits at
+ *  the region's configured left padding, then shrink the region to its content + right
+ *  padding. The shift is UNIFORM per scope, so alignSpine's straightening is preserved;
+ *  IO sidebar rows render via CSS (not child nodes), so they stay pinned at the border. */
+function compactScopes(nodes: FlowNode[], direction: Direction): FlowNode[] {
+  if (direction !== "TD") return nodes; // prototype: TD (the screenshot case) only
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const childrenByParent = new Map<string, FlowNode[]>();
+  for (const n of nodes) {
+    if (!n.parentId) continue;
+    (childrenByParent.get(n.parentId) ?? childrenByParent.set(n.parentId, []).get(n.parentId)!).push(n);
+  }
+  const depthOf = (n: FlowNode): number => {
+    let d = 0;
+    for (let p = n.parentId; p; p = byId.get(p)?.parentId) d++;
+    return d;
+  };
+  const regions = nodes
+    .filter((n) => n.type === "group" && !n.data.collapsed && (childrenByParent.get(n.id)?.length ?? 0) > 0)
+    .sort((a, b) => depthOf(b) - depthOf(a));
+
+  const shiftById = new Map<string, number>(); // parent-relative x shift (negative = left)
+  const widthById = new Map<string, number>();
+  for (const region of regions) {
+    const kids = childrenByParent.get(region.id)!;
+    const padLeft = regionPadLeft(region);
+    const minLeft = Math.min(...kids.map((k) => k.position.x));
+    const shift = minLeft - padLeft; // dead space on the region's left
+    if (shift <= 1) continue;
+    for (const k of kids) shiftById.set(k.id, -shift);
+    const maxRight = Math.max(...kids.map((k) => k.position.x - shift + (widthById.get(k.id) ?? k.width ?? 0)));
+    widthById.set(region.id, maxRight + REGION_RIGHT);
+  }
+  if (shiftById.size === 0) return nodes;
+
+  return nodes.map((n) => {
+    const dx = shiftById.get(n.id);
+    const w = widthById.get(n.id);
+    if (dx === undefined && w === undefined) return n;
+    return {
+      ...n,
+      position: dx !== undefined ? { x: n.position.x + dx, y: n.position.y } : n.position,
+      ...(w !== undefined ? { width: w, style: { ...n.style, width: w } } : {}),
+    };
+  });
 }
 
 /** Reorder a sibling list so each fork's targets follow their branch-edge order

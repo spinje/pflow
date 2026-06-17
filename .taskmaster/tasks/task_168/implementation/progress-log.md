@@ -3987,3 +3987,31 @@ rests on the user's eyes (browser tooling not wired in this worktree).
   Reverted via `git checkout HEAD --` on the 3 touched files (Tier-1 only; Tier-0 files
   untouched). At ~8% (advanced+expanded ONLY — hidden by default), Tier 2 reads as polish.
   Full reasoning + the Tier-2 risks: `visualization-requirements.md` → "Smart edge-router".
+
+### Nested-region de-center + symmetric inputs gap; edge-routing experiments reverted (2026-06-17, user-driven) ✅
+
+All `layout.ts`; verified via the screenshot/inspect skill + 481 web tests.
+
+- **De-center (`compactScopes`, post-`alignSpine`):** nested expanded sub-workflow bodies
+  were shoved right / the deepest one touched the container border. Root cause (measured):
+  an expanded region carries NO ELK port (the compound-port crash), so ELK anchors its
+  trunk edge at the region's box CENTER — a narrow trunk above a WIDE region gets centered
+  over it (~half its width of dead space on the left), and `alignSpine` then aligns the
+  region to that pushed column, slamming its right edge into the parent border. New pass,
+  per expanded-region scope (DEEPEST first): shift the body left to the configured left
+  padding, shrink the region to content + right padding. Kills the left dead space AND
+  restores the right gap; the uniform per-scope shift preserves alignSpine's straightening.
+  Measured on run-from-plan: execute-plan body gap 770px → padding; final-gate right pad
+  0px (touching) → clear.
+- **Symmetric inputs gap (`IO_BODY_GAP`, `regionPadLeft`, derived `REGION_RIGHT`):** the
+  inputs-sidebar→body gutter is `REGION_LEFT + IO_BODY_GAP`, and `REGION_RIGHT` is DERIVED
+  to equal it so an inputs region's body sits with symmetric left/right margins (one knob
+  moves both; user-tuned `IO_BODY_GAP` 24→80 → ~128px each side).
+- **Data-edge routing in tight channels — experiments TRIED then REVERTED (negative
+  result, worth recording):** the boxy/wrapping `${ref}` lines the user kept catching.
+  Tried, all measured: backward-edge longer stub, forward-edge stub-cap + rail clamp,
+  bezier curves (user: mixed aesthetics, reverted), near-sharp corner radius (no visible
+  change — corners were already auto-clamped tight). None fixed it: the boxiness is the
+  lane-staggered orthogonal routing of many parallel lines through a narrow row-to-row
+  channel (staircase-vs-crossings tension) — genuinely the deferred smart edge-router
+  (Tier 2 above), not a tunable knob. `DataEdge.tsx` reverted to baseline.
