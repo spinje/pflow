@@ -3,16 +3,18 @@
 // ElementContent[] per source line — the source pane renders each line as a
 // `.src-line` row, so the line count MUST equal `text.split("\n").length`
 // (asserted below in dev). Two tiers:
-//   decorateLinesSync(text)            — instant: body tokens + fence info
-//     colored, fence CONTENT plain (+ teal refs). No shiki, so it paints now.
-//   buildDecoratedLines(text, hl)      — full: the above, with fence content
-//     highlighted in its INFERRED grammar (prompt→markdown, command→bash, …).
+//   decorateLinesSync(text)            — instant: headings/keys/fence-info
+//     colored, fence + PROSE content plain (+ teal refs). No shiki, paints now.
+//   buildDecoratedLines(text, hl)      — full: the above, with fence AND prose
+//     content highlighted in its grammar (prompt→markdown, command→bash, prose
+//     →markdown). Prose is colored markdown SOURCE + teal refs (like prompts).
 //
-// The scheme is "Canvas language" (the user pick): type-values + node-name
+// The scheme is "Canvas language" (the user pick): `- type:` values + node-name
 // headings take their canvas KIND color (format.kindColor — one source of
-// truth), `${refs}` are teal, structural keys are muted. Fences stay faithful
-// to the file (the ```python code lines show), with the language word
-// kind-colored and the pflow role word (code/command/prompt/…) muted.
+// truth); input/output headings take a faded IO color (CSS .src-io-*); `${refs}`
+// are teal; structural keys are muted. Fences and description PROSE stay faithful
+// to the file (the ```python lines / the `**bold**` source show), highlighted in
+// their grammar — the language word kind-colored, the pflow role word muted.
 
 import type { ElementContent, Properties, Root } from "hast";
 
@@ -31,8 +33,8 @@ const REF_RE = /\$\{[^}]+\}/g;
 
 // --- hast helpers ---
 const txt = (value: string): ElementContent => ({ type: "text", value });
-function span(className: string, children: ElementContent[], style?: string): ElementContent {
-  const properties: Properties = { className: [className] };
+function span(className: string | string[], children: ElementContent[], style?: string): ElementContent {
+  const properties: Properties = { className: Array.isArray(className) ? className : [className] };
   if (style) properties.style = style;
   return { type: "element", tagName: "span", properties, children };
 }
@@ -54,7 +56,7 @@ function refSegments(text: string): ElementContent[] {
 }
 
 /** Wrap every `${ref}` in shiki's hast output (text nodes) with the teal span,
- *  in place — refs inside a prompt are the point, like the markRefs precedent. */
+ *  in place — refs inside a prompt/prose are the point, like markRefs. */
 function markAllRefs(nodes: ElementContent[]): void {
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
@@ -79,8 +81,18 @@ export function fenceGrammar(info: string): string | null {
   return null;
 }
 
+// A `###`+ heading's color source: a node heading takes its block's `- type:`
+// KIND color; an input/output heading (under `## Inputs`/`## Outputs`) takes a
+// faded IO color instead — its `type:` is a DATA type (string/integer/…) which
+// is not a node kind and would otherwise fall through to grey.
+interface HeadingColor {
+  kind?: string;
+  io?: "input" | "output";
+}
+
 type LineSpec =
-  | { t: "body"; text: string; headingKind: string | null }
+  | { t: "body"; text: string; headingColor: HeadingColor | null }
+  | { t: "prose"; bi: number; ci: number }
   | { t: "fopen"; fence: string; info: string }
   | { t: "fclose"; text: string }
   | { t: "fbody"; fi: number; ci: number };
@@ -90,17 +102,43 @@ interface FenceBlock {
   content: string[];
 }
 
-/** For each `###`+ node heading, the `type:` value declared in its block (the
- *  heading's KIND color). Forward-scan to the next heading; `null` if none. */
-function headingKinds(lines: string[]): Map<number, string> {
-  const map = new Map<number, string>();
+interface ProseBlock {
+  content: string[];
+}
+
+const FENCE_OPEN_RE = /^(`{3,}|~{3,})/;
+const HEADING_RE = /^#{1,6}(\s|$)/;
+const KEY_RE = /^\s*[-*]\s+[A-Za-z][\w-]*\s*:/;
+
+/** A line that's neither blank, a heading, a `- key:` line, nor a fence open —
+ *  i.e. description prose, highlighted as markdown SOURCE (+ teal refs). */
+function isProseLine(line: string): boolean {
+  return line.trim() !== "" && !HEADING_RE.test(line) && !KEY_RE.test(line) && !FENCE_OPEN_RE.test(line);
+}
+
+/** Per `###`+ heading line, how to color it: by enclosing `## Inputs`/`##
+ *  Outputs` section (io), else by the `type:` kind declared in its block.
+ *  Forward-scan the block to the next heading; absent → no color (grey). */
+function headingColors(lines: string[]): Map<number, HeadingColor> {
+  const map = new Map<number, HeadingColor>();
+  let io: "input" | "output" | null = null;
   for (let i = 0; i < lines.length; i++) {
+    const sec = /^##\s+(\S+)/.exec(lines[i]!);
+    if (sec) {
+      const name = sec[1]!.toLowerCase();
+      io = name === "inputs" ? "input" : name === "outputs" ? "output" : null;
+      continue; // a `##` line is a section heading, never a node
+    }
     if (!/^#{3,}\s+\S/.test(lines[i]!)) continue;
+    if (io) {
+      map.set(i, { io });
+      continue;
+    }
     for (let j = i + 1; j < lines.length; j++) {
       if (/^#{1,6}\s/.test(lines[j]!)) break;
       const t = /^\s*[-*]\s+type\s*:\s*(\S+)/.exec(lines[j]!);
       if (t) {
-        map.set(i, t[1]!);
+        map.set(i, { kind: t[1]! });
         break;
       }
     }
@@ -108,14 +146,17 @@ function headingKinds(lines: string[]): Map<number, string> {
   return map;
 }
 
-/** Walk lines into specs (one per source line) + the fence content blocks.
+/** Walk lines into specs (one per source line) + the fence/prose content blocks.
  *  Fences match the PARSER's rule: 3+ of ` or ~, closing only on a same-char
- *  fence of >= length — so a ````prompt block may contain inner ```. */
-function scan(text: string): { specs: LineSpec[]; fences: FenceBlock[] } {
+ *  fence of >= length — so a ````prompt block may contain inner ```. Contiguous
+ *  PROSE lines group into a markdown block (broken by headings/keys/blanks —
+ *  markdown inlines are per-paragraph). */
+function scan(text: string): { specs: LineSpec[]; fences: FenceBlock[]; proseBlocks: ProseBlock[] } {
   const lines = text.split("\n");
-  const heads = headingKinds(lines);
+  const heads = headingColors(lines);
   const specs: LineSpec[] = [];
   const fences: FenceBlock[] = [];
+  const proseBlocks: ProseBlock[] = [];
   let i = 0;
   while (i < lines.length) {
     const open = /^(`{3,}|~{3,})(.*)$/.exec(lines[i]!);
@@ -144,12 +185,23 @@ function scan(text: string): { specs: LineSpec[]; fences: FenceBlock[] } {
         specs.push({ t: "fclose", text: closeText });
         i++;
       }
+    } else if (isProseLine(lines[i]!)) {
+      const bi = proseBlocks.length;
+      const content: string[] = [];
+      let ci = 0;
+      while (i < lines.length && isProseLine(lines[i]!)) {
+        content.push(lines[i]!);
+        specs.push({ t: "prose", bi, ci });
+        ci++;
+        i++;
+      }
+      proseBlocks.push({ content });
     } else {
-      specs.push({ t: "body", text: lines[i]!, headingKind: heads.get(i) ?? null });
+      specs.push({ t: "body", text: lines[i]!, headingColor: heads.get(i) ?? null });
       i++;
     }
   }
-  return { specs, fences };
+  return { specs, fences, proseBlocks };
 }
 
 function colorValue(key: string, value: string): ElementContent[] {
@@ -163,8 +215,9 @@ function colorValue(key: string, value: string): ElementContent[] {
   return refSegments(value);
 }
 
-/** Decorate one BODY line (outside any fence). */
-function decorateBody(text: string, headingKind: string | null): ElementContent[] {
+/** Decorate one BODY line: a heading, a `- key:` line, or a blank. Prose is
+ *  handled as markdown blocks (never here). */
+function decorateBody(text: string, headingColor: HeadingColor | null): ElementContent[] {
   const h = /^(#{1,6})(\s*)(.*)$/.exec(text);
   if (h) {
     const [, hashes, sp, rest] = h;
@@ -173,7 +226,8 @@ function decorateBody(text: string, headingKind: string | null): ElementContent[
     if (!rest) return out;
     if (hashes!.length === 1) out.push(span("src-title", [txt(rest)]));
     else if (hashes!.length === 2) out.push(span("src-section", [txt(rest)]));
-    else out.push(span("src-node", [txt(rest)], headingKind ? `color:${kindColor(headingKind)}` : undefined));
+    else if (headingColor?.io) out.push(span(["src-node", `src-io-${headingColor.io}`], [txt(rest)]));
+    else out.push(span("src-node", [txt(rest)], headingColor?.kind ? `color:${kindColor(headingColor.kind)}` : undefined));
     return out;
   }
   const b = /^(\s*[-*]\s+)([A-Za-z][\w-]*)(\s*:)(.*)$/.exec(text);
@@ -217,11 +271,13 @@ function shikiContentLines(root: Root): ElementContent[][] | null {
   return lines;
 }
 
-function assemble(specs: LineSpec[], fenceLines: ElementContent[][][]): ElementContent[][] {
+function assemble(specs: LineSpec[], fenceLines: ElementContent[][][], proseLines: ElementContent[][][]): ElementContent[][] {
   return specs.map((s) => {
     switch (s.t) {
       case "body":
-        return decorateBody(s.text, s.headingKind);
+        return decorateBody(s.text, s.headingColor);
+      case "prose":
+        return proseLines[s.bi]?.[s.ci] ?? [];
       case "fopen":
         return decorateFenceOpen(s.fence, s.info);
       case "fclose":
@@ -238,37 +294,47 @@ function assertLineCount(text: string, lines: ElementContent[][]): void {
   }
 }
 
-/** Instant tier: body + fence-info colored, fence content plain (+ teal refs). */
+/** Instant tier: headings/keys/fence-info colored, fence + prose content plain
+ *  (+ teal refs) — no shiki, so it paints without waiting. */
 export function decorateLinesSync(text: string): ElementContent[][] {
-  const { specs, fences } = scan(text);
+  const { specs, fences, proseBlocks } = scan(text);
   const fenceLines = fences.map((f) => f.content.map(refSegments));
-  const lines = assemble(specs, fenceLines);
+  const proseLines = proseBlocks.map((b) => b.content.map(refSegments));
+  const lines = assemble(specs, fenceLines, proseLines);
   assertLineCount(text, lines);
   return lines;
 }
 
-/** Full tier: fence content highlighted in its inferred grammar (refs tealed
- *  in markdown fences). Fail-closed per fence — a missing/mismatched shiki
- *  result degrades to plain content (+ refs), never throws, never misaligns. */
+/** Highlight a block's content in `grammar` (markdown blocks get refs tealed),
+ *  fail-closed to plain content + teal refs on null / a line-count mismatch —
+ *  never throws, never misaligns the per-line count. */
+async function highlightBlock(
+  content: string[],
+  grammar: string | null,
+  highlight: (code: string, lang: string) => Promise<Root | null>,
+): Promise<ElementContent[][]> {
+  if (grammar) {
+    const root = await highlight(content.join("\n"), grammar);
+    const shiki = root ? shikiContentLines(root) : null;
+    if (shiki && shiki.length === content.length) {
+      if (grammar === "markdown") shiki.forEach(markAllRefs);
+      return shiki;
+    }
+  }
+  return content.map(refSegments);
+}
+
+/** Full tier: fence content highlighted in its inferred grammar AND description
+ *  prose highlighted as markdown — both with refs tealed, both fail-closed per
+ *  block to plain content (+ refs). */
 export async function buildDecoratedLines(
   text: string,
   highlight: (code: string, lang: string) => Promise<Root | null>,
 ): Promise<ElementContent[][]> {
-  const { specs, fences } = scan(text);
-  const fenceLines = await Promise.all(
-    fences.map(async (f) => {
-      if (f.grammar) {
-        const root = await highlight(f.content.join("\n"), f.grammar);
-        const shiki = root ? shikiContentLines(root) : null;
-        if (shiki && shiki.length === f.content.length) {
-          if (f.grammar === "markdown") shiki.forEach(markAllRefs);
-          return shiki;
-        }
-      }
-      return f.content.map(refSegments);
-    }),
-  );
-  const lines = assemble(specs, fenceLines);
+  const { specs, fences, proseBlocks } = scan(text);
+  const fenceLines = await Promise.all(fences.map((f) => highlightBlock(f.content, f.grammar, highlight)));
+  const proseLines = await Promise.all(proseBlocks.map((b) => highlightBlock(b.content, "markdown", highlight)));
+  const lines = assemble(specs, fenceLines, proseLines);
   assertLineCount(text, lines);
   return lines;
 }

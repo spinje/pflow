@@ -100,6 +100,50 @@ describe("decorateLinesSync", () => {
     expect(styleOf(lang)).toBe(`color:${kindColor("shell")}`);
     expect(textOf(firstWithClass(open, "src-role")!)).toBe("command"); // muted role
   });
+
+  it("renders a prose line plain (+ teal refs) — verbatim, no kind/key chrome", () => {
+    const prose = lines[3]!; // "Fetch data." — a description line
+    expect(lineText(prose)).toBe("Fetch data.");
+    expect(firstWithClass(prose, "src-key")).toBeUndefined();
+    expect(firstWithClass(prose, "src-node")).toBeUndefined();
+  });
+});
+
+describe("input/output heading colors (section-aware)", () => {
+  const IO_SAMPLE = [
+    "## Inputs", // 1
+    "", // 2
+    "### repo_dir", // 3
+    "Path to the repo.", // 4
+    "- type: string", // 5
+    "", // 6
+    "## Steps", // 7
+    "### build", // 8
+    "- type: shell", // 9
+    "", // 10
+    "## Outputs", // 11
+    "### pr_url", // 12
+  ].join("\n");
+  const lines = decorateLinesSync(IO_SAMPLE);
+
+  it("colors an input heading with the faded IO class, NOT an inline kind color", () => {
+    const head = lines[2]!; // "### repo_dir" under "## Inputs"
+    const node = firstWithClass(head, "src-node");
+    expect(textOf(node!)).toBe("repo_dir");
+    expect(firstWithClass(head, "src-io-input")).toBeTruthy();
+    expect(styleOf(node)).toBeUndefined(); // not kindColor("string") → grey
+  });
+
+  it("colors an output heading with the faded IO class", () => {
+    expect(firstWithClass(lines[11]!, "src-io-output")).toBeTruthy(); // "### pr_url"
+  });
+
+  it("still colors a `## Steps` node heading by its declared kind, no IO class", () => {
+    const head = lines[7]!; // "### build" under "## Steps"
+    expect(styleOf(firstWithClass(head, "src-node"))).toBe(`color:${kindColor("shell")}`);
+    expect(firstWithClass(head, "src-io-input")).toBeUndefined();
+    expect(firstWithClass(head, "src-io-output")).toBeUndefined();
+  });
 });
 
 describe("length-aware fence nesting", () => {
@@ -151,5 +195,18 @@ describe("buildDecoratedLines", () => {
     expect(lines.length).toBe(4);
     expect(lineText(lines[1]!)).toBe("x = 1"); // verbatim, no shiki tokens
     expect(spansWithClass(lines[1]!, "tok-python").length).toBe(0);
+  });
+
+  it("highlights a prose run as markdown and teals its refs; headings/keys stay canvas", async () => {
+    const src = ["## Steps", "Run `make test` for ${repo_dir}.", "- type: shell"].join("\n");
+    const lines = await buildDecoratedLines(src, stub);
+    expect(lines.length).toBe(3);
+    const prose = lines[1]!; // the description line → markdown-highlighted
+    expect(spansWithClass(prose, "tok-markdown").length).toBe(1); // shiki markdown ran on prose
+    expect(spansWithClass(prose, "src-ref").map(textOf)).toEqual(["${repo_dir}"]); // ref still tealed
+    // the `## Steps` heading and `- type:` key keep canvas decoration, never markdown
+    expect(spansWithClass(lines[0]!, "tok-markdown").length).toBe(0);
+    expect(spansWithClass(lines[2]!, "tok-markdown").length).toBe(0);
+    expect(firstWithClass(lines[2]!, "src-key")).toBeTruthy();
   });
 });

@@ -249,9 +249,14 @@ Tests sit beside their subject.
   (`prompt`/`cache`→markdown, `command`→bash). That inference is the reason this is
   per-segment, NOT one whole-file shiki pass: shiki's markdown embedding can't recognize
   the role-only info strings (`prompt`/`command`/`cache`) and would leave them uncolored.
-  Two tiers: an instant sync pass (body + fence-info colored) then an async pass upgrading
-  fence content via shiki, fail-closed per fence, line-count asserted. Description PROSE
-  stays plain (a source VIEW, not a markdown renderer — the accepted tradeoff).
+  Two tiers: an instant sync pass (headings/keys/fence-info colored, fence + prose content
+  plain + teal refs) then an async pass upgrading fence AND prose content via shiki,
+  fail-closed per block, line-count asserted. Description PROSE is highlighted as markdown
+  SOURCE (`**bold**`/`` `code` `` shown, not rendered) + teal refs — the same treatment as a
+  prompt fence; contiguous prose runs (broken by headings/keys/blanks) are the markdown
+  blocks. Input/output `### name` headings take a faded IO color (`.src-io-input`/`-output`,
+  index.css) — their `- type:` is a DATA type (string/integer), not a node kind, so the
+  kind-color path would leave them grey.
   **No diff view belongs here**: this UI is comprehension-only, while the user's
   IDE/unstaged-diff staging loop is the approval surface. A ROOT io-card
   selection syncs to its `## Inputs`/`## Outputs` SECTION HEADING found in the

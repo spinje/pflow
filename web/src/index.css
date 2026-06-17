@@ -1359,6 +1359,15 @@ button.active {
 .src-node {
   font-weight: 600;
 }
+/* Input/output `### name` headings echo their `## Inputs`/`## Outputs` SECTION
+   color (the teal --ref that .src-section uses), muted toward --text-faint so
+   each reads as a dimmer variant of its section heading. Their `- type:` is a
+   DATA type (string/integer), not a node kind, so the kind-color path would
+   otherwise leave them grey. */
+.src-io-input,
+.src-io-output {
+  color: color-mix(in srgb, var(--ref) 62%, var(--text-faint));
+}
 .read-panel-header {
   display: flex;
   justify-content: space-between;
