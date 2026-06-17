@@ -4,7 +4,8 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import type { ElementContent } from "hast";
 
 import type { RFGraph, RFNode, SourceFiles } from "../types";
-import { codeChildren, highlight } from "../utils/highlight";
+import { buildDecoratedLines, decorateLinesSync } from "../graph/sourceDecorate";
+import { highlight } from "../utils/highlight";
 import {
   breadcrumbFor,
   fileChainFor,
@@ -139,12 +140,9 @@ export function SourcePane({
     }
     setHighlighted((prev) => (prev?.file === displayedFile && prev.text === text ? prev : null));
     let cancelled = false;
-    void highlight(text, "markdown").then((root) => {
-      if (cancelled || !root) return;
-      const children = codeChildren(root);
-      if (!children) return;
-      const lines = hastLines(children);
-      if (lines.length === 0) return;
+    void buildDecoratedLines(text, highlight).then((perLine) => {
+      if (cancelled) return;
+      const lines = toLineNodes(perLine);
       highlightCache.current.set(displayedFile, { text, lines });
       setHighlighted({ file: displayedFile, text, lines });
     });
@@ -161,7 +159,11 @@ export function SourcePane({
     lineRefs.current.get(activeLine)?.scrollIntoView?.({ block: "center" });
   }, [activeLine, displayedFile]);
 
-  const renderedLines = highlighted?.file === displayedFile && highlighted.text === text ? highlighted.lines : plainLines(text ?? "");
+  // Instant tier: body tokens + fence info colored without waiting for shiki
+  // (no async, no flash of raw text); the effect above upgrades fence CONTENT to
+  // its grammar once shiki resolves.
+  const instantLines = useMemo(() => toLineNodes(decorateLinesSync(text ?? "")), [text]);
+  const renderedLines = highlighted?.file === displayedFile && highlighted.text === text ? highlighted.lines : instantLines;
   // The owning node's whole authored block gets a barely-visible extent tint;
   // the active line itself keeps the stronger mark on top of it.
   const activeRange = useMemo(() => {
@@ -265,24 +267,9 @@ function sourceCrumbs(file: string, selectedNode: RFNode | null, graph: RFGraph,
   return fileChainFor(file, graph, workflowName);
 }
 
-function hastLines(children: ElementContent[]): ReactNode[] {
-  const lines: ReactNode[] = [];
-  for (const child of children) {
-    if (child.type !== "element" || child.tagName !== "span") continue;
-    const classes = classList(child.properties?.className ?? child.properties?.class);
-    if (!classes.includes("line")) continue;
-    lines.push(toJsxRuntime({ type: "root", children: child.children }, { Fragment, jsx, jsxs }));
-  }
-  return lines;
-}
-
-function classList(className: unknown): string[] {
-  if (Array.isArray(className)) return className.filter((item): item is string => typeof item === "string");
-  return typeof className === "string" ? className.split(/\s+/).filter(Boolean) : [];
-}
-
-function plainLines(text: string): ReactNode[] {
-  return text.split("\n");
+/** One ReactNode per source line, from the decoration module's per-line hast. */
+function toLineNodes(perLine: ElementContent[][]): ReactNode[] {
+  return perLine.map((children) => toJsxRuntime({ type: "root", children }, { Fragment, jsx, jsxs }));
 }
 
 function initialFile(source: SourceFiles): string | null {

@@ -25,6 +25,12 @@ export function CodeBlock({
   lang: string | null;
   highlightRef?: string;
 }): JSX.Element {
+  // Markdown (prompts, cached prefix) and plain values teal ALL their refs — the
+  // canvas-language treatment the source pane uses. Code/shell/yaml/json values do
+  // NOT (shiki owns them; a bash variable is not a pflow ref), exactly as the
+  // source pane leaves those fences to their grammar.
+  const tealRefs = lang === "markdown" || lang === null;
+
   // The highlighted tree is keyed by its inputs: a re-render with new props must
   // never paint a stale highlight of the OLD value while the effect catches up.
   const key = `${lang ?? ""}\u0000${highlightRef ?? ""}\u0000${code}`;
@@ -36,19 +42,18 @@ export function CodeBlock({
     let cancelled = false;
     void highlight(code, lang).then((root) => {
       if (cancelled || !root) return;
-      if (highlightRef) {
-        // The count rule: swap only when every plain-text mark landed in the
-        // hast (expected === 0 means marks add nothing, so the swap is free).
-        const expected = parseTemplate(code).filter((s) => s.isRef && refMatchesHighlight(s.text, highlightRef)).length;
-        if (markRefs(root, highlightRef) !== expected) return;
-      }
+      // The count rule (highlightRef only): swap only when every plain-text mark
+      // landed in the hast. tealRest decoration is best-effort and never gates.
+      const expected = highlightRef ? parseTemplate(code).filter((s) => s.isRef && refMatchesHighlight(s.text, highlightRef)).length : 0;
+      const landed = markRefs(root, highlightRef, { tealRest: tealRefs });
+      if (highlightRef && landed !== expected) return;
       const children = codeChildren(root);
       if (children) setHighlighted({ key, nodes: children });
     });
     return () => {
       cancelled = true;
     };
-  }, [code, lang, highlightRef, key]);
+  }, [code, lang, highlightRef, key, tealRefs]);
 
   if (nodes) {
     // ONE <pre> — the hast <code>'s children render inside OUR container so the
@@ -63,13 +68,23 @@ export function CodeBlock({
 
   return (
     <pre className="read-param-value">
-      {highlightRef
+      {highlightRef != null || tealRefs
         ? parseTemplate(code).map((seg, i) => {
             if (!seg.isRef) return seg.text;
-            return refMatchesHighlight(seg.text, highlightRef) ? (
-              <mark className="ref-mark" key={i}>{`\${${seg.text}}`}</mark>
+            const t = `\${${seg.text}}`;
+            if (highlightRef != null && refMatchesHighlight(seg.text, highlightRef)) {
+              return (
+                <mark className="ref-mark" key={i}>
+                  {t}
+                </mark>
+              );
+            }
+            return tealRefs ? (
+              <span className="src-ref" key={i}>
+                {t}
+              </span>
             ) : (
-              `\${${seg.text}}`
+              t
             );
           })
         : code}

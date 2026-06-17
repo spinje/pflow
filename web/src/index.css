@@ -1332,6 +1332,33 @@ button.active {
   width: calc(var(--source-w, 460px) - 72px);
   padding-right: 0;
 }
+/* Canvas-language source coloring (graph/sourceDecorate.ts): type-values +
+   node-name headings carry an inline kind color (format.kindColor); the rest
+   reuse the canvas palette. Refs teal, structural keys/roles muted. */
+.src-ref {
+  color: var(--ref);
+}
+.src-key,
+.src-role {
+  color: var(--text-muted);
+}
+.src-hash {
+  color: var(--text-faint);
+}
+.src-fence {
+  color: var(--text-faint);
+}
+.src-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.src-section {
+  color: var(--ref);
+  font-weight: 600;
+}
+.src-node {
+  font-weight: 600;
+}
 .read-panel-header {
   display: flex;
   justify-content: space-between;

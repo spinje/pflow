@@ -87,4 +87,32 @@ describe("CodeBlock", () => {
     expect(marks).toEqual(["${a.b}"]);
     expect(container.querySelector("span.tok")).toBeTruthy();
   });
+
+  it("teals EVERY ${ref} in a markdown value (no highlightRef) — the canvas language", () => {
+    vi.mocked(highlight).mockReturnValue(new Promise(() => {})); // stay on the sync plain path
+    const { container } = render(<CodeBlock code={"Use ${a.b} and ${c.d}"} lang="markdown" />);
+    expect([...container.querySelectorAll("span.src-ref")].map((s) => s.textContent)).toEqual(["${a.b}", "${c.d}"]);
+    expect(container.querySelectorAll("mark.ref-mark")).toHaveLength(0);
+  });
+
+  it("with highlightRef in markdown: the selected ref is the bright mark, the rest teal", () => {
+    vi.mocked(highlight).mockReturnValue(new Promise(() => {}));
+    const { container } = render(<CodeBlock code={"Use ${a.b} and ${c.d}"} lang="markdown" highlightRef="a.b" />);
+    expect([...container.querySelectorAll("mark.ref-mark")].map((m) => m.textContent)).toEqual(["${a.b}"]);
+    expect([...container.querySelectorAll("span.src-ref")].map((s) => s.textContent)).toEqual(["${c.d}"]);
+  });
+
+  it("does NOT teal refs in a code value — shiki owns it (a bash ${VAR} is not a pflow ref)", () => {
+    vi.mocked(highlight).mockReturnValue(new Promise(() => {}));
+    const { container } = render(<CodeBlock code={"x = ${a.b}"} lang="python" />);
+    expect(container.querySelectorAll("span.src-ref")).toHaveLength(0);
+    expect(container.querySelector("pre.read-param-value")!.textContent).toBe("x = ${a.b}");
+  });
+
+  it("teals refs in the shiki hast once it swaps in (markdown)", async () => {
+    vi.mocked(highlight).mockResolvedValue(shikiRoot(el("span", [text("Use ${a.b}")], ["tok"])));
+    const { container } = render(<CodeBlock code={"Use ${a.b}"} lang="markdown" />);
+    await waitFor(() => expect(container.querySelector("pre.shiki-host")).toBeTruthy());
+    expect([...container.querySelectorAll("span.src-ref")].map((s) => s.textContent)).toEqual(["${a.b}"]);
+  });
 });

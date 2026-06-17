@@ -123,7 +123,9 @@ describe("SourcePane", () => {
     expect(sourceLine(container, 5).querySelector(".src-gutter")?.textContent).toBe("5");
   });
 
-  it("upgrades to highlighted Shiki line spans when they arrive", async () => {
+  it("decorates body tokens instantly and upgrades fence CONTENT when shiki resolves", async () => {
+    const text = ["## Steps", "", "### fetch", "- type: shell", "- inputs: ${data}", "", "```shell command", "echo ${repo}", "```"].join("\n");
+    // shiki stub for the one-line fence body "echo ${repo}"
     vi.mocked(highlight).mockResolvedValueOnce({
       type: "root",
       children: [
@@ -141,14 +143,7 @@ describe("SourcePane", () => {
                   type: "element",
                   tagName: "span",
                   properties: { class: "line" },
-                  children: [
-                    {
-                      type: "element",
-                      tagName: "span",
-                      properties: { style: "color:#ff7b72" },
-                      children: [{ type: "text", value: "# Demo" }],
-                    },
-                  ],
+                  children: [{ type: "element", tagName: "span", properties: { style: "color:#79c0ff" }, children: [{ type: "text", value: "echo ${repo}" }] }],
                 },
               ],
             },
@@ -156,10 +151,21 @@ describe("SourcePane", () => {
         },
       ],
     } satisfies Root);
-    const { container } = renderPane();
+    const { container } = renderPane({ source: { root: ROOT_FILE, files: { [ROOT_FILE]: text } } });
 
-    await waitFor(() => expect(container.querySelector(".src-content span[style]")).toBeTruthy());
-    expect(sourceLine(container, 1).textContent).toContain("# Demo");
+    // Instant tier (no await): section heading, kind-colored type value, muted
+    // key, and the teal body ref all reach the DOM before shiki resolves.
+    expect(container.querySelector(".src-content .src-section")).toBeTruthy();
+    expect(container.querySelector(".src-content .src-type")).toBeTruthy();
+    expect(container.querySelector(".src-content .src-key")).toBeTruthy();
+    expect(container.querySelector(".src-content .src-ref")).toBeTruthy();
+
+    // Async tier: the fence content line (line 8) starts as instant plain text
+    // + a class-only `.src-ref`, then swaps to the shiki token span (inline
+    // style) once highlighting resolves — verbatim content preserved.
+    expect(sourceLine(container, 8).querySelector("span[style]")).toBeNull();
+    await waitFor(() => expect(sourceLine(container, 8).querySelector("span[style]")).toBeTruthy());
+    expect(sourceLine(container, 8).textContent).toContain("echo ${repo}");
   });
 
   it("clicking a node heading line navigates to the resolved rendered node id", () => {

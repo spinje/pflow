@@ -4015,3 +4015,42 @@ All `layout.ts`; verified via the screenshot/inspect skill + 481 web tests.
   lane-staggered orthogonal routing of many parallel lines through a narrow row-to-row
   channel (staircase-vs-crossings tension) — genuinely the deferred smart edge-router
   (Tier 2 above), not a tunable knob. `DataEdge.tsx` reverted to baseline.
+
+### Canvas-language source coloring + panel ref teal (2026-06-17, user-driven) ✅
+
+> "Make the rendered markdown more colorful." A shoot-lab (`/tmp/pflow-md-color-lab/`,
+> 4 schemes, screenshotted + opened in the user's browser) settled on **Canvas language**:
+> type-values + node-name headings in their `kindColor`, `${refs}` teal, structural keys
+> muted. The *what* lives in `visualization-requirements.md`; the *how/invariants* in
+> `web/CLAUDE.md` (Source pane + HIGHLIGHT bullets). All `web/`; zero Python/contract change.
+
+- **The mechanism FORK that decided the implementation:** the source pane could NOT keep
+  shiki's whole-file markdown pass — shiki's markdown embedding keys on the fence info
+  string's first word, so the role-only fences (`prompt`/`command`/`cache`) aren't
+  recognized as a language and render UNcolored. So a new pure `graph/sourceDecorate.ts`
+  does per-segment grammar **inference** (`prompt`/`cache`→markdown, `command`→bash) and
+  decorates body tokens itself. Length-aware fence parsing mirrors the parser's
+  same-length-close rule (so a `` ````prompt `` block carries an inner ```` ``` ````,
+  confirmed against `markdown_parser.py:1073` which errors and tells authors to use 4+
+  backticks). Two tiers in `SourcePane`: instant sync (body + fence-info colored now) →
+  async upgrade of fence CONTENT via shiki, fail-closed per fence, line-count asserted
+  (the pane is line-number-keyed — click-sync/active-line/block-tint all index by line).
+- **Node-name heading color is self-contained:** the `### name` heading scans its OWN
+  block's `- type:` value for the kind (no graph dependency) — `### fetch-data` green
+  (shell), `### classify` amber (code).
+- **Accepted tradeoff (matches the approved lab):** description PROSE loses markdown
+  bold/italic coloring — plain text + teal refs. More faithful for a source VIEW; the
+  pane is not a markdown renderer. The user signed off on it via the lab.
+- **Panels made consistent (user-caught: "why is the markdown in the right panel not
+  colored the same?"):** `markRefs` (highlight.ts) gained a `tealRest` mode; `CodeBlock`
+  — the one renderer behind every panel value — teals all `${refs}` for markdown/plain
+  values (prompts, cached prefix), the selected-edge `.ref-mark` still winning for the one
+  clicked ref. Code/shell/yaml/json values stay shiki-only — a bash `${VAR}` is NOT a
+  pflow ref, the same rule the source pane applies to non-markdown fences.
+- **Gotcha re-confirmed (the standing rule):** `CodeBlock`'s cache key holds a literal
+  NUL-escape separator, so the Edit tool can't match that line (my escape becomes a real
+  NUL) — anchored all edits on NUL-free neighbours instead.
+- **Verified:** 494 web tests (new `sourceDecorate.test.ts` ×9 + `CodeBlock` ×5 — teal-all,
+  code-not-tealed, selected-ref-precedence, shiki-swap teal), `tsc` clean; real browser on
+  `conditional-branching` + `test_llm_templates` (source pane) and `prompt-caching-multi-chunk`
+  (the user's exact `summarize` panel — cached-prefix + prompt refs now teal).

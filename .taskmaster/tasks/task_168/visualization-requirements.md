@@ -122,6 +122,16 @@
   node above that line. Multi-file sub-workflows use breadcrumbs for the invocation
   chain. The pane intentionally has no diff/write surface; edits remain reviewed
   through the user's IDE unstaged-diff/staging loop.
+- **Canvas-language source + panel coloring (2026-06-17):** the source pane colors
+  `.pflow.md` in the canvas language — `- type:` values + `###` node-name headings
+  take their `kindColor` (heading reads its own block's `type:`), `${refs}` teal,
+  structural keys muted; fence info is colored (language word kind-colored, pflow role
+  word muted) and fence CONTENT is highlighted in its INFERRED grammar
+  (`prompt`/`cache`→markdown, `command`→bash — shiki can't recognize those role-only
+  fences). Length-aware fences (a `` ````prompt `` block carries an inner ```` ``` ````).
+  The SAME teal-`${ref}` treatment now rides PANEL values (prompts, cached prefix) via
+  `CodeBlock`; the selected-edge bright mark still wins. Description prose stays plain
+  (a faithful source view). Mechanism: `web/src/graph/sourceDecorate.ts`.
 - **IO interface panel (2026-06-11):** clicking a root INPUTS/OUTPUTS card selects
   it + opens `IoPanel` — the workflow's API written out (per input: type/required/
   default/description + consumer chips; per output: producer chip + the read field +

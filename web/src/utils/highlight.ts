@@ -79,14 +79,17 @@ export async function highlight(code: string, lang: string): Promise<Root | null
   }
 }
 
-/** Walk the hast TEXT nodes and wrap every `${...}` segment matching
- *  `highlightRef` in the existing `.ref-mark` <mark>. Returns the COUNT of marks
- *  landed — the caller compares it against the count the plain text yields and
- *  keeps the legacy rendering on a mismatch (a `${ref}` the tokenizer split
- *  across text nodes stays unmarked here by design; partial marking would tell
- *  the user something false, so the fallback is count-based, never cross-node
- *  merging). */
-export function markRefs(root: Root, highlightRef: string): number {
+/** Walk the hast TEXT nodes and color `${...}` segments. The segment matching
+ *  `highlightRef` (if given) gets the bright `.ref-mark` <mark>; with
+ *  `opts.tealRest`, every OTHER `${ref}` gets the teal `.src-ref` span (the
+ *  same canvas-language treatment the source pane uses). Returns the COUNT of
+ *  `.ref-mark`s landed — the caller compares it against the count the plain
+ *  text yields and keeps the legacy rendering on a mismatch (a `${ref}` the
+ *  tokenizer split across text nodes stays unmarked here by design; partial
+ *  marking would tell the user something false, so the highlightRef fallback is
+ *  count-based, never cross-node merging — tealRest is best-effort decoration). */
+export function markRefs(root: Root, highlightRef?: string, opts?: { tealRest?: boolean }): number {
+  const tealRest = opts?.tealRest ?? false;
   let marks = 0;
   const visit = (node: { children: ElementContent[] }): void => {
     for (let i = 0; i < node.children.length; i++) {
@@ -98,17 +101,18 @@ export function markRefs(root: Root, highlightRef: string): number {
       }
       if (child.type !== "text" || !child.value.includes("${")) continue;
       const segments = parseTemplate(child.value);
-      if (!segments.some((s) => s.isRef && refMatchesHighlight(s.text, highlightRef))) continue;
+      const hasMatch = highlightRef != null && segments.some((s) => s.isRef && refMatchesHighlight(s.text, highlightRef));
+      const hasRef = segments.some((s) => s.isRef);
+      if (!hasRef || (!hasMatch && !tealRest)) continue; // nothing to color in this text node
       const replacement: ElementContent[] = segments.map((seg) => {
         const text = seg.isRef ? `\${${seg.text}}` : seg.text;
-        if (!seg.isRef || !refMatchesHighlight(seg.text, highlightRef)) return { type: "text", value: text };
-        marks++;
-        return {
-          type: "element",
-          tagName: "mark",
-          properties: { className: ["ref-mark"] },
-          children: [{ type: "text", value: text }],
-        };
+        if (!seg.isRef) return { type: "text", value: text };
+        if (highlightRef != null && refMatchesHighlight(seg.text, highlightRef)) {
+          marks++;
+          return { type: "element", tagName: "mark", properties: { className: ["ref-mark"] }, children: [{ type: "text", value: text }] };
+        }
+        if (tealRest) return { type: "element", tagName: "span", properties: { className: ["src-ref"] }, children: [{ type: "text", value: text }] };
+        return { type: "text", value: text };
       });
       node.children.splice(i, 1, ...replacement);
       i += replacement.length - 1;

@@ -242,6 +242,16 @@ Tests sit beside their subject.
   lands in the child file. Line clicks use `nodeAtLine` (greatest authored
   `source.line <= clicked line`, ignoring null lines), then iterate candidates
   until one resolves to a rendered id; unresolved clicks still mark the local line.
+  **Lines are colored in the canvas language** by `graph/sourceDecorate.ts` (a pure,
+  length-aware fence parser → per-line hast): `${refs}` teal, `- type:` values + `###`
+  node headings via `format.kindColor` (the heading scans its OWN block's `type:`, no
+  graph dep), structural keys muted; fence CONTENT is highlighted in its INFERRED grammar
+  (`prompt`/`cache`→markdown, `command`→bash). That inference is the reason this is
+  per-segment, NOT one whole-file shiki pass: shiki's markdown embedding can't recognize
+  the role-only info strings (`prompt`/`command`/`cache`) and would leave them uncolored.
+  Two tiers: an instant sync pass (body + fence-info colored) then an async pass upgrading
+  fence content via shiki, fail-closed per fence, line-count asserted. Description PROSE
+  stays plain (a source VIEW, not a markdown renderer — the accepted tradeoff).
   **No diff view belongs here**: this UI is comprehension-only, while the user's
   IDE/unstaged-diff staging loop is the approval surface. A ROOT io-card
   selection syncs to its `## Inputs`/`## Outputs` SECTION HEADING found in the
@@ -770,6 +780,10 @@ Tests sit beside their subject.
   (EdgePanel tests pin it), the shiki hast swaps in later — and with a
   `highlightRef`, ONLY if `markRefs` lands exactly the expected mark count (a
   tokenizer-split `${ref}` falls back to legacy; partial marks would lie).
+  Markdown + plain values ALSO teal EVERY `${ref}` (`.src-ref`, via
+  `markRefs(…, {tealRest})`) so panel prompts/cached-prefix match the source pane;
+  code/shell/yaml/json values do NOT (shiki owns them — a bash `${VAR}` isn't a pflow
+  ref). The `highlightRef` bright mark still wins for the one selected ref.
   Shiki's `<pre>` never renders — its `<code>` children go inside OUR
   `.read-param-value` so pre-wrap keeps governing. (3) STRIP — canvas
   description lines + `title=` tooltips can't render formatting, so
