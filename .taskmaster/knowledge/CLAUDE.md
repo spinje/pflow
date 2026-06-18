@@ -7,7 +7,7 @@ This directory contains consolidated knowledge from all task implementations. Ea
 - **patterns.md** - Successful patterns and approaches that worked well
 - **pitfalls.md** - Failed approaches and anti-patterns to avoid
 - **decisions.md** - Architectural decisions with rationale and context
-- **decision-deep-dives/** - Detailed investigations for complex decisions (referenced from decisions.md)
+- **historical/** - Superseded decisions and deep-dive investigations preserved for context (e.g. `pre-task-135.md`, `pocketflow-parameter-handling/`)
 
 ## What should be in the knowledge base?
 

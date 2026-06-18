@@ -2,8 +2,6 @@
 
 Workflow examples and demo scripts. Some are used by tests, others are reference-only.
 
-> **README.md is stale** — references JSON IR format and `$variable` syntax (now `.pflow.md` and `${variable}`). Do not trust it.
-
 ## Directory Structure
 
 ```
@@ -14,14 +12,16 @@ examples/
 ├── invalid/               # ⚠️ USED BY TESTS — parse error test cases (test_example_validation.py)
 ├── nested/                # Nested workflow examples (main + sub-workflows)
 ├── nodes/                 # Node-specific examples (claude-code)
-├── real-workflows/        # Real-world workflows (changelog, release, vision-scraper)
+├── real-workflows/        # Real-world workflows (changelog, release, vision-scraper, announcements)
+├── agent-orchestration/   # plan-to-code + parallel-planner-review harnesses (claude-code)
+├── bundling/              # Workflow-bundling-on-save examples (see TESTING.md)
+├── file-references/       # External file-reference (${file:...}) examples (see TESTING.md)
 ├── mcp-http/              # MCP HTTP transport examples
 ├── mcp-integration/       # MCP client integration demos (Python scripts)
 ├── mcp-pflow/             # pflow-as-MCP-server setup and testing
-├── interfaces/            # Empty
 ├── *.pflow.md             # Root-level workflow examples (batch, MCP, output validation)
 ├── *_demo.py              # Python demo scripts (registry, shell node, workflow manager)
-└── README.md              # ⚠️ STALE — references old JSON format
+└── README.md              # User-facing example index
 ```
 
 ## Test Dependencies
@@ -30,7 +30,9 @@ examples/
 - `tests/test_core/test_ir_examples.py` — similar validation of example files
 - `tests/test_integration/test_failed_node_invariant.py` — executes each fixture in `examples/error-handling/` end-to-end via `WorkflowRunner` and asserts on rendered diagnostic text (source lines, paste-able fixes, structured failure blocks). See `examples/error-handling/README.md` for the per-fixture contract.
 
-**Don't rename/move/delete files in `core/`, `advanced/`, `error-handling/`, or `invalid/` without checking these tests.**
+Also pinned by path: `examples/bundling/parent-with-sub.pflow.md` and the root-level files `test-worktree.pflow.md`, `batch-test.pflow.md`, `batch-test-parallel.pflow.md`, `test_llm_templates.pflow.md` are the prompt-cache hash baseline in `tests/test_runtime/fixtures/baseline_workflows.py` (golden hashes in `golden_config_hashes.json`; also covered by the validation tests above). The `examples/agent-orchestration/plan-to-code/` harness is parsed by path: `tests/test_integration/test_plan_to_code_harness.py` reads its real `.pflow.md` files (`_HARNESS_DIR`) and pins their routing/loop contract, and `tests/test_core/test_graph_build.py` parses `execute-plan/validate-fix/validate-fix.pflow.md` — so renaming/moving those files breaks tests.
+
+**Don't rename/move/delete files in `core/`, `advanced/`, `error-handling/`, `invalid/`, `bundling/parent-with-sub.pflow.md`, the root-level baseline files above, or under `agent-orchestration/plan-to-code/` without checking these tests.**
 
 ### Environment-dependent examples
 

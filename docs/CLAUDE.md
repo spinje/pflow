@@ -42,7 +42,7 @@ docs/
 ├── guides/                      # How-to guides
 ├── integrations/                # AI tool setup
 ├── how-it-works/                # Technical deep-dives for curious users
-└── reference/                   # CLI, nodes, config
+└── reference/                   # CLI, nodes, config, experimental
 ```
 
 ### Navigation tabs
@@ -57,9 +57,10 @@ The docs have four main tabs:
 
 | Location | Links |
 |----------|-------|
-| Sidebar anchors | Website (pflow.run), Blog |
-| Navbar (top right) | Blog, GitHub |
-| Footer | GitHub |
+| Navbar (top right) | GitHub |
+| Footer | GitHub (social) |
+
+Note: the Website and Blog sidebar anchors and the Blog navbar link currently live under `_disabled_anchors` / `_disabled_navbar_links` in `docs.json` (i.e. not rendered). Only the GitHub navbar link and GitHub footer social are active.
 
 See `.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md` for complete specification.
 

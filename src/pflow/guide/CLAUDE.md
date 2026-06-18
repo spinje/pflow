@@ -23,13 +23,13 @@ src/pflow/guide/
 
 ## Topic Resolution
 
-`_resolve_topic_path()` checks: `core.md` (top-level) → `nodes/<topic>.md` → `features/<topic>.md`. First match wins.
+`_resolve_topic_path()` first canonicalizes the topic via `_TOPIC_ALIASES` (e.g. `caching` → `prompt-caching`), then checks: `core.md` (top-level) → `nodes/<topic>.md` → `features/<topic>.md`. First match wins. Aliases are kept out of auto-detection and the menu so generated pointers use the public topic name.
 
 ## Dynamic Interface Injection
 
 Node topics (http, llm, claude-code, code, shell, file) get Parameters + Outputs sections appended at render time, read from the registry. This keeps interface info in sync with actual node implementations.
 
-The mapping is in `_TOPIC_TO_NODE_TYPES`. Topics not listed there (mcp, features, core) get static content only. The `file` topic maps to both `read-file` and `write-file` node types.
+The mapping is in `_TOPIC_TO_NODE_TYPES`. Topics not listed there (mcp, features, core) get static content only. The `file` topic maps to all five file node types (`read-file`, `write-file`, `copy-file`, `move-file`, `delete-file`).
 
 **Known issue**: The metadata extractor (`registry/metadata_extractor.py`) sometimes parses `(optional, default: value)` as a separate `key: "default"` param. The guide formatter filters these out with `if p.get("key") != "default"`.
 
@@ -46,10 +46,10 @@ The topic is automatically discoverable — `list_topics()` scans the filesystem
 
 `detect_topics_from_ir()` walks a single IR to find relevant topics:
 - Node `type` → topic (via `_NODE_TYPE_TO_TOPIC` for non-1:1 mappings, `mcp-*` prefix → `mcp`)
-- `node["batch"]` present → `batch`
+- `node["batch"]` present → `batch`; `node["loop"]` → `loop`; `node["retry"]` → `error-handling`
 - `node["prompt_cache"]` or `node["prewarm"]` present (presence, not truthiness) → `prompt-caching`
 - Top-level `ir["cache"]` (parsed `## Cache` block) → `prompt-caching`
-- Edge with `action != "default"` → `branching`
+- Edge with `action == "error"` → `error-handling`; any other non-`default` action → `branching`
 
 `_topics_from_workflow_file()` walks the workflow TREE: parses the root,
 runs `detect_topics_from_ir` on every reachable IR via `_collect_topics`

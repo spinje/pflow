@@ -15,8 +15,6 @@ async def tool_name(param: Annotated[Type, Field(description="...")]) -> str:
     return await asyncio.to_thread(_sync_operation)
 ```
 
-See `mcp_server/CLAUDE.md` for the async/sync bridge pattern explanation.
-
 ## Docstring Rules (LLMs See This)
 
 ### Parameter Descriptions
@@ -92,13 +90,6 @@ query="check PRs and notify"
 3. **Business logic in tools** — Always delegate to services
 4. **Overly technical examples** — Discovery tools need user-like descriptions
 5. **Inconsistent formatting** — Use `{...}` and `[...]` for brevity
-
-## Files
-
-- `discovery_tools.py` — LLM-powered workflow/component discovery (2 tools)
-- `execution_tools.py` — Workflow execute/validate/plan/save/analyze-cache + node testing + read_fields (7 tools)
-- `registry_tools.py` — Node describe + list with optional filter (2 tools)
-- `workflow_tools.py` — Workflow list/describe from library (2 tools)
 
 ## Testing
 

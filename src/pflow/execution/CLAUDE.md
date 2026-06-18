@@ -10,7 +10,7 @@ src/pflow/execution/
 ├── runner.py                # THE shared execution pipeline (resolve→validate→compile→execute→return)
 ├── result.py                # Result types: ExecutionResult, ValidationResult, RunnerConfig, ResolvedWorkflow
 ├── workflow_resolver.py     # Unified workflow resolution (file, library, markdown, dict → ResolvedWorkflow)
-├── executor_service.py      # Internal utility: error extraction helpers (_build_error_list, etc.)
+├── executor_service.py      # Internal utility: error extraction helpers (build_error_list, determine_error_category, etc.)
 ├── execution_state.py       # Per-node execution state building (shared CLI/MCP)
 ├── plan.py                  # Dry-run planner — graph walker with explicit `Transition` state machine
 └── formatters/              # Shared output formatters (return strings/dicts, NEVER print)
@@ -124,6 +124,10 @@ When `_plan_sub_workflow(cause="downstream")` recurses into a child, it passes `
 
 Load-bearing: without recursion in BFS mode, any sub-workflow reached post-first-miss became a leaf entry with no `sub_plan`, hiding every nested LLM cost. Agents cost-gating after an upstream edit silently under-reported — the #1 iteration pattern. Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats`.
 
+### Loop-node planning (`_annotate_loop_entry`, issue #445)
+
+The planner walks a `loop:` node's body exactly ONCE — re-entry is not a graph edge, so the walker never repeats it — then `_annotate_loop_entry` stamps `loop_iterations` = the resolved `max_iterations` cap (`resolve_loop_cap`; falls back to `MAX_NODE_VISITS` when the cap is a plan-time-unresolvable template, rather than crashing the dry run). `_summarize` multiplies that single-pass cost/duration (and any `sub_plan` rollup) by `loop_iterations` and flips the plan to `cost_basis="upper_bound"`. A loop is a do-while with unknown real iteration count, so the cap is the honest worst case for a cost gate.
+
 ### Placeholder child inputs in downstream mode
 
 `_placeholder_child_inputs(child_ir)` synthesizes type-appropriate values (`list[None]`, `"<dry-run-downstream-placeholder>"`, `1`, etc.) for every declared child input. Used only in downstream mode — the child's BFS walk never reads inputs (no template resolution, no `_run()`), so placeholders are never observed. They just satisfy `compile_workflow`'s required-input presence check.
@@ -170,7 +174,7 @@ class WorkflowRunner:
 
 `plan()` reuses the same resolve → file-ref → validation → compile pipeline, then delegates to `execution/plan.py::build_plan()` instead of running the engine. No trace collector, metrics collector, MCP pool, or progress callback is created on the plan path.
 
-**Inline-workflow cache scoping** (load-bearing): `_prepare_workflow` injects `params["_pflow_workflow_file"]` for every run — file/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline submissions) get a synthetic `ir-hash:<md5>` identifier from `_synthesize_inline_workflow_id(resolved.ir)`. Without this, inline writers pass `workflow_path=NULL` to the memo cache, and SQL's NULL semantics (`WHERE workflow_path = NULL` matches zero rows) cause scoped `get_latest_for_node` lookups to fall back to unscoped — pooling cost/duration history across unrelated inline workflows that happen to share node IDs. Uses `setdefault` so callers that pre-inject survive (only `runner.validate()`'s own write path does today — CLI and MCP no longer pre-inject).
+**Inline-workflow cache scoping** (load-bearing): `_prepare_workflow` injects `params["_pflow_workflow_file"]` for every run — file/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline submissions) get a synthetic `ir-hash:<md5>` identifier via `_workflow_path_id(resolved)`, which returns `resolved.file_path` or falls back to `synthesize_inline_workflow_id(resolved.ir)`. Without this, inline writers pass `workflow_path=NULL` to the memo cache, and SQL's NULL semantics (`WHERE workflow_path = NULL` matches zero rows) cause scoped `get_latest_for_node` lookups to fall back to unscoped — pooling cost/duration history across unrelated inline workflows that happen to share node IDs. Uses `setdefault` so callers that pre-inject survive (only `runner.validate()`'s own write path does today — CLI and MCP no longer pre-inject).
 
 **Exception boundary**: `run()` catches ALL exceptions, wraps into `ExecutionResult`. Only `KeyboardInterrupt`/`SystemExit` propagate.
 
@@ -197,6 +201,8 @@ class ResolvedWorkflow:
     ir: dict[str, Any]
     source: str  # "file", "library", "content", "direct"
     file_path: Optional[str] = None
+    title: Optional[str] = None        # H1 title from .pflow.md (None for dict/content)
+    description: Optional[str] = None  # H1 prose from .pflow.md (None for dict/content)
     diagnostics: tuple[Diagnostic, ...] = ()
 
 @dataclass
@@ -226,7 +232,7 @@ class ExecutionResult:
     def warnings(self) -> list[Diagnostic]: ...
 
 @dataclass(frozen=True)
-class PlanEntry: ...  # Includes batch_count / batch_parallel / batch_items_* for batch sub-workflows
+class PlanEntry: ...  # status adds "opaque"/"routing_error"; carries batch_count / batch_parallel / batch_items_* (batch sub-workflows) and loop_iterations (loop: nodes, issue #445)
 
 @dataclass(frozen=True)
 class PlanSummary: ...
@@ -237,6 +243,7 @@ class Plan:
     entries: list[PlanEntry]
     summary: PlanSummary
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    workflow_path: Optional[str] = None
 ```
 
 ## Unified Resolver (workflow_resolver.py)
@@ -275,7 +282,7 @@ Diagnostic(
 
 ## Integration
 
-**CLI**: `cli/main.py:execute_json_workflow()` calls `WorkflowRunner().run()`, passing `progress_callback=output_controller.create_progress_callback()` when progress is enabled. Handles: stdin routing, trace saving, display.
+**CLI**: `cli/commands/run.py:execute_json_workflow()` calls `WorkflowRunner().run()`, passing `progress_callback=output_controller.create_progress_callback()` when progress is enabled. Handles: stdin routing, trace saving, display.
 
 **MCP Server**: `mcp_server/services/execution_service.py` calls `WorkflowRunner().run()` without a progress callback (defaults to `None`). Three methods: `execute_workflow()`, `validate_workflow()`, `run_registry_node()`.
 
@@ -297,6 +304,6 @@ Diagnostic(
 - **`ExecutionResult.shared_after` is populated on exception paths** via the `_pflow_shared_store` annotation. Consumers can inspect `result.shared_after["__failures__"]` for failure detail even when the engine raised. Without the annotation chain, this would be empty.
 - **`OutputResolutionError` carries `node_id=None`** in its Diagnostic — it's about an output declaration, not a node. Don't add per-node display logic that assumes every error has a node_id.
 - **`_extract_runtime_warnings` template_error path passes through structured Diagnostic** — do NOT replace it with canned suggestion strings. The structured `unresolved_references` carry per-ref classification that the renderer consumes. Canned suggestions would silently lose all per-ref data.
-- **Dict passthrough skips file ref guard**: When Runner receives dict input, `_check_inline_file_references()` is bypassed. CLI/MCP callers who pre-resolve to dict must handle this.
+- **Inline workflows reject file references**: `resolve_workflow` runs `_check_inline_file_references()` for every inline source — dict (`source="direct"`) and content-string (`source="content"`) alike — because there is no base directory to resolve `./file` refs against. File/library sources resolve refs instead (at the ResolvedWorkflow boundary). The guard lives in `workflow_resolver.py`, not the Runner.
 - **MCPNode error detection**: `MCPNode.post()` returns `"error"` for protocol/tool failures. Formatters also check for `"error"` keys in outputs/shared_store as a defensive signal for direct-node execution paths that may not preserve the returned action.
 - **`executor_service.py` is an internal utility**: Contains standalone error extraction functions (`build_error_list`, `determine_error_category`, etc.). The Runner delegates to these via `_build_errors()`. Not part of public API. Reads category from `__failures__` first; legacy regex is fallback only.

@@ -38,6 +38,8 @@ src/pflow/core/
 ├── file_resolver.py         # External file reference detection and resolution
 ├── duration_format.py       # Human-readable duration formatting
 ├── trace_tree.py            # Tree-structured trace helpers
+├── trace_io.py              # Trace blob interning/resolution + trace-file load
+├── node_type_display.py     # Short display tags for node-class names (node_type_tag, is_llm_node_type)
 ├── workflow_id.py           # Synthetic ID for inline-workflow cache scoping (ir-hash:<md5>)
 ├── llm_capabilities.py      # Per-model capability table for prompt caching (Task 159)
 ├── llm_usage.py             # Shared LLM usage normalization helpers (Task 159)
@@ -78,6 +80,8 @@ PflowError(Exception)                    <- base for all pflow errors
   |- UnsupportedCacheTTLError            <- cache TTL not supported by provider (Task 159)
   |- ReportGenerationError               <- trace report generation failure
   |- OnlySnapshotMissingError            <- --only has no prior full-run trace to restore upstream from (issue #443)
+  |- LoopConditionError                  <- loop `until`/condition evaluation failed (raised by runtime/engine/loop_control.py)
+  |- LoopCarryError                      <- loop carry-state propagation failed (raised by runtime/engine/loop_control.py)
   |- LLMCallError                        <- LLM adapter base for ALL provider errors (raised by llm_client)
   |   |- UnknownModelError               <- model identifier not recognized (reason="unknown_name"|"missing_prefix")
   |   |- MissingApiKeyError              <- AuthenticationError or PermissionDeniedError (kind="missing_key"|"lacks_permission")
@@ -113,7 +117,7 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 **Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
 
-**Self-describing exceptions** — `PflowError` (and 8 subclasses) implement `to_diagnostics() -> list[Diagnostic]`. `MaxNodeVisitsError` also implements it despite intentionally not inheriting from `PflowError` (it's a `RuntimeError` because of the loop-guard use case). `exception_to_diagnostics()` is a thin dispatcher: call `to_diagnostics()` if present, else `_builtin_exception_diagnostic()` for stdlib types. When adding a new exception class, override `to_diagnostics()` rather than extending the dispatcher. `MarkdownParseError.raw_message` holds the message without the `Line N:` prefix/suggestion suffix — `to_diagnostics()` uses this for clean rendering.
+**Self-describing exceptions** — `PflowError` and most of its subclasses implement `to_diagnostics() -> list[Diagnostic]`. `MaxNodeVisitsError` also implements it despite intentionally not inheriting from `PflowError` (it's a `RuntimeError` because of the loop-guard use case). `exception_to_diagnostics()` is a thin dispatcher: call `to_diagnostics()` if present, else `_builtin_exception_diagnostic()` for stdlib types. When adding a new exception class, override `to_diagnostics()` rather than extending the dispatcher. `MarkdownParseError.raw_message` holds the message without the `Line N:` prefix/suggestion suffix — `to_diagnostics()` uses this for clean rendering.
 
 **Error handling philosophy — producers are self-describing**: validators, exceptions, and runtime events all construct `Diagnostic` objects at the detection site. Never flatten structured data (paths, fuzzy matches, available fields, suggestions) into string messages for downstream code to reverse-engineer. CLI, JSON, and MCP all flow through the same `format_diagnostic()` pipeline — the only place rendering happens.
 

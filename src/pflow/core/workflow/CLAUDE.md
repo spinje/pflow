@@ -6,13 +6,14 @@ Workflow lifecycle management: save, load, validate, discover, publish.
 
 ```
 core/workflow/
-├── __init__.py              # Re-exports all public symbols
+├── __init__.py              # Package docstring only — import from submodules (no re-exports)
 ├── manager.py               # WorkflowManager: save/load/list/delete workflows (folder-based)
 ├── save_service.py          # Shared save operations for CLI + MCP (with dependency bundling)
 ├── dependency_discovery.py  # Recursive file dependency scanner for bundling
 ├── sub_workflow_resolver.py # Shared sub-workflow resolution (file path or saved name)
 ├── validator.py             # Unified 10-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
+├── loop_validation.py        # check_loop_polarity: shared while/until exactly-one-of rule (compiler + validate path)
 ├── graph/                   # Renderer-agnostic workflow graph model + renderers
 │   ├── __init__.py          # Re-exports build_graph, render_mermaid, model dataclasses
 │   ├── model.py             # GraphModel, NodeId, Node/Edge/Container dataclasses
@@ -81,7 +82,7 @@ No cycles. All heavy imports are lazy (inside functions).
 
 | Consumer | Uses |
 |----------|------|
-| `cli/main.py` | `WorkflowManager`, `WorkflowValidator` |
+| `cli/commands/run.py` | `WorkflowManager` |
 | `cli/commands/list.py`, `describe.py`, `history.py`, `save.py` | `WorkflowManager`, save_service functions |
 | `cli/commands/skills.py` | Most of skill_service |
 | `execution/` | `WorkflowManager`, `WorkflowValidator`, `WorkflowStatus` |
@@ -157,7 +158,7 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 
 ### skill_service.py
 
-Publishes workflows as AI agent skills for Claude Code, Cursor, Codex, Copilot. **Symlink-based**: `{tool}/skills/{name}/SKILL.md` → `~/.pflow/workflows/{name}.pflow.md`.
+Publishes workflows as AI agent skills for Claude Code, Cursor, Codex, Copilot. **Symlink-based**: `{tool}/skills/{name}/SKILL.md` → the folder-based entry point `~/.pflow/workflows/{name}/{name}.pflow.md`.
 
 **`enrich_workflow()`**: Injects `## Usage` section (with example command) and adds `name`/`description` to frontmatter.
 

@@ -20,7 +20,7 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 ## Services (6)
 
 - **BaseService** — Pattern enforcement via `@ensure_stateless` decorator
-- **DiscoveryService** — Wraps `find_workflow()` and `find_components()` plain functions
+- **DiscoveryService** — `discover_workflows()` wraps `find_workflow()`; `discover_components()` wraps `find_components()`
 - **ExecutionService** — Execute, validate, plan, save, analyze-cache workflows + run registry nodes (largest service). `analyze_cache(workflow, parameters)` mirrors `pflow analyze-cache --format=json`; returns the `render_json(analyze(...))` payload as a dict.
 - **FieldService** — Read cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. **Not exported from `__init__.py`** — imported directly in execution_tools.py.
 - **RegistryService** — Node describe, list/search via `build_component_context()` and `Registry.search()`
@@ -28,19 +28,11 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 
 ## Discovery Integration (DiscoveryService)
 
-Discovery services call plain functions that return typed dataclasses:
-
-```python
-from pflow.core.workflow.discovery import find_workflow
-result = find_workflow(query, workflow_manager=WorkflowManager())
-# result is WorkflowMatch(found, workflow_name, confidence, reasoning, workflow)
-```
-
-Model defaults to `get_model_for_feature("discovery")`.
+`find_workflow(query, workflow_manager=...)` returns a `WorkflowMatch(found, workflow_name, confidence, reasoning, workflow)` dataclass; the service formats it via `format_discovery_result` / `format_no_matches_with_suggestions`. Model defaults to `get_model_for_feature("discovery")` (never None — see core/llm_config.py).
 
 ## Error Handling
 
-Services raise exceptions. Self-describing exceptions (anything with `to_diagnostics()` — all `PflowError` subclasses plus `MaxNodeVisitsError`) are rendered by the `PflowMCP.call_tool` override (`server.py`) via the shared `exception_to_diagnostics()` + `format_diagnostic()` pipeline, producing structured `CallToolResult(isError=True)` output. Bare `ValueError` / `RuntimeError` / `TypeError` / `FileExistsError` with pre-formatted message text pass through FastMCP's default handling to preserve existing rich output. Producer bugs (`AttributeError`, `KeyError`, etc.) are always rendered.
+Services raise exceptions; the `PflowMCP.call_tool` override (`server.py`) renders them. See the parent `mcp_server/CLAUDE.md` 'Agent-Optimized Defaults' for the full self-describing-vs-bare-exception boundary. In short: anything with `to_diagnostics()` (and producer bugs like `AttributeError`/`KeyError`) is rendered to a structured `CallToolResult(isError=True)`; bare `ValueError`/`RuntimeError`/`TypeError`/`FileExistsError` with pre-formatted text pass through unchanged.
 
 **Exception types used:**
 - `ValueError` — Invalid input, not found, validation failures
@@ -54,15 +46,15 @@ Services raise exceptions. Self-describing exceptions (anything with `to_diagnos
 
 ### Type Narrow Before Calling Formatters
 
-Formatters expect specific types and crash on wrong input. Always `isinstance()` check before calling:
+Formatters expect specific types and crash on wrong input. After a formatter that has a `dict | str` return overload, narrow with `isinstance()` before returning:
 
 ```python
-if not isinstance(result, dict):
-    raise TypeError(f"Expected dict, got {type(result)}")
-return format_discovery_result(result)  # Now safe
+if not isinstance(result, str):
+    raise TypeError(f"Expected str from formatter, got {type(result)}")
+return result
 ```
 
-This pattern appears in discovery_service.py and is required anywhere formatters are used.
+This pattern appears in field_service.py and execution_service.py (`run_registry_node`).
 
 ### Consistent Return Types
 
@@ -72,29 +64,13 @@ Service methods must return one type consistently. Never return dict from one br
 
 Service methods no longer import node classes directly. Execution routes through `WorkflowRunner().run()`, validation through `WorkflowRunner().validate()`, and dry-run planning through `WorkflowRunner().plan()`. `plan_workflow()` must return the CLI dry-run JSON shape via `format_plan_json(plan)`. For `run_registry_node()`, build a single-node IR dict and call the Runner — the compilation pipeline handles node loading internally.
 
-### Dummy Parameters for Validation
-
-Validation fails on templates without parameter values. Use `generate_dummy_parameters()` to create `__validation_placeholder__` values:
-
-```python
-from pflow.core.diagnostic import Severity
-
-dummy = generate_dummy_parameters(workflow_ir.get("inputs", {}))
-diagnostics = WorkflowValidator.validate(workflow_ir, extracted_params=dummy)
-errors = [d for d in diagnostics if d.severity == Severity.ERROR]
-```
-
 ### CLI/MCP parity — formatter call sites come in pairs
 
-Every shared formatter has two call sites: CLI (`cli/main.py`) and MCP (`execution_service.py`). Adding a new parameter to a formatter WITHOUT updating both sides causes silent output divergence — the CLI gets the new field, MCP doesn't, and the error surfaces as "MCP output is missing X". Grep both files for the formatter name when modifying its signature.
+Every shared formatter has two call sites: CLI and MCP (`execution_service.py`). Adding a new parameter to a formatter WITHOUT updating both sides causes silent output divergence — the CLI gets the new field, MCP doesn't, and the error surfaces as "MCP output is missing X". Grep both surfaces for the formatter name when modifying its signature (CLI call sites live in `cli/commands/run.py` and `cli/workflow_output.py`, not `cli/main.py`).
 
 Same rule for rendering exceptions: the MCP `save_workflow` path relies on `save_workflow_with_options()` for parse + validation + save, then catches `WorkflowValidationError` and renders it via `format_validation_failure(e.validation_errors)` — parity with the CLI save/validate paths. `WorkflowValidationError.validation_warnings` is a constructor kwarg (not a dynamic attribute), so warnings survive the exception boundary without special plumbing.
 
 MCP validation/execution responses intentionally surface parser/validator INFO diagnostics as `advisories` alongside warnings/errors. This preserves agent-visible definition advisories after parser near-miss diagnostics were reclassified from WARNING to INFO; runtime INFO diagnostics remain suppressed unless a formatter explicitly opts into them.
-
-## Testing
-
-Mock at service layer (service methods return predictable results). Integration tests use real Registry/WorkflowManager. See `mcp_server/CLAUDE.md` for test file listing.
 
 ## When Adding New Service Methods
 

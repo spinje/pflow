@@ -356,7 +356,7 @@ Full definitions and rejected framings: `.claude/skills/improve-codebase-archite
 # Run a workflow file
 uv run pflow workflow.pflow.md
 
-# Traces saved to ~/.pflow/debug/workflow-trace-[name-]YYYYMMDD-HHMMSS.json
+# Traces saved to ~/.pflow/debug/workflow-trace-<hash>-[name-]YYYYMMDD-HHMMSS.json
 uv run pflow my-workflow
 
 # Full agent usage context (only read if needed)

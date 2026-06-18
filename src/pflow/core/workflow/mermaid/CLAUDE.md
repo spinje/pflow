@@ -10,8 +10,8 @@ This package is now a compatibility shim. Its only public symbol is
 from pflow.core.workflow.mermaid import generate_mermaid
 ```
 
-`generate_mermaid(ir, resolve_child, base_path, max_depth, direction,
-descriptions)` delegates to:
+`generate_mermaid(ir, resolve_child, base_path, source_file, max_depth,
+direction, descriptions)` delegates to:
 
 1. `pflow.core.workflow.graph.build_graph()` for the IR walk and structural
    model construction.

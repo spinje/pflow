@@ -19,7 +19,7 @@ These are design-time documents from early planning. They contain valuable desig
 | MCP integration "v2.0" | Fully implemented (stdio + http transports) |
 | Natural language planner as core | Labeled "legacy" — agents use CLI primitives directly |
 | Node names like `yt-transcript`, `shell-exec` | Actual: `shell`, `read-file`, `llm`, etc. |
-| Anthropic-specific features (thinking tokens, prompt caching) | Provider-agnostic via LiteLLM (Task 158 — superseded the Simon Willison `llm` library wiring from Task 95). Prompt caching is being re-introduced as a first-class feature in Task 159. |
+| Anthropic-specific features (thinking tokens, prompt caching) | Provider-agnostic via LiteLLM (Task 158 — superseded the Simon Willison `llm` library wiring from Task 95). Prompt caching is now a first-class feature (Task 159, with cache analysis from Task 160). |
 
 ## Document Index
 
@@ -42,6 +42,8 @@ These are design-time documents from early planning. They contain valuable desig
 | mcp-integration-original.md | Superseded. MCP is fully implemented. |
 | agent-guide-pre-task71.md | Superseded by CLI primitives. Run `pflow guide`. |
 | github-nodes-original.md | Deprecated — use MCP tools (e.g., `mcp-github-list_issues`). |
+| json-workflows-original.md | JSON workflow format — replaced by markdown `.pflow.md` in Task 107. |
+| shared-store-original.md | Shared-store/proxy design pattern. Rationale still valid; uses conceptual `=>` syntax. Current canonical: `src/pflow/runtime/CLAUDE.md` and `src/pflow/nodes/CLAUDE.md`. |
 
 ### Archived January 2026
 
@@ -52,5 +54,5 @@ These are design-time documents from early planning. They contain valuable desig
 | planner-specification.md | 40%+ describes unimplemented features | `pflow guide` |
 | planner-debugging.md | Inaccurate trace format, inverted flag behavior | Trace files at `~/.pflow/debug/` |
 | thinking-tokens-optimization.md | Pre-LiteLLM (Task 158) design; provider-agnostic now. | N/A |
-| prompt-caching-architecture.md | Pre-LiteLLM design. Task 159 is reintroducing prompt caching — may again be relevant material. | `src/pflow/core/prompt_cache.py` (current) |
+| prompt-caching-architecture.md | Pre-LiteLLM design, superseded by the shipped Task 159 implementation. | `src/pflow/core/prompt_cache.py` (current) |
 | simonw-llm-patterns/ | Pre-implementation research for Task 95 (Simon Willison `llm` library — superseded by Task 158 / LiteLLM) | `core-node-packages/llm-nodes.md` |

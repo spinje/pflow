@@ -1,52 +1,6 @@
 # tests/test_cli/CLAUDE.md
 
-## Direct Workflow Execution
+CLI-specific test notes. General test guidance (markers, fixtures, CliRunner limits, subprocess/e2e patterns, LLM mock) lives in `tests/CLAUDE.md`.
 
-The CLI supports direct execution:
-- `my-workflow param=value` → Tries to load and execute directly
-- `pflow workflow.pflow.md param=value` → Direct execution with params
-- If workflow not found → Shows error with suggestions
-
-Detection logic in `src/pflow/cli/workflow_resolution.py::is_likely_workflow_name()`:
-- `my-workflow param=value` → Detected as workflow (has params)
-- `my-analyzer` → Detected as workflow (kebab-case)
-- `node1 => node2` → NOT workflow (has `=>` operator)
-- `analyze data` → NOT workflow (has spaces)
-
-## Writing New CLI Tests
-
-```python
-def test_example():
-    runner = click.testing.CliRunner()
-    result = runner.invoke(main, ["args", "here"])
-    assert result.exit_code == 0
-    assert "expected output" in result.output
-```
-
-**Important**:
-- Use `runner.isolated_filesystem()` for file operations
-- CliRunner always returns False for `isatty()` — can't test interactive prompts
-- Don't use real workflow names — may trigger direct execution attempt
-- CliRunner tests do not write trace files by default under pytest. If the test
-  asserts `pflow report`, trace serialization, or `.pflow/debug` contents, mark
-  it with `@pytest.mark.trace_files`.
-
-## Real Subprocess CLI Tests
-
-Use a real subprocess only for behavior that CliRunner cannot observe:
-
-- stderr/stdout byte separation
-- progress streaming before process exit
-- logger output interleaving
-- shell pipe behavior
-- true process exit-code behavior
-
-Mark these tests `@pytest.mark.e2e`. Default `make test` excludes `e2e`;
-`make test-e2e` runs them separately. Keep one subprocess regression per
-bug/feature and cover edge cases in faster in-process tests.
-
-## If Tests Hang
-
-Check:
-1. Is the global LLM mock in tests/conftest.py working?
-2. Did someone add a real LLM call without mocking?
+- **Don't use real saved workflow names as CliRunner args** — a kebab-case or `key=value` arg can trip `is_likely_workflow_name` and trigger a real direct-execution attempt instead of the path you meant to test.
+- Use `runner.isolated_filesystem()` for tests that touch the filesystem.

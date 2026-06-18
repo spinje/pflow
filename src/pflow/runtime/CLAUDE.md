@@ -57,7 +57,7 @@ All 5 engine failure paths funnel through `mark_node_failed`: `cache_result` (ac
 
 ### TemplateResolver (`template_resolver.py`)
 
-**Regex**: `r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"`
+**Regex**: `TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_COALESCE_EXPR_PATTERN})\}}")` — the capture group is the composed coalesce sub-grammar (literal-or-var-path operands separated by `??`), not a bare variable path. Negative lookbehind `(?<!\$)` guards `$${var}` escapes.
 
 **Path support**: `${data.user.name}`, `${items[0].title}`, `${data[5].users[2]}`
 
@@ -173,7 +173,7 @@ shared["__execution__"] = {
 shared["__failures__"] = {
     "node_id": {
         "data": {...},        # what was at shared[node_id] before the move (may be {})
-        "category": "shell_failure" | "node_action_error" | "api_warning" | "routing_error" | "exception" | "template_error",
+        "category": "shell_failure" | "http_failure" | "mcp_failure" | "llm_failure" | "node_action_error" | "api_warning" | "routing_error" | "exception" | "template_error",
         "error": "...",       # human-readable error (optional)
         # NOTE: warning text is NOT stored here — structured warnings (api_warning
         # + on-error recovery) live only in shared["__warnings__"][node_id].
@@ -235,9 +235,11 @@ shared["__pflow_prompt_cache__"] = MappingProxyType[node_id, CacheRenderContext]
 shared["_pflow_depth"] = int
 shared["_pflow_stack"] = list[str]
 shared["_pflow_workflow_file"] = str
-shared["_pflow_child_only_node"] = str   # Transient: remaining dotted --only path for child engine.
-                                         # Written by engine before target sub-workflow, read+consumed
-                                         # by WorkflowExecutor.exec(), cleaned up by engine after.
+shared["_pflow_child_only_node"] = str   # DORMANT plumbing for dotted --only sub-workflow targeting.
+                                         # _run_node_with_child_only() can write it (engine.py) and
+                                         # WorkflowExecutor.exec() reads it, but the walk currently
+                                         # passes child_only=None, so it is never actually written.
+                                         # Kept for the deferred nested-targeting follow-up.
 ```
 
 ## Critical Behaviors
@@ -250,11 +252,11 @@ shared["_pflow_child_only_node"] = str   # Transient: remaining dotted --only pa
 
 ### Error Categorization (API Warning Detection)
 
-**Validation errors** (parameter format issues, 73 patterns checked):
+**Validation errors** (parameter format issues, ~40 patterns checked):
 - `validation_error` — bad request, invalid parameter, schema error
 - `template_error` — unresolved variables (triggers ValueError)
 
-**Resource errors** (external state, 20 patterns):
+**Resource errors** (external state, ~30 patterns):
 - `resource_error` — not found, forbidden
 - API warnings: Slack `"ok": false`, Discord errors, GraphQL `"errors": []`
 - HTTP status codes: 401, 403, 404, 429

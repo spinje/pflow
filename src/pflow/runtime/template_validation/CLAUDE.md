@@ -9,7 +9,7 @@ template_validation/
 ├── __init__.py              # Public API re-exports
 ├── validator.py             # Orchestrator — runs all passes, aggregates errors/warnings
 ├── path_validation.py       # Pass 5: path existence + all path error formatting
-├── type_validation.py       # Passes 6+7: type matching + shell command safety
+├── type_validation.py       # Passes 6+7+9: type matching + shell command safety + code-node input annotations
 ├── batch_item_validation.py # Pass 8: ${item.field} against inferred item structure
 ├── utils.py                 # Shared: path splitting and display helpers
 └── type_checker.py          # Type compatibility matrix and inference
@@ -60,6 +60,8 @@ validator.py (orchestrator)
 | 6: Type matching | type_validation.py | Source type compatible with parameter's expected type |
 | 7: Shell safety | type_validation.py | dict/list blocked in shell `command` (escape: `'${var}'`) |
 | 8: Batch items | batch_item_validation.py | `${item.field}` exists on inferred item structure |
+| 9: Code-node annotations | type_validation.py | code-node input annotations vs upstream template types |
+| 10: Loop conditions | validator.py | `loop: while:`/`until:` typed-output gate + operator rejection; loop carry-ref checks (issue #445) |
 
 ## External Consumers
 

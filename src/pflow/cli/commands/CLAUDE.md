@@ -24,7 +24,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 
 ## Cross-References Within commands/
 
-`probe.py` is a thin Click wrapper that delegates to `_probe_impl.py:execute_single_node()`. This split keeps probe logic importable without Click dependencies (MCP server uses it via `execution_service.py`).
+`probe.py` is a thin Click wrapper that delegates to `_probe_impl.py:execute_single_node()`. The split keeps the Click decorator separate from the execution logic.
 
 `find.py` and `mcp.py` (the `find` subcommand) both use `handle_discovery_error()` from `cli/find_errors.py` for consistent LLM error handling.
 
@@ -117,7 +117,7 @@ Node filtering priority: Test policy → Deny → Allow → Default. See `core/C
 **Environment variables**: `set-env`, `unset-env`, `list-env`.
 Stores API keys in `~/.pflow/settings.json`. Injected into `os.environ` at CLI startup (`_inject_settings_env_vars` in `commands/run.py`).
 
-**LLM model settings** (`settings llm` subgroup): `show`, `set-default`, `set-discovery`, `set-filtering`, `unset`.
+**LLM model settings** (`settings llm` subgroup): `show`, `providers`, `set-default`, `set-discovery`, `set-filtering`, `unset`.
 
 LLM model resolution chain (genuinely hard to discover):
 - `default`: workflow params → `default_model` setting → `llm` CLI default → error

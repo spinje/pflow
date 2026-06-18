@@ -17,13 +17,17 @@ tests/
 ├── test_integration/      # End-to-end workflow tests
 ├── test_mcp/              # MCP client-side integration tests (connection pool, http transport)
 ├── test_mcp_server/       # pflow-as-MCP-server tests
-├── test_nodes/            # Node implementation tests
-│   ├── test_file/         # File node tests (read/write/copy/move/delete)
+├── test_nodes/            # Node implementation tests (one dir per node type:
+│   │                      #   test_file, test_shell, test_http, test_mcp, test_python,
+│   │                      #   test_claude, test_llm)
 │   ├── test_shell/        # Shell node tests (execution, binary, SIGPIPE, security)
-│   ├── test_claude/       # Claude Code node tests
+│   ├── test_claude/       # Claude Code node tests (see pitfall #17 re: SDK stub)
 │   └── test_llm/          # LLM node tests (includes RUN_LLM_TESTS integration test)
 ├── test_registry/         # Registry, scanner, smart filter, and component discovery tests
-└── test_runtime/          # Compiler, engine, template resolution, batch, caching, tracing
+├── test_runtime/          # Compiler, engine, template resolution, batch, caching, tracing
+├── test_planning/         # Planning-related tests
+├── test_pocketflow/       # Pocketflow primitive tests
+└── fixtures/              # Committed JSON/workflow fixtures (e.g. cache_analysis; see pitfall #19)
 ```
 
 **Mapping convention**: `src/pflow/X/Y/module.py` → `tests/test_X/test_Y/test_module.py`
@@ -155,7 +159,7 @@ def test_something(mock_llm_client):
 
 Registered in `pyproject.toml`:
 - **`serial`**: Tests that must run sequentially (deselect with `-m "not serial"`)
-- **`integration`**: Tests that spawn subprocesses
+- **`integration`**: Cross-component integration tests (rarely used — only 2 spots; subprocess/pipe tests use the `e2e` marker instead)
 - **`e2e`**: Real process, shell-pipe, external CLI boundary, or other slow environment-boundary tests. Excluded from default `make test`; run with `make test-e2e`.
 - **`trace_files`**: Tests that need real workflow trace JSON files. Without this marker, `save_to_file()` is a no-op under pytest.
 
@@ -169,7 +173,7 @@ Other markers used across the suite:
 | Command | Workers | What it excludes |
 |---------|---------|-----------------|
 | `make test` | `-n 4` | `test_llm_integration.py`, `e2e` |
-| `make test-debug` | sequential | Same exclusions |
+| `make test-debug` | sequential | Only `test_llm_integration.py` (does NOT exclude `e2e`) |
 | `make test-e2e` | `-n 4 --dist=worksteal` | Non-`e2e`, LLM integration |
 | `make test-all-local` | `-n 4 --dist=worksteal` | `test_llm_integration.py` only |
 | `make test-llm` | sequential | Only runs LLM-specific tests |
@@ -211,7 +215,7 @@ registry = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name
 
 pytest sets `PYTEST_CURRENT_TEST` automatically. **Three production files check it** to skip dangerous operations during tests:
 - `src/pflow/core/llm_config.py` — Skips LLM key detection
-- `src/pflow/cli/main.py` — Guards CLI behavior
+- `src/pflow/mcp_server/main.py` — Guards MCP-server behavior
 - `src/pflow/cli/logging_config.py` — Adjusts logging config
 
 If you modify these files, be aware they behave differently under test.
@@ -260,7 +264,7 @@ Use `os.path.join()`, handle line endings, use `pathlib`.
 `CompilationError: Node type 'basic-node' not found` → Use actually registered nodes: `echo`, `shell`, `read-file`. Aliases like `basic-node`, `transform-node` are NOT registered. For mocked tests, define any names in your mock registry.
 
 ### 7. Test Node Interface Inconsistency
-`KeyError: 'test_output'` → The `echo` node (only test node in registry) uses `message`/`echo` keys. `ExampleNode` in mocked tests uses `test_input`/`test_output`. Check node interfaces before use.
+`KeyError: 'test_output'` → There is no globally-registered `echo` test node; tests that use `type: "echo"` mock it locally (e.g. `test_namespacing_integration.py` defines an `EchoNode` reading a `data` param). `ExampleNode` (`tests/shared/mock_nodes.py`) uses `test_input`/`test_output`. Check the node's interface in the specific test before assuming keys.
 
 ### 8. Node Interface Uses `key`, Not `name`
 When building mock node interfaces, parameters use `{"key": "param_name", ...}`, NOT `{"name": "param_name", ...}`.

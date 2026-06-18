@@ -57,7 +57,7 @@ Only notes that help you decide whether to read a file. If the filename is self-
 
 ### Guides
 
-**mcp-guide.md** — MCP tools appear as nodes with pattern `mcp-{server}-{tool}` after syncing. Supports stdio and HTTP transports.
+**mcp-guide.md** — MCP tools appear as nodes with pattern `mcp-{server}-{tool}` after syncing. Both stdio and HTTP transports are implemented; stdio is the recommended/default transport, HTTP (`type: "http"`, via `streamablehttp_client`) is newer — read the guide before relying on it.
 
 ### Features
 

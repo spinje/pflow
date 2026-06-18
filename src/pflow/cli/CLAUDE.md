@@ -53,7 +53,7 @@ src/pflow/cli/
 │   ├── list.py, find.py, describe.py, history.py, save.py
 │   ├── guide.py, probe.py, _probe_impl.py
 │   ├── mcp.py, settings.py, skills.py
-│   ├── read_fields.py, report.py, visualize.py
+│   ├── read_fields.py, report.py, visualize.py, analyze_cache.py
 │   └── CLAUDE.md
 ```
 
@@ -206,7 +206,7 @@ Full list readable in `_initialize_context` and `_setup_workflow_execution` in `
 
 **Internal parameters**: `__` prefixed params are system-internal, filtered from display by `filter_user_params()` (in `rerun_display.py`). Includes `__verbose__`.
 
-**Sensitive parameter masking**: 15 predefined sensitive keys auto-masked as `<REDACTED>` in rerun display. Shell injection protection via `shlex.quote()`.
+**Sensitive parameter masking**: 19 predefined sensitive keys auto-masked as `<REDACTED>` in rerun display. Shell injection protection via `shlex.quote()`.
 
 ## MCP Auto-Discovery (mcp_sync.py)
 

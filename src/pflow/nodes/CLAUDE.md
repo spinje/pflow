@@ -7,7 +7,7 @@ This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the
 ## Shared Store vs Params
 
 - **Params** (`self.params`): Static configuration — model name, temperature, timeout, file format. Set by the engine from the workflow IR before each `_run()`.
-- **Shared store** (`shared`): Dynamic data flowing between nodes — user inputs, API responses, generated content. Read in `prep()`, written in `post()`.
+- **Shared store** (`shared`): Dynamic data flowing between nodes — user inputs, API responses, generated content. Node *inputs* arrive via `self.params` (the engine resolves `${...}` templates from the shared store into params before `prep()`), not by reading `shared` directly — see the Parameter-Only Pattern below. Node *outputs* are written in `post()`.
 
 Rule of thumb: if the value changes between workflow runs, it's shared store data. If it's the same regardless of input, it's a param.
 
@@ -68,8 +68,8 @@ class ExampleNode(Node):
 2. **Use NonRetriableError** for validation errors that shouldn't retry
 3. **Prefer `PflowError` subclasses** over vanilla `ValueError`/`Exception` — see `src/pflow/core/exceptions.py`
 4. **Return only success values** from exec()
-4. **Handle errors in exec_fallback()** after retries exhausted
-5. **Check for errors in post()** by looking for "Error:" prefix
+5. **Handle errors in exec_fallback()** after retries exhausted
+6. **Check for errors in post()** by looking for "Error:" prefix
 
 ### Examples
 

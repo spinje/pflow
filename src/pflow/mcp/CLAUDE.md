@@ -10,7 +10,7 @@ This module connects pflow workflows to **external MCP servers** (Playwright, Gi
 mcp/
 ├── __init__.py        # Re-exports: MCPConnectionPool, MCPDiscovery, MCPRegistrar, MCPServerManager
 ├── types.py           # TypedDicts for server configs, tool schemas, registry entries
-├── utils.py           # Parse mcp-<server>-<tool> names (handles hyphenated server names)
+├── utils.py           # parse_mcp_node_name — DEAD CODE (no callers; the live parser is mcp_resolution._parse_mcp_node_type)
 ├── auth_utils.py      # Env var expansion (${VAR}, ${VAR:-default}) + auth header building
 ├── errors.py          # Shared MCP SDK error handling: ExceptionGroup unwrapping + Diagnostic creation
 ├── discovery.py       # Connect to MCP servers, list tools, convert schemas to pflow format
@@ -36,7 +36,7 @@ mcp-servers.json   lists tools+schemas   registry entries         for stateful s
 | Integration | From → To | Mechanism |
 |-------------|-----------|-----------|
 | Auto-sync at startup | `cli/mcp_sync.py` (via `cli/commands/run.py`) → `MCPDiscovery` + `MCPRegistrar` | Smart sync on mtime+hash change; cleans ALL old `mcp-` entries before re-syncing |
-| Compiler param injection | `runtime/compilation/compiler.py:inject_special_parameters` → MCPNode params | Parses node type string with greedy longest-match against known servers. Does **NOT** use `mcp_metadata` from registry |
+| Compiler param injection | `runtime/compilation/compiler.py:inject_special_parameters` → MCPNode params | Injects `__mcp_server__`/`__mcp_tool__`; the server/tool split is delegated to `mcp_resolution._parse_mcp_node_type` (greedy longest-match). Does **NOT** use `mcp_metadata` from registry |
 | Pool creation | `execution/runner.py:_initialize_shared_store` → `shared["__mcp_pool__"]` | Created unconditionally for every workflow, but background thread starts lazily on first `call_tool()` |
 | Pool consumption | `nodes/mcp/node.py:prep()` → `pool.call_tool()` | Falls back to `asyncio.run()` if no pool (e.g., `pflow probe`) |
 | Pool shutdown | `execution/runner.py:_cleanup()` | Always runs; safe to call multiple times |
@@ -51,11 +51,11 @@ All MCP tools create registry entries pointing to the **same** `MCPNode` class (
 - Node name format: `mcp-{server_name}-{tool_name}`
 
 ### Node Naming Ambiguity
-`mcp-slack-http-remote-SEND_MESSAGE` — where does server end and tool begin? Two parsing paths exist:
-1. **`runtime/compilation/mcp_resolution.py:_parse_mcp_node_type`** (authoritative): Greedy longest-match against known servers from `MCPServerManager().list_servers()`
-2. **`utils.py:parse_mcp_node_name`**: Progressive matching + heuristic fallback (tool names tend to be `UPPERCASE_WITH_UNDERSCORES`)
+`mcp-slack-http-remote-SEND_MESSAGE` — where does server end and tool begin? The authoritative parser is **`runtime/compilation/mcp_resolution.py:_parse_mcp_node_type`**: greedy longest-match against known servers from `MCPServerManager().list_servers()`.
 
 **Known inconsistency**: `registrar.py:get_tool_info()` uses a naive `split("-", 2)` that breaks for multi-hyphen server names.
+
+**Dead code**: `utils.py:parse_mcp_node_name` (progressive matching + `UPPERCASE_WITH_UNDERSCORES` heuristic) has NO callers in src/ or tests/ — it is not a live parsing path. Don't reach for it.
 
 ### Connection Pool Threading Model
 pflow nodes are **synchronous**. MCP protocol is **async**. The pool bridges this:

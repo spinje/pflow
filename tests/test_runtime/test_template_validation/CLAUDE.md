@@ -1,6 +1,6 @@
 # Template Validation Tests
 
-Tests for `src/pflow/runtime/template_validation/`. All tests call through the public API (`validate_workflow_templates`) unless noted.
+Tests for `src/pflow/runtime/template_validation/`. Most files exercise the public API via the `split_template_diagnostics` helper (`tests/shared/diagnostic_helpers.py`), which wraps `validate_workflow_templates` and splits results by severity — every file except `test_type_checker.py` uses it. Some files additionally call lower-level functions directly: `_extract_all_templates` (`test_array_notation.py`, `test_validator.py`) and `type_checker` functions (`test_type_checker.py`, which bypasses the public API entirely).
 
 ## Source-to-Test Mapping
 
@@ -16,6 +16,7 @@ Tests for `src/pflow/runtime/template_validation/`. All tests call through the p
 | `test_unused_inputs.py` | `validator.py` | Unused declared input detection |
 | `test_warnings.py` | `path_validation.py` | Runtime validation warnings (str type + nested access) |
 | `test_array_notation.py` | `validator.py` | Array notation in templates (`${node[0].field}`) |
+| `test_literal_operands.py` | `validator.py` | Literal operands in `??` and bare literals (`${a ?? 0}`, `${0}`) |
 
 ## Mock Pattern
 

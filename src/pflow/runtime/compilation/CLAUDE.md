@@ -50,9 +50,11 @@ This is where bare nodes get created and configured. The step order is load-bear
    - These go into `static_params` since they don't contain `${...}`
 9. `split_params(params, expected_types)` → `(template_params, static_params)`
 10. `node.set_params(static_params)` — node gets ONLY static params at compile time
-11. Build `TemplateConfig` (if any templates) and `BatchConfig` (if batch)
-12. Extract per-node cache fields (LLM nodes only): `_extract_prompt_cache_items` reads top-level `prompt_cache:` into a tuple of chunk names (rejects non-list and `tuple("string")` silent-splat); `_extract_prewarm` reads top-level `prewarm:` strict-bool. Both feed `NodeConfig.prompt_cache_items` / `NodeConfig.prewarm` (defaults: empty tuple / False).
-13. Build and return `NodeConfig`
+11. `_validate_retry_config(node_data.get("retry"))` then, on `Node` instances, apply `max`/`wait`/`backoff` (coerced + bounded). Direct-compile guard for callers that bypass schema validation — `_RETRY_CONFIG_KEYS` mirrors `core.ir_schema`'s `RETRY_CONFIG_SCHEMA`.
+12. Build `BatchConfig` (if batch) then `_build_loop_config()` (if `loop:`). **Batch and loop are mutually exclusive** — both set raises `CompilationError`. Loop enforces single `while:`/`until:` polarity and bounds a literal `max_iterations` to `[1, MAX_NODE_VISITS]`; a `${template}` `max_iterations` is deferred to runtime.
+13. Build `TemplateConfig` (if any templates, OR a carry loop — round-2 carry inputs become template_params).
+14. Extract per-node cache fields (LLM nodes only): `_extract_prompt_cache_items` reads top-level `prompt_cache:` into a tuple of chunk names (rejects non-list and `tuple("string")` silent-splat); `_extract_prewarm` reads top-level `prewarm:` strict-bool. Both feed `NodeConfig.prompt_cache_items` / `NodeConfig.prewarm` (defaults: empty tuple / False).
+15. Build and return `NodeConfig`
 
 ### Other functions
 
@@ -63,7 +65,7 @@ This is where bare nodes get created and configured. The step order is load-bear
 
 ### Non-obvious behaviors
 
-- **Per-node cache default is type-based** — `NodeConfig.cache_enabled` is set from `node_data.get("cache", _default_cache_for_node_type(node_type))`. `_default_cache_for_node_type` returns `True` only for `node_type == "llm"`; every other type defaults to `False` (side-effecting or external-state, unsafe to memoize). Explicit `cache:` always wins. Single source of truth — don't recompute the default elsewhere.
+- **Per-node cache default** (`_default_cache_for_node_type`, see parent `runtime/CLAUDE.md`): applied here via `node_data.get("cache", _default_cache_for_node_type(node_type))`. Single source of truth — don't recompute the default elsewhere.
 - **`only_node` is NOT a compiler parameter** — it's an engine parameter. The Runner passes it to `WorkflowEngine`.
 - **`resolved_defaults` vs `initial_params`**: After `_prepare_compilation`, `initial_params` contains ALL values (user-provided + defaults + `__template_resolution_mode__`). `resolved_defaults` contains ONLY the defaults from `prepare_inputs()` (not user-provided values). This distinction matters: when seeding the shared store, defaults must not override user values. The Runner seeds user params first, then `resolved_defaults`.
 
@@ -87,12 +89,12 @@ MCP node type parsing and validation.
 - **Parameters injected**: `__mcp_server__` and `__mcp_tool__` added to node params by `inject_special_parameters()` in `compiler.py`.
 - **Validation skip**: When registry has no real nodes for this MCP type (test/mock registries), validation is skipped — `_check_registry_for_mcp()`.
 - **Error suggestions**: 3-tier system via `_create_mcp_error_suggestion()` — no MCP tools registered → similar tool names → available servers.
-- **Boundary violation**: `_parse_mcp_node_type()` also consumed by `mcp_server/services/execution_service.py` via lazy import.
+- **Boundary violation**: `_parse_mcp_node_type()` also consumed by `core/workflow/validator.py` via lazy import (`from pflow.runtime.compilation.mcp_resolution import _parse_mcp_node_type`).
 
 ## node_loader.py
 
 Dynamic node class importing via `import_node_class()`. Four import paths:
-1. **Workflow**: `node_type == "workflow"` → returns `WorkflowExecutor` directly, **bypasses registry entirely**. This means `workflow` type nodes never appear in the registry.
+1. **Workflow**: `node_type == "workflow"` (or the fully-qualified `"pflow.runtime.workflow_executor"`) → returns `WorkflowExecutor` directly, **bypasses registry entirely**. This means `workflow` type nodes never appear in the registry.
 2. **User**: `type == "user"` with real `file_path` → `spec_from_file_location`
 3. **Core**: standard `importlib.import_module()`
 4. **MCP**: virtual nodes with `"virtual://mcp"` file path → standard import (MCP nodes are regular Python classes)

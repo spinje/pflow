@@ -9,7 +9,7 @@ registry/
 ├── __init__.py              # Re-exports: Registry, normalize_node_id, scan_for_nodes
 ├── registry.py              # Registry class — load/save/search/filter against ~/.pflow/registry.json
 ├── scanner.py               # Discover Node subclasses via importlib (executes code!)
-├── node_id.py               # normalize_node_id() — canonical kebab-case naming
+├── node_id.py               # normalize_node_id() — resolve user-typed node IDs to registry keys (exact/hyphen/suffix tiers)
 ├── metadata_extractor.py    # Parse Interface section from node docstrings into structured metadata
 ├── context_builder.py       # Build LLM-optimized node/component context (build_component_context, build_nodes_context)
 ├── smart_filter.py          # LLM-powered field reduction for structure-only mode

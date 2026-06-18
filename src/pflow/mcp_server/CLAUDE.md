@@ -116,7 +116,7 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 
 See `utils/CLAUDE.md` for details. Quick reference:
 
-- **validation.py** — `validate_execution_parameters()` (shell-safe names, 1MB limit, code injection detection), `validate_file_path()` (exists but **never called** — design decision: local MCP = trusted), `generate_dummy_parameters()` (re-exported from `core.validation_utils`)
+- **validation.py** — `validate_execution_parameters()` (shell-safe names, 1MB limit, code injection detection), `generate_dummy_parameters()` (re-exported from `core.validation_utils`)
 - **errors.py** — Re-exports `sanitize_parameters()` from `core.security_utils` for backward compat. Called by `WorkflowRunner._update_metadata()` for metadata redaction.
 
 ## Key Patterns
@@ -138,9 +138,6 @@ Shared formatters from `execution/formatters/` ensure identical output between C
 **What's actually wired up:**
 - Parameter name validation via `validate_execution_parameters()` — blocks shell-unsafe chars, 1MB limit, code injection patterns (`__import__`, `eval(`, etc.)
 - SENSITIVE_KEYS-based redaction in `sanitize_parameters()` — exists in errors.py but **not called anywhere in services**
-
-**What exists but is never called:**
-- `validate_file_path()` — path traversal prevention. Design decision: local MCP server = trusted environment.
 
 ## Agent-Optimized Defaults
 

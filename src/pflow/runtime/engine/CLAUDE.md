@@ -14,6 +14,7 @@ src/pflow/runtime/engine/
 ├── batch_item_summary.py    # Display-safe summaries for failed batch inputs
 ├── instrumentation.py       # Cache, trace, metrics, progress, loop guards
 ├── loop_control.py          # `loop:` re-entry: condition eval, cap resolution, iteration scope (#445)
+├── plan_node.py             # plan_node(): shared per-node cache/template decision primitive (engine + dry-run planner)
 ├── namespaced_store.py      # NamespacedSharedStore proxy for per-node store isolation
 ├── api_warning_detector.py  # API error classification (73 validation + 20 resource patterns)
 ├── template_errors.py       # Structured Diagnostic builder for unresolved templates
@@ -271,7 +272,7 @@ When a parallel batch LLM node has `prewarm: true` + declared `prompt_cache:` ch
 - **Sum cost / accumulate tokens** → include warmup (it's real money paid; ~1.25× input rate)
 - **Count calls / per-node averages / discrepancy detection** → exclude via `if call.get("is_warmup"): continue`
 
-Filters live at 8 sites across `metrics.py`, `workflow_trace.py::_LLMSummaryAccumulator`, `prompt_cache_analysis/analyze.py`, `prompt_cache_analysis.trace_loading`, `prompt_cache_analysis/stages/discrepancy/diagnose.py`, and `trace_report.py` (3). Grep `is_warmup` to find them. Cost-summing paths (`calculate_costs`, `cost_for_event`, `iter_actual_cost_events`) need no filter — they only look at `cost_usd`.
+Filters live across `metrics.py`, `workflow_trace.py::_LLMSummaryAccumulator`, `prompt_cache_analysis.trace_loading`, `prompt_cache_analysis/stages/discrepancy/diagnose.py`, and `trace_report.py`. Grep `is_warmup` to find them. Cost-summing paths (`calculate_costs`, `cost_for_event`, `iter_actual_cost_events`) need no filter — they only look at `cost_usd`.
 
 ## Instrumentation (`instrumentation.py`)
 
@@ -335,7 +336,7 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 
 `update()` is a required override (not inherited from `dict`) — without it, `storage_mode: shared` sub-workflows crash when the child engine calls `shared_store.update(...)`. Any new proxy subclass must override `update()`, `__contains__`, `get()`, and the mutation methods explicitly.
 
-### `error_context.py` (92 lines)
+### `error_context.py`
 
 `get_upstream_stderr(template_str, context)` — extracts stderr from upstream shell nodes referenced in a template. Appended to error messages for "shell command failed, here's what it said" context.
 
@@ -359,6 +360,6 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 - **Batch nodes skip top-level template resolution** — per-item resolution in callback instead.
 - **`_source_line` keys NOT filtered in `split_params()`** — `python_code.py` reads them. Filtered only in `compute_node_config()` for cache hashing.
 - **Engine doesn't restore `node.params`** — intentional. Each execution sets params fresh.
-- **`handle_cached_execution` serves both cache levels** — memo (SQLite) and in-process (resume). Defensively clears `__failures__[id]` before restoring.
+- **`handle_cached_execution` serves both cache levels** — memo (SQLite) and in-process (resume). It does NOT clear `__failures__[id]` (both cache paths are unreachable for nodes with a stale failure record — see the Instrumentation section).
 - **Parallel batch deep-copies bare node** — cheap, but `_batch_trace` list append relies on GIL (CPython only).
 - **`CompiledWorkflow` is NOT concurrent-safe** — `node.params` mutation means one `engine.run()` at a time per workflow instance.

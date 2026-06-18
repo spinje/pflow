@@ -39,7 +39,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 - JSON string auto-parsing: `flatten_runtime_value()` tries to parse strings as JSON via `core.json_utils.try_parse_json`. If a string looks like JSON, it's recursively flattened as structure. This is critical for MCP nodes that return JSON strings as output values.
 - Deduplication: `get_value_hash()` detects identical data under different keys in legacy traces or custom node output. Shows a warning and skips duplicates.
 
-**error_formatter** uses lazy import of `mcp_server.utils.errors.sanitize_parameters` to avoid circular deps. Sanitizes `raw_response` and `response_headers` fields.
+**error_formatter** uses lazy import of `core.security_utils.sanitize_parameters` to avoid circular deps. Sanitizes `raw_response` and `response_headers` fields.
 
 **history_formatter** expects FLAT metadata dicts with execution fields at top level (`execution_count`, `last_execution_timestamp`, etc.) — NOT wrapped in `rich_metadata`. Silently returns `None` if fields aren't found, which can be hard to debug.
 
@@ -56,7 +56,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 | `node_output_formatter` | `Registry` | Metadata for template path extraction |
 | `node_output_formatter` | `TemplateResolver`, `template_validation` | Path resolution and flattening |
 | `node_output_formatter` | `smart_filter_fields_cached` (registry) | LLM-based field filtering in smart mode |
-| `error_formatter` | `sanitize_parameters` (mcp_server.utils) | Security sanitization (lazy import) |
+| `error_formatter` | `sanitize_parameters` (core.security_utils) | Security sanitization (lazy import) |
 
 ## CLI/MCP Parity
 
