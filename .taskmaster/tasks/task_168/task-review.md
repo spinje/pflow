@@ -2,12 +2,13 @@
 
 ## Metadata
 - **Design + plan:** 2026-06-06 → 06-07. **Implementation:** 2026-06-07 → 06-08.
-- **Branch:** `feat/workflow-visualization-static-viewer`. **PR:** none yet (Phase 5 uncommitted at review time; Phases 1–4 in commit `38fd6fe0`).
+- **Branch:** `feat/workflow-visualization-static-viewer`. **PR #496** = the static increment (Phases 1–5). The **visual/interaction layer + contract extensions** then landed on the same branch (~47 commits total, through 2026-06-17).
+- **Scope of THIS review:** the FULL feature. The static increment (Phases 1–5) is documented below as before; the **visual/interaction layer + contract extensions** (*The Visual / Interaction Layer* section) I did **NOT** implement — those facts are **[relayed]** from `implementation/progress-log.md`, cross-checked against the `web/` CLAUDE.md suite + code via parallel review agents.
 - **Source of truth for the journey:** `.taskmaster/tasks/task_168/implementation/progress-log.md` (unusually rich — every phase's deviations live there). Spec: `task-168.md`. How: `implementation/implementation-plan.md` (the H1–H13 review-hardening section is load-bearing). Requirements checklist: `visualization-requirements.md`.
 - **Trust boundary (per CLAUDE.md):** Phase 5 (docs, purity guard, test-quality fix) I implemented directly. The *whole feature* I verified end-to-end (live server, real-browser screenshots, a 58-workflow contract sweep, mutation tests) — marked **[verified]**. Phases 1–4 internals I relay from the progress log cross-checked against the committed code I read — marked **[relayed+read]**. I did not write Phases 1–4.
 
 ## Executive Summary
-Adds a **second renderer** (`render_react_flow`) and a **local Starlette server** (`pflow ui`, behind a `pflow[ui]` extra) that serves a Vite/React/React-Flow/ELK SPA over a **typed, React-Flow-native JSON contract** derived from the Task 155 `GraphModel`. It reveals structure that is invisible in `.pflow.md` text: input→node wiring, `${ref}` template connections, params (click-to-read), nested sub-workflow/batch/loop containers. This is the **static** increment; the live-run overlay and visual editing are deliberately deferred but architected-for (the structural `RFRef` join key + a pluggable `api/` data seam + a `status`-prop separation in node components).
+Adds a **second renderer** (`render_react_flow`) and a **local Starlette server** (`pflow ui`, behind a `pflow[ui]` extra) that serves a Vite/React/React-Flow/ELK SPA over a **typed, React-Flow-native JSON contract** derived from the Task 155 `GraphModel`. It reveals structure that is invisible in `.pflow.md` text: input→node wiring, `${ref}` template connections, params (click-to-read), nested sub-workflow/batch/loop containers. That static increment is the FOUNDATION; a large **visual/interaction layer** (Tines/n8n visual language, click-to-read panels, a source pane, live-source auto-update) and substantial **contract extensions** then landed on top of it (see *The Visual / Interaction Layer* below). Still deferred but architected-for: the **live-run overlay** (the structural `RFRef` join key + a pluggable `api/` data seam + a `status`-prop separation in node components) and **visual editing** (the per-param `SourceRef` seam).
 
 ## Implementation Overview
 
@@ -27,6 +28,50 @@ Adds a **second renderer** (`render_react_flow`) and a **local Starlette server*
 - **W1 (found in review, not the plan): truncation silently dropped cross-boundary DATA_FLOW edges.** `_visible_anchor` re-anchors a truncated endpoint to its batch host; never drops. **[verified — 3 such edges in `deep-research`, all survive]**
 - **`graph_service.py` lives in `execution/`, not `core/`** — it orchestrates `WorkflowRunner.validate` (execution layer); putting it in `core` inverts layering. **[verified+read]**
 - **Cold-registry concurrency torn-read fixed at the ROOT**, not worked around. The UI firing `/api/catalog`+`/api/graph` on a cold registry triggered concurrent lazy scan+writes → torn JSON reads → 422s. Fixed via `Registry._write_atomic` (tempfile+`os.replace`), the pattern `WorkflowManager`/`SettingsManager` already use; a server-side warm workaround was added then *deleted* once the root fix proved sufficient. **[relayed+read]**
+
+## The Visual / Interaction Layer + Contract Extensions (post-PR #496) **[relayed]**
+
+> The static increment above is the foundation; the **bulk of the feature** — the Tines/n8n
+> visual language, the interaction model, the source pane, and a much richer contract — landed
+> across ~40 user-driven arcs afterward. The canonical *how* is the **`web/` CLAUDE.md suite**,
+> so this section captures only the cross-cutting knowledge a future agent can't find there.
+
+**Read first for frontend work:** `web/CLAUDE.md` (cross-cutting invariants + folder map) →
+`web/src/graph/CLAUDE.md` (the pure transform) · `…/components/CLAUDE.md` (render) ·
+`…/hooks/CLAUDE.md` (runtime machinery) · `…/utils/CLAUDE.md` (helpers). Verify the visual layer
+in a real browser via `.claude/skills/screenshot-pflow-web-ui` (jsdom cannot).
+
+**The contract grew substantially** (load-bearing for ANY consumer; source of truth =
+`react_flow.py` + `graph/CLAUDE.md`): `RFNode.output_shape` (+ `field` naming the port
+result/response) and `cached_prefix`; `RFEdge.condition` (fail-closed AST extraction of branch
+conditions) + `output_path`; the **unified `${ref}` edge model** — every validator-enforced
+`${ref}` now emits one DATA_FLOW edge, so `is_dynamic ⟺ an edge exists` (the old pair-dedup is
+gone); **prompt-cache edges** (`input_name="prompt_cache"`); `IOPort` gained `purpose`/`default`
++ the **corrected `required` polarity** (was `False`, now the validator's `True` — one Mermaid
+golden updated); `is_decision` now counts the reserved **end route** (continue-or-stop gates ARE
+decisions). Two **presented pseudo-kinds**, classified fail-closed in Python — CONDITION (a
+decision code node) and TRANSFORM (a pure-reshape code node). Registry interface types reach the
+renderer via `kind_output_types`, **injected at the server seam** (renderer stays registry-free
+— purity). New endpoints: **`/api/source`** (source pane) + **`/api/version`** (the
+live-source-update poll).
+
+**The GOLD — frontend gotchas that cost hours (none findable by reading code):**
+- **React Flow draws ALL edges BEHIND nodes** (one SVG layer) → a line flowing *into* an icon
+  must be OUR geometry (the connector flare), never a stock edge.
+- **jsdom renders ZERO edge DOM** and logs no handle error → edge integrity MUST be a pure
+  `graph/flow.test.ts` test (the HANDLE-TYPE INVARIANT). A handle of the wrong *type* silently
+  drops the edge (bit the build twice).
+- **elkjs crashes, both pinned by layout tests:** a fixed port on a COMPOUND node under
+  `INCLUDE_CHILDREN` when an edge references it, and *every* `considerModelOrder.strategy` value
+  on a cross-hierarchy edge (`forceNodeModelOrder` is the lone survivor). Also: `nodeSize.minimum`
+  is applied **transposed** under direction DOWN — pass `(minH, minW)` in TD.
+- **`StaticFiles` sends no `Cache-Control`** → a stale `index.html` repeatedly defeated
+  debugging; fix = `Cache-Control: no-cache` on the HTML entry only.
+- **The visual layer can't be verified without a real browser** — jsdom can't see edges, and a
+  paint-vs-box bug (e.g. a viewBox/element mismatch rescaling the drawing) is invisible to
+  `getBoundingClientRect`. Automated guards: the **frontend lossless invariant**
+  (`web/src/graph/lossless.test.ts`) + the **Python contract drift guard** (committed real
+  contracts vs the live renderer).
 
 ## Files Modified/Created
 
@@ -106,20 +151,21 @@ None — `pflow ui` runs **no workflows**; every request is read-only (resolve�
 - Assert "no edge errors" under jsdom.
 
 ## Breaking Changes
-None. `Node.params` is additive; `render_mermaid` ignores it → **Mermaid goldens byte-identical**. Base `pip install pflow` gains no new *direct* runtime dep and no bundle.
+The static increment: none — `Node.params` is additive; `render_mermaid` ignores it. **Post-PR-#496:** `pflow visualize` was **renamed to `pflow mermaid`** (hard rename, no alias — no users; `pflow ui` is the new primary viewer verb), and the `required`-polarity contract fix changed ONE Mermaid golden (`document-processor.mmd` — the old `(string)` input-port label was the bug; now `(string, required)`). Base `pip install pflow` still gains no new *direct* runtime dep and no bundle.
 
 ## Future Considerations (extension points)
+- **Task 169 (agent↔browser channel):** an SSE push + CLI focus/frame commands. The shipped live-source-update **poll** (`/api/version` → in-place reload via `useSourceWatch` + `remap.ts`) is its baseline — detection is separable from reaction, so 169's SSE can replace the poll with a push calling the same trigger; the `?focus=`/`node=`/`?focus=<edge id>` deep links + the screenshot skill are the addressing it reuses.
 - **Live-run overlay (next increment):** subscribe in `web/src/api/`; node components already separate static data from a future `status` prop; join runtime events onto `RFRef`. The two substrates (structure vs. runtime JSONL) share ONLY the `NodeId` — do not couple them.
 - **Visual editing increment:** `RFParam.source` (a `SourceRef{file,line}`) is the seam that makes write-back *surgical* (target a source line) rather than a destructive file regeneration.
 - **A third renderer:** follow `render_react_flow`'s purity pattern; mint your own injective ids; don't touch the others.
-- **Migrate `visualize`/`analyze-cache` onto `graph_service`** when convenient (re-run Mermaid goldens after).
+- **Migrate `mermaid`/`analyze-cache` onto `graph_service`** when convenient (`visualize` was renamed `mermaid`; re-run Mermaid goldens after).
 
 ## AI Agent Guidance
 
 ### Quick start for related tasks — read first, in order
 1. `src/pflow/ui/CLAUDE.md` — the **HTTP + contract consumption rules** (the four `/api/graph` status arms; the H5/H6/H8/H9 rendering rules that prevent information loss; the `?workflow=` auto-load; the SPA-404 caveat; the `artifacts` packaging note).
 2. `src/pflow/core/workflow/graph/renderers/react_flow.py` — the contract's source of truth (frozen dataclasses + the `_ReactFlowRenderer`).
-3. `web/CLAUDE.md` — frontend structure, the data seam, the handle-type invariant, density-governs-edges, the consolidated dual-handle ports node.
+3. **`web/CLAUDE.md` + its `src/graph` / `components` / `hooks` / `utils` sub-docs** — the frontend's canonical *how* (cross-cutting invariants in the root; per-folder detail below). For ANY visual-layer work start HERE, not the progress log; verify in a real browser via `.claude/skills/screenshot-pflow-web-ui`.
 4. `graph/CLAUDE.md` — model invariants + the Runtime Overlay Join Contract (a Task-133 coordination touch-point; don't change the identity seam).
 
 ### Common pitfalls (from this build)

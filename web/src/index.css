@@ -1169,11 +1169,6 @@ button.active {
     0 0 6px rgb(0 0 0 / 0.8);
   z-index: 1; /* above the edge paths, never under a line */
 }
-.edge-label-num {
-  color: var(--decision);
-  font-weight: 700;
-  margin-right: 5px;
-}
 /* The mid-path branch CONDITION ("if len(items) > 5" / "else") renders as a
    standard .edge-label pill tinted by --label-c = --decision (GradientEdge sets
    it inline) — white text, orange tint, like the error pill but condition-colored. */
