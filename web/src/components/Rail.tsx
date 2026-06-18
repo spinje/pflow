@@ -34,21 +34,30 @@ interface RailProps {
 
 interface RailButtonProps {
   label: string;
+  // Optional second tooltip line — supplementary STATE under the action label
+  // (e.g. the sub-workflow toggle's "N/M open" readout), muted below the label.
+  detail?: string;
   active?: boolean;
   onClick: () => void;
   children: ReactNode;
 }
 
-function RailButton({ label, active, onClick, children }: RailButtonProps): JSX.Element {
+// A custom hover tooltip (the dark chip to the right of the icon) replaces the
+// native `title`: it can carry a muted second `detail` line and is styled in the
+// chrome palette. The action stays on `aria-label` for assistive tech.
+function RailButton({ label, detail, active, onClick, children }: RailButtonProps): JSX.Element {
   return (
     <button
       className={"rail-button" + (active ? " active" : "")}
-      title={label}
       aria-label={label}
       aria-pressed={active}
       onClick={onClick}
     >
       {children}
+      <span className="rail-tip">
+        <span className="rail-tip-label">{label}</span>
+        {detail && <span className="rail-tip-detail">{detail}</span>}
+      </span>
     </button>
   );
 }
@@ -80,10 +89,11 @@ export function Rail(props: RailProps): JSX.Element | null {
 
       {showGroups && (
         // ONE sub-workflow toggle: muted glyph → click expands all → magenta;
-        // magenta → click collapses all → muted. The "N/M open" readout in the
-        // Toolbar keeps partial states legible.
+        // magenta → click collapses all → muted. The "N/M open" readout rides this
+        // button's tooltip as a second line, keeping partial states legible.
         <RailButton
           label={groupsExpanded ? "Collapse sub-workflows" : "Expand sub-workflows"}
+          detail={`${props.openCount}/${props.groupCount} open`}
           active={groupsExpanded}
           onClick={groupsExpanded ? props.onCollapseAll : props.onExpandAll}
         >

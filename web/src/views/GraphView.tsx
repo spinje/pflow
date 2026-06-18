@@ -9,7 +9,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   Background,
   Controls,
-  MiniMap,
   type Node,
   ReactFlow,
   ReactFlowProvider,
@@ -25,7 +24,6 @@ import { usePanelPair } from "../hooks/usePanelPair";
 import { useSourceWatch } from "../hooks/useSourceWatch";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { ApiError, fetchSource } from "../api/client";
-import { nodeColor } from "../utils/format";
 import { edgeClickAction, nodeRepresentativeId, readViewParams, writeViewParams } from "../utils/viewParams";
 import type { RFEdge, RFGraph, RFNode, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
@@ -42,25 +40,6 @@ import { Toolbar } from "../components/Toolbar";
 interface GraphViewProps {
   workflow: string;
   onBack: () => void;
-}
-
-// MiniMap node fills — REAL color strings, not CSS vars: React Flow paints minimap
-// nodes as SVG fill attributes, where var() does not resolve. Leaves take their
-// identity color through the nodeColor seam (CONDITION-aware — never raw kindColor);
-// groups stay a faint wash so containers read as regions without drowning the leaf
-// dots; the root IO cards take a quiet wash of their teal; end stays neutral. The
-// dark container/mask styling lives in index.css (.react-flow__minimap*).
-function minimapNodeColor(n: FlowNode): string {
-  switch (n.type) {
-    case "node":
-      return nodeColor(n.data.node);
-    case "group":
-      return "rgba(255, 255, 255, 0.05)";
-    case "io":
-      return "rgba(111, 191, 168, 0.45)"; // IO_COLOR at minimap strength
-    default:
-      return "rgba(255, 255, 255, 0.12)"; // end sink
-  }
 }
 
 export function GraphView(props: GraphViewProps): JSX.Element {
@@ -435,8 +414,6 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       path={workflow}
       density={density}
       direction={direction}
-      groupCount={collapsibleIds.length}
-      openCount={collapsibleIds.length - collapsed.size}
       onDensity={changeDensity}
       onDirection={changeDirection}
       onBack={onBack}
@@ -538,7 +515,6 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           >
             <Background bgColor="#0D0D0D" color="#272727" />
             <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeColor={minimapNodeColor} nodeStrokeColor="transparent" nodeBorderRadius={3} />
           </ReactFlow>
           </div>
           {rightPanelOpen && (

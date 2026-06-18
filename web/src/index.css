@@ -36,7 +36,7 @@
 }
 
 /* Chrome palette — the dark product surfaces AROUND the canvas (toolbar, side
-   panels, source pane, catalog, banners, minimap/zoom controls). A neutral
+   panels, source pane, catalog, banners, zoom controls). A neutral
    near-black ladder (#0d0d0d void < #151515 panels) with white-alpha borders/text,
    so the frame reads as one continuous surface with the canvas instead of a cooler,
    lighter slate bolted onto it.
@@ -55,7 +55,6 @@
 .reload-banner,
 .panel-resizer,
 .canvas-overlay,
-.react-flow__minimap,
 .react-flow__controls {
   --bg: #0d0d0d;
   --bg-raised: #151515;
@@ -213,6 +212,7 @@ button.active {
   margin: 3px 0;
 }
 .rail-button {
+  position: relative;
   display: grid;
   place-items: center;
   width: 38px;
@@ -222,6 +222,46 @@ button.active {
   border: 1px solid transparent;
   border-radius: 10px;
   color: var(--text-muted);
+}
+/* Hover tooltip: a dark rounded chip to the RIGHT of the icon (the capsule hugs
+   the canvas's left edge, like the search popover). Replaces the native title so
+   the sub-workflow toggle can carry a muted second "N/M open" state line.
+   position:absolute + pointer-events:none keeps it out of the button's grid
+   centering and never blocks the click. */
+.rail-tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  z-index: 8;
+}
+.rail-button:hover .rail-tip,
+.rail-button:focus-visible .rail-tip {
+  opacity: 1;
+  visibility: visible;
+}
+.rail-tip-label {
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text);
+}
+.rail-tip-detail {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-faint);
 }
 .rail-button:hover {
   background: rgba(255, 255, 255, 0.05);
@@ -413,12 +453,6 @@ button.active {
   background: transparent;
   color: var(--text-muted);
 }
-/* "N/M open" beside the collapse/expand-all buttons (Toolbar.tsx) — state, not action */
-.toolbar-count {
-  color: var(--text-faint);
-  font-size: 12px;
-  white-space: nowrap;
-}
 
 .graph-body {
   flex: 1 1 auto;
@@ -488,20 +522,7 @@ button.active {
   color: var(--text-faint);
 }
 
-/* minimap — dark to match the canvas (the stock white box read as a hole in the
-   theme). Node fills are set in TS (GraphView minimapNodeColor: kind colors — SVG
-   fill attributes can't resolve var()); the container + viewport mask theme here. */
-.react-flow__minimap {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.react-flow__minimap-mask {
-  fill: rgb(13 13 13 / 0.62); /* dims the out-of-viewport region; the visible window stays clear */
-}
-
-/* zoom/fit controls — same dark treatment as the minimap (the stock buttons are white) */
+/* zoom/fit controls — dark treatment (the stock buttons are white) */
 .react-flow__controls {
   box-shadow: none;
   border: 1px solid var(--border);

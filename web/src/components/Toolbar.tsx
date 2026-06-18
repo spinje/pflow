@@ -6,10 +6,6 @@ interface ToolbarProps {
   path: string;
   density: Density;
   direction: Direction;
-  // The "N/M open" readout — state, not action. The collapse/expand BUTTONS live
-  // in the Rail; this count stays up top beside the mode pills (the chosen split).
-  groupCount: number;
-  openCount: number;
   onDensity: (d: Density) => void;
   onDirection: (d: Direction) => void;
   onBack: () => void;
@@ -17,7 +13,7 @@ interface ToolbarProps {
 
 // The slim top context bar: a back-to-catalog arrow + workflow title + the two
 // MODE selectors as labeled segmented pills (state-legibility wins here — see
-// Rail.tsx) + the open-count readout. Panel toggles + focus live in the floating
+// Rail.tsx). Panel toggles, focus, and the "N/M open" readout live on the floating
 // Rail; the back nav stays here (matching the reference's top-left breadcrumb).
 export function Toolbar(props: ToolbarProps): JSX.Element {
   return (
@@ -59,12 +55,6 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
           TD
         </button>
       </div>
-
-      {props.groupCount > 0 && (
-        <span className="toolbar-count" title="Expanded groups">
-          {props.openCount}/{props.groupCount} open
-        </span>
-      )}
     </header>
   );
 }
