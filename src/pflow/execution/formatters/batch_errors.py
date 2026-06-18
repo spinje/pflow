@@ -32,6 +32,9 @@ def format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
             item_summary = format_batch_item_summary(err)
             if item_summary:
                 lines.append(f"      item: {item_summary}")
+            child_failure = err.get("child_failure")
+            if isinstance(child_failure, Mapping):
+                lines.extend(_format_child_failure_lines(dict(child_failure), node_id))
 
         if truncated > 0:
             lines.append(f"  ...and {truncated} more errors")
@@ -68,7 +71,39 @@ def compact_batch_error_detail(error_detail: Mapping[str, Any]) -> dict[str, Any
     if "item" in error_detail:
         compact["has_full_item"] = True
 
+    # Preserve the structured child-failure bundle (#252) so JSON/MCP consumers
+    # get the child's per-node category + data, not a flattened string. The bundle
+    # holds child failure records (never the raw batch item), so it is API-safe.
+    child_failure = error_detail.get("child_failure")
+    if isinstance(child_failure, Mapping):
+        compact["child_failure"] = dict(child_failure)
+
     return compact
+
+
+def _format_child_failure_lines(child_failure: dict[str, Any], node_id: str) -> list[str]:
+    """Render a failed batch sub-workflow item's reconstructed child diagnostics (indented).
+
+    Reuses the same reconstruction primitive (``build_subworkflow_diagnostics``) and
+    renderer (``format_diagnostic``) the non-batch path uses, so a batched
+    sub-workflow failure shows the same rich, provenance-wrapped block.
+    """
+    from pflow.core.diagnostic_render import format_diagnostic
+    from pflow.execution.executor_service import build_subworkflow_diagnostics
+
+    lines: list[str] = []
+    for diagnostic in build_subworkflow_diagnostics(child_failure, node_id):
+        rendered = format_diagnostic(diagnostic).splitlines()
+        # Drop the top-level title frame ("Error: <title>" + its trailing blank line).
+        # The "[idx] ..." line above is already the item's headline, so the title
+        # would read as a second, separate error. format_diagnostic always emits the
+        # severity-prefixed title first (diagnostic_render._format_error_diagnostic).
+        if rendered and rendered[0].startswith(("Error:", "Warning:", "Info:")):
+            rendered = rendered[1:]
+            while rendered and not rendered[0].strip():
+                rendered.pop(0)
+        lines.extend(f"      {line}" if line.strip() else "" for line in rendered)
+    return lines
 
 
 def compact_batch_output_value(value: Any) -> Any:

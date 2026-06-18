@@ -8,9 +8,16 @@ agent-friendly error dicts.
 
 import json
 import logging
+from dataclasses import replace
 from typing import Any, Optional
 
-from pflow.core.diagnostic import CATEGORY_TITLES, Diagnostic, Severity, normalize_runtime_warning
+from pflow.core.diagnostic import (
+    CATEGORY_TITLES,
+    Diagnostic,
+    Severity,
+    format_child_provenance,
+    normalize_runtime_warning,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +65,20 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
     if success:
         return []
 
+    # A failed sub-workflow node carries the child's structured failure state
+    # forward in its archived data (`child_failure` bundle, written by
+    # WorkflowExecutor.post()). Reconstruct the child's diagnostics recursively
+    # and wrap them with parent provenance instead of collapsing to the
+    # generic one-line "WorkflowExecutor failed" message (issues #233/#252).
+    # Checked BEFORE the generic path so the rich reconstruction wins.
+    from pflow.runtime.node_state import get_node_output
+
+    failed_node = _get_failed_node(shared_store)
+    if failed_node:
+        node_output = get_node_output(shared_store, failed_node)
+        if isinstance(node_output, dict) and isinstance(node_output.get("child_failure"), dict):
+            return build_subworkflow_diagnostics(node_output["child_failure"], failed_node)
+
     error_info = _extract_error_info(action_result, shared_store)
     category = determine_error_category(error_info["message"] or "")
 
@@ -94,6 +115,60 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
             context=context,
         )
     ]
+
+
+def build_subworkflow_diagnostics(bundle: dict[str, Any], parent_step_id: str) -> list[Diagnostic]:
+    """Rebuild a failed sub-workflow child's diagnostics, wrapped with parent provenance.
+
+    The runtime layer (``WorkflowExecutor``) ferries a JSON-able ``child_failure``
+    bundle across the parent boundary — it cannot import this module without an
+    import cycle. Here we reconstruct the child's structured diagnostics by
+    reusing ``build_error_list`` so a nested failure renders byte-identical to a
+    top-level one (shell ``exit_code``/``command``/``stderr``, HTTP status, MCP
+    details, template ``unresolved_references``), then prefix each message via
+    ``format_child_provenance``. Nesting recurses naturally: the reconstructed
+    child shape's failed-node data may itself carry a ``child_failure`` bundle,
+    which ``build_error_list`` detects and dispatches back here, so provenance
+    chains outermost-first across arbitrary depth.
+
+    Used by ``build_error_list`` (non-batch sub-workflow failures) and the batch
+    error formatter (per-item sub-workflow failures).
+    """
+    workflow_ref = bundle.get("workflow_path")
+
+    template_diagnostic = bundle.get("template_diagnostic")
+    if isinstance(template_diagnostic, dict):
+        # Strict-mode template failure: the rich Diagnostic (unresolved_references,
+        # peer suggestions) lives only on the child exception — captured verbatim
+        # into the bundle, never present in the child's archived failure record.
+        inner: list[Diagnostic] = [Diagnostic.from_dict(template_diagnostic)]
+    else:
+        child_shape: dict[str, Any] = {
+            "__execution__": {"failed_node": bundle.get("failed_node")},
+            "__failures__": bundle.get("failures") or {},
+        }
+        if bundle.get("error"):
+            child_shape["error"] = bundle["error"]
+        inner = build_error_list(False, "error", child_shape)
+
+    wrapped: list[Diagnostic] = []
+    for d in inner:
+        # Mirror the provenance contract of `_propagate_child_parser_warnings`
+        # exactly (message via the shared helper, node_id fallback, setdefault
+        # context keys) — see core/diagnostic.py::format_child_provenance.
+        context = dict(d.context or {})
+        context.setdefault("sub_workflow_step", parent_step_id)
+        if isinstance(workflow_ref, str) and workflow_ref:
+            context.setdefault("sub_workflow_path", workflow_ref)
+        wrapped.append(
+            replace(
+                d,
+                message=format_child_provenance(parent_step_id, d.message),
+                node_id=d.node_id or parent_step_id,
+                context=context,
+            )
+        )
+    return wrapped
 
 
 def determine_error_category(error_message: str) -> str:
