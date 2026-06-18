@@ -90,7 +90,7 @@ describe("EdgePanel — data variant", () => {
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("result → impl");
     expect(screen.getByText("happy-check")).toBeTruthy();
     expect(screen.getByText("report-commits")).toBeTruthy();
-    expect(screen.getByText("receives")).toBeTruthy();
+    expect(screen.getByText("Receives")).toBeTruthy();
     // THIS edge's ref is highlighted inside the param value
     const mark = document.querySelector("mark.ref-mark");
     expect(mark?.textContent).toBe("${happy-check.result}");
@@ -157,7 +157,7 @@ describe("EdgePanel — data variant", () => {
     expect(screen.getByText("cached context")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("response → cached prompt prefix");
     expect(screen.getByText(/cached system prefix/)).toBeTruthy();
-    expect(screen.queryByText("receives")).toBeNull();
+    expect(screen.queryByText("Receives")).toBeNull();
     expect(screen.queryByText(/prompt_cache/)).toBeTruthy(); // the purpose line MAY name the authored field…
     expect(screen.queryByText("data flow")).toBeNull(); // …but the kind line never shows the generic wording
   });
@@ -224,7 +224,7 @@ describe("EdgePanel — data variant", () => {
     };
     show(g, "eb");
     // the host's `inputs` param renders, THIS edge's ref highlighted — not ${item}
-    expect(screen.getByText("receives")).toBeTruthy();
+    expect(screen.getByText("Receives")).toBeTruthy();
     const marks = [...document.querySelectorAll("mark.ref-mark")].map((m) => m.textContent);
     expect(marks).toEqual(["${pair.result}"]);
     expect(screen.getByText("fan-out.pflow.md:42")).toBeTruthy();
@@ -249,7 +249,7 @@ describe("EdgePanel — branch / end variants", () => {
     expect(screen.getByText("branch · outcome")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("fix-tests");
     expect(screen.getAllByText("elif round < cap").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/all outcomes of check-validate/)).toBeTruthy();
+    expect(screen.getByText(/All outcomes of check-validate/)).toBeTruthy();
     const marked = document.querySelector(".fact-marked");
     expect(marked?.textContent).toContain("fix-tests");
   });
@@ -258,7 +258,7 @@ describe("EdgePanel — branch / end variants", () => {
     show(graph, "e14");
     expect(screen.getByText("end · outcome")).toBeTruthy();
     expect(screen.getAllByText("if ok · else").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/all outcomes of check-validate/)).toBeTruthy();
+    expect(screen.getByText(/All outcomes of check-validate/)).toBeTruthy();
   });
 
   it("a decision's end edge whose condition extraction failed STAYS an outcome (fail-closed extraction ships condition-less)", () => {
@@ -341,7 +341,7 @@ describe("EdgePanel — loop (a control cycle with no LoopSpec — the validate-
     show(gateGraph(), "e_rc");
     expect(screen.getByText("sequential · loop")).toBeTruthy();
     expect(screen.getByText(/Part of a loop/)).toBeTruthy();
-    expect(screen.getByText("loop controlled by")).toBeTruthy();
+    expect(screen.getByText("Loop controlled by")).toBeTruthy();
     // check-validate appears as the TARGET chip AND the loop-controller chip
     expect(screen.getAllByText("check-validate").length).toBe(2);
     // the loop framing supersedes the shadowed "data dependency" prose (no inference)
@@ -352,7 +352,7 @@ describe("EdgePanel — loop (a control cycle with no LoopSpec — the validate-
     const nav = vi.fn();
     show(gateGraph(), "e_rc", undefined, nav);
     const chips = screen.getAllByText("check-validate");
-    fireEvent.click(chips[chips.length - 1]!); // the "loop controlled by" chip
+    fireEvent.click(chips[chips.length - 1]!); // the "Loop controlled by" chip
     expect(nav).toHaveBeenCalledWith("check-validate");
   });
 });
@@ -474,7 +474,7 @@ describe("EdgePanel — hostless item containers and coalesce refs", () => {
       ],
     };
     show(g, "eb");
-    expect(screen.getByText("receives")).toBeTruthy();
+    expect(screen.getByText("Receives")).toBeTruthy();
     const marks = [...document.querySelectorAll("mark.ref-mark")].map((m) => m.textContent);
     expect(marks).toEqual(["${prep.stdout}"]);
     expect(screen.getByText(/sub-workflow input of work/)).toBeTruthy();

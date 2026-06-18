@@ -206,13 +206,17 @@ export function ReadPanel({
         onClose={onClose}
       />
 
-      {/* Authored prose renders as markdown. The markdown CSS hangs off `.md` —
-          NOT off .read-panel-purpose, which EdgePanel shares for app-written
-          plain strings (do not restyle that class). */}
+      {/* Authored prose renders as markdown, inside a collapsible "Description"
+          disclosure (open by default). The markdown CSS hangs off `.md` — NOT off
+          .read-panel-purpose, which EdgePanel shares for app-written plain strings
+          (do not restyle that class). */}
       {node.purpose && (
-        <div className="read-panel-purpose md-host">
-          <Markdown text={node.purpose} />
-        </div>
+        <details className="panel-section" open>
+          <summary>Description</summary>
+          <div className="read-panel-purpose md-host">
+            <Markdown text={node.purpose} />
+          </div>
+        </details>
       )}
       {src &&
         (onOpenSource ? (
@@ -245,7 +249,7 @@ export function ReadPanel({
 
       {(node.params.length > 0 || node.cached_prefix != null) && (
         <section className="read-panel-params">
-          <h3>params</h3>
+          <h3>Params</h3>
           {node.params.slice(0, cacheInsertIndex(node.params)).map((param) => (
             <ParamBlock param={param} kind={node.kind} batch={node.batch} key={param.name} />
           ))}

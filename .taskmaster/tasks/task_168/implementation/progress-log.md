@@ -4149,3 +4149,29 @@ surfaces an edge), not just `output_shape=None`. Was previously an ad-hoc manual
 (already mutation-verified during the build), a frontend "no phantom row" test (the frontend has no
 batch-specific output-row path — a batched node is just an `output_shape=null` node, covered
 generically). The bar is bug-catching value, not coverage.
+
+### Chrome reskin — dark product UI around the canvas (2026-06-18, user-driven) ✅
+
+Restyled the chrome AROUND the canvas (toolbar, side panels, source pane, catalog); the canvas,
+nodes, and edges are UNTOUCHED. CSS + a few chrome components only.
+
+- **Palette (load-bearing mechanism):** neutral near-black ladder (`#0d0d0d` void < `#151515` panel
+  < `#1c1c1c` field = `--bg-field`) + white-alpha borders/text + orange accent
+  `oklch(70.5% 0.213 47.604)`. The new tokens are SCOPED to chrome containers (`.toolbar,
+  .read-panel, .source-pane, .catalog, .banner, .reload-banner, .panel-resizer, .canvas-overlay,
+  .react-flow__minimap, .react-flow__controls`), **NOT `:root`** — the RF node/edge layers share
+  `--bg/--border/--text/--accent`, so a `:root` redefine would recolor the CANVAS. `body` bg is a
+  LITERAL `#0d0d0d` (a canvas ancestor — a token there inherits into nodes). Recorded in `web/CLAUDE.md`.
+- **Typography:** mono→sans for names/labels (code/values/paths/`${ref}`/`file:line` stay mono);
+  sentence-case headers; coherent panel scale (`.read-panel` 13px base → 13 body / 12 code / 11 meta,
+  replacing a 10–14px mix); param labels `text-transform: capitalize` (display-only — authored key
+  stays lowercase).
+- **Structure:** segmented toolbar pills; collapsible Description; value/code boxes are RAISED
+  (`--bg-field`), not the inverted near-black, at 12px / 1.55 lh / 14×16 pad; rounded catalog cards.
+- **Source-row SELECTION tint kept the original blue `#6ea8fe`** (`.src-line-active/-block`),
+  deliberately NOT the orange chrome `--accent` (user-caught — selection is a distinct signal).
+- **Canvas verified byte-identical:** the only before/after canvas delta is a 1px `fitView`
+  reposition (the segmented toolbar is 2px taller) — node-band big-diffs → 0 after a 1px shift;
+  pre-vs-pre baseline = 0.00%. No new "tines" in the codebase (the requested constraint); 2
+  pre-existing `index.css` mentions scrubbed. **Gates:** web `tsc` clean; `npx vitest run` 500
+  passed (label-casing assertions updated).

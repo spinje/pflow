@@ -257,7 +257,7 @@ export function EdgePanel({
       )}
       {isLoop && loopDecidersList!.length > 0 && (
         <section className="read-panel-params">
-          <h3>loop controlled by</h3>
+          <h3>Loop controlled by</h3>
           <div className="chip-stack">
             {loopDecidersList!.map((d) => (
               <Chip key={d.id} node={d} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
@@ -285,7 +285,7 @@ export function EdgePanel({
       )}
       {isOutcome && outcomes.length > 1 && (
         <section className="read-panel-params">
-          <h3>all outcomes of {sourceName}</h3>
+          <h3>All outcomes of {sourceName}</h3>
           <OutcomeTable branches={outcomes} marked={edge.id} />
         </section>
       )}
@@ -319,7 +319,7 @@ export function EdgePanel({
 
       {param && (
         <section className="read-panel-params">
-          <h3>receives</h3>
+          <h3>Receives</h3>
           {/* kind = the param OWNER's kind: an IO-port target's param comes from
               the sub-workflow HOST (bindingParam above), so the port's own
               kind ("input") would pick the wrong language. */}

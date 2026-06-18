@@ -208,8 +208,8 @@ export function ConnectionSections({
   const shared = { graph, renderedIds, onNavigate };
   return (
     <>
-      <ChipStack label="references" nodes={producersOf(graph, node.id)} {...shared} />
-      <ChipStack label="referenced by" nodes={consumersOf(graph, node.id)} {...shared} />
+      <ChipStack label="References" nodes={producersOf(graph, node.id)} {...shared} />
+      <ChipStack label="Referenced by" nodes={consumersOf(graph, node.id)} {...shared} />
     </>
   );
 }

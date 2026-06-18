@@ -122,7 +122,7 @@ describe("ConnectionSections", () => {
       <ConnectionSections node={genNode} graph={graph} renderedIds={new Set(["n1", "n2", "n3"])} onNavigate={noop} />,
     );
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(["references (1)", "referenced by (2)"]);
+    expect(headings).toEqual(["References (1)", "Referenced by (2)"]);
     expect(screen.getByText("use-a")).toBeTruthy();
     expect(screen.getAllByText("use-b").length).toBe(2); // producer of gen AND consumer of gen
   });
@@ -134,7 +134,7 @@ describe("ConnectionSections", () => {
       <ConnectionSections node={useANode} graph={graph} renderedIds={new Set(["n1", "n2", "n3"])} onNavigate={noop} />,
     );
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(["references (1)"]); // no "referenced by" claim
+    expect(headings).toEqual(["References (1)"]); // no "referenced by" claim
   });
 });
 

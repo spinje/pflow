@@ -35,6 +35,42 @@
   color-scheme: dark;
 }
 
+/* Chrome palette — the dark product surfaces AROUND the canvas (toolbar, side
+   panels, source pane, catalog, banners, minimap/zoom controls). A neutral
+   near-black ladder (#0d0d0d void < #151515 panels) with white-alpha borders/text,
+   so the frame reads as one continuous surface with the canvas instead of a cooler,
+   lighter slate bolted onto it.
+
+   SCOPED to the chrome containers on purpose — NOT redefined on :root. The React
+   Flow node/edge layers share --bg/--border/--text/--accent, so a global redefine
+   would recolor the canvas. Those layers are NOT descendants of these containers,
+   so they keep the :root values and render byte-identical. (Layout wrappers like
+   .graph-body/.canvas ARE canvas ancestors and are deliberately excluded.) */
+.toolbar,
+.read-panel,
+.source-pane,
+.catalog,
+.banner,
+.reload-banner,
+.panel-resizer,
+.canvas-overlay,
+.react-flow__minimap,
+.react-flow__controls {
+  --bg: #0d0d0d;
+  --bg-raised: #151515;
+  /* Raised field surface — value/code/prompt boxes + inline code chips sit ABOVE
+     the panel (lighter), not recessed into the void. The surface ladder is
+     #0d0d0d void < #151515 panel < #1c1c1c field. */
+  --bg-field: #1c1c1c;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-muted: rgba(255, 255, 255, 0.6);
+  --text-faint: rgba(255, 255, 255, 0.42);
+  --accent: oklch(70.5% 0.213 47.604);
+  --accent-soft: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -46,9 +82,12 @@ body,
   margin: 0;
 }
 
+/* Literal void color, NOT var(--bg): body is a canvas ANCESTOR, so setting the
+   token here would inherit into the React Flow node/edge layers. Only the catalog
+   (no graph view) and any uncovered gutter actually show it. */
 body {
   font-family: var(--font);
-  background: var(--bg);
+  background: #0d0d0d;
   color: var(--text);
   font-size: 14px;
 }
@@ -118,6 +157,7 @@ button.active {
   padding: 14px 16px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 .catalog-item:hover {
   border-color: var(--accent);
@@ -162,29 +202,42 @@ button.active {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: var(--mono);
+  font-family: var(--font);
   color: var(--text-muted);
 }
+/* Segmented control: a recessed track holding borderless pill buttons. The
+   selected pill carries the accent wash + accent text; the rest are quiet until
+   hovered. */
 .toolbar-group {
   display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 .toolbar-group button {
-  border-radius: 0;
-  border-right-width: 0;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 4px 11px;
+  color: var(--text-muted);
 }
-.toolbar-group button:first-child {
-  border-radius: 6px 0 0 6px;
+.toolbar-group button:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
 }
-.toolbar-group button:last-child {
-  border-radius: 0 6px 6px 0;
-  border-right-width: 1px;
+.toolbar-group button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .toolbar-group button:disabled {
   opacity: 0.35;
   cursor: default;
 }
 .toolbar-group button:disabled:hover {
-  border-color: var(--border);
+  background: transparent;
+  color: var(--text-muted);
 }
 /* "N/M open" beside the collapse/expand-all buttons (Toolbar.tsx) — state, not action */
 .toolbar-count {
@@ -963,12 +1016,12 @@ button.active {
   box-shadow: 0 0 0 2px var(--kind, var(--accent));
 }
 
-/* batch DECK (Tines-style, user-requested 2026-06-10): a batch card reads as a
-   stack of item copies — two kind-tinted layers peeking below the card, slightly
-   narrower (scaled from the bottom-center). Applies to a collapsed batch group
-   card AND a leaf carrying a batch spec (`.batched`, WorkflowNode). Pure
+/* batch DECK (stacked-copies look, user-requested 2026-06-10): a batch card reads
+   as a stack of item copies — two kind-tinted layers peeking below the card,
+   slightly narrower (scaled from the bottom-center). Applies to a collapsed batch
+   group card AND a leaf carrying a batch spec (`.batched`, WorkflowNode). Pure
    decoration: pseudo-elements at z -1 (behind the card, over the edge layer —
-   the edge passes behind the deck and re-emerges, like the Tines reference). */
+   the edge passes behind the deck and re-emerges). */
 .group-card.group-batch::before,
 .group-card.group-batch::after,
 .node.batched::before,
@@ -1184,6 +1237,10 @@ button.active {
   padding: 16px;
   background: var(--bg-raised);
   border-left: 1px solid var(--border);
+  /* Panel type scale: 13px is the BODY/label size (names, facts, section headers,
+     description all inherit it); 12px = code/value boxes; 11px = meta (eyebrow,
+     file:line, badges). One coherent ladder instead of the old 10/11/12/13/14 mix. */
+  font-size: 13px;
 }
 /* The drag handle between canvas and panel: zero net width in the flex row
    (negative margins straddle the panel's left border), a 9px col-resize hit
@@ -1296,15 +1353,17 @@ button.active {
   cursor: pointer;
 }
 /* The selected node's whole authored BLOCK — a barely-visible extent tint
-   (before :hover/-active in the sheet so both still win on top of it). */
+   (before :hover/-active in the sheet so both still win on top of it).
+   The source-row SELECTION tint keeps its original blue (#6ea8fe), NOT the orange
+   chrome --accent — selection here is a distinct signal from the chrome accent. */
 .src-line-block {
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  background: color-mix(in srgb, #6ea8fe 5%, transparent);
 }
 .src-line:hover {
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 .src-line-active {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, #6ea8fe 16%, transparent);
 }
 .src-gutter {
   color: var(--text-faint);
@@ -1372,10 +1431,10 @@ button.active {
 .read-panel-header h2 {
   margin: 2px 0 0;
   font-size: 17px;
-  font-family: var(--mono);
+  font-family: var(--font);
 }
 .read-panel-kind {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   color: var(--text-faint);
   text-transform: lowercase;
@@ -1471,7 +1530,7 @@ button.active {
   gap: 8px;
 }
 .fact dt {
-  font-family: var(--mono);
+  font-family: var(--font);
   color: var(--text-faint);
   flex: 0 0 76px;
 }
@@ -1481,12 +1540,42 @@ button.active {
   word-break: break-word;
 }
 .read-panel-params h3 {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
+  font-size: 13px;
+  color: var(--text-muted);
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  margin-top: 20px;
+  margin-bottom: 12px;
+  padding-top: 16px;
+}
+
+/* Collapsible panel section (ReadPanel Description) — a native <details> styled as
+   a quiet disclosure: a small rotating caret + a muted label, open by default. */
+.panel-section {
+  margin: 10px 0;
+}
+.panel-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.panel-section > summary::-webkit-details-marker {
+  display: none;
+}
+.panel-section > summary::before {
+  content: "▸";
+  font-size: 9px;
+  transition: transform 0.12s;
+}
+.panel-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+.panel-section .read-panel-purpose {
+  margin: 8px 0 0;
 }
 .read-param {
   margin-bottom: 12px;
@@ -1495,29 +1584,33 @@ button.active {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .read-param-name {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-weight: 600;
+  /* Field labels read as UI labels (Inputs, Code, Prompt), capitalized like the
+     section headers — a display nicety; the authored key stays lowercase in source. */
+  text-transform: capitalize;
 }
 .read-param-source {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-faint);
   margin-left: auto;
 }
 .read-param-value {
   margin: 0;
-  padding: 8px 10px;
-  background: var(--bg);
+  padding: 14px 16px;
+  background: var(--bg-field);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 280px;
+  max-height: 320px;
   overflow: auto;
 }
 
@@ -1641,11 +1734,11 @@ button.active {
    carry no <code> element, so this can't leak into them */
 .md code {
   font-family: var(--mono);
-  font-size: 11px;
-  background: var(--bg);
+  font-size: 12px;
+  background: var(--bg-field);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 4px;
+  border-radius: 4px;
+  padding: 2px 5px;
 }
 /* headings capped small — a side panel has no room for giant headers */
 .md h1,
@@ -1765,7 +1858,7 @@ button.active {
   opacity: 0.55;
 }
 .edge-chip-name {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 12px;
   font-weight: 600;
   overflow: hidden;
@@ -1805,7 +1898,7 @@ button.active {
   background: color-mix(in srgb, var(--text) 7%, transparent); /* = .fact-marked */
 }
 .io-port-meta {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   color: var(--text-faint);
 }
@@ -1822,7 +1915,7 @@ button.active {
 /* The relationship word ("used by" / "from") — the panel's faint label-word
    vocabulary (feeds/consumed/…), clearer than a bare arrow. */
 .io-port-uses-label {
-  font-family: var(--mono);
+  font-family: var(--font);
   font-size: 11px;
   color: var(--text-faint);
   flex: 0 0 auto;
