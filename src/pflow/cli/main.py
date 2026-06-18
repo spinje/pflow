@@ -140,6 +140,7 @@ from pflow.cli.commands.guide import guide_cmd  # noqa: E402
 from pflow.cli.commands.history import history_cmd  # noqa: E402
 from pflow.cli.commands.list import list_cmd  # noqa: E402
 from pflow.cli.commands.mcp import mcp  # noqa: E402
+from pflow.cli.commands.mermaid import mermaid_cmd  # noqa: E402
 from pflow.cli.commands.probe import probe_cmd  # noqa: E402
 from pflow.cli.commands.read_fields import read_fields  # noqa: E402
 from pflow.cli.commands.report import report_cmd  # noqa: E402
@@ -147,7 +148,7 @@ from pflow.cli.commands.run import run  # noqa: E402
 from pflow.cli.commands.save import save_cmd  # noqa: E402
 from pflow.cli.commands.settings import settings  # noqa: E402
 from pflow.cli.commands.skills import skill  # noqa: E402
-from pflow.cli.commands.visualize import visualize  # noqa: E402
+from pflow.cli.commands.ui import ui_cmd  # noqa: E402
 
 cli.add_command(run)
 cli.add_command(list_cmd)
@@ -162,8 +163,9 @@ cli.add_command(settings)
 cli.add_command(read_fields)
 cli.add_command(skill)
 cli.add_command(report_cmd)
-cli.add_command(visualize)
+cli.add_command(mermaid_cmd)
 cli.add_command(analyze_cache)
+cli.add_command(ui_cmd)
 
 
 def cli_main() -> None:

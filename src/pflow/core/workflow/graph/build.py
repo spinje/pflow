@@ -21,7 +21,7 @@ from pflow.core.workflow.graph.model import (
     SourceRef,
     UnexpandedReason,
 )
-from pflow.core.workflow.graph.scope import refs_in, source_refs_in
+from pflow.core.workflow.graph.scope import refs_in, refs_with_path_in
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 
@@ -106,6 +106,7 @@ class _GraphBuilder:
                 batch=_build_batch(raw_node.get("batch")),
                 source=_source_ref(raw_node, source_file),
                 param_sources=_param_source_refs(raw_node, source_file),
+                params=_node_params(raw_node),
             )
             self._add_node(node)
             level_nodes[node_id.node_id] = node
@@ -136,6 +137,7 @@ class _GraphBuilder:
         self._add_routes_to_end(nodes, result, ancestor_path, parent_container)
         self._add_child_input_data_flow(nodes, result)
         self._add_input_consumer_edges(nodes, result)
+        self._add_cache_edges(ir, nodes, level_nodes, result)
 
         result.outputs = self._add_outputs(ir, ancestor_path, parent_container, result, source_file)
         return result
@@ -170,14 +172,20 @@ class _GraphBuilder:
         for name, config in inputs.items():
             node_id = _input_node_id(str(name), ancestor_path)
             result[str(name)] = node_id
+            cfg = config if isinstance(config, dict) else {}
             self._add_node(
                 Node(
                     id=node_id,
                     kind="input",
                     parent=container.id,
+                    purpose=str(cfg.get("description", "")),
                     io=IOPort(
-                        data_type=str(config.get("type")) if isinstance(config, dict) and config.get("type") else None,
-                        required=bool(config.get("required", False)) if isinstance(config, dict) else False,
+                        data_type=str(cfg.get("type")) if cfg.get("type") else None,
+                        # An input that omits `required:` IS required — the
+                        # ir_schema-documented default every runtime reader
+                        # (validator/executor/context) already applies.
+                        required=bool(cfg.get("required", True)),
+                        default=cfg.get("default"),
                     ),
                 )
             )
@@ -469,7 +477,7 @@ class _GraphBuilder:
                 self._add_literal_batch_item_input_edges(raw_node, node_id, level)
                 continue
             for input_name, binding in inputs_dict.items():
-                self._add_one_param_input_edges(
+                self._add_ref_edges(
                     str(input_name),
                     binding,
                     target_inputs,
@@ -493,14 +501,13 @@ class _GraphBuilder:
             for input_name, binding in inputs_dict.items():
                 if not isinstance(binding, str) or _binding_uses_batch_alias(binding, _batch_alias(raw_node)):
                     continue
-                self._add_one_param_input_edges(str(input_name), binding, target_inputs, node_id, level)
+                self._add_ref_edges(str(input_name), binding, target_inputs, node_id, level)
 
     def _add_input_consumer_edges(self, raw_nodes: list[dict[str, Any]], level: _LevelResult) -> None:
-        connected: set[tuple[NodeId, NodeId]] = set()
         for raw_node in raw_nodes:
-            self._add_one_input_consumer_edges(raw_node, level, connected)
+            self._add_one_input_consumer_edges(raw_node, level)
 
-    def _add_one_param_input_edges(
+    def _add_ref_edges(
         self,
         input_name: str | None,
         binding: Any,
@@ -510,30 +517,41 @@ class _GraphBuilder:
         batch_source: tuple[NodeId, str | None] | None = None,
         batch_alias: str = "item",
     ) -> None:
+        """Emit one DATA_FLOW edge per resolvable ``${ref}`` in authored text.
+
+        THE general-purpose emitter: every resolvable ref — workflow inputs and
+        siblings alike, via ``_resolve_ref``'s inputs-first resolution — is one
+        edge, deduped by full edge equality. (``_connect_source_expression``
+        stays a separate emitter: its no-dedup is load-bearing for sub-key
+        output edges.)
+        """
         target = target_inputs.get(input_name, node_id) if input_name is not None else node_id
         if not isinstance(binding, str) or "${" not in binding:
             return
-        for root, ref_field in refs_in(binding):
+        for root, ref_field, ref_path in refs_with_path_in(binding):
             # The batch alias takes precedence over a same-named top-level input: when
             # `as: data` collides with an input also named `data`, an item binding's
             # `${data.x}` must resolve to the batch source, not the input node.
-            if root == batch_alias:
-                resolved = batch_source
-            elif root in level.inputs:
-                continue
-            else:
-                resolved = self._resolve_ref(root, ref_field, level)
+            resolved = batch_source if root == batch_alias else self._resolve_ref(root, ref_field, level)
             if resolved is None:
                 continue
             source, output_field = resolved
             if source == target:
                 continue
+            # The ref's sub-path below the resolved output port: `${gen.result.ok}`
+            # carries ("ok",). Only when the first segment IS the resolved port —
+            # and NEVER through the batch alias: with `as: item` over
+            # `items: ${prep.rows}`, a binding `${item.rows.x}` has first segment
+            # "rows" == the batch source's output_field, but attaching ("x",)
+            # would describe an edge whose source is prep — the wrong node.
+            output_path = ref_path if root != batch_alias and output_field == ref_field else ()
             edge = Edge(
                 source=source,
                 target=target,
                 kind=EdgeKind.DATA_FLOW,
                 output_field=output_field,
                 input_name=input_name,
+                output_path=output_path,
             )
             if edge not in self.edges:
                 self.edges.append(edge)
@@ -553,80 +571,140 @@ class _GraphBuilder:
         self,
         raw_node: dict[str, Any],
         level: _LevelResult,
-        connected: set[tuple[NodeId, NodeId]],
     ) -> None:
         node_id = level.nodes.get(str(raw_node["id"]))
         if node_id is None:
             return
+        # Literal-batch hosts with expanded items already get per-item edges from
+        # _add_literal_batch_item_input_edges (mirroring _add_child_input_data_flow's
+        # arm) — a host-level duplicate here would sit beside the per-item edges.
+        if node_id in level.batch_item_incoming:
+            return
         target_inputs = level.incoming.get(node_id, {})
-        alias = _batch_alias(raw_node) if isinstance(raw_node.get("batch"), dict) else None
-        for param_name, ref_value in _params_strings(raw_node.get("params", {})):
-            self._add_declared_input_edges(
-                ref_value, param_name, target_inputs, node_id, level, connected, skip_root=alias
+        alias = _batch_alias(raw_node) if isinstance(raw_node.get("batch"), dict) else "item"
+        for param_name, ref_value, shallow in _params_strings(raw_node.get("params", {})):
+            # Only a binding-level (shallow) name may target a child-input port —
+            # a depth-2 dict ref must never claim a child input that happens to
+            # share its key's name; `{}` forces the host-level fallback.
+            self._add_ref_edges(
+                param_name,
+                ref_value,
+                target_inputs if shallow else {},
+                node_id,
+                level,
+                batch_alias=alias,
             )
-        self._add_loop_cap_edges(raw_node, node_id, level, connected)
+        self._add_loop_cap_edges(raw_node, node_id, level)
 
         batch = raw_node.get("batch")
         items = batch.get("items") if isinstance(batch, dict) else None
         if isinstance(items, str):
-            fallback_target = next(iter(target_inputs.values()), node_id)
-            self._add_declared_input_edges(items, None, {}, fallback_target, level, connected)
             # Expanded (workflow) batches capture a sibling-produced items source via the
             # child-input resolution path. A leaf (non-expanded) batch has no child inputs,
             # so resolve the sibling source onto the host here — otherwise `items: ${prep.rows}`
             # on a leaf batch silently drops the prep->host dependency the model exists to carry.
             if node_id not in level.incoming and node_id not in level.batch_item_incoming:
-                self._add_one_param_input_edges(None, items, {}, node_id, level)
+                self._add_ref_edges(None, items, {}, node_id, level)
+            # An expanded dynamic batch over `${docs}` with OPAQUE bindings
+            # (`inputs: ${item}`) has no other emitter for the input→batch
+            # dependency, so input-rooted items refs land on the host
+            # unconditionally; sibling-rooted items stay leaf-only (the guard
+            # above — a host-level sibling edge would flip Mermaid's
+            # structural-arrow suppression). Input edges cannot flip that
+            # suppression (its rules are same-source filtered). On leaf
+            # batches this duplicates the pass above and dedup absorbs it.
+            for root, _field, _path in refs_with_path_in(items):
+                if root not in level.inputs:
+                    continue
+                edge = Edge(source=level.inputs[root], target=node_id, kind=EdgeKind.DATA_FLOW)
+                if edge not in self.edges:
+                    self.edges.append(edge)
 
     def _add_loop_cap_edges(
         self,
         raw_node: dict[str, Any],
         node_id: NodeId,
         level: _LevelResult,
-        connected: set[tuple[NodeId, NodeId]],
     ) -> None:
         raw_loop = raw_node.get("loop")
         cap = raw_loop.get("max_iterations") if isinstance(raw_loop, dict) else None
         if not isinstance(cap, str) or "${" not in cap:
             return
-        self._add_declared_input_edges(cap, "max_iterations", {}, node_id, level, connected)
-        self._add_one_param_input_edges("max_iterations", cap, {}, node_id, level)
+        self._add_ref_edges("max_iterations", cap, {}, node_id, level)
 
-    def _add_declared_input_edges(
+    def _add_cache_edges(
         self,
-        ref_value: str,
-        input_name: str | None,
-        target_inputs: dict[str, NodeId],
-        fallback_target: NodeId,
+        ir: dict[str, Any],
+        raw_nodes: list[dict[str, Any]],
+        body_nodes: dict[str, Node],
         level: _LevelResult,
-        connected: set[tuple[NodeId, NodeId]],
-        skip_root: str | None = None,
     ) -> None:
-        for root, _field in refs_in(ref_value):
-            # A batch alias shadows a same-named top-level input inside item bindings:
-            # `${data.x}` under `as: data` is the per-item alias, not the input `data`.
-            # The batch-source edge is drawn by _add_one_param_input_edges instead.
-            if skip_root is not None and root == skip_root:
+        """One DATA_FLOW edge per ``## Cache`` chunk a node's ``prompt_cache`` consumes.
+
+        A chunk's ref is FORBIDDEN in the consumer's prompt body (the validator's
+        cache.prompt-body-duplicates-cache error), so this edge is the only
+        visibility that dependency can ever have. ``## Cache`` is strictly
+        per-file: only this level's ``ir`` and this level's resolution scope
+        participate. Guarded like ``_node_params`` — build_graph assumes
+        pre-validated IR; the validator owns ``cache.*`` errors, so malformed
+        shapes just emit nothing.
+
+        Also assembles ``Node.cached_prefix`` from the SAME data: per consumed
+        chunk (declaration order), ``prose_before + ${var}`` — the runtime's
+        block-assembly rule over the authored template instead of resolved
+        values, so the model's text reads as the prompt prefix will.
+        """
+        cache_block = ir.get("cache")
+        if not isinstance(cache_block, dict):
+            return
+        items = cache_block.get("items") or []
+        if not isinstance(items, list):
+            return
+        chunks = {
+            item["name"]: item
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("name"), str) and isinstance(item.get("var"), str)
+        }
+        if not chunks:
+            return
+        for raw_node in raw_nodes:
+            node_id = level.nodes.get(str(raw_node["id"]))
+            prompt_cache = raw_node.get("prompt_cache")
+            if node_id is None or not isinstance(prompt_cache, list):
                 continue
-            source = level.inputs.get(root)
-            if source is None:
-                continue
-            target = target_inputs.get(input_name or "", target_inputs.get(root, fallback_target))
-            key = (source, target)
-            if key in connected:
-                continue
-            connected.add(key)
-            self.edges.append(Edge(source=source, target=target, kind=EdgeKind.DATA_FLOW, input_name=input_name))
+            prefix_parts: list[str] = []
+            for entry in prompt_cache:
+                chunk = chunks.get(entry) if isinstance(entry, str) else None
+                if chunk is None:
+                    continue
+                var = chunk["var"]
+                prose = chunk.get("prose_before")
+                prefix_parts.append((prose if isinstance(prose, str) else "") + "${" + var + "}")
+                # "${var}" is the established re-wrap pattern (core/prompt_cache.py);
+                # resolution, output_field/output_path, the self-edge skip (a
+                # producer listing its own chunk draws nothing), and dedup all
+                # come from the shared emitter.
+                self._add_ref_edges("prompt_cache", "${" + var + "}", {}, node_id, level)
+            if prefix_parts:
+                body_nodes[node_id.node_id].cached_prefix = "".join(prefix_parts)
 
     def _connect_source_expression(self, source_expr: str, target: NodeId, level: _LevelResult) -> None:
         if not isinstance(source_expr, str) or "${" not in source_expr:
             return
-        for root, ref_field in source_refs_in(source_expr):
+        for root, ref_field, ref_path in refs_with_path_in(source_expr):
             resolved = self._resolve_ref(root, ref_field, level)
             if resolved is None:
                 continue
             source, output_field = resolved
-            self.edges.append(Edge(source=source, target=target, kind=EdgeKind.DATA_FLOW, output_field=output_field))
+            self.edges.append(
+                Edge(
+                    source=source,
+                    target=target,
+                    kind=EdgeKind.DATA_FLOW,
+                    output_field=output_field,
+                    output_path=ref_path if output_field == ref_field else (),
+                )
+            )
 
     def _resolve_ref(self, root: str, field: str | None, level: _LevelResult) -> tuple[NodeId, str | None] | None:
         if root in {"item", "__iteration__"}:
@@ -716,6 +794,18 @@ def _source_ref(raw: dict[str, Any], source_file: Path | None) -> SourceRef | No
     )
 
 
+def _node_params(raw_node: dict[str, Any]) -> dict[str, Any]:
+    """Authored param values for click-to-read / the React Flow renderer.
+
+    Stored verbatim (small literals, templates, full prompt/code strings alike);
+    the renderer decides what to inline vs truncate. Guarded like every other
+    ``raw_node`` read in this module: unvalidated IR may carry ``params: None``
+    (or a non-dict), which becomes an empty dict rather than an ``AttributeError``.
+    """
+    params = raw_node.get("params")
+    return params if isinstance(params, dict) else {}
+
+
 def _param_source_refs(raw: dict[str, Any], source_file: Path | None) -> dict[str, SourceRef]:
     source_lines = raw.get("_source_lines")
     source_files = raw.get("_source_files")
@@ -758,18 +848,35 @@ def _binding_uses_batch_alias(binding: str, alias: str) -> bool:
     return any(root == alias for root, _field in refs_in(binding))
 
 
-def _params_strings(params: Any) -> list[tuple[str, str]]:
+def _params_strings(params: Any) -> list[tuple[str, str, bool]]:
+    """Yield ``(name, string_leaf, shallow)`` for every string leaf in params.
+
+    Recurses dicts AND lists to any depth — validator parity (`_check_param_value`
+    in core/workflow/data_flow.py walks the same shapes), so every authored
+    ``${ref}`` is visited wherever it sits. ``shallow`` marks binding-level names that may
+    legitimately target a child-input port: a top-level string param, a depth-1
+    dict value, or a direct item of a top-level list param. Deeper leaves keep
+    their nearest key (the web UI joins it to a param row when names match) but
+    must never claim a child-input port. A ref is never dropped — deep refs
+    attach node-level downstream.
+    """
     if not isinstance(params, dict):
         return []
-    values: list[tuple[str, str]] = []
+    leaves: list[tuple[str, str, bool]] = []
     for name, value in params.items():
-        if isinstance(value, str):
-            values.append((str(name), value))
-        elif isinstance(value, dict):
-            for nested_name, nested_value in value.items():
-                if isinstance(nested_value, str):
-                    values.append((str(nested_name), nested_value))
-    return values
+        _collect_string_leaves(str(name), value, 0, leaves)
+    return leaves
+
+
+def _collect_string_leaves(name: str, value: Any, depth: int, leaves: list[tuple[str, str, bool]]) -> None:
+    if isinstance(value, str):
+        leaves.append((name, value, depth <= 1))
+    elif isinstance(value, dict):
+        for key, nested in value.items():
+            _collect_string_leaves(str(key), nested, depth + 1, leaves)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_string_leaves(name, item, depth + 1, leaves)
 
 
 def _container_id(ancestor_path: tuple[AncestorStep, ...], suffix: str) -> str:

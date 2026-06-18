@@ -1,0 +1,1675 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "ref": {
+        "node_id": "base_branch",
+        "ancestor_path": [],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "Branch PRs target, and that new branches are based on.",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": false,
+        "default": "main"
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g0",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n1",
+      "ref": {
+        "node_id": "max_issues",
+        "ancestor_path": [],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "Cap on how many issues the planner may pick up in a single cycle.",
+      "params": [],
+      "io": {
+        "data_type": "integer",
+        "required": false,
+        "default": 5
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g0",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n2",
+      "ref": {
+        "node_id": "find-repo",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Resolve the repository root by walking up from wherever pflow was launched\n(`git rev-parse --show-toplevel` does the walk). Every agent runs with this as\nits `cwd`, so the workflow works launched from any subdirectory of the repo \u2014\nnot just the root. Fails clearly if launched outside a git repo.",
+      "params": [
+        {
+          "name": "command",
+          "value": "git rev-parse --show-toplevel",
+          "is_dynamic": false,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+            "line": 44
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 34
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n3",
+      "ref": {
+        "node_id": "fetch-issues",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Fetch the candidate pool as JSON \u2014 label-gated to `agent-ready` so the swarm\nonly ever touches issues a human opted in. Deterministic; no agent.",
+      "params": [
+        {
+          "name": "command",
+          "value": "gh issue list --label agent-ready --json number,title,body,labels --limit 50",
+          "is_dynamic": false,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+            "line": 55
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 47
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n4",
+      "ref": {
+        "node_id": "plan",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "llm",
+      "purpose": "The one relational call: read the whole candidate pool and select up to\n`${max_issues}` unblocked, highest-impact issues \u2014 inferring dependencies and\npriority from what the issues are about. `output_schema` guarantees valid JSON\nvia constrained decoding (an `llm` node, not an agent \u2014 no tools needed).",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "You are triaging open GitHub issues for an autonomous implementation swarm.\n\nFrom the issues below, select up to ${max_issues} that are BOTH unblocked and\nworth doing now. Priority and dependencies are NOT stated in the issues \u2014 infer\nthem from what each issue is actually about:\n\n- **Dependencies**: if two issues touch the same component/area, or one must\n  logically land before another, treat the prerequisite as a blocker. Only pick\n  issues whose prerequisites are already done (i.e. not also in this list).\n- **Priority**: judge intrinsic severity/impact (security, data loss, crashes,\n  broken builds rank above features, which rank above cosmetics) and prefer work\n  that unblocks the most downstream issues.\n- **Dedup**: if several issues share a root cause, pick one.\n\nFor each chosen issue, assign a branch name `agent/<short-slug>-<number>` and a\none-line rationale. Return an empty list if nothing is safely unblocked.\n\nOpen issues (JSON):\n${issues}\n",
+          "is_dynamic": true,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/prompts/plan.prompt.md",
+            "line": null
+          }
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "issues": "${fetch-issues.stdout}",
+            "max_issues": "${max_issues}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "output_schema",
+          "value": {
+            "type": "object",
+            "properties": {
+              "issues": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "branch": {
+                      "type": "string"
+                    },
+                    "rationale": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "title",
+                    "branch",
+                    "rationale"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "issues"
+            ]
+          },
+          "is_dynamic": false,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 58
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "response",
+        "data_type": "object",
+        "keys": [
+          {
+            "name": "issues",
+            "data_type": "array"
+          }
+        ]
+      },
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n5",
+      "ref": {
+        "node_id": "gate",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Skip the expensive implement/review/PR work when the planner found nothing\nunblocked \u2014 a zero-issue cycle costs only fetch + plan.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "issues": "${plan.response.issues}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "issues: list\nresult: int = len(issues)\nif issues:\n    next: str = \"implement-and-review-each\"\nelse:\n    next: str = \"end\"",
+          "is_dynamic": false,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+            "line": 97
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 87
+      },
+      "is_decision": true,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "result",
+        "data_type": "int",
+        "keys": null
+      },
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n6",
+      "ref": {
+        "node_id": "implement-and-review-each",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "workflow",
+      "purpose": "Fan out across the unblocked issues, one parallel agent pipeline per issue, each\non its own branch/worktree. `error_handling: continue` keeps the pack alive if\none issue fails.",
+      "params": [
+        {
+          "name": "workflow",
+          "value": "./implement-and-review-one/implement-and-review-one.pflow.md",
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "issue": "${item}",
+            "base_branch": "${base_branch}",
+            "repo_dir": "${find-repo.stdout}"
+          },
+          "is_dynamic": true,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": {
+        "parallel": true,
+        "dynamic": true,
+        "as_name": "item",
+        "source_ref": "${plan.response.issues}",
+        "count": null,
+        "items": null
+      },
+      "parent": null,
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 105
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": true,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n7",
+      "ref": {
+        "node_id": "open-prs",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "claude-code",
+      "purpose": "Finalize the cycle by opening a PR per approved branch (push + `gh pr create`),\nnever merging into `${base_branch}` directly. **Critically, it also removes the\n`agent-ready` label from every issue it touches** \u2014 that is what shrinks the\ncandidate pool so the next cycle doesn't re-pick a done issue and collide on its\nexisting branch. Without the relabel the loop would never converge. Approved\nissues get a PR; `request-changes` issues are relabeled `agent-needs-human`.",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "You are finalizing this cycle's work by opening **pull requests** \u2014 do NOT merge\ninto ${base_branch} directly.\n\nPer-issue results (each item has `branch`, `commits_made`, `verdict`, `summary`,\nand `item.number` / `item.title` for the original issue):\n${results}\n\nYou are on ${base_branch} in the main checkout. For each result:\n\n**verdict \"approve\" and commits_made > 0:**\n- `git push -u origin <branch>`\n- `gh pr create --base ${base_branch} --head <branch> --title \"<item.title>\" --body \"Automated implementation of #<item.number>.\\n\\n<summary>\"`\n- `gh issue edit <item.number> --remove-label agent-ready`\n- record `<branch>` under `prs_opened`.\n\n**verdict \"request-changes\" (or commits_made == 0):**\n- `gh issue edit <item.number> --remove-label agent-ready --add-label agent-needs-human`\n- (optional) `gh issue comment <item.number> --body \"<review notes>\"`\n- record `#<item.number>` under `needs_human`.\n\n**Removing the `agent-ready` label is REQUIRED for every issue you touch** \u2014\nit takes the issue out of the candidate pool so the next cycle does not\nre-attempt it and collide on the now-existing branch. This label removal is what\nlets the outer loop converge. Report `prs_opened` and `needs_human`.\n",
+          "is_dynamic": true,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/prompts/open-prs.prompt.md",
+            "line": null
+          }
+        },
+        {
+          "name": "cwd",
+          "value": "${find-repo.stdout}",
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "max_turns",
+          "value": 30,
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "timeout",
+          "value": 900,
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "results": "${implement-and-review-each.results}",
+            "base_branch": "${base_branch}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "allowed_tools",
+          "value": [
+            "Bash",
+            "Read"
+          ],
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "output_schema",
+          "value": {
+            "type": "object",
+            "properties": {
+              "prs_opened": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "needs_human": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "prs_opened",
+              "needs_human"
+            ]
+          },
+          "is_dynamic": false,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 124
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "result",
+        "data_type": "object",
+        "keys": [
+          {
+            "name": "prs_opened",
+            "data_type": "array"
+          },
+          {
+            "name": "needs_human",
+            "data_type": "array"
+          }
+        ]
+      },
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n8",
+      "ref": {
+        "node_id": "issue",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "The issue to work on: an object with `number`, `title`, and `branch` (the branch\nname the planner assigned).",
+      "params": [],
+      "io": {
+        "data_type": "object",
+        "required": true,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g3",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n9",
+      "ref": {
+        "node_id": "base_branch",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "Branch to base the new work branch on.",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g3",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n10",
+      "ref": {
+        "node_id": "repo_dir",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "Absolute path to the repository root (resolved by the parent via\n`git rev-parse --show-toplevel`). Both agents run with this as their `cwd`, so\nworktree paths are predictable regardless of where pflow was launched.",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g3",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n11",
+      "ref": {
+        "node_id": "implement",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "claude-code",
+      "purpose": "Implement the issue in an isolated worktree and commit. Genuinely agentic:\nwrite code, run tests, iterate. Reports `commits_made` so the next step can\ndecide whether a review is warranted.",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "Implement GitHub issue #${issue.number}: \"${issue.title}\".\n\nWork in an ISOLATED git worktree so you do not collide with sibling agents\nrunning on the same checkout:\n\n    git worktree add -b ${issue.branch} ../wt-${issue.branch} ${base_branch}\n\nDo all your work inside that worktree directory. Make the smallest correct\nchange, run the most relevant tests, and commit.\n\nSet commits_made to the number of commits you actually created on\n${issue.branch} (0 if you could not complete the work).\n",
+          "is_dynamic": true,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/prompts/implement.prompt.md",
+            "line": null
+          }
+        },
+        {
+          "name": "cwd",
+          "value": "${repo_dir}",
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "max_turns",
+          "value": 80,
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "timeout",
+          "value": 1800,
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "issue": "${issue}",
+            "base_branch": "${base_branch}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "allowed_tools",
+          "value": [
+            "Bash",
+            "Read",
+            "Edit",
+            "Write",
+            "Glob",
+            "Grep"
+          ],
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "output_schema",
+          "value": {
+            "type": "object",
+            "properties": {
+              "branch": {
+                "type": "string"
+              },
+              "commits_made": {
+                "type": "integer"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "branch",
+              "commits_made",
+              "summary"
+            ]
+          },
+          "is_dynamic": false,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g2",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "line": 38
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "result",
+        "data_type": "object",
+        "keys": [
+          {
+            "name": "branch",
+            "data_type": "string"
+          },
+          {
+            "name": "commits_made",
+            "data_type": "integer"
+          },
+          {
+            "name": "summary",
+            "data_type": "string"
+          }
+        ]
+      },
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n12",
+      "ref": {
+        "node_id": "check-commits",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "code",
+      "purpose": "Gate the review: only branches with real commits are worth a reviewer's time.\nLiteral routing \u2014 pflow auto-detects the `review` / `end` targets.",
+      "params": [
+        {
+          "name": "inputs",
+          "value": {
+            "committed": "${implement.result.commits_made}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "code",
+          "value": "committed: int\nresult: int = committed\nif committed > 0:\n    next: str = \"review\"\nelse:\n    next: str = \"end\"",
+          "is_dynamic": false,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+            "line": 79
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g2",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "line": 69
+      },
+      "is_decision": true,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "result",
+        "data_type": "int",
+        "keys": null
+      },
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n13",
+      "ref": {
+        "node_id": "review",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "claude-code",
+      "purpose": "A real review \u2014 reads the diff AND the surrounding code (callers, tests,\nrelated modules), which is why it is an agent, not a single LLM call. Adequate\n`max_turns` so it is never starved mid-review.",
+      "params": [
+        {
+          "name": "prompt",
+          "value": "Review branch ${branch} against ${base_branch}.\n\nThe implementer's summary was:\n${summary}\n\nThis is a real review \u2014 read the diff AND the surrounding code it touches\n(callers, tests, related modules), not just the patch in isolation. Run:\n\n    git diff ${base_branch}...${branch}\n\nCheck correctness, missing or broken tests, and regressions in the code paths\nthis change affects. Return verdict \"approve\" only if it is safe to merge as-is;\notherwise \"request-changes\" with specific notes.\n",
+          "is_dynamic": true,
+          "source": {
+            "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/prompts/review.prompt.md",
+            "line": null
+          }
+        },
+        {
+          "name": "cwd",
+          "value": "${repo_dir}",
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "max_turns",
+          "value": 12,
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "timeout",
+          "value": 600,
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "inputs",
+          "value": {
+            "branch": "${implement.result.branch}",
+            "summary": "${implement.result.summary}",
+            "base_branch": "${base_branch}"
+          },
+          "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "allowed_tools",
+          "value": [
+            "Bash",
+            "Read",
+            "Grep"
+          ],
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "output_schema",
+          "value": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "approve",
+                  "request-changes"
+                ]
+              },
+              "notes": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "notes"
+            ]
+          },
+          "is_dynamic": false,
+          "source": null
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g2",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "line": 87
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "result",
+        "data_type": "object",
+        "keys": [
+          {
+            "name": "verdict",
+            "data_type": "string"
+          },
+          {
+            "name": "notes",
+            "data_type": "string"
+          }
+        ]
+      },
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n14",
+      "ref": {
+        "node_id": "__end__",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": null
+      },
+      "kind": "end",
+      "purpose": "",
+      "params": [],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": "g2",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n15",
+      "ref": {
+        "node_id": "branch",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The branch this item produced.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g4",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "line": 122
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n16",
+      "ref": {
+        "node_id": "commits_made",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "Commits produced \u2014 `0` means nothing to merge.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g4",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "line": 128
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n17",
+      "ref": {
+        "node_id": "verdict",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The review verdict, or `\"skipped\"` when there were no commits to review. Branch\nconvergence: `review` only runs on the committed path, so the literal fallback\ncovers the skipped path.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g4",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "line": 136
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n18",
+      "ref": {
+        "node_id": "summary",
+        "ancestor_path": [
+          {
+            "node_id": "implement-and-review-each",
+            "batch_index": null
+          }
+        ],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "What the implementer changed.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g4",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
+        "line": 142
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n19",
+      "ref": {
+        "node_id": "__end__",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "end",
+      "purpose": "",
+      "params": [],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": null,
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n20",
+      "ref": {
+        "node_id": "issues_planned",
+        "ancestor_path": [],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "The issues the planner picked this cycle. The orchestrator loops on this list:\nwhile it is non-empty there is more work, and because `open-prs` removes the\n`agent-ready` label, the pool shrinks each cycle until this drains to empty.\nDeclared `array` so the orchestrator's `loop: while:` source is positively typed.",
+      "params": [],
+      "io": {
+        "data_type": "array",
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g5",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 163
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n21",
+      "ref": {
+        "node_id": "prs_opened",
+        "ancestor_path": [],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "Branches that got a PR this cycle, or `[]` when the cycle ended early with no\nwork.",
+      "params": [],
+      "io": {
+        "data_type": null,
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g5",
+      "source": {
+        "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
+        "line": 170
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "source": "n11",
+      "target": "n12",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e1",
+      "source": "n12",
+      "target": "n13",
+      "kind": "branch",
+      "label": "review",
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": "if committed > 0",
+      "output_path": []
+    },
+    {
+      "id": "e2",
+      "source": "n12",
+      "target": "n14",
+      "kind": "end",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": "else",
+      "output_path": []
+    },
+    {
+      "id": "e3",
+      "source": "n13",
+      "target": "n14",
+      "kind": "end",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e4",
+      "source": "n8",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "issue",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e5",
+      "source": "n9",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "base_branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e6",
+      "source": "n11",
+      "target": "n12",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": "committed",
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "commits_made"
+      ]
+    },
+    {
+      "id": "e7",
+      "source": "n11",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": "branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "branch"
+      ]
+    },
+    {
+      "id": "e8",
+      "source": "n11",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": "summary",
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "summary"
+      ]
+    },
+    {
+      "id": "e9",
+      "source": "n9",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "base_branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e10",
+      "source": "n8",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e11",
+      "source": "n9",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e12",
+      "source": "n10",
+      "target": "n11",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "cwd",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e13",
+      "source": "n9",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e14",
+      "source": "n10",
+      "target": "n13",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "cwd",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e15",
+      "source": "n11",
+      "target": "n15",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "branch"
+      ]
+    },
+    {
+      "id": "e16",
+      "source": "n11",
+      "target": "n16",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "commits_made"
+      ]
+    },
+    {
+      "id": "e17",
+      "source": "n13",
+      "target": "n17",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "verdict"
+      ]
+    },
+    {
+      "id": "e18",
+      "source": "n11",
+      "target": "n18",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "summary"
+      ]
+    },
+    {
+      "id": "e19",
+      "source": "n2",
+      "target": "n3",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e20",
+      "source": "n3",
+      "target": "n4",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e21",
+      "source": "n4",
+      "target": "n5",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e22",
+      "source": "n5",
+      "target": "n6",
+      "kind": "branch",
+      "label": "implement-and-review-each",
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": "if issues",
+      "output_path": []
+    },
+    {
+      "id": "e23",
+      "source": "n6",
+      "target": "n7",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e24",
+      "source": "n5",
+      "target": "n19",
+      "kind": "end",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": "else",
+      "output_path": []
+    },
+    {
+      "id": "e25",
+      "source": "n3",
+      "target": "n4",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "stdout",
+      "input_name": "issues",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e26",
+      "source": "n1",
+      "target": "n4",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "max_issues",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e27",
+      "source": "n4",
+      "target": "n5",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": "issues",
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "issues"
+      ]
+    },
+    {
+      "id": "e28",
+      "source": "n4",
+      "target": "n8",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": "issue",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e29",
+      "source": "n0",
+      "target": "n9",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "base_branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e30",
+      "source": "n2",
+      "target": "n10",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "stdout",
+      "input_name": "repo_dir",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e31",
+      "source": "n6",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "results",
+      "input_name": "results",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e32",
+      "source": "n0",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "base_branch",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e33",
+      "source": "n1",
+      "target": "n4",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e34",
+      "source": "n0",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e35",
+      "source": "n2",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "stdout",
+      "input_name": "cwd",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e36",
+      "source": "n4",
+      "target": "n20",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "issues"
+      ]
+    },
+    {
+      "id": "e37",
+      "source": "n7",
+      "target": "n21",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "result",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": [
+        "prs_opened"
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "g0",
+      "kind": "input_wrapper",
+      "parent": null,
+      "host": null,
+      "members": [
+        "n0",
+        "n1"
+      ],
+      "nesting_depth": 0,
+      "annotations": {
+        "start_node": "find-repo"
+      }
+    },
+    {
+      "id": "g1",
+      "kind": "batch",
+      "parent": null,
+      "host": "n6",
+      "members": [],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g2",
+      "kind": "workflow",
+      "parent": "g1",
+      "host": "n6",
+      "members": [
+        "n11",
+        "n12",
+        "n13",
+        "n14"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g3",
+      "kind": "input_wrapper",
+      "parent": "g2",
+      "host": null,
+      "members": [
+        "n8",
+        "n9",
+        "n10"
+      ],
+      "nesting_depth": 1,
+      "annotations": {
+        "start_node": "implement"
+      }
+    },
+    {
+      "id": "g4",
+      "kind": "output_wrapper",
+      "parent": "g2",
+      "host": null,
+      "members": [
+        "n15",
+        "n16",
+        "n17",
+        "n18"
+      ],
+      "nesting_depth": 1,
+      "annotations": {}
+    },
+    {
+      "id": "g5",
+      "kind": "output_wrapper",
+      "parent": null,
+      "host": null,
+      "members": [
+        "n20",
+        "n21"
+      ],
+      "nesting_depth": 0,
+      "annotations": {}
+    }
+  ],
+  "kind_output_types": {
+    "claude-code": {
+      "result": "str|dict",
+      "_schema_error": "str",
+      "llm_usage": "dict"
+    },
+    "code": {
+      "stdout": "str",
+      "stderr": "str",
+      "error": "str"
+    },
+    "llm": {
+      "response": "str|dict",
+      "error": "str",
+      "prompt": "str",
+      "llm_usage": "dict"
+    },
+    "shell": {
+      "stdout": "str",
+      "stdout_is_binary": "bool",
+      "stderr": "str",
+      "stderr_is_binary": "bool",
+      "exit_code": "int"
+    }
+  }
+}

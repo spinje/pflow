@@ -1,0 +1,679 @@
+"""Tests for ``pflow ui`` — the Starlette server, its endpoints, and the CLI.
+
+Covers the three ``/api/graph`` failure arms (H2: 400 missing param, 422
+resolution/validation failure, 500 build/render bug → never a 200-with-empty-
+graph), the catalog endpoint, the ``uv tool install 'pflow-cli[ui]'`` hint when the extra
+is absent (H4), and the lazy-import boundary that keeps the base CLI loading
+without the web stack.
+
+Implementation: src/pflow/ui/server.py, src/pflow/cli/commands/ui.py
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import socket
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+from click.testing import CliRunner
+from starlette.testclient import TestClient
+
+from pflow.cli.commands.ui import ui_cmd
+from pflow.core.workflow.manager import WorkflowManager
+from pflow.ui.server import _json, create_app
+from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
+
+_VALID_IR = {
+    "nodes": [
+        {"id": "greet", "type": "shell", "params": {"command": "echo hello"}},
+        {"id": "done", "type": "shell", "params": {"command": "echo done"}},
+    ],
+    "edges": [{"from": "greet", "to": "done"}],
+}
+
+
+def _save_workflow(name: str, *, description: str | None = None) -> None:
+    """Materialize a saved workflow in the (isolated) registry directory."""
+    manager = WorkflowManager()
+    wf_dir = manager.workflows_dir / name
+    wf_dir.mkdir(parents=True, exist_ok=True)
+    write_workflow_file(_VALID_IR, wf_dir / f"{name}.pflow.md", title=name, description=description)
+
+
+class TestCatalogEndpoint:
+    def test_empty_catalog_returns_json_list(self) -> None:
+        """A clean registry yields an empty JSON array (200)."""
+        client = TestClient(create_app())
+        response = client.get("/api/catalog")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_catalog_lists_saved_workflows_without_ir(self) -> None:
+        """A saved workflow appears with name/description/path and no ``ir``."""
+        _save_workflow("demo", description="A demo workflow")
+        client = TestClient(create_app())
+        response = client.get("/api/catalog")
+
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) == 1
+        entry = items[0]
+        assert entry["name"] == "demo"
+        assert entry["description"] == "A demo workflow"
+        assert entry["path"].endswith("demo.pflow.md")
+        assert "ir" not in entry
+
+
+class TestGraphEndpoint:
+    def test_valid_workflow_returns_react_flow_payload(self, tmp_path: Path) -> None:
+        """A valid workflow renders to a JSON payload with nodes/edges/groups."""
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/graph", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert set(payload) >= {"nodes", "edges", "groups"}
+        # The two shell nodes survive into the contract.
+        node_kinds = {n["kind"] for n in payload["nodes"]}
+        assert "shell" in node_kinds
+        # Every edge endpoint resolves to an emitted node id (contract integrity).
+        node_ids = {n["id"] for n in payload["nodes"]}
+        for edge in payload["edges"]:
+            assert edge["source"] in node_ids
+            assert edge["target"] in node_ids
+        # The registry's declared output types ride the payload, scoped to the
+        # kinds present (the frontend's last type fallback on output rows).
+        assert payload["kind_output_types"]["shell"]["stdout"] == "str"
+        assert set(payload["kind_output_types"]) <= node_kinds
+
+    def test_missing_workflow_param_is_400(self) -> None:
+        """No ``workflow`` query param → 400 with a structured error body."""
+        client = TestClient(create_app())
+        response = client.get("/api/graph")
+        assert response.status_code == 400
+        assert response.json()["errors"][0]["message"]
+
+    def test_invalid_workflow_is_422_not_500(self, tmp_path: Path) -> None:
+        """A workflow that fails validation → 422 with diagnostics, never a 500."""
+        bad_ir = {"nodes": [{"id": "bad", "type": "nonexistent_type_xyz", "params": {}}], "edges": []}
+        workflow_path = tmp_path / "invalid.pflow.md"
+        write_workflow_file(bad_ir, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/graph", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 422
+        errors = response.json()["errors"]
+        assert errors and all("message" in e for e in errors)
+
+    def test_nonexistent_workflow_is_422(self) -> None:
+        """An unresolvable workflow reference → 422 (resolution failure)."""
+        client = TestClient(create_app())
+        response = client.get("/api/graph", params={"workflow": "no-such-workflow-xyz"})
+        assert response.status_code == 422
+        assert response.json()["errors"]
+
+    def test_unexpected_pipeline_exception_is_loud_500(self, tmp_path: Path) -> None:
+        """An unexpected (non-validation) pipeline exception is a loud 500.
+
+        Patches ``resolve_validate_build`` wholesale to raise a ``RuntimeError`` —
+        a stand-in for a producer bug (e.g. a build/render fault on already-
+        validated IR). The endpoint catches only ``WorkflowGraphValidationError``
+        (→ 422); anything else must propagate to a loud 500, never a
+        200-with-empty-graph. With ``raise_server_exceptions=False`` the client
+        observes that 500 rather than re-raising.
+        """
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app(), raise_server_exceptions=False)
+        with patch(
+            "pflow.ui.server.resolve_validate_build",
+            side_effect=RuntimeError("simulated builder bug"),
+        ):
+            response = client.get("/api/graph", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 500
+
+
+class TestSourceEndpoint:
+    def test_valid_workflow_returns_source_files_with_root_after_inputs(self, tmp_path: Path) -> None:
+        """A valid workflow returns its source text and root despite input nodes.
+
+        Regression guard: GraphModel input nodes are top-level and sourceless, so
+        deriving ``root`` from the first top-level node would return ``None`` for
+        common workflows with ``## Inputs``.
+        """
+        workflow_ir = {
+            "inputs": {"name": {"description": "Name to greet.", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "greet",
+                    "type": "shell",
+                    "params": {"command": "echo ${name}"},
+                }
+            ],
+            "outputs": {"greeting": {"description": "Greeting text.", "source": "${greet.stdout}"}},
+        }
+        workflow_path = tmp_path / "with-inputs.pflow.md"
+        write_workflow_file(workflow_ir, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        payload = response.json()
+        expected_root = str(workflow_path.resolve())
+        assert payload["root"] == expected_root
+        assert payload["files"] == {expected_root: workflow_path.read_text(encoding="utf-8")}
+
+    def test_valid_sub_workflow_returns_parent_and_child_sources_only(self, tmp_path: Path) -> None:
+        """Nested workflow source is inlined; unrelated files are absent."""
+        child_path = tmp_path / "child.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [{"id": "child-step", "type": "shell", "params": {"command": "echo child"}}],
+                "outputs": {"child_out": {"description": "Child output.", "source": "${child-step.stdout}"}},
+            },
+            child_path,
+            title="Child",
+        )
+        parent_path = tmp_path / "parent.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [
+                    {
+                        "id": "call-child",
+                        "type": "workflow",
+                        "params": {"workflow": f"./{child_path.name}"},
+                    }
+                ],
+                "outputs": {"result": {"description": "Parent output.", "source": "${call-child.child_out}"}},
+            },
+            parent_path,
+            title="Parent",
+        )
+        unrelated_path = tmp_path / "unrelated.pflow.md"
+        unrelated_path.write_text("# Unrelated\n", encoding="utf-8")
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": str(parent_path)})
+
+        assert response.status_code == 200
+        payload = response.json()
+        parent_key = str(parent_path.resolve())
+        child_key = str(child_path.resolve())
+        assert payload["root"] == parent_key
+        assert payload["files"] == {
+            child_key: child_path.read_text(encoding="utf-8"),
+            parent_key: parent_path.read_text(encoding="utf-8"),
+        }
+        assert str(unrelated_path.resolve()) not in payload["files"]
+
+    def test_unreadable_child_source_file_is_skipped_not_500(self, tmp_path: Path) -> None:
+        """A child file that becomes unreadable after graph build is skipped.
+
+        The producer arm of the skip contract: ``source()`` catches
+        OSError/UnicodeDecodeError per file (logger.warning) so one vanished
+        child never 500s the request or drops the readable parent. Patching
+        ``pflow.ui.server.Path`` (the read loop's seam) simulates the
+        between-resolve-and-read vanish — resolution itself still reads the
+        real child file via graph_service, so the workflow builds fine.
+        """
+        child_path = tmp_path / "child.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [{"id": "child-step", "type": "shell", "params": {"command": "echo child"}}],
+                "outputs": {"child_out": {"description": "Child output.", "source": "${child-step.stdout}"}},
+            },
+            child_path,
+            title="Child",
+        )
+        parent_path = tmp_path / "parent.pflow.md"
+        write_workflow_file(
+            {
+                "nodes": [
+                    {
+                        "id": "call-child",
+                        "type": "workflow",
+                        "params": {"workflow": f"./{child_path.name}"},
+                    }
+                ],
+                "outputs": {"result": {"description": "Parent output.", "source": "${call-child.child_out}"}},
+            },
+            parent_path,
+            title="Parent",
+        )
+        parent_key = str(parent_path.resolve())
+        child_key = str(child_path.resolve())
+
+        class _UnreadablePath:
+            def read_text(self, *args: object, **kwargs: object) -> str:
+                raise OSError("simulated: file vanished after graph build")
+
+        def _fake_path(arg: object) -> object:
+            return _UnreadablePath() if str(arg) == child_key else Path(str(arg))
+
+        client = TestClient(create_app())
+        with patch("pflow.ui.server.Path", _fake_path):
+            response = client.get("/api/source", params={"workflow": str(parent_path)})
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["root"] == parent_key
+        assert payload["files"] == {parent_key: parent_path.read_text(encoding="utf-8")}
+        assert child_key not in payload["files"]
+
+    def test_missing_workflow_param_is_400(self) -> None:
+        """No ``workflow`` query param → 400 with a structured error body."""
+        client = TestClient(create_app())
+        response = client.get("/api/source")
+        assert response.status_code == 400
+        assert response.json()["errors"][0]["message"]
+
+    def test_invalid_workflow_is_422_not_500(self, tmp_path: Path) -> None:
+        """A workflow that fails validation → 422 with diagnostics, never a 500."""
+        bad_ir = {"nodes": [{"id": "bad", "type": "nonexistent_type_xyz", "params": {}}], "edges": []}
+        workflow_path = tmp_path / "invalid.pflow.md"
+        write_workflow_file(bad_ir, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 422
+        errors = response.json()["errors"]
+        assert errors and all("message" in e for e in errors)
+
+    def test_unexpected_pipeline_exception_is_loud_500(self, tmp_path: Path) -> None:
+        """An unexpected (non-validation) pipeline exception is a loud 500."""
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app(), raise_server_exceptions=False)
+        with patch(
+            "pflow.ui.server.resolve_validate_build",
+            side_effect=RuntimeError("simulated source builder bug"),
+        ):
+            response = client.get("/api/source", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 500
+
+    def test_inline_content_workflow_returns_empty_source_map(self) -> None:
+        """Inline markdown has no file path, so source refs carry no file."""
+        workflow = ir_to_markdown(
+            {"nodes": [{"id": "inline", "type": "shell", "params": {"command": "echo inline"}}]},
+            title="Inline",
+        )
+
+        client = TestClient(create_app())
+        response = client.get("/api/source", params={"workflow": workflow})
+
+        assert response.status_code == 200
+        assert response.json() == {"root": None, "files": {}}
+
+
+class TestVersionEndpoint:
+    """``/api/version`` — the cheap change-fingerprint the frontend polls.
+
+    Contract: always ``200`` with a ``fingerprint`` (except ``400`` on a missing
+    param), the fingerprint MOVES when a source file changes, and a mid-edit
+    INVALID workflow still yields a ``200`` (entry-file fallback) so the client's
+    poll loop never breaks.
+    """
+
+    def test_valid_workflow_returns_a_fingerprint(self, tmp_path: Path) -> None:
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/version", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        fingerprint = response.json()["fingerprint"]
+        assert isinstance(fingerprint, str) and fingerprint
+
+    def test_fingerprint_is_stable_across_identical_reads(self, tmp_path: Path) -> None:
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app())
+        first = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        second = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        assert first == second
+
+    def test_fingerprint_changes_when_the_source_file_changes(self, tmp_path: Path) -> None:
+        """An edit (here: a forced mtime bump) moves the fingerprint — the whole
+        point: it is what triggers the client's in-place re-fetch."""
+        import os
+
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app())
+        before = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+
+        # Force a distinct mtime (deterministic across fast test runs).
+        stat = workflow_path.stat()
+        os.utime(workflow_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+        after = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        assert before != after
+
+    def test_missing_workflow_param_is_400(self) -> None:
+        client = TestClient(create_app())
+        response = client.get("/api/version")
+        assert response.status_code == 400
+        assert response.json()["errors"][0]["message"]
+
+    def test_invalid_workflow_still_returns_200_so_the_poll_survives(self, tmp_path: Path) -> None:
+        """A mid-edit invalid workflow must NOT error the poll. The entry file's
+        mtime still rides the fingerprint, so the triggered ``/api/graph``
+        re-fetch (not this endpoint) surfaces the 422 and recovers on the fix."""
+        bad_ir = {"nodes": [{"id": "bad", "type": "nonexistent_type_xyz", "params": {}}], "edges": []}
+        workflow_path = tmp_path / "invalid.pflow.md"
+        write_workflow_file(bad_ir, workflow_path)
+
+        client = TestClient(create_app())
+        response = client.get("/api/version", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        assert response.json()["fingerprint"]
+
+    def test_parse_broken_file_tracks_its_literal_path_so_edits_while_broken_are_seen(self, tmp_path: Path) -> None:
+        """A PARSE error makes even resolution fail — but the agent is editing a
+        real file. The literal-path fallback tracks it, so an edit-while-broken
+        still moves the fingerprint (the fix is then noticed immediately)."""
+        workflow_path = tmp_path / "broken.pflow.md"
+        # Missing the required node description → a parse error (resolution fails,
+        # not just validation).
+        workflow_path.write_text("# Broken\n\n## Steps\n\n### greet\n\n```shell\necho hi\n```\n", encoding="utf-8")
+
+        client = TestClient(create_app())
+        before = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+
+        import os
+
+        stat = workflow_path.stat()
+        os.utime(workflow_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+        after = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
+        assert before != after
+
+    def test_deleted_workflow_returns_200_constant_so_the_poll_survives(self) -> None:
+        """If even resolution fails (the file is gone), the fingerprint is a
+        stable constant — the poll keeps running until the file returns."""
+        client = TestClient(create_app())
+        response = client.get("/api/version", params={"workflow": "no-such-workflow-xyz"})
+        assert response.status_code == 200
+        assert response.json()["fingerprint"]
+
+    def test_saved_NAME_opened_workflow_tracks_edits_while_parse_broken(self) -> None:
+        """A workflow opened by saved NAME (the catalog default) whose file is
+        PARSE-broken still tracks edits: resolution fails, but the name resolves
+        to its entry path directly, so the fingerprint moves on a save. Without
+        this, a name-opened workflow froze the fingerprint while broken."""
+        _save_workflow("demo")
+        path = Path(WorkflowManager().get_path("demo"))
+        # Corrupt the saved file into a PARSE error (missing the node description).
+        path.write_text("# Demo\n\n## Steps\n\n### greet\n\n```shell\necho hi\n```\n", encoding="utf-8")
+
+        client = TestClient(create_app())
+        before = client.get("/api/version", params={"workflow": "demo"}).json()["fingerprint"]
+
+        import os
+
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+        after = client.get("/api/version", params={"workflow": "demo"}).json()["fingerprint"]
+        assert before != after  # the broken-while-editing save moved the fingerprint
+
+    def test_build_stage_failure_returns_200_not_500(self, tmp_path: Path) -> None:
+        """A producer bug on validated IR makes ``/api/graph`` a loud 500 — but
+        ``/api/version`` must NEVER 500 (it would break the poll). It falls
+        through to the entry-file fallback and returns 200 with a fingerprint."""
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        client = TestClient(create_app(), raise_server_exceptions=False)
+        with patch("pflow.ui.server.resolve_validate_build", side_effect=RuntimeError("boom")):
+            response = client.get("/api/version", params={"workflow": str(workflow_path)})
+
+        assert response.status_code == 200
+        assert response.json()["fingerprint"]
+
+
+class TestJsonSerialization:
+    def test_exotic_param_values_are_stringified_not_500(self) -> None:
+        """The JSON seam tolerates non-JSON-native values via ``default=str``.
+
+        Load-bearing H2 guard: param values inlined from ``.pflow.md`` can be
+        non-JSON-native (a YAML-native date, etc.). The server must stringify
+        them, never 500. A refactor to a plain ``JSONResponse`` (no
+        ``default=str``) would silently reintroduce the 500 — this pins it.
+        """
+        response = _json({"nodes": [{"value": datetime.date(2026, 6, 8)}]})
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["nodes"][0]["value"] == "2026-06-08"
+
+
+class TestFrontendFallback:
+    def test_root_without_bundle_returns_503_hint(self, tmp_path: Path) -> None:
+        """With no built bundle, non-API paths return a clear 503 (not a crash).
+
+        Points the server at an empty static dir so the assertion is independent
+        of whether the developer has run ``make ui-build`` locally — the real
+        bundle is gitignored but DOES exist on disk after a Phase-4 build.
+        """
+        with patch("pflow.ui.server._STATIC_DIR", tmp_path):
+            client = TestClient(create_app())
+            response = client.get("/")
+        assert response.status_code == 503
+        assert "make ui-build" in response.text
+
+    def test_built_bundle_is_served_and_api_is_not_shadowed(self, tmp_path: Path) -> None:
+        """With a bundle present, ``/`` serves index.html, assets resolve, and the
+        API routes still win (they are registered before the static mount)."""
+        (tmp_path / "assets").mkdir()
+        (tmp_path / "index.html").write_text("<!doctype html><div id=root></div>")
+        (tmp_path / "assets" / "app.js").write_text("console.log('hi')")
+
+        with patch("pflow.ui.server._STATIC_DIR", tmp_path):
+            client = TestClient(create_app())
+            root = client.get("/")
+            asset = client.get("/assets/app.js")
+            api = client.get("/api/catalog")
+
+        assert root.status_code == 200
+        assert "id=root" in root.text
+        assert asset.status_code == 200
+        # /api/* not shadowed: a 200 serving the catalog JSON, NOT index.html.
+        assert api.status_code == 200
+        assert api.json() == []  # isolated empty registry — proves real catalog content
+
+    def test_index_html_revalidates_but_hashed_assets_may_cache(self, tmp_path: Path) -> None:
+        """index.html sends Cache-Control: no-cache; hashed assets do not.
+
+        Without it, browsers heuristically reuse a stale index.html whose asset
+        URLs point at the PREVIOUS build — a mixed old/new bundle after every
+        rebuild (the recurring stale-canvas debugging trap).
+        """
+        (tmp_path / "assets").mkdir()
+        (tmp_path / "index.html").write_text("<!doctype html><div id=root></div>")
+        (tmp_path / "assets" / "app-CAFE1234.js").write_text("console.log('hi')")
+
+        with patch("pflow.ui.server._STATIC_DIR", tmp_path):
+            client = TestClient(create_app())
+            root = client.get("/")
+            asset = client.get("/assets/app-CAFE1234.js")
+
+        assert root.headers.get("cache-control") == "no-cache"
+        assert asset.headers.get("cache-control") != "no-cache"
+
+
+class TestBrowserOpen:
+    def test_waits_then_opens_when_the_server_becomes_ready(self) -> None:
+        """The core fix: don't open on a guess — open when the port is listening.
+
+        Binds a port but delays ``listen()``; the poller must NOT open while the
+        port refuses connections, and must open promptly once it accepts.
+        """
+        import threading
+        import time
+
+        from pflow.cli.commands.ui import _open_browser_when_ready
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        opened = threading.Event()
+        try:
+            with patch("webbrowser.open", side_effect=lambda _url: opened.set()):
+                poller = threading.Thread(
+                    target=_open_browser_when_ready,
+                    args=("127.0.0.1", port, "http://late"),
+                    kwargs={"timeout": 5},
+                )
+                poller.start()
+                time.sleep(0.3)
+                assert not opened.is_set(), "opened before the server was listening"
+                sock.listen(1)  # server becomes ready
+                assert opened.wait(timeout=3), "browser never opened after the port came up"
+                poller.join(timeout=3)
+        finally:
+            sock.close()
+
+    def test_opens_after_timeout_when_nothing_ever_listens(self) -> None:
+        """Safety net: a never-ready server still opens (never silently skips)."""
+        from pflow.cli.commands.ui import _open_browser_when_ready
+
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        dead_port = probe.getsockname()[1]
+        probe.close()  # nothing listens here now
+        with patch("webbrowser.open") as mock_open:
+            _open_browser_when_ready("127.0.0.1", dead_port, "http://x", timeout=0.4)
+        mock_open.assert_called_once_with("http://x")
+
+
+class TestUiCommand:
+    def test_missing_extra_prints_install_hint(self) -> None:
+        """When uvicorn is unimportable, the command prints the [ui] hint and exits 1."""
+        runner = CliRunner()
+        # A ``None`` entry in sys.modules forces ``import uvicorn`` to raise
+        # ImportError — simulating a base install without the [ui] extra.
+        with patch.dict(sys.modules, {"uvicorn": None}):
+            result = runner.invoke(ui_cmd, [])
+        assert result.exit_code == 1
+        assert "pflow-cli[ui]" in result.output
+
+    def test_serves_without_opening_browser(self, tmp_path: Path) -> None:
+        """``--no-open`` starts the server without a browser; uvicorn.run is invoked.
+
+        ``uvicorn.run`` blocks forever, so it is stubbed — the test asserts the
+        command wires the app + host/port through to it and never schedules a
+        browser open.
+        """
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        runner = CliRunner()
+        with (
+            patch("pflow.cli.commands.ui._port_available", return_value=True),
+            patch("uvicorn.run") as mock_run,
+            patch("webbrowser.open") as mock_open,
+        ):
+            result = runner.invoke(ui_cmd, [str(workflow_path), "--no-open", "--port", "9123"])
+
+        assert result.exit_code == 0, result.output
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["port"] == 9123
+        assert mock_run.call_args.kwargs["host"] == "127.0.0.1"
+        mock_open.assert_not_called()
+
+    def test_default_path_wires_the_readiness_thread(self, tmp_path: Path) -> None:
+        """Without --no-open, the command starts the readiness poller (not a timer).
+
+        Guards against the helper being tested-but-unwired: a regression that
+        drops the open path would still pass the --no-open test above. Patches
+        ``threading.Thread`` so the assertion is deterministic (no thread timing).
+        """
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        from pflow.cli.commands import ui as ui_mod
+
+        captured: dict[str, object] = {}
+
+        class _FakeThread:
+            def __init__(self, *, target=None, args=(), daemon=None):  # type: ignore[no-untyped-def]
+                captured.update(target=target, args=args, daemon=daemon)
+
+            def start(self) -> None:
+                captured["started"] = True
+
+        runner = CliRunner()
+        with (
+            patch("pflow.cli.commands.ui._port_available", return_value=True),
+            patch("uvicorn.run"),
+            patch("threading.Thread", _FakeThread),
+        ):
+            result = runner.invoke(ui_cmd, [str(workflow_path), "--port", "9124"])
+
+        assert result.exit_code == 0, result.output
+        assert captured.get("target") is ui_mod._open_browser_when_ready
+        assert captured.get("started") is True
+        assert captured.get("daemon") is True
+        host, port, url = captured["args"]  # type: ignore[misc]
+        assert (host, port) == ("127.0.0.1", 9124)
+        assert url.startswith("http://127.0.0.1:9124/?workflow=")
+
+    def test_port_in_use_prints_actionable_hint(self) -> None:
+        """An occupied port → exit 1 with an actionable hint; uvicorn is never reached.
+
+        Regression guard: uvicorn swallows the bind OSError and sys.exit(1)s with
+        only its own log line, so the command pre-flights the bind to own the
+        message. ``uvicorn.run`` is stubbed as a safety net against a hang if the
+        pre-flight check ever wrongly passes.
+        """
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        port = sock.getsockname()[1]
+        try:
+            runner = CliRunner()
+            with patch("uvicorn.run") as mock_run:
+                result = runner.invoke(ui_cmd, ["--no-open", "--port", str(port)])
+        finally:
+            sock.close()
+
+        assert result.exit_code == 1
+        assert "already in use" in result.output
+        assert "--port" in result.output
+        mock_run.assert_not_called()
+
+
+class TestLazyImportBoundary:
+    def test_importing_ui_command_does_not_import_server(self) -> None:
+        """The eagerly-imported ``ui`` command must not pull in the web stack (H4).
+
+        ``cli/commands/ui.py`` is imported at ``main.py`` load. It must import
+        starlette/uvicorn/the server only inside the command body, so a base
+        install can load the CLI without the [ui] web stack.
+        """
+        import importlib
+
+        # Observe a fresh import of the command module's effect, independent of
+        # whatever earlier tests loaded.
+        sys.modules.pop("pflow.ui.server", None)
+        sys.modules.pop("pflow.cli.commands.ui", None)
+        importlib.import_module("pflow.cli.commands.ui")
+
+        assert "pflow.ui.server" not in sys.modules

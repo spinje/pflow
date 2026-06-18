@@ -581,6 +581,8 @@ Why the run ended (shipped after validation, a segment that aborted, or a final-
 
 ### segments
 
-The phase-group breakpoints the breakdown produced.
+The phase-group breakpoints the breakdown produced. Note: no caller consumes this today
+(`run-from-plan` reads only `pr_url` + `summary`) — kept as diagnostic surface for
+inspecting how the plan was segmented after a run.
 
 - source: ${breakdown.result.segments}

@@ -1,7 +1,10 @@
 """Registry for managing discovered pflow nodes."""
 
+import contextlib
 import json
 import logging
+import os
+import tempfile
 from collections.abc import Collection
 from datetime import datetime, timezone
 from pathlib import Path
@@ -180,8 +183,6 @@ class Registry:
             This completely replaces the nodes in the registry file.
             Manual edits will be lost on save.
         """
-        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-
         # Preserve existing wrapper metadata (version, timestamps, metadata)
         existing = self._read_wrapper()
 
@@ -193,11 +194,34 @@ class Registry:
         }
 
         try:
-            with open(self.registry_path, "w") as f:
-                json.dump(data, f, indent=2, sort_keys=True)
+            self._write_atomic(data)
             logger.info(f"Saved {len(nodes)} nodes to registry")
         except Exception:
             logger.exception("Failed to save registry")
+            raise
+
+    def _write_atomic(self, data: dict[str, Any]) -> None:
+        """Persist the registry wrapper to ``registry_path`` atomically.
+
+        A plain truncate-and-write lets a concurrent reader (e.g. parallel
+        ``pflow ui`` requests, or two CLI processes) observe a half-written file
+        → invalid JSON → an empty node set → spurious "unknown node type"
+        errors. ``os.replace`` is atomic on POSIX, so a reader always sees either
+        the complete old file or the complete new one. Mirrors the
+        tempfile+replace pattern ``WorkflowManager``/``SettingsManager`` use.
+        """
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        # Dot-prefixed temp file (hidden, namespaced) in the SAME dir as the
+        # target — matches settings.py/manager.py and keeps os.replace on one
+        # filesystem (cross-fs rename would raise).
+        fd, tmp = tempfile.mkstemp(dir=self.registry_path.parent, prefix=".registry.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f, indent=2, sort_keys=True)
+            os.replace(tmp, self.registry_path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
             raise
 
     def get_metadata(self, key: str, default: Any = None) -> Any:
@@ -238,10 +262,8 @@ class Registry:
         if "last_core_scan" not in wrapper:
             wrapper["last_core_scan"] = self._now_iso()
 
-        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.registry_path, "w") as f:
-                json.dump(wrapper, f, indent=2, sort_keys=True)
+            self._write_atomic(wrapper)
             logger.debug(f"Updated metadata key '{key}' in registry")
         except Exception:
             logger.exception("Failed to update registry metadata")
@@ -314,6 +336,28 @@ class Registry:
 
         return result
 
+    def output_types_by_kind(self) -> dict[str, dict[str, str]]:
+        """Per node kind, its declared output fields and their types.
+
+        A read-model over the parsed docstring interfaces (``- Writes:
+        shared["stdout"]: str``): kind -> output field -> declared type, the
+        docstring's own text (lowercased by the extractor — ``str``, ``int``,
+        ``str|dict``). Entries typed ``any`` are dropped: a type that says
+        nothing is not a fact worth shipping (e.g. MCP tools without an
+        outputSchema declare ``result: any``).
+        """
+        types: dict[str, dict[str, str]] = {}
+        for kind, metadata in self.load().items():
+            outputs = (metadata.get("interface") or {}).get("outputs") or []
+            fields = {
+                out["key"]: out["type"]
+                for out in outputs
+                if isinstance(out, dict) and out.get("key") and out.get("type") not in (None, "", "any")
+            }
+            if fields:
+                types[kind] = fields
+        return types
+
     def _auto_discover_core_nodes(self) -> None:
         """Auto-discover and save core nodes on first use."""
         import pflow.nodes
@@ -366,8 +410,6 @@ class Registry:
                 omitted, defaults to "now" (safe for merge/post-refresh saves
                 that aren't wrapping a live scan).
         """
-        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-
         # Preserve existing metadata (MCP sync hashes, etc.)
         existing = self._read_wrapper()
 
@@ -378,8 +420,7 @@ class Registry:
             "nodes": nodes,
         }
 
-        with open(self.registry_path, "w") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
+        self._write_atomic(data)
 
         logger.info(f"Saved {len(nodes)} nodes to registry with metadata")
 

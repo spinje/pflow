@@ -1,9 +1,9 @@
-"""Tests for the CLI visualize command.
+"""Tests for the CLI mermaid command.
 
-The visualize command validates a workflow then outputs Mermaid flowchart
+The mermaid command validates a workflow then outputs Mermaid flowchart
 syntax to stdout. Errors go to stderr with exit code 1.
 
-Implementation: src/pflow/cli/commands/visualize.py
+Implementation: src/pflow/cli/commands/mermaid.py
 """
 
 from pathlib import Path
@@ -11,20 +11,20 @@ from unittest.mock import patch
 
 from click.testing import CliRunner, Result
 
-from pflow.cli.commands.visualize import visualize
+from pflow.cli.commands.mermaid import mermaid_cmd
 from tests.shared.markdown_utils import write_workflow_file
 
 
 def _invoke(args: list[str]) -> Result:
-    """Invoke the visualize command via CliRunner."""
+    """Invoke the mermaid command via CliRunner."""
     runner = CliRunner()
-    return runner.invoke(visualize, args)
+    return runner.invoke(mermaid_cmd, args)
 
 
-class TestVisualizeSimpleWorkflow:
+class TestMermaidSimpleWorkflow:
     """Basic visualization of a valid workflow."""
 
-    def test_visualize_simple_workflow(self, tmp_path: Path) -> None:
+    def test_mermaid_simple_workflow(self, tmp_path: Path) -> None:
         """Valid workflow produces Mermaid output with exit code 0."""
         ir = {
             "nodes": [
@@ -47,10 +47,10 @@ class TestVisualizeSimpleWorkflow:
         assert "-->" in result.output
 
 
-class TestVisualizeInvalidWorkflow:
+class TestMermaidInvalidWorkflow:
     """Visualization of invalid workflows."""
 
-    def test_visualize_invalid_workflow(self, tmp_path: Path) -> None:
+    def test_mermaid_invalid_workflow(self, tmp_path: Path) -> None:
         """Workflow with unknown node type exits 1 with error output."""
         ir = {
             "nodes": [
@@ -66,22 +66,22 @@ class TestVisualizeInvalidWorkflow:
         assert result.exit_code == 1
 
 
-class TestVisualizeNonexistentFile:
+class TestMermaidNonexistentFile:
     """Visualization of a file that does not exist."""
 
-    def test_visualize_nonexistent_file(self) -> None:
+    def test_mermaid_nonexistent_file(self) -> None:
         """Invoking with a nonexistent path exits 1."""
         result = _invoke(["nonexistent.pflow.md"])
 
         assert result.exit_code == 1
 
 
-class TestVisualizeProducerBugBoundary:
+class TestMermaidProducerBugBoundary:
     """Regression guard for issue #237 wrapper deletion.
 
     After the 3 defensive wrappers in ``WorkflowValidator`` were deleted,
     producer bugs (``AttributeError``/``KeyError`` from same-team code)
-    propagate out of ``runner.validate()``. The visualize command must
+    propagate out of ``runner.validate()``. The mermaid command must
     convert them to structured diagnostics via ``exception_to_diagnostics``
     — mirroring the existing boundary around ``resolve_workflow`` — not let
     a raw Python traceback escape to the user.
@@ -110,7 +110,7 @@ class TestVisualizeProducerBugBoundary:
         assert "'str' object has no attribute 'get'" in result.output
 
 
-class TestVisualizeDepthFlag:
+class TestMermaidDepthFlag:
     """The --depth flag controls sub-workflow expansion."""
 
     def test_depth_zero_produces_no_subgraphs(self, tmp_path: Path) -> None:
@@ -146,7 +146,7 @@ class TestVisualizeDepthFlag:
         assert "subgraph" not in result.output
 
 
-class TestVisualizeDirectionFlag:
+class TestMermaidDirectionFlag:
     """The --direction flag controls graph orientation."""
 
     def test_direction_td(self, tmp_path: Path) -> None:
@@ -167,7 +167,7 @@ class TestVisualizeDirectionFlag:
         assert "graph LR" not in result.output
 
 
-class TestVisualizeOutputFlag:
+class TestMermaidOutputFlag:
     """The -o/--output flag writes mermaid to a file."""
 
     def test_output_writes_file(self, tmp_path: Path) -> None:
@@ -193,7 +193,7 @@ class TestVisualizeOutputFlag:
         assert "graph LR" not in result.output
 
 
-class TestVisualizeNestedWorkflowExpansion:
+class TestMermaidNestedWorkflowExpansion:
     """Nested workflow files are expanded into subgraphs."""
 
     def test_nested_workflow_expansion(self, tmp_path: Path) -> None:
@@ -227,7 +227,7 @@ class TestVisualizeNestedWorkflowExpansion:
         assert "subgraph" in result.output
 
 
-class TestVisualizeMarkdownOutput:
+class TestMermaidMarkdownOutput:
     """The -o flag with .md extension wraps mermaid in a markdown document."""
 
     def test_md_output_wraps_with_title_and_description(self, tmp_path: Path) -> None:
@@ -269,7 +269,7 @@ class TestVisualizeMarkdownOutput:
         assert "```mermaid" not in content
 
 
-class TestVisualizeDescriptionsFlag:
+class TestMermaidDescriptionsFlag:
     """The --descriptions flag adds node purpose text to labels."""
 
     def test_descriptions_cli_flag(self, tmp_path: Path) -> None:

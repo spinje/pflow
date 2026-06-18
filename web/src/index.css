@@ -1,0 +1,2122 @@
+/* Geometry vars (--node-header-h, --row-h, --io-label-h, --io-sidebar-w, --tile-size,
+   --tile-border, --edge-stroke, --group-header-h) are NOT declared here — they are
+   injected on :root at startup from graph/metrics.ts (the single source shared with
+   ELK sizing and the connector/edge geometry). Never hardcode those numbers in CSS. */
+:root {
+  --bg: #0f1117;
+  --bg-raised: #171a23;
+  --bg-node: #1b1f2a;
+  --bg-node-header: #232838;
+  --border: #2c3242;
+  --border-strong: #3a4255;
+  --text: #e6e9ef;
+  --text-muted: #9aa3b5;
+  --text-faint: #6b7280;
+  --accent: #6ea8fe;
+  --accent-soft: #2a3a5a;
+  --ref: #6fbfa8;
+  --ref-bg: #16302a;
+  --loop: #f0b86c;
+  --batch: #c79bf0;
+  /* fork accent — equals CONDITION_COLOR in utils/format.ts (the condition node's
+     identity); branch handles/labels tint from this so node + fork speak one color.
+     Deliberately NOT blue: blue belongs to llm/http kinds + --accent UI chrome. */
+  --decision: #ffa657;
+  --warn: #f0a07a;
+  --danger: #ff6b6b;
+  --data-edge: #6fbfa8;
+  /* The SELECTED data line: the bright member of the same green-teal family (hue
+     carries identity, brightness carries state). Provisional — shoot-lab tunes it
+     against transform cyan + shell green neighbors; this var is the one knob. */
+  --data-edge-selected: #8fe8c0;
+  --radius: 8px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+/* Chrome palette — the dark product surfaces AROUND the canvas (toolbar, side
+   panels, source pane, catalog, banners, zoom controls). A neutral
+   near-black ladder (#0d0d0d void < #151515 panels) with white-alpha borders/text,
+   so the frame reads as one continuous surface with the canvas instead of a cooler,
+   lighter slate bolted onto it.
+
+   SCOPED to the chrome containers on purpose — NOT redefined on :root. The React
+   Flow node/edge layers share --bg/--border/--text/--accent, so a global redefine
+   would recolor the canvas. Those layers are NOT descendants of these containers,
+   so they keep the :root values and render byte-identical. (Layout wrappers like
+   .graph-body/.canvas ARE canvas ancestors and are deliberately excluded.) */
+.toolbar,
+.rail,
+.read-panel,
+.source-pane,
+.catalog,
+.banner,
+.reload-banner,
+.panel-resizer,
+.canvas-overlay,
+.react-flow__controls {
+  --bg: #0d0d0d;
+  --bg-raised: #151515;
+  /* Raised field surface — value/code/prompt boxes + inline code chips sit ABOVE
+     the panel (lighter), not recessed into the void. The surface ladder is
+     #0d0d0d void < #151515 panel < #1c1c1c field. */
+  --bg-field: #1c1c1c;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-muted: rgba(255, 255, 255, 0.6);
+  --text-faint: rgba(255, 255, 255, 0.42);
+  --accent: oklch(70.5% 0.213 47.604);
+  --accent-soft: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/* Literal void color, NOT var(--bg): body is a canvas ANCESTOR, so setting the
+   token here would inherit into the React Flow node/edge layers. Only the catalog
+   (no graph view) and any uncovered gutter actually show it. */
+body {
+  font-family: var(--font);
+  background: #0d0d0d;
+  color: var(--text);
+  font-size: 14px;
+}
+
+button {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--border-strong);
+}
+button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: #fff;
+}
+.link-button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 5px 6px;
+}
+.link-button:hover {
+  color: var(--text);
+}
+.icon-button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 15px;
+  padding: 2px 6px;
+}
+
+/* ---------- catalog ---------- */
+.catalog {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 48px 24px;
+}
+.catalog-header h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+}
+.catalog-header p {
+  margin: 0 0 24px;
+  color: var(--text-muted);
+}
+.catalog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.catalog-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.catalog-item:hover {
+  border-color: var(--accent);
+}
+.catalog-item-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+.catalog-item-desc {
+  color: var(--text-muted);
+}
+.catalog-item-path {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.catalog-empty {
+  color: var(--text-muted);
+  padding: 24px 0;
+}
+
+/* ---------- graph view ---------- */
+.graph-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------- floating rail (canvas-anchored capsule: actions & toggles) ----------
+   Rendered INSIDE .canvas (position:relative), so it floats at the canvas's LEFT
+   edge — far-left when the source pane is closed, just right of the pane when it's
+   open. A rounded capsule, content-height, above the React Flow pane. */
+.rail {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.rail-sep {
+  width: 22px;
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}
+.rail-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text-muted);
+}
+/* Hover tooltip: a dark rounded chip to the RIGHT of the icon (the capsule hugs
+   the canvas's left edge, like the search popover). Replaces the native title so
+   the sub-workflow toggle can carry a muted second "N/M open" state line.
+   position:absolute + pointer-events:none keeps it out of the button's grid
+   centering and never blocks the click. */
+.rail-tip {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  z-index: 8;
+}
+.rail-button:hover .rail-tip,
+.rail-button:focus-visible .rail-tip {
+  opacity: 1;
+  visibility: visible;
+}
+.rail-tip-label {
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text);
+}
+.rail-tip-detail {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--text-faint);
+}
+.rail-button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
+  color: var(--text);
+}
+/* Canvas-language toggle glyphs: fixed-color SVGs muted to grey when inactive,
+   their identity color restored on enable (markdown white / sub-workflow magenta).
+   The active state lives in the GLYPH color, so the button chrome stays quiet — an
+   accent wash here would fight the magenta/white. */
+.rail-icon {
+  width: 20px;
+  height: 20px;
+  filter: grayscale(1) opacity(0.45);
+  transition: filter 0.12s ease;
+}
+.rail-button:hover .rail-icon {
+  filter: grayscale(0.4) opacity(0.85);
+}
+.rail-button.active .rail-icon {
+  filter: none;
+}
+.rail-button.active {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border);
+}
+
+/* Rail search: the magnifier expands a popover to the RIGHT of the capsule (the
+   capsule hugs the canvas's left edge, so the list opens over the canvas). */
+.rail-search {
+  position: relative;
+}
+.rail-search-popover {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 14px);
+  width: 280px;
+  padding: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 7;
+}
+.rail-search-input {
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+}
+.rail-search-input:focus {
+  border-color: var(--border-strong);
+}
+.rail-search-field {
+  position: relative;
+}
+/* The ⌘K / Ctrl+K hint, shown only while the query is empty (the placeholder is
+   short, so it never collides). pointer-events:none keeps clicks on the input. */
+.rail-search-kbd {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  padding: 1px 5px;
+  font-family: var(--font);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  pointer-events: none;
+}
+.rail-search-empty {
+  padding: 10px 6px 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.rail-search-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rail-search-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 7px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--text);
+}
+.rail-search-result.active {
+  background: rgba(255, 255, 255, 0.06);
+}
+.rail-search-result-name {
+  flex: 1 1 auto;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rail-search-result-cat {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Back-to-catalog arrow, left of the title in the top bar. */
+.toolbar-back {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+.toolbar-back:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.toolbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font);
+  color: var(--text-muted);
+}
+/* Segmented control: a recessed track holding borderless pill buttons. The
+   selected pill carries the accent wash + accent text; the rest are quiet until
+   hovered. */
+.toolbar-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.toolbar-group button {
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 4px 11px;
+  color: var(--text-muted);
+}
+.toolbar-group button:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+.toolbar-group button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.toolbar-group button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.toolbar-group button:disabled:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.graph-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+.canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.canvas-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.banner {
+  margin: 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.banner.error {
+  border-color: var(--danger);
+}
+.banner ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+/* Live-reload error (GraphView reload-banner): the source changed on disk but the
+   new version is invalid. The last-good canvas stays interactive underneath; this
+   is a non-blocking strip (pointer-events: none), NOT the full-screen .banner.error,
+   and it clears on the next valid save. */
+.reload-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: 80%;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 45%);
+}
+.reload-banner strong {
+  color: var(--danger);
+}
+
+/* ---------- react flow surface ---------- */
+.react-flow {
+  background: var(--bg);
+}
+.react-flow__attribution {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+/* zoom/fit controls — dark treatment (the stock buttons are white) */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow__controls-button:hover {
+  background: var(--bg-node-header);
+  color: var(--text);
+}
+.react-flow__controls-button svg {
+  fill: currentColor; /* the +/−/fit glyphs follow the text color, not a baked black */
+}
+
+/* ---------- nodes (shared) ---------- */
+.node,
+.group {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+}
+.node.dimmed,
+.react-flow__edge.edge-dimmed {
+  opacity: 0.18;
+  transition: opacity 0.15s;
+}
+/* selection ring takes the node's own type color (--kind is set inline per node;
+   nodes without one — end sink — fall back to the accent) */
+.node.focused {
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
+}
+/* A hovered panel CHIP marks its canvas node (components/Chip.tsx → hoverNode):
+   the focus ring's look, plus an opacity override so a DIMMED node still lights
+   (must stay after .node.dimmed — equal specificity, order decides). Pure
+   highlight: no focus change, no expansion, no camera move. */
+.node.hover-mark,
+.group.hover-mark {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
+}
+
+/* card shell — colored BY TYPE: the kind color in the border + a faint kind-tinted
+   bg (the same color the node's edges use). Option B keeps the tile/icon native, so
+   the type color lives in the border. One visual language at both densities. */
+.node.compact,
+.node.detailed {
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--kind) 9%, var(--bg-node));
+  /* subtle kind-colored border (the edge flows into the icon TILE, not the border). */
+  border: 1.5px solid color-mix(in srgb, var(--kind) 55%, transparent);
+  border-radius: 12px;
+  /* visible on BOTH densities: connector stubs (compact), the batch deck, and the
+     border chip rail all straddle the card box. Rows have transparent backgrounds,
+     so the rounded corners need no clipping. (detailed was overflow:hidden until
+     the chip rail, 2026-06-10 — it silently clipped the deck on advanced cards.) */
+  overflow: visible;
+}
+
+/* header — neutral tile + native-color icon, then the type line + description (wraps
+   to ≤2 lines). Shown in BOTH densities; advanced adds the body below + a divider. */
+.node-header {
+  position: relative;
+  z-index: 2; /* keeps the header above the card background */
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--header-pad);
+  min-height: var(--node-header-h);
+}
+.node.detailed .node-header,
+.node.expanded .node-header {
+  border-bottom: 1px solid color-mix(in srgb, var(--kind) 20%, var(--border));
+}
+/* connector flare — a kind-colored cove so a control edge appears to flow into the icon
+   tile. A CHILD of the tile, anchored to its edge (so the base is always at the tile
+   regardless of node height — no node-height magic), drawn ON TOP, centered on the tile.
+   TD/beautiful only. */
+.node-connector {
+  position: absolute;
+  left: 50%;
+  /* width/height/anchor are INLINE, derived from the same constants as the SVG path +
+     viewBox (WorkflowNode.tsx CONN) — keeping them here invited the drift that silently
+     rescaled the paint inside the box. */
+  transform: translateX(-50%);
+  z-index: 3;
+}
+/* horizontal (LR) variant: anchored off the tile's LEFT edge (inline `right`),
+   vertically centered on the tile — the base class's horizontal centering must
+   be undone (construction site: WorkflowNode Connector side="left") */
+.node-connector-left {
+  left: auto;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* the LR EXIT DOT — the control edge's departure point on a card's right border
+   (user-picked E1 solid dot, exit-affordance lab 2026-06-10; the entry side has
+   the tile flare, the exit side has this). Pure decoration: the real NODE_OUT
+   handle is invisible and tucked 5px INSIDE the card (the terminus hides under
+   the node), the dot straddles the border at the icon row. Kind-colored like the
+   flares. Rendered by WorkflowNode/IOCardNode/GroupNode when the trunk actually
+   leaves NODE_OUT (handle-aware hasOutgoing — an LR decision's outcomes leave
+   their BranchPorts rows, which carry their own dots). */
+.exit-dot {
+  position: absolute;
+  right: -5px;
+  top: calc(var(--node-header-h) / 2);
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--kind);
+  z-index: 3;
+}
+.node-connector svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.node-connector path {
+  fill: var(--kind);
+}
+
+/* big tile, close to the node edges (small inset) — the icon is the node's anchor;
+   the control edge flows into it (image #11). */
+.node-tile {
+  position: relative; /* positioning context for the connector flares (its children) */
+  flex: 0 0 auto;
+  width: var(--tile-size);
+  height: var(--tile-size);
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  /* the IMAGE border matches the edge width AND the full kind color (the edge/connector
+     are full --kind too). The node CARD border stays subtle and untouched. */
+  border: var(--tile-border) solid var(--kind);
+}
+.node-icon-img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+.node-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+  flex: 1 1 auto;
+}
+.node-category {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--kind);
+}
+/* the description (node name) — wraps to at most 2 lines; full text in the read panel */
+.node-name {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* MOCK (name-label exploration, 2026-06-11): the node's name (its node_id — the
+   ${ref} key) floats above the card as border chrome, like the chip rail. TD: right
+   of the incoming line at the icon column (it REPLACES the TD outcome labels, which
+   spelled the same string); LR: above-left (a below-variant flag lives in
+   WorkflowNode). Beautiful = humanized sans; advanced = verbatim mono id. The
+   text-shadow halo matches the old outcome labels (text must read over edge lines). */
+.node-name-label {
+  position: absolute;
+  z-index: 5;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  color: #dfe5ec;
+  text-shadow:
+    0 0 3px rgb(0 0 0 / 0.95),
+    0 0 6px rgb(0 0 0 / 0.8);
+  pointer-events: none;
+}
+.node-name-label.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+}
+.param-rows {
+  display: flex;
+  flex-direction: column;
+}
+.param-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--row-h);
+  padding: 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.param-row:last-child {
+  border-bottom: none;
+}
+/* In-card row hover — ONE visible treatment for every interactive row
+   (param/output rows here, io rows below; user-caught 2026-06-12: the only
+   hover was .io-row's 4% white, imperceptible — rows that mark connections
+   and take clicks must read as hot under the cursor). Loop-rule rows are
+   inert (no hover/click behavior) and stay quiet. */
+.param-row:not(.loop-row):hover,
+.io-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.param-name {
+  font-family: var(--mono);
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  max-width: 42%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Param rows speak the output rows' connection language (user-decided
+   2026-06-12): a DYNAMIC param (`is_dynamic` — refs land here) gets the
+   data-teal name + the live dot, like a READ output row; a static config
+   param keeps its muted name and gets the quiet dot. The static VALUE stays
+   full-strength — config is real info, unlike an unread output shape. */
+.param-row.dynamic .param-name {
+  color: var(--data-edge);
+}
+/* A nested ref sub-row has no value column — like output rows, the label gets
+   the whole row before ellipsizing (the 42% cap truncated a ref chip against
+   empty space). The flat single-chunk cache row keeps the default split. */
+.ref-row .param-name {
+  max-width: 100%;
+}
+.param-row:not(.dynamic) .react-flow__handle.param-handle {
+  background: var(--text-faint);
+  opacity: 0.45;
+}
+.param-name.out {
+  color: var(--data-edge);
+  margin-left: auto;
+  /* The 42% cap above reserves room for a param row's VALUE — an output row
+     has no value (the `: type` suffix nests inside this span), so the label
+     gets the whole row before ellipsizing (`result.output_dir` was truncating
+     against empty space). */
+  max-width: 100%;
+}
+/* Output rows (WorkflowNode `output-row nested|quiet`, `row-type`): a NESTED row
+   indents under its parent (the wholesale-read case); a QUIET row is authored-
+   but-unread shape documentation — faint text + a dimmed dot, no line reaches it;
+   the type is a faint `: type` suffix (the file's own annotation syntax). */
+.output-row.nested .param-name.out {
+  padding-left: 14px;
+}
+.output-row.quiet .param-name.out {
+  color: var(--text-faint);
+}
+.output-row.quiet .react-flow__handle.out-handle {
+  background: var(--text-faint);
+  opacity: 0.45;
+}
+.row-type {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.output-row.quiet .row-type {
+  opacity: 0.7;
+}
+/* the ↻ loop-rule rows (WorkflowNode) — authored loop config as rows (condition,
+   then the cap on its own row), amber so it reads "loop RULE", not a data param;
+   the loop-back U's arrow lands on the condition row's right-side handle.
+   Right-aligned like outputs: it belongs to the exit side. */
+.loop-rule {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--loop);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.param-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+.param-value .lit {
+  color: var(--text);
+  font-family: var(--mono);
+}
+.ref-chip {
+  display: inline-block;
+  background: var(--ref-bg);
+  color: var(--ref);
+  border: 1px solid #214a40;
+  border-radius: 4px;
+  padding: 0 5px;
+  margin: 0 1px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* node identity color (set per node via the --kind CSS var in the component) */
+.node.terminal.detailed {
+  border-right: 2px solid var(--border-strong);
+}
+.node.unexpanded {
+  border-style: dashed;
+}
+
+/* branch (fork) outputs — labeled source handles on the right border */
+.branch-ports {
+  display: flex;
+  flex-direction: column;
+}
+.branch-port {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: var(--row-h);
+  padding: 0 12px 0 10px;
+}
+/* The outcome's CONDITION on its row ("if len(items) > 5") — the condition's home
+   in LR (BranchPorts; flow.ts populates it in advanced / focus-expanded only).
+   Quiet muted text so the orange outcome pill stays the row's anchor; full text
+   on the title + the read panel's table. */
+.branch-cond {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 8px;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.branch-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--decision);
+  background: color-mix(in srgb, var(--decision) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--decision) 28%, transparent);
+  border-radius: 4px;
+  padding: 0 6px;
+  flex-shrink: 0; /* the outcome pill wins the row; the condition text ellipsizes first */
+  max-width: 88%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.react-flow__handle.branch-handle {
+  background: var(--decision);
+}
+/* The reserved "end" outcome row (a decision's stop arm — BranchPorts.tsx): faint,
+   matching the end edge/dot it feeds — a real outcome that stops the flow. */
+.branch-port-end .branch-label {
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--text-faint) 10%, var(--bg));
+  border-color: color-mix(in srgb, var(--text-faint) 28%, transparent);
+}
+.branch-port-end .react-flow__handle.branch-handle {
+  background: var(--text-faint);
+}
+
+/* IO rows — a workflow's inputs/outputs as rows on its OWN node, never a floating
+   table. `io-*` classes are constructed in PortRows.tsx (rows/columns), IOCardNode.tsx
+   (the root Inputs/Outputs cards, .io-card) and GroupNode.tsx (.io-rows areas,
+   .group-io-in sidebar / .group-io-out strip). */
+/* NO horizontal padding — io rows use the LEAF row geometry exactly (.param-row's
+   0 10px text inset, dots at the row edge == the card border); a container inset
+   here re-opens the padding drift (user-caught 2026-06-12). */
+.io-rows {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding: 6px 0 4px;
+}
+/* MOCK (adaptive IO width, 2026-06-11): columns size to their CONTENT and push
+   apart (inputs hug the left border, outputs the right — the visible handle dots
+   stay on the card borders). The old `flex: 1 1 0` 50/50 split truncated a long
+   input row at half the card even when the outputs band beside it was empty;
+   flow.ts groupIoWidth() now predicts the card wide enough for both columns. */
+.io-rows-cols {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+.io-rows-cols .io-col {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* the outputs column is BOTTOM-ANCHORED via an inline margin-top (PortRows
+   staggerRows × --row-h; flow.ts ioRowsCount reserves the rows) */
+.io-col-label {
+  height: var(--io-label-h);
+  display: flex;
+  align-items: center;
+  padding: 0 10px; /* == the row inset */
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+/* alignment keys on .io-col-right (the LIVE-handle side, set by PortRows) —
+   text hugs its connection side, never bare input/output kind */
+.io-col-right .io-col-label {
+  justify-content: flex-end;
+}
+.io-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--row-h);
+  padding: 0 10px; /* == .param-row — one row geometry everywhere */
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+/* :hover lives with .param-row's (one shared in-card row-hover rule). */
+.io-row.focused {
+  background: var(--accent-soft);
+}
+/* a hovered panel chip lights its port's row (the focus treatment, hover-scoped) */
+.io-row.hover-mark {
+  background: var(--accent-soft);
+}
+.io-col-right .io-row {
+  justify-content: flex-end;
+}
+.io-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the leaf rows' connection language (one vocabulary for ALL rows): a WIRED
+   port (data edges touch it) gets the teal name, like a dynamic param / read
+   output; unwired keeps the muted row color (+ the quiet dot — handles section) */
+.io-row.wired .io-name {
+  color: var(--data-edge);
+}
+.io-required {
+  color: var(--warn);
+}
+/* (io rows type their name via the shared `: type` suffix — .row-type above —
+   the same grammar as a leaf's output rows; the old 10px .io-type died.
+   .port-handle paint lives in the HANDLES section — it must come after the
+   generic .handle rule or the base grey wins, which is exactly how the io
+   dots silently drifted grey, user-caught 2026-06-12.) */
+
+/* Expanded region IO: the inputs SIDEBAR (ELK reserves the column as left padding —
+   layout.ts groupPadding — so the body lays out beside it) and the outputs strip at
+   the bottom; both dividers run the FULL region width, touching the border. */
+.group.has-io > .node-header.group-header {
+  border-bottom: 1px solid color-mix(in srgb, var(--kind) 22%, var(--border));
+}
+.group-io-in {
+  position: absolute;
+  top: calc(var(--group-header-h) + 10px);
+  left: 10px;
+  width: var(--io-sidebar-w);
+  --io-inset: 10px; /* == the sidebar's left offset — the receive dots sit ON the region border */
+}
+.group-io-out {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-top: 1px solid color-mix(in srgb, var(--kind) 22%, var(--border));
+  padding: 4px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  --io-inset: 10px; /* == the horizontal padding — the feed dots sit ON the region border */
+}
+/* strip rows HUG their content: a full-width row with right-aligned text leaves the
+   left (receive) dot floating mid-strip, far from its label — the producer line
+   looked like it landed on nothing (user-caught 2026-06-10). Fit-content puts the
+   receive dot directly beside the text: `• segments •`. */
+.group-io-out .io-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  max-width: 100%;
+}
+.group-io-out .io-row {
+  width: fit-content;
+}
+
+/* end sink */
+.node.end {
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+.end-glyph {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* ---------- groups ---------- */
+/* the `group-*` kind classes are CONSTRUCTED in GroupNode.tsx as `group-${group.kind}`
+   (workflow | batch) — grep that site, not the literal. IO wrappers render as rows on
+   their owner node, never as groups; a COLLAPSED group renders the leaf card classes
+   (.node.compact.group-card), so the rules below style the EXPANDED region only.
+   --kind is set inline per group (workflow magenta / batch purple), same mechanism
+   as the leaf card — one tint rule serves both kinds. */
+/* React Flow's base stylesheet paints node type "group" itself (grey bg + border
+   + padding + CENTERED text) — neutralize the wrapper; GroupNode draws the entire
+   visual, and its header must read exactly like a leaf card's (left-aligned). */
+.react-flow__node-group {
+  background: transparent;
+  border: none;
+  padding: 0;
+  text-align: left;
+}
+.group {
+  background: color-mix(in srgb, var(--kind) 4%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--kind) 30%, transparent);
+  border-radius: 10px;
+}
+.group.focused {
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
+}
+/* The expanded region's header is the leaf `.node-header` VERBATIM (one shared
+   markup in GroupNode — user requirement: the tile/name must not move when a
+   container opens). This class only adds what the region needs: the header is an
+   absolute OVERLAY at the region's top (member nodes are ELK-positioned below —
+   --group-header-h == --node-header-h keeps the padding honest) + the click
+   affordance. Typography/layout all come from the .node-header rules. */
+.group-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  cursor: pointer;
+}
+/* ---------- the border CHIP RAIL (ChipRail.tsx, 2026-06-10) ----------
+   Behavior modifiers (loop amber / batch purple) + the group's merged count-expander,
+   straddling the TOP border, right-aligned — in BOTH container states (header-parity:
+   nothing moves across the fold). Grammar: ROUND/capsule tinted chip = info; the one
+   SQUARE element (.group-toggle) = button. Reserved as the future overlay's status-
+   chip home (status joins leftmost). The rail extends 11px above the box; ELK doesn't
+   know — same straddle the old group-pill had, no layout impact. */
+.chip-rail {
+  position: absolute;
+  top: -11px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--chip, var(--batch)) 14%, var(--bg-node));
+  border: 1px solid color-mix(in srgb, var(--chip, var(--batch)) 45%, transparent);
+  color: var(--chip, var(--batch));
+}
+.chip svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--chip, var(--batch));
+}
+.chip-round {
+  width: 22px;
+  padding: 0;
+}
+.chip-loop {
+  --chip: var(--loop);
+}
+.chip-batch {
+  --chip: var(--batch);
+}
+
+/* the root IO card's count pill ("14 inputs") — same border-straddling species as
+   the rail, restyled to its 22px language so the two pill kinds match. */
+.count-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--kind) 14%, var(--bg-node));
+  border: 1px solid color-mix(in srgb, var(--kind) 40%, transparent);
+  border-radius: 999px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+.group-pill {
+  position: absolute;
+  top: -11px;
+  right: 10px;
+  z-index: 5;
+}
+/* the collapsed card (leaf anatomy via .node.compact) — clicking the BODY selects,
+   exactly like a leaf; the corner .group-toggle (below) is the only click toggle */
+.group-card {
+  cursor: pointer;
+}
+
+/* the merged COUNT-EXPANDER (construction site: GroupNode .group-toggle — design D
+   evolved 2026-06-10: the count pill and the corner button became ONE rail element,
+   user-picked F1 via shoot-lab). Recursive step count + the A1 glyph; the rail's one
+   SQUARE element (7px radius — round = info, square = button). Body still = select;
+   this (+ dblclick) is the only toggle. */
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  border-radius: 7px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--kind) 12%, var(--bg-node));
+  border: 1px solid color-mix(in srgb, var(--kind) 30%, transparent);
+}
+/* optical centering: the mono digits sit 1px high against the glyph (user-caught) */
+.group-toggle .toggle-count {
+  transform: translateY(1px);
+}
+.group-toggle svg {
+  width: 11px;
+  height: 11px;
+  stroke: var(--text-muted);
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.group-toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--kind) 22%, var(--bg-node));
+  border-color: color-mix(in srgb, var(--kind) 55%, transparent);
+}
+.group-toggle:hover svg {
+  stroke: var(--kind);
+}
+/* the expanded region's selection ring (collapsed cards get it via .node.focused) */
+.group.focused {
+  box-shadow: 0 0 0 2px var(--kind, var(--accent));
+}
+
+/* batch DECK (stacked-copies look, user-requested 2026-06-10): a batch card reads
+   as a stack of item copies — two kind-tinted layers peeking below the card,
+   slightly narrower (scaled from the bottom-center). Applies to a collapsed batch
+   group card AND a leaf carrying a batch spec (`.batched`, WorkflowNode). Pure
+   decoration: pseudo-elements at z -1 (behind the card, over the edge layer —
+   the edge passes behind the deck and re-emerges). */
+.group-card.group-batch::before,
+.group-card.group-batch::after,
+.node.batched::before,
+.node.batched::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--kind) 7%, var(--bg-node));
+  border: 1.5px solid color-mix(in srgb, var(--kind) 40%, transparent);
+  z-index: -1;
+  transform-origin: 50% 100%;
+}
+.group-card.group-batch::before,
+.node.batched::before {
+  transform: translateY(7px) scaleX(0.955);
+}
+.group-card.group-batch::after,
+.node.batched::after {
+  transform: translateY(13px) scaleX(0.9);
+  opacity: 0.65;
+}
+
+/* ---------- badges ---------- */
+.badges {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.badge {
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.badge-unexpanded {
+  background: rgba(240, 160, 122, 0.14);
+  color: var(--warn);
+  border-color: #5a3a2a;
+}
+.badge-warning {
+  background: rgba(255, 107, 107, 0.12);
+  color: var(--danger);
+  border-color: #5a2a2a;
+}
+.badge-dynamic {
+  background: var(--ref-bg);
+  color: var(--ref);
+}
+
+/* ---------- handles ---------- */
+.react-flow__handle.handle {
+  width: 7px;
+  height: 7px;
+  background: var(--border-strong);
+  border: 1px solid var(--bg);
+}
+.react-flow__handle.param-handle {
+  background: var(--data-edge);
+}
+.react-flow__handle.out-handle {
+  background: var(--data-edge);
+}
+/* io-row dots — AFTER the generic .handle rule above (equal specificity: the
+   later rule wins; defined earlier they silently render grey). Same language
+   as param dots: live teal on a wired row, quiet on an unwired one. */
+.react-flow__handle.port-handle {
+  background: var(--data-edge);
+}
+.io-row:not(.wired) .react-flow__handle.port-handle {
+  background: var(--text-faint);
+  opacity: 0.45;
+}
+/* a row's role-less side: the handle stays (React Flow drops an edge whose named
+   handle is missing — the silent-drop bug class) but shows no dot */
+.react-flow__handle.port-handle.quiet {
+  opacity: 0;
+}
+/* The OUTER io dot centers on the CARD/REGION border, like every leaf row's dot
+   (the containers inset their rows, so the row-edge default sat the dot inside
+   the card — drift, user-caught 2026-06-12). --io-inset is defined NEXT TO each
+   container's padding. The stock row-edge offset is 0px, NOT -4px: React Flow's
+   base handle style already translates a left/right handle by -/+50% of its own
+   width, so `left: 0` IS "centered on the row edge" (a leaf param handle
+   computes to exactly that). The old -4px double-offset pushed every io dot
+   ~4px OUTSIDE its border (measured; user-caught 2026-06-12). */
+.io-col-input .react-flow__handle-left,
+.io-card .io-col-output .react-flow__handle-left {
+  left: calc(0px - var(--io-inset, 0px));
+}
+.io-col-output .react-flow__handle-right,
+.io-card .io-col-input .react-flow__handle-right {
+  right: calc(0px - var(--io-inset, 0px));
+}
+/* the ↻ loop-rule row's landing dot — amber, the loop language */
+.react-flow__handle.loop-row-handle {
+  background: var(--loop);
+}
+/* control handles are invisible — the edge flows straight into the node/tile with no
+   dot (nodesConnectable is off, so the handle only needs to be a connection point). */
+.react-flow__handle.node-handle {
+  background: transparent;
+  border: none;
+}
+
+/* ---------- edges ---------- */
+/* the `edge-*` classes are CONSTRUCTED, so grep the sites not the literals:
+   `edge-${kind}` in flow.ts toFlowEdge (sequential | branch | data_flow | error | end),
+   literal `edge-loop` on the synthesized loop arcs (flow.ts buildFlow),
+   `edge-dimmed` added/stripped by applyFocus. */
+.react-flow__edge .react-flow__edge-path {
+  stroke-width: var(--edge-stroke);
+}
+/* ALL control edges (GradientEdge: sequential/branch/error/end) AND data edges
+   (DataEdge: lane tint + endpoint fades) are stroked by their components — do NOT
+   set `stroke` here or CSS would override the gradients. Dash patterns are separate
+   properties, safe in CSS. */
+.react-flow__edge.edge-branch .react-flow__edge-path {
+  stroke-dasharray: 6 4;
+}
+.react-flow__edge.edge-data_flow .react-flow__edge-path {
+  stroke-dasharray: 4 3;
+}
+.react-flow__edge.edge-end .react-flow__edge-path {
+  stroke-dasharray: 2 3;
+}
+/* loop-back U (synthesized from LoopSpec; rail from assignLoopRails) — full edge
+   weight: it speaks the same rounded-orthogonal language as the control edges */
+.react-flow__edge.edge-loop .react-flow__edge-path {
+  stroke: var(--loop);
+  stroke-width: var(--edge-stroke);
+}
+/* the U's re-entry arrowhead (LoopEdge `arrowPoints`) — the app's ONE arrowhead:
+   a loop's direction is the only one the layout doesn't imply */
+.loop-arrow {
+  fill: var(--loop);
+}
+/* The backward-sequential loop-back's re-entry arrowhead (GradientEdge, data.loopBack).
+   Fill is set INLINE to the edge's arrival color (the target node's color); this rule
+   is the grep anchor + a fallback. */
+.loopback-arrow {
+  fill: var(--accent);
+}
+.loop-edge-label {
+  position: absolute;
+  /* OPAQUE tint (mix over --bg, like .edge-label) — the pill rides ON the U's top
+     run, so a translucent bg lets the line strike through the text */
+  background: color-mix(in srgb, var(--loop) 14%, var(--bg));
+  color: var(--loop);
+  border: 1px solid #5a4524;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-family: var(--mono);
+  white-space: nowrap;
+  pointer-events: all;
+}
+.react-flow__edge-text {
+  fill: var(--text-muted);
+  font-size: 10px;
+}
+.react-flow__edge-textbg {
+  fill: var(--bg);
+}
+/* custom-edge label (GradientEdge) — e.g. a TD fork outcome riding its edge.
+   position:absolute is REQUIRED inside EdgeLabelRenderer — without it the div is a
+   full-width block that ignores the transform (the "full-width bar" bug). */
+.edge-label {
+  position: absolute;
+  /* Edge-colored pill (user-chosen "B0", 2026-06-09): --label-c is set per edge by
+     GradientEdge (error = --danger, else the target node's color). Tinted fill + a
+     faint same-color hairline; the text stays white — the tint, not the text, ties
+     the label to its line. */
+  --label-c: var(--decision);
+  background: color-mix(in srgb, var(--label-c) 11%, var(--bg));
+  color: #f5f7fa;
+  border: 1px solid color-mix(in srgb, var(--label-c) 16%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: all;
+}
+/* Branch-outcome label (GradientEdge adds `.branch` on labeled branch edges).
+   Bare text, no chrome — a dark text-shadow halo lifts the glyphs off the edge
+   line behind them (user-chosen over a backdrop box; ordinals removed 2026-06-10). */
+.edge-label.branch {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 10px;
+  text-shadow:
+    0 0 3px rgb(0 0 0 / 0.95),
+    0 0 6px rgb(0 0 0 / 0.8);
+  z-index: 1; /* above the edge paths, never under a line */
+}
+/* The mid-path branch CONDITION ("if len(items) > 5" / "else") renders as a
+   standard .edge-label pill tinted by --label-c = --decision (GradientEdge sets
+   it inline) — white text, orange tint, like the error pill but condition-colored. */
+
+
+/* ---------- read panel ---------- */
+/* Width rides --panel-w, set inline on .graph-body by GraphView (user-resizable
+   via .panel-resizer, persisted; default in utils/panelWidth.ts). */
+.read-panel {
+  flex: 0 0 var(--panel-w, 460px);
+  max-width: var(--panel-w, 460px);
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+  /* Panel type scale: 13px is the BODY/label size (names, facts, section headers,
+     description all inherit it); 12px = code/value boxes; 11px = meta (eyebrow,
+     file:line, badges). One coherent ladder instead of the old 10/11/12/13/14 mix. */
+  font-size: 13px;
+}
+/* The drag handle between canvas and panel: zero net width in the flex row
+   (negative margins straddle the panel's left border), a 9px col-resize hit
+   area on top of it. Hover/drag paints a thin accent line on the divider. */
+.panel-resizer {
+  flex: 0 0 9px;
+  margin: 0 -5px 0 -4px;
+  position: relative;
+  z-index: 6;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+.panel-resizer.left {
+  margin: 0 -4px 0 -5px;
+}
+.panel-resizer:hover::after,
+.panel-resizer:active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+/* ---------- source pane ---------- */
+.source-pane {
+  flex: 0 0 var(--source-w, 460px);
+  max-width: var(--source-w, 460px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+}
+.source-pane-header {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+}
+.source-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.source-crumb {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+.source-crumb:not(:last-child)::after {
+  content: "/";
+  color: var(--text-faint);
+  margin-left: 7px;
+}
+.source-crumb:hover:not(:disabled) {
+  color: var(--text);
+}
+.source-crumb:disabled,
+.source-crumb-muted {
+  color: var(--text-faint);
+  cursor: default;
+}
+.source-pane-notice,
+.source-pane-empty {
+  margin: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.source-pane-notice {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.source-pane-notice.error {
+  border-color: var(--danger);
+  color: var(--text);
+}
+.source-code {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 18px;
+}
+.src-line {
+  min-width: 100%;
+  display: grid;
+  grid-template-columns: 48px max-content;
+  cursor: pointer;
+}
+/* The selected node's whole authored BLOCK — a barely-visible extent tint
+   (before :hover/-active in the sheet so both still win on top of it).
+   The source-row SELECTION tint keeps its original blue (#6ea8fe), NOT the orange
+   chrome --accent — selection here is a distinct signal from the chrome accent. */
+.src-line-block {
+  background: color-mix(in srgb, #6ea8fe 5%, transparent);
+}
+.src-line:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.src-line-active {
+  background: color-mix(in srgb, #6ea8fe 16%, transparent);
+}
+.src-gutter {
+  color: var(--text-faint);
+  text-align: right;
+  padding: 0 10px 0 8px;
+  user-select: none;
+}
+.src-content {
+  color: var(--text);
+  white-space: pre;
+  padding-right: 16px;
+}
+/* Prose lines (outside ``` fences) soft-wrap at the pane width instead of
+   feeding the horizontal scrollbar; the width pin is what makes pre-wrap
+   actually wrap inside the max-content grid track. Fenced code/prompts keep
+   white-space: pre — wrapping would misrepresent their layout. */
+.src-line-wrap .src-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  width: calc(var(--source-w, 460px) - 72px);
+  padding-right: 0;
+}
+/* Canvas-language source coloring (graph/sourceDecorate.ts): type-values +
+   node-name headings carry an inline kind color (format.kindColor); the rest
+   reuse the canvas palette. Refs teal, structural keys/roles muted. */
+.src-ref {
+  color: var(--ref);
+}
+.src-key,
+.src-role {
+  color: var(--text-muted);
+}
+.src-hash {
+  color: var(--text-faint);
+}
+.src-fence {
+  color: var(--text-faint);
+}
+.src-title {
+  color: var(--text);
+  font-weight: 600;
+}
+.src-section {
+  color: var(--ref);
+  font-weight: 600;
+}
+.src-node {
+  font-weight: 600;
+}
+/* Input/output `### name` headings echo their `## Inputs`/`## Outputs` SECTION
+   color (the teal --ref that .src-section uses), muted toward --text-faint so
+   each reads as a dimmer variant of its section heading. Their `- type:` is a
+   DATA type (string/integer), not a node kind, so the kind-color path would
+   otherwise leave them grey. */
+.src-io-input,
+.src-io-output {
+  color: color-mix(in srgb, var(--ref) 62%, var(--text-faint));
+}
+.read-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+.read-panel-header h2 {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-family: var(--font);
+}
+.read-panel-kind {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--text-faint);
+  text-transform: lowercase;
+}
+/* The single-subject panel header avatar (PanelHeader.tsx — ReadPanel + IoPanel):
+   a LARGER node chip than the references/referenced-by stack (.edge-chip-tile is
+   28px) — kind-colored tile + category eyebrow + the name as a navigate button
+   (re-centers the camera). EdgePanel keeps the plain text header (the rules
+   above). */
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.panel-head-tile {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  border: 2px solid var(--chip-c, var(--text-faint));
+}
+.panel-head-tile img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+.panel-head-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+/* the name stays the <h2> (size/mono from .read-panel-header h2); kill its top
+   margin in the column (specificity beats that rule) and ellipsize the nav button */
+.read-panel-header .panel-head-name {
+  margin: 0;
+  min-width: 0;
+}
+.panel-head-nav {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel-head-nav:hover {
+  text-decoration: underline;
+}
+.read-panel-purpose {
+  color: var(--text-muted);
+  margin: 10px 0;
+  white-space: pre-wrap;
+}
+.read-panel-source {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  margin: 0 0 12px;
+}
+/* The clickable variant (ReadPanel: opens the source pane at this file:line).
+   Color/font/margin come from .read-panel-source; reset the button chrome and
+   underline on hover so it reads as a link. */
+.read-panel-source-btn {
+  display: inline-block;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+}
+.read-panel-source-btn:hover {
+  text-decoration: underline;
+}
+.facts {
+  margin: 0 0 14px;
+  display: grid;
+  gap: 4px;
+}
+.fact {
+  display: flex;
+  gap: 8px;
+}
+.fact dt {
+  font-family: var(--font);
+  color: var(--text-faint);
+  flex: 0 0 76px;
+}
+.fact dd {
+  margin: 0;
+  color: var(--text);
+  word-break: break-word;
+}
+.read-panel-params h3 {
+  font-size: 13px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  margin-bottom: 12px;
+  padding-top: 16px;
+}
+
+/* Collapsible panel section (ReadPanel Description) — a native <details> styled as
+   a quiet disclosure: a small rotating caret + a muted label, open by default. */
+.panel-section {
+  margin: 10px 0;
+}
+.panel-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.panel-section > summary::-webkit-details-marker {
+  display: none;
+}
+.panel-section > summary::before {
+  content: "▸";
+  font-size: 9px;
+  transition: transform 0.12s;
+}
+.panel-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+.panel-section .read-panel-purpose {
+  margin: 8px 0 0;
+}
+.read-param {
+  margin-bottom: 12px;
+}
+.read-param-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.read-param-name {
+  font-family: var(--font);
+  font-weight: 600;
+  /* Field labels read as UI labels (Inputs, Code, Prompt), capitalized like the
+     section headers — a display nicety; the authored key stays lowercase in source. */
+  text-transform: capitalize;
+}
+.read-param-source {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: auto;
+}
+.read-param-value {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* Batch-alias param expander (ReadPanel ParamBlock, batchItems.ts): a value that
+   reads `${item.x}` on a LITERAL batch resolves to its per-item values inline. */
+.batch-expand {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.batch-expand:hover {
+  color: var(--text);
+}
+.batch-items {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.batch-item-head {
+  margin-bottom: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Flat batch-items listing (BatchItems.tsx): every literal item with all its
+   fields — short scalars inline, long values a `▸ name <size>` disclosure. */
+.batch-block {
+  margin: 0 0 12px;
+}
+.batch-block-head,
+.batch-field-head {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+.batch-block-head:hover,
+.batch-field-head:hover {
+  color: var(--text);
+}
+.batch-block-count,
+.batch-field-size {
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+.batch-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.batch-item-index {
+  margin-bottom: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.batch-item-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.batch-field {
+  font-size: 11px;
+}
+.batch-field-name {
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+.batch-field-val {
+  font-family: var(--mono);
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* ---- rendered markdown prose (Markdown.tsx, block mode) ------------------ */
+/* white-space FIRST and load-bearing: the host classes (.read-panel-purpose,
+   .io-port-desc) keep pre-wrap as the "respect authored newlines" mechanism for
+   PLAIN strings (EdgePanel shares .read-panel-purpose — never restyle the hosts
+   for markdown). Markdown owns its own paragraphs/lists; inherited pre-wrap
+   would hard-break every soft newline and double the block spacing. */
+.md {
+  white-space: normal;
+}
+.md p {
+  margin: 6px 0;
+}
+.md > p:first-child {
+  margin-top: 0;
+}
+.md > p:last-child {
+  margin-bottom: 0;
+}
+.md ul,
+.md ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.md li {
+  margin: 2px 0;
+}
+/* inline code chip; fenced blocks route to CodeBlock (.read-param-value) and
+   carry no <code> element, so this can't leak into them */
+.md code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+/* headings capped small — a side panel has no room for giant headers */
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.md blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+}
+.md a {
+  color: var(--accent);
+}
+
+/* ---- edge selection (EdgePanel + canvas treatment) ---------------------- */
+
+/* A dimmed edge's floating pill dims WITH its line: EdgeLabelRenderer content
+   renders outside .react-flow__edge, so the edge dim opacity can't cascade —
+   the components add this class from EdgeData.dimmed (applyFocus). */
+.label-dimmed {
+  opacity: 0.18;
+}
+
+/* The outcome → condition table (OutcomeTable): outcome names are long, so the
+   facts table's fixed 76px label column wrapped them mid-word and orphaned the
+   arrow. Labels stay on ONE line (ellipsis past half the row; full name on the
+   title tooltip); rows get breathing room and align baseline-to-baseline. */
+.facts.outcomes .fact {
+  margin: 0 -6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  align-items: baseline;
+  gap: 10px;
+}
+.facts.outcomes .fact dt {
+  flex: 0 0 auto;
+  min-width: 76px;
+  max-width: 55%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The selected edge's row in the EdgePanel outcome table. */
+.fact-marked {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  border-radius: 4px;
+}
+
+/* The selected data edge's own ${ref} inside the param value (ParamBlock
+   highlightRef) — which reference of a multi-ref prompt the clicked line IS. */
+.ref-mark {
+  background: color-mix(in srgb, var(--data-edge-selected) 22%, transparent);
+  color: var(--data-edge-selected);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* Endpoint chips: the selected connection's two ends, kind-colored, clickable
+   (navigate focus) — or disabled when the endpoint is hidden inside a collapsed
+   container (visible honesty over a silent no-op). */
+.edge-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.edge-chips-arrow {
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+/* A chip is a mini node avatar: the canvas tile in miniature + the name, no box
+   around the pair (the tile carries the kind color; the category word rides the
+   tooltip — identity by recognition, matching the canvas). */
+.edge-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 0 1 auto;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.edge-chip-tile {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  border: 2px solid var(--chip-c, var(--text-faint));
+}
+.edge-chip-tile img {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+}
+.edge-chip:hover:not(:disabled) .edge-chip-name {
+  text-decoration: underline;
+}
+.edge-chip:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.edge-chip-name {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+/* a nested io port's scope prefix ("create-songs." before "concept") — fainter,
+   so the port name stays the subject */
+.edge-chip-scope {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.edge-chip-static {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  cursor: default;
+}
+/* references / referenced-by (ReadPanel, via components/Chip.tsx): one neighbor
+   chip per row — a vertical stack, not the EdgePanel's inline endpoint pair. */
+.chip-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+/* The workflow-interface panel (IoPanel.tsx): one entry per input/output. */
+.io-port {
+  padding: 8px 6px;
+  margin: 0 -6px;
+  border-radius: 4px;
+  border-top: 1px solid var(--border);
+}
+.io-port.marked {
+  background: color-mix(in srgb, var(--text) 7%, transparent); /* = .fact-marked */
+}
+.io-port-meta {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.io-port-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+.io-port-uses {
+  margin: 6px 0 0;
+  flex-wrap: wrap;
+}
+/* The relationship word ("used by" / "from") — the panel's faint label-word
+   vocabulary (feeds/consumed/…), clearer than a bare arrow. */
+.io-port-uses-label {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+.io-port-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}

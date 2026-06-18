@@ -158,19 +158,36 @@ class TestCriticalAPIWarningScenarios:
         assert warning is None
 
     def test_json_string_result_not_unwrapped_for_non_mcp_nodes(self):
-        """GH #508: a JSON-string ``result`` is payload, not an API response.
-
-        The string arm of ``unwrap_mcp_response`` used to bypass the MCP-only
-        gate, so a successful code node returning a JSON failure report (e.g. a
-        verdict ``{"ok": false}``) was misclassified as a failed API call. This
-        pins the string case to match the dict case above — both stay payload
-        for non-MCP nodes.
+        """GH #508: a non-MCP node's `result` is author-computed DATA, never an
+        API-response envelope — a successful code node emitting the JSON string
+        '{"ok": false, ...}' (e.g. a verification verdict) must not be failed.
+        The dict arm was already gated; the JSON-string arm bypassed the gate.
         """
-        shared = {"calc": {"result": json.dumps({"ok": False, "violations": ["x"]})}}
+        shared = {"clean": {"result": '{"ok": false, "violations": 53}', "stdout": "", "stderr": ""}}
 
-        warning = detect_api_warning("calc", shared, node_type_name="PythonCodeNode")
+        warning = detect_api_warning("clean", shared, node_type_name="PythonCodeNode")
 
         assert warning is None
+
+    def test_json_string_result_dict_string_symmetry_for_non_mcp_nodes(self):
+        """GH #508: identical data must classify identically regardless of
+        whether `result` is a dict or its json.dumps serialization."""
+        as_dict = {"calc": {"result": {"ok": False}}}
+        as_string = {"calc": {"result": json.dumps({"ok": False})}}
+
+        assert detect_api_warning("calc", as_dict, node_type_name="PythonCodeNode") is None
+        assert detect_api_warning("calc", as_string, node_type_name="PythonCodeNode") is None
+
+    def test_json_string_result_still_inspected_for_mcp_nodes(self):
+        """The GH #508 gate must not weaken MCP detection: a JSON-string result
+        carrying an explicit failure flag still warns when the node IS an MCP
+        node (the Slack scenario above covers the node_type_name=None default).
+        """
+        shared = {"api": {"result": json.dumps({"ok": False, "error": "channel_not_found"})}}
+
+        warning = detect_api_warning("api", shared, node_type_name="MCPNode")
+
+        assert warning == "API error: channel_not_found"
 
     def test_top_level_explicit_failure_flags_remain_type_agnostic(self):
         shared = {"calc": {"status": "error", "message": "Invalid input format"}}

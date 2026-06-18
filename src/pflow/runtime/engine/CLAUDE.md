@@ -318,7 +318,7 @@ All emitters wrap the callback in `contextlib.suppress(Exception)` so rendering 
 
 ### `api_warning_detector.py`
 
-Classifies node output as API warning based on explicit failure flags, error codes, and resource/validation message patterns. See `runtime/CLAUDE.md` "Error Categorization" for the pattern categories and ambiguity rule. Key function: `detect_api_warning(node_id, shared, *, node_type_name=None) → Optional[str]`. Pass `node_type_name` from the compiled node config so canonical `result` wrapper inspection is limited to MCP nodes.
+Classifies node output as API warning based on explicit failure flags, error codes, and resource/validation message patterns. See `runtime/CLAUDE.md` "Error Categorization" for the pattern categories and ambiguity rule. Key function: `detect_api_warning(node_id, shared, *, node_type_name=None) → Optional[str]`. Pass `node_type_name` from the compiled node config so `result` wrapper inspection is limited to MCP nodes — BOTH arms (dict result AND JSON-string result) share the gate (GH #508: the string arm originally bypassed it, so a successful code node returning the JSON string `{"ok": false, ...}` as data — e.g. a verification verdict — was failed as an API error; identical data as a dict was safe). Top-level explicit failure flags stay type-agnostic by design. Related: GH #301 (message-pattern hijack of `error_action` — a different mechanism in the same module).
 
 ### `template_errors.py`
 
@@ -360,6 +360,5 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 - **Batch nodes skip top-level template resolution** — per-item resolution in callback instead.
 - **`_source_line` keys NOT filtered in `split_params()`** — `python_code.py` reads them. Filtered only in `compute_node_config()` for cache hashing.
 - **Engine doesn't restore `node.params`** — intentional. Each execution sets params fresh.
-- **`handle_cached_execution` serves both cache levels** — memo (SQLite) and in-process (resume). It does NOT clear `__failures__[id]` (both cache paths are unreachable for nodes with a stale failure record — see the Instrumentation section).
 - **Parallel batch deep-copies bare node** — cheap, but `_batch_trace` list append relies on GIL (CPython only).
 - **`CompiledWorkflow` is NOT concurrent-safe** — `node.params` mutation means one `engine.run()` at a time per workflow instance.

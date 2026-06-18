@@ -101,7 +101,7 @@ def _handle_workflow_success(
     # diagnostics like `cache.routed-provider-degraded` reach the agent-
     # facing CLI surface. Severity is still used by the renderer to choose
     # an icon (see `diagnostic_render.py`). Matches the precedent at the
-    # validate/dry-run rendering site below (~line 365) and visualize.py.
+    # validate/dry-run rendering site below (~line 365) and mermaid.py.
     result_warnings = [
         diagnostic
         for diagnostic in getattr(result, "diagnostics", [])

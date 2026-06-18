@@ -1,0 +1,438 @@
+// The one leaf-node component, at two densities from the same data. Both share the
+// header (neutral tile + native-color icon + category line + bold purpose); the
+// ADVANCED body (param rows with per-row target handles + output ports) renders only
+// when density="detailed". Fork outcomes (BranchPorts) show in BOTH densities — a
+// fork is structure, not advanced detail. `density` rides in `data`, so toggling it
+// re-renders this one component (no node-type swap / remount).
+//
+// Per-row handles sit inside position:relative rows; React Flow measures their DOM
+// rects for edge routing, so a ${ref} line lands on its exact row with no pixel math.
+
+import { type CSSProperties, memo, useEffect, useRef } from "react";
+import { Handle, type NodeProps, Position, useUpdateNodeInternals } from "@xyflow/react";
+
+import type { FlowNode } from "../../graph/flow";
+import { NODE_IN, NODE_OUT } from "../../graph/handles";
+import { ICON_COL_X, ICON_ROW_Y, METRICS } from "../../graph/metrics";
+import { categoryLabel, collapseWhitespace, humanizeId, nodeColor, parseTemplate, previewValue, stripMarkdown, truncate } from "../../utils/format";
+import { iconFor } from "../../utils/icons";
+import type { RFParam } from "../../types";
+import { useHoverMarks, useInteraction } from "../interaction";
+import { BranchPorts } from "./BranchPorts";
+import { ChipRail } from "./ChipRail";
+
+type WorkflowNodeType = Extract<FlowNode, { type: "node" }>;
+
+// The connector flare: a 3px stem (== the control-edge stroke width) flowing via
+// concave elliptical-arc fillets onto a wide flat base that sinks into the tile's
+// 3px border. ONE set of constants drives the path, the viewBox, AND the element's
+// inline size — if viewBox and box ever disagree, the browser silently rescales and
+// centers the paint inside the (correctly placed) box, which bounding-box measurement
+// cannot see: the tip renders thinner than the edge and the cove reads angular.
+// Arcs (`A`), not eyeballed cubics: tangent is exactly vertical at the stem and
+// exactly horizontal at the base, so the landing is flat by construction.
+const CONN = {
+  w: 14, // base span == element width
+  tipW: METRICS.edgeStroke, // the stem must continue the edge at exactly its width
+  stemH: 2, // straight stem run; slides under the edge terminus (same width+color → seamless)
+  coveH: 7, // fillet height: vertical tangent at the stem → horizontal at the tile
+  // The landing line sits baseSink px inside the tile border; the apron continues
+  // past it. baseSink + baseApron must stay WITHIN the tile border (past it = a dark
+  // notch). History: baseSink was 1 (landing exactly ON the outer edge antialiased a
+  // 1px jag under the OLD palette); user re-tuned to 0 (anchor +1 → +2, 2026-06-10)
+  // — if a jag reappears at the landing, restore baseSink 1 and drop baseApron to 0
+  // instead (same +2 anchor, sunken landing).
+  baseSink: 0,
+  baseApron: 1,
+};
+const CONN_H = CONN.stemH + CONN.coveH + CONN.baseApron;
+const TIP_L = (CONN.w - CONN.tipW) / 2;
+const TIP_R = TIP_L + CONN.tipW;
+const BASE_Y = CONN.stemH + CONN.coveH; // where the cove lands flat (baseSink px inside the border)
+const CONNECTOR_TOP = [
+  `M${TIP_L},0 L${TIP_R},0 L${TIP_R},${CONN.stemH}`,
+  `A${TIP_L},${CONN.coveH} 0 0 0 ${CONN.w},${BASE_Y}`,
+  `L${CONN.w},${CONN_H} L0,${CONN_H} L0,${BASE_Y}`,
+  `A${TIP_L},${CONN.coveH} 0 0 0 ${TIP_L},${CONN.stemH} Z`,
+].join(" ");
+const CONNECTOR_BOTTOM = [
+  `M${TIP_L},${CONN_H} L${TIP_R},${CONN_H} L${TIP_R},${CONN_H - CONN.stemH}`,
+  `A${TIP_L},${CONN.coveH} 0 0 1 ${CONN.w},${CONN.baseApron}`,
+  `L${CONN.w},0 L0,0 L0,${CONN.baseApron}`,
+  `A${TIP_L},${CONN.coveH} 0 0 1 ${TIP_L},${CONN_H - CONN.stemH} Z`,
+].join(" ");
+// The LR flare: CONNECTOR_TOP transposed ((x,y) → (y,x); a reflection, so the arc
+// sweep flags flip) — the edge arrives HORIZONTALLY at the icon row and flows into
+// the tile's LEFT border. Element is CONN_H wide × CONN.w tall. There is no RIGHT
+// tile flare: the tile sits at the card's left, so the outgoing edge leaves the
+// card's right BORDER at the icon row, far from the tile — no cove to draw.
+const CONNECTOR_LEFT = [
+  `M0,${TIP_L} L0,${TIP_R} L${CONN.stemH},${TIP_R}`,
+  `A${CONN.coveH},${TIP_L} 0 0 1 ${BASE_Y},${CONN.w}`,
+  `L${CONN_H},${CONN.w} L${CONN_H},0 L${BASE_Y},0`,
+  `A${CONN.coveH},${TIP_L} 0 0 1 ${CONN.stemH},${TIP_L} Z`,
+].join(" ");
+// Anchor offset from the tile's padding box (the containing block for an absolutely
+// positioned child): +tileBorder would put the element's end at the border's OUTER
+// edge; subtracting sink+apron drops the landing line baseSink px inside the border
+// and keeps the apron's far end (sink+apron) px in — clear of the dark face.
+const CONN_ANCHOR = `calc(100% + ${METRICS.tileBorder - CONN.baseSink - CONN.baseApron}px)`;
+
+// MOCK (name-label exploration, 2026-06-11): flip to compare LR placements in
+// screenshots — false = above the card (consistent with TD), true = below it
+// (n8n-style; uncontested space in LR, where the loop rail + chip rail live above).
+const LR_NAME_BELOW = false;
+
+// The node's NAME (its node_id — the `${ref}` key) as floating chrome straddling
+// the card border, like the chip rail: it dims/selects/moves with the card for
+// free and ELK doesn't know (same accepted straddle). TD: right of the incoming
+// line (the icon column) — this REPLACES the TD outcome labels, which were
+// redundant with it (a branch outcome IS the target's node id in pflow).
+// Beautiful shows the humanized name; advanced the verbatim id (mono). The
+// verbatim id always rides the tooltip. Exported for GroupNode.
+export function NameLabel({
+  name,
+  direction,
+  density,
+}: {
+  name: string;
+  direction: "LR" | "TD";
+  density: string;
+}): JSX.Element {
+  const detailed = density === "detailed";
+  const pos: CSSProperties =
+    direction === "TD"
+      ? { bottom: "calc(100% + 7px)", left: ICON_COL_X + 10 }
+      : LR_NAME_BELOW
+        ? { top: "calc(100% + 6px)", left: 8 }
+        : { bottom: "calc(100% + 6px)", left: 8 };
+  return (
+    <span className={`node-name-label${detailed ? " mono" : ""}`} style={pos} title={name}>
+      {detailed ? name : humanizeId(name)}
+    </span>
+  );
+}
+
+function ParamValue({ param }: { param: RFParam }): JSX.Element {
+  if (param.is_dynamic && typeof param.value === "string") {
+    const collapsed = collapseWhitespace(param.value);
+    return (
+      <>
+        {parseTemplate(collapsed).map((seg, i) =>
+          seg.isRef ? (
+            <span key={i} className="ref-chip" title={`\${${seg.text}}`}>
+              {seg.text}
+            </span>
+          ) : (
+            <span key={i} className="lit">
+              {truncate(seg.text, 28)}
+            </span>
+          ),
+        )}
+      </>
+    );
+  }
+  return <span className="lit">{previewValue(param.value)}</span>;
+}
+
+// A kind-colored connector flare bridging the edge into the icon tile. PURE DECORATION —
+// it owns NO handle. The control handle lives on the node BORDER (reliable RF measurement);
+// the edge ends there, hidden UNDER this opaque flare, so it appears to flow into the tile.
+// Decoupling the handle from the flare is what closed the gap (a handle nested in this
+// transformed, outside-the-box element was mis-measured by React Flow). TD/beautiful only.
+// Exported for GroupNode: a COLLAPSED group renders the same card anatomy (tile +
+// flares), so edges flow into its icon exactly like a leaf's.
+export function Connector({ side }: { side: "top" | "bottom" | "left" }): JSX.Element {
+  if (side === "left") {
+    // Horizontal variant (LR): anchored to the tile's LEFT edge, vertically
+    // centered on the tile (== the icon row, where the LR control handles sit).
+    return (
+      <div
+        className="node-connector node-connector-left"
+        style={{ width: CONN_H, height: CONN.w, right: CONN_ANCHOR }}
+        aria-hidden="true"
+      >
+        <svg viewBox={`0 0 ${CONN_H} ${CONN.w}`}>
+          <path d={CONNECTOR_LEFT} />
+        </svg>
+      </div>
+    );
+  }
+  const anchor: CSSProperties = side === "top" ? { bottom: CONN_ANCHOR } : { top: CONN_ANCHOR };
+  return (
+    <div
+      className={`node-connector node-connector-${side}`}
+      style={{ width: CONN.w, height: CONN_H, ...anchor }}
+      aria-hidden="true"
+    >
+      <svg viewBox={`0 0 ${CONN.w} ${CONN_H}`}>
+        <path d={side === "top" ? CONNECTOR_TOP : CONNECTOR_BOTTOM} />
+      </svg>
+    </div>
+  );
+}
+
+export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<WorkflowNodeType>): JSX.Element {
+  const {
+    node,
+    density,
+    direction,
+    rows,
+    branchLabels,
+    branchConditions,
+    revealedConditions,
+    hasIncoming,
+    hasOutgoing,
+    expanded,
+    dimmed,
+    focused,
+  } = data;
+  const detailed = density === "detailed";
+  // Focus-expansion (beautiful only): the card renders its full advanced body in place.
+  const showBody = detailed || expanded;
+  const targetPos = direction === "LR" ? Position.Left : Position.Top;
+  const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
+  // TD/beautiful: a control edge flows into the icon via the connector flare — but only
+  // the side that actually HAS an edge gets one. An EXPANDED card keeps the TOP flare
+  // (the tile still abuts the top border) but drops the BOTTOM one: the body grew below
+  // the tile, so a tile-anchored flare would sit mid-card, away from the outgoing edge.
+  const topConnector = direction === "TD" && !detailed && hasIncoming;
+  const bottomConnector = direction === "TD" && !detailed && !expanded && hasOutgoing;
+  // LR/beautiful: the incoming edge flows into the tile's LEFT border via the
+  // horizontal flare. No right-side tile flare — the tile sits at the card's left;
+  // the outgoing edge leaves the card's right border at the icon row, plain.
+  const leftConnector = direction === "LR" && !detailed && hasIncoming;
+  // Control handles sit on the ICON LINE — TD: the icon column (ICON_COL_X = tile
+  // center, the SAME x layout.ts declares to ELK as ports, so columns align
+  // icon-to-icon), LR: the icon ROW (ICON_ROW_Y = header center — in on the left,
+  // out on the right at the SAME height, so the trunk passes straight through;
+  // layout.ts declares matching LR ports). The flare-side handle is pulled INWARD
+  // toward the tile (5px) so the edge terminates closer in — letting the flare be
+  // short instead of bridging the full header padding.
+  const topHandleStyle =
+    direction === "TD" ? { left: ICON_COL_X, top: 5 } : { top: ICON_ROW_Y, left: 5 };
+  // right: 5 tucks the OUT terminus 5px UNDER the card (edges render behind
+  // nodes), so the line emerges through the border — RF otherwise anchors a
+  // right handle just OUTSIDE it, leaving a 2px unplugged gap (user-caught).
+  const bottomHandleStyle =
+    direction === "TD" ? { left: ICON_COL_X, bottom: 5 } : { top: ICON_ROW_Y, right: 5 };
+
+  // React Flow caches handle positions; moving them (LR↔TD flips the border handles
+  // from the sides to the icon column; focus-expansion adds/removes the per-row
+  // handles) needs a re-measure or edges use stale coords and fly to the origin.
+  const hovered = useHoverMarks();
+  const { hoverRow } = useInteraction();
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, direction, density, expanded, updateNodeInternals]);
+
+  // Dev tripwire for the open-loop ELK sizing: leafSize PREDICTS this box and React
+  // Flow pins the node to it, so offsetHeight always "agrees" — the drift signal is
+  // content overflowing the pinned box (scrollHeight). Detailed only: compact is
+  // fixed-height and its connector flare legitimately overflows. Skips jsdom
+  // (clientHeight 0); compiled out of production builds.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!import.meta.env.DEV || !showBody) return;
+    const el = rootRef.current;
+    if (el && el.clientHeight > 0 && el.scrollHeight > el.clientHeight + 1) {
+      console.warn(
+        `pflow UI: node ${id} content is ${el.scrollHeight}px but leafSize predicted ${el.clientHeight}px — update METRICS / leafSize (graph/rows.ts) or ELK lays out on a lie`,
+      );
+    }
+  });
+
+  // `kind-*` has NO CSS rules but is NOT dead: the real-browser inspect tooling
+  // (examples/real-workflows/screenshot-pflow-web-ui/inspect.pflow.md) reads the node
+  // kind off the classList. Removing it breaks `inspect` with no test failing.
+  const classes = ["node", detailed ? "detailed" : "compact", `kind-${node.kind}`];
+  if (expanded) classes.push("expanded"); // focus-expanded beautiful card (shares the body styling)
+  if (dimmed) classes.push("dimmed");
+  if (focused) classes.push("focused");
+  if (hovered.has(id)) classes.push("hover-mark"); // a panel chip / row hover marks this node
+  if (node.is_terminal) classes.push("terminal");
+  if (node.unexpanded) classes.push("unexpanded");
+  if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
+  const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
+  const hasBody = showBody && rows.length > 0;
+  const paramRow = (param: RFParam, handle: string): JSX.Element => (
+    <div
+      className={`param-row${param.is_dynamic ? " dynamic" : ""}`}
+      key={param.name}
+      onMouseEnter={() => hoverRow({ nodeId: id, handles: [handle] })}
+      onMouseLeave={() => hoverRow(null)}
+    >
+      <Handle id={handle} type="target" position={Position.Left} className="handle param-handle" />
+      <span className="param-name">{param.name}</span>
+      <span className="param-value">
+        <ParamValue param={param} />
+      </span>
+    </div>
+  );
+
+  return (
+    <div ref={rootRef} className={classes.join(" ")} style={kindStyle}>
+      {/* Control handles ALWAYS sit on the node border (in TD, on the icon column via
+          fallbackHandleStyle) — the reliable RF measurement. The flare is additive
+          decoration anchored to the tile; the edge ends at the border handle, hidden
+          under the flare. */}
+      <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
+      <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
+      {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
+      {/* The node's name (id) as chrome above the card. */}
+      <NameLabel name={node.ref.node_id} direction={direction} density={density} />
+      {/* Behavior chips (loop/batch) on the top border — the rail (ChipRail.tsx). */}
+      <ChipRail node={node} />
+
+      <div className="node-header">
+        <div className="node-tile">
+          <img className="node-icon-img" src={iconFor(node)} alt="" />
+          {topConnector && <Connector side="top" />}
+          {bottomConnector && <Connector side="bottom" />}
+          {leftConnector && <Connector side="left" />}
+        </div>
+        <div className="node-titles">
+          {/* Type line + description, in BOTH densities. The description (purpose)
+              wraps to ≤2 lines — markdown markers are STRIPPED (a clamped line
+              can't render formatting; the read panel renders it properly). The
+              node_id does not fall back into the title — identity lives on the
+              NameLabel above the card; a card with no purpose shows just its
+              category. */}
+          <span className="node-category">{categoryLabel(node)}</span>
+          <span className="node-name" title={node.ref.node_id}>
+            {stripMarkdown(node.purpose ?? "")}
+          </span>
+        </div>
+        {/* The ONE status badge a leaf can carry — inline, like GroupNode's
+            unexpanded badge (loop/batch are ChipRail border chips; decision/
+            transform present as pseudo-kinds). The old Badge[] list machinery
+            could never hold more than this (review-caught 2026-06-11). */}
+        {node.unexpanded && (
+          <div className="badges">
+            <span className="badge badge-unexpanded" title={`not expanded: ${node.unexpanded}`}>
+              {node.unexpanded.replace(/_/g, " ")}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {hasBody && (
+        <div className="param-rows">
+          {/* Param/output rows are STRICT-sided — inputs receive on the LEFT, outputs
+              feed from the RIGHT (the node-graph convention; user decision over
+              shortest-path sides). A line from the "wrong" side wraps around the
+              card; its rail clears the nodes via the data-rail hint (DataEdge). */}
+          {/* Row hover marks the nodes the row's edges touch — a pure highlight
+              (the hover-set channel, see interaction.ts). */}
+          {/* The body is ONE switch over the assembled row list (nodeRows,
+              graph/rows.ts): the left column (params in authored order, the
+              cached prefix before `prompt`, per-ref sub-rows under any param
+              receiving ≥2 refs), then output rows, then the ↻ loop-rule rows —
+              the same list leafSize and rowAnchorsFor consume, so render,
+              height and ports cannot drift. Handles arrive ON the rows.
+              Param rows speak the output rows' connection language: a DYNAMIC
+              param (refs land here) gets the data-teal name + live dot, a
+              static config param a muted name + quiet dot (index.css). A "ref"
+              row's line lands on IT (its handle), shown as the established
+              ref-chip; a "label" row is handle-less.
+              Output rows: name + faint `: type` (D1). A NESTED row indents
+              under its parent (the wholesale-read case); a QUIET row is
+              authored-but-unread — faint, grey dot, and no line can reach it
+              (lines come only from edges). Every output row still renders its
+              handle: the landing ladder only names rows that exist, and a
+              quiet row never receives an edge by construction (D4/D5).
+              Loop rows style as a LOOP RULE (amber), not a data param (they
+              parameterize the loop mechanism, not the node's inputs): the
+              CONDITION row carries the loop-back U's landing handle
+              ("iteration re-enters under this rule" — the rail already runs on
+              the right); the CAP gets its own row below (one row truncated
+              both operands into mush — user-caught). */}
+          {rows.map((row) => {
+            switch (row.kind) {
+              case "param":
+                return paramRow(row.param, row.targetHandle);
+              case "label":
+                return (
+                  <div className="param-row cache-row" key={`l:${row.text}`}>
+                    <span className="param-name" title="Cached system prefix — ## Cache chunks consumed via prompt_cache:, in prefix order">
+                      {row.text}
+                    </span>
+                    <span className="param-value">×{row.count}</span>
+                  </div>
+                );
+              case "ref":
+                return (
+                  <div
+                    className="param-row dynamic ref-row"
+                    key={row.handle}
+                    onMouseEnter={() => hoverRow({ nodeId: id, handles: [row.handle] })}
+                    onMouseLeave={() => hoverRow(null)}
+                  >
+                    <Handle id={row.handle} type="target" position={Position.Left} className="handle param-handle" />
+                    {row.nested ? (
+                      <span className="param-name" title={`\${${row.ref}}`}>
+                        ·{row.name != null && ` ${row.name}`}{" "}
+                        <span className="ref-chip">{row.ref}</span>
+                      </span>
+                    ) : (
+                      <>
+                        <span className="param-name" title="Cached system prefix — ## Cache chunk consumed via prompt_cache:">
+                          {row.name}
+                        </span>
+                        <span className="param-value" title={`\${${row.ref}}`}>
+                          <span className="ref-chip">{row.ref}</span>
+                        </span>
+                      </>
+                    )}
+                  </div>
+                );
+              case "output":
+                return (
+                  <div
+                    className={`param-row output-row${row.row.nested ? " nested" : ""}${row.row.quiet ? " quiet" : ""}`}
+                    key={`o:${row.row.field}`}
+                    onMouseEnter={() => hoverRow({ nodeId: id, handles: [row.sourceHandle] })}
+                    onMouseLeave={() => hoverRow(null)}
+                  >
+                    {/* The title carries field AND type: a long label ellipsizes the
+                        faint `: type` suffix away, so hover must recover both. */}
+                    <span className="param-name out" title={row.row.dataType ? `${row.row.field}: ${row.row.dataType}` : row.row.field}>
+                      {row.row.nested ? "·" : "→"} {row.row.label}
+                      {row.row.dataType != null && <span className="row-type">: {row.row.dataType}</span>}
+                    </span>
+                    <Handle id={row.sourceHandle} type="source" position={Position.Right} className="handle out-handle" />
+                  </div>
+                );
+              case "loop-condition":
+                return (
+                  <div className="param-row loop-row" key="loop-condition">
+                    <span className="loop-rule" title={`${row.loop.polarity} ${row.loop.condition}`}>
+                      ↻ {row.loop.polarity} {truncate(collapseWhitespace(row.loop.condition), 34)}
+                    </span>
+                    <Handle id={row.targetHandle} type="target" position={Position.Right} className="handle loop-row-handle" />
+                  </div>
+                );
+              case "loop-cap":
+                return (
+                  <div className="param-row loop-row" key="loop-cap">
+                    <span className="loop-rule" title={`at most ${row.loop.cap} iterations`}>
+                      ≤ {truncate(String(row.loop.cap), 34)}
+                    </span>
+                  </div>
+                );
+            }
+          })}
+        </div>
+      )}
+
+      {/* Focus-revealed conditions (a clicked branch TARGET, LR) merge over the
+          build-time set — the row is the condition's LR home in both cases. */}
+      <BranchPorts
+        labels={branchLabels}
+        conditions={revealedConditions ? { ...branchConditions, ...revealedConditions } : branchConditions}
+        direction={direction}
+      />
+    </div>
+  );
+});

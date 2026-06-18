@@ -227,6 +227,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 165: Shrink Trace Interning
 - ✅ Task 166: Declarative Stateful Loop Primitive
 - ✅ Task 155: Workflow Graph Model for Multi-Renderer Support
+- ✅ Task 168: Workflow Visualization Web UI
 
 ### Planned Features (in order of priority)
 

@@ -62,6 +62,9 @@ class BatchSpec:
 class IOPort:
     data_type: str | None
     required: bool = False
+    # The authored `default:` value verbatim; None when absent (an authored
+    # `default: null` is indistinguishable — accepted, it's pathological).
+    default: Any = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,13 @@ class Node:
     io: IOPort | None = None
     source: SourceRef | None = None
     param_sources: dict[str, SourceRef] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
+    # The node's cached system prefix as authored TEMPLATE text: for each
+    # ``## Cache`` chunk its ``prompt_cache:`` consumes (declaration order),
+    # ``prose_before + ${var}`` concatenated — the same assembly rule the
+    # runtime applies to the real values (core/prompt_cache.py
+    # build_cache_system_blocks). None when the node consumes no chunks.
+    cached_prefix: str | None = None
     unexpanded: UnexpandedReason | None = None
     annotations: dict[str, Any] = field(default_factory=dict)
 
@@ -105,6 +115,15 @@ class Edge:
     label: str | None = None
     output_field: str | None = None
     input_name: str | None = None
+    # The ref's sub-path BELOW output_field: ``${gen.result.ok}`` carries
+    # ("ok",). ``compare=False`` is LOAD-BEARING, not an optimization: edge
+    # dedup is full dataclass equality (build.py `if edge not in self.edges`).
+    # In identity, two same-input_name sub-key refs would become two edges and
+    # change Mermaid's edge count (goldens break). Out of identity, dedup is
+    # byte-identical to before this field; the accepted lossiness (the first
+    # ref's path wins in that rare shape) is exactly the documented
+    # `input_name` multi-role precedent.
+    output_path: tuple[str, ...] = field(default=(), compare=False)
 
 
 ContainerKind = Literal["workflow", "batch", "input_wrapper", "output_wrapper"]
@@ -143,8 +162,18 @@ class GraphModel:
         return None
 
     def is_decision(self, n: NodeId) -> bool:
+        # A decision has >= 2 distinct routing OUTCOMES: the BRANCH labels plus the
+        # reserved "end" route when one exists. A dynamic `next` arm to "end" becomes
+        # an END edge, never a BRANCH — so a continue-or-stop decider (1 branch label
+        # + an END route, e.g. `if ok: next="end" else: next="fix"`) is a decision.
+        # No branch labels at all (a static `- next: end`, or every arm -> "end")
+        # means single-outcome routing, not a decision.
         labels = {edge.label for edge in self.edges if edge.source == n and edge.kind == EdgeKind.BRANCH}
-        return len(labels) >= 2
+        if not labels:
+            return False
+        if len(labels) >= 2:
+            return True
+        return any(edge.source == n and edge.kind == EdgeKind.END for edge in self.edges)
 
     def is_terminal(self, n: NodeId) -> bool:
         # A node is terminal when it has no forward control-flow successor. ERROR and END

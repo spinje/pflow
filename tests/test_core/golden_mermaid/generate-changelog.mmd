@@ -58,8 +58,8 @@ graph LR
     input_changelog_file --> update-changelog-file
     input_mintlify_file --> update-mintlify-file
     input_slack_channel --> check-slack
-    input_slack_channel --> notify-slack
     input_slack_channel --> create-summary
+    input_slack_channel --> notify-slack
     subgraph workflow-outputs ["workflow outputs"]
         out_summary(["summary"]):::output
         out_suggested_version(["suggested_version"]):::output

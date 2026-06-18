@@ -6,7 +6,7 @@ were generated via the CLI and represent the expected byte-exact output.
 
 To regenerate a golden file after an intentional change:
 
-    uv run pflow visualize <workflow> [flags] -o tests/test_core/golden_mermaid/<name>.mmd
+    uv run pflow mermaid <workflow> [flags] -o tests/test_core/golden_mermaid/<name>.mmd
 """
 
 from pathlib import Path
@@ -71,7 +71,7 @@ def test_golden_example_workflow(workflow_rel: str, golden_name: str, direction:
 
     assert actual == expected, (
         f"Mermaid output differs from golden file {golden_name}.\n"
-        f"To update: uv run pflow visualize {workflow_path} --depth 5 "
+        f"To update: uv run pflow mermaid {workflow_path} --depth 5 "
         f"--direction {direction} -o {golden_path}"
     )
 
@@ -95,6 +95,6 @@ def test_golden_fixture_workflow(workflow_rel: str, golden_name: str, direction:
 
     assert actual == expected, (
         f"Mermaid output differs from golden fixture {golden_name}.\n"
-        f"To update: pflow visualize {workflow_path} --depth 5 "
+        f"To update: pflow mermaid {workflow_path} --depth 5 "
         f"--direction {direction} -o {golden_path}"
     )

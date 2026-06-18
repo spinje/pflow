@@ -1,0 +1,552 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "ref": {
+        "node_id": "article",
+        "ancestor_path": [],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "The article text to analyze.",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g0",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n1",
+      "ref": {
+        "node_id": "session_id",
+        "ancestor_path": [],
+        "port": "in"
+      },
+      "kind": "input",
+      "purpose": "A per-session identifier used to scope session-level context. Changing\nthis invalidates only the session chunk and below.",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": true,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g0",
+      "source": null,
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n2",
+      "ref": {
+        "node_id": "system_prompt",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "The most stable chunk producer: a fixed task definition.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo \"You are a careful editor. Cite specific terms from the article when answering.\"",
+          "is_dynamic": false,
+          "source": {
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+            "line": 64
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+        "line": 57
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n3",
+      "ref": {
+        "node_id": "knowledge_ref",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Occasionally-updated glossary content.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo \"Glossary: 'lede' = first sentence; 'nut graf' = thesis paragraph; 'kicker' = closing line.\"",
+          "is_dynamic": false,
+          "source": {
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+            "line": 74
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+        "line": 67
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n4",
+      "ref": {
+        "node_id": "session_context",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "shell",
+      "purpose": "Per-session context, scoped by ${session_id}.",
+      "params": [
+        {
+          "name": "command",
+          "value": "echo \"Session ${session_id}: editorial style is concise, formal, no emoji.\"",
+          "is_dynamic": true,
+          "source": {
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+            "line": 84
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+        "line": 77
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n5",
+      "ref": {
+        "node_id": "summarize",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "llm",
+      "purpose": "Reads all three cached chunks plus the per-call article.",
+      "params": [
+        {
+          "name": "model",
+          "value": "anthropic/claude-haiku-4-5",
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "prompt",
+          "value": "Summarize this article in three sentences, applying the glossary terms\nwhere they fit. Article: ${article}",
+          "is_dynamic": true,
+          "source": {
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+            "line": 96
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+        "line": 87
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "response",
+        "data_type": "str",
+        "keys": null
+      },
+      "cached_prefix": "System role and overall task definition:\n${system_prompt}\n\nDomain glossary and reference material:\n${knowledge_ref}\n\nSession context:\n${session_context}",
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n6",
+      "ref": {
+        "node_id": "translate",
+        "ancestor_path": [],
+        "port": null
+      },
+      "kind": "llm",
+      "purpose": "Reads the same three cached chunks. Under Anthropic multi-breakpoint, the\nsecond call reuses each per-chunk prefix independently.",
+      "params": [
+        {
+          "name": "model",
+          "value": "anthropic/claude-haiku-4-5",
+          "is_dynamic": false,
+          "source": null
+        },
+        {
+          "name": "prompt",
+          "value": "Translate the article to formal Spanish. Article: ${article}",
+          "is_dynamic": true,
+          "source": {
+            "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+            "line": 110
+          }
+        }
+      ],
+      "io": null,
+      "loop": null,
+      "batch": null,
+      "parent": null,
+      "source": {
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+        "line": 100
+      },
+      "is_decision": false,
+      "is_terminal": false,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": {
+        "field": "response",
+        "data_type": "str",
+        "keys": null
+      },
+      "cached_prefix": "System role and overall task definition:\n${system_prompt}\n\nDomain glossary and reference material:\n${knowledge_ref}\n\nSession context:\n${session_context}",
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n7",
+      "ref": {
+        "node_id": "summary",
+        "ancestor_path": [],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "Three-sentence editorial summary.",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g1",
+      "source": {
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+        "line": 119
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    },
+    {
+      "id": "n8",
+      "ref": {
+        "node_id": "translation",
+        "ancestor_path": [],
+        "port": "out"
+      },
+      "kind": "output",
+      "purpose": "Formal Spanish translation.",
+      "params": [],
+      "io": {
+        "data_type": "string",
+        "required": false,
+        "default": null
+      },
+      "loop": null,
+      "batch": null,
+      "parent": "g1",
+      "source": {
+        "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
+        "line": 126
+      },
+      "is_decision": false,
+      "is_terminal": true,
+      "is_group_host": false,
+      "is_transform": false,
+      "output_shape": null,
+      "cached_prefix": null,
+      "unexpanded": null,
+      "annotations": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "source": "n2",
+      "target": "n3",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e1",
+      "source": "n3",
+      "target": "n4",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e2",
+      "source": "n4",
+      "target": "n5",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": true,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e3",
+      "source": "n5",
+      "target": "n6",
+      "kind": "sequential",
+      "label": null,
+      "output_field": null,
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e4",
+      "source": "n1",
+      "target": "n4",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "command",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e5",
+      "source": "n0",
+      "target": "n5",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e6",
+      "source": "n0",
+      "target": "n6",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e7",
+      "source": "n2",
+      "target": "n5",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt_cache",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e8",
+      "source": "n3",
+      "target": "n5",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt_cache",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e9",
+      "source": "n4",
+      "target": "n5",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt_cache",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e10",
+      "source": "n2",
+      "target": "n6",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt_cache",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e11",
+      "source": "n3",
+      "target": "n6",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt_cache",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e12",
+      "source": "n4",
+      "target": "n6",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": null,
+      "input_name": "prompt_cache",
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e13",
+      "source": "n5",
+      "target": "n7",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    },
+    {
+      "id": "e14",
+      "source": "n6",
+      "target": "n8",
+      "kind": "data_flow",
+      "label": null,
+      "output_field": "response",
+      "input_name": null,
+      "shadowed": false,
+      "condition": null,
+      "output_path": []
+    }
+  ],
+  "groups": [
+    {
+      "id": "g0",
+      "kind": "input_wrapper",
+      "parent": null,
+      "host": null,
+      "members": [
+        "n0",
+        "n1"
+      ],
+      "nesting_depth": 0,
+      "annotations": {
+        "start_node": "system_prompt"
+      }
+    },
+    {
+      "id": "g1",
+      "kind": "output_wrapper",
+      "parent": null,
+      "host": null,
+      "members": [
+        "n7",
+        "n8"
+      ],
+      "nesting_depth": 0,
+      "annotations": {}
+    }
+  ],
+  "kind_output_types": {
+    "llm": {
+      "response": "str|dict",
+      "error": "str",
+      "prompt": "str",
+      "llm_usage": "dict"
+    },
+    "shell": {
+      "stdout": "str",
+      "stdout_is_binary": "bool",
+      "stderr": "str",
+      "stderr_is_binary": "bool",
+      "exit_code": "int"
+    }
+  }
+}

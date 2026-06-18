@@ -286,6 +286,47 @@ class TestRegistryNodeRetrieval:
             assert result["llm"] == test_data["llm"]
             assert result["read-file"] == test_data["read-file"]
 
+    def test_output_types_by_kind_ships_declared_types_and_drops_any(self):
+        """The kind->field->type read-model: declared docstring types verbatim;
+        ``any`` entries dropped (a type that says nothing is not a fact worth
+        shipping); kinds with no typed outputs absent entirely."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = Registry(Path(tmpdir) / "test.json")
+            registry.save({
+                "shell": {
+                    "module": "m",
+                    "class_name": "C",
+                    "interface": {
+                        "outputs": [
+                            {"key": "stdout", "type": "str", "description": ""},
+                            {"key": "exit_code", "type": "int", "description": ""},
+                        ]
+                    },
+                },
+                "mcp-some-tool": {
+                    "module": "m",
+                    "class_name": "C",
+                    "interface": {"outputs": [{"key": "result", "type": "any", "description": ""}]},
+                },
+                "bare": {"module": "m", "class_name": "C"},
+            })
+
+            types = registry.output_types_by_kind()
+
+            assert types["shell"] == {"stdout": "str", "exit_code": "int"}
+            assert "mcp-some-tool" not in types  # only output was `any`
+            assert "bare" not in types  # no interface at all
+
+    def test_output_types_by_kind_on_real_core_nodes(self):
+        """The real scanned shell interface produces the documented types
+        (guards the docstring convention end-to-end, not just the read-model)."""
+        registry = Registry()
+        types = registry.output_types_by_kind()
+
+        assert types["shell"]["stdout"] == "str"
+        assert types["shell"]["exit_code"] == "int"
+        assert all("any" not in fields.values() for fields in types.values())
+
     def test_filters_invalid_node_names(self):
         """Test that invalid node names are filtered out."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -975,3 +1016,58 @@ class TestRegistryFormatConsistency:
 
             assert "__metadata__" not in nodes, "__metadata__ must be stripped from flat format"
             assert "shell" in nodes
+
+
+class TestRegistryAtomicWrite:
+    """Registry persistence is atomic: a torn or failed write never corrupts it.
+
+    Regression guard for the cold-`pflow ui` concurrency bug — concurrent readers
+    of a plain truncate-and-write registry observed half-written JSON → an empty
+    node set → spurious "unknown node type" errors. The fix writes to a tempfile
+    and ``os.replace``s it (atomic on POSIX). These tests pin the resulting
+    behavior without depending on the implementation: a failed write leaves the
+    previous registry intact, and no temp debris is left behind.
+    """
+
+    def test_failed_write_preserves_the_existing_registry(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+            registry.save({"shell": {"module": "m", "class_name": "C", "type": "core"}})
+            original = registry_path.read_text()
+
+            class _Unserializable:
+                pass
+
+            # json.dump raises partway through — a truncate-and-write would have
+            # already destroyed the file by now; os.replace never touched it.
+            with pytest.raises(TypeError):
+                registry._write_atomic({"nodes": {"bad": _Unserializable()}})
+
+            assert registry_path.read_text() == original, "failed write corrupted the registry"
+            # Only the intact registry remains — no temp debris. iterdir is robust
+            # to hidden dot-prefixed temp files across Python versions; glob is not.
+            assert [p.name for p in Path(tmpdir).iterdir()] == ["registry.json"]
+
+    def test_failed_write_leaves_no_temp_debris(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            class _Unserializable:
+                pass
+
+            with pytest.raises(TypeError):
+                registry._write_atomic({"nodes": {"bad": _Unserializable()}})
+
+            # Nothing was created (no prior save) and the temp file was cleaned up.
+            assert list(Path(tmpdir).iterdir()) == [], "temp file left behind after failed write"
+
+    def test_successful_write_round_trips(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+            registry.save({"shell": {"module": "m", "class_name": "C", "type": "core"}})
+
+            assert json.loads(registry_path.read_text())["nodes"]["shell"]["module"] == "m"
+            assert [p.name for p in Path(tmpdir).iterdir()] == ["registry.json"]

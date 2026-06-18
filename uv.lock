@@ -1478,6 +1478,12 @@ dependencies = [
     { name = "requests" },
 ]
 
+[package.optional-dependencies]
+ui = [
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "deptry" },
@@ -1487,10 +1493,12 @@ dev = [
     { name = "pytest-xdist" },
     { name = "pyyaml" },
     { name = "ruff" },
+    { name = "starlette" },
     { name = "tox-uv" },
     { name = "types-jsonschema" },
     { name = "types-pyyaml" },
     { name = "types-requests" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -1505,7 +1513,10 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.32.5" },
+    { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.40" },
+    { name = "uvicorn", marker = "extra == 'ui'", specifier = ">=0.30" },
 ]
+provides-extras = ["ui"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1516,10 +1527,12 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.11.5" },
+    { name = "starlette", specifier = ">=0.40" },
     { name = "tox-uv", specifier = ">=1.11.3" },
     { name = "types-jsonschema", specifier = ">=4.25.0.20250809" },
     { name = "types-pyyaml", specifier = ">=6.0.0" },
     { name = "types-requests", specifier = ">=2.32.4.20250809" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [[package]]

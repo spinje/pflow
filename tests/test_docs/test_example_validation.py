@@ -13,10 +13,12 @@ supplied by user-configured servers) are skipped with a recorded reason. Workflo
 with any non-MCP unregistered type (typos, removed node types) still fail — that's
 the rot we want to catch.
 
-Latent gap: the skip predicate pre-scans only top-level `node.type` strings. If a
-parent workflow references a sub-workflow file whose own nodes include unregistered
-MCP types, the validator will recurse and fail; the pre-scan won't know to skip.
-No shipped example currently has that shape.
+Directory exclusion: `examples/real-workflows/` is skipped wholesale. Those are
+external-service-dependent tools/workflows (chrome-devtools / Slack / Discord MCP
+servers), and some compose mcp-laden *sub-workflows* — which the top-level skip
+predicate (it pre-scans only this file's `node.type` strings) can't see, so the
+validator would recurse into the sub-workflow and fail. They aren't meant to pass
+full validation in a clean env, so they're excluded by directory like invalid/legacy.
 """
 
 import copy
@@ -47,7 +49,7 @@ class TestExampleValidation:
 
     @pytest.fixture(scope="class")
     def valid_workflow_files(self) -> list[tuple[Path, dict]]:
-        """Collect valid .pflow.md example files (outside examples/invalid/ and legacy/)."""
+        """Collect valid .pflow.md example files (outside invalid/, legacy/, real-workflows/)."""
         if not EXAMPLES_DIR.exists():
             pytest.skip("Examples directory not found")
 
@@ -57,6 +59,12 @@ class TestExampleValidation:
             if "invalid" in pflow_file.parts:
                 continue
             if "legacy" in pflow_file.parts:
+                continue
+            # Skip real-workflows wholesale: external-service-dependent tools/workflows
+            # (chrome-devtools / Slack / Discord MCP servers), some composing mcp-laden
+            # sub-workflows the top-level skip predicate can't see — not validatable in a
+            # clean env. See the module docstring.
+            if "real-workflows" in pflow_file.parts:
                 continue
 
             try:

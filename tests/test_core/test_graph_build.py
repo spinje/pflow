@@ -15,6 +15,7 @@ from pflow.core.workflow.graph import (
     Edge,
     EdgeKind,
     GraphModel,
+    IOPort,
     Node,
     NodeId,
     SourceRef,
@@ -227,6 +228,43 @@ def test_nodes_carry_param_level_source_refs_for_click_to_read() -> None:
     )
 
 
+def test_nodes_carry_authored_param_values_for_click_to_read() -> None:
+    prompt = "Summarize the report.\n\nFocus on:\n- risks\n- mitigations\n"
+    graph = build_graph({
+        "nodes": [
+            {
+                "id": "summarize",
+                "type": "llm",
+                "params": {"prompt": prompt, "model": "anthropic/claude-sonnet-4-5", "max_tokens": 1024},
+            }
+        ]
+    })
+
+    summarize = _node(graph, NodeId("summarize"))
+
+    # The full multi-line prompt lives inline on the model; the React Flow renderer
+    # owns the inline-vs-truncate policy, not build_graph. Scalars round-trip as-is.
+    assert summarize.params["prompt"] == prompt
+    assert summarize.params["model"] == "anthropic/claude-sonnet-4-5"
+    assert summarize.params["max_tokens"] == 1024
+
+
+def test_node_params_defaults_to_empty_dict_for_non_dict_ir() -> None:
+    # Unvalidated IR may carry `params: None`/str/list; build_graph normalizes to {}
+    # so downstream readers never hit AttributeError. Mirrors every other raw read here.
+    graph = build_graph({
+        "nodes": [
+            {"id": "missing", "type": "code"},
+            {"id": "nulled", "type": "code", "params": None},
+            {"id": "listy", "type": "code", "params": ["not", "a", "dict"]},
+        ]
+    })
+
+    assert _node(graph, NodeId("missing")).params == {}
+    assert _node(graph, NodeId("nulled")).params == {}
+    assert _node(graph, NodeId("listy")).params == {}
+
+
 def test_batch_model_carries_literal_items_without_dots_and_expands_all_subworkflows() -> None:
     ir = _parse("examples/nested/deep-research/deep-research.pflow.md")
     graph = build_graph(
@@ -304,7 +342,30 @@ def test_synthetic_input_and_output_with_same_name_have_distinct_identity() -> N
     assert input_node.id.ancestor_path == () and output_node.id.ancestor_path == ()
 
 
-def test_routes_to_end_builds_synthetic_end_edges_without_changing_decision_or_terminal() -> None:
+def test_input_ports_carry_interface_data_and_required_defaults_true() -> None:
+    graph = build_graph({
+        "inputs": {
+            "topic": {"type": "string", "description": "What to research"},
+            "limit": {"type": "integer", "required": False, "default": 5},
+        },
+        "nodes": [{"id": "work", "type": "code"}],
+    })
+
+    # Description rides `purpose` (symmetric with outputs); an input that omits
+    # `required:` IS required — the ir_schema default every runtime reader applies.
+    topic = _node(graph, _input_id("topic"))
+    assert topic.purpose == "What to research"
+    assert topic.io == IOPort(data_type="string", required=True, default=None)
+
+    limit = _node(graph, _input_id("limit"))
+    assert limit.purpose == ""
+    assert limit.io == IOPort(data_type="integer", required=False, default=5)
+    # Inputs ship no source ref (the parser injects `_source_line` only for
+    # outputs/nodes; the inputs schema forbids extra keys).
+    assert limit.source is None
+
+
+def test_routes_to_end_builds_synthetic_end_edges_and_counts_end_as_a_decision_outcome() -> None:
     validate_fix = _parse("examples/agent-orchestration/plan-to-code/execute-plan/validate-fix/validate-fix.pflow.md")
     graph = build_graph(validate_fix)
 
@@ -312,7 +373,10 @@ def test_routes_to_end_builds_synthetic_end_edges_without_changing_decision_or_t
     end_edges = [edge for edge in graph.edges if edge.source == check and edge.kind == EdgeKind.END]
     assert len(end_edges) == 1
     assert _node(graph, end_edges[0].target).kind == "end"
-    assert not graph.is_decision(check)
+    # A continue-or-stop decider IS a decision: 1 branch label (fix-tests) + the
+    # END route = 2 distinct outcomes. (The old rule required >= 2 branch labels,
+    # which missed every `if ok: next="end"` loop gate.)
+    assert graph.is_decision(check)
     assert not graph.is_terminal(check)
 
     conditional = _parse("examples/core/conditional-branching.pflow.md")
@@ -320,6 +384,28 @@ def test_routes_to_end_builds_synthetic_end_edges_without_changing_decision_or_t
     handle_error = NodeId("handle-error")
     assert [edge for edge in branch_graph.edges if edge.source == handle_error and edge.kind == EdgeKind.END]
     assert branch_graph.is_terminal(handle_error)
+    # A static `- next: end` (no branch edges) is single-outcome routing, not a decision.
+    assert not branch_graph.is_decision(handle_error)
+
+
+def test_is_decision_outcome_matrix() -> None:
+    a, b, end = NodeId("a"), NodeId("b"), NodeId("__end__")
+
+    def model(edges: list[Edge]) -> GraphModel:
+        return GraphModel(
+            nodes=[Node(a, "code"), Node(b, "code"), Node(end, "end")],
+            edges=edges,
+            containers=[],
+        )
+
+    # 1 branch label + an END route -> 2 outcomes -> decision
+    assert model([Edge(a, b, EdgeKind.BRANCH, label="go"), Edge(a, end, EdgeKind.END)]).is_decision(a)
+    # 1 branch label alone -> single forward outcome -> not a decision
+    assert not model([Edge(a, b, EdgeKind.BRANCH, label="go")]).is_decision(a)
+    # END route alone (static `- next: end` / every arm -> "end") -> not a decision
+    assert not model([Edge(a, end, EdgeKind.END)]).is_decision(a)
+    # ERROR edges never count as outcomes
+    assert not model([Edge(a, b, EdgeKind.ERROR, label="error"), Edge(a, end, EdgeKind.END)]).is_decision(a)
 
     manual = build_graph({
         "nodes": [
@@ -584,7 +670,10 @@ def test_same_child_path_expands_under_distinct_structural_paths() -> None:
     assert graph.node(NodeId("inner", (AncestorStep("second"),))) is not None
 
 
-def test_top_level_input_connects_to_each_distinct_consumer_once() -> None:
+def test_top_level_input_connects_once_per_distinct_ref() -> None:
+    # One edge per distinct ${ref}: a node reading the same input in TWO params
+    # gets TWO edges with distinct input_names — each param row gets its line
+    # (the old pair-dedup kept one edge and orphaned the second row).
     graph = build_graph({
         "inputs": {"topic": {"type": "string"}},
         "nodes": [
@@ -595,9 +684,381 @@ def test_top_level_input_connects_to_each_distinct_consumer_once() -> None:
     })
 
     source = _input_id("topic")
-    targets = [edge.target for edge in graph.edges if edge.source == source and edge.kind == EdgeKind.DATA_FLOW]
-    assert targets.count(NodeId("a")) == 1
-    assert targets.count(NodeId("b")) == 1
+    edges = [edge for edge in graph.edges if edge.source == source and edge.kind == EdgeKind.DATA_FLOW]
+    assert [edge.input_name for edge in edges if edge.target == NodeId("a")] == ["topic"]
+    assert sorted(edge.input_name or "" for edge in edges if edge.target == NodeId("b")) == ["again", "topic"]
+
+
+def test_plain_param_sibling_ref_forms_data_flow_edge() -> None:
+    # The validator enforces `prompt: "...${gen.response}"` as a real ordering
+    # dependency; the model carries it as an edge (one rule: every enforced
+    # ${ref} is one DATA_FLOW edge).
+    graph = build_graph({
+        "nodes": [
+            {"id": "gen", "type": "llm", "params": {"prompt": "write a poem"}},
+            {"id": "consume", "type": "llm", "params": {"prompt": "Summarize: ${gen.response}"}},
+        ],
+        "edges": [{"from": "gen", "to": "consume"}],
+    })
+
+    assert (
+        Edge(
+            source=NodeId("gen"),
+            target=NodeId("consume"),
+            kind=EdgeKind.DATA_FLOW,
+            output_field="response",
+            input_name="prompt",
+        )
+        in graph.edges
+    )
+
+
+def test_interpolated_multi_ref_param_forms_one_edge_per_ref() -> None:
+    graph = build_graph({
+        "nodes": [
+            {"id": "a", "type": "llm", "params": {"prompt": "x"}},
+            {"id": "b", "type": "llm", "params": {"prompt": "y"}},
+            {"id": "joins", "type": "llm", "params": {"prompt": "${a.x} and ${b.y}"}},
+        ],
+        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "joins"}],
+    })
+
+    incoming = [edge for edge in graph.edges if edge.target == NodeId("joins") and edge.kind == EdgeKind.DATA_FLOW]
+    assert sorted((edge.source.node_id, edge.output_field or "", edge.input_name or "") for edge in incoming) == [
+        ("a", "x", "prompt"),
+        ("b", "y", "prompt"),
+    ]
+
+
+def test_top_level_list_param_ref_forms_edge_with_param_name() -> None:
+    graph = build_graph({
+        "nodes": [
+            {"id": "a", "type": "shell", "params": {"command": "ls"}},
+            {"id": "b", "type": "code", "params": {"lines": ["echo ${a.stdout}"]}},
+        ],
+        "edges": [{"from": "a", "to": "b"}],
+    })
+
+    assert (
+        Edge(
+            source=NodeId("a"),
+            target=NodeId("b"),
+            kind=EdgeKind.DATA_FLOW,
+            output_field="stdout",
+            input_name="lines",
+        )
+        in graph.edges
+    )
+
+
+def test_deep_dict_ref_attaches_to_node_never_a_same_named_child_port() -> None:
+    # A depth-2 dict ref keeps its nearest key as input_name but must never
+    # claim a child-input port that happens to share that key's name (the
+    # `shallow` guard): on a plain node it targets the node; on a workflow
+    # step with a child input named `inner` it targets the HOST.
+    graph = build_graph({
+        "nodes": [
+            {"id": "gen", "type": "llm", "params": {"prompt": "x"}},
+            {"id": "plain", "type": "code", "params": {"config": {"outer": {"inner": "${gen.response}"}}}},
+        ],
+        "edges": [{"from": "gen", "to": "plain"}],
+    })
+    assert (
+        Edge(
+            source=NodeId("gen"),
+            target=NodeId("plain"),
+            kind=EdgeKind.DATA_FLOW,
+            output_field="response",
+            input_name="inner",
+        )
+        in graph.edges
+    )
+
+    child = {"inputs": {"inner": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {"id": "gen", "type": "llm", "params": {"prompt": "x"}},
+                {
+                    "id": "host",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "config": {"outer": {"inner": "${gen.response}"}}},
+                },
+            ],
+            "edges": [{"from": "gen", "to": "host"}],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+    deep_edges = [
+        edge
+        for edge in graph.edges
+        if edge.source == NodeId("gen") and edge.kind == EdgeKind.DATA_FLOW and edge.input_name == "inner"
+    ]
+    assert [edge.target for edge in deep_edges] == [NodeId("host")]
+
+
+def test_dynamic_batch_over_input_with_opaque_bindings_keeps_input_edge() -> None:
+    # An expanded dynamic batch over `${docs}` whose bindings are opaque
+    # (`inputs: ${item}`) has no other emitter for the input→batch dependency.
+    child = {"inputs": {"text": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "inputs": {"docs": {"type": "array"}},
+            "nodes": [
+                {
+                    "id": "proc",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "inputs": "${item}"},
+                    "batch": {"items": "${docs}"},
+                }
+            ],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    assert Edge(source=_input_id("docs"), target=NodeId("proc"), kind=EdgeKind.DATA_FLOW) in graph.edges
+
+
+def test_batch_alias_ref_in_plain_param_forms_no_edge() -> None:
+    # `${item.text}` in a plain param of a batched node is the per-item alias —
+    # the items-source edge is drawn by the batch arm, never duplicated here.
+    graph = build_graph({
+        "nodes": [
+            {"id": "prep", "type": "code", "params": {"code": "result = {'rows': []}"}},
+            {
+                "id": "fan",
+                "type": "shell",
+                "params": {"command": "echo ${item.text}"},
+                "batch": {"items": "${prep.rows}"},
+            },
+        ],
+        "edges": [{"from": "prep", "to": "fan"}],
+    })
+
+    assert not any(edge.kind == EdgeKind.DATA_FLOW and edge.input_name == "command" for edge in graph.edges)
+    # the items-source dependency itself is still there (the batch arm)
+    assert any(
+        edge.kind == EdgeKind.DATA_FLOW and edge.source == NodeId("prep") and edge.target == NodeId("fan")
+        for edge in graph.edges
+    )
+
+
+def test_cache_chunk_consumed_by_two_nodes_forms_edge_per_consumer() -> None:
+    # A chunk's ref is FORBIDDEN in the consumer's prompt body, so the cache
+    # edge is the only visibility this dependency can have.
+    graph = build_graph({
+        "cache": {"items": [{"name": "ctx", "var": "extract.response"}]},
+        "nodes": [
+            {"id": "extract", "type": "llm", "params": {"prompt": "extract"}},
+            {"id": "a", "type": "llm", "params": {"prompt": "x"}, "prompt_cache": ["ctx"]},
+            {"id": "b", "type": "llm", "params": {"prompt": "y"}, "prompt_cache": ["ctx"]},
+        ],
+        "edges": [{"from": "extract", "to": "a"}, {"from": "a", "to": "b"}],
+    })
+
+    cache_edges = [edge for edge in graph.edges if edge.input_name == "prompt_cache"]
+    assert sorted((edge.source.node_id, edge.target.node_id) for edge in cache_edges) == [
+        ("extract", "a"),
+        ("extract", "b"),
+    ]
+    assert all(edge.kind == EdgeKind.DATA_FLOW and edge.output_field == "response" for edge in cache_edges)
+
+
+def test_input_rooted_cache_chunk_draws_edge_from_input_node() -> None:
+    graph = build_graph({
+        "inputs": {"article": {"type": "string"}},
+        "cache": {"items": [{"name": "doc", "var": "article"}]},
+        "nodes": [
+            {"id": "summarize", "type": "llm", "params": {"prompt": "go"}, "prompt_cache": ["doc"]},
+        ],
+    })
+
+    assert (
+        Edge(
+            source=_input_id("article"),
+            target=NodeId("summarize"),
+            kind=EdgeKind.DATA_FLOW,
+            input_name="prompt_cache",
+        )
+        in graph.edges
+    )
+
+
+def test_sub_path_cache_chunk_var_keeps_output_path() -> None:
+    graph = build_graph({
+        "cache": {"items": [{"name": "ok-part", "var": "gen.result.ok"}]},
+        "nodes": [
+            {"id": "gen", "type": "code", "params": {"code": "result = {'ok': 1}"}},
+            {"id": "use", "type": "llm", "params": {"prompt": "x"}, "prompt_cache": ["ok-part"]},
+        ],
+        "edges": [{"from": "gen", "to": "use"}],
+    })
+
+    edge = next(e for e in graph.edges if e.input_name == "prompt_cache")
+    assert edge.source == NodeId("gen")
+    assert edge.output_field == "result"
+    assert edge.output_path == ("ok",)
+
+
+def test_cache_edges_only_for_listed_chunks() -> None:
+    # Subset consumption: edges only for listed chunks; an unconsumed chunk
+    # draws nothing; a producer listing its own chunk draws nothing (self-skip).
+    graph = build_graph({
+        "cache": {
+            "items": [
+                {"name": "one", "var": "p1.stdout"},
+                {"name": "two", "var": "p2.stdout"},
+            ]
+        },
+        "nodes": [
+            {"id": "p1", "type": "shell", "params": {"command": "a"}},
+            {"id": "p2", "type": "shell", "params": {"command": "b"}, "prompt_cache": ["two"]},
+            {"id": "use", "type": "llm", "params": {"prompt": "x"}, "prompt_cache": ["one"]},
+        ],
+        "edges": [{"from": "p1", "to": "p2"}, {"from": "p2", "to": "use"}],
+    })
+
+    cache_edges = [edge for edge in graph.edges if edge.input_name == "prompt_cache"]
+    assert [(edge.source.node_id, edge.target.node_id) for edge in cache_edges] == [("p1", "use")]
+
+
+def test_sub_workflow_cache_resolves_level_locally() -> None:
+    # `## Cache` is strictly per-file: a child's chunks resolve against the
+    # child's own scope, never the parent's.
+    child = {
+        "cache": {"items": [{"name": "ctx", "var": "inner-gen.response"}]},
+        "nodes": [
+            {"id": "inner-gen", "type": "llm", "params": {"prompt": "x"}},
+            {"id": "inner-use", "type": "llm", "params": {"prompt": "y"}, "prompt_cache": ["ctx"]},
+        ],
+        "edges": [{"from": "inner-gen", "to": "inner-use"}],
+    }
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {"nodes": [{"id": "host", "type": "workflow", "params": {"workflow": "child"}}]},
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    step = AncestorStep("host")
+    assert (
+        Edge(
+            source=NodeId("inner-gen", (step,)),
+            target=NodeId("inner-use", (step,)),
+            kind=EdgeKind.DATA_FLOW,
+            output_field="response",
+            input_name="prompt_cache",
+        )
+        in graph.edges
+    )
+
+
+def test_malformed_cache_shapes_emit_nothing() -> None:
+    # build_graph assumes pre-validated IR; the validator owns cache.* errors —
+    # malformed shapes must not crash and must not draw edges.
+    malformed_irs = [
+        {"cache": [], "nodes": [{"id": "n", "type": "llm", "params": {}, "prompt_cache": ["x"]}]},
+        {"cache": {"items": "nope"}, "nodes": [{"id": "n", "type": "llm", "params": {}, "prompt_cache": ["x"]}]},
+        {
+            "cache": {"items": [{"name": "x"}]},  # item missing var
+            "nodes": [{"id": "n", "type": "llm", "params": {}, "prompt_cache": ["x"]}],
+        },
+        {
+            "cache": {"items": [{"name": "x", "var": "gen.response"}]},
+            "nodes": [
+                {"id": "gen", "type": "llm", "params": {}},
+                {"id": "n", "type": "llm", "params": {}, "prompt_cache": "x"},  # not a list
+            ],
+        },
+    ]
+    for ir in malformed_irs:
+        graph = build_graph(ir)
+        assert not any(edge.input_name == "prompt_cache" for edge in graph.edges)
+
+
+def test_multi_chunk_cache_example_draws_all_producer_consumer_edges() -> None:
+    # Real subject: three shell producers, two LLM consumers listing all three.
+    ir = _parse("examples/core/prompt-caching-multi-chunk.pflow.md")
+    graph = build_graph(ir)
+
+    cache_edges = [edge for edge in graph.edges if edge.input_name == "prompt_cache"]
+    producers = {"system_prompt", "knowledge_ref", "session_context"}
+    consumers = {"summarize", "translate"}
+    assert {(edge.source.node_id, edge.target.node_id) for edge in cache_edges} == {
+        (producer, consumer) for producer in producers for consumer in consumers
+    }
+
+
+def test_cached_prefix_assembles_prose_and_vars_in_declaration_order() -> None:
+    # Node.cached_prefix mirrors the runtime's block assembly over the authored
+    # template (build_cache_system_blocks: prose_before + value, declaration
+    # order, consumed chunks only): the user reads the prompt as the model will.
+    ir = _parse("examples/core/prompt-caching-multi-chunk.pflow.md")
+    graph = build_graph(ir)
+
+    chunks = {item["name"]: item for item in ir["cache"]["items"]}
+    expected = "".join(
+        chunks[name]["prose_before"] + "${" + chunks[name]["var"] + "}"
+        for name in ("system_prompt", "knowledge_ref", "session_context")
+    )
+    assert _node(graph, NodeId("summarize")).cached_prefix == expected
+    assert _node(graph, NodeId("translate")).cached_prefix == expected
+    # producers consume nothing
+    assert _node(graph, NodeId("system_prompt")).cached_prefix is None
+
+
+def test_cached_prefix_includes_only_consumed_chunks() -> None:
+    graph = build_graph({
+        "cache": {
+            "items": [
+                {"name": "one", "var": "p1.stdout", "prose_before": "First:\n"},
+                {"name": "two", "var": "p2.stdout", "prose_before": "\n\nSecond:\n"},
+            ]
+        },
+        "nodes": [
+            {"id": "p1", "type": "shell", "params": {"command": "a"}},
+            {"id": "p2", "type": "shell", "params": {"command": "b"}},
+            {"id": "use", "type": "llm", "params": {"prompt": "x"}, "prompt_cache": ["two"]},
+        ],
+        "edges": [{"from": "p1", "to": "p2"}, {"from": "p2", "to": "use"}],
+    })
+
+    assert _node(graph, NodeId("use")).cached_prefix == "\n\nSecond:\n${p2.stdout}"
+
+
+def test_literal_operands_form_no_edges_and_coalesce_forms_two() -> None:
+    graph = build_graph({
+        "nodes": [
+            {"id": "gen", "type": "llm", "params": {"prompt": "x"}},
+            {"id": "alt", "type": "llm", "params": {"prompt": "y"}},
+            {
+                "id": "consume",
+                "type": "code",
+                "params": {"a": "${5}", "b": '${"x"}', "c": "${true}", "d": "${gen.x ?? alt.y}"},
+            },
+        ],
+        "edges": [{"from": "gen", "to": "alt"}, {"from": "alt", "to": "consume"}],
+    })
+
+    incoming = [edge for edge in graph.edges if edge.target == NodeId("consume") and edge.kind == EdgeKind.DATA_FLOW]
+    assert all(edge.input_name == "d" for edge in incoming)
+    assert sorted((edge.source.node_id, edge.output_field or "") for edge in incoming) == [
+        ("alt", "y"),
+        ("gen", "x"),
+    ]
 
 
 def test_shadowed_preserves_expanded_output_sources_and_requires_full_batch_coverage() -> None:
@@ -864,6 +1325,164 @@ def test_batch_alias_takes_precedence_over_same_named_top_level_input() -> None:
         edge.target == target and edge.source == _input_id("data") and edge.kind == EdgeKind.DATA_FLOW
         for edge in graph.edges
     )
+
+
+def test_refs_with_path_in_extracts_full_dotted_tail() -> None:
+    """The path-preserving extractor; refs_in stays byte-identical via the shared walk."""
+    from pflow.core.workflow.graph.scope import refs_in, refs_with_path_in
+
+    assert refs_with_path_in("${a.b.c.d}") == [("a", "b", ("c", "d"))]
+    assert refs_with_path_in("${a.b}") == [("a", "b", ())]
+    assert refs_with_path_in("${a}") == [("a", None, ())]
+    assert refs_with_path_in("${a.b.c ?? x.y}") == [("a", "b", ("c",)), ("x", "y", ())]
+    assert refs_with_path_in('${missing ?? "literal"}') == [("missing", None, ())]
+    # Runtime parity: an escaped template resolves to literal `${x}` and a
+    # spaced operand never resolves — neither is a ref (the grammar gate).
+    assert refs_with_path_in("$${escaped}") == []
+    assert refs_with_path_in("${ spaced }") == []
+    # the (root, field) view is the same walk truncated — cannot drift
+    assert refs_in("${a.b.c.d} and ${e}") == [("a", "b"), ("e", None)]
+
+
+def test_data_flow_edges_carry_output_path_below_the_resolved_port() -> None:
+    """A sub-key ref keeps its sub-path on the edge; wholesale/input refs carry none."""
+    child = {
+        "inputs": {
+            "ok": {"type": "boolean"},
+            "deep": {"type": "string"},
+            "whole": {"type": "object"},
+        },
+        "nodes": [{"id": "work", "type": "code"}],
+    }
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "inputs": {"input_x": {"type": "object"}},
+            "nodes": [
+                {"id": "gen", "type": "code", "params": {"code": "result = compute('${input_x.y}')"}},
+                {
+                    "id": "check",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": "child",
+                        "inputs": {
+                            "ok": "${gen.result.ok}",
+                            "deep": "${gen.result.a.b}",
+                            "whole": "${gen.result}",
+                        },
+                    },
+                },
+            ],
+            "edges": [{"from": "gen", "to": "check"}],
+            "outputs": {
+                "summary": {"source": "${gen.result.text}"},
+                # An output source reading BELOW a workflow input: resolves to the
+                # input node with output_field=None, so the equality guard must
+                # keep the tail off (an input node has no "y" port to land on).
+                "echoed": {"source": "${input_x.y.z}"},
+            },
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    def data_edge_into(target: NodeId) -> Edge:
+        matches = [e for e in graph.edges if e.target == target and e.kind == EdgeKind.DATA_FLOW]
+        assert len(matches) == 1, f"expected one data edge into {target}"
+        return matches[0]
+
+    step = AncestorStep("check", None)
+    sub_key = data_edge_into(_input_id("ok", step))
+    assert (sub_key.output_field, sub_key.output_path) == ("result", ("ok",))
+    two_deep = data_edge_into(_input_id("deep", step))
+    assert (two_deep.output_field, two_deep.output_path) == ("result", ("a", "b"))
+    wholesale = data_edge_into(_input_id("whole", step))
+    assert (wholesale.output_field, wholesale.output_path) == ("result", ())
+    # site 2 (output source:) carries the tail too
+    source_edge = data_edge_into(_output_id("summary"))
+    assert (source_edge.output_field, source_edge.output_path) == ("result", ("text",))
+    # site 2's equality guard: an input-rooted deep ref resolves with
+    # output_field=None, so the tail must NOT attach (mutation-tested gap W1 —
+    # without the guard this edge would carry ("z",) toward a port-less node)
+    deep_input_edge = data_edge_into(_output_id("echoed"))
+    assert (deep_input_edge.output_field, deep_input_edge.output_path) == (None, ())
+    # site 3 (workflow input -> consumer) has no output port, hence no sub-path
+    input_edge = next(e for e in graph.edges if e.source == _input_id("input_x") and e.kind == EdgeKind.DATA_FLOW)
+    assert input_edge.output_path == ()
+
+
+def test_batch_alias_ref_never_carries_an_output_path() -> None:
+    """The explicit alias guard: `${data.rows.x}` under `as: data` over
+    `items: ${prep.rows}` has first segment "rows" == the batch source's
+    output_field — the equality rule ALONE would attach ("x",) to an edge whose
+    source is prep, describing the wrong node. The alias guard keeps it ()."""
+    child = {"inputs": {"text": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {"id": "prep", "type": "code"},
+                {
+                    "id": "process",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "inputs": {"text": "${data.rows.x}"}},
+                    "batch": {"items": "${prep.rows}", "as": "data"},
+                },
+            ],
+            "edges": [{"from": "prep", "to": "process"}],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    target = _input_id("text", AncestorStep("process", None))
+    edge = next(e for e in graph.edges if e.target == target and e.source == NodeId("prep"))
+    assert edge.output_field == "rows"
+    assert edge.output_path == ()
+
+
+def test_two_subkey_refs_in_one_binding_dedupe_to_one_edge_first_path_wins() -> None:
+    """``Edge.output_path`` is ``compare=False`` — LOAD-BEARING, mutation-checked.
+
+    Edge dedup is full dataclass equality, so two sub-key refs of the SAME field
+    inside ONE binding (``"${gen.result.ok} ${gen.result.no}"``) must collapse to
+    ONE DATA_FLOW edge whose ``output_path`` is the FIRST ref's ``("ok",)`` — the
+    same documented lossiness as ``input_name``'s multi-role case. Removing
+    ``compare=False`` puts the paths into identity: this test then sees TWO edges
+    and fails (verified by mutation) — exactly the "cleanup" regression that
+    would silently change Mermaid's edge count on multi-sub-key workflows.
+    """
+    child = {"inputs": {"ok": {"type": "string"}}, "nodes": [{"id": "work", "type": "code"}]}
+
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
+        return SubWorkflowResult(ir=child, path=Path("/fake/child.pflow.md"), warnings=())
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {"id": "gen", "type": "code", "params": {"code": 'result = {"ok": 1, "no": 2}'}},
+                {
+                    "id": "check",
+                    "type": "workflow",
+                    "params": {"workflow": "child", "inputs": {"ok": "${gen.result.ok} ${gen.result.no}"}},
+                },
+            ],
+            "edges": [{"from": "gen", "to": "check"}],
+        },
+        resolve_child=resolver,
+        max_depth=2,
+    )
+
+    target = _input_id("ok", AncestorStep("check", None))
+    edges = [e for e in graph.edges if e.target == target and e.kind == EdgeKind.DATA_FLOW]
+    assert len(edges) == 1
+    assert (edges[0].output_field, edges[0].output_path) == ("result", ("ok",))
 
 
 def test_leaf_dynamic_batch_records_sibling_items_source_data_flow() -> None:

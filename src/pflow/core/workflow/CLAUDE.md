@@ -20,7 +20,8 @@ core/workflow/
 │   ├── build.py             # The only IR walk: IR -> GraphModel
 │   ├── scope.py             # Pure template ref extraction helpers
 │   └── renderers/
-│       └── mermaid.py       # GraphModel -> Mermaid syntax
+│       ├── mermaid.py       # GraphModel -> Mermaid syntax
+│       └── react_flow.py    # GraphModel -> React Flow JSON contract (Task 168)
 ├── mermaid/                 # Compatibility shim for generate_mermaid
 │   └── __init__.py          # Delegates to graph.build_graph + graph.render_mermaid
 ├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
@@ -73,7 +74,7 @@ No cycles. All heavy imports are lazy (inside functions).
 | `sub_workflow_resolver.py` | `resolve_sub_workflow`, `SubWorkflowResult` |
 | `validator.py` | `WorkflowValidator` (static `.validate()` method — 10-step pipeline) |
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
-| `graph/` | `build_graph`, `render_mermaid`, `GraphModel`, `NodeId`, `EdgeKind` |
+| `graph/` | `build_graph`, `render_mermaid`, `render_react_flow`, `GraphModel`, `NodeId`, `EdgeKind` |
 | `mermaid/` | `generate_mermaid` |
 | `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
 | `skill_service.py` | `SkillInfo`, `enrich_workflow`, `create_skill_symlink`, `find_pflow_skills`, `remove_skill`, `re_enrich_if_skill` |

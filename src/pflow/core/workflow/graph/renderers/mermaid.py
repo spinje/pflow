@@ -65,6 +65,7 @@ class _MermaidRenderer:
     descriptions: bool
     lines: list[str] = field(default_factory=list)
     rendered_nodes: set[NodeId] = field(default_factory=set)
+    emitted_data_flow: set[str] = field(default_factory=set)
     maps: _RenderMaps = field(default_factory=_RenderMaps)
 
     def __post_init__(self) -> None:
@@ -89,6 +90,7 @@ class _MermaidRenderer:
 
     def render(self, direction: str) -> str:
         self.lines = [f"graph {direction}"]
+        self.emitted_data_flow = set()
         self._render_classdefs()
         top_inputs = self._io_container(parent=None, kind="input_wrapper")
         if top_inputs is not None:
@@ -370,7 +372,14 @@ class _MermaidRenderer:
                 continue
             if edge.source not in self.rendered_nodes or edge.target not in self.rendered_nodes:
                 continue
-            self.lines.append(f"{indent}{self._node_mermaid_id(edge.source)} --> {self._node_mermaid_id(edge.target)}")
+            # Presentation dedup only: the model keeps one edge per ${ref}, but
+            # Mermaid boxes have no param rows, so same-pair refs are
+            # indistinguishable here — render each arrow line once per diagram.
+            arrow = f"{self._node_mermaid_id(edge.source)} --> {self._node_mermaid_id(edge.target)}"
+            if arrow in self.emitted_data_flow:
+                continue
+            self.emitted_data_flow.add(arrow)
+            self.lines.append(f"{indent}{arrow}")
 
     def _render_end_nodes_and_edges(
         self,
@@ -446,6 +455,12 @@ class _MermaidRenderer:
         covered: set[str] = set()
         for edge in self.graph.edges:
             if edge.kind != EdgeKind.DATA_FLOW:
+                continue
+            # Input fan-in must never suppress an execution-order arrow — the
+            # data fan comes from the Inputs wrapper, not the predecessor
+            # (mirrors the input-source exclusion the model's shadowed()
+            # achieves via same-source filtering).
+            if self.nodes_by_id[edge.source].kind == "input":
                 continue
             target = edge.target
             if not _is_batch_item_descendant(target, batch_host):

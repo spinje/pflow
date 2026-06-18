@@ -987,6 +987,71 @@ def test_data_flow_edges_from_params() -> None:
     assert "producer --> consumer" in out
 
 
+def test_same_pair_refs_render_one_arrow_line() -> None:
+    """A node reading one input in two params renders exactly one arrow line.
+
+    The model keeps one DATA_FLOW edge per distinct ${ref}; Mermaid boxes have
+    no param rows, so same-pair refs are indistinguishable and dedup to one
+    rendered line (presentation dedup only — the model keeps both edges).
+    """
+    parent_ir = _ir(
+        nodes=[
+            {
+                "id": "use",
+                "type": "code",
+                "params": {"inputs": {"first": "${topic}", "second": "${topic}"}},
+            }
+        ],
+        inputs={"topic": {"type": "string"}},
+    )
+    out = generate_mermaid(parent_ir)
+
+    assert out.count("input_topic --> use") == 1
+
+
+def test_structural_arrow_into_literal_batch_survives_input_only_bindings() -> None:
+    """Input fan-in never suppresses the execution-order arrow into a literal batch.
+
+    Input-rooted bindings land on per-item child inputs, so without a source
+    filter the fork-coverage rule would count them as "the predecessor already
+    fans into every item" and delete prep's ordering arrow — but that data fan
+    comes from the Inputs wrapper, not the predecessor.
+    """
+    child_ir = _ir(
+        nodes=[_node("work", "code")],
+        inputs={"text": {"type": "string"}},
+    )
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            _node("prep", "code"),
+            {
+                "id": "fan",
+                "type": "workflow",
+                "params": {
+                    "workflow": "child",
+                    "inputs": {"text": "${cfg}"},
+                },
+                "batch": {
+                    "items": [
+                        {"workflow": "./child.pflow.md"},
+                        {"workflow": "./child.pflow.md"},
+                    ]
+                },
+            },
+        ],
+        edges=[{"from": "prep", "to": "fan"}],
+        inputs={"cfg": {"type": "string"}},
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver, max_depth=2)
+
+    # The structural arrow from prep into the batch items is rendered, not suppressed.
+    assert "prep --> " in out
+
+
 def test_structural_edge_not_suppressed_when_subwf_inputs_are_only_from_parent() -> None:
     """Structural edge survives when sub-workflow inputs come only from workflow inputs.
 

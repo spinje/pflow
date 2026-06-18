@@ -61,6 +61,8 @@ Features — when the user says X, load topic Y:
                    → "cache prompts", "reduce LLM cost", "speed up repeated calls"
   patterns         Multi-step LLM/agent recipes — fan-out, verify, generate-filter, tournament
                    → "fan out and combine", "verify from multiple angles", "rank/tournament", "generate and pick the best", "orchestrate steps"
+  visualization    Show the user a workflow as a LIVE visual canvas while you build it (Mermaid diagram on request)
+                   → "show me the workflow", "let me see/watch it build", "open the UI", "make a mermaid diagram"
 
 Start here:
   core             Framework fundamentals — how to design and build workflows

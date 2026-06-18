@@ -38,7 +38,9 @@ RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
     "settings",
     "trace",
     "report",
-    "visualize",
+    "mermaid",
+    "ui",
+    "analyze-cache",
     "registry",
     "workflow",
     "instructions",
@@ -58,6 +60,7 @@ RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
     "prompt-caching",
     "patterns",
     "caching",
+    "visualization",
 })
 
 

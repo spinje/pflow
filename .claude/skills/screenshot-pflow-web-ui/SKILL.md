@@ -1,0 +1,177 @@
+---
+name: screenshot-pflow-web-ui
+description: Screenshot or measure the running pflow web UI (the React Flow canvas; web/ → src/pflow/ui) to verify frontend changes. Use after changing web/ UI code.
+---
+
+# pflow web UI: screenshot + inspect
+
+Six workflows. All drive the chrome-devtools MCP Chrome and **wait until the React Flow
+canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
+
+- **`screenshot.pflow.md`** → a settled full-page PNG. Eyeball the rendered canvas.
+- **`inspect.pflow.md`** → JSON geometry: every node's box/tile/connector/handle rect +
+  every edge's path rect + the viewport `scale`. Measure exact pixels (e.g. does an edge
+  endpoint land on its target handle? is a connector flush with the tile?).
+- **`hover.pflow.md`** → dispatch a REAL `mouseover` on the first row whose text starts
+  with `row_name` (React's onMouseEnter delegates through native mouseover, so this
+  drives the production hover path — the state `focus=` deep links cannot capture),
+  return `{ringedNodes, haloedEdges}` counts, and screenshot the hovered state:
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/hover.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=<…>&density=advanced&node=<node_id>' \
+    row_name='inputs' out_path=/tmp/pflow-shots/hover.png
+  ```
+- **`click.pflow.md`** → dispatch a REAL `click` on the first `selector` match
+  (optionally narrowed by exact trimmed `text`), wait for the consequences, return
+  `{panel, before, after, visible, transform}` (`measure_id` = a flat node id to
+  rect-report — e.g. the expected camera-follow target) + screenshot. Deep links
+  capture states; this captures what a click DOES (camera follow, panel
+  stays-vs-swaps, focus/expansion side effects). One click per run (a reload resets
+  in-page state — multi-click sequences need extra steps inside one run). Selectors
+  interpolate into single-quoted JS: use double quotes inside.
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/click.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=<…>&focus=<node_id>' \
+    selector='.chip-stack .edge-chip' text='create-songs' measure_id=g19 \
+    out_path=/tmp/pflow-shots/click.png
+  ```
+- **`visual-invariants.pflow.md`** → assert the geometry invariants no vitest suite can
+  observe (jsdom renders no edge DOM and fictional rects): (1) every bordered io dot
+  centers within 2 CSS px of its owner card/region border (mirrors the `--io-inset`
+  CSS selectors); (2) every `/api/graph` contract edge is rendered, extras only
+  `loop:`/`io-flow:` (needs `density=advanced&collapse=none`; self-skips otherwise);
+  (3) no two leaf node boxes overlap (>1 CSS px = ELK laid out on a lie). Returns a
+  JSON verdict (`passed` + per-invariant counts/violations — the key is deliberately
+  NOT `ok`: pflow's API-warning detector trusts explicit failure flags like
+  `ok: false` on MCP-node outputs, and the verdict transits an MCP evaluate_script
+  node; GH #508 fixed the same false-positive on code nodes, but for MCP nodes the
+  inspection is intended behavior) + screenshot. Run on demand before merging
+  visual work — not CI:
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/visual-invariants.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=<…>&density=advanced&collapse=none' \
+    -p -o verdict | jq
+  ```
+  Fixture URLs that exercise all three invariants: the plan-to-code harness
+  (`examples/agent-orchestration/plan-to-code/run-from-plan.pflow.md`) and
+  `examples/nested/deep-research/deep-research.pflow.md`.
+- **`live-reload.pflow.md`** → the ONLY same-page-across-an-edit check (every other
+  workflow reopens the page per run). Keeps one page open and edits the `.pflow.md`
+  under it, asserting `pflow ui`'s live source auto-update in one session: (1) append
+  a node → canvas grows IN PLACE, viewport byte-identical (no reload, no camera jump);
+  (2) insert a node BEFORE a focused one → focus FOLLOWS it (the structural-ref remap),
+  not the inserted node; (3) the source pane refreshes (not stale); (4) corrupt the
+  source → the last valid canvas holds under a non-blocking banner, NOT the full-screen
+  error. Returns a JSON `verdict` (`passed` + per-check booleans + node counts — `passed`
+  not `ok`, the API-warning-detector convention). It OWNS `wf_file`: writes a seed there,
+  edits it, deletes it — the caller only supplies a throwaway path + a URL pointing at it
+  (the URL MUST carry `&focus=done&source=1&density=advanced&collapse=none` — it focuses
+  the seed's `done` node, opens the source pane, and needs every node rendered). Re-run
+  before merging any change to the live-reload path (`useSourceWatch`, the `reload` arm of
+  `useWorkflowGraph`, `graph/remap.ts`, the `/api/version` endpoint); it's also the
+  same-page-react primitive Task 169 (agent→browser push) extends. On demand, not CI:
+  ```bash
+  uv run pflow examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md \
+    url='http://127.0.0.1:8765/?workflow=/tmp/lr-probe.pflow.md&focus=done&source=1&density=advanced&collapse=none' \
+    wf_file=/tmp/lr-probe.pflow.md -p -o verdict | jq
+  ```
+
+## URL params
+
+Base `http://127.0.0.1:<port>/` (default port 8765). Source: `web/src/utils/viewParams.ts`.
+
+| param | values | default | meaning |
+|---|---|---|---|
+| `workflow` | saved name, or `.pflow.md` path relative to the server's cwd | required | which workflow |
+| `direction` | `LR` \| `TD` | `LR` | layout direction |
+| `density` | `beautiful` \| `advanced` | `beautiful` | node density |
+| `collapse` | `all` \| `none` | auto | initial container collapse override |
+| `source` | `1` \| `0` | `0` | open the left source pane on load |
+| `node` | a `node_id` (or flat id) | whole graph | frame the camera on one node — needed for small geometry (a connector/handle) |
+| `focus` | a `node_id`, flat id, or flat EDGE id (`e12`) | none | apply the click-focus state on load: dim non-incident, reveal data lines, (beautiful) expand the card + its data-flow endpoints to rows — the only way to capture the focused/expanded state without driving the UI. An EDGE id captures edge SELECTION (bright+halo+elevated line, EdgePanel open); get edge ids from `/api/graph` |
+
+## Before running
+
+1. Server on the URL's port (reuse if up, else start and wait — safe to re-run):
+   ```bash
+   curl -sf http://127.0.0.1:8765/api/catalog >/dev/null 2>&1 \
+     || { uv run pflow ui --no-open --port 8765 & \
+          for i in $(seq 1 20); do curl -sf http://127.0.0.1:8765/api/catalog >/dev/null 2>&1 && break; sleep 0.3; done; }
+   ```
+2. Rebuild after ANY `web/` change (the server serves the built bundle, not source):
+   ```bash
+   make ui-build
+   ```
+
+## Run
+
+Single-quote the URL so the shell doesn't split on `&`.
+
+Screenshot — `-p` makes stdout JUST the PNG path (no progress/header — saves tokens; errors
+still print + exit 1); then `Read` it:
+```bash
+uv run pflow examples/real-workflows/screenshot-pflow-web-ui/screenshot.pflow.md \
+  url='http://127.0.0.1:8765/?workflow=<name|path>&direction=TD&density=beautiful&node=<node_id>' \
+  [out_dir=/tmp/pflow-shots] -p
+```
+
+Inspect — stdout is the geometry JSON; pipe to `jq`:
+`-p -o geometry` prints just the JSON (no progress, no header) → pipe straight to `jq`:
+```bash
+uv run pflow examples/real-workflows/screenshot-pflow-web-ui/inspect.pflow.md \
+  url='http://127.0.0.1:8765/?workflow=<name|path>&direction=TD&density=beautiful&node=<node_id>' \
+  -p -o geometry | jq '<filter>'
+```
+
+Both reuse `shared/open-and-settle.pflow.md` (open + poll-until-settled).
+
+## inspect output
+
+~1K tokens for a small graph, ~11K for a big one in advanced — so **filter with `jq`
+in-shell**, never read it whole. Every `rect` is `{top,bottom,left,right,w,h}` in screen
+px (= CSS px × `scale`); `null` when the element is absent:
+
+```
+{ scale,
+  nodes: [{ dataId, nodeId, kind, offsetHeight,
+            nodeRect, tile, connTop, connBottom,           // rects (connTop/Bottom: the TD connector stubs)
+            handles: [{ type: "source"|"target", rect }] }],
+  edges: [{ id, pathRect }] }                              // pathRect = where the edge actually draws
+```
+
+```bash
+… -p -o geometry | jq '.nodes[] | select(.nodeId=="classify")'   # one node
+… -p -o geometry | jq '[.nodes[] | select(.nodeRect.left < 0)]'  # assert: any node off-canvas?
+```
+
+`nodeId` isn't unique across sub-workflows (the same step invoked twice → two nodes with
+the same `nodeId`) — disambiguate with the flat `dataId` (`n6` vs `n9`); the URL `node=`
+also accepts a flat id.
+
+A connector gap = the edge's `pathRect` end vs the node's `connTop`/`connBottom` tip vs
+its `tile` edge. **Before/after a fix:** save each run (`… -p -o geometry > /tmp/before.json`),
+then `diff` (or `jq`) the rects to prove the gap closed.
+
+## Headless by default (user decision 2026-06-10)
+
+The MCP Chrome runs with `--headless=true` (`~/.pflow/mcp-servers.json`, `chrome-devtools`
+entry): no window appears, nothing steals the user's focus, and the occluded-window
+interference class (suspected in the 2026-06-10 ELK-worker hang) is gone. **Verified
+identical to headed** for both tools: `screenshot` paints the full canvas (gradient edges,
+flares, condition icon, minimap), and `inspect` returns the same CSS-px geometry (compact
+leaf 230×68, tile 56×56, all edges carry pathRects). Treat headless output as authoritative.
+
+**Opt-in headed mode** — ONLY if the user explicitly asks to watch the browser: remove
+`"--headless=true"` from the `chrome-devtools` args and kill the running headless instance
+(`pkill -f "chrome-devtools-mcp/chrome-profile"`) so the next run relaunches with a window.
+Re-add the flag when done — headless is the standing default; do not leave headed on.
+
+## Troubleshooting
+
+- `mcp-chrome-devtools-*` node error ("MCP tool not registered") → `pflow mcp sync chrome-devtools`.
+- `viewport` = the default `translate(0px, 0px) scale(1)` → nothing fit: empty graph, or `node=` named a node that isn't rendered.
+- Stale output → you didn't rebuild after a `web/` change: `make ui-build`.
+- Stale output DESPITE a rebuild (old layout/styles, even mixed old+new) → the MCP Chrome's
+  **HTTP cache** heuristically reused old `assets/*` (index.html itself now sends
+  `Cache-Control: no-cache`). Add a throwaway query param to bust it: `&v=<anything-new>`
+  (unknown params are ignored by the app).

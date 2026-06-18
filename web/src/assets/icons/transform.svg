@@ -1,0 +1,19 @@
+<svg viewBox="0 0 192 192" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Transform glyph (shuffle): two flows crossing and swapping lanes, blending
+       kind cyan to white left to right with white chevrons at the exits (the same
+       source/target idea as the canvas's gradient edges). Cyan = TRANSFORM_COLOR
+       (utils/format.ts). Strokes only, no transforms: objectBoundingBox gradients
+       apply in path LOCAL space, so a transformed path would flip its blend (the
+       condition.svg lesson). NOTE: never put a double hyphen inside this comment,
+       it is illegal in XML and breaks the whole file. -->
+  <defs>
+    <linearGradient id="flow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0.15" stop-color="#5fd4dd"/>
+      <stop offset="0.85" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+  <path d="M16 56 C70 56 122 136 162 136" stroke="url(#flow)" stroke-width="16" stroke-linecap="round"/>
+  <path d="M16 136 C70 136 122 56 162 56" stroke="url(#flow)" stroke-width="16" stroke-linecap="round"/>
+  <path d="M146 32 L174 56 L146 80" stroke="#ffffff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M146 112 L174 136 L146 160" stroke="#ffffff" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -908,7 +908,7 @@ def serve(debug: bool) -> None:
     except ImportError:
         click.echo(
             "Error: MCP server dependencies not installed.\n"
-            "Install with: pip install 'pflow[mcp]' or pip install 'mcp[cli]>=1.17.0'",
+            "Install with: uv tool install pflow-cli (or pip install 'mcp[cli]>=1.17.0').",
             err=True,
         )
         sys.exit(1)

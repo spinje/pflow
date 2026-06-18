@@ -36,6 +36,17 @@ dependencies = [
     "httpx>=0.18", # Already a transitive dep via litellm; declared directly because src/pflow/core/litellm_runtime.py::ensure_model_priced calls httpx.get on cost-map miss to fetch the upstream model_cost JSON. This bypasses litellm.get_model_cost_map, which honors LITELLM_LOCAL_MODEL_COST_MAP=True (set by pflow) and would short-circuit a URL-form fetch to the bundled backup. 0.18 is the floor for raise_for_status + .json() + scalar timeout — the only httpx surface we use. GH #422 tracks consolidating HttpNode onto httpx so this becomes the only declared HTTP library.
 ]
 
+[project.optional-dependencies]
+# Web UI server (`pflow ui`, Task 168). NOTE: starlette + uvicorn are ALSO
+# pulled transitively by mcp[cli] today, so this extra adds no new wheel in
+# practice — but a feature must declare its own direct deps rather than lean on
+# another feature's transitive ones. The frontend bundle ships separately under
+# src/pflow/ui/static/ (built at release by `make ui-build`, gitignored in source).
+ui = [
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
+
 [project.scripts]
 pflow = "pflow.cli:cli_main"
 
@@ -57,6 +68,8 @@ dev = [
     "types-PyYAML>=6.0.0",
     "types-jsonschema>=4.25.0.20250809",
     "types-requests>=2.32.4.20250809",
+    "starlette>=0.40",  # `pflow ui` server + Starlette TestClient (tests/test_cli/test_ui.py)
+    "uvicorn>=0.30",  # `pflow ui` server runtime
 ]
 
 [build-system]
@@ -85,9 +98,23 @@ exclude = [
     "tox.ini",
     "uv.lock",
 ]
+# The web UI bundle (src/pflow/ui/static/, Task 168) is gitignored, so hatchling
+# excludes it from the sdist by default. `uv build` and `make build` build the
+# wheel FROM the sdist, so the wheel-target force-include below is silently
+# dropped (the sdist had no bundle to copy) and the published [ui] wheel ships
+# EMPTY → `pflow ui` 503s. This line must mirror the wheel target's `artifacts`.
+# Pinned by tests/test_packaging.py + a post-build wheel check in release CI.
+artifacts = ["src/pflow/ui/static/**/*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pflow"]
+# The web UI bundle (Task 168) is a build artifact: gitignored, produced by
+# `make ui-build` at release time. Hatchling honors .gitignore by default, so
+# without this it would EXCLUDE src/pflow/ui/static/ from the wheel and ship an
+# empty [ui] bundle (`pflow ui` would 404 — plan §Review Hardening H1).
+# `artifacts` force-includes VCS-ignored build outputs. MUST be mirrored on the
+# sdist target above — `uv build`/`make build` build the wheel from the sdist.
+artifacts = ["src/pflow/ui/static/**/*"]
 
 [tool.mypy]
 files = ["src"]
