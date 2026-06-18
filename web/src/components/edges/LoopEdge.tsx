@@ -1,6 +1,6 @@
 // The loop-back U. The contract has no loop edge — flow.ts synthesizes a
 // self-loop edge from a node's LoopSpec, and this draws it in the same
-// rounded-orthogonal language as every other edge (the Tines backward-edge U):
+// rounded-orthogonal language as every other edge (the backward-edge U):
 // out of NODE_OUT, onto a rail OUTSIDE the box (assignLoopRails, post-layout:
 // TD → right of the box, LR → above it), back into NODE_IN. Replaced the old
 // perpendicular-bulge bezier (2026-06-10), which cut straight through any box

@@ -220,7 +220,7 @@ export function nodeColor(node: RoleFacts): string {
 
 // The small category line on a node card (the kind, e.g. "CLAUDE CODE"). Title-ish
 // uppercase; the human description (purpose) is the bold line below it. A code
-// node's ROLE replaces its kind (the Tines/n8n model): CONDITION / TRANSFORM.
+// node's ROLE replaces its kind (the n8n model): CONDITION / TRANSFORM.
 export function categoryLabel(node: RoleFacts): string {
   if (isCondition(node)) return "CONDITION";
   if (isTransform(node)) return "TRANSFORM";

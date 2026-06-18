@@ -207,7 +207,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
     // edges back across the canvas). The honest model, like n8n: a sequence flows
     // in one direction; genuinely independent branches fan out on their own (ELK
     // stacks sibling targets across the cross-axis). A linear pipeline IS a line.
-    // TD runs tighter between layers (the Tines look: rail close under the source,
+    // TD runs tighter between layers (rail close under the source,
     // short drops into the next row); LR keeps the wider gap that suits wide cards.
     "elk.layered.spacing.nodeNodeBetweenLayers": direction === "TD" ? "80" : "140",
     "elk.spacing.nodeNode": "80",
@@ -229,7 +229,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   // aligns box centers, so every chain/merge jogs by the cards' height/width
   // difference. Port-aware NETWORK_SIMPLEX aligns the icon line itself: chains
   // and end-sinks go dead straight, exactly one branch of a fork/merge continues
-  // the trunk (the Tines pattern), and in LR the headers of different-height
+  // the trunk (the rounded-orthogonal pattern), and in LR the headers of different-height
   // cards sit on ONE line with the bodies hanging below. LR ROW handles get
   // their own fixed ports too (`rowPorts`) so binding bundles align row-to-row.
   const portable = new Set<string>();

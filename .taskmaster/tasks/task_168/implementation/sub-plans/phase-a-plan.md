@@ -1,6 +1,6 @@
-# Task 168 — Phase A Implementation Plan (Tines/n8n visual redesign)
+# Task 168 — Phase A Implementation Plan (n8n-style visual redesign)
 
-> **Scope.** Frontend-only restyle of the `pflow ui` canvas to the Tines/n8n look:
+> **Scope.** Frontend-only restyle of the `pflow ui` canvas to the n8n-style look:
 > neutral-tile native-color icon nodes, one visual language across both densities,
 > gradient control edges, dashed branches, softened palette, beautiful-by-default.
 > **Zero contract change.** Companion to `../../research/visual-redesign-knowledge.md`
@@ -127,7 +127,7 @@ Provider→icon: anthropic, openai, gemini, ollama. `input`/`output`=ports node 
 
 ## Acceptance
 
-Matches the Tines/n8n references — neutral-tile native-color icons, gradient control
+Matches the n8n references — neutral-tile native-color icons, gradient control
 edges, dashed conditionals, softened palette, beautiful default, LLM provider icons —
 with **zero contract change** and **no regression** to the §1 invariants. `render_react_flow`
 and its Python tests are untouched.

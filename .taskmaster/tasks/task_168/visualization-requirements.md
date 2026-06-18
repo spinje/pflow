@@ -77,7 +77,7 @@
 - **Predicates baked in Python, visual policy in TS**
   (`is_decision`/`is_terminal`/`shadowed` ship as facts; the frontend decides
   treatment).
-- **Rounded-orthogonal edges (the Tines language)** — axis-aligned runs, generous
+- **Rounded-orthogonal edges** — axis-aligned runs, generous
   rounded turns, the rail just past the source, straight columns into targets.
   *(Supersedes the earlier bezier decision, 2026-06-09.)* The leftmost sibling keeps
   the straight trunk through forks AND merges; error branches order last (rightmost in
@@ -101,7 +101,7 @@
 > Mechanism + invariants for everything below: `web/CLAUDE.md`. Per-feature decisions
 > and rejected alternatives: the dated plan docs under `implementation/`.
 
-- **Floating chrome rail (2026-06-18):** a Tines-style rounded capsule anchored to the
+- **Floating chrome rail (2026-06-18):** a rounded capsule anchored to the
   canvas's LEFT edge (`components/Rail.tsx`, rendered inside `.canvas`) — far-left when the
   source pane is closed, riding to the right of the pane when it's open. ACTIONS & TOGGLES
   only, never a node palette (read-only viewer): **search**, the **markdown** source toggle,
@@ -183,7 +183,7 @@
   sub-workflow contracted the card being read: host-level `${x.results}` edges
   never surface in a container focus's port-level scan). Verified via the
   skill's real-click harness (`click.pflow.md`, promoted 2026-06-12).
-- **Tines/n8n visual language** (Phase A + follow-ups, 2026-06-09/10): one leaf
+- **n8n-style visual language** (Phase A + follow-ups, 2026-06-09/10): one leaf
   component; neutral tile + brand/native-color icon (*tile is NOT solid-color —
   user-chosen*; node CARD border stays subtle — *do not thicken/recolor it*);
   gradient control edges, no arrowheads; rounded-orthogonal paths everywhere; icon
@@ -194,7 +194,7 @@
   (orange, fork icon); a provably pure-reshape code node as TRANSFORM (cyan, shuffle
   icon), classified FAIL-CLOSED in Python (corpus: 10/20 unique code nodes classify,
   0 false positives); mutually exclusive by construction. *Considered + deferred:*
-  Tines-style sub-modes (extract/dedupe/message-only) — intent inference from
+  reference-tool sub-modes (extract/dedupe/message-only) — intent inference from
   arbitrary Python breaks the fail-closed bar, and the card's `purpose` line already
   names the specifics; explode/implode map to pflow batch, "automatic" to the llm
   kind, delay/throttle have no pflow analog.

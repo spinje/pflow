@@ -629,10 +629,10 @@ The other three were valid low-priority polish, applied (all non-behavioral): (a
 
 ---
 
-# Phase A — Visual Redesign (Tines/n8n aesthetic) — HANDOFF (2026-06-09)
+# Phase A — Visual Redesign (n8n-style aesthetic) — HANDOFF (2026-06-09)
 
 > **What this is.** A *user-driven, frontend-only* restyle of the `pflow ui` canvas to the
-> Tines/n8n/Flowise look — done across one long iterative session, **building blind** (the
+> n8n/Flowise look — done across one long iterative session, **building blind** (the
 > implementing agent has no canvas; the user reviewed each iteration via screenshots). Spec/
 > design for Phase A: `../research/visual-redesign-knowledge.md` (the KB — Flowise teardown,
 > gradient technique, gotchas) + `implementation/sub-plans/phase-a-plan.md`. At handoff time all Phase A
@@ -677,7 +677,7 @@ invariant) are green.
 1. **React Flow renders ALL edges in one SVG layer BEHIND the nodes.** This is the single most
    important constraint and the root of the whole "edge flows *into* the icon" saga. A stock edge
    *cannot* be drawn on top of / inside an opaque node — it's painted over at the node's box edge.
-   Any "line into the icon with a rounded junction" (the Tines look) must be drawn by **our own
+   Any "line into the icon with a rounded junction" (the rounded-orthogonal look) must be drawn by **our own
    geometry** (a per-node connector stub, an elevated edge, or a transparent card). We chose the
    per-node stub. (Options enumerated in the KB §9 and in the chat: transparent-card, elevated-
    zIndex, full-height-tile — all still on the table if the stub proves too fiddly.)
@@ -742,7 +742,7 @@ subtle card border. Don't re-litigate.)*
 
 - **Shape (a curve, a flare, an icon) → `shoot` a standalone SVG/HTML.** Render the candidate in a
   throwaway `.html`, `shoot` the `file://`, Read the PNG. ~3s, **no app build**, fully isolated from
-  React/ELK. Used it to compare three flare paths in `/tmp/flare-lab.html` (kept) against the Tines
+  React/ELK. Used it to compare three flare paths in `/tmp/flare-lab.html` (kept) against the n8n
   reference. This is the right loop for *aesthetics* — the app is too slow and too noisy to iterate a
   curve in.
 - **Geometry / gaps / positioning → `inspect.pflow.md`.** Reads real `getBoundingClientRect` rects for
@@ -1033,7 +1033,7 @@ voices on one card: python tile, amber CODE, blue pill; hierarchy inverted — t
 the smallest element). The fork that made it safe: the user challenged "can a shell node even be a
 condition?" → verified NO — dynamic `next` routing is **code-only** (guide/features/branching.md), so
 `is_decision ⟹ kind == code` (confirmed empirically: corpus sweep of all buildable examples — every
-decision node is code). Tines' role-as-type model therefore applies cleanly; my earlier "worker-decider"
+decision node is code). The role-as-type model therefore applies cleanly; my earlier "worker-decider"
 objection (a shell node that runs checks AND branches) is impossible by construction. Decisions, all
 user-made: label = full replacement (not "CODE · CONDITION"); color = NEW orange, code keeps `#ffd479`
 (blue rejected — llm/http/accent already own blue; recoloring code would churn the commonest kind and
@@ -1047,14 +1047,14 @@ through `nodeColor`); icon is a data-URI SVG generated from `CONDITION_COLOR` (c
 future where branching extends. +4 pins (condition presentation ×3, condition edge color);
 verified on canvas (conditional-branching TD/beautiful screenshot).
 
-### Tines edge language: rounded-orthogonal paths + ELK ports (2026-06-09, user-driven) ✅
+### Edge language: rounded-orthogonal paths + ELK ports (2026-06-09, user-driven) ✅
 
-> User goal: edge paths like the Tines references (axis-aligned runs, generous rounded turns, the
+> User goal: edge paths like the n8n references (axis-aligned runs, generous rounded turns, the
 > trunk splitting just below the source, straight columns into targets). Two rounds: the path swap,
 > then a 4-issue review against screenshots. **All `web/` — zero contract/Python change.**
 
 **Round 1 — path generator swap.** Picked via a `shoot` SVG lab (3 variants side by side): bezier vs
-midpoint-rail smoothstep vs **near-source rail** (the Tines signature) — user confirmed direction.
+midpoint-rail smoothstep vs **near-source rail** (the signature look) — user confirmed direction.
 `GradientEdge`: `getBezierPath` → `getSmoothStepPath` with `borderRadius` and a `railCenter()` helper
 (`centerY = sourceY + 24` when the target is far enough ahead; mirror for LR; stock midpoint/wrap
 routing otherwise — short hops, backward edges). Gradient/fades/labels untouched (the path is just
@@ -1081,7 +1081,7 @@ handle offset that beziers had hidden and orthogonal exposed honestly. Fixes:
   edge ("Cannot read properties of undefined (reading 'a')").
   `crossingMinimization.forceNodeModelOrder` is the survivor and does what we need. The vitest ELK
   smoke test caught this pre-browser.
-- **TD layer spacing 140 → 80** (direction-aware; LR keeps 140) — the Tines proximity.
+- **TD layer spacing 140 → 80** (direction-aware; LR keeps 140) — the n8n proximity.
 - **Data edges → built-in `smoothstep`** (`pathOptions.borderRadius`), dotted styling intact — kills
   the issue-4 bezier swoop; full node-avoidance stays the deferred smart-router.
 - **Geometry single-sourced:** `METRICS.headerPad`/`edgeRadius` + derived `ICON_COL_X` (was a
@@ -1089,7 +1089,7 @@ handle offset that beziers had hidden and orthogonal exposed honestly. Fixes:
 
 **Verified:** tests updated (type-pin: data_flow → smoothstep + radius); screenshots TD/LR/advanced/harness; `inspect` proves alignment numerically — trunk column
 x=506/506/506, merge 141→141, end dot 871→870 (1px = dot-center rounding). The harness's backward
-cycle edge (validate→decide) now draws as the clean orthogonal U from the Tines reference. **Known
+cycle edge (validate→decide) now draws as the clean orthogonal U from the reference. **Known
 residuals:** LR merge target sits ~8px off the straight row (no LR ports yet); loop arcs (LoopEdge)
 still the old amber bezier arc — restyling to the orthogonal U is the agreed next step.
 
@@ -1344,7 +1344,7 @@ its rail mid-gap, ~55px clear of both nodes.
 
 **Everything from "Connector aspect-ratio root cause" (2026-06-09) down is ONE UNCOMMITTED batch**
 from two agents working the same files in parallel — the arcs are the entries above (connector +
-CONDITION; the Tines edge language; the row-side settlement; the perf round; animated expansion;
+CONDITION; the rounded-orthogonal edge language; the row-side settlement; the perf round; animated expansion;
 minimap/controls theming; collapse controls; metrics + palette). **A per-author split was evaluated and
 rejected** — WorkflowNode/index.css/flow.ts/flow.test.ts/useWorkflowGraph.ts/web/CLAUDE.md
 interleave both authors, and each side's work references the other's (CONN reads METRICS; lanes
@@ -1382,7 +1382,7 @@ AGAINST palette neighbors: hot pink collides with mcp `#ff8fab`, violet with cla
 the category line still says SUB-WORKFLOW; leaf kinds never swap (their icon IS their identity).
 *(The swap was RETIRED with the chip rail, 2026-06-10 — identity never mutates; behavior is
 border chrome.)*
-Mid-build the user added the **batch deck** (Tines stacked-copies reference image) — shipped as
+Mid-build the user added the **batch deck** (stacked-copies reference image) — shipped as
 pure CSS pseudo-elements on `.group-card.group-batch` + `.node.batched` (unexpanded dynamic
 batches).
 
@@ -1615,7 +1615,7 @@ design (recorded so nobody tries).
 Three changes from one review session, all `web/` — zero contract/Python change. Verified in the real browser (conditional-branching advanced crop; execute-plan
 check-groups LR advanced + beautiful focus-expanded).
 
-**1. Condition pills take their EDGE's color** (user accepted my observation against their n8n/Tines
+**1. Condition pills take their EDGE's color** (user accepted my observation against their n8n
 references): GradientEdge's condition pill `--label-c` went `var(--decision)` → `to` — the target
 node's color, the exact rule the outcome/error pills already follow ("the line's color where it
 arrives"). Bare-text outcome labels stay as-is (user choice). One line + doc sync.
@@ -2157,7 +2157,7 @@ on entry.
   collision / no separation). Seam extensions only: `isTransform` + `nodeColor`/`categoryLabel`
   arms (a `RoleFacts` structural type), `iconFor` arm, ReadPanel `code · transform`. Edge
   gradients pick the cyan up automatically through the nodeColor seam (test-pinned).
-- **Tines sub-modes considered + deferred (user question, answered with the mapping):**
+- **Transform sub-modes considered + deferred (user question, answered with the mapping):**
   extract/dedupe/message-only are flavors our one TRANSFORM covers (the `purpose` line
   names the specifics; intent-inference from arbitrary Python breaks fail-closed);
   explode/implode = pflow batch; "automatic" = the llm kind; delay/throttle = no pflow
@@ -2198,7 +2198,7 @@ Design settled with the user against an iterated mock (now persisted:
 `implementation/transform-l2-mock/`): result-shape rows with `name: type` format
 (the authored annotation syntax), wholesale-read vs wrapper-collapsed row policies,
 quiet-dot unread keys, the no-line-without-a-read invariant, one-level depth, and
-Half B's observed-usage generalization to all kinds. Tines' transform sub-modes were
+Half B's observed-usage generalization to all kinds. The reference tool's transform sub-modes were
 mapped and consciously deferred (recorded in visualization-requirements.md).
 
 **Plan:** `implementation/sub-plans/transform-l2-plan.md` — hardened for handoff (a fresh agent,
@@ -2227,7 +2227,7 @@ Phases 1–2 are Python-only and start anytime; Phase 3 carries a HARD entry gat
 
 ### Batch/loop CHIP RAIL: the batch pill dies, the corner chrome unifies (2026-06-10, user-driven) ✅ (uncommitted)
 
-> Design locked via a 3-round shoot-lab (`/tmp/batch-chip-lab/`), Tines corner-chips as the
+> Design locked via a 3-round shoot-lab (`/tmp/batch-chip-lab/`), corner-chips as the
 > user's reference. Plan + the per-round picks: `implementation/sub-plans/batch-chip-rail-plan.md`.
 > Round 1: **A3** (tinted capsule, icon + count) · **B3** (dynamic shows `×N`; I flagged the
 > fake-number concern, user overrode — source rides the tooltip) · **C2** (loop chip, same
@@ -4172,6 +4172,5 @@ nodes, and edges are UNTOUCHED. CSS + a few chrome components only.
   deliberately NOT the orange chrome `--accent` (user-caught — selection is a distinct signal).
 - **Canvas verified byte-identical:** the only before/after canvas delta is a 1px `fitView`
   reposition (the segmented toolbar is 2px taller) — node-band big-diffs → 0 after a 1px shift;
-  pre-vs-pre baseline = 0.00%. No new "tines" in the codebase (the requested constraint); 2
-  pre-existing `index.css` mentions scrubbed. **Gates:** web `tsc` clean; `npx vitest run` 500
+  pre-vs-pre baseline = 0.00%. **Gates:** web `tsc` clean; `npx vitest run` 500
   passed (label-casing assertions updated).

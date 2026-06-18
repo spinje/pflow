@@ -53,7 +53,7 @@ dark notch); (3) ONE `CONN` constant set drives the path, the viewBox AND the el
 
 Render the paths `graph/` routes (lanes from `assignEdgeLanes`, rails from `portSides`); this
 folder owns appearance. All control kinds (sequential/branch/error/end) → `GradientEdge`
-(the Tines/n8n rounded-orthogonal language: `getSmoothStepPath` + `railCenter`; a `userSpaceOnUse` source→target
+(the n8n-style rounded-orthogonal language: `getSmoothStepPath` + `railCenter`; a `userSpaceOnUse` source→target
 gradient via `gradientStops`; error fades to red, end to faint grey). `data_flow` → `DataEdge`
 (same path language + per-lane stub/rail geometry; flat teal, focus draws SOLID at the clicked
 end). `loop:` → `LoopEdge` (the U on its `assignLoopRails` rail; carries the app's ONE

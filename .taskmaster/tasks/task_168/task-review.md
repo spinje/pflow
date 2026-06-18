@@ -8,7 +8,7 @@
 - **Trust boundary (per CLAUDE.md):** Phase 5 (docs, purity guard, test-quality fix) I implemented directly. The *whole feature* I verified end-to-end (live server, real-browser screenshots, a 58-workflow contract sweep, mutation tests) — marked **[verified]**. Phases 1–4 internals I relay from the progress log cross-checked against the committed code I read — marked **[relayed+read]**. I did not write Phases 1–4.
 
 ## Executive Summary
-Adds a **second renderer** (`render_react_flow`) and a **local Starlette server** (`pflow ui`, behind a `pflow[ui]` extra) that serves a Vite/React/React-Flow/ELK SPA over a **typed, React-Flow-native JSON contract** derived from the Task 155 `GraphModel`. It reveals structure that is invisible in `.pflow.md` text: input→node wiring, `${ref}` template connections, params (click-to-read), nested sub-workflow/batch/loop containers. That static increment is the FOUNDATION; a large **visual/interaction layer** (Tines/n8n visual language, click-to-read panels, a source pane, live-source auto-update) and substantial **contract extensions** then landed on top of it (see *The Visual / Interaction Layer* below). Still deferred but architected-for: the **live-run overlay** (the structural `RFRef` join key + a pluggable `api/` data seam + a `status`-prop separation in node components) and **visual editing** (the per-param `SourceRef` seam).
+Adds a **second renderer** (`render_react_flow`) and a **local Starlette server** (`pflow ui`, behind a `pflow[ui]` extra) that serves a Vite/React/React-Flow/ELK SPA over a **typed, React-Flow-native JSON contract** derived from the Task 155 `GraphModel`. It reveals structure that is invisible in `.pflow.md` text: input→node wiring, `${ref}` template connections, params (click-to-read), nested sub-workflow/batch/loop containers. That static increment is the FOUNDATION; a large **visual/interaction layer** (n8n-style visual language, click-to-read panels, a source pane, live-source auto-update) and substantial **contract extensions** then landed on top of it (see *The Visual / Interaction Layer* below). Still deferred but architected-for: the **live-run overlay** (the structural `RFRef` join key + a pluggable `api/` data seam + a `status`-prop separation in node components) and **visual editing** (the per-param `SourceRef` seam).
 
 ## Implementation Overview
 
@@ -31,7 +31,7 @@ Adds a **second renderer** (`render_react_flow`) and a **local Starlette server*
 
 ## The Visual / Interaction Layer + Contract Extensions (post-PR #496) **[relayed]**
 
-> The static increment above is the foundation; the **bulk of the feature** — the Tines/n8n
+> The static increment above is the foundation; the **bulk of the feature** — the n8n-style
 > visual language, the interaction model, the source pane, and a much richer contract — landed
 > across ~40 user-driven arcs afterward. The canonical *how* is the **`web/` CLAUDE.md suite**,
 > so this section captures only the cross-cutting knowledge a future agent can't find there.

@@ -1,7 +1,7 @@
-# Task 168 — Visual Redesign Knowledge Base (Phase A: Tines/n8n look-and-feel)
+# Task 168 — Visual Redesign Knowledge Base (Phase A: n8n-style look-and-feel)
 
 > **What this file is.** A single, self-contained brief for redesigning the `pflow ui` canvas
-> to match the **Tines / n8n / Flowise-AgentFlow** look (gradient edges, color-tile icon nodes,
+> to match the **n8n / Flowise-AgentFlow** look (gradient edges, color-tile icon nodes,
 > clean branch fan-out). It was compiled by cloning **Flowise** (`FlowiseAI/Flowise`, `packages/ui`)
 > and reading its actual AgentFlow-v2 source, plus authoritative `@xyflow/react` v12 / ELK /
 > smart-edge docs. **Assume the reader has ONLY this file + the codebase** — every technique here
@@ -34,7 +34,7 @@ editing-only, irrelevant to our read-only derived viewer).
 ## 1. Locked decisions (the brief — do not re-litigate)
 
 1. **Tile treatment = Option B (n8n): neutral dark tile + icon in its native color.** NOT solid
-   color tiles with white glyphs (that was Option A / pure Tines). The **kind color** still drives:
+   color tiles with white glyphs (that was Option A / the pure color-tile look). The **kind color** still drives:
    the category label text, the card's left accent, and the gradient edges. This lets the brand
    SVGs (python blue/yellow, claude orange) render as-is, no recoloring.
 2. **"Beautiful" is the new DEFAULT density** (currently `detailed` is default — flip it in
@@ -287,7 +287,7 @@ at **opacity 0.75**, full on select. Hover is CSS-only via the sibling selector 
 - **Category line** = `node.kind` (uppercased, in `kindColor`). The model/provider could later be
   shown as a sub-pill (§8.4) but Phase A just shows the kind.
 - **Title** = `node.purpose || node.ref.node_id` (bold). Today the title is `node_id`; switch to
-  `purpose` (Tines/n8n show the human description). `node_id` still available in read panel + tooltip.
+  `purpose` (n8n shows the human description). `node_id` still available in read panel + tooltip.
 
 ### 4.2 Shared header component (extract from Detailed/Compact)
 
@@ -493,7 +493,7 @@ CSS vars to retune in `index.css :root`:
 
 ## 7. Edge semantics — solid / dashed / colored
 
-Decided mapping (Tines dashes conditionals; we keep data-flow dashed-green):
+Decided mapping (the reference tools dash conditionals; we keep data-flow dashed-green):
 
 | edge kind | stroke | dash | hidden in beautiful? |
 |---|---|---|---|
@@ -748,7 +748,7 @@ Flowise is v11; we're v12. When adapting their code:
    on `conditional-branching` (forks) + the harness (density, gradients, no dropped edges). jsdom
    can't see edges — browser is the only visual proof.
 
-**Acceptance:** matches the Tines/n8n references — neutral-tile native-color icons, gradient
+**Acceptance:** matches the n8n references — neutral-tile native-color icons, gradient
 control edges, dashed conditionals, softened palette, beautiful default — **with zero contract
 change** and **no regression** to the §1 invariants (collapse/focus/LR-TD/read-panel/ports/loop/forks
 all still work; `render_react_flow` + its tests untouched; Mermaid goldens irrelevant/untouched).

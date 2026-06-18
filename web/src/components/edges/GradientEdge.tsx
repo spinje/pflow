@@ -1,4 +1,4 @@
-// A rounded-orthogonal control edge (the Tines look: axis-aligned runs, generously
+// A rounded-orthogonal control edge (axis-aligned runs, generously
 // rounded turns) whose stroke blends sourceColor -> targetColor along the TRUE edge
 // direction. We use a `userSpaceOnUse` gradient positioned by the actual source/target
 // coords, so the blend follows direction in any orientation (LR/TD, backward,
@@ -86,7 +86,7 @@ export function conditionAnchor(args: {
 const FADE_PX = 26;
 
 // Rounded-orthogonal geometry. RAIL_OFFSET puts the first turn just past the source
-// (the Tines "trunk splits, then long straight columns into the targets" signature)
+// (the "trunk splits, then long straight columns into the targets" signature)
 // instead of smoothstep's default midpoint turn. It is 2×radius because smoothstep
 // clamps every bend to HALF its adjoining segment — a shorter offset STARVES the rail
 // corners (they rendered ~12px against the 18px everywhere else; user-caught). Closer

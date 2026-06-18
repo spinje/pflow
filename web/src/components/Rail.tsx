@@ -1,4 +1,4 @@
-// The floating chrome rail (Tines-style rounded capsule) anchored to the LEFT
+// The floating chrome rail (rounded capsule) anchored to the LEFT
 // EDGE OF THE CANVAS — so it rides just right of the source pane when that's open
 // and floats at the far left when it's closed (GraphView renders it inside
 // .canvas, which is position:relative). ACTIONS & TOGGLES only, never a node

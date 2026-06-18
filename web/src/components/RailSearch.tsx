@@ -1,6 +1,6 @@
 // The search box at the top of the floating rail — find a node by name (or
 // description) in the current workflow and jump to it. The ONE rail item that
-// expands in place (Tines-style): the magnifier opens a popover with an input + a
+// expands in place: the magnifier opens a popover with an input + a
 // ranked results list. Selecting a result REVEALS it (GraphView expands the node's
 // collapsed ancestor chain) then focuses + cameras — so a node buried in a
 // collapsed sub-workflow is still reliably reachable. Read-only navigation; never
