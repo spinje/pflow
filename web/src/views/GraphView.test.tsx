@@ -168,7 +168,7 @@ describe("GraphView mount", () => {
       await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
       expect(container.querySelector(".source-pane")).toBeNull();
 
-      fireEvent.click(screen.getByRole("button", { name: "source" }));
+      fireEvent.click(screen.getByRole("button", { name: "Show source" }));
       await waitFor(() => expect(container.querySelector(".source-pane")).toBeTruthy());
 
       const canvasNode = screen.getAllByText("say hi").find((el) => el.className.includes("node-name"));
@@ -341,14 +341,14 @@ describe("GraphView mount", () => {
     // The toolbar itself rendered (density control present) — only the source
     // toggle is absent, not the whole header.
     expect(screen.getByText("advanced")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "source" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show source" })).toBeNull();
 
     // A normal render HAS it — the absence above is the error-branch gate.
     cleanup();
     vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
     render(<GraphView workflow="demo" onBack={() => {}} />);
     await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
-    expect(screen.getByRole("button", { name: "source" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show source" })).toBeTruthy();
   });
 
   it("container clicks: body SELECTS (read panel, no toggle); the corner button TOGGLES (design D)", async () => {

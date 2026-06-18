@@ -109,6 +109,22 @@ Tests sit beside their subject.
   (a canvas ancestor — a token would inherit into nodes). Adding a chrome surface → add it to that
   selector list or it renders with stale `:root` values. The source-row selection tint
   (`.src-line-active/-block`) keeps blue `#6ea8fe`, not the orange `--accent` (selection ≠ accent).
+- **The chrome rail is a floating capsule of ACTIONS & TOGGLES (`components/Rail.tsx` +
+  `RailSearch.tsx`), never a node palette** (read-only viewer). Rendered INSIDE `.canvas`
+  (position-relative) so it anchors to the canvas's LEFT edge — far-left when the source pane is
+  closed, right of the pane when open. Holds **search**, the **markdown** source toggle, the
+  **sub-workflow** expand toggle, and **clear focus**; the back-nav + the mode pills
+  (advanced/beautiful, LR/TD) stay in the Toolbar (labeled pills keep "which mode am I in"
+  legible — an icon would lose it). Toggle glyphs speak the CANVAS language and light on enable
+  (`markdown.svg`/`subworkflow.svg`, grey → identity-color via a CSS `grayscale` filter lifted on
+  `.active`; `.rail` is in the scoped-chrome token list but NOT a parent of RF nodes, so it's
+  safe). Top slot reserved for the future run/status control.
+- **Search (`RailSearch.tsx`) is REVEAL-then-node-click.** Ranks node_id prefix > substring >
+  purpose; selecting → `GraphView.onSelectNode` expands the target's collapsed ancestor chain (so
+  a buried node is reachable) then `onNavigate(repId, repId)` — the SELECTION arm (not a bare
+  focus) is what opens the read panel AND scrolls the source pane (`selectedNode → activeLine`).
+  `nodeRepresentativeId` (utils/viewParams) resolves a host → its group; Cmd/Ctrl+K toggles search
+  (a global keydown the component owns; `preventDefault` stops Chrome's omnibox).
 
 ## Dev, build, test
 

@@ -47,6 +47,7 @@
    so they keep the :root values and render byte-identical. (Layout wrappers like
    .graph-body/.canvas ARE canvas ancestors and are deliberately excluded.) */
 .toolbar,
+.rail,
 .read-panel,
 .source-pane,
 .catalog,
@@ -184,6 +185,179 @@ button.active {
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+/* ---------- floating rail (canvas-anchored capsule: actions & toggles) ----------
+   Rendered INSIDE .canvas (position:relative), so it floats at the canvas's LEFT
+   edge — far-left when the source pane is closed, just right of the pane when it's
+   open. A rounded capsule, content-height, above the React Flow pane. */
+.rail {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 5px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.rail-sep {
+  width: 22px;
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}
+.rail-button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--text-muted);
+}
+.rail-button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border);
+  color: var(--text);
+}
+/* Canvas-language toggle glyphs: fixed-color SVGs muted to grey when inactive,
+   their identity color restored on enable (markdown white / sub-workflow magenta).
+   The active state lives in the GLYPH color, so the button chrome stays quiet — an
+   accent wash here would fight the magenta/white. */
+.rail-icon {
+  width: 20px;
+  height: 20px;
+  filter: grayscale(1) opacity(0.45);
+  transition: filter 0.12s ease;
+}
+.rail-button:hover .rail-icon {
+  filter: grayscale(0.4) opacity(0.85);
+}
+.rail-button.active .rail-icon {
+  filter: none;
+}
+.rail-button.active {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border);
+}
+
+/* Rail search: the magnifier expands a popover to the RIGHT of the capsule (the
+   capsule hugs the canvas's left edge, so the list opens over the canvas). */
+.rail-search {
+  position: relative;
+}
+.rail-search-popover {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 14px);
+  width: 280px;
+  padding: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 7;
+}
+.rail-search-input {
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+}
+.rail-search-input:focus {
+  border-color: var(--border-strong);
+}
+.rail-search-field {
+  position: relative;
+}
+/* The ⌘K / Ctrl+K hint, shown only while the query is empty (the placeholder is
+   short, so it never collides). pointer-events:none keeps clicks on the input. */
+.rail-search-kbd {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  padding: 1px 5px;
+  font-family: var(--font);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  pointer-events: none;
+}
+.rail-search-empty {
+  padding: 10px 6px 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.rail-search-results {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rail-search-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 7px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--text);
+}
+.rail-search-result.active {
+  background: rgba(255, 255, 255, 0.06);
+}
+.rail-search-result-name {
+  flex: 1 1 auto;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rail-search-result-cat {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* Back-to-catalog arrow, left of the title in the top bar. */
+.toolbar-back {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+.toolbar-back:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
 }
 .toolbar {
   display: flex;

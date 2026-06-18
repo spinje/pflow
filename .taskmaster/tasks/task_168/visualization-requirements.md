@@ -101,6 +101,18 @@
 > Mechanism + invariants for everything below: `web/CLAUDE.md`. Per-feature decisions
 > and rejected alternatives: the dated plan docs under `implementation/`.
 
+- **Floating chrome rail (2026-06-18):** a Tines-style rounded capsule anchored to the
+  canvas's LEFT edge (`components/Rail.tsx`, rendered inside `.canvas`) — far-left when the
+  source pane is closed, riding to the right of the pane when it's open. ACTIONS & TOGGLES
+  only, never a node palette (read-only viewer): **search**, the **markdown** source toggle,
+  the **sub-workflow** expand toggle, **clear focus**. Toggle glyphs speak the canvas language,
+  muted grey when off → identity-color when on (markdown white / sub-workflow magenta). The
+  back-nav + the mode selectors (advanced/beautiful, LR/TD) stay in the slim top bar as labeled
+  pills (state-legibility wins over icons). Top slot reserved for the future run/status control.
+- **Node search (2026-06-18):** `RailSearch.tsx` — find a node by name/purpose (ranked: node_id
+  prefix > substring > purpose), Cmd/Ctrl+K to open. Selecting REVEALS the node (expands its
+  collapsed ancestor chain so a buried target is reachable) then behaves exactly like clicking
+  it — focus + read panel + source-pane scroll. The one rail item that expands in place.
 - Catalog → per-workflow graph; URL params `workflow=` / `node=` / `focus=` (node,
   container name, or flat edge id) / `collapse=all|none` / `direction=` / `density=` /
   `source=1|0` —

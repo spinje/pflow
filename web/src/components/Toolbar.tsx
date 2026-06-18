@@ -1,32 +1,44 @@
 import type { Density, Direction } from "../graph/flow";
 
 interface ToolbarProps {
+  // title = the workflow basename (display); path = the full path (tooltip).
   title: string;
+  path: string;
   density: Density;
   direction: Direction;
-  // Collapse control (user-chosen design 2026-06-10: buttons + count). groupCount is
-  // the COLLAPSIBLE group total; the whole control hides when a workflow has none.
+  // The "N/M open" readout — state, not action. The collapse/expand BUTTONS live
+  // in the Rail; this count stays up top beside the mode pills (the chosen split).
   groupCount: number;
   openCount: number;
-  focused: boolean;
-  sourceOpen?: boolean;
-  showSourceToggle?: boolean;
   onDensity: (d: Density) => void;
   onDirection: (d: Direction) => void;
-  onSourceOpen?: (open: boolean) => void;
-  onCollapseAll: () => void;
-  onExpandAll: () => void;
-  onClearFocus: () => void;
   onBack: () => void;
 }
 
+// The slim top context bar: a back-to-catalog arrow + workflow title + the two
+// MODE selectors as labeled segmented pills (state-legibility wins here — see
+// Rail.tsx) + the open-count readout. Panel toggles + focus live in the floating
+// Rail; the back nav stays here (matching the reference's top-left breadcrumb).
 export function Toolbar(props: ToolbarProps): JSX.Element {
   return (
     <header className="toolbar">
-      <button className="link-button" onClick={props.onBack} title="Back to the workflow catalog">
-        ← catalog
+      <button className="toolbar-back" onClick={props.onBack} title="Back to catalog" aria-label="Back to catalog">
+        <svg
+          width={18}
+          height={18}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.7}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <line x1="19" y1="12" x2="5" y2="12" />
+          <polyline points="12 19 5 12 12 5" />
+        </svg>
       </button>
-      <h1 className="toolbar-title" title={props.title}>
+      <h1 className="toolbar-title" title={props.path}>
         {props.title}
       </h1>
 
@@ -48,35 +60,10 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
         </button>
       </div>
 
-      {props.showSourceToggle && props.onSourceOpen && (
-        <div className="toolbar-group" role="group" aria-label="source">
-          <button className={props.sourceOpen ? "active" : ""} onClick={() => props.onSourceOpen?.(!props.sourceOpen)}>
-            source
-          </button>
-        </div>
-      )}
-
-      {/* The disabled states carry the extremes (fully open / fully closed); the count
-          disambiguates every mixed state in between. */}
       {props.groupCount > 0 && (
-        <>
-          <div className="toolbar-group" role="group" aria-label="groups">
-            <button title="Collapse all groups" disabled={props.openCount === 0} onClick={props.onCollapseAll}>
-              ⊟
-            </button>
-            <button title="Expand all groups" disabled={props.openCount === props.groupCount} onClick={props.onExpandAll}>
-              ⊞
-            </button>
-          </div>
-          <span className="toolbar-count" title="Expanded groups">
-            {props.openCount}/{props.groupCount} open
-          </span>
-        </>
-      )}
-      {props.focused && (
-        <button className="link-button" onClick={props.onClearFocus}>
-          clear focus
-        </button>
+        <span className="toolbar-count" title="Expanded groups">
+          {props.openCount}/{props.groupCount} open
+        </span>
       )}
     </header>
   );

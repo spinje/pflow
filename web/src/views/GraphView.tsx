@@ -26,7 +26,7 @@ import { useSourceWatch } from "../hooks/useSourceWatch";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { ApiError, fetchSource } from "../api/client";
 import { nodeColor } from "../utils/format";
-import { edgeClickAction, readViewParams, writeViewParams } from "../utils/viewParams";
+import { edgeClickAction, nodeRepresentativeId, readViewParams, writeViewParams } from "../utils/viewParams";
 import type { RFEdge, RFGraph, RFNode, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
@@ -34,6 +34,7 @@ import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components
 import { IoPanel } from "../components/IoPanel";
 import { nodeTypes } from "../components/nodes";
 import { PanelResizer } from "../components/PanelResizer";
+import { Rail } from "../components/Rail";
 import { ReadPanel } from "../components/ReadPanel";
 import { SourcePane } from "../components/SourcePane";
 import { Toolbar } from "../components/Toolbar";
@@ -394,30 +395,78 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   }, [collapsibleIds]);
   const onExpandAll = useCallback(() => setCollapsed(new Set()), []);
 
-  const toolbar = (showSourceToggle: boolean): JSX.Element => (
+  // The rail's search: the searchable subjects are the workflow's STEPS + container
+  // hosts — not IO ports (found via the IO card) and not the synthetic end sink.
+  const searchNodes = useMemo(
+    () => (graph ? graph.nodes.filter((n) => n.kind !== "input" && n.kind !== "output" && n.kind !== "end") : []),
+    [graph],
+  );
+  // Search-select behaves like CLICKING the node: REVEAL it (expand the collapsed
+  // ancestor chain so a buried target becomes visible), then focus + SELECT +
+  // camera its representative (a host → its group; a leaf → itself). Passing the
+  // rep as the SELECTION (not just the focus) is what opens the read panel and
+  // syncs the source pane (selectedNode → activeLine → scroll, SourcePane) — a bare
+  // focus would do neither. The follow is paint-deferred, landing after the reveal
+  // re-layout — the same ordering the node=/focus= deep link relies on.
+  const onSelectNode = useCallback(
+    (node: RFNode) => {
+      if (!graph) return;
+      setCollapsed((prev) => {
+        if (prev.size === 0) return prev;
+        const groupById = new Map(graph.groups.map((g) => [g.id, g]));
+        const next = new Set(prev);
+        let parent: string | null = node.parent ?? null;
+        let changed = false;
+        while (parent) {
+          if (next.delete(parent)) changed = true;
+          parent = groupById.get(parent)?.parent ?? null;
+        }
+        return changed ? next : prev;
+      });
+      const repId = nodeRepresentativeId(graph, node);
+      onNavigate(repId, repId);
+    },
+    [graph, onNavigate],
+  );
+
+  const toolbar = (): JSX.Element => (
     <Toolbar
-      title={workflow}
+      title={workflowName}
+      path={workflow}
       density={density}
       direction={direction}
+      groupCount={collapsibleIds.length}
+      openCount={collapsibleIds.length - collapsed.size}
+      onDensity={changeDensity}
+      onDirection={changeDirection}
+      onBack={onBack}
+    />
+  );
+
+  // The rail is a floating capsule anchored to the LEFT EDGE OF THE CANVAS (it
+  // rides right of the source pane when open, far-left when closed). showSource is
+  // false in the error state, where there's no canvas; the rail returns null when
+  // it has nothing to show (the back nav lives in the toolbar).
+  const rail = (showSourceToggle: boolean): JSX.Element => (
+    <Rail
       sourceOpen={sourceOpen}
       showSourceToggle={showSourceToggle}
       groupCount={collapsibleIds.length}
       openCount={collapsibleIds.length - collapsed.size}
       focused={focus !== null}
-      onDensity={changeDensity}
-      onDirection={changeDirection}
+      searchNodes={showSourceToggle ? searchNodes : undefined}
       onSourceOpen={changeSourceOpen}
       onCollapseAll={onCollapseAll}
       onExpandAll={onExpandAll}
       onClearFocus={() => setFocus(null)}
-      onBack={onBack}
+      onSelectNode={onSelectNode}
     />
   );
 
   if (status === "error") {
     return (
       <div className="graph-view">
-        {toolbar(false)}
+        {toolbar()}
         <div className="banner error">
           <strong>This workflow could not be rendered.</strong>
           <ul>
@@ -434,7 +483,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     <InteractionProvider value={interaction}>
       <HoverMarksProvider value={hovered}>
       <div className="graph-view">
-        {toolbar(true)}
+        {toolbar()}
         <div className="graph-body" style={{ "--panel-w": `${panelWidth}px`, "--source-w": `${sourceWidth}px` } as React.CSSProperties}>
           {sourceOpen && (
             <>
@@ -453,6 +502,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             </>
           )}
           <div className="canvas">
+          {rail(true)}
           {status === "loading" && <div className="canvas-overlay">Laying out…</div>}
           {status === "empty" && <div className="canvas-overlay">This workflow has no visible structure.</div>}
           {reloadError && (

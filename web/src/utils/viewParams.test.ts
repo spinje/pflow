@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_VIEW, edgeClickAction, readViewParams, resolveEndpointFlatId, resolveNodeFlatId, writeViewParams } from "./viewParams";
-import type { RFGraph } from "../types";
+import { DEFAULT_VIEW, edgeClickAction, nodeRepresentativeId, readViewParams, resolveEndpointFlatId, resolveNodeFlatId, writeViewParams } from "./viewParams";
+import type { RFGraph, RFNode } from "../types";
 
 describe("readViewParams", () => {
   it("defaults to LR + beautiful + no node on an empty query", () => {
@@ -193,6 +193,28 @@ describe("resolveEndpointFlatId — contract endpoint → rendered flat id (edge
 
   it("returns null when nothing is rendered for the endpoint (the chip must disable, not silently focus)", () => {
     expect(resolveEndpointFlatId(graph, new Set(["other"]), "n5")).toBeNull();
+  });
+});
+
+describe("nodeRepresentativeId — search-select target (ignores collapse state)", () => {
+  // A dynamic-batch host: a batch SHELL group + the workflow group (both host n5).
+  const hostGraph = {
+    nodes: [],
+    edges: [],
+    groups: [
+      { id: "gshell", kind: "batch", host: "n5", members: [] }, // shell — never rendered
+      { id: "gwf", kind: "workflow", host: "n5", members: ["n9"] },
+    ],
+  } as unknown as RFGraph;
+
+  it("a leaf resolves to itself", () => {
+    expect(nodeRepresentativeId(hostGraph, { id: "n9", is_group_host: false } as unknown as RFNode)).toBe("n9");
+  });
+
+  it("a group host resolves to its representative group, skipping batch shells", () => {
+    // Unlike resolveEndpointFlatId it does NOT gate on renderedIds — the reveal
+    // expands the chain first, so the representative is guaranteed to render.
+    expect(nodeRepresentativeId(hostGraph, { id: "n5", is_group_host: true } as unknown as RFNode)).toBe("gwf");
   });
 });
 

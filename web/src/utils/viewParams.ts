@@ -7,7 +7,7 @@
 // passes `window.location.search` in and applies the returned string via history.
 
 import { type Density, type Direction, shellBatchIds } from "../graph/flow";
-import type { RFGraph } from "../types";
+import type { RFGraph, RFNode } from "../types";
 
 export interface ViewParams {
   // LR/TD. null = AUTO: dense pipelines open TD (graph/direction.ts), like collapse's
@@ -122,6 +122,18 @@ export function resolveEndpointFlatId(
   const representative = graph.groups.find((g) => g.host === contractId && !shells.has(g.id));
   if (representative && renderedIds.has(representative.id)) return representative.id;
   return null;
+}
+
+/** The on-canvas representative of a node IGNORING current collapse state: a group
+ *  host → its rendered group (skipping decorator shells, like resolveEndpointFlatId);
+ *  a leaf → itself. Unlike resolveEndpointFlatId this does NOT gate on renderedIds —
+ *  search-select expands the node's ancestor chain FIRST, so the representative is
+ *  guaranteed to render even though it isn't in the current (pre-reveal) snapshot. */
+export function nodeRepresentativeId(graph: RFGraph, node: RFNode): string {
+  if (!node.is_group_host) return node.id;
+  const shells = shellBatchIds(graph);
+  const rep = graph.groups.find((g) => g.host === node.id && !shells.has(g.id));
+  return rep ? rep.id : node.id;
 }
 
 /** What an edge CLICK does (pure — GraphView applies it; jsdom renders no edge
