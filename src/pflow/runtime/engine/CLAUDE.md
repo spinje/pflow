@@ -334,7 +334,7 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 
 `NamespacedSharedStore` — dict proxy that routes writes to `parent[namespace][key]`. Special `__*__` keys bypass namespacing (read/write at root). `__init__` eagerly creates `parent[namespace] = {}` even before any write — meaning a node that fails before writing anything still has an empty dict at root. Step 17.5's `mark_node_failed` archives this empty dict to `__failures__[id].data = {}`, which is correct (the failure record exists, just with no captured data).
 
-`update()` is a required override (not inherited from `dict`) — without it, `storage_mode: shared` sub-workflows crash when the child engine calls `shared_store.update(...)`. Any new proxy subclass must override `update()`, `__contains__`, `get()`, and the mutation methods explicitly.
+`update()` / `get()` / `pop()` / `setdefault()` are provided by the `MutableMapping` ABC mixin and route through the implemented primitives (`__getitem__` / `__setitem__` / `__delitem__` / `__iter__` / `__len__` / `__contains__`) — no manual override needed. A new proxy subclass only needs to implement those primitives.
 
 ### `error_context.py`
 

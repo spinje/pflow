@@ -63,7 +63,6 @@ def mock_registry(tmp_path):
                 "parameters": [
                     {"key": "workflow", "type": "string", "required": False},
                     {"key": "inputs", "type": "dict", "required": False},
-                    {"key": "storage_mode", "type": "string", "required": False},
                     {"key": "max_depth", "type": "integer", "required": False},
                     {"key": "error_action", "type": "string", "required": False},
                 ],

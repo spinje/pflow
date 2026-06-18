@@ -104,9 +104,9 @@ Runtime node for nested workflow execution. Child outputs auto-expose via namesp
 
 - **`workflow` param**: file path or saved workflow name. The only sub-workflow reference mechanism.
 - **`inputs` param**: dict of values passed to the child's declared `## Inputs`. Every key must be declared; extras rejected at parse time (Step 7 + sub-workflow validator, both directions) and at runtime (`_validate_child_params`).
-- **Closed schema via `ALLOWED_PARAMS`** (`ClassVar[frozenset[str]]`): `workflow`, `inputs`, `error_action`, `storage_mode`, `max_depth`. Validator Step 7 reads this attribute to reject unknown top-level fields — forward-compatible shape for the planned schema-declaration refactor (see task list).
+- **Closed schema via `ALLOWED_PARAMS`** (`ClassVar[frozenset[str]]`): `workflow`, `inputs`, `error_action`, `max_depth`. Validator Step 8 reads this attribute to reject unknown top-level fields — forward-compatible shape for the planned schema-declaration refactor (see task list).
 - **Auto-outputs**: child's `## Outputs` exposed via namespace. No declarations → all non-internal keys exposed.
-- **Storage modes**: `mapped` (default, isolated) and `shared` (parent storage directly).
+- **Child storage is always isolated**: the child gets a fresh store and exposes its `## Outputs` back to the parent. There is no `storage_mode` param — a former `storage_mode: shared` aliased the child store to the parent and leaked child failures/depth into it (issues #254/#231), so the param was removed entirely. Any `storage_mode:` line is now an unknown param rejected by the validator's unknown-param step.
 - **Compile-once cache**: `_compiled_workflow_cache` (dict keyed by resolved workflow path) + `_loaded_ir_cache` (dict keyed by raw workflow ref) — compiles once per unique child, reuses for sequential batch items. Heterogeneous batches (`${item.workflow}` varies per item) correctly cache each child independently.
 - **Circular detection** via `_pflow_stack`, **max depth** via `_pflow_depth` (default 10).
 - **Relative paths** resolve from parent workflow directory via `_pflow_workflow_file`.
@@ -207,29 +207,6 @@ shared["__pflow_prompt_cache__"] = MappingProxyType[node_id, CacheRenderContext]
                                           # .pflow.md scopes its own ## Cache (DD#12); leaking
                                           # parent → child would break cache scoping AND the
                                           # CacheBlockIR freeze guarantee.
-                                          #
-                                          # storage_mode: shared × parallel batch × child
-                                          # ## Cache is SAFE — the per-item store copy is the
-                                          # load-bearing isolation. Each batch item (parallel
-                                          # AND sequential) runs against a shallow copy
-                                          # (`item_shared = dict(shared)`, batch_executor.py),
-                                          # so a `storage_mode: shared` child's save/restore of
-                                          # this key — which bypasses namespacing for __*__ keys
-                                          # (NamespacedSharedStore.__setitem__) — lands in the
-                                          # discarded copy, never the parent root. The value is
-                                          # an immutable MappingProxyType, only ever REBOUND,
-                                          # so a copy can't leak mutations either. Consumers DO
-                                          # read this key after a batch (plan_node reads it for
-                                          # every node; LLMNode for rendering) — they see the
-                                          # parent's untouched binding. Pinned by
-                                          # tests/test_runtime/test_storage_mode_shared_prompt_cache.py
-                                          # (mutation-verified: removing the dict(shared) copy
-                                          # fails it). If batch items ever stop copying the
-                                          # store, this combination becomes a real last-
-                                          # finished-worker-wins race — restore the copy or add
-                                          # a guard at engine.run entry. (An earlier version of
-                                          # this note described the race as existing-but-benign;
-                                          # GH #379 closed when the code trace disproved it.)
 
 # Nested workflow keys
 shared["_pflow_depth"] = int

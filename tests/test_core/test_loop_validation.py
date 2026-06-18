@@ -6,7 +6,6 @@ are the highest silent-drift area:
 - operator rejection in `while:`
 - loop self-reference carve-out (allowed for the loop node, rejected otherwise)
 - `${__iteration__}` reserved-key handling (bare allowed, path access rejected)
-- `loop:` + `storage_mode: shared` rejection
 - an input used only in `while:` is NOT flagged unused
 """
 
@@ -139,19 +138,6 @@ def test_self_reference_in_while_allowed_for_loop_node(registry) -> None:
 def test_while_referencing_nonexistent_node_rejected(registry) -> None:
     errs = _errors(_shell_loop("${typo.x}"), registry)
     assert any("non-existent" in d.message or "typo" in d.message for d in errs)
-
-
-def test_storage_mode_shared_plus_loop_rejected(registry) -> None:
-    ir = _ir([
-        {
-            "id": "c",
-            "type": "workflow",
-            "params": {"workflow": "./child.pflow.md", "storage_mode": "shared"},
-            "loop": {"while": "${c.items}", "max_iterations": 3},
-        }
-    ])
-    errs = _errors(ir, registry)
-    assert any("storage_mode: shared" in d.message for d in errs)
 
 
 def test_loop_under_disabled_namespacing_rejected(registry) -> None:

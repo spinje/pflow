@@ -1747,25 +1747,6 @@ def test_subworkflow_error_action_continue_does_not_leak_child_failure(tmp_path)
             )
 
 
-def test_storage_mode_shared_skips_child_failure_bundle(tmp_path):
-    """Review W-a — storage_mode: shared aliases child storage to the parent, so the
-    carry is guarded off (bundling would be self-referential / #254 territory). No
-    failure record may carry a child_failure bundle in shared mode."""
-    child = _write_child_shell_fail(tmp_path, command="exit 1")
-    parent_ir = {
-        "ir_version": "0.1.0",
-        "nodes": [_subworkflow_node(child, node_id="sub", storage_mode="shared")],
-        "start_node": "sub",
-    }
-
-    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
-
-    failures = result.shared_after.get("__failures__", {})
-    for record in failures.values():
-        data = record.get("data") or {}
-        assert "child_failure" not in data, "shared mode must not build a child_failure bundle"
-
-
 def test_child_template_diagnostic_survives_reconstruction():
     """A strict-mode child template error carries its structured Diagnostic
     (unresolved_references, peer suggestions) only on the child exception. Pin that it

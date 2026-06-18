@@ -117,7 +117,6 @@ def mock_registry(tmp_path):
                 "parameters": [
                     {"key": "workflow", "type": "string", "required": False},
                     {"key": "inputs", "type": "dict", "required": False},
-                    {"key": "storage_mode", "type": "string", "required": False},
                     {"key": "max_depth", "type": "integer", "required": False},
                     {"key": "error_action", "type": "string", "required": False},
                 ],
@@ -389,7 +388,7 @@ class TestCreateChildStorage:
         }
 
         prep_res = self._make_prep_res()
-        child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
+        child_storage = node._create_child_storage(parent_shared, prep_res)
 
         # All propagated keys present and are same object references
         assert child_storage["__progress_callback__"] is progress_cb
@@ -422,7 +421,7 @@ class TestCreateChildStorage:
         }
 
         prep_res = self._make_prep_res()
-        child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
+        child_storage = node._create_child_storage(parent_shared, prep_res)
 
         # None of the propagated keys should be present
         assert "__progress_callback__" not in child_storage
@@ -434,32 +433,6 @@ class TestCreateChildStorage:
         # Should still have child params and execution context
         assert child_storage["input1"] == "value1"
         assert child_storage["_pflow_depth"] == 1
-
-    def test_shared_mode_propagation_is_noop(self):
-        """When storage_mode is 'shared', child_storage IS parent_shared (same object).
-
-        In shared mode, the child operates directly on the parent's storage.
-        Propagation is effectively a no-op because the keys are already there.
-        """
-        node = WorkflowExecutor()
-        node.set_params({"workflow": "dummy.pflow.md"})
-
-        trace_collector = Mock()
-        parent_shared: dict = {
-            "__trace_collector__": trace_collector,
-            "__progress_callback__": Mock(),
-            "_pflow_depth": 0,
-            "_pflow_stack": [],
-        }
-
-        prep_res = self._make_prep_res()
-        child_storage = node._create_child_storage(parent_shared, "shared", prep_res)
-
-        # In shared mode, child_storage IS parent_shared
-        assert child_storage is parent_shared
-
-        # The propagated keys are naturally present since it's the same dict
-        assert child_storage["__trace_collector__"] is trace_collector
 
     def test__trace_collector___reference_identity(self):
         """__trace_collector__ in child is the same object as in parent.
@@ -478,7 +451,7 @@ class TestCreateChildStorage:
         }
 
         prep_res = self._make_prep_res()
-        child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
+        child_storage = node._create_child_storage(parent_shared, prep_res)
 
         # Same object reference — not a copy
         assert child_storage["__trace_collector__"] is trace_collector

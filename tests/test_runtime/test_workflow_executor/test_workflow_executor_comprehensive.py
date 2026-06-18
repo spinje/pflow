@@ -4,8 +4,8 @@ API:
 - workflow: file path or saved name (the only sub-workflow reference mechanism)
 - inputs: dict of values passed to the child's declared inputs
 - auto-outputs via namespace
-- Storage modes: "mapped" (default) and "shared" only
-- Reserved params: workflow, storage_mode, max_depth, error_action, __registry__, inputs
+- Child storage is always isolated (no storage_mode param — removed, issues #254/#231)
+- Reserved params: workflow, max_depth, error_action, __registry__, inputs
 """
 
 from pathlib import Path
@@ -82,7 +82,6 @@ class TestWorkflowExecutorComprehensive:
                     "parameters": [
                         {"key": "workflow", "type": "string", "required": False},
                         {"key": "inputs", "type": "dict", "required": False},
-                        {"key": "storage_mode", "type": "string", "required": False},
                         {"key": "max_depth", "type": "integer", "required": False},
                         {"key": "error_action", "type": "string", "required": False},
                     ],
@@ -462,41 +461,26 @@ class TestWorkflowExecutorComprehensive:
         assert child_snapshot["payload"] == "config: ${SECRET}/path"
         assert "leaked" not in child_snapshot.get("payload", "")
 
-    # --- Test 10: storage_mode "mapped" ---
+    # --- Test 10: child storage isolation ---
 
-    def test_storage_mode_mapped(self, simple_workflow_ir, tmp_path):
-        """Test mapped storage mode: child sees only mapped params."""
+    def test_child_storage_isolated(self, simple_workflow_ir, tmp_path):
+        """Child storage is isolated: it sees only its declared inputs, not parent keys."""
         ir_with_input = {**simple_workflow_ir, "inputs": {"allowed": {"type": "string"}}}
-        child_path = _write_child(tmp_path, ir_with_input, "mapped_storage_child")
+        child_path = _write_child(tmp_path, ir_with_input, "isolated_storage_child")
         node = WorkflowExecutor()
         node.set_params({
             "workflow": str(child_path),
             "inputs": {"allowed": "mapped_value"},
-            "storage_mode": "mapped",
         })
 
         parent_shared = {"other": "should_not_see"}
 
         prep_res = node.prep(parent_shared)
-        child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
+        child_storage = node._create_child_storage(parent_shared, prep_res)
 
         assert child_storage["allowed"] == "mapped_value"
         assert "other" not in child_storage
         assert "_pflow_depth" in child_storage
-
-    # --- Test 13: storage_mode "shared" ---
-
-    def test_storage_mode_shared(self, simple_workflow_ir, tmp_path):
-        """Test shared storage mode: child uses same storage as parent."""
-        child_path = _write_child(tmp_path, simple_workflow_ir, "shared_storage_child")
-        node = WorkflowExecutor()
-        node.set_params({"workflow": str(child_path), "storage_mode": "shared"})
-
-        parent_shared = {"data": "shared_data"}
-        prep_res = node.prep(parent_shared)
-        child_storage = node._create_child_storage(parent_shared, "shared", prep_res)
-
-        assert child_storage is parent_shared
 
     # --- Test 14: compilation error ---
 
@@ -515,7 +499,6 @@ class TestWorkflowExecutorComprehensive:
             "child_ir": simple_workflow_ir,
             "workflow_path": "test.json",
             "child_params": {},
-            "storage_mode": "mapped",
         }
 
         # CompilationError propagates directly
@@ -596,7 +579,6 @@ class TestWorkflowExecutorComprehensive:
                 "internal": "should_not_be_exposed",
                 "_pflow_depth": 1,
             },
-            "storage_mode": "mapped",
         }
 
         action = node.post(shared, prep_res, exec_res)
@@ -617,7 +599,7 @@ class TestWorkflowExecutorComprehensive:
 
         shared = {}
         prep_res = node.prep(shared)
-        exec_res = {"success": True, "result": "custom_action", "child_storage": {}, "storage_mode": "mapped"}
+        exec_res = {"success": True, "result": "custom_action", "child_storage": {}}
 
         action = node.post(shared, prep_res, exec_res)
         assert action == "custom_action"
@@ -632,7 +614,7 @@ class TestWorkflowExecutorComprehensive:
 
         shared = {}
         prep_res = node.prep(shared)
-        exec_res = {"success": True, "result": None, "child_storage": {}, "storage_mode": "mapped"}
+        exec_res = {"success": True, "result": None, "child_storage": {}}
 
         action = node.post(shared, prep_res, exec_res)
         assert action == "default"
@@ -697,20 +679,6 @@ class TestWorkflowExecutorComprehensive:
             with pytest.raises(ValueError, match="not_there"):
                 engine.run(workflow, shared)
 
-    # --- Test 23: invalid storage_mode ---
-
-    def test_invalid_storage_mode(self, simple_workflow_ir, tmp_path):
-        """Test error on invalid storage mode with helpful message."""
-        child_path = _write_child(tmp_path, simple_workflow_ir, "invalid_storage_child")
-        node = WorkflowExecutor()
-        node.set_params({"workflow": str(child_path), "storage_mode": "invalid_mode"})
-
-        parent_shared = {}
-        prep_res = node.prep(parent_shared)
-
-        with pytest.raises(ValueError, match="Use 'mapped' \\(default\\) or 'shared'"):
-            node._create_child_storage(parent_shared, "invalid_mode", prep_res)
-
     # --- Test 24: multi-level circular dependency ---
 
     def test_multilevel_circular_dependency(self, simple_workflow_ir, tmp_path):
@@ -740,11 +708,11 @@ class TestWorkflowExecutorComprehensive:
         """Test that reserved keys are isolated between parent and child."""
         child_path = _write_child(tmp_path, simple_workflow_ir, "reserved_iso_child")
         node = WorkflowExecutor()
-        node.set_params({"workflow": str(child_path), "storage_mode": "mapped"})
+        node.set_params({"workflow": str(child_path)})
 
         parent_shared = {"_pflow_depth": 1}
         prep_res = node.prep(parent_shared)
-        child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
+        child_storage = node._create_child_storage(parent_shared, prep_res)
 
         assert child_storage["_pflow_depth"] == 2
         assert parent_shared["_pflow_depth"] == 1
@@ -1003,14 +971,11 @@ class TestWorkflowExecutorComprehensive:
         node.set_params({
             "workflow": str(child_path),
             "inputs": {"text": "hello", "count": 5},
-            "storage_mode": "mapped",
         })
 
         prep_res = node.prep({})
 
         assert prep_res["child_params"] == {"text": "hello", "count": 5}
-        # storage_mode is reserved, not passed as child input
-        assert "storage_mode" not in prep_res["child_params"]
 
     # --- NEW: test_auto_outputs_undeclared ---
 
@@ -1034,7 +999,6 @@ class TestWorkflowExecutorComprehensive:
                 "_pflow_depth": 1,
                 "__execution__": {},
             },
-            "storage_mode": "mapped",
         }
 
         action = node.post(shared, prep_res, exec_res)
@@ -1066,7 +1030,6 @@ class TestWorkflowExecutorComprehensive:
                 "mode": "upper",  # Same as child input — should be skipped
                 "result": "HELLO",  # New output — should be exposed
             },
-            "storage_mode": "mapped",
         }
 
         action = node.post(shared, prep_res, exec_res)
@@ -1087,7 +1050,6 @@ class TestWorkflowExecutorComprehensive:
         node = WorkflowExecutor()
         node.set_params({
             "workflow": str(child_path),
-            "storage_mode": "mapped",
             "max_depth": 10,
             "error_action": "error",
             "__registry__": Mock(),
@@ -1098,7 +1060,7 @@ class TestWorkflowExecutorComprehensive:
 
         # Only user_input should be in child_params
         assert prep_res["child_params"] == {"user_input": "this should be passed"}
-        for reserved in ("workflow", "storage_mode", "max_depth", "error_action", "__registry__"):
+        for reserved in ("workflow", "max_depth", "error_action", "__registry__"):
             assert reserved not in prep_res["child_params"]
 
     # --- NEW: test_is_file_reference ---

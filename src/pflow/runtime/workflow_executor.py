@@ -55,9 +55,12 @@ class WorkflowExecutor(BaseNode):
     Parameters:
         - workflow (str): File path (.pflow.md) or saved workflow name
         - inputs (dict): Values to pass to the child's declared ``## Inputs``
-        - storage_mode (str): "mapped" (default) or "shared"
         - max_depth (int): Maximum nesting depth (default: 10)
         - error_action (str): Action to return on error (default: "error")
+
+    The child's store is always isolated; its ``## Outputs`` are exposed back to the
+    parent. (A former ``storage_mode: shared`` aliased the child store to the parent
+    and leaked child failures/depth into it — removed, issues #254/#231.)
 
     Actions:
         - default: Workflow executed successfully
@@ -67,16 +70,17 @@ class WorkflowExecutor(BaseNode):
     MAX_DEPTH_DEFAULT = 10
     RESERVED_KEY_PREFIX = "_pflow_"
 
-    # Closed top-level schema for workflow nodes. The validator (Step 7) reads
-    # this attribute to reject unknown top-level fields at parse time, matching
-    # the closure Step 7 applies to every other node via Interface docstrings.
+    # Closed top-level schema for workflow nodes. The validator's unknown-param
+    # step (Step 8) reads this attribute to reject unknown top-level fields at
+    # parse time, matching the closure it applies to every other node via
+    # Interface docstrings. (A removed `storage_mode` value now lands here as an
+    # unknown param — issues #254/#231.)
     # Framework-internal keys (``__registry__`` etc.) are compiler-injected into
     # params and never user-authored, so they don't need to appear here.
     ALLOWED_PARAMS: ClassVar[frozenset[str]] = frozenset({
         "workflow",
         "inputs",
         "error_action",
-        "storage_mode",
         "max_depth",
     })
 
@@ -207,7 +211,6 @@ class WorkflowExecutor(BaseNode):
             "workflow_path": str(workflow_path) if workflow_path else "<inline>",
             "workflow_source": workflow_source,
             "child_params": child_params,
-            "storage_mode": self.params.get("storage_mode", "mapped"),
             "current_depth": current_depth,
             "execution_stack": execution_stack,
             "parent_shared": shared,
@@ -340,7 +343,6 @@ class WorkflowExecutor(BaseNode):
         workflow_path = prep_res["workflow_path"]
         workflow_source = prep_res.get("workflow_source", "unknown")
         child_params = prep_res["child_params"]
-        storage_mode = prep_res["storage_mode"]
         parent_shared = prep_res.get("parent_shared", {})
         self._record_child_workflow_path(parent_shared, workflow_path)
 
@@ -365,7 +367,7 @@ class WorkflowExecutor(BaseNode):
         compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)
 
         # Create child storage
-        child_storage = self._create_child_storage(parent_shared, storage_mode, prep_res)
+        child_storage = self._create_child_storage(parent_shared, prep_res)
 
         # Seed structural defaults (for inputs NOT provided by this item), then per-item values.
         # Only seed resolved_defaults keys absent from child_params — resolved_defaults may
@@ -397,7 +399,7 @@ class WorkflowExecutor(BaseNode):
             if isinstance(result, str) and result.startswith("error"):
                 return self._child_failure_result(prep_res, child_storage, workflow_path)
 
-            return {"success": True, "result": result, "child_storage": child_storage, "storage_mode": storage_mode}
+            return {"success": True, "result": result, "child_storage": child_storage}
         except Exception as e:
             if child_trace and child_trace.events:
                 self._child_trace_events = child_trace.events
@@ -506,10 +508,7 @@ class WorkflowExecutor(BaseNode):
         prep_res: dict[str, Any],
         exec_res: dict[str, Any],
     ) -> None:
-        """Expose child workflow outputs unless child storage was shared directly."""
-        if exec_res.get("storage_mode") == "shared":
-            return
-
+        """Expose the child workflow's outputs into the parent's namespace."""
         child_storage = exec_res.get("child_storage", {})
         child_ir = prep_res.get("child_ir", {})
         child_declared_outputs = child_ir.get("outputs", {})
@@ -536,37 +535,24 @@ class WorkflowExecutor(BaseNode):
     ) -> dict[str, Any]:
         """Build the ``success=False`` exec_res for a child failure, carrying a structured bundle.
 
-        The ``child_failure`` bundle is built ONLY for ``storage_mode: mapped`` (the
-        default). In ``shared`` mode the child store *is* the parent store, so the
-        child's ``__failures__`` already live in the parent (issue #254 territory,
-        out of scope here) and bundling would be self-referential. The guard reads
-        ``prep_res`` (always present after prep) — ``exec_res`` lacks ``storage_mode``
-        on the failure path.
+        The child store is always isolated (``mapped`` mode), so the child's
+        ``__failures__`` live in ``child_storage`` and are bundled up to the parent
+        boundary here — never promoted to parent ``__failures__`` keys directly
+        (that leak was the removed ``shared`` mode, issues #254/#231).
         """
-        bundle: dict[str, Any] | None = None
-        if prep_res.get("storage_mode") == "mapped":
-            bundle = self._extract_child_failure(child_storage, workflow_path, template_diagnostic=template_diagnostic)
+        bundle = self._extract_child_failure(child_storage, workflow_path, template_diagnostic=template_diagnostic)
         # When a specific child node is identified, the structured summary (names the
         # node + its real error) beats a generic exception string. Fall back to the
         # exception text only when no node was archived (e.g. an engine-level error).
-        # Reuse the bundle's already-computed summary when present (mapped mode) so
-        # the summary isn't built twice.
+        # Reuse the bundle's already-computed summary so it isn't built twice.
         failed_node = child_storage.get("__execution__", {}).get("failed_node")
-        if failed_node or fallback_summary is None:
-            summary = (
-                bundle["error"]
-                if bundle is not None
-                else self._summarize_child_failure(child_storage, workflow_path, failed_node)
-            )
-        else:
-            summary = fallback_summary
+        summary = bundle["error"] if (failed_node or fallback_summary is None) else fallback_summary
         # Keep the bundle's reconstruction summary in sync with the chosen summary:
         # build_error_list prefers the bundle over the parent failure record, so
         # without this an exception with no archived child node (e.g. a child
         # output-resolution failure) would surface the generic "returned error
         # action" instead of the real exception text.
-        if bundle is not None:
-            bundle["error"] = summary
+        bundle["error"] = summary
         return {
             "success": False,
             "error": summary,
@@ -797,14 +783,13 @@ class WorkflowExecutor(BaseNode):
             ]
             raise ValueError("\n".join(msg_parts))
 
-    def _create_child_storage(
-        self, parent_shared: dict[str, Any], storage_mode: str, prep_res: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Create storage for child workflow based on isolation mode.
+    def _create_child_storage(self, parent_shared: dict[str, Any], prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Create isolated storage for the child workflow.
 
-        In "mapped" mode, child gets a fresh dict with only passed params.
-        In "shared" mode, child uses parent storage directly (propagation is
-        redundant but harmless — just re-assigns references to themselves).
+        The child always gets a fresh dict with only the passed params; declared
+        `## Outputs` are exposed back to the parent in `post()`. (A former
+        `storage_mode: shared` aliased the child store to the parent and leaked the
+        child's failures/depth into it — removed, issues #254/#231.)
 
         Propagated keys are SAME object references, not copies. This is
         intentional: __warnings__ accumulates across the full tree,
@@ -813,14 +798,7 @@ class WorkflowExecutor(BaseNode):
         """
         child_depth = prep_res["current_depth"] + 1
         child_stack = [*prep_res["execution_stack"], prep_res["workflow_path"]]
-        child_storage: dict[str, Any]
-
-        if storage_mode == "mapped":
-            child_storage = prep_res["child_params"].copy()
-        elif storage_mode == "shared":
-            child_storage = parent_shared
-        else:
-            raise ValueError(f"Invalid storage_mode: '{storage_mode}'. Use 'mapped' (default) or 'shared'.")
+        child_storage: dict[str, Any] = prep_res["child_params"].copy()
 
         # Always set execution context
         child_storage[f"{self.RESERVED_KEY_PREFIX}depth"] = child_depth
