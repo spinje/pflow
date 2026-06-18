@@ -21,6 +21,8 @@ when you touch its files, so the invariants below are stated once here and only
   animation, the live-source poll/reload).
 - `src/utils/CLAUDE.md` — pure helpers (color/text, the shiki seam, URL/deep-link,
   source mapping, batch items).
+- `src/views/CLAUDE.md` — the two screens (CatalogView, GraphView): the canvas wiring hub —
+  view state, the selection→panel model, the per-workflow one-shot effects.
 
 ## Where things live (and where new code goes)
 
@@ -43,7 +45,7 @@ src/
   utils/             pure helpers: color/text (format.ts), the shiki seam (highlight.ts),
                      URL/deep-link (viewParams.ts), source mapping (sourceMap.ts), pane
                      clamp (panelWidth.ts), icons, batch items.  >> src/utils/CLAUDE.md
-  views/             the screens App switches between (CatalogView, GraphView)
+  views/             the screens App switches between (CatalogView, GraphView).  >> src/views/CLAUDE.md
   components/        React render: nodes/ (WorkflowNode, GroupNode, IOCardNode, EndNode,
                      PortRows, BranchPorts, ChipRail), edges/ (GradientEdge, DataEdge,
                      LoopEdge, EdgeHalo), panels (ReadPanel, EdgePanel, IoPanel, Chip,

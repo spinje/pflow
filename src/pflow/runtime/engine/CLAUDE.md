@@ -360,6 +360,5 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 - **Batch nodes skip top-level template resolution** — per-item resolution in callback instead.
 - **`_source_line` keys NOT filtered in `split_params()`** — `python_code.py` reads them. Filtered only in `compute_node_config()` for cache hashing.
 - **Engine doesn't restore `node.params`** — intentional. Each execution sets params fresh.
-- **`handle_cached_execution` serves both cache levels** — memo (SQLite) and in-process (resume). It does NOT clear `__failures__[id]` (both cache paths are unreachable for nodes with a stale failure record — see the Instrumentation section).
 - **Parallel batch deep-copies bare node** — cheap, but `_batch_trace` list append relies on GIL (CPython only).
 - **`CompiledWorkflow` is NOT concurrent-safe** — `node.params` mutation means one `engine.run()` at a time per workflow instance.
