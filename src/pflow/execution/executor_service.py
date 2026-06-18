@@ -65,19 +65,22 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
     if success:
         return []
 
-    # A failed sub-workflow node carries the child's structured failure state
-    # forward in its archived data (`child_failure` bundle, written by
-    # WorkflowExecutor.post()). Reconstruct the child's diagnostics recursively
-    # and wrap them with parent provenance instead of collapsing to the
-    # generic one-line "WorkflowExecutor failed" message (issues #233/#252).
-    # Checked BEFORE the generic path so the rich reconstruction wins.
-    from pflow.runtime.node_state import get_node_output
+    from pflow.runtime.node_state import get_node_failure, get_node_output
 
+    # A failed sub-workflow node carries the child's structured failure state
+    # forward in its archived data (the reserved `_pflow_child_failure` bundle,
+    # written by WorkflowExecutor.post()). Reconstruct the child's diagnostics
+    # recursively and wrap them with parent provenance instead of collapsing to
+    # the generic one-line message (issues #233/#252). Checked BEFORE the generic
+    # path so the rich reconstruction wins. The reserved `_pflow_` key is written
+    # only by WorkflowExecutor.post() (collision-proof); even so, reconstruction
+    # degrades gracefully on a malformed bundle (empty `failures` → generic
+    # "Workflow execution failed").
     failed_node = _get_failed_node(shared_store)
     if failed_node:
         node_output = get_node_output(shared_store, failed_node)
-        if isinstance(node_output, dict) and isinstance(node_output.get("child_failure"), dict):
-            return build_subworkflow_diagnostics(node_output["child_failure"], failed_node)
+        if isinstance(node_output, dict) and isinstance(node_output.get("_pflow_child_failure"), dict):
+            return build_subworkflow_diagnostics(node_output["_pflow_child_failure"], failed_node)
 
     error_info = _extract_error_info(action_result, shared_store)
     category = determine_error_category(error_info["message"] or "")
@@ -90,8 +93,6 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
     # Extract rich error data from namespaced node output
     failed_node = error_info.get("failed_node")
     if failed_node:
-        from pflow.runtime.node_state import get_node_failure, get_node_output
-
         node_output = get_node_output(shared_store, failed_node) or {}
         if isinstance(node_output, dict):
             _enrich_error_from_node_output(context, node_output, category)

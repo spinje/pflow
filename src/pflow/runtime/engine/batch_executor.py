@@ -413,10 +413,11 @@ def _run_batch_item_once(
     if error_info is not None:
         # Carry a failed sub-workflow item's structured child-failure bundle into
         # the error record so the parent can reconstruct rich per-item diagnostics
-        # (#252). Read from the per-item result here (the worker body) — step 17.5
-        # never fires per item, so item_shared[node_id] still holds it, and this
-        # runs inside the worker so parallel items stay isolated.
-        child_failure = result.get("child_failure")
+        # (#252). Read the reserved namespace key from the per-item result here (the
+        # worker body) — step 17.5 never fires per item, so item_shared[node_id]
+        # still holds it, and this runs inside the worker so parallel items stay
+        # isolated. (Stored under the display key `child_failure` on the record.)
+        child_failure = result.get("_pflow_child_failure")
         if isinstance(child_failure, dict):
             error_info["child_failure"] = child_failure
     _capture_item_trace(

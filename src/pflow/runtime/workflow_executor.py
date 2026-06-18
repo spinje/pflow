@@ -423,16 +423,18 @@ class WorkflowExecutor(BaseNode):
             shared["error"] = error_msg
             error_action = self.params.get("error_action", "error")
             action = str(error_action) if error_action else "error"
-            # Carry the child's structured failure forward so the execution layer
-            # can reconstruct rich diagnostics with provenance (#233/#252). Only on
-            # a real failure route: step 17.5 archives error-actions, so a custom
-            # non-error route (e.g. `error_action: continue`) must NOT write the
-            # bundle — it would linger in the success namespace and leak as
-            # ${node.child_failure}. Non-dunder key → namespaced into
-            # shared[node_id] → archived to __failures__[node_id].data.child_failure.
+            # Carry the child's structured failure forward so the execution layer can
+            # reconstruct rich diagnostics with provenance (#233/#252). The reserved
+            # `_pflow_` key is namespaced into shared[node_id] (→ archived to
+            # __failures__[node_id].data on an error route, where build_error_list
+            # reconstructs it) AND filtered from agent-visible output / never exposed
+            # as a child output — so it is written unconditionally without leaking.
+            # That unconditional write matters for a batched sub-workflow with a
+            # non-error `error_action` (e.g. `continue`): the batch still records the
+            # item as failed and must surface its structured child failure (#252).
             child_failure = exec_res.get("child_failure")
-            if child_failure is not None and action.startswith("error"):
-                shared["child_failure"] = child_failure
+            if child_failure is not None:
+                shared["_pflow_child_failure"] = child_failure
             return action
 
         self._expose_child_outputs(shared, prep_res, exec_res)
@@ -547,11 +549,24 @@ class WorkflowExecutor(BaseNode):
         # When a specific child node is identified, the structured summary (names the
         # node + its real error) beats a generic exception string. Fall back to the
         # exception text only when no node was archived (e.g. an engine-level error).
+        # Reuse the bundle's already-computed summary when present (mapped mode) so
+        # the summary isn't built twice.
         failed_node = child_storage.get("__execution__", {}).get("failed_node")
         if failed_node or fallback_summary is None:
-            summary = self._summarize_child_failure(child_storage, workflow_path, failed_node)
+            summary = (
+                bundle["error"]
+                if bundle is not None
+                else self._summarize_child_failure(child_storage, workflow_path, failed_node)
+            )
         else:
             summary = fallback_summary
+        # Keep the bundle's reconstruction summary in sync with the chosen summary:
+        # build_error_list prefers the bundle over the parent failure record, so
+        # without this an exception with no archived child node (e.g. a child
+        # output-resolution failure) would surface the generic "returned error
+        # action" instead of the real exception text.
+        if bundle is not None:
+            bundle["error"] = summary
         return {
             "success": False,
             "error": summary,
@@ -581,10 +596,21 @@ class WorkflowExecutor(BaseNode):
         reference-shared across parallel batch items and would mis-attribute.
         """
         failed_node = child_storage.get("__execution__", {}).get("failed_node")
+        failures = WorkflowExecutor._jsonable(child_storage.get("__failures__") or {})
+        # A failed child node that is itself a batch archives the full batch output,
+        # including each error record's RAW item input. Honor the same display-safety
+        # compaction the top-level batch path applies (compact_batch_error_detail) so
+        # raw child batch inputs don't leak into the parent's trace / JSON output.
+        # (Lazy import of a leaf formatter — no module-level deps, so no import cycle.)
+        from pflow.execution.formatters.batch_errors import compact_batch_output_value
+
+        for record in failures.values():
+            if isinstance(record, dict) and isinstance(record.get("data"), dict):
+                record["data"] = compact_batch_output_value(record["data"])
         bundle: dict[str, Any] = {
             "workflow_path": str(workflow_path),
             "failed_node": failed_node,
-            "failures": WorkflowExecutor._jsonable(child_storage.get("__failures__") or {}),
+            "failures": failures,
             "error": WorkflowExecutor._summarize_child_failure(child_storage, workflow_path, failed_node),
         }
         if template_diagnostic is not None:
