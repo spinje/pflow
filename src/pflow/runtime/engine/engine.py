@@ -610,13 +610,11 @@ class WorkflowEngine:
         per-workflow ``CacheRenderContext`` map into
         ``shared["__pflow_prompt_cache__"]`` for the duration of the run.
         The save/restore pattern correctly handles nested sub-workflow runs
-        (parent's values reinstated after a child engine.run completes) for
-        both ``mapped`` and ``shared`` storage modes.
+        (parent's values reinstated after a child engine.run completes).
         """
         # Install this engine's trace collector so LLMNode.prep() can find
         # it. Save+restore handles nested sub-workflow runs (parent's
-        # collector reinstated after a child engine.run completes) for both
-        # storage_mode=mapped and storage_mode=shared.
+        # collector reinstated after a child engine.run completes).
         #
         # Write-back form (not .pop()) because shared may be a
         # NamespacedSharedStore (sub-workflow path) which doesn't implement

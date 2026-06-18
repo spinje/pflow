@@ -815,59 +815,6 @@ class TestSubWorkflowTraceCollector:
         assert child_llm_event is not None, f"child-llm event missing from sub_workflow_events: {sub_events}"
         assert child_llm_event.get("llm_prompt") == "Hello from the child."
 
-    def test_storage_mode_shared_does_not_pollute_parent_collector(self, tmp_path, mock_llm_client):
-        """storage_mode=shared sub-workflow must not leave child's collector
-        installed in the parent's shared store after it returns.
-
-        With `child_storage IS parent_shared`, the child engine.run swaps
-        in child_trace via save/restore. After the child completes, the
-        parent's collector must be reinstated for any subsequent parent-
-        level reads. Identity check (``is``) verifies it's the SAME object,
-        not just an equal one.
-        """
-        from pathlib import Path
-
-        from pflow.registry import Registry
-        from pflow.runtime import compile_workflow
-        from pflow.runtime.engine import WorkflowEngine
-
-        child_md = Path(tmp_path) / "child.pflow.md"
-        child_md.write_text(
-            "# Child\n\nA child workflow.\n\n"
-            "## Steps\n\n"
-            "### echo\n\nEcho a value.\n\n"
-            "- type: shell\n"
-            "- command: echo shared_works\n",
-            encoding="utf-8",
-        )
-
-        parent_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "child-wf",
-                    "type": "workflow",
-                    "params": {"workflow": str(child_md), "storage_mode": "shared"},
-                },
-            ],
-            "edges": [],
-        }
-
-        parent_collector = WorkflowTraceCollector("parent")
-        registry = Registry()
-        workflow = compile_workflow(ir_json=parent_ir, registry=registry)
-        shared: dict[str, Any] = {"__trace_collector__": parent_collector}
-        shared.update(workflow.resolved_defaults)
-
-        engine = WorkflowEngine(trace_collector=parent_collector)
-        engine.run(workflow, shared)
-
-        # After the run, parent's collector must be back in shared — the
-        # child engine's save/restore must have reinstated it. Identity check
-        # (`is`) catches any case where save/restore returned an equal-but-
-        # different object (e.g. a copy).
-        assert shared["__trace_collector__"] is parent_collector
-
 
 class TestParallelBatchSubWorkflowTrace:
     """Parallel batch where each item is a sub-workflow containing an LLM.

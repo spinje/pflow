@@ -7,7 +7,7 @@ API:
   - workflow: file path or saved name (the only sub-workflow reference mechanism)
   - inputs: dict of values to pass to the child's declared inputs
   - Child outputs auto-exposed via namespace
-  - Storage modes: "mapped" (default) and "shared" only
+  - Storage mode: "mapped" (default, isolated) — the only supported mode
 """
 
 from pathlib import Path
@@ -149,7 +149,6 @@ class TestWorkflowExecutorIntegration:
                     "parameters": [
                         {"key": "workflow", "type": "string", "required": False},
                         {"key": "inputs", "type": "dict", "required": False},
-                        {"key": "storage_mode", "type": "string", "required": False},
                         {"key": "max_depth", "type": "integer", "required": False},
                         {"key": "error_action", "type": "string", "required": False},
                     ],
@@ -324,14 +323,14 @@ class TestWorkflowExecutorIntegration:
             assert failure is not None
             assert "Child failed" in str(failure.get("error"))
 
-    def test_storage_mapped_isolation(self, simple_workflow_ir, mock_registry, tmp_path):
-        """When storage_mode is 'mapped' (default), child does not see parent data.
+    def test_child_storage_isolation(self, simple_workflow_ir, mock_registry, tmp_path):
+        """The child storage is always isolated — the child does not see parent data.
 
-        The child storage starts with only the mapped child inputs and internal
+        The child storage starts with only its declared inputs and internal
         _pflow_ keys. Parent-level data like 'parent_data' is invisible.
         """
         simple_workflow_ir = {**simple_workflow_ir, "inputs": {"test_input": {"type": "string"}}}
-        child_path = _write_child(tmp_path, simple_workflow_ir, "mapped_child")
+        child_path = _write_child(tmp_path, simple_workflow_ir, "isolated_child")
         parent_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -340,7 +339,6 @@ class TestWorkflowExecutorIntegration:
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow": str(child_path),
-                        "storage_mode": "mapped",
                         "inputs": {"test_input": "child_sees_this"},
                     },
                 }

@@ -1175,7 +1175,7 @@ class TestUndeclaredExtras:
         """Unknown top-level field on a workflow node is rejected by Step 7.
 
         The workflow node's ALLOWED_PARAMS is {workflow, inputs, error_action,
-        storage_mode, max_depth}. Anything else at the top level → parse error
+        max_depth}. Anything else at the top level → parse error
         with a "did you mean" suggestion, same as every other node type.
         """
         child = tmp_path / "child.pflow.md"
@@ -1215,6 +1215,42 @@ class TestUndeclaredExtras:
         available = first.context.get("available_fields", [])
         assert "inputs" in available and "workflow" in available, (
             f"ALLOWED_PARAMS should surface as available_fields, got: {available}"
+        )
+
+    def test_storage_mode_param_rejected(self, tmp_path: Path) -> None:
+        """`storage_mode` was removed (issues #254/#231) — it is no longer in
+        ALLOWED_PARAMS, so any `storage_mode:` on a workflow node is rejected as an
+        unknown top-level param. This is the #254/#231 regression guard: the buggy
+        `shared` value can never reach the runtime, which always isolates the child.
+        """
+        child = tmp_path / "child.pflow.md"
+        self._child_with_inputs(child, "a")
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {
+                        "workflow": str(child),
+                        "inputs": {"a": "hello"},
+                        "storage_mode": "shared",
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        errors, _ = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            skip_node_types=True,
+        )
+
+        assert any("Unknown parameter" in e.message and "storage_mode" in e.message for e in errors), (
+            f"Expected 'Unknown parameter' rejection for storage_mode, got: {[e.message for e in errors]}"
         )
 
     def test_workflow_extras_in_inputs_rejected(self, tmp_path: Path) -> None:

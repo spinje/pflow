@@ -130,7 +130,6 @@ class TestWorkflowExecutor:
 
         node.set_params({
             "workflow": str(child_file),
-            "storage_mode": "mapped",
             "max_depth": 5,
             "error_action": "fail",
             "inputs": {"user_param": "should_pass"},
@@ -142,12 +141,14 @@ class TestWorkflowExecutor:
         assert "user_param" in prep_res["child_params"]
         assert prep_res["child_params"]["user_param"] == "should_pass"
         assert "workflow" not in prep_res["child_params"]
-        assert "storage_mode" not in prep_res["child_params"]
         assert "max_depth" not in prep_res["child_params"]
         assert "error_action" not in prep_res["child_params"]
 
-    def test_storage_modes(self):
-        """Test mapped and shared storage isolation modes."""
+    def test_create_child_storage_isolates(self):
+        """The child store is always a fresh, isolated dict — never aliased to the parent.
+
+        (A former `storage_mode: shared` aliased it to the parent and leaked child
+        failures/depth in — removed, issues #254/#231. There is no storage_mode arg.)"""
         node = WorkflowExecutor()
         parent_shared = {"parent_data": "value", "_pflow_internal": "reserved"}
 
@@ -158,22 +159,14 @@ class TestWorkflowExecutor:
             "workflow_path": "test.json",
         }
 
-        # Test mapped mode — child gets only child_params (plus pflow internals)
-        storage = node._create_child_storage(parent_shared, "mapped", prep_res)
+        storage = node._create_child_storage(parent_shared, prep_res)
         assert storage["param"] == "value"
-        assert "parent_data" not in storage
+        assert "parent_data" not in storage  # isolated — does not see parent keys
+        assert storage is not parent_shared
         # Execution context is always injected
         assert storage["_pflow_depth"] == 1
         assert storage["_pflow_stack"] == ["test.json"]
         assert storage["_pflow_workflow_file"] == "test.json"
-
-        # Test shared mode — child gets the exact same reference as parent
-        storage = node._create_child_storage(parent_shared, "shared", prep_res)
-        assert storage is parent_shared  # Same reference
-
-        # Test invalid mode — should raise ValueError
-        with pytest.raises(ValueError, match="Invalid storage_mode"):
-            node._create_child_storage(parent_shared, "isolated", prep_res)
 
     def test_prep_preserves_child_parser_warnings_when_input_validation_fails(
         self,
@@ -229,7 +222,6 @@ class TestExecErrorActionDetection:
         self,
         workflow_path: str = "child.pflow.md",
         child_params: dict | None = None,
-        storage_mode: str = "mapped",
     ) -> dict:
         """Build a minimal prep_res dict for exec()."""
         return {
@@ -237,7 +229,6 @@ class TestExecErrorActionDetection:
             "workflow_path": workflow_path,
             "workflow_source": "ref:child.pflow.md",
             "child_params": child_params or {},
-            "storage_mode": storage_mode,
             "current_depth": 0,
             "execution_stack": [],
             "parent_shared": {},

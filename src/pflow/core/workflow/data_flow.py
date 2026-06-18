@@ -552,9 +552,10 @@ def _validate_loop_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
       root, so the self-reference never resolves and the loop would silently run a
       single pass. Reject up front rather than letting it surface as a confusing
       generic "no valid source".
-    - **`loop:` + `storage_mode: shared`** — shared storage writes the child's
-      output (and the engine's `__iteration__` / `__execution__` keys) straight to
-      the parent root, so loop re-entry would collide.
+
+    (The former `storage_mode: shared` combo no longer needs a check here — the
+    whole `storage_mode` param was removed, so any value is now an unknown param
+    caught by the validator's unknown-param step. See issues #254/#231.)
     """
     # Deferred import: the literal-cap check below compares against the live,
     # env-overridable MAX_NODE_VISITS module attribute (so a test monkeypatching it
@@ -571,9 +572,6 @@ def _validate_loop_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         node_id = node.get("id")
         if not namespacing_on:
             diagnostics.append(_make_loop_namespacing_diagnostic(node_id))
-        params = node.get("params")
-        if isinstance(params, dict) and params.get("storage_mode") == "shared":
-            diagnostics.append(_make_loop_shared_storage_diagnostic(node_id))
         # batch + loop are mutually exclusive. The compiler enforces this fail-fast in
         # _build_loop_config, but that only runs on the run path — duplicate it here so
         # `pflow save` / --validate-only (which never compile) catch it too.
@@ -648,26 +646,6 @@ def _make_loop_namespacing_diagnostic(node_id: Optional[str]) -> Diagnostic:
             "iteration with a manual backward-edge worker/checker pair instead of `loop:`.",
         ],
         context={"category": "validation", "path": f"nodes[id={node_id}].loop"},
-    )
-
-
-def _make_loop_shared_storage_diagnostic(node_id: Optional[str]) -> Diagnostic:
-    """Reject the unsupported ``loop:`` + ``storage_mode: shared`` combination (issue #445)."""
-    return Diagnostic(
-        severity=Severity.ERROR,
-        source="validator",
-        title="Validation Error",
-        node_id=node_id,
-        message=(
-            f"Node '{node_id}' combines `loop:` with `storage_mode: shared`, which is not supported. "
-            f"Shared storage writes the child's output and pflow's loop bookkeeping to the parent root, "
-            f"so re-entry collides."
-        ),
-        suggestions=[
-            "Remove `storage_mode: shared` (the default `mapped` mode isolates the child's storage), "
-            "or drop the `loop:` block and express iteration in the parent.",
-        ],
-        context={"category": "validation", "path": f"nodes[id={node_id}].params.storage_mode"},
     )
 
 
