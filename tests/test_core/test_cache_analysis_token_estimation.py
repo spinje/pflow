@@ -15,6 +15,7 @@ from pflow.core.prompt_cache_analysis.token_estimation import (
     tokenize_prompt_region,
     tokenize_prompt_region_lower_bound,
 )
+from pflow.core.trace_io import load_trace_file
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -180,7 +181,6 @@ def test_tier_1_trace_works_with_real_collector_round_trip(tmp_path: Any, monkey
     ``tests/CLAUDE.md``: every consumer that walks production data structures
     needs at least one test that drives a real producer end-to-end.
     """
-    import json
 
     from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
@@ -206,7 +206,7 @@ def test_tier_1_trace_works_with_real_collector_round_trip(tmp_path: Any, monkey
     )
 
     saved_path = collector.save_to_file()
-    trace_data = json.loads(saved_path.read_text())
+    trace_data = load_trace_file(saved_path)
 
     # Sanity: the collector wrote the events under the canonical "nodes" key.
     assert "nodes" in trace_data, "Producer contract drifted — events key changed"

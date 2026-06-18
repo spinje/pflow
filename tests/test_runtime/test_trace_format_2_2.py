@@ -11,11 +11,11 @@ with provider-specific ``cache_control`` markers). Tests pin:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
+from pflow.core.trace_io import load_trace_file
 from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION, WorkflowTraceCollector
 
 pytestmark = pytest.mark.trace_files
@@ -33,7 +33,7 @@ def test_saved_trace_records_format_version(tmp_path, monkeypatch) -> None:
     collector = WorkflowTraceCollector(workflow_name="t", workflow_path=None)
 
     trace_path = collector.save_to_file()
-    trace_data = json.loads(trace_path.read_text())
+    trace_data = load_trace_file(trace_path)
 
     assert trace_data["format_version"] == TRACE_FORMAT_VERSION
 
@@ -135,6 +135,6 @@ def test_2_2_0_llm_system_serializes_through_save_roundtrip(tmp_path, monkeypatc
     )
 
     trace_path = collector.save_to_file()
-    saved = json.loads(trace_path.read_text())
+    saved = load_trace_file(trace_path)
     saved_event = saved["nodes"][0]
     assert saved_event["llm_system"] == system_blocks

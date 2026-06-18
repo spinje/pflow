@@ -8,6 +8,7 @@ import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.core.trace_io import load_trace_file
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -1301,7 +1302,9 @@ def test_loop_recovery_trace_reports_success_end_to_end(tmp_path):
     assert result.trace is not None, "trace collector must exist under default RunnerConfig"
     with patch("pathlib.Path.home", return_value=tmp_path):
         trace_path = result.trace.save_to_file()
-    trace_data = json.loads(trace_path.read_text())
+    # save_to_file now writes JSONL (Task 133 Phase C); load_trace_file reconstructs
+    # the identical nested dict the test previously got from a raw json.load.
+    trace_data = load_trace_file(trace_path)
 
     assert trace_data["final_status"] == "success"
     assert trace_data["failed_node_ids"] == []

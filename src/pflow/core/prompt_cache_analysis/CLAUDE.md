@@ -170,9 +170,12 @@ The analyzer reads trace fields written by the engine:
 | `event["cache_age_sec"]` | memo-hit instrumentation | trace report display |
 | `trace["workflow_path"]` | `WorkflowTraceCollector` | trace autoload/listing and cross-trace correlation |
 
-2.x traces remain readable when explicitly passed with `--from-trace`. Autoload
-is intentionally stricter and skips traces that do not match the current root
-workflow/model context.
+Traces are written as **JSONL** on disk (Task 133: a `meta` line + one line per event +
+`run.complete`/`blobs` trailers) and read through `pflow.core.trace_io.load_trace_file`, which
+reconstructs the nested dict described above — the field contract is unchanged. 2.x traces remain
+readable when explicitly passed with `--from-trace` (legacy single-object traces too, via dual-read).
+Autoload is intentionally stricter and skips traces that do not match the current root workflow/model
+context.
 
 ## Discrepancy Stage
 

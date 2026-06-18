@@ -241,6 +241,11 @@ rename (**not** an exporter — build only when a second real consumer appears):
 
 ## References
 
+- **Decision record (ADR):** `context/adr/0007-133-trace-cache-storage-separation.md` — stores stay
+  separate; per-run interning, not a global blob store; the NodeId identity-join contract.
+- **Execution-ready plan (the *how*):** `implementation/implementation-plan.md` — transport +
+  correlation now, span taxonomy deferred; phased A–D; spike resolutions (incl. the no-lock global
+  `seq` insight); open decisions.
 - **#382** — the now-work (honest model + per-run interning). The observed disk fix.
 - Full session reasoning + verified findings (with `file:line`): `starting-context/braindump-storage-architecture-session.md`
 - Root-cause measurement: Task 159 `BASELINE-AUDIT.md` L-8

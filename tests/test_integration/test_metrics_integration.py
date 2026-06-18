@@ -15,6 +15,7 @@ from click.testing import CliRunner
 
 from pflow.cli.main import main as cli
 from pflow.core.metrics import MetricsCollector
+from pflow.core.trace_io import load_trace_file
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 from tests.shared.markdown_utils import ir_to_markdown
 
@@ -326,7 +327,7 @@ class TestTraceGeneration:
                 assert len(trace_files) > 0  # Should have at least one trace file
 
                 # Verify trace content
-                trace_data = json.loads(trace_files[0].read_text())
+                trace_data = load_trace_file(trace_files[0])
                 assert "workflow_name" in trace_data  # Has a workflow name (default or specified)
                 assert "nodes" in trace_data  # Has nodes execution data
                 assert len(trace_data["nodes"]) >= 1  # At least one node executed
@@ -386,7 +387,7 @@ class TestTraceGeneration:
                 assert result.exit_code == 0
 
                 trace_files = list(debug_dir.glob("workflow-trace-*.json"))
-                trace_data = json.loads(trace_files[0].read_text())
+                trace_data = load_trace_file(trace_files[0])
 
                 # Find LLM node events
                 llm_events = [e for e in trace_data["nodes"] if "llm" in e["node_id"]]
@@ -656,7 +657,7 @@ class TestCLIFlags:
 
                 # Test 3: Verify trace file contents
                 latest_trace = max(trace_files, key=lambda p: p.stat().st_mtime)
-                trace_content = json.loads(latest_trace.read_text())
+                trace_content = load_trace_file(latest_trace)
 
                 # Verify expected fields in trace
                 assert "workflow_name" in trace_content, "Trace should have workflow_name"
