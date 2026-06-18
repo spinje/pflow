@@ -1219,3 +1219,59 @@ def test_output_shape_ships_on_the_contract_for_all_code_nodes() -> None:
     assert [k.name for k in by_id["gate"].output_shape.keys or []] == ["ok", "round"]
     assert by_id["a"].output_shape is None  # non-code kinds never ship a shape
     json.dumps(asdict(rf), default=str)
+
+
+def test_batched_node_suppresses_its_per_item_output_shape() -> None:
+    """A BATCHED node's real output is the 6-key batch aggregate ({results,
+    count, ...} — batch_executor.build_batch_output), NOT its per-item
+    `result`/`response`, which lives inside each `results` element. Emitting the
+    per-item shape names a top-level port that does not exist (`${node.response}`
+    would not resolve). The contract ships output_shape=None for ANY batched node
+    (code/llm/claude-code); the guard is specific to batch — an un-batched
+    sibling keeps its authored shape. Also pins the OTHER half: a real
+    `${node.results}` read still forms a data-flow edge, so suppression removes
+    the wrong row without hiding the batched node's true output."""
+    schema = {"type": "object", "properties": {"verdict": {"type": "string"}}}
+    transform_code = 'text: str\nresult: dict = {"upper": text.upper()}\n'
+    batch = {"items": "${prep.rows}", "as": "item"}
+    graph = build_graph({
+        "nodes": [
+            {"id": "prep", "type": "code"},
+            {"id": "fan-code", "type": "code", "params": {"code": transform_code}, "batch": batch},
+            {"id": "fan-llm", "type": "llm", "params": {"prompt": "${item}", "output_schema": schema}, "batch": batch},
+            {
+                "id": "fan-agent",
+                "type": "claude-code",
+                "params": {"prompt": "${item}", "output_schema": schema},
+                "batch": batch,
+            },
+            {"id": "solo", "type": "llm", "params": {"prompt": "${fan-llm.results}", "output_schema": schema}},
+        ],
+        "edges": [
+            {"from": "prep", "to": "fan-code"},
+            {"from": "fan-code", "to": "fan-llm"},
+            {"from": "fan-llm", "to": "fan-agent"},
+            {"from": "fan-agent", "to": "solo"},
+        ],
+    })
+    rf = render_react_flow(graph)
+
+    by_id = {n.ref.node_id: n for n in rf.nodes}
+    # Every batched node suppresses its per-item shape (would otherwise ship
+    # keys / `response` — reverting the guard fails exactly these three)...
+    assert by_id["fan-code"].output_shape is None
+    assert by_id["fan-llm"].output_shape is None
+    assert by_id["fan-agent"].output_shape is None
+    # ...while the un-batched sibling keeps its authored `response` shape.
+    assert by_id["solo"].output_shape is not None
+    assert by_id["solo"].output_shape.field == "response"
+    # The OTHER half of the guarantee: suppressing the per-item shape must NOT
+    # hide the real output. `solo` reads `${fan-llm.results}` (the batched node's
+    # true aggregate field), so a data-flow edge carrying output_field="results"
+    # still forms — the frontend's observed-reads path then surfaces a truthful
+    # `results` row where the phantom `response` row used to be.
+    results_edges = [
+        e for e in rf.edges if e.kind == "data_flow" and e.source == by_id["fan-llm"].id and e.output_field == "results"
+    ]
+    assert len(results_edges) == 1
+    json.dumps(asdict(rf), default=str)

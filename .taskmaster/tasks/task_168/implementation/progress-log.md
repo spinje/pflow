@@ -4054,3 +4054,98 @@ All `layout.ts`; verified via the screenshot/inspect skill + 481 web tests.
   code-not-tealed, selected-ref-precedence, shiki-swap teal), `tsc` clean; real browser on
   `conditional-branching` + `test_llm_templates` (source pane) and `prompt-caching-multi-chunk`
   (the user's exact `summarize` panel — cached-prefix + prompt refs now teal).
+
+### Final deep-review (7-lens battery, Opus) + 4 fixes (2026-06-17) ✅
+
+The whole-branch final review (`main..HEAD`, 47 commits / 304 files / +48k), run because the
+existing `task-review.md` only covered Phases 1–5 (PR #496) while the entire visual/interaction
+layer — the bulk of the diff and ~all of a viewer's risk surface — had only per-arc reviews, never
+a consolidated one. Seven specialists, each TARGETED at the surface its dimension lives on:
+silent-failures, simplicity, feature-interactions, impact-completeness, test-fidelity,
+validation-consistency, agent-ux (concurrency-safety dropped — the registry torn-read root-fix and
+the live-reload poll were already the best-covered dimension). **Six came back clean** (a notable
+result for a 40-arc / two-agent / 10-day build): the cross-cutting rules are each one documented
+copy, the `${ref}` grammar agrees across all 5 mirrors, the bug-fix regressions are
+mutation-proven, no validator/runtime/contract drift, no dead scaffolding, the install hint is
+already `pflow-cli[ui]` everywhere (a stale-log pre-flag I had to retract after verification).
+
+**One real Warning + three Suggestions, all fixed and verified:**
+
+- **Batch × output-shape (Warning, CONFIRMED via the runtime aggregation code).** `_output_shape`
+  (react_flow.py) ran with no batch guard, so a batched `llm`/`code`/`claude-code` LEAF shipped its
+  PER-ITEM shape (`response`/`result`) as the node's output port — but a batched node's real output
+  is the 6-key aggregate `{results, count, success_count, error_count, errors, batch_metadata}`
+  (`batch_executor.build_batch_output`); the per-item field lives INSIDE each `results` element, so
+  `${node.response}` doesn't resolve. The card painted a quiet row naming a port that doesn't exist.
+  Misleading display only — no edge dropped (hence Warning), untested, and uncovered by the committed
+  fixtures (they batch only over sub-workflows, which have no `output_shape`). **Fix (contract-level,
+  fail-closed — "facts in Python, absent beats wrong"):** `_output_shape` returns `None` when
+  `node.batch is not None`. A real `${node.results}` read still surfaces a `results` row via the
+  observed-reads path, so this only removes the wrong row. + `test_batched_node_suppresses_its_per_item_output_shape`
+  (renderer test) — **mutation-verified** (guard disabled → `fan-code` ships `result:dict{upper}` →
+  test fails exactly there). Contract fixtures + Mermaid goldens unchanged (no committed fixture had
+  a batched leaf with a shape).
+- **Cache fixture not in the frontend lossless sweep (Suggestion).** `prompt-caching-multi-chunk.json`
+  was generated + drift-guarded but the generator's stated intent (enroll it in the RF→flow sweep)
+  never happened. Wired it into `lossless.test.ts` FIXTURES (now 11 tests, all green).
+- **`graph_service.resolve_validate_build` had only transitive coverage (Suggestion).** Added
+  `tests/test_execution/test_graph_service.py` — pins the success path (→ GraphModel) and both arms
+  of the WRAPPING failure regime (validation failure / unresolvable ref → `WorkflowGraphValidationError`
+  carrying diagnostics). The third regime (a build bug on validated IR propagates UNWRAPPED → 500) is
+  covered by `test_ui.py`'s loud-500 arm, not duplicated here.
+- **Stale `PROTOTYPE` label (Suggestion, cosmetic).** `layout.ts compactScopes` is permanent, wired,
+  and tested — dropped the misleading word (kept the real "TD only" scope).
+
+**Discovered while verifying — a PRE-EXISTING red web suite (5th fix, not from the review battery).**
+Running the FULL web suite (not just the touched file) surfaced **8 failing tests in
+`web/src/utils/sourceMap.test.ts`** — red on the committed branch, unrelated to any review finding.
+Root cause: commit `5c142c11` ("portable contract fixtures — repo-relative source paths
+[skip review]") rewrote the contract fixtures' `source.file` absolute → REPO_ROOT-relative (for
+CI/dev portability, `_generate.py` `_make_paths_repo_relative`) but never updated the test's four
+hardcoded ABSOLUTE `*_FILE` constants — and the `[skip review]` commit evidently didn't run the full
+web suite, so it shipped red. The progress log even predicted it ("sourceMap.test's absolute fixture
+paths break LOUDLY on fixture regen") but filed it "acceptable" — it wasn't. Fix: the four constants
+now mirror the portable fixture's relative paths (+ a do-not-restore-absolute comment). The fixture
+is the source of truth (drift-guarded); the test was stale. No production code — production
+`source.file` stays absolute (the server resolves real paths); only the portable test fixture is
+relative.
+
+**Gates (full suites, this session):** `make check` clean (ruff + mypy 236 files + deptry); **full
+`make test` = 7984 passed**; **full web `npx vitest run` = 500 passed** (39 files — after the
+sourceMap fix; was 8-red before); web `tsc` clean; Mermaid goldens byte-identical;
+contract-fixture drift guard green. The batch-guard fix was independently mutation-verified, and the
+"a `${node.results}` read still surfaces a `results` row" claim was empirically confirmed (the read
+forms a `output_field="results"` data-flow edge). Only production behavior change: the batched-node
+per-item output row is suppressed (no false port).
+
+**Honest residuals (NOT fixed — deliberate scope / awaiting a call):**
+- The batch fix is fail-closed (`output_shape=None`). The fuller behavior — surfacing the real 6-key
+  aggregate (`results: array`, `count: integer`, …) as the node's output shape — is a deferred
+  ENHANCEMENT, not built. Practical impact is small (a real `${node.results}` read still draws its
+  row); a batched node read by no one shows no output row (reads as "produces nothing" — better than
+  a false `response` row, not as good as the true aggregate).
+- `review-concurrency-safety` was the one lens NOT run in this battery (justified: the registry
+  torn-read root-fix and the live-reload poll already had dedicated adversarial + 3-agent reviews) —
+  a deliberate coverage choice, recorded.
+- `task-review.md` still covers only Phases 1–5 — a refresh to the full feature is offered, pending.
+
+**Highest-value finding — the 500 web tests gated NOTHING in CI (fixed).** The sourceMap red-suite
+wasn't bad luck: `main.yml` (PR CI) runs `make check` + the pytest matrix + mypy — all Python. The
+ENTIRE `web/` vitest suite (500 tests — incl. the HANDLE-TYPE invariant and the RF→flow lossless
+invariant, the guards for the silent-edge-drop class that "bit us twice") and the web `tsc` typecheck
+ran in NO CI job; `tsc` ran only at release (`make ui-build`). So the frontend — the bulk of the
+feature, and where the recurring bugs live — had zero PR gate; a green PR proved nothing about it.
+That is the literal "not passing the right thing": deep tests that never run. **Fix:** a `web` job in
+`main.yml` (node 22, `npm ci` → `npx tsc --noEmit` → `npx vitest run`) — verified CI-portable (vitest
+runs on `src`, no built bundle; no machine-absolute paths remain after the sourceMap fix; 500/500
+local green). Branch protection must be set to REQUIRE the `web` job (a repo setting, not YAML).
+
+**Batch test strengthened to pin BOTH halves.** `test_batched_node_suppresses_its_per_item_output_shape`
+now has `solo` read `${fan-llm.results}` and asserts a `output_field="results"` data-flow edge forms —
+so it pins the complete guarantee (wrong per-item row suppressed AND the real aggregate output still
+surfaces an edge), not just `output_shape=None`. Was previously an ad-hoc manual check; now locked.
+
+**Deliberately NOT added (would be coverage padding, not bug-catching):** more AST-classifier pins
+(already mutation-verified during the build), a frontend "no phantom row" test (the frontend has no
+batch-specific output-row path — a batched node is just an `output_shape=null` node, covered
+generically). The bar is bug-catching value, not coverage.

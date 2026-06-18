@@ -5,14 +5,15 @@ import type { RFGraph, RFNode } from "../types";
 import { breadcrumbFor, fileChainFor, nodeAtLine, nodeBlockRange, sectionBlockRange, sectionHeadingLine } from "./sourceMap";
 
 const deepResearch = deepResearchContract as RFGraph;
-const ROOT_FILE =
-  "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/deep-research.pflow.md";
-const ANALYZE_FILE =
-  "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/analyze-source.pflow.md";
-const SCORE_FILE =
-  "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/score-section.pflow.md";
-const REVIEW_FILE =
-  "/Users/andfal/projects/pflow-worktrees/feat-workflow-visualization-static-viewer/examples/nested/deep-research/review-aspect.pflow.md";
+// REPO-RELATIVE to match the PORTABLE committed fixture: the contract carries
+// absolute source paths, but _generate.py rewrites them REPO_ROOT-relative so a
+// fixture is identical across machines (CI /home/runner vs a dev clone). These
+// constants MUST mirror the fixture's `source.file` exactly — do NOT restore the
+// absolute form (a fixture regen flipped them relative and broke this file once).
+const ROOT_FILE = "examples/nested/deep-research/deep-research.pflow.md";
+const ANALYZE_FILE = "examples/nested/deep-research/analyze-source.pflow.md";
+const SCORE_FILE = "examples/nested/deep-research/score-section.pflow.md";
+const REVIEW_FILE = "examples/nested/deep-research/review-aspect.pflow.md";
 
 function ids(nodes: RFNode[]): string[] {
   return nodes.map((node) => node.id);

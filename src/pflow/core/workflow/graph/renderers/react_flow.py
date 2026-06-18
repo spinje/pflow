@@ -259,6 +259,17 @@ class _ReactFlowRenderer:
         return _is_transform_code(code) if isinstance(code, str) else False
 
     def _output_shape(self, node: Node) -> RFOutputShape | None:
+        # A BATCHED node's output is NOT its per-item shape. The engine
+        # overwrites shared[node_id] with the 6-key batch aggregate
+        # ({results, count, success_count, error_count, errors, batch_metadata}
+        # — batch_executor.build_batch_output); the per-item `result`/`response`
+        # lives INSIDE each `results` element, never at the top level
+        # (`${node.response}` would not resolve). Emitting the per-item shape
+        # would name a port that does not exist. Fail closed (absent beats
+        # wrong) — a real `${node.results}` read still surfaces a `results` row
+        # via the observed-reads path.
+        if node.batch is not None:
+            return None
         if node.kind == "code":
             code = node.params.get("code")
             return _result_shape_from_code(code) if isinstance(code, str) else None

@@ -414,7 +414,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
   return compactScopes(alignSpine(positioned, edges, direction), direction);
 }
 
-/** PROTOTYPE (TD only) — de-center expanded regions.
+/** De-center expanded regions (TD only).
  *
  *  ELK cannot put a fixed port on a compound node (the INCLUDE_CHILDREN crash, see
  *  above), so it anchors an expanded region's trunk edge at the region's box CENTER,
@@ -432,7 +432,7 @@ export async function layoutGraph(nodes: FlowNode[], edges: FlowEdge[], directio
  *  padding. The shift is UNIFORM per scope, so alignSpine's straightening is preserved;
  *  IO sidebar rows render via CSS (not child nodes), so they stay pinned at the border. */
 function compactScopes(nodes: FlowNode[], direction: Direction): FlowNode[] {
-  if (direction !== "TD") return nodes; // prototype: TD (the screenshot case) only
+  if (direction !== "TD") return nodes; // TD (the screenshot case) only
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const childrenByParent = new Map<string, FlowNode[]>();
   for (const n of nodes) {

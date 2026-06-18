@@ -27,6 +27,7 @@ import { collapsibleGroupIds } from "./collapse";
 import type { EdgeKind, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
 import conditionalBranchingContract from "../test/fixtures/contracts/conditional-branching.json";
 import deepResearchContract from "../test/fixtures/contracts/deep-research.json";
+import promptCachingContract from "../test/fixtures/contracts/prompt-caching-multi-chunk.json";
 import runCycleContract from "../test/fixtures/contracts/run-cycle.json";
 
 // ---- fixture factories (minimal mirrors of flow.test.ts's) ---------------
@@ -289,6 +290,7 @@ describe("losslessness — REAL contracts (committed renderer output)", () => {
     ["conditional-branching", conditionalBranchingContract],
     ["run-cycle", runCycleContract],
     ["deep-research", deepResearchContract],
+    ["prompt-caching-multi-chunk", promptCachingContract],
   ];
   for (const [name, contract] of FIXTURES) {
     sweep(name, contract as RFGraph);
