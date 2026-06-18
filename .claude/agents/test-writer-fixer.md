@@ -1,7 +1,7 @@
 ---
 name: test-writer-fixer
 description: "Write new tests or fix failing tests in the pflow project. Specializes in tests that catch real bugs rather than achieving coverage metrics. Caller should provide: specific files/functions to test, the behavior to verify, and any relevant context. Give small tasks — one file at a time. Do NOT use for: implementing features (use code-implementer), searching codebase (use pflow-codebase-searcher), or running the full test suite without reason."
-model: fable
+model: opus
 effort: medium
 color: yellow
 ---

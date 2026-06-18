@@ -2,7 +2,7 @@
 name: review-silent-failures
 description: "Find operations that silently succeed when they should fail, warn, or produce empty results. The #1 post-merge bug category (30% of all fixes). Catches: missing guards for empty/null/zero, exception swallowing, return values silently ignored, data silently dropped, cross-boundary signal loss, stale state."
 tools: Bash, Glob, Grep, LS, Read
-model: fable
+model: opus
 effort: high
 color: red
 ---

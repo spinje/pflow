@@ -2,7 +2,7 @@
 name: review-test-fidelity
 description: "Check that tests actually test the right thing — correct assertions, production-matching fixtures, behavior not implementation. Catches: tests encoding wrong behavior, fixtures with wrong data shapes, comparisons that aren't assertions, tests testing implementation details, test bloat, missing regression tests for bug fixes."
 tools: Bash, Glob, Grep, LS, Read
-model: fable
+model: opus
 effort: medium
 color: red
 ---

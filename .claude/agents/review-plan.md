@@ -2,7 +2,7 @@
 name: review-plan
 description: "Review implementation plans for structural integrity before coding begins. Catches: unverified assumptions, missing phases, wrong approach, ambiguous instructions, incomplete code path coverage, missing verification strategy. Run BEFORE implementation to catch plan-level errors that cost hours to fix later."
 tools: Bash, Glob, Grep, LS, Read
-model: fable
+model: opus
 effort: medium
 color: red
 ---

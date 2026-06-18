@@ -2,7 +2,7 @@
 name: review-simplicity
 description: "Judge whether the FINAL integrated code is as simple as it should be — the dimension a correctness reviewer misses. Catches: emergent duplication across separately-implemented segments, interfaces grown more complex than their use warrants, dead scaffolding, premature abstraction, cross-segment inconsistency, and accidental complexity that survived because each piece looked fine in isolation."
 tools: Bash, Glob, Grep, LS, Read
-model: fable
+model: opus
 effort: medium
 color: cyan
 ---
