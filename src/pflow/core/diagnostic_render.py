@@ -147,6 +147,11 @@ def _format_error_diagnostic(
     # can grep on the id without parsing JSON. Diagnostics without an ``id``
     # (every pflow diagnostic pre-Task-159) render unchanged.
     title = diagnostic.title or CATEGORY_TITLES.get(context.get("category", ""), "Error")
+    # NOTE: `execution/formatters/batch_errors.py::_format_child_failure_lines`
+    # strips this title line by matching the "Error:"/"Warning:"/"Info:" prefix so
+    # a nested batch sub-workflow diagnostic doesn't double-render its title. If this
+    # prefix format changes (e.g. the numbered "Error N:" form leaks into that
+    # single-arg call site), update that consumer too.
     prefix = f"Error {error_number}" if error_number is not None else "Error"
     if diagnostic.id:
         lines.append(f"{prefix}: {title} [{diagnostic.id}]")

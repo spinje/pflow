@@ -1464,3 +1464,554 @@ def test_routing_failure_on_custom_action_propagates_to_trace():
         "did not literally start with 'error'. This was the GH #250 bug."
     )
     assert "custom_route" in (event.get("error") or "")
+
+
+# ===========================================================================
+# PR 1: failure-archival invariant across the sub-workflow boundary (#252 + #233)
+#
+# A failed sub-workflow must reach the parent's __failures__ with the child's
+# STRUCTURED per-node failure (category + data) and provenance, not a flattened
+# string — across the non-batch, batch, and nested boundaries — while never
+# leaking child node IDs into the parent's top-level __failures__ keys (#254).
+# ===========================================================================
+
+
+def _write_child_shell_fail(tmp_path, name="child.pflow.md", *, command='echo "boom" >&2; exit 7'):
+    """Write a child workflow whose single shell step always fails. Returns the path."""
+    path = tmp_path / name
+    path.write_text(
+        f"""\
+# Child
+
+A child workflow whose inner shell step always fails.
+
+## Steps
+
+### inner
+
+Run a shell command that always fails.
+
+- type: shell
+
+```shell command
+{command}
+```
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _subworkflow_node(child_path, *, node_id="sub", **extra):
+    node = {
+        "id": node_id,
+        "type": "workflow",
+        "purpose": "Delegate to a child workflow that fails.",
+        "params": {"workflow": str(child_path), **extra},
+    }
+    return node
+
+
+def test_subworkflow_shell_failure_propagates_structured_to_parent(tmp_path):
+    """#233 — a non-batch sub-workflow shell failure surfaces the child's structured
+    record (category, command, exit_code, stderr) at the parent, with provenance, and
+    NO child node ID leaks into the parent's top-level __failures__ (#254)."""
+    child = _write_child_shell_fail(tmp_path, command='echo "out"; echo "err" >&2; exit 1')
+    parent_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [_subworkflow_node(child)],
+        "start_node": "sub",
+    }
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    assert result.status == WorkflowStatus.FAILED
+    failures = result.shared_after.get("__failures__", {})
+    # The executor node is archived; the child's inner node is NOT a top-level key.
+    assert "sub" in failures
+    assert "inner" not in failures, "child node IDs must stay nested (no #254 regression)"
+
+    # Structured child failure carried in the executor's archived data.
+    child_failure = failures["sub"]["data"]["_pflow_child_failure"]
+    assert child_failure["failed_node"] == "inner"
+    assert child_failure["failures"]["inner"]["category"] == "shell_failure"
+
+    # The reconstructed diagnostic renders byte-identical to a top-level shell
+    # failure, wrapped with provenance.
+    assert len(result.errors) == 1
+    diag = result.errors[0]
+    assert diag.node_id == "inner"
+    assert diag.message.startswith("In step 'sub' sub-workflow:")
+    ctx = diag.context or {}
+    assert ctx.get("sub_workflow_step") == "sub"
+    assert ctx.get("shell_exit_code") == 1
+    assert "exit 1" in (ctx.get("shell_command") or "")
+    rendered = format_diagnostic(diag)
+    assert "In step 'sub' sub-workflow:" in rendered
+    assert "Shell details:" in rendered
+    assert "err" in rendered  # child stderr survives to the parent's rendered error
+    assert "__failures__" not in rendered  # no internal-vocabulary leak
+
+
+def test_subworkflow_failure_state_is_json_serializable(tmp_path):
+    """The carried bundle must be plain JSON (no Diagnostic/Exception objects) so it
+    survives the trace + MCP/JSON serialization paths (review W-b)."""
+    child = _write_child_shell_fail(tmp_path)
+    parent_ir = {"ir_version": "0.1.0", "nodes": [_subworkflow_node(child)], "start_node": "sub"}
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    failures = result.shared_after.get("__failures__", {})
+    dumped = json.dumps(failures)  # raises TypeError if a Diagnostic/Exception leaked
+    assert "_pflow_child_failure" in dumped
+    # Result diagnostics serialize cleanly too (no dataclass repr fallbacks).
+    diag_json = json.dumps([d.to_dict() for d in result.errors])
+    assert "Diagnostic(" not in diag_json
+
+
+def test_batch_subworkflow_shell_failure_carries_structured_per_item(tmp_path):
+    """#252 — a sub-workflow run as a batch item carries the child's structured
+    failure into the parent batch node's errors[], not just a flat string."""
+    child = _write_child_shell_fail(tmp_path)  # exit 7
+    parent_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fan",
+                "type": "workflow",
+                "purpose": "Run the failing child once per batch item.",
+                "params": {"workflow": str(child)},
+                "batch": {"items": ["a"], "as": "item"},
+            }
+        ],
+        "start_node": "fan",
+    }
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    assert result.status == WorkflowStatus.FAILED
+    failures = result.shared_after.get("__failures__", {})
+    assert "fan" in failures
+    assert "inner" not in failures  # no #254 regression through the batch path
+    errors = failures["fan"]["data"]["errors"]
+    assert len(errors) == 1
+    child_failure = errors[0]["child_failure"]
+    assert child_failure["failed_node"] == "inner"
+    inner = child_failure["failures"]["inner"]
+    assert inner["category"] == "shell_failure"
+    assert inner["data"]["exit_code"] == 7
+
+
+def test_parallel_batch_subworkflow_failures_attributed_per_item(tmp_path):
+    """Review W-c — in a PARALLEL batch, each item's child failure must be attributed
+    to its own item (the bundle is sourced from per-item-isolated __failures__, never
+    the reference-shared __warnings__)."""
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        """\
+# Child
+
+Echo the per-item message, then fail.
+
+## Inputs
+
+### msg
+
+The per-item message.
+
+- type: string
+
+## Steps
+
+### inner
+
+Echo the message and fail so the value is captured in the failure record.
+
+- type: shell
+
+```shell command
+echo "got:${msg}"; exit 3
+```
+""",
+        encoding="utf-8",
+    )
+    parent_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fan",
+                "type": "workflow",
+                "purpose": "Fan a failing child over distinguishable items in parallel.",
+                "params": {"workflow": str(child), "inputs": {"msg": "${item}"}},
+                "batch": {
+                    "items": ["alpha", "beta"],
+                    "as": "item",
+                    "error_handling": "continue",
+                    "parallel": True,
+                },
+            }
+        ],
+        "start_node": "fan",
+    }
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    failures = result.shared_after.get("__failures__", {})
+    errors = failures["fan"]["data"]["errors"]
+    assert len(errors) == 2
+    # Map each item's index → the stdout captured in ITS OWN child failure record.
+    by_item = {}
+    for err in errors:
+        cf = err["child_failure"]
+        stdout = cf["failures"]["inner"]["data"].get("stdout", "")
+        by_item[str(err["item"])] = stdout
+    assert "got:alpha" in by_item["alpha"], by_item
+    assert "got:beta" in by_item["beta"], by_item
+
+
+def test_nested_subworkflow_failure_chains_provenance(tmp_path):
+    """Nested >1 level — provenance chains outermost-first across depth, and the
+    reconstructed diagnostic names the deepest failing node."""
+    grandchild = _write_child_shell_fail(tmp_path, "grandchild.pflow.md", command="exit 1")
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        f"""\
+# Child
+
+A child whose only step is a deeper sub-workflow that fails.
+
+## Steps
+
+### subsub
+
+Delegate to the grandchild workflow.
+
+- type: workflow
+- workflow: {grandchild}
+""",
+        encoding="utf-8",
+    )
+    parent_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [_subworkflow_node(child, node_id="sub")],
+        "start_node": "sub",
+    }
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    assert result.status == WorkflowStatus.FAILED
+    assert len(result.errors) == 1
+    diag = result.errors[0]
+    # Outermost-first chain: parent step 'sub' wraps child step 'subsub' wraps inner.
+    assert diag.message.startswith("In step 'sub' sub-workflow: In step 'subsub' sub-workflow:")
+    assert diag.node_id == "inner"  # deepest failing node
+
+
+def test_subworkflow_error_action_continue_does_not_leak_child_failure(tmp_path):
+    """Review W-d — a custom non-error route (error_action: continue) is NOT archived
+    by step 17.5, so the child_failure bundle must NOT be written (it would linger in
+    the success namespace and leak as ${node.child_failure})."""
+    child = _write_child_shell_fail(tmp_path)
+    parent_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            _subworkflow_node(child, node_id="sub", error_action="continue"),
+            {
+                "id": "after",
+                "type": "shell",
+                "purpose": "Continue past the failed sub-workflow.",
+                "params": {"command": 'echo "after"'},
+            },
+        ],
+        "edges": [{"from": "sub", "to": "after", "action": "continue"}],
+        "start_node": "sub",
+    }
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    from pflow.runtime.workflow_executor import WorkflowExecutor
+
+    # The run continued past the handled failure (continue route, not archived).
+    assert "sub" not in result.shared_after.get("__failures__", {})
+    sub_namespace = result.shared_after.get("sub", {})
+    assert isinstance(sub_namespace, dict)
+    # The carry rides a reserved `_pflow_` key so it is filtered from agent-visible
+    # output and never exposed as a ${sub.child_failure} workflow output. Any key
+    # carrying the bundle in the (succeeded-via-continue) namespace must be
+    # non-exposable — never the plain `child_failure` key.
+    assert "child_failure" not in sub_namespace
+    for key in sub_namespace:
+        if "child_failure" in key:
+            assert not WorkflowExecutor.is_exposable_child_key(key, set()), (
+                f"child_failure carried on exposable key {key!r} would leak as a workflow output"
+            )
+
+
+def test_storage_mode_shared_skips_child_failure_bundle(tmp_path):
+    """Review W-a — storage_mode: shared aliases child storage to the parent, so the
+    carry is guarded off (bundling would be self-referential / #254 territory). No
+    failure record may carry a child_failure bundle in shared mode."""
+    child = _write_child_shell_fail(tmp_path, command="exit 1")
+    parent_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [_subworkflow_node(child, node_id="sub", storage_mode="shared")],
+        "start_node": "sub",
+    }
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    failures = result.shared_after.get("__failures__", {})
+    for record in failures.values():
+        data = record.get("data") or {}
+        assert "child_failure" not in data, "shared mode must not build a child_failure bundle"
+
+
+def test_child_template_diagnostic_survives_reconstruction():
+    """A strict-mode child template error carries its structured Diagnostic
+    (unresolved_references, peer suggestions) only on the child exception. Pin that it
+    round-trips through the bundle and reconstruction with provenance, fields intact."""
+    from pflow.execution.executor_service import build_subworkflow_diagnostics
+
+    template_diag = Diagnostic(
+        severity=Severity.ERROR,
+        source="runtime",
+        message="Template error: '${ghost.value}' could not be resolved",
+        node_id="inner",
+        context={
+            "category": "template_error",
+            "unresolved_references": [{"var": "ghost.value", "status": "absent"}],
+        },
+    )
+    bundle = {
+        "workflow_path": "./child.pflow.md",
+        "failed_node": "inner",
+        "failures": {"inner": {"data": {}, "category": "template_error", "error": "Template error"}},
+        "template_diagnostic": template_diag.to_dict(),
+    }
+
+    diags = build_subworkflow_diagnostics(bundle, "sub")
+
+    assert len(diags) == 1
+    d = diags[0]
+    assert d.message == "In step 'sub' sub-workflow: Template error: '${ghost.value}' could not be resolved"
+    assert d.node_id == "inner"
+    assert (d.context or {}).get("unresolved_references") == [{"var": "ghost.value", "status": "absent"}]
+    assert (d.context or {}).get("sub_workflow_step") == "sub"
+    assert (d.context or {}).get("sub_workflow_path") == "./child.pflow.md"
+
+
+def test_real_mcp_node_protocol_error_archived_as_mcp_failure():
+    """#253 end-to-end: a REAL MCPNode hitting a transport error flows through
+    exec_fallback → post → engine step 17.5 and is archived as mcp_failure, with
+    get_node_status reporting FAILED (never SUCCEEDED).
+
+    #491 fixed and tested the ROUTING with a BaseNode mock that mimics MCPNode.post();
+    this drives the real node through its own exec_fallback path — the integration gap
+    the issue flagged ("zero MCP integration tests for the failure archival path").
+    """
+    from unittest.mock import patch
+
+    from pflow.nodes.mcp.node import MCPNode
+    from pflow.runtime.engine import CompiledWorkflow, NodeConfig, WorkflowEngine
+    from pflow.runtime.node_state import NodeStatus, get_node_failure, get_node_status
+
+    node = MCPNode()
+    node.node_id = "call_tool"
+    node.set_params({"__mcp_server__": "demo", "__mcp_tool__": "do_thing"})
+
+    async def boom(_prep_res):
+        raise ConnectionError("connection refused")
+
+    configs = {
+        "call_tool": NodeConfig(
+            node_id="call_tool",
+            node_type_name="MCPNode",
+            template_config=None,
+            batch_config=None,
+            namespaced=True,
+            interface_metadata=None,
+        )
+    }
+    workflow = CompiledWorkflow(start_node=node, node_configs=configs)
+    shared: dict = {}
+
+    with (
+        patch.object(MCPNode, "_load_server_config", return_value={"command": "x"}),
+        patch.object(MCPNode, "_exec_async", side_effect=boom),
+    ):
+        result = WorkflowEngine().run(workflow, shared)
+
+    assert result == "error"
+    failure = get_node_failure(shared, "call_tool")
+    assert failure is not None
+    assert failure["category"] == "mcp_failure"
+    assert get_node_status(shared, "call_tool") == NodeStatus.FAILED
+
+
+@pytest.mark.trace_files
+def test_subworkflow_failure_trace_json_has_no_diagnostic_repr(tmp_path):
+    """Review W-b — the saved trace serializes via _sanitize_for_json + default=str
+    (no Diagnostic-aware converter). Assert the trace JSON for a failed sub-workflow
+    carries the structured child_failure as data, never a stringified 'Diagnostic('."""
+    child = _write_child_shell_fail(tmp_path, command='echo "boom" >&2; exit 1')
+    parent_ir = {"ir_version": "0.1.0", "nodes": [_subworkflow_node(child)], "start_node": "sub"}
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    assert result.trace is not None
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        trace_path = result.trace.save_to_file()
+    raw = trace_path.read_text()
+    assert "_pflow_child_failure" in raw, "structured child failure must reach the saved trace"
+    assert "Diagnostic(" not in raw, "no Diagnostic object may be stringified into the trace"
+
+
+def test_strict_template_error_in_child_surfaces_unresolved_references(tmp_path):
+    """Review W1 (test-fidelity) — a RUNTIME strict-mode template error inside a child
+    (a failed-node reference, which the validator can't catch statically) carries its
+    structured Diagnostic only on the child exception. Pin the full capture chain:
+    child raises → `_pflow_template_diagnostic` → bundle → reconstruction, so
+    `unresolved_references` survive to the parent with provenance."""
+    child = tmp_path / "tmpl-child.pflow.md"
+    child.write_text(
+        """\
+# Template Child
+
+A child where a recovered node references a failed node's output at runtime.
+
+## Steps
+
+### producer
+
+Fail by design so its output is unavailable at runtime.
+
+- type: shell
+- on-error: consumer
+
+```shell command
+exit 1
+```
+
+### consumer
+
+Reference the failed producer's stdout — unresolved at runtime in strict mode.
+
+- type: shell
+- next: end
+
+```shell command
+echo "${producer.stdout}"
+```
+""",
+        encoding="utf-8",
+    )
+    parent_ir = {"ir_version": "0.1.0", "nodes": [_subworkflow_node(child)], "start_node": "sub"}
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    assert result.status == WorkflowStatus.FAILED
+    # The strict-mode template Diagnostic was captured from the child exception.
+    cf = result.shared_after["__failures__"]["sub"]["data"]["_pflow_child_failure"]
+    assert "template_diagnostic" in cf
+    # ...and reconstructed with unresolved_references + provenance at the parent.
+    assert len(result.errors) == 1
+    diag = result.errors[0]
+    assert diag.message.startswith("In step 'sub' sub-workflow:")
+    ctx = diag.context or {}
+    assert ctx.get("category") == "template_error"
+    assert ctx.get("unresolved_references"), "structured per-reference detail must survive the boundary"
+    assert ctx.get("sub_workflow_step") == "sub"
+
+
+def test_jsonable_converts_diagnostic_and_exception():
+    """Review S1 — `_jsonable` is the serialization isolation boundary for the carry
+    bundle: it must convert Diagnostic → dict and Exception → str (recursively) so the
+    archived bundle never holds objects the trace / MCP-JSON serializers would drop."""
+    from pflow.runtime.workflow_executor import WorkflowExecutor
+
+    diag = Diagnostic(severity=Severity.ERROR, source="x", message="m", context={"k": "v"})
+    value = {"a": diag, "b": [ValueError("boom")], "c": {"nested": diag}, "plain": "s", "n": 7}
+
+    out = WorkflowExecutor._jsonable(value)
+
+    json.dumps(out)  # must not raise — proves no Diagnostic/Exception object survived
+    assert out["a"] == diag.to_dict()
+    assert out["b"][0] == "boom"
+    assert out["c"]["nested"] == diag.to_dict()
+    assert out["plain"] == "s"
+    assert out["n"] == 7
+
+
+def test_child_batch_failure_strips_raw_item_from_carried_bundle(tmp_path):
+    """Review (codex A) — when the failed child node is itself a batch, the carried
+    bundle must NOT expose raw child batch item inputs in the parent's archived data;
+    it honors the same display-safety compaction the top-level batch path applies."""
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        """\
+# Child
+
+Child whose batch step fails per item with sensitive inputs.
+
+## Steps
+
+### faninner
+
+Fail per item so the child batch archives raw item inputs.
+
+- type: shell
+- batch:
+    items: ["SENSITIVE-AAA", "SENSITIVE-BBB"]
+    as: it
+    error_handling: continue
+
+```shell command
+echo "${it}"; exit 1
+```
+""",
+        encoding="utf-8",
+    )
+    parent_ir = {"ir_version": "0.1.0", "nodes": [_subworkflow_node(child)], "start_node": "sub"}
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    bundle = result.shared_after["__failures__"]["sub"]["data"]["_pflow_child_failure"]
+    inner_errors = bundle["failures"]["faninner"]["data"]["errors"]
+    assert inner_errors
+    # The raw `item` input is stripped (replaced by the display-safe summary +
+    # has_full_item), exactly as the top-level batch compaction does — so raw child
+    # batch inputs don't ride into the parent's trace / JSON output.
+    assert "item" not in inner_errors[0], "raw child batch item leaked into the carried bundle"
+    assert inner_errors[0].get("has_full_item") is True
+    assert "item_summary" in inner_errors[0]
+    json.dumps(bundle)  # still JSON-serializable
+
+
+def test_batch_subworkflow_continue_route_still_carries_structured_failure(tmp_path):
+    """Review (codex C) — a batched sub-workflow with a non-error `error_action`
+    (e.g. `continue`) is still recorded as a failed item by the batch, so its
+    structured child failure must survive (not regress to a flat string)."""
+    child = _write_child_shell_fail(tmp_path, command='echo "x"; exit 5')
+    parent_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fan",
+                "type": "workflow",
+                "purpose": "Batch a continue-routed failing child once per item.",
+                "params": {"workflow": str(child), "error_action": "continue"},
+                "batch": {"items": ["a", "b"], "as": "item", "error_handling": "continue"},
+            }
+        ],
+        "start_node": "fan",
+    }
+
+    result = WorkflowRunner().run(parent_ir, {}, RunnerConfig(cache_enabled=False))
+
+    errors = result.shared_after["__failures__"]["fan"]["data"]["errors"]
+    assert len(errors) == 2
+    for err in errors:
+        cf = err.get("child_failure")
+        assert cf is not None, "continue-routed batch item must still carry structured child failure"
+        assert cf["failures"]["inner"]["category"] == "shell_failure"
+        assert cf["failures"]["inner"]["data"]["exit_code"] == 5

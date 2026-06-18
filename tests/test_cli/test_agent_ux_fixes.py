@@ -328,7 +328,7 @@ def test_extract_child_error_includes_node_id() -> None:
         error="Command failed with exit code 127",
     )
 
-    message = WorkflowExecutor._extract_child_error(child_storage, "./child.pflow.md")
+    message = WorkflowExecutor._extract_child_failure(child_storage, "./child.pflow.md")["error"]
 
     assert "my-shell-node" in message
     assert "Command failed with exit code 127" in message
@@ -341,7 +341,7 @@ def test_extract_child_error_fallback_without_failed_node() -> None:
         "__execution__": {},
     }
 
-    message = WorkflowExecutor._extract_child_error(child_storage, "./child.pflow.md")
+    message = WorkflowExecutor._extract_child_failure(child_storage, "./child.pflow.md")["error"]
 
     assert "./child.pflow.md" in message
     assert "returned error action" in message
@@ -357,7 +357,7 @@ def test_extract_child_error_fallback_no_error_in_node_data() -> None:
     }
     mark_node_failed(child_storage, "some-node", category=FAILURE_CATEGORY_EXCEPTION)
 
-    message = WorkflowExecutor._extract_child_error(child_storage, "./workflow.pflow.md")
+    message = WorkflowExecutor._extract_child_failure(child_storage, "./workflow.pflow.md")["error"]
 
     assert "returned error action" in message
 

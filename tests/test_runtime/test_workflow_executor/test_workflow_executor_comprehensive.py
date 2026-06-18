@@ -562,8 +562,13 @@ class TestWorkflowExecutorComprehensive:
         exec_res = node.exec(prep_res)
 
         assert exec_res["success"] is False
-        assert "Sub-workflow execution failed" in exec_res["error"]
+        # An exception-path child failure now surfaces the structured summary that
+        # names the failing child node (#233/#252), not a generic
+        # "Sub-workflow execution failed" string.
+        assert "node 'fail'" in exec_res["error"]
         assert "Execution failed as expected" in exec_res["error"]
+        # The structured child-failure bundle is carried forward (mapped mode).
+        assert exec_res["child_failure"]["failed_node"] == "fail"
 
     # --- Test 16: auto-outputs with declared outputs ---
 

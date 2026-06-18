@@ -352,15 +352,20 @@ class TestExecErrorActionDetection:
             category=FAILURE_CATEGORY_EXCEPTION,
             error="HTTP 503 Service Unavailable",
         )
-        msg = WorkflowExecutor._extract_child_error(child_storage, "deploy.pflow.md")
+        bundle = WorkflowExecutor._extract_child_failure(child_storage, "deploy.pflow.md")
+        msg = bundle["error"]
 
         assert "HTTP 503 Service Unavailable" in msg
         assert "deploy.pflow.md" in msg
+        # The bundle carries the child's structured failure forward (#233/#252):
+        # the failed-node pointer and its per-node failure record (with category).
+        assert bundle["failed_node"] == "api_call"
+        assert bundle["failures"]["api_call"]["category"] == FAILURE_CATEGORY_EXCEPTION
 
     def test_extract_child_error_without_failed_node(self):
         """When __execution__ has no failed_node, return generic fallback message."""
         child_storage: dict = {"__execution__": {}}
-        msg = WorkflowExecutor._extract_child_error(child_storage, "deploy.pflow.md")
+        msg = WorkflowExecutor._extract_child_failure(child_storage, "deploy.pflow.md")["error"]
 
         assert "returned error action" in msg
         assert "deploy.pflow.md" in msg
@@ -374,7 +379,7 @@ class TestExecErrorActionDetection:
             "step1": {"stdout": "some output", "exit_code": 1},
         }
         mark_node_failed(child_storage, "step1", category=FAILURE_CATEGORY_EXCEPTION)
-        msg = WorkflowExecutor._extract_child_error(child_storage, "build.pflow.md")
+        msg = WorkflowExecutor._extract_child_failure(child_storage, "build.pflow.md")["error"]
 
         assert "returned error action" in msg
         assert "build.pflow.md" in msg
@@ -394,7 +399,7 @@ class TestExecErrorActionDetection:
             category=FAILURE_CATEGORY_ROUTING,
             warning="Node 'router' returned action 'banana' but no successor edge matches.",
         )
-        msg = WorkflowExecutor._extract_child_error(child_storage, "child.pflow.md")
+        msg = WorkflowExecutor._extract_child_failure(child_storage, "child.pflow.md")["error"]
 
         assert "banana" in msg
         assert "no successor edge matches" in msg
@@ -419,7 +424,7 @@ class TestExecErrorActionDetection:
         }
         mark_node_failed(child_storage, "router", category=FAILURE_CATEGORY_ROUTING)
 
-        msg = WorkflowExecutor._extract_child_error(child_storage, "child.pflow.md")
+        msg = WorkflowExecutor._extract_child_failure(child_storage, "child.pflow.md")["error"]
 
         assert "router: declared cache did not fire" in msg
         assert "Diagnostic(" not in msg

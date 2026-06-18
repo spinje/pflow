@@ -395,33 +395,47 @@ class WorkflowExecutor(BaseNode):
 
             # Detect sub-workflow failure via action string
             if isinstance(result, str) and result.startswith("error"):
-                error_msg = self._extract_child_error(child_storage, workflow_path)
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "workflow_path": workflow_path,
-                    "child_storage": child_storage,
-                }
+                return self._child_failure_result(prep_res, child_storage, workflow_path)
 
             return {"success": True, "result": result, "child_storage": child_storage, "storage_mode": storage_mode}
         except Exception as e:
             if child_trace and child_trace.events:
                 self._child_trace_events = child_trace.events
-            return {
-                "success": False,
-                "error": f"Sub-workflow execution failed: {e!s}",
-                "workflow_path": workflow_path,
-                "child_storage": child_storage,
-            }
+            # A strict-mode template failure carries its structured Diagnostic
+            # (unresolved_references, peer suggestions) ONLY on the exception — it
+            # is never in child_storage — so capture it here for full fidelity.
+            return self._child_failure_result(
+                prep_res,
+                child_storage,
+                workflow_path,
+                template_diagnostic=getattr(e, "_pflow_template_diagnostic", None),
+                fallback_summary=f"Sub-workflow execution failed: {e!s}",
+            )
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Auto-expose child outputs and update parent storage."""
         if not exec_res.get("success", False):
+            # The summary already reads "Sub-workflow failed at <path> (node 'X'): ..."
+            # (or the exception text) — don't re-wrap it with "WorkflowExecutor failed
+            # at <path>:" which double-states the path and leaks the internal class
+            # name into agent-facing text.
             error_msg = exec_res.get("error", "Unknown error")
-            workflow_path = exec_res.get("workflow_path", "<unknown>")
-            shared["error"] = f"WorkflowExecutor failed at {workflow_path}: {error_msg}"
+            shared["error"] = error_msg
             error_action = self.params.get("error_action", "error")
-            return str(error_action) if error_action else "error"
+            action = str(error_action) if error_action else "error"
+            # Carry the child's structured failure forward so the execution layer can
+            # reconstruct rich diagnostics with provenance (#233/#252). The reserved
+            # `_pflow_` key is namespaced into shared[node_id] (→ archived to
+            # __failures__[node_id].data on an error route, where build_error_list
+            # reconstructs it) AND filtered from agent-visible output / never exposed
+            # as a child output — so it is written unconditionally without leaking.
+            # That unconditional write matters for a batched sub-workflow with a
+            # non-error `error_action` (e.g. `continue`): the batch still records the
+            # item as failed and must surface its structured child failure (#252).
+            child_failure = exec_res.get("child_failure")
+            if child_failure is not None:
+                shared["_pflow_child_failure"] = child_failure
+            return action
 
         self._expose_child_outputs(shared, prep_res, exec_res)
 
@@ -511,16 +525,103 @@ class WorkflowExecutor(BaseNode):
             if WorkflowExecutor.is_exposable_child_key(key, child_input_keys):
                 shared[key] = value
 
-    @staticmethod
-    def _extract_child_error(child_storage: dict[str, Any], workflow_path: str) -> str:
-        """Extract a meaningful error message from child storage after sub-workflow failure.
+    def _child_failure_result(
+        self,
+        prep_res: dict[str, Any],
+        child_storage: dict[str, Any],
+        workflow_path: str,
+        *,
+        template_diagnostic: Diagnostic | None = None,
+        fallback_summary: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the ``success=False`` exec_res for a child failure, carrying a structured bundle.
 
-        When a sub-workflow's Flow returns "error" action (not an exception), the actual
-        error message is namespaced under the failed node's ID in child_storage.
+        The ``child_failure`` bundle is built ONLY for ``storage_mode: mapped`` (the
+        default). In ``shared`` mode the child store *is* the parent store, so the
+        child's ``__failures__`` already live in the parent (issue #254 territory,
+        out of scope here) and bundling would be self-referential. The guard reads
+        ``prep_res`` (always present after prep) — ``exec_res`` lacks ``storage_mode``
+        on the failure path.
         """
+        bundle: dict[str, Any] | None = None
+        if prep_res.get("storage_mode") == "mapped":
+            bundle = self._extract_child_failure(child_storage, workflow_path, template_diagnostic=template_diagnostic)
+        # When a specific child node is identified, the structured summary (names the
+        # node + its real error) beats a generic exception string. Fall back to the
+        # exception text only when no node was archived (e.g. an engine-level error).
+        # Reuse the bundle's already-computed summary when present (mapped mode) so
+        # the summary isn't built twice.
+        failed_node = child_storage.get("__execution__", {}).get("failed_node")
+        if failed_node or fallback_summary is None:
+            summary = (
+                bundle["error"]
+                if bundle is not None
+                else self._summarize_child_failure(child_storage, workflow_path, failed_node)
+            )
+        else:
+            summary = fallback_summary
+        # Keep the bundle's reconstruction summary in sync with the chosen summary:
+        # build_error_list prefers the bundle over the parent failure record, so
+        # without this an exception with no archived child node (e.g. a child
+        # output-resolution failure) would surface the generic "returned error
+        # action" instead of the real exception text.
+        if bundle is not None:
+            bundle["error"] = summary
+        return {
+            "success": False,
+            "error": summary,
+            "child_failure": bundle,
+            "workflow_path": workflow_path,
+            "child_storage": child_storage,
+        }
+
+    @staticmethod
+    def _extract_child_failure(
+        child_storage: dict[str, Any],
+        workflow_path: str,
+        *,
+        template_diagnostic: Diagnostic | None = None,
+    ) -> dict[str, Any]:
+        """Capture a child sub-workflow's failure state as a JSON-able bundle.
+
+        Replaces the former string flattening (issues #233/#252). Carries exactly
+        what the execution-layer reconstructor reads: the child ``__failures__``
+        records (each with its per-node ``category`` + ``data``), the failed-node
+        pointer, a one-line summary, and — for a strict-mode template failure — the
+        rich Diagnostic that lives only on the child exception. Plain dicts only
+        (Diagnostics → ``to_dict``) so it survives trace + JSON serialization once
+        archived in ``__failures__[id].data``. Child node IDs stay nested inside the
+        bundle, never promoted to parent ``__failures__`` keys (no #254 regression).
+        Sourced from ``__failures__`` / node output — never ``__warnings__``, which is
+        reference-shared across parallel batch items and would mis-attribute.
+        """
+        failed_node = child_storage.get("__execution__", {}).get("failed_node")
+        failures = WorkflowExecutor._jsonable(child_storage.get("__failures__") or {})
+        # A failed child node that is itself a batch archives the full batch output,
+        # including each error record's RAW item input. Honor the same display-safety
+        # compaction the top-level batch path applies (compact_batch_error_detail) so
+        # raw child batch inputs don't leak into the parent's trace / JSON output.
+        # (Lazy import of a leaf formatter — no module-level deps, so no import cycle.)
+        from pflow.execution.formatters.batch_errors import compact_batch_output_value
+
+        for record in failures.values():
+            if isinstance(record, dict) and isinstance(record.get("data"), dict):
+                record["data"] = compact_batch_output_value(record["data"])
+        bundle: dict[str, Any] = {
+            "workflow_path": str(workflow_path),
+            "failed_node": failed_node,
+            "failures": failures,
+            "error": WorkflowExecutor._summarize_child_failure(child_storage, workflow_path, failed_node),
+        }
+        if template_diagnostic is not None:
+            bundle["template_diagnostic"] = template_diagnostic.to_dict()
+        return bundle
+
+    @staticmethod
+    def _summarize_child_failure(child_storage: dict[str, Any], workflow_path: str, failed_node: str | None) -> str:
+        """One-line human summary of a child failure (the legacy flat message, reused for shared["error"])."""
         from pflow.runtime.node_state import get_node_failure, get_node_output
 
-        failed_node = child_storage.get("__execution__", {}).get("failed_node")
         if failed_node:
             failure = get_node_failure(child_storage, failed_node)
             if failure and failure.get("error"):
@@ -535,6 +636,24 @@ class WorkflowExecutor(BaseNode):
                 message, _context = normalize_runtime_warning(warning)
                 return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {message}"
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
+
+    @staticmethod
+    def _jsonable(value: Any) -> Any:
+        """Deep-convert a value to JSON-serializable form for the carry bundle.
+
+        Converts any ``Diagnostic`` to its dict shape and stringifies stray
+        exceptions, so the archived bundle never holds objects that the trace or
+        MCP/JSON serializers would drop or coerce lossily.
+        """
+        if isinstance(value, Diagnostic):
+            return value.to_dict()
+        if isinstance(value, BaseException):
+            return str(value)
+        if isinstance(value, dict):
+            return {k: WorkflowExecutor._jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [WorkflowExecutor._jsonable(v) for v in value]
+        return value
 
     def _record_child_workflow_path(self, parent_shared: dict[str, Any], workflow_path: str) -> None:
         if not workflow_path or workflow_path == "<inline>":
