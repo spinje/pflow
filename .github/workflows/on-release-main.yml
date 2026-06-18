@@ -67,14 +67,27 @@ jobs:
       - name: Build UI bundle
         run: make ui-build
 
-      # Fail loudly if the bundle is missing rather than letting `uv build`
-      # silently ship an empty [ui] wheel (hatchling treats a zero-match
-      # `artifacts` glob as a no-op, so this is the only guard).
+      # Fast-fail before the build if `make ui-build` produced nothing (hatchling
+      # treats a zero-match `artifacts` glob as a silent no-op). The post-build
+      # check below is the real artifact-level guard.
       - name: Verify UI bundle is present
         run: test -f src/pflow/ui/static/index.html
 
       - name: Build package
         run: uv build
+
+      # `uv build` builds the wheel FROM the sdist, so the bundle ships only if
+      # BOTH hatch targets force-include it (pyproject [tool.hatch.build.targets.*]
+      # artifacts). Inspect the real published artifact — the source-tree check
+      # above cannot catch a wheel that built empty.
+      - name: Verify built wheel contains the UI bundle
+        run: |
+          wheel=$(ls dist/*.whl)
+          echo "Inspecting $wheel"
+          if ! unzip -l "$wheel" | grep -q 'pflow/ui/static/index.html'; then
+            echo "::error::Built wheel $wheel is missing the UI bundle (pflow/ui/static/) — the [ui] install would 404."
+            exit 1
+          fi
 
       - name: Publish package
         run: uv publish --trusted-publishing always

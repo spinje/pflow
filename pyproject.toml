@@ -98,6 +98,13 @@ exclude = [
     "tox.ini",
     "uv.lock",
 ]
+# The web UI bundle (src/pflow/ui/static/, Task 168) is gitignored, so hatchling
+# excludes it from the sdist by default. `uv build` and `make build` build the
+# wheel FROM the sdist, so the wheel-target force-include below is silently
+# dropped (the sdist had no bundle to copy) and the published [ui] wheel ships
+# EMPTY → `pflow ui` 503s. This line must mirror the wheel target's `artifacts`.
+# Pinned by tests/test_packaging.py + a post-build wheel check in release CI.
+artifacts = ["src/pflow/ui/static/**/*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pflow"]
@@ -105,7 +112,8 @@ packages = ["src/pflow"]
 # `make ui-build` at release time. Hatchling honors .gitignore by default, so
 # without this it would EXCLUDE src/pflow/ui/static/ from the wheel and ship an
 # empty [ui] bundle (`pflow ui` would 404 — plan §Review Hardening H1).
-# `artifacts` force-includes VCS-ignored build outputs.
+# `artifacts` force-includes VCS-ignored build outputs. MUST be mirrored on the
+# sdist target above — `uv build`/`make build` build the wheel from the sdist.
 artifacts = ["src/pflow/ui/static/**/*"]
 
 [tool.mypy]

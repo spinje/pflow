@@ -259,16 +259,22 @@ chips/groups/batches):
   `src/pflow/ui/static/`); `make build` depends on it so local wheels include the
   bundle.
 - **CRITICAL:** the release CI (`.github/workflows/on-release-main.yml`,
-  `uv build`) has **no Node step** by default. The publish job now runs
-  `actions/setup-node` + `make ui-build` **before** `uv build` (plus a guard that
-  fails if `static/index.html` is missing), or the `[ui]` wheel ships an **empty**
-  bundle and `pflow ui` 404s. Local `uv build` likewise needs `make ui-build` first.
-- **Load-bearing (the plan got this wrong):** `static/` is gitignored, and
+  `uv build`) has **no Node step** by default. The publish job runs
+  `actions/setup-node` + `make ui-build` **before** `uv build`, then guards at BOTH
+  ends — a pre-build source-tree check (`static/index.html` exists) AND a post-build
+  check that the *built wheel actually contains* `pflow/ui/static/index.html` — or
+  the `[ui]` wheel ships an **empty** bundle and `pflow ui` 503s. Local `uv build`
+  likewise needs `make ui-build` first.
+- **Load-bearing (the plan got this wrong twice):** `static/` is gitignored, and
   hatchling honors `.gitignore`, so `packages = ["src/pflow"]` alone EXCLUDES the
-  bundle from the wheel. `[tool.hatch.build.targets.wheel] artifacts =
-  ["src/pflow/ui/static/**/*"]` force-includes it — **do not remove it** or the
-  wheel ships empty. (The sdist still omits the bundle by design; end users install
-  the prebuilt wheel and never run Node.)
+  bundle. The `artifacts = ["src/pflow/ui/static/**/*"]` force-include ships it —
+  and it must sit on **BOTH** the `wheel` AND the `sdist` hatch targets. `uv build`
+  and `make build` build the wheel **from the sdist**, so a wheel-only force-include
+  is silently dropped (the sdist had no bundle to copy) → the published `[ui]` wheel
+  ships **empty** and `pflow ui` 503s. **Do not remove either line.** Pinned by
+  `tests/test_packaging.py`; the release workflow greps the built wheel as the
+  artifact-level guard. (The sdist now carries the bundle too — ~3 MB larger — so a
+  from-sdist install needs no Node.)
 
 ## Already verified — don't re-litigate
 

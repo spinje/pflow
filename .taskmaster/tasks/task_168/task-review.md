@@ -124,10 +124,14 @@ None — `pflow ui` runs **no workflows**; every request is read-only (resolve�
 ### Technical debt / deferred (deliberate)
 - `visualize`/`analyze-cache` NOT migrated to `graph_service` (the point of H11 was to keep `ui` from being a *third* literal copy, not to rewrite the existing two — avoids perturbing Mermaid goldens). Low-risk follow-up.
 - Frontend polish: **smart edge-router** (skip/loop edges overlap nodes in dense graphs — the biggest visual gap) and **gradient edges**, both deferred by the user.
-- The **sdist** omits the bundle by design (end users install the prebuilt wheel; never run Node).
+- ~~The **sdist** omits the bundle by design~~ **(CORRECTED 2026-06-18):** a clean-room
+  install proved this was a SHIP-BLOCKING BUG, not a deliberate tradeoff — `uv build`
+  (CI) and `make build` build the wheel *from the sdist*, so a bundle-less sdist yields
+  an EMPTY `[ui]` wheel and `pflow ui` 503s. The sdist now force-includes the bundle
+  too (both hatch targets). See Unexpected Discoveries #1.
 
 ## Unexpected Discoveries (the GOLD — non-obvious, cost-a-future-agent-hours)
-1. **Hatchling honors `.gitignore`.** `packages=` names a parent, but a gitignored child is still excluded. `artifacts` is the only mechanism to force-include a VCS-ignored build output. A zero-match `artifacts` glob is a silent no-op — the CI `test -f .../static/index.html` guard is the only thing that fails loudly.
+1. **Hatchling honors `.gitignore`.** `packages=` names a parent, but a gitignored child is still excluded. `artifacts` is the only mechanism to force-include a VCS-ignored build output. A zero-match `artifacts` glob is a silent no-op. **(EXTENDED 2026-06-18 — the deeper trap:)** `uv build` and `make build` build the wheel **from the sdist** ("Building wheel from source distribution"), so a wheel-target-only `artifacts` is silently dropped — the sdist never carried the bundle to copy forward, and the published `[ui]` wheel ships EMPTY. The force-include must be on **BOTH** the `sdist` and `wheel` targets. The original `test -f src/pflow/ui/static/index.html` guard checks the *source tree*, which passes green while the wheel ships empty — false confidence. Now pinned by `tests/test_packaging.py` (config invariant) + a post-build `unzip -l … | grep pflow/ui/static/index.html` guard in the release workflow (real artifact).
 2. **jsdom renders ZERO React Flow edge DOM** and logs no handle error. Any "no edge errors" assertion under jsdom is **theater** (it passes because no edges exist). Edge integrity MUST be a pure `flow.ts` test.
 3. **A handle id of the wrong *type* silently drops the edge** (a `sourceHandle` that's secretly target-type). This bit the build twice. `handles.ts` makes `handleType` authoritative; `flow.test.ts` asserts every `sourceHandle` is source-type / `targetHandle` is target-type. **[verified end-to-end: 37 contract edges == 37 DOM edges in a real browser]**
 4. **Body-to-body data flow only forms via workflow `inputs`, sub-workflow input bindings, or output `source:`** — NOT an arbitrary `${node.field}` in a regular leaf param (that draws no DATA_FLOW edge). Critical when reasoning about which `${ref}` becomes a chip/line.

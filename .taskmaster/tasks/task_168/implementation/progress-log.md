@@ -496,6 +496,15 @@ bundle fails LOUDLY instead of `uv build` silently shipping empty (hatchling tre
 no-op — the only guard is this assertion + CI ordering); (W2) corrected the stale `ui/CLAUDE.md` line that still claimed
 "no wheel-config change needed" — it now documents that `artifacts` is load-bearing and must not be removed.
 
+> **CORRECTION (2026-06-18) — the packaging was NOT actually handled; this paragraph was wrong.** A clean-room
+> install (build wheel → install into an isolated venv → run `pflow ui` from outside the repo) proved the released
+> `[ui]` wheel ships an EMPTY bundle. `uv build` (CI) and `make build` build the wheel **from the sdist**, and the
+> `artifacts` force-include lived ONLY on the wheel target — so the gitignored bundle was dropped at the sdist step
+> and never reached the wheel. The W1 `test -f src/pflow/ui/static/index.html` guard checks the **source tree**, so it
+> passes green while the wheel ships empty — it does NOT make `uv build` "fail loudly." Fix: force-include the bundle
+> on the **sdist** target too (`pyproject.toml`), a post-build `unzip … | grep` wheel check in release CI, and
+> `tests/test_packaging.py` pinning both targets. See `task-review.md` Unexpected Discoveries #1.
+
 **Simplicity:** consolidated the whitespace-collapse/truncate logic duplicated in `DetailedNode` into the shared
 `utils/format` (`collapseWhitespace`/`truncate`) — the one real cross-file duplication. Reviewer otherwise judged the
 `flow.ts` transform, the node-component split, and the abstractions all earned (pass the deletion test).
