@@ -5,10 +5,8 @@ contract (the Task 155 GraphModel → `render_react_flow`) plus the built fronte
 bundle. It runs **no workflows** — every request is read-only: resolve →
 validate → `build_graph` → `render_react_flow`.
 
-**Phase status (Task 168):** Phase 3 (this server + the `pflow ui` command +
-the `[ui]` extra) is DONE. **Phase 4 builds the `web/` frontend that consumes
-this server** — start from the contract below, not from scratch. The deeper
-*why* is `task-168.md` + the plan (`implementation/implementation-plan.md`).
+The frontend that consumes this server lives in `web/` (its own CLAUDE.md
+suite). The design *why* is `task-168.md` + `ADR-0005`.
 
 ## Files
 
@@ -16,15 +14,15 @@ this server** — start from the contract below, not from scratch. The deeper
 src/pflow/ui/
 ├── __init__.py     # package marker (docstring only)
 ├── server.py       # the Starlette app: create_app(), endpoints, static mount
-└── static/         # built frontend bundle — GITIGNORED, built by `make ui-build`
-                    #   (Phase 4), served at "/". Absent in a source checkout.
+└── static/         # built frontend bundle — GITIGNORED, built by `make ui-build`,
+                    #   served at "/". Absent in a source checkout.
 ```
 
 The command lives in `cli/commands/ui.py`; the contract translator + dataclasses
 live in `core/workflow/graph/renderers/react_flow.py`; the shared resolve→
 validate→build helper is `execution/graph_service.py`.
 
-## The HTTP contract (this is what the Phase 4 frontend codes against)
+## The HTTP contract (what the frontend codes against)
 
 `web/src/api/client.ts` is the single data-loading seam. Endpoints:
 
@@ -33,7 +31,7 @@ validate→build helper is `execution/graph_service.py`.
 `path` is the absolute entry-point `.pflow.md`. Pass **either** `name` or `path`
 to `/api/graph` (both resolve). Unparseable saved workflows are silently
 omitted (inherited from `WorkflowManager.list_all()`, parity with `pflow list`);
-surfacing a `skipped[]` field is an open Phase-4 product choice.
+surfacing a `skipped[]` field is an open product choice.
 
 ### `GET /api/graph?workflow=<name|path>`
 The React Flow contract as JSON (`json.dumps(asdict(render_react_flow(...)),
@@ -96,29 +94,33 @@ file tracks only the entry file's mtime until it parses again (recovery still fi
 fixing save).
 
 ### Static bundle (`/` + assets)
-Build the SPA into `src/pflow/ui/static/` (Vite `build.outDir = "../src/pflow/ui/static"`)
-with `base = "./"` (relative asset paths so it serves from `/`). The server
-mounts it via `StaticFiles(html=True)` **only when `static/index.html` exists**;
-otherwise non-API paths return `503` with a "run `make ui-build`" hint (dev
-convenience — not an error).
+The SPA builds into `src/pflow/ui/static/` (Vite `build.outDir`, `base = "./"`
+so relative asset paths serve from `/`). The server mounts it via
+`StaticFiles(html=True)` **only when `static/index.html` exists**; otherwise
+non-API paths return `503` with a "run `make ui-build`" hint (dev convenience —
+not an error). `index.html` is served `Cache-Control: no-cache` (the
+`_BundleFiles` subclass) so a rebuild's new asset hashes can't be defeated by a
+heuristically-cached stale entry; the content-hashed assets stay cacheable.
 
 > **SPA routing caveat (verified).** `StaticFiles(html=True)` serves
 > `index.html` at `/`, but a deep client route like `/graph/123` returns **404**
-> — there is **no SPA fallback**. If Phase 4 adds React Router, either use **hash
-> routing**, or add a server catch-all that returns `index.html` for any
-> non-`/api/` path (then re-test `/api/*` precedence — API routes are registered
-> *before* the catch-all in `create_app()` and must stay that way).
+> — there is **no SPA fallback**. The frontend avoids this today (it switches
+> views by the `?workflow=` query param, not client routes). If a future version
+> adds React Router, either use **hash routing**, or add a server catch-all that
+> returns `index.html` for any non-`/api/` path (then re-test `/api/*` precedence
+> — API routes are registered *before* the catch-all in `create_app()` and must
+> stay that way).
 
 ## The `pflow ui` command (`cli/commands/ui.py`)
 
-- `pflow ui [workflow] [--port 8765] [--no-open]`. Behind the `[ui]` extra
+- `pflow ui [workflow] [--port 8765] [--no-open] [--no-watch]`. Behind the `[ui]` extra
   (lazy import of `uvicorn`/`starlette` → prints `uv tool install 'pflow-cli[ui]'` if
   absent; a real bug inside the server module surfaces as a loud traceback, not
   the hint).
 - **Opens the browser to `http://127.0.0.1:{port}/?workflow=<urlencoded>`**
-  once the port is actually listening (polls, not a guessed delay). →
-  **`App.tsx` should read `?workflow=` from the URL and auto-load that
-  workflow**; with no param, show the catalog.
+  once the port is actually listening (polls, not a guessed delay). `App.tsx`
+  reads `?workflow=` and auto-loads it; with no param, it shows the catalog.
+  `--no-watch` appends `?watch=0` to freeze the live-source poll.
 - **Local dev loop:** run `pflow ui` (backend) and Vite's dev server
   concurrently; set `server.proxy` in `vite.config.ts` to forward `/api` →
   `http://127.0.0.1:<port>` so the React app hot-reloads against the live
@@ -127,15 +129,19 @@ convenience — not an error).
 
 ## The RFGraph contract + load-bearing rendering rules
 
-Source of truth: `core/workflow/graph/renderers/react_flow.py` (frozen
-dataclasses `RFGraph{nodes,edges,groups}`, `RFNode`, `RFEdge`, `RFGroup`,
-`RFParam`, `RFRef`). `web/src/types.ts` hand-mirrors these for v1. Rules the
-frontend MUST honor or it loses information (each traces to a Task-168 review
-item / progress-log entry — read those before rendering chips/groups/batches):
+**Source of truth:** the frozen dataclasses + their docstrings in
+`core/workflow/graph/renderers/react_flow.py` (`RFGraph{nodes,edges,groups}`,
+`RFNode`, `RFEdge`, `RFGroup`, `RFParam`, `RFRef`); `web/src/types.ts` mirrors
+them. The *rendering policy* these rules drive lives in the `web/` CLAUDE.md
+suite (`graph/` = the transform, `components/` = the render); model invariants
+are in `graph/CLAUDE.md`. This list is the consumer's INDEX — when it disagrees
+with `react_flow.py`, the code wins. Rules the frontend MUST honor or it loses
+information (read the cited progress-log entry before rendering
+chips/groups/batches):
 
 - **`RFEdge.input_name=None` is COMMON, not rare** (output-`source:` edges,
   batch-`items:` edges, truncation re-anchoring). → attach the data-flow line at
-  **node level**, never drop it. (H6.)
+  **node level**, never drop it.
 - **`input_name="prompt_cache"` is RESERVED** (2026-06-13): a `## Cache` chunk
   dependency — the chunk's ref is forbidden in the consumer's prompt body, so
   this edge is the dependency's only visibility. No PARAM row exists for it:
@@ -188,7 +194,7 @@ item / progress-log entry — read those before rendering chips/groups/batches):
   True left the node with no on-canvas representative and dropped its spine
   edges, review-caught 2026-06-11). The host of a literal batch OF
   SUB-WORKFLOWS is represented by its rendered BATCH container (the frontend's
-  `shellBatchIds` rule). (H8 / progress-log "Deviation 2" + the 2026-06-11
+  `shellBatchIds` rule). (progress-log "Deviation 2" + the 2026-06-11
   literal-batch fix.)
 - **`RFNode.is_transform`** (2026-06-10): the code node is a provably pure data
   reshape (inputs → `result`, no external effects, no `next` routing) — classified
@@ -235,25 +241,24 @@ item / progress-log entry — read those before rendering chips/groups/batches):
   `groups`, but `RFNode.batch.items` keeps **all N** descriptors + `batch.count`.
   Map a surviving group to its item by the member ref's
   `ancestor_path[].batch_index` (**positional**, not list order). Cross-boundary
-  `data_flow` edges into hidden items are re-anchored to the batch host. (H9 /
-  W1.)
+  `data_flow` edges into hidden items are re-anchored to the batch host.
 - **`RFParam.is_dynamic`** is derived one level deep (mirrors the edge builder):
   a ref nested >1 level reads `False`, but the raw `${...}` text is still in
-  `value`, so render the literal text + chips per visible ref. (H5.)
+  `value`, so render the literal text + chips per visible ref.
 - **`RFNode.unexpanded`** (one of 4 reasons) → render a badge, never crash.
   `RFGroup.annotations["unexpanded_items"]` keys are **strings** post-JSON.
 - Reconcile `is_terminal` nodes + synthetic `kind="end"` nodes + `kind="end"`
-  edges into **one visual sink per level**. (H10.)
+  edges into **one visual sink per level**.
 - `RFRef` carries the structural join key (`node_id` + `ancestor_path` +
   `port`) for the future runtime-overlay; the flat `id` is React-Flow-only.
   Keep both; don't flatten the structural identity away.
 
-## Build + release wiring (Phase 4 — DONE)
+## Build + release wiring
 
 - `make ui-build` → `cd web && npm ci && npm run build` (emits into
   `src/pflow/ui/static/`); `make build` depends on it so local wheels include the
   bundle.
-- **CRITICAL (H1):** the release CI (`.github/workflows/on-release-main.yml`,
+- **CRITICAL:** the release CI (`.github/workflows/on-release-main.yml`,
   `uv build`) has **no Node step** by default. The publish job now runs
   `actions/setup-node` + `make ui-build` **before** `uv build` (plus a guard that
   fails if `static/index.html` is missing), or the `[ui]` wheel ships an **empty**
