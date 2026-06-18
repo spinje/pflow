@@ -101,6 +101,14 @@ Tests sit beside their subject.
 - **Overlay-ready seam.** Node components keep static data separate from a future `status`
   prop; `api/` is the single data-loading point a live stream plugs into. Every React Flow
   component the registries reference must be `memo()`'d.
+- **Chrome palette is SCOPED, never `:root`.** The dark UI tokens (`--bg/--border/--text/
+  --accent/--bg-field`, surface ladder `#0d0d0d` void < `#151515` panel < `#1c1c1c` field) are
+  redefined on the chrome containers (`.toolbar/.read-panel/.source-pane/.catalog/.banner/
+  .canvas-overlay/.react-flow__minimap/-controls`) — NOT `:root`, because the RF node/edge layers
+  share those names and a `:root` redefine recolors the CANVAS. `body` bg is a LITERAL `#0d0d0d`
+  (a canvas ancestor — a token would inherit into nodes). Adding a chrome surface → add it to that
+  selector list or it renders with stale `:root` values. The source-row selection tint
+  (`.src-line-active/-block`) keeps blue `#6ea8fe`, not the orange `--accent` (selection ≠ accent).
 
 ## Dev, build, test
 
