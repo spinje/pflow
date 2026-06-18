@@ -38,9 +38,12 @@ src/
                      rowAnchorsFor, the size constants
     focus.ts         the restyle pass + expansion policy: applyFocus, expandTargets,
                      rowTouches, NO_EXPANSION
-    layout.ts        ELK positioning (the only async step; lazy-loads elkjs as its own chunk)
+    layout.ts        ELK positioning (the only async step; lazy-loads elkjs as its own
+                     chunk); compactScopes de-centers expanded TD regions (the SPINE bullet)
+    direction.ts     auto layout-direction default — LR, or TD when dense (the auto-direction bullet)
     portSides.ts     post-layout edge decoration (data rails, loop rails, back rails)
     spine.ts         post-layout sequential-chain re-alignment (the SPINE bullet)
+    sourceDecorate.ts canvas-language source-pane decoration (per-line hast, fence-grammar inference)
     collapse.ts      initial-collapse policy (auto-collapse budget, URL overrides)
     remap.ts         reload-time remap of preserved selection/focus/collapse through the
                      stable structural ref (flat ids are positional — a structural edit
@@ -64,7 +67,9 @@ src/
                      viewParams.ts (URL params, deep-link id resolution, edge-click dispatch);
                      panelWidth.ts (pane width clamp + localStorage persistence — BOTH
                      side panes share the symmetric reserved-budget clamp);
-                     sourceMap.ts (source↔canvas mapping: nodeAtLine, breadcrumbs)
+                     sourceMap.ts (source↔canvas mapping: nodeAtLine, breadcrumbs);
+                     highlight.ts (the shiki highlight seam — lazy, degrade-to-plain);
+                     batchItems.ts (resolve ${item.x} against literal batch items for panels)
   assets/icons/      vendored brand/tool SVGs (Vite bundles them into static/assets)
   views/             the screens App switches between (CatalogView, GraphView)
   components/        reusable UI: Toolbar, ReadPanel, EdgePanel, IoPanel, ErrorBoundary,
@@ -74,7 +79,11 @@ src/
                      PanelResizer (the side panel's drag handle — width rides the
                      --panel-w var GraphView sets on .graph-body; all three panels share
                      .read-panel so they follow for free; double-click resets),
-                     nodes/, edges/
+                     PanelHeader (single-subject panel avatar header), Markdown + CodeBlock
+                     (panel prose/value rendering — see the authored-text bullet),
+                     BatchItems (literal batch-item listing),
+                     nodes/ (WorkflowNode, GroupNode, IOCardNode, EndNode, PortRows,
+                     BranchPorts, ChipRail), edges/ (GradientEdge, DataEdge, LoopEdge, EdgeHalo)
   test/              rf-jsdom.ts — React Flow jsdom mocks; fixtures/contracts/ — real
                      /api/graph payloads, drift-guarded by a Python test (regen command
                      in its failure message)
@@ -117,8 +126,7 @@ Tests sit beside their subject.
   HANDLE-TYPE INVARIANT test (`flow.test.ts`) enforces this — **jsdom CANNOT** (React
   Flow renders no edge DOM under jsdom, so any "no edge errors" assertion there is
   theater). Edge integrity is a pure `flow.ts` test, never a render test.
-- **A leaf's BODY has ONE source of truth: `nodeRows` (graph/rows.ts, 2026-06-13 —
-  the row-model generalization of the original `outputRowsFor` consolidation).**
+- **A leaf's BODY has ONE source of truth: `nodeRows` (graph/rows.ts).**
   The `NodeRow[]` list it assembles — the left column (`paramRowsFor`: params in
   authored order, the cached-prefix group before `prompt`, per-ref sub-rows under
   a ≥2-ref param) → output rows (`outputRowsFor`) → the ↻ loop-rule rows
@@ -129,7 +137,7 @@ Tests sit beside their subject.
   anchor: label/loop rows anchor nothing, the self-loop never enters ELK), and
   `sourceHandleFor` (the landing ladder via `rowsByNode`) — so render, size,
   ports and handles cannot drift; adding a row kind touches `rows.ts` + one JSX
-  branch. `outputRowsFor` composition (TRANSFORM L2, 2026-06-10): authored shape
+  branch. `outputRowsFor` composition: authored shape
   (`RFNode.output_shape` — its `field` names the port: result/response) ∪
   observed reads (edge `output_field` + first `output_path` segment); a bare
   read or unknown keys → parent row + nested key rows (D2); no bare read + keys
@@ -144,7 +152,7 @@ Tests sit beside their subject.
   batch-alias-skipping, grammar-gated (mirrors scope.py: escaped `$${x}` and
   spaced operands are never reads), and it NEVER creates a new field row or a
   line (no edge + no shape → no row; lines come only from edges — D5). KEPT
-  after the unified-edge model fix (2026-06-13, every authored `${ref}` now
+  after the unified-edge model fix (every authored `${ref}` now
   draws a contract edge): build-time dedup still collapses two same-param
   sub-key refs (`Edge.output_path` is compare=False) — the scan recovers those
   lost reads. Residual: refs outside params (loop conditions) are not scanned.
@@ -180,7 +188,7 @@ Tests sit beside their subject.
   the presentation hides no other kind; the kind gate is defensive. No decision badge
   (same reasoning as the deleted loop badge); the read panel shows `code · condition`
   so the canvas stays mappable to `type: code` in the file.
-- **TRANSFORM is the second presented pseudo-kind (2026-06-10).** A pure-reshape **code**
+- **TRANSFORM is the second presented pseudo-kind.** A pure-reshape **code**
   node (`is_transform && kind === "code"` — `isTransform` in `utils/format.ts`) presents
   as label `TRANSFORM`, the shuffle icon (`assets/icons/transform.svg`), and the
   transform cyan (`TRANSFORM_COLOR = #5fd4dd` — deliberately apart from
@@ -208,7 +216,7 @@ Tests sit beside their subject.
   a revealed data line lands on the source's output row / target's param row wherever
   that row actually renders — and when BOTH ends land on rows the `stdout → data` edge
   label drops (the rows already name the fields, like advanced). Expansion changes node
-  sizes, so it flows through build → ELK (decided 2026-06-09: a card growing along the
+  sizes, so it flows through build → ELK (a card growing along the
   TD flow axis would otherwise collide with the node below); `useWorkflowGraph` pans
   the viewport by the focused node's layout delta so the clicked node never moves on
   screen (camera anchoring — applied in the same effect that pushes the new positions).
@@ -341,11 +349,11 @@ Tests sit beside their subject.
   handles render at the icon column, jogging every "straight" connection. Port-aware
   NETWORK_SIMPLEX aligns columns icon-to-icon; each target's FIRST non-error control
   in-edge gets a straightness priority (the LEFTMOST sibling keeps the straight trunk
-  through forks AND merges, user-decided); error-only targets order LAST among
+  through forks AND merges); error-only targets order LAST among
   siblings (rightmost TD / bottom LR) via `forceNodeModelOrder` — the ONLY model-order
   option that survives `INCLUDE_CHILDREN` (every `considerModelOrder.strategy` value
-  crashes elkjs on a cross-hierarchy edge; bisected 2026-06-09). **LR has the same
-  icon-line discipline** (2026-06-10): control handles sit on the ICON ROW
+  crashes elkjs on a cross-hierarchy edge). **LR has the same
+  icon-line discipline**: control handles sit on the ICON ROW
   (`ICON_ROW_Y` = header center — in on the left, out on the right at the SAME
   height, so the trunk passes straight THROUGH the node), with matching fixed
   ports; different-height cards then sit header-to-header on one line, bodies
@@ -361,13 +369,23 @@ Tests sit beside their subject.
   binding bundles simultaneously — leaf↔card bindings have no parity guarantee
   and may keep small jogs (honest geometry). Expanded regions stay port-less
   (the compound crash).
+- **Auto layout-direction: dense workflows open TD, the rest LR (`graph/direction.ts`).**
+  With no explicit `direction=`, `autoDirection(graph)` returns LR under `DENSE_NODE_FLOOR`
+  (16) nodes (direction is cosmetic on short chains), else TD once `data_flow` edges per
+  node reach `DENSE_DATA_PER_NODE` (1.4). Data-edge DENSITY — not loops, not raw size — is
+  the measured predictor of the "edges drawn THROUGH unrelated boxes" problem: a dense LR
+  chain threads its `${ref}` deps horizontally back across intervening cards, while TD
+  spreads them down. Applied ONCE per workflow in a GraphView pre-paint `useLayoutEffect`
+  frozen by a `workflow`-keyed ref (mirrors auto-collapse, so a live-reload never re-rotates
+  the canvas); skipped entirely when the URL carries `direction=`, and the toolbar toggle
+  wins thereafter. `viewParams.direction` is nullable — absent = AUTO.
 - **The SPINE pass straightens what the missing region ports bend
   (`graph/spine.ts alignSpine`, run at the END of `layoutGraph` — so the layout
   cache / camera anchoring / animation all see aligned positions).** Because
   expanded regions carry no ELK port, ELK anchors their trunk edges at the box
   CENTER while the handles render on the icon line — every wide region knocks
   the following chain sideways by ~half its width and the error COMPOUNDS down
-  the flow (the "staircase", user-caught 2026-06-11). The pass re-aligns each
+  the flow (the "staircase"). The pass re-aligns each
   PURE sequential chain's control anchors (icon line; an end dot's CENTER) to
   its HEAD's — the head keeps ELK's position (entry placement, fork ordering).
   Chain links are sequential/end edges between same-scope siblings; a node with
@@ -382,6 +400,14 @@ Tests sit beside their subject.
   stated: shifting a region vertically can re-jog row-aligned bindings crossing
   its boundary — trunk-over-bindings is the established priority order (100 vs
   5), now applied post-hoc as well.
+- **De-center expanded regions (`compactScopes`, layout.ts — TD only, runs AFTER
+  `alignSpine`).** The same missing region port makes ELK center-anchor a region's
+  trunk, so a wide region opens with ~half its width of dead space on the left and
+  `alignSpine` then slams its right edge into the parent border. `compactScopes` shifts
+  each region's body (DEEPEST first) left to `regionPadLeft` and shrinks the region to
+  content + `REGION_RIGHT` — and `REGION_RIGHT` is DERIVED as `REGION_LEFT + IO_BODY_GAP`,
+  so an inputs region's body sits with symmetric left/right margins (one knob,
+  `IO_BODY_GAP`, moves both).
 - **Icon connector flare (beautiful; TD top/bottom + LR left).** A kind-colored SVG
   cove (`Connector` in `WorkflowNode`, anchored as a child of `.node-tile`) makes a
   control edge appear to flow **into the icon tile** — drawn only on sides that have
@@ -389,7 +415,7 @@ Tests sit beside their subject.
   LR variant (`side="left"`, `CONNECTOR_LEFT` — the TOP path transposed, arc sweeps
   flipped) lands on the tile's LEFT border at the icon row; there is NO right tile
   flare — the tile sits at the card's left. The LR EXIT instead gets the **exit
-  dot** (`.exit-dot`, user-picked 2026-06-10): a
+  dot** (`.exit-dot`): a
   kind-colored 10px dot straddling the right border at the icon row, pure
   decoration (the invisible NODE_OUT handle is tucked 5px INSIDE the card so the
   edge terminus hides under it — RF otherwise anchors a right handle just outside
@@ -421,7 +447,7 @@ Tests sit beside their subject.
   LR: above via `centerY`). The rail is LOAD-BEARING, not polish: a self-loop's
   endpoints share an axis, so the default smoothstep midpoint runs the line straight
   back THROUGH the node. **Where the U lands and what it says (the loop-row
-  design, user-decided 2026-06-10):** a LEAF whose body rows render (advanced /
+  design):** a LEAF whose body rows render (advanced /
   focus-expanded) grows ↻ loop-rule rows (WorkflowNode; amber, right-aligned —
   it's authored LOOP config, deliberately NOT presented as a data param; leafSize
   counts them): the CONDITION row + the cap `≤ ${…}` on its OWN row (one row
@@ -440,7 +466,7 @@ Tests sit beside their subject.
   re-entry (own `<polygon>`, CSS `--loop` fill — RF marker objects only take
   literal colors): a loop is the only edge whose direction the layout doesn't
   imply. Self-loops are filtered out of ELK.
-- **A container is ONE object in two states (GroupNode, 2026-06-10 redesign) — and
+- **A container is ONE object in two states (GroupNode) — and
   NOTHING in its header moves across the fold (user requirement).** Both states
   render the IDENTICAL header markup (one JSX block): the leaf `.node-header` with
   the full-size tile + `.node-titles` (category + purpose||node_id), in leaf
@@ -466,7 +492,7 @@ Tests sit beside their subject.
   index.css **including its `text-align: center`** — GroupNode owns the visual.
   Batch cards (and `.batched` leaves — unexpanded dynamic batches) draw a stacked
   DECK via pseudo-elements (the Tines stacked-copies look).
-- **The border CHIP RAIL (ChipRail.tsx, 2026-06-10).** Behavior modifiers render
+- **The border CHIP RAIL (ChipRail.tsx).** Behavior modifiers render
   as 22px tinted chips straddling the TOP
   border, right-aligned, on leaves AND containers: loop = amber round ↻ (tooltip:
   polarity + condition + cap), batch = purple capsule (stack glyph + `×{count}`
@@ -480,8 +506,8 @@ Tests sit beside their subject.
   impact). `.node.compact/.detailed` are BOTH
   `overflow: visible` for it (detailed was hidden, silently clipping the deck
   on advanced cards).
-- **Containers SELECT on click; expand/collapse is the rail's count-expander
-  (user-decided 2026-06-10).** A container's body — collapsed card OR expanded
+- **Containers SELECT on click; expand/collapse is the rail's count-expander.**
+  A container's body — collapsed card OR expanded
   region/header — is a node like any other: click = focus + read panel (the panel
   shows the group's HOST node, resolved in GraphView's `selectedNode`; a ROOT
   wrapper group resolves through `selectedIoGroup` to the IoPanel instead — see
@@ -497,7 +523,7 @@ Tests sit beside their subject.
   them — internal wiring + external bindings light, the rest dims; in beautiful
   the unit's hidden data lines reveal ("what feeds this box?" without opening
   it). In beautiful, selecting a container ALSO expands "just its inputs and
-  outputs" (user-decided 2026-06-10): `expandTargets` treats a workflow/batch
+  outputs": `expandTargets` treats a workflow/batch
   group focus as ALL of its IO ports (child wrappers' members), so the card/
   region renders its IO rows and each binding's far end expands too — every
   revealed line lands row-to-row. Without this the bindings re-anchor
@@ -508,7 +534,7 @@ Tests sit beside their subject.
   (viewParams.ts) resolves a group-host's node_id to its representative group
   (skipping decorator shells via `shellBatchIds` — a literal batch host resolves
   to its rendered BATCH container), so `?focus=<sub-workflow name>` works.
-- **Edges SELECT on click (2026-06-10).** The clicked CONNECTION is the focus subject:
+- **Edges SELECT on click.** The clicked CONNECTION is the focus subject:
   only that edge lights — bright variant (`--data-edge-selected` for data lines; full
   gradient for control), a **halo under-stroke** (the edge analog of the node ring;
   its stroke must stay INLINE — RF's base stylesheet greys `.selected` paths),
@@ -521,9 +547,8 @@ Tests sit beside their subject.
   selected LR branch instead reveals its condition on the source's row. `applyFocus`
   clears `focusEnd` on the selected edge (both ends solid — the ternary would default
   one end faded). The `shadowed` FACT still rides EdgeData but no density dims for
-  it anymore (2026-06-13: with one edge per `${ref}` most of the sequential spine
-  is shadowed — the old advanced 35% dim erased the control skeleton; user-gated
-  removal via browser before/after). In beautiful, a
+  it anymore (with one edge per `${ref}` most of the sequential spine
+  is shadowed — the old advanced 35% dim erased the control skeleton). In beautiful, a
   selected DATA edge expands exactly its two endpoint owners (`expandTargets` edge
   arm — endpoints go into the OUTPUT set, never `foci`, or both neighborhoods would
   expand) so the line lands row-to-row. The click dispatch is pure
@@ -550,38 +575,32 @@ Tests sit beside their subject.
   assembled template (prose + ${var}, prefix order, baked in Python with the
   runtime's own assembly rule) — as a `cached prefix` block placed by
   `cacheInsertIndex` before `prompt`, colored as markdown SOURCE like prompts.
-- **The LEFT column has ONE source of truth: `paramRowsFor` (graph/rows.ts,
-  2026-06-13) — the `outputRowsFor` mirror, composed into `nodeRows` (the body
-  bullet above).** It assembles the ordered `ParamRowItem[]` list (params in
-  authored order · the cached-prefix group before `prompt` via
-  `cacheInsertIndex` — request order: system → cached prefix → prompt · per-ref
-  binding SUB-ROWS). SUB-ROWS (user design 2026-06-13): a param receiving ≥2
-  refs (an interpolated prompt, a dict of bindings) grows one nested `·` row
-  per ref — label = the authored ref text rebuilt from the edge (`refText`;
-  rendered as the established ref-chip; a dict-key row prepends its key) —
-  and each edge lands on ITS row's `bindingRowHandle(input_name, ref)`; a
-  single ref keeps landing on the param row itself (no sub-row noise on the
-  common case). Cache chunks are the same mechanism with parent group
-  "prompt_cache": one chunk = a flat `cached prefix` row, several = a
-  handle-less `cached prefix ×N` label row + nested rows — and cache edges
-  ALWAYS land on their chunk row (no param row exists for them; without one
-  they merged invisibly into the control trunk at NODE_IN). The landing rule
-  lives in `targetHandleFor` reading the SAME `refRowsByNode` derivation, so
-  rows and landings can't disagree. Rows hidden (beautiful) → NODE_IN
-  fallback unchanged.
-  Endpoint CHIPS navigate via `resolveEndpointFlatId` (host → representative group)
-  and render NON-CLICKABLE when the endpoint isn't rendered — never a silent no-op
-  focus. RF native selection stays inert: components ignore the `selected` prop,
-  `deleteKeyCode={null}` (Backspace would delete from the store). An edge-id focus
-  has no `from/to` escape hatch through rebuilds, so GraphView CLEARS the selection
-  when the focused edge id leaves the flow (collapse re-anchor/dedupe). Deep links:
-  `focus=<flat edge id>` works (the deterministic escape hatch — agents/screenshot
-  loop); `initialCollapsed` protects BOTH endpoints' ancestor chains for an edge
-  target. Stable edge ADDRESSING (`source→target:input`) stays deferred (Task 169).
+  EdgePanel endpoint CHIPS navigate via `resolveEndpointFlatId` (host →
+  representative group) and render NON-CLICKABLE when the endpoint isn't rendered —
+  never a silent no-op focus. RF native selection stays inert: components ignore the
+  `selected` prop, `deleteKeyCode={null}` (Backspace would delete from the store). An
+  edge-id focus has no `from/to` escape hatch through rebuilds, so GraphView CLEARS the
+  selection when the focused edge id leaves the flow (collapse re-anchor/dedupe). Deep
+  links: `focus=<flat edge id>` works (the deterministic escape hatch — agents/screenshot
+  loop); `initialCollapsed` protects BOTH endpoints' ancestor chains for an edge target.
+  Stable edge ADDRESSING (`source→target:input`) stays deferred (Task 169).
+- **The left column of `nodeRows` is `paramRowsFor` (graph/rows.ts); its two specifics:**
+  (1) **per-ref binding SUB-ROWS** — a param receiving ≥2 refs (an interpolated prompt, a
+  dict of bindings) grows one nested `·` row per ref (label = the authored ref text rebuilt
+  from the edge via `refText`, rendered as the ref-chip; a dict-key row prepends its key),
+  each landing on its own `bindingRowHandle(input_name, ref)`; a single ref keeps landing on
+  the param row (no sub-row noise on the common case). (2) **cache chunks** — the same
+  mechanism under parent group `"prompt_cache"`, placed before `prompt` via `cacheInsertIndex`
+  (request order: system → cached prefix → prompt): one chunk = a flat `cached prefix` row,
+  several = a handle-less `cached prefix ×N` label row + nested rows; cache edges ALWAYS land
+  on their chunk row (no param row exists, so without one they merge invisibly into the
+  control trunk at NODE_IN). The landing rule lives in `targetHandleFor` reading the SAME
+  `refRowsByNode` derivation `paramRowsFor` builds, so rows and landings can't disagree; rows
+  hidden (beautiful) → NODE_IN fallback.
 - **A decorator-SHELL batch group is never rendered — and `shellBatchIds` (graph/io.ts)
   is the ONE copy of what counts as a shell.** The contract models "batched X" as
   batch-wrapping-X, but presentationally batch is a MODIFIER (deck + ×N chip), not a
-  box to travel through (user decision 2026-06-10): a DYNAMIC batch group is always
+  box to travel through: a DYNAMIC batch group is always
   a shell — the workflow group reparents past it (`effectiveParent`), becomes the
   host's representative (`groupsByHost` skips shells → edges/title/loop land on it),
   gets the deck from `hostNode.batch`, and its corner toggle opens the sub-workflow
@@ -595,11 +614,11 @@ Tests sit beside their subject.
   memberlessness — a batch group never has direct node members, so the old
   `members.length === 0` rule swallowed literal batches whole: the host had no
   on-canvas representative and every edge touching it warn-dropped, shattering the
-  spine at each literal batch step (review-caught 2026-06-11, CRITICAL).
+  spine at each literal batch step (CRITICAL).
   `collapse.ts collapsibleGroupIds` and `viewParams.ts resolveEndpointFlatId` both
   consume `shellBatchIds` — never re-derive the rule locally.
-- **IO is ROWS on the workflow's OWN node — never a floating table (2026-06-10
-  redesign).** An `input_wrapper`/`output_wrapper` group's ports render via the shared
+- **IO is ROWS on the workflow's OWN node — never a floating table.** An
+  `input_wrapper`/`output_wrapper` group's ports render via the shared
   `PortRows` component on their OWNER; the IO member nodes are NOT emitted. Three
   locations, one anatomy: (1) a ROOT wrapper becomes a standalone **IO card**
   (`IOCardNode`, RF type `"io"`, id = the wrapper's group id — focus/deep-link ids
@@ -610,8 +629,8 @@ Tests sit beside their subject.
   in beautiful, rows under the leaf `showBody` rule (advanced / focus-expanded).
   IO rows speak the SAME text grammar as leaf output rows — `name: type` via the
   shared `.row-type` faint suffix (PortRows; the old detached 10px `.io-type`
-  died, user-caught 2026-06-11) — and clicking the card SELECTS like every other node
-  (2026-06-11, the toggle died when the card got a panel): focus + **IoPanel**
+  died) — and clicking the card SELECTS like every other node
+  (the toggle died when the card got a panel): focus + **IoPanel**
   (components/IoPanel.tsx), the workflow's interface written out — per input:
   type/required/`default:`/full description + consumer chips under a faint
   `used by` label; per output: a `from` label + the producer chip + the
@@ -619,7 +638,7 @@ Tests sit beside their subject.
   `.io-port-uses` un-stretches `.edge-chip`, `.io-port-uses-label` is the
   relationship word — the panel's label-word vocabulary, clearer than bare
   arrows) + source line. Types carry NO filler — never "any" (an invented
-  claim, user-caught 2026-06-11): `Port.dataType` is the authored `type:` when
+  claim): `Port.dataType` is the authored `type:` when
   declared, else an OUTPUT derives fail-closed from its SINGLE producer edge
   via `producedTypeOf` (the same shape→registry resolution order the canvas
   output rows use), else null — and the derivation lives IN `wrapperPorts`,
@@ -637,14 +656,14 @@ Tests sit beside their subject.
   pane click / panel ✕, like every node. The card class is
   ALWAYS `compact` (the card shell lives on `.node.compact/.detailed`; adding
   `expanded` doubles the divider — both were real bugs). **Root IO cards JOIN THE
-  CONTROL SKELETON (2026-06-10):** `buildFlow` synthesizes `io-flow:` control edges
+  CONTROL SKELETON:** `buildFlow` synthesizes `io-flow:` control edges
   — Inputs card → each root ENTRY step (no incoming control edge; falls back to
   the FIRST root step, where pflow starts execution, on a root cycle) and each
   root CONTROL SINK's representative → Outputs card (no sequential/branch out-edge,
   derived from contract edges; LAST-root-step fallback on a cycle). Sink-ness must
   NOT come from the contract's `is_terminal` — that fact counts DATA_FLOW out-edges
   (Mermaid end-sink parity), so a final leaf feeding a declared output reads
-  non-terminal and the Outputs card floats as an island (the 2026-06-11 bug).
+  non-terminal and the Outputs card floats as an island.
   NOT contract edges (pflow has no
   io→node control flow) — visual policy that makes the cards behave like nodes:
   drawn in BOTH densities, gradient blends IO teal ↔ the step's kind color, ELK
@@ -672,7 +691,7 @@ Tests sit beside their subject.
   handles always
   render (an edge naming a missing handle is silently dropped — the recurring bug
   class); the role-less side's dot is hidden via `.port-handle.quiet`. **ALL rows
-  speak ONE connection language (2026-06-12):** wired = teal name + live teal
+  speak ONE connection language:** wired = teal name + live teal
   dot, unwired/static = muted name + quiet dot — a dynamic param (`is_dynamic`),
   a read output, and a wired io row all render identically. An io row's wiring
   is SIDE-AWARE (`Port.receives`/`Port.feeds`; PortRows picks the side its
@@ -682,7 +701,7 @@ Tests sit beside their subject.
   into-nowhere gate in GraphView's focusPort; root card rows always click —
   the panel is the payoff). Io paint gotcha: `.port-handle` color must live AFTER the generic
   `.handle` rule in index.css (equal specificity — defined earlier it silently
-  renders grey, the 2026-06-12 drift). The OUTER io dot offsets onto the
+  renders grey). The OUTER io dot offsets onto the
   card/region border via `--io-inset` (defined beside each container's padding). Edge handle
   resolution is owner-aware (`ioNodeToOwner` + `rowsVisible(owner)`): rows hidden →
   node-level, never a handle that doesn't render. `expandTargets` pulls an IO
@@ -701,14 +720,14 @@ Tests sit beside their subject.
   both densities; in beautiful, a revealed LEAF-TO-LEAF data line is labeled with
   what flows (`output_field → input_name`) — but an IO-touching binding carries NO
   label (the port rows name the fields, and a binding label often single-names one
-  side; user-caught 2026-06-10), and any line landing row-to-row drops it too.
-- **The node CHIP is one shared component (components/Chip.tsx, 2026-06-11) — a
+  side), and any line landing row-to-row drops it too.
+- **The node CHIP is one shared component (components/Chip.tsx) — a
   mini node avatar:** the canvas tile in miniature (kind-color border +
   native-color icon via `nodeColor`/`iconFor`) + the name, no box; the category
   word rides the TOOLTIP (identity by recognition — the canvas teaches the
   icon↔kind map once). Consumers: EdgePanel endpoints, IoPanel consumer/producer
   rows, ReadPanel's `ConnectionSections`. Semantics every consumer inherits:
-  chips NAVIGATE WITHOUT OPENING (user decision 2026-06-12 — `onNavigate(id)`
+  chips NAVIGATE WITHOUT OPENING (`onNavigate(id)`
   with no selectedId): focus moves to the target (it lights, its connections
   reveal, the camera follows) but the open panel never swaps — a chip answers
   "where is it / how are we connected?"; click the centered node itself to
@@ -717,8 +736,8 @@ Tests sit beside their subject.
   and HOVER marks the chip's canvas node. An io-port chip's camera follow AND the
   expansion re-layout's anchor both resolve the port to its OWNER card via
   `ioOwners` (a port id is never a rendered node — unresolved, the follow
-  silently skipped and the anchorless re-layout jumped the canvas to nowhere;
-  fixed 2026-06-12). The follow itself is DEFERRED to the paint the click
+  silently skipped and the anchorless re-layout jumped the canvas to nowhere).
+  The follow itself is DEFERRED to the paint the click
   produces (`paintEpoch` from useWorkflowGraph — bumped after every completed
   paint, animated glides included): a fit started at click time aims at the
   target's PRE-re-layout position (first click landed wrong, second landed
@@ -731,18 +750,18 @@ Tests sit beside their subject.
   node's data-flow neighborhood as chip stacks — `references (N)` (upstream,
   first: data flows in→out) then `referenced by (N)` (downstream), from
   `producersOf`/`consumersOf` (deduped, edge order); an EMPTY direction renders
-  NOTHING (no-claims rule). A GROUP HOST aggregates as a BLACK BOX
-  (2026-06-12): its data flow lives on its io-PORT members, not its own id
+  NOTHING (no-claims rule). A GROUP HOST aggregates as a BLACK BOX:
+  its data flow lives on its io-PORT members, not its own id
   (only batch `${x.results}` reads attach host-level), so `dataNeighbors`
   widens the subject to host + direct wrappers' ports and lists EXTERNAL far
   ends only — an input's inner consumer / an output's inner producer is the
   body's wiring, never the unit's neighborhood. Derived from contract edges ONLY —
-  COMPLETE since the 2026-06-13 unified-edge model fix (every validator-enforced
+  COMPLETE since the unified-edge model fix (every validator-enforced
   `${ref}`, incl. plain-param sibling refs, now draws a DATA_FLOW edge; the original
   design is recorded in
   .taskmaster/tasks/task_168/implementation/sub-plans/proposal.md).
 - **HOVER is one concept: mark a SET of canvas subjects — a PURE highlight**
-  (no focus change, no expansion, NO camera move; user decision 2026-06-11).
+  (no focus change, no expansion, NO camera move).
   Two producers: a panel CHIP marks its one resolved node
   (`Interaction.hoverNode`); a canvas ROW (param/output rows on leaves, io rows
   via PortRows) marks every edge landing on it AND each edge's far-end node
@@ -760,7 +779,7 @@ Tests sit beside their subject.
   focus ring + an un-dim override (must stay after `.node.dimmed` in the
   sheet). GraphView's `onNavigate` clears the hover (the clicked chip unmounts
   with the panel swap — its mouseleave never fires).
-- **Authored text rendering (2026-06-12): three treatments, one per surface
+- **Authored text rendering: three treatments, one per surface
   class.** (1) RENDER — prose descriptions (`node.purpose` in ReadPanel,
   `port.description` in IoPanel, catalog `item.description`) render as real
   markdown via `components/Markdown.tsx` (react-markdown + remark-gfm; raw HTML
