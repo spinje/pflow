@@ -66,10 +66,13 @@ async function createElk(): Promise<ELK> {
 // blocked, so its result settles the race before the timer callback can run.
 export const WORKER_TIMEOUT_MS = 10_000;
 
-export async function layoutWithWatchdog(elk: ELK, root: ElkNode): Promise<ElkNode> {
+// `timeoutMs` is parameterized (default = the production WORKER_TIMEOUT_MS) ONLY so the
+// unit test can drive a short watchdog under REAL timers: the bundled GWT fallback uses
+// its own internal setTimeout, so faking timers across the fallback would orphan it.
+export async function layoutWithWatchdog(elk: ELK, root: ElkNode, timeoutMs: number = WORKER_TIMEOUT_MS): Promise<ElkNode> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), WORKER_TIMEOUT_MS);
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
   });
   try {
     const result = await Promise.race([elk.layout(root), timedOut]);
@@ -78,7 +81,7 @@ export async function layoutWithWatchdog(elk: ELK, root: ElkNode): Promise<ElkNo
     clearTimeout(timer);
   }
   console.warn(
-    `pflow UI: ELK worker did not answer within ${WORKER_TIMEOUT_MS / 1000}s — ` +
+    `pflow UI: ELK worker did not answer within ${timeoutMs / 1000}s — ` +
       "re-running this layout on the main thread (worker demoted for this session)",
   );
   (elk as { terminateWorker?: () => void }).terminateWorker?.();

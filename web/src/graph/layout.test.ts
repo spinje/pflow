@@ -10,7 +10,7 @@ import type { ELK, ElkNode } from "elkjs/lib/elk.bundled.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { FlowNode } from "./flow";
-import { layoutWithWatchdog, orderForkSiblings, WORKER_TIMEOUT_MS } from "./layout";
+import { layoutWithWatchdog, orderForkSiblings } from "./layout";
 
 const n = (id: string): FlowNode => ({ id, type: "node", position: { x: 0, y: 0 }, data: {} }) as FlowNode;
 const branch = (entries: Array<[string, string, number]>): Map<string, { source: string; rank: number }> =>
@@ -63,20 +63,20 @@ describe("layoutWithWatchdog", () => {
     await expect(layoutWithWatchdog(elk, { id: "root" })).rejects.toThrow("boom");
   });
 
+  // REAL timers throughout (no fake-timer dance): the bundled GWT ELK fallback uses its
+  // own internal setTimeout, so straddling fake→real timers across it would orphan that
+  // timer and hang. A tiny watchdog timeout keeps the test fast; the generous test-level
+  // timeout covers the one-time COLD import of the 1.5 MB bundle on slow CI (the cause of
+  // the prior 5 s default-timeout flake).
   it("rescues a SILENT engine on the main thread and terminates its worker", async () => {
-    vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const terminate = vi.fn();
     const silent = { layout: () => new Promise(() => {}), terminateWorker: terminate } as unknown as ELK;
     const root: ElkNode = { id: "root", children: [{ id: "a", width: 10, height: 10 }], edges: [] };
 
-    const pending = layoutWithWatchdog(silent, root);
-    await vi.advanceTimersByTimeAsync(WORKER_TIMEOUT_MS + 1);
-    vi.useRealTimers(); // the bundled fallback needs real timers to settle
-
-    const out = await pending;
+    const out = await layoutWithWatchdog(silent, root, 20);
     expect(out.children?.[0]?.x).toBeTypeOf("number"); // a real layout happened
     expect(terminate).toHaveBeenCalled();
     expect(warn).toHaveBeenCalledOnce();
-  });
+  }, 30_000);
 });
