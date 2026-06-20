@@ -146,3 +146,45 @@ plumbing, stop — the overlay adds its own `type`s over the same pipe later.
 The server going stateful + push reopens a *recorded* "read-only, stateless, no side effects" decision
 (`server.py:279`, `ui/CLAUDE.md`, ADR-0005). Write the amendment first, or a future validation-
 consistency review will (correctly) flag the stateful server as an unjustified regression.
+
+---
+
+## 2026-06-19 — Apply model: the "sent vs shown" correction (and why there is NO ack channel)
+
+A contradiction surfaced after the deep-review (the user caught it; it was *my* planning over-reach):
+the plan reported a command's outcome at the moment the message was **queued** to the SSE connections,
+yet *also* promised browser-determined outcomes back in the command response — e.g. it literally said
+"the command's window entry notes 'target hidden'". There was **no channel** for the browser to report
+that, and the word "delivered" quietly conflated **queued** with **shown**. So the CLI could report
+success while the user's screen showed nothing.
+
+We considered building command **acknowledgments** (command id → each Viewer POSTs applied/failed →
+the CLI waits a bounded time and returns per-window outcomes). **We deliberately did NOT.** The cleaner
+resolution — which the user steered — is two rules that make the report honest without a protocol:
+
+1. **The server validates before sending** → a bad target never broadcasts; it returns a *great error*
+   (not-found + fuzzy suggestions / ambiguous + qualified scopes / 0 windows). All server-knowable.
+2. **The browser always reveals a resolvable target** (total apply: focus/edge/frame expand collapsed
+   ancestors; edge focus un-hides in beautiful). So "exists in the view → shown" holds without a
+   confirmation round-trip.
+
+The report now says **`sent_to` N windows (+ per-window visible/backgrounded)** — never "shown".
+
+**The insight that makes acks unnecessary in v1: the human is the acknowledgment.** This is a
+*conversation* — the agent points, says "see it?", and the human says yes/no. Two corollaries a future
+agent must not forget:
+- The screenshot skill drives the **agent's own** headless browser, **not the user's window** — so it
+  can never confirm the point landed in the user's Viewer. Don't reach for it as proof.
+- The only residual gap is a **stale browser view** (~1.5s after an edit, before Auto-update
+  refreshes): a just-validated target may not be in that window yet → nothing shows. It **self-heals**
+  on the next poll and the human re-points. A transient, not a failure mode worth a protocol.
+
+**When acks WOULD be worth building (deferred fast-follow):** an autonomous/no-human flow that must
+programmatically confirm "shown", or the run-overlay (which would define its own confirmation). Until
+such a consumer exists, building it would violate the same "build it when a consumer exists" discipline
+that deleted the original SSE stub. The envelope is generic, so an `applied`/ack message type is purely
+additive later — no rework.
+
+**Meta-lesson for the next agent:** don't add a confirmation protocol when a human closes the loop.
+"Validate hard up front + always reveal + report honestly" beats "do it blind, then build machinery to
+check whether it worked."

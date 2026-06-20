@@ -56,6 +56,13 @@ CLI verb (httpx)  --GET /api/activity-->  hub ring                          Grap
   existing `sameRef` machinery. Flat ids (`n3`/`g2`/`e7`) are positional, unstable across rebuilds, and
   the server's render won't match the browser's — only structural identity is valid between two
   independent renders. **One parser (Python, fully unit-testable).**
+- **Apply model — two rules, no acknowledgment (detailed under "Apply model" below).** The server
+  validates the target against the current workflow file and either returns a **great error**
+  (not-found / ambiguous / 0 windows — all server-knowable) or broadcasts it; the browser then
+  **always reveals** a target that exists in its view. The command reports *resolution + which live
+  windows it was sent to + each window's visible/backgrounded state* — it does **not** claim or
+  confirm "shown", and there is **no browser→server apply-ack**. Confirmation is the human in the
+  loop (it's a conversation).
 
 ---
 
@@ -92,7 +99,7 @@ class _Hub:
     def unregister(self, conn_id) -> None: ...
     def set_visibility(self, conn_id, visibility) -> None: ...
     def windows_for(self, workflow_key) -> list[_Conn]: ...
-    def broadcast(self, workflow_key, message) -> list[_Conn]:   # put_nowait each match; ret delivered
+    def broadcast(self, workflow_key, message) -> list[_Conn]:   # put_nowait each match; ret conns queued to
     def record(self, event) -> None: ...
     def activity(self, workflow_key=None) -> list[dict]: ...      # filtered, newest-first
 ```
@@ -156,18 +163,19 @@ mismatch is visible to the agent.
    with a body naming the required header). Body `{workflow, type: "focus"|"frame"|"clear", target?}`.
    - Normalize the workflow → `_workflow_key`. If `None` (unknown name) → 404-style actionable
      not-found with fuzzy `list_names()` suggestions (do not broadcast).
-   - `type=="clear"`: `hub.broadcast(key, {"type":"clear"})`; return delivery report.
+   - `type=="clear"`: `hub.broadcast(key, {"type":"clear"})`; return the dispatch report (below).
    - `type in ("focus","frame")`: build the graph + resolve the target (below). On
      `WorkflowGraphValidationError` → 422 with diagnostics (mirror `graph` handler `server.py:106`).
-     - **0 matches** → `{"resolved":{"matched":0,"suggestions":[...fuzzy node-ids...]}, "delivered":0}`
-       (no broadcast).
-     - **>1 match** → `{"resolved":{"matched":N,"qualify":[<fully-qualified addrs>]}, "delivered":0}`
+     - **0 matches** → `{"resolved":{"matched":0,"suggestions":[...fuzzy node-ids...]}, "sent_to":0}`
+       (a great error, no broadcast).
+     - **>1 match** → `{"resolved":{"matched":N,"qualify":[<fully-qualified addrs>]}, "sent_to":0}`
        (no broadcast — never point at a guess; the agent re-points with a qualified address).
        **Each `qualify` entry MUST resolve to exactly 1 element** (test it — the self-correcting loop
        must converge).
      - **1 match** → `hub.broadcast(key, {"type":type, "target":<descriptor>})`; return
-       `{"resolved":{"matched":1,"address":<addr>}, "delivered":len(conns),
+       `{"resolved":{"matched":1,"address":<addr>}, "sent_to":len(conns),
        "windows":[{"visibility":c.visibility} for c in conns], "workflow_key":key}`.
+       `sent_to` = queued to N live windows, NOT confirmed-shown (see "Apply model").
 
 3. **`POST /api/interaction`** — Watch report (fire-and-forget). Require JSON. Body
    `{workflow, type, target?, view_state}`. `hub.record({..., "workflow_key":_workflow_key(workflow),
@@ -179,6 +187,26 @@ mismatch is visible to the agent.
 5. **`GET /api/activity?workflow=<name|path optional>`** — Watch read (a **snapshot**, not a stream).
    Return `{"events": [...], "workflow_key": <resolved or null>}`, newest-first, each event annotated
    with `age_seconds = time.time() - ev["ts"]` (single clock — CLI + server share localhost).
+
+### Apply model — validate → reveal → report; NO apply-acknowledgment
+
+The command's report tells the agent *resolution + which live windows it was sent to + each window's
+visible/backgrounded state*. It deliberately does **not** report "did the browser actually show it",
+and there is **no browser→server ack channel**. Two rules make that honest, not lossy:
+
+1. **The server validates before sending** (it builds the graph from the current file). A bad target
+   never gets broadcast — it returns a **great error**: not-found + fuzzy suggestions, ambiguous +
+   qualified scopes, or 0-windows. All server-knowable.
+2. **The browser always reveals a resolvable target** (total apply — see the frontend section: focus
+   expands collapsed ancestors; edge focus expands both endpoints + un-hides; frame expands + moves
+   camera). So "exists in the window's view → shown" holds without confirmation.
+
+The only residual gap is a **stale browser view**: in the ~1.5s after the user edits the `.pflow.md`,
+the server already sees the new target but a window hasn't auto-refreshed yet, so a just-validated
+target isn't in *that* window's view → nothing visible. It **self-heals** on the next Auto-update
+poll, and the **human in the loop** ("see it?" → "no") prompts a re-point. A transient, not a failure
+mode worth a protocol. A programmatic apply-ack is a deferred fast-follow, only worth it for
+autonomous/no-human flows or the run-overlay (which would define its own).
 
 ### Target resolution (`src/pflow/ui/targets.py` — new module, pure, unit-tested)
 
@@ -258,8 +286,9 @@ Resolve `{source, source_field, target, input_name}`: `flatIdForRef` each ref, t
 by its **`data.from`/`data.to`** (the original contract endpoints the focus-reveal styling keys on,
 `GraphView.tsx:288`, `flow.ts:1075-1076`) — **NOT** `edge.source`/`edge.target` (renderAnchor-resolved;
 they differ exactly when an endpoint is suppressed/re-anchored). Pin the chosen mapping with a
-`flow.test.ts` assertion. Collapsed endpoint → re-anchored, discrete edge absent → return an explicit
-"endpoint collapsed; focus an endpoint node instead" outcome (no silent no-op).
+`flow.test.ts` assertion. Collapsed endpoint → re-anchored, discrete edge absent → **expand both
+endpoints' collapsed ancestors first** so the discrete edge appears, then highlight it (the apply path
+reveals; it does not report a failure back to the agent).
 
 ### `web/src/views/GraphView.tsx` wiring
 
@@ -267,18 +296,16 @@ On mount `subscribe(workflow, handlers)` (unsubscribe on unmount / workflow chan
 server-resolved descriptor onto the **existing** entry points — no new focus mechanics:
 - `focus` + node: `flatIdForRef` → `RFNode` → **`onSelectNode(node)`** (`GraphView.tsx:390` — already
   expands collapsed ancestors + focus + select + pan).
-- `focus` + edge: edge-by-endpoints lookup → `setFocus(edgeId)` + `setSelectedId(edgeId)` (mirrors
-  `onEdgeClick`, `:237`). **Must reveal a default-hidden data edge in beautiful** — a data edge is
-  `hidden:true` in compact density (`flow.ts:1090`), revealed only on incident focus. Verify
-  `onEdgeClick`/`applyFocus` un-hides a directly-focused edge; if it doesn't, the handler clears
-  `hidden` on that edge, else `focus "a.x -> b.y"` delivers-but-shows-nothing in the default density.
-- `frame` + node/edge: resolve to the **visible on-canvas representative** via
-  `resolveEndpointFlatId`/`nodeRepresentativeId` (`viewParams.ts:111/132` — returns the nearest visible
-  ancestor when the target is collapsed), then `useReactFlow().fitView({nodes:[{id}], padding:0.45,
-  maxZoom:1.2, duration:300})` (recipe `useCameraNavigation.ts:102/143`; expose a focus-free variant).
-  **Never `fitView` a flat id that exists structurally but is hidden in a collapsed container** (large
-  workflows >60 nodes open fully collapsed → `fitView` on an off-canvas id is a silent no-op while the
-  command falsely reports `delivered>0`). If unresolvable to anything on-canvas, the browser reports it.
+- `focus` + edge: **total apply** — expand both endpoints' collapsed ancestors so the (otherwise
+  re-anchored) discrete edge exists, then `setFocus(edgeId)` + `setSelectedId(edgeId)` (mirrors
+  `onEdgeClick`, `:237`), AND un-hide it in beautiful (a data edge is `hidden:true` in compact density,
+  `flow.ts:1090`, revealed only on focus — verify `applyFocus` un-hides a directly-focused edge; if
+  not, the handler clears `hidden`). So a resolvable edge is *always* revealed, never a shown-nothing
+  no-op.
+- `frame` + node/edge: **total apply, camera-only** — expand collapsed ancestors to reveal the target
+  (same as focus), then `useReactFlow().fitView({nodes:[{id}], padding:0.45, maxZoom:1.2,
+  duration:300})` (recipe `useCameraNavigation.ts:102/143`; expose a focus-free variant) WITHOUT
+  setting focus/selection. Reveal-then-frame the actual target; never `fitView` an off-canvas id.
 - `clear`: `onPaneClick()` (`:261`).
 
 Wire `reportInteraction` into the deliberate handlers ONLY (never hover/pan/zoom): `onNodeClick`,
@@ -350,12 +377,12 @@ body and return; else the text render below. **JSON mode exposes the per-window 
 not just an aggregate, so an agent can reason "all backgrounded → tell the user to switch tabs".
 
 - **`pflow ui focus <workflow> <target> [--open] [--json] [--port]`** → `POST /api/command` `focus`.
-  `--open` when `delivered==0`: non-edge target → open `?workflow=<wf>&focus=<target>` (load-time
+  `--open` when `sent_to==0`: non-edge target → open `?workflow=<wf>&focus=<target>` (load-time
   `?focus=` resolves node/container/IO); **edge target** → open `?workflow=<wf>` then re-POST every
-  ~0.25s until `delivered>0` or a 15s timeout (the load-time `?focus=` can't parse `from -> to`). On
+  ~0.25s until `sent_to>0` or a 15s timeout (the load-time `?focus=` can't parse `from -> to`). On
   **timeout**, print a DISTINCT message: "opened a window but it didn't connect within 15s — re-run
   `pflow ui focus …` now that it may be up" (never the plain `0 windows` report — that's misleading
-  after an open). `--open` gates strictly on `delivered==0` (never duplicates a backgrounded window).
+  after an open). `--open` gates strictly on `sent_to==0` (never duplicates a backgrounded window).
 - **`pflow ui frame <workflow> <target> [--json] [--port]`** → `frame`.
 - **`pflow ui clear-focus <workflow> [--json] [--port]`** → `clear`.
 - **`pflow ui user-activity [workflow] [--json] [--port]`** → `GET /api/activity`; newest-first with
@@ -366,9 +393,9 @@ not just an aggregate, so an agent can reason "all backgrounded → tell the use
 ### Text report shapes (agent-first; the `--json` payload is the server body verbatim)
 
 ```
-focus 'fetch-data' in 'my-wf':  resolved 1 (fetch-data) · delivered to 2 windows (1 visible, 1 backgrounded)
+focus 'fetch-data' in 'my-wf':  resolved 1 (fetch-data) · sent to 2 windows (1 visible, 1 backgrounded)
   workflow key: /abs/.../my-wf.pflow.md
-focus 'gen' in 'my-wf':  ambiguous — 2 matches, not delivered. Qualify with one of:
+focus 'gen' in 'my-wf':  ambiguous — 2 matches, not sent. Qualify with one of:
     create-songs.gen
     remix.gen
 focus 'fetchdata' in 'my-wf':  not found. did you mean: fetch-data, fetch-config?   # FUZZY, not substring
@@ -412,13 +439,18 @@ untouched (the `?watch` param is an internal CLI↔frontend contract).
   hub.unregister` → next command reports the corrected count.
 - **Mid-edit-invalid source:** `/api/command` → 422 diagnostics (CLI renders via `format_diagnostic`,
   not a traceback); `/api/activity`/`/api/visibility` unaffected.
-- **Ambiguous target:** not delivered; qualify list of fully-qualified addresses, each resolving to 1.
+- **Ambiguous target:** not sent; qualify list of fully-qualified addresses, each resolving to 1.
 - **IO in/out + body-name collision; batched sub-workflow interiors:** addresses carry `in:`/`out:`
   and `[batch_index]` so the qualify list is distinct + actionable.
-- **Collapsed node/frame target (large auto-collapsed workflow):** resolve via the visible
-  representative; never frame an off-canvas id; report if unresolvable.
-- **Collapsed edge endpoint:** re-anchored → explicit "endpoint collapsed" outcome.
-- **Default-density (beautiful) data-edge focus:** the focus must un-hide the edge.
+- **Collapsed node / edge / frame target (large workflows auto-collapse):** the apply path EXPANDS
+  collapsed ancestors so a target that exists in the current graph is **always revealed** (edges
+  expand both endpoints; frame expands + moves camera without highlighting). Never `fitView` an
+  off-canvas id.
+- **Default-density (beautiful) data-edge focus:** the focus also un-hides the edge.
+- **Stale browser view (mid-edit, ~1.5s):** a just-validated target may not exist in a window's
+  not-yet-refreshed view → nothing visible; **self-heals** on the next Auto-update poll, and the
+  human-in-the-loop re-points. The command does **not** confirm apply — no browser ack, by design
+  (see "Apply model").
 - **Name vs path Viewer split:** `_workflow_key` normalizes both to the resolved entry path (symlinks
   included); the key is echoed.
 - **Unknown workflow name:** actionable not-found with fuzzy suggestions (not a silent 0-window).
@@ -439,7 +471,7 @@ untouched (the `?watch` param is an internal CLI↔frontend contract).
   literal batch (N>4) of a sub-workflow; input+output sharing a name; a data edge. Assert
   node/container/IO/edge resolution, scoped + `in:`/`out:` + `[i]` disambiguation, 0→fuzzy suggestions,
   and that **every emitted `qualify` address resolves to exactly 1 element**.
-- **Endpoint integration** via `TestClient(create_app())`: `/api/command` delivery counts, 415 on
+- **Endpoint integration** via `TestClient(create_app())`: `/api/command` sent_to counts, 415 on
   non-JSON, 422 on invalid source, the unknown-workflow not-found; `/api/activity` shape + empty case.
 - **CLI tests** (`CliRunner`): bare serve preserved (`test_ui.py:593/628` green; patch
   `_port_available`/`uvicorn.run`/`webbrowser.open`); subcommand dispatch; `httpx.ConnectError` →
@@ -454,11 +486,11 @@ untouched (the `?watch` param is an internal CLI↔frontend contract).
 ## End-to-end verification (the originating scenario)
 
 1. `pflow ui my-wf` (browser opens). Second terminal: `pflow ui focus my-wf fetch-data` → the window
-   focuses/reveals it, no reload; output `delivered to 1 window (1 visible)`.
+   focuses/reveals it, no reload; output `sent to 1 window (1 visible)`.
 2. Second window same workflow → re-run → `2 windows`.
 3. Background the tab → report says `backgrounded`. Close it (incl. a hard close) → next focus reports
    the corrected count.
-4. No window → `0 windows` + hint; `--open` opens focused (node) or opens+delivers-once-connected
+4. No window → `0 windows` + hint; `--open` opens focused (node) or opens+sends-once-connected
    (edge); a backgrounded window present → `--open` does NOT duplicate.
 5. `pflow ui focus my-wf "gen.response -> summarize.prompt"` → the data line lights (even in beautiful).
 6. Click a node → `pflow ui user-activity my-wf` shows it with the right `node_id` + view state +
@@ -485,7 +517,9 @@ untouched (the `?watch` param is an internal CLI↔frontend contract).
 
 Standalone body-row targets (need a field-level descriptor beyond `RFRef`); control/branch edges;
 `user-activity --follow` livestream (same bus, "when a consumer exists"); SSE replacing the Auto-update
-poll; any run-event schema (Task 133 boundary — envelope stays vocabulary-agnostic).
+poll; **programmatic apply-acknowledgment** (browser confirming "shown" back to the agent — unneeded
+while a human is in the loop; revisit only for autonomous/no-human flows or the run-overlay); any
+run-event schema (Task 133 boundary — envelope stays vocabulary-agnostic).
 
 ---
 
@@ -503,8 +537,10 @@ poll; any run-event schema (Task 133 boundary — envelope stays vocabulary-agno
 - **Async-only hub INVARIANT comment names the specific failure** — review-concurrency W3.
 - **`_workflow_key` gates on `exists()` + `.resolve()`; unknown name → fuzzy not-found** — review-plan
   W1 (dead `try/except`; phantom-path → silent 0 windows) + review-feature-interactions (symlink).
-- **`frame`/focus resolve via the visible representative; never frame an off-canvas id** —
-  review-feature-interactions (auto-collapse silent false-delivery).
+- **Total apply: focus/edge/frame expand collapsed ancestors so a resolvable target is always
+  revealed; never frame an off-canvas id** — review-feature-interactions (auto-collapse silent
+  false-delivery) + the apply-model simplification (no browser ack; the server validates, the browser
+  always reveals; the report says "sent", not "shown").
 - **Edge lookup keyed on `data.from`/`data.to`; beautiful-density edge un-hide** —
   review-feature-interactions (+ review-plan W3: pin with a `flow.test.ts` assertion).
 - **`--json` flag + structured passthrough; per-window visibility in JSON** — review-agent-ux C1.
