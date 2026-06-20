@@ -94,6 +94,26 @@ an input/output wrapper, or (future) a detected cycle. One record type for every
 carrying its members, nesting depth, and parent. A Loop is metadata on its node, not a
 Container. _Avoid_: subgraph, cluster, box, group.
 
+### Viewer & agent interaction
+
+**Viewer** — an open `pflow ui` browser window showing one workflow. Several Viewers can show
+the same workflow at once; an agent's Point reaches all of them. _Avoid_: window, tab, canvas
+(the canvas is the diagram drawn *inside* a Viewer).
+
+**Point** — the agent action of focusing, framing, or clearing a target (a node, port, container,
+or edge) in every Viewer showing a workflow, reusing the exact selection a user's click produces.
+The agent-side counterpart to a user click — the "hands" half of the shared canvas.
+_Avoid_: highlight, navigate; select (select is the user's click).
+
+**Watch** — reading the recent, bounded history of the user's *deliberate* interactions in the
+Viewers (clicks, focus changes, workflow switches — never hover/pan/zoom), most-recent-first.
+The agent's read-only "eyes" onto what the user is doing; the CLI surface is `user-activity`.
+_Avoid_: monitor, track, observe; auto-update (a different "watch", below).
+
+**Auto-update** — the Viewer rebuilding its canvas in place when the workflow's `.pflow.md`
+changes on disk, preserving view state. On by default; frozen with `pflow ui --no-auto-update`.
+_Avoid_: watch, live-reload, hot-reload.
+
 ## Ambiguity
 
 **Batch vs Loop** — both repeat a step. Discriminator: can you write the list of runs
@@ -124,3 +144,8 @@ after (the prior Iteration's output). One input key carries both roles.
 engine *executes* (run-oriented, the source of truth for behavior); the Graph model is what a
 renderer *draws* (structure-oriented, derived from the IR, never executed). They also identify
 nodes differently — see ADR-0003.
+
+**Watch vs Auto-update** — both involve "watching". Discriminator: Auto-update is the *Viewer*
+watching the *source file* to live-rebuild the canvas (the `--no-auto-update` flag freezes it);
+Watch is the *agent* watching the *user's* interactions (the `user-activity` command reads them).
+Different watcher, different watched.
