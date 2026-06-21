@@ -125,15 +125,54 @@ additional, bounded). The scary concurrency question is already retired (no-lock
 
 ## Verification
 
-- **Live-engine → on-disk JSONL → existing-reader integration test** (the A–C round-trip oracle only
-  proves `flatten`↔`reconstruct`, not the new emit path).
-- **Intermediate checkpoint:** one sub-workflow **and** one parallel batch end-to-end through the unified
-  collector, asserting correct `parent_id`/`ancestor_path`/`seq` and correct cost/`failed_node_ids`.
-- `uv run pytest -m trace_files` (the authoritative trace-shape oracle) + `make test` + `make check`
-  green; capture the baseline first.
-- Crash-tail: kill mid-run → partial JSONL still loads (degraded, no trailer); `report` renders the prefix.
-- Manual e2e: a real workflow with sub-workflow + parallel batch + loop; diff `report` / `analyze-cache`
-  / `--only` against a pre-change baseline.
+**No separate baseline harness for this task** (decided 2026-06-21). A golden-output baseline (like
+Task 159's) earns its keep on a *wide, shallow, subtly-formatted* surface; Task 172 is the opposite —
+a *deep, narrow* change behind one hard invariant (**the reconstructed nested dict, and the cost/status
+totals derived from it, stay identical**; on-disk format is frozen by A–C). For that shape you assert the
+invariant directly. A bespoke harness would mostly re-test the unchanged reader/analyzer and duplicate
+existing trace tests (fails the deletion test). The two real failure modes — **sub-workflow cost
+under-count** and **wrong `final_status`** (child `node_id` overwriting a parent) — are loud and already
+largely covered by the existing suite.
+
+### 1. The existing trace suite IS the regression oracle — green before & after
+Capture the pass/fail baseline on `main` first, re-run after the change, report the delta:
+- `tests/test_core/test_trace_io.py` — flatten↔reconstruct round-trip (the byte-identical-dict invariant).
+- `uv run pytest -m trace_files` (164 cases) + `test_workflow_trace.py`, `test_trace_format_2_1/2_2` — trace shape.
+- `test_metrics_integration.py` — cost/token totals. `test_failed_node_invariant.py`, `test_only_snapshot.py` — status + snapshot restore.
+
+### 2. Confirm the oracle covers the two risks — patch only if gapped
+Verify an existing test exercises (a) **sub-workflow LLM cost aggregation** (so the `tree()`-walking cost
+readers can't silently under-count) and (b) **parent/child `node_id` collision** for status (top-level
+scoping). If either is a gap, add *that one targeted test* — not a baseline.
+
+### 3. The headline NEW test — emit↔save equivalence
+Run one realistic workflow (sub-workflow **+** parallel batch, **mocked LLM** via `tests/shared/llm_mock`
+— do not live-call) through the new emit-time producer and assert the **reconstructed dict + cost totals
++ `final_status`/`failed_node_ids` equal the save-time result**. A–C's oracle does not cover the new
+producer; this is the load-bearing contract for the whole A-C/Phase-D split.
+
+### 4. Producer-internals unit tests (the genuinely new mechanics)
+- No-lock `seq` correctness under a **parallel-batch-of-sub-workflows** run (the routing rule; re-verify
+  the invariant against current code first).
+- `ancestor_path` stamping (`[{node_id, batch_index}]`, mirrors `NodeId.ancestor_path`); stripped on read.
+- Incremental flush (one line per event as recorded).
+- **D3 crash-tail tolerance:** truncated *final* line drops to `final_status="incomplete"` while corruption
+  anywhere earlier still raises — **replacing** the A–C documenting test
+  (`test_load_trace_file_skips_truncated_tail_*`) that pins today's whole-trace-skip behavior.
+
+### 5. Intermediate checkpoint (ADR-0008 — gate before consumer treats producer as "done")
+One sub-workflow **and** one parallel batch end-to-end through the unified collector, asserting correct
+`parent_id`/`ancestor_path`/`seq` and correct cost/`failed_node_ids`. (Reuse Task 159's
+`_shared/workflows/lyrics-generator/` tree as a realistic at-scale execution fixture — the asset, not the
+harness — but with mocked LLM, not the ~181-call live run.)
+
+### 6. Free outer net (zero new work)
+After baselining it on `main` (it may need a `regenerate.sh` post-A–C), run Task 159's
+`baseline/verify.sh` once — its deliberately **un-normalized cost** diff is a cheap catch for the
+cost-reader risk. Don't *build* anything for it; ~66/79 cases are static `analyze-cache` and pass
+trivially, so treat green as a bonus, not proof.
+
+- `make test` + `make check` green to finish.
 
 ## References
 
