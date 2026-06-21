@@ -25,8 +25,23 @@ shape as you work.
   user sees each change land while keeping their zoom and focus. An edit that doesn't
   validate is held (the last valid version stays up, with an error banner) until you fix it.
 - With no workflow argument, it opens the catalog of saved workflows.
-- Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-watch`
+- Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-auto-update`
   (freeze — stop live-updating).
+
+Once a Viewer server is running, an agent can Point in the user's open windows and
+Watch deliberate interactions:
+
+- `pflow ui focus <workflow> <target> [--open]` — focus/reveal a node, container,
+  IO port (`in:name` / `out:name`, scoped like `in:child.data`), or
+  `source.field -> target.input` data edge in every matching Viewer.
+- `pflow ui frame <workflow> <target>` — move the camera without changing focus.
+- `pflow ui clear-focus <workflow>` — clear the current focus.
+- `pflow ui user-activity [workflow]` — read recent clicks and view changes.
+
+All four accept `--port N` and `--json`. Use the command's sent-window and
+visible/backgrounded counts honestly: it reports where the command was sent, not
+a browser apply acknowledgment. Point exits nonzero when resolution fails or no
+Viewer received the command; empty `user-activity` remains a successful read.
 
 Deep-link a specific view (to point the user at a node, or for a screenshot): append
 `?workflow=<name-or-path>&focus=<node-id>` — `focus=` highlights the node and reveals its

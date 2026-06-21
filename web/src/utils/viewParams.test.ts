@@ -20,7 +20,7 @@ describe("readViewParams", () => {
     });
   });
 
-  it("watch is on by default and only watch=0 disables it (pflow ui --no-watch)", () => {
+  it("watch is on by default and only watch=0 disables it (pflow ui --no-auto-update)", () => {
     expect(readViewParams("").watch).toBe(true);
     expect(readViewParams("?watch=1").watch).toBe(true);
     expect(readViewParams("?watch=0").watch).toBe(false);

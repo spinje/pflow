@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AUTO_COLLAPSE_NODE_BUDGET, collapsibleGroupIds, initialCollapsed } from "./collapse";
+import { AUTO_COLLAPSE_NODE_BUDGET, collapsibleGroupIds, initialCollapsed, revealNodes } from "./collapse";
 import type { RFGraph, RFGroup, RFNode } from "../types";
 
 function node(id: string, over: Partial<RFNode> = {}): RFNode {
@@ -137,5 +137,26 @@ describe("initialCollapsed — big workflows open as an overview", () => {
     expect(collapsed.has("g0")).toBe(false); // source's chain
     expect(collapsed.has("g1")).toBe(false); // target's chain
     expect(collapsed.has("g2")).toBe(true); // unrelated stays collapsed
+  });
+});
+
+describe("revealNodes", () => {
+  it("opens both endpoint chains while preserving unrelated collapse and no-op identity", () => {
+    const g = graphWith(
+      5,
+      [
+        group("outer"),
+        group("left", { parent: "outer" }),
+        group("right"),
+        group("unrelated"),
+      ],
+      [node("source", { parent: "left" }), node("target", { parent: "right" })],
+    );
+    const collapsed = new Set(["outer", "left", "right", "unrelated"]);
+
+    const revealed = revealNodes(g, collapsed, ["source", "target"]);
+
+    expect(revealed).toEqual(new Set(["unrelated"]));
+    expect(revealNodes(g, revealed, ["source", "target"])).toBe(revealed);
   });
 });

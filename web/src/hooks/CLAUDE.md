@@ -74,4 +74,4 @@ is `utils/panelWidth.ts`.
 Polls `GET /api/version` (~1.5s, visibility-gated, in-flight-guarded) for a source-file
 fingerprint; fires the `useWorkflowGraph` reload on a CHANGE. Detection is deliberately separable
 from reaction: Task 169's SSE can later replace the poll with a push calling the same trigger,
-nothing downstream changing. On by default; `--no-watch` (→ `?watch=0`) freezes it.
+nothing downstream changing. On by default; `--no-auto-update` (→ `?watch=0`) freezes it.

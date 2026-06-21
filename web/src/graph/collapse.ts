@@ -32,6 +32,27 @@ export function collapsibleGroupIds(graph: RFGraph): string[] {
     .map((g) => g.id);
 }
 
+/** Expand every collapsed ancestor needed to render the given contract nodes. */
+export function revealNodes(
+  graph: RFGraph,
+  collapsed: ReadonlySet<string>,
+  nodeIds: readonly string[],
+): ReadonlySet<string> {
+  if (collapsed.size === 0) return collapsed;
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const groupById = new Map(graph.groups.map((group) => [group.id, group]));
+  const next = new Set(collapsed);
+  let changed = false;
+  for (const nodeId of nodeIds) {
+    let parent = nodeById.get(nodeId)?.parent ?? null;
+    while (parent) {
+      if (next.delete(parent)) changed = true;
+      parent = groupById.get(parent)?.parent ?? null;
+    }
+  }
+  return changed ? next : collapsed;
+}
+
 /** The collapsed set a workflow opens with. `mode` (the `collapse=` param) wins;
  *  otherwise auto: over-budget workflows open fully collapsed, others fully expanded.
  *  `protect` (deep-link targets — node_id, flat id, or a flat EDGE id) keeps each

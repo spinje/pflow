@@ -10,7 +10,7 @@ the canvas a shared surface for human↔agent conversation about a workflow.
 
 ## Status
 
-in progress
+done
 
 ## Priority
 

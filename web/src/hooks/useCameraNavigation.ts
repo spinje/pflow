@@ -31,6 +31,7 @@ interface CameraNavigationArgs {
 
 export interface CameraNavigation {
   onNavigate: (focusId: string, selected?: string | null) => void;
+  frameTargets: (ids: readonly string[], deferUntilPaint?: boolean) => void;
 }
 
 export function useCameraNavigation({
@@ -117,12 +118,20 @@ export function useCameraNavigation({
   // path follows just as promptly. A SAME-focus navigate repaints nothing, so
   // it fits immediately (positions are already settled — the old behavior).
   const pendingFollowRef = useRef<string | null>(null);
+  const pendingFrameRef = useRef<readonly string[] | null>(null);
   useEffect(() => {
     const id = pendingFollowRef.current;
-    if (id == null) return;
-    pendingFollowRef.current = null;
-    if (getNodes().some((n) => n.id === id)) {
+    if (id != null) {
+      pendingFollowRef.current = null;
+    }
+    const rendered = new Set(getNodes().map((node) => node.id));
+    if (id != null && rendered.has(id)) {
       fitView({ nodes: [{ id }], padding: 0.45, maxZoom: 1.2, duration: 300 });
+    }
+    const frameIds = pendingFrameRef.current;
+    if (frameIds != null && frameIds.every((target) => rendered.has(target))) {
+      pendingFrameRef.current = null;
+      fitView({ nodes: frameIds.map((target) => ({ id: target })), padding: 0.45, maxZoom: 1.2, duration: 300 });
     }
   }, [paintEpoch, fitView, getNodes]);
   const onNavigate = useCallback(
@@ -130,6 +139,9 @@ export function useCameraNavigation({
       // The clicked chip may unmount with the panel swap — its mouseleave never
       // fires, so the hover mark would stick. Clear it here.
       clearHover();
+      // A newer user/chip navigation supersedes any agent frame that was
+      // waiting for a reveal paint.
+      pendingFrameRef.current = null;
       setFocus(focusId);
       if (selected !== undefined) setSelectedId(selected);
       // An io-PORT chip names a row, not a node — the camera follows the OWNER
@@ -148,5 +160,26 @@ export function useCameraNavigation({
     [fitView, getNodes, ioPorts, focus, setFocus, setSelectedId, clearHover],
   );
 
-  return { onNavigate };
+  // Agent frame command: reveal is owned by GraphView; this camera-only arm
+  // waits for the resulting paint when a target is currently collapsed, and
+  // never mutates focus or selection.
+  const frameTargets = useCallback(
+    (ids: readonly string[], deferUntilPaint = false) => {
+      clearHover();
+      // Latest command wins. Without this, a pending frame for A can run on
+      // the paint caused by a later immediate frame for B.
+      pendingFrameRef.current = null;
+      const targets = [...new Set(ids.map((id) => ioPorts?.get(id) ?? id))];
+      if (targets.length === 0) return;
+      const rendered = new Set(getNodes().map((node) => node.id));
+      if (!deferUntilPaint && targets.every((id) => rendered.has(id))) {
+        fitView({ nodes: targets.map((id) => ({ id })), padding: 0.45, maxZoom: 1.2, duration: 300 });
+      } else {
+        pendingFrameRef.current = targets;
+      }
+    },
+    [clearHover, fitView, getNodes, ioPorts],
+  );
+
+  return { onNavigate, frameTargets };
 }

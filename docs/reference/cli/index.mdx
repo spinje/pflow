@@ -480,6 +480,8 @@ Serve an interactive browser canvas for a workflow — the visual counterpart to
 pflow ui workflow.pflow.md          # open straight to a workflow
 pflow ui my-saved-workflow          # a saved workflow by name
 pflow ui                            # the catalog of saved workflows
+pflow ui focus my-saved-workflow fetch-data
+pflow ui user-activity my-saved-workflow
 ```
 
 The canvas updates in place — no page reload — as the workflow's `.pflow.md` is edited on disk, so you can watch it take shape (while keeping the current zoom and selection) as you, or an AI agent, build it. An edit that doesn't validate is held: the last valid version stays on screen with an error banner until the source parses again. The server blocks until `Ctrl+C`, so run it in the background while you edit.
@@ -490,9 +492,20 @@ Runs on a standard install. If `pflow ui` reports a missing dependency, add the 
 |--------|-------------|
 | `--port N` | Port to serve on (default: 8765) |
 | `--no-open` | Don't open a browser window |
-| `--no-watch` | Freeze the view — don't live-update when the source changes |
+| `--no-auto-update` | Freeze the view — don't live-update when the source changes |
 
 The full view is described by the URL, so you can share or screenshot an exact state — for example `?workflow=<name-or-path>&focus=<node-id>&direction=TD`. `focus=` highlights a node and reveals its connections; `node=` centers the camera on it.
+
+An agent can interact with every open Viewer showing a workflow:
+
+```bash
+pflow ui focus <workflow> <target> [--open]  # focus and reveal a node, container, IO port, or data edge
+pflow ui frame <workflow> <target>           # move the camera without changing focus
+pflow ui clear-focus <workflow>
+pflow ui user-activity [workflow]             # recent deliberate clicks and view changes
+```
+
+These commands target the server on port 8765 by default; pass `--port N` for another instance or `--json` for structured output. Point commands exit nonzero when the target is unresolved/ambiguous or no Viewer received the command. `focus --open` opens a Viewer only when no window for that workflow is connected. Data edges use `source.field -> target.input`; IO ports use `in:name` / `out:name` (for example `in:child.data`); qualify duplicate nested node ids with their container path.
 
 ## Mermaid command
 

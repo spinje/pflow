@@ -15,17 +15,31 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { collapsibleGroupIds, initialCollapsed } from "../graph/collapse";
+import { reportInteraction, subscribe, type PointHandlers } from "../api/events";
+import { collapsibleGroupIds, initialCollapsed, revealNodes } from "../graph/collapse";
 import { autoDirection } from "../graph/direction";
 import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
-import { remapCollapsed, remapSelection } from "../graph/remap";
+import {
+  edgeIdForTarget,
+  edgeTargetForId,
+  flatIdForRef,
+  refForFlatId,
+  remapCollapsed,
+  remapSelection,
+} from "../graph/remap";
 import { useCameraNavigation } from "../hooks/useCameraNavigation";
 import { usePanelPair } from "../hooks/usePanelPair";
 import { useSourceWatch } from "../hooks/useSourceWatch";
 import { useWorkflowGraph } from "../hooks/useWorkflowGraph";
 import { ApiError, fetchSource } from "../api/client";
-import { edgeClickAction, nodeRepresentativeId, readViewParams, writeViewParams } from "../utils/viewParams";
-import type { RFEdge, RFGraph, RFNode, SourceFiles } from "../types";
+import {
+  DENSITY_TO_PARAM,
+  edgeClickAction,
+  nodeRepresentativeId,
+  readViewParams,
+  writeViewParams,
+} from "../utils/viewParams";
+import type { InteractionTarget, PointTarget, RFEdge, RFGraph, RFNode, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -82,7 +96,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
 
   // Live source watch: poll /api/version and bump `reload` when the .pflow.md
   // changes on disk, so the graph re-fetches and rebuilds IN PLACE (no page
-  // reload — view state is preserved). On unless `pflow ui --no-watch` opened
+  // reload — view state is preserved). On unless `pflow ui --no-auto-update` opened
   // with watch=0. Detection only; the in-place reaction lives in the hook.
   const [reload, setReload] = useState(0);
   const onSourceChanged = useCallback(() => setReload((n) => n + 1), []);
@@ -176,8 +190,6 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     url.search = writeViewParams(window.location.search, patch);
     window.history.replaceState({}, "", url);
   }, []);
-  const changeDensity = useCallback((d: Density) => { setDensity(d); syncUrl({ density: d }); }, [syncUrl]);
-  const changeDirection = useCallback((d: Direction) => { setDirection(d); syncUrl({ direction: d }); }, [syncUrl]);
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   // The read panel's source-link click: open the pane (if closed) and bump a
   // counter so SourcePane re-scrolls to the selected node's line even when it's
@@ -191,6 +203,69 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   graphRef.current = graph;
   const edgesRef = useRef(edges);
   edgesRef.current = edges;
+  const ioOwnership = useMemo(() => (graph ? ioOwners(graph) : null), [graph]);
+
+  const interactionTargetForNode = useCallback(
+    (flatId: string): InteractionTarget | undefined => {
+      if (!graph) return undefined;
+      const ref = refForFlatId(graph, flatId);
+      return ref ? { kind: "node", flat_id: flatId, ref } : undefined;
+    },
+    [graph],
+  );
+  const interactionTargetForEdge = useCallback(
+    (flatId: string): InteractionTarget | undefined => {
+      if (!graph) return undefined;
+      const target = edgeTargetForId(graph, flatId);
+      return target ? { ...target, flat_id: flatId } : undefined;
+    },
+    [graph],
+  );
+  const reportUser = useCallback(
+    (
+      type: string,
+      target?: InteractionTarget,
+      nextFocus: string | null = focus,
+      nextDensity: Density = density,
+      nextDirection: Direction = direction,
+    ): void => {
+      const focusRef = graph && nextFocus ? refForFlatId(graph, nextFocus) : null;
+      reportInteraction(workflow, {
+        type,
+        ...(target ? { target } : {}),
+        view_state: {
+          density: DENSITY_TO_PARAM[nextDensity],
+          direction: nextDirection,
+          focus: focusRef?.node_id ?? null,
+        },
+      });
+    },
+    [density, direction, focus, graph, workflow],
+  );
+
+  const changeDensity = useCallback(
+    (next: Density) => {
+      setDensity(next);
+      syncUrl({ density: next });
+      reportUser("density_change", undefined, focus, next, direction);
+    },
+    [direction, focus, reportUser, syncUrl],
+  );
+  const changeDirection = useCallback(
+    (next: Direction) => {
+      setDirection(next);
+      syncUrl({ direction: next });
+      reportUser("direction_change", undefined, focus, density, next);
+    },
+    [density, focus, reportUser, syncUrl],
+  );
+
+  const reportedOpen = useRef(false);
+  useEffect(() => {
+    if (!graph || reportedOpen.current) return;
+    reportedOpen.current = true;
+    reportUser("workflow_open");
+  }, [graph, reportUser]);
 
   // Initial collapse state, applied ONCE per workflow when its contract arrives: big
   // workflows open as an overview (everything collapsed), small ones fully expanded;
@@ -221,7 +296,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     // beautiful-mode rows still open via focus (expansion IS its focus state).
     setFocus(node.id);
     setSelectedId(node.id);
-  }, []);
+    reportUser("node_click", interactionTargetForNode(node.id), node.id);
+  }, [interactionTargetForNode, reportUser]);
 
   const onNodeDoubleClick = useCallback(
     (_: unknown, node: Node) => {
@@ -238,7 +314,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     const action = edgeClickAction(edge);
     setFocus(action.focus);
     setSelectedId(action.selectedId);
-  }, []);
+    reportUser("edge_click", interactionTargetForEdge(edge.id), action.focus);
+  }, [interactionTargetForEdge, reportUser]);
 
   // A selected EDGE id has no `from`/`to` escape hatch through rebuilds: a
   // single-group collapse can re-anchor + dedupe the focused edge's id out of the
@@ -261,37 +338,48 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const onPaneClick = useCallback(() => {
     setFocus(null);
     setSelectedId(null);
-  }, []);
+    reportUser("focus_clear", undefined, null);
+  }, [reportUser]);
+  const onClearFocus = useCallback(() => {
+    setFocus(null);
+    reportUser("focus_clear", undefined, null);
+  }, [reportUser]);
 
   // Clicking a single IO ROW focuses just that port — its connections reveal, the
   // row highlights. On a ROOT IO card the row ALSO opens the interface panel with
   // its entry marked (card = the whole interface, row = one port, same panel both
   // ways). Nested rows (on group cards) stay focus-only: their owner's panel is
   // the host ReadPanel, and auto-opening it on a row click is a different gesture.
-  const ioOwnership = useMemo(() => (graph ? ioOwners(graph) : null), [graph]);
+  const selectPort = useCallback(
+    (portId: string, force: boolean, report: boolean): void => {
+      const owner = ioOwnership?.ports.get(portId);
+      const ownerGroup = owner != null ? graphRef.current?.groups.find((g) => g.id === owner) : undefined;
+      const isRootWrapper =
+        ownerGroup != null &&
+        ownerGroup.parent == null &&
+        (ownerGroup.kind === "input_wrapper" || ownerGroup.kind === "output_wrapper");
+      // A user-clicked nested port with no line would reveal nothing. Agent Point
+      // is total-apply, so it bypasses this guard and still reveals the named row.
+      if (!force && !isRootWrapper) {
+        const touched = edgesRef.current.some(
+          (edge) =>
+            edge.source === portId ||
+            edge.target === portId ||
+            edge.data?.from === portId ||
+            edge.data?.to === portId,
+        );
+        if (!touched) return;
+      }
+      setFocus(portId);
+      if (isRootWrapper) setSelectedId(owner!);
+      if (report) reportUser("port_click", interactionTargetForNode(portId), portId);
+    },
+    [interactionTargetForNode, ioOwnership, reportUser],
+  );
+
   const interaction = useMemo(
     () => ({
-      focusPort: (portId: string) => {
-        const owner = ioOwnership?.ports.get(portId);
-        const ownerGroup = owner != null ? graphRef.current?.groups.find((g) => g.id === owner) : undefined;
-        const isRootWrapper =
-          ownerGroup != null &&
-          ownerGroup.parent == null &&
-          (ownerGroup.kind === "input_wrapper" || ownerGroup.kind === "output_wrapper");
-        // A NESTED port with no line in the current view: focusing would dim the
-        // whole canvas and reveal nothing — the into-nowhere click (user-caught
-        // 2026-06-12; e.g. an output no caller reads, its inner producer edge
-        // self-loop-dropped on the collapsed card). Root rows always click — the
-        // interface panel is the payoff regardless of lines.
-        if (!isRootWrapper) {
-          const touched = edgesRef.current.some(
-            (e) => e.source === portId || e.target === portId || e.data?.from === portId || e.data?.to === portId,
-          );
-          if (!touched) return;
-        }
-        setFocus(portId);
-        if (isRootWrapper) setSelectedId(owner!);
-      },
+      focusPort: (portId: string) => selectPort(portId, false, true),
       toggleGroup,
       hoverNode: (flatId: string | null) => setHovered(flatId != null ? new Set([flatId]) : NO_HOVER),
       // A hovered row marks its touch set — derived from the FLOW edges (the
@@ -299,7 +387,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       hoverRow: (row: { nodeId: string; handles: readonly string[] } | null) =>
         setHovered(row != null ? rowTouches(edgesRef.current, row.nodeId, row.handles) : NO_HOVER),
     }),
-    [ioOwnership, toggleGroup],
+    [selectPort, toggleGroup],
   );
 
   // A selected CONTAINER reads as its HOST node — purpose, params (bindings),
@@ -349,7 +437,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // Camera ownership (fit-on-view-change, the node=/focus= deep links, chip
   // navigation + the paint-deferred follow) lives in useCameraNavigation.
   const clearHover = useCallback(() => setHovered(NO_HOVER), []);
-  const { onNavigate } = useCameraNavigation({
+  const { onNavigate: navigate, frameTargets } = useCameraNavigation({
     status,
     paintEpoch,
     graph,
@@ -362,6 +450,13 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setSelectedId,
     clearHover,
   });
+  const onNavigate = useCallback(
+    (focusId: string, selected?: string | null): void => {
+      navigate(focusId, selected);
+      reportUser("focus_change", interactionTargetForNode(focusId), focusId);
+    },
+    [interactionTargetForNode, navigate, reportUser],
+  );
 
   // Collapse-all folds every collapsible container and clears focus (the focused
   // node is about to disappear into a box — a ring on a hidden node is meaningless).
@@ -371,7 +466,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setCollapsed(new Set(collapsibleIds));
     setFocus(null);
     setSelectedId(null);
-  }, [collapsibleIds]);
+    reportUser("focus_clear", undefined, null);
+  }, [collapsibleIds, reportUser]);
   const onExpandAll = useCallback(() => setCollapsed(new Set()), []);
 
   // The rail's search: the searchable subjects are the workflow's STEPS + container
@@ -380,6 +476,20 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     () => (graph ? graph.nodes.filter((n) => n.kind !== "input" && n.kind !== "output" && n.kind !== "end") : []),
     [graph],
   );
+  const reveal = useCallback(
+    (nodeIds: readonly string[]): void => {
+      if (!graph) return;
+      setCollapsed((current) => revealNodes(graph, current, nodeIds));
+    },
+    [graph],
+  );
+  const representativeFor = useCallback(
+    (node: RFNode): string => {
+      if (node.ref.port !== null) return ioOwnership?.ports.get(node.id) ?? node.id;
+      return graph ? nodeRepresentativeId(graph, node) : node.id;
+    },
+    [graph, ioOwnership],
+  );
   // Search-select behaves like CLICKING the node: REVEAL it (expand the collapsed
   // ancestor chain so a buried target becomes visible), then focus + SELECT +
   // camera its representative (a host → its group; a leaf → itself). Passing the
@@ -387,26 +497,87 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // syncs the source pane (selectedNode → activeLine → scroll, SourcePane) — a bare
   // focus would do neither. The follow is paint-deferred, landing after the reveal
   // re-layout — the same ordering the node=/focus= deep link relies on.
-  const onSelectNode = useCallback(
-    (node: RFNode) => {
+  const selectNode = useCallback(
+    (node: RFNode, report: boolean) => {
       if (!graph) return;
-      setCollapsed((prev) => {
-        if (prev.size === 0) return prev;
-        const groupById = new Map(graph.groups.map((g) => [g.id, g]));
-        const next = new Set(prev);
-        let parent: string | null = node.parent ?? null;
-        let changed = false;
-        while (parent) {
-          if (next.delete(parent)) changed = true;
-          parent = groupById.get(parent)?.parent ?? null;
-        }
-        return changed ? next : prev;
-      });
-      const repId = nodeRepresentativeId(graph, node);
-      onNavigate(repId, repId);
+      reveal([node.id]);
+      const repId = representativeFor(node);
+      navigate(repId, repId);
+      if (report) reportUser("node_click", interactionTargetForNode(repId), repId);
     },
-    [graph, onNavigate],
+    [graph, interactionTargetForNode, navigate, reportUser, representativeFor, reveal],
   );
+  const onSelectNode = useCallback((node: RFNode) => selectNode(node, true), [selectNode]);
+
+  const applyPoint = useCallback(
+    (command: "focus" | "frame", target: PointTarget): void => {
+      if (!graph) return;
+      if (target.kind === "node") {
+        const flatId = flatIdForRef(graph, target.ref);
+        const node = flatId ? graph.nodes.find((candidate) => candidate.id === flatId) : undefined;
+        if (!node) return; // stale Viewer; Auto-update + a human re-point self-heals
+        reveal([node.id]);
+        const representative = representativeFor(node);
+        if (command === "frame") {
+          frameTargets([representative], !nodes.some((rendered) => rendered.id === representative));
+        } else if (node.ref.port !== null) {
+          selectPort(node.id, true, false);
+          frameTargets(
+            [representative],
+            focus !== node.id || !nodes.some((rendered) => rendered.id === representative),
+          );
+        } else {
+          selectNode(node, false);
+          // onNavigate cannot see a currently-collapsed representative until
+          // the reveal paints; arm the camera explicitly in that one case.
+          if (!nodes.some((rendered) => rendered.id === representative)) frameTargets([representative], true);
+        }
+        return;
+      }
+
+      const edgeId = edgeIdForTarget(graph, target);
+      const sourceId = flatIdForRef(graph, target.source);
+      const targetId = flatIdForRef(graph, target.target);
+      if (!edgeId || !sourceId || !targetId) return;
+      reveal([sourceId, targetId]);
+      const endpointRepresentatives = [sourceId, targetId]
+        .map((id) => graph.nodes.find((node) => node.id === id))
+        .filter((node): node is RFNode => node !== undefined)
+        .map(representativeFor);
+      const endpointsNeedPaint = endpointRepresentatives.some(
+        (representative) => !nodes.some((rendered) => rendered.id === representative),
+      );
+      if (command === "frame") {
+        frameTargets(endpointRepresentatives, endpointsNeedPaint);
+      } else {
+        setFocus(edgeId);
+        setSelectedId(edgeId);
+        frameTargets(endpointRepresentatives, focus !== edgeId || endpointsNeedPaint);
+      }
+    },
+    [focus, frameTargets, graph, nodes, representativeFor, reveal, selectNode, selectPort],
+  );
+
+  // Subscribe only after the graph is present. This prevents the open-if-absent
+  // retry from observing a live Viewer before it can resolve/apply a command.
+  const pointHandlers = useRef<PointHandlers | null>(null);
+  pointHandlers.current = {
+    focus: (target) => applyPoint("focus", target),
+    frame: (target) => applyPoint("frame", target),
+    clear: () => {
+      setFocus(null);
+      setSelectedId(null);
+    },
+  };
+  const graphReady = graph !== null;
+  useEffect(() => {
+    if (!graphReady) return;
+    return subscribe(workflow, {
+      focus: (target) => pointHandlers.current?.focus(target),
+      frame: (target) => pointHandlers.current?.frame(target),
+      clear: () => pointHandlers.current?.clear(),
+    });
+  }, [graphReady, workflow]);
 
   const toolbar = (): JSX.Element => (
     <Toolbar
@@ -435,7 +606,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       onSourceOpen={changeSourceOpen}
       onCollapseAll={onCollapseAll}
       onExpandAll={onExpandAll}
-      onClearFocus={() => setFocus(null)}
+      onClearFocus={onClearFocus}
       onSelectNode={onSelectNode}
     />
   );

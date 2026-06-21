@@ -35,8 +35,8 @@ src/
   index.css          all styles (one sheet; theme vars at :root — geometry vars are
                      INJECTED from graph/metrics.ts, never hardcoded here)
   types.ts           the wire contract (mirrors react_flow.py) — imported everywhere
-  api/               server communication (client.ts: fetch + ApiError + fetchVersion,
-                     the source-watch poll; a live /events subscription would go here)
+  api/               server communication (client.ts: graph/source/version;
+                     events.ts: SSE Point subscription + fire-and-forget Watch reports)
   graph/             PURE contract → React Flow transform; NO React (tests run node-env).
                      flow.ts is the FAÇADE (re-exports the siblings); the DAG is
                      scan → io → rows → focus/flow.  >> src/graph/CLAUDE.md
@@ -99,7 +99,8 @@ Tests sit beside their subject.
   `is_transform` ship as booleans from the contract; the frontend decides treatment. Don't
   re-derive them in JS.
 - **Overlay-ready seam.** Node components keep static data separate from a future `status`
-  prop; `api/` is the single data-loading point a live stream plugs into. Every React Flow
+  prop; `api/events.ts` owns the vocabulary-agnostic SSE envelope. Point messages use it
+  today; a future run overlay adds message types without defining them here. Every React Flow
   component the registries reference must be `memo()`'d.
 - **Chrome palette is SCOPED, never `:root`.** The dark UI tokens (`--bg/--border/--text/
   --accent/--bg-field`, surface ladder `#0d0d0d` void < `#151515` panel < `#1c1c1c` field) are

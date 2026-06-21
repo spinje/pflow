@@ -109,6 +109,64 @@ describe("useCameraNavigation", () => {
     expect(fitViewSpy).not.toHaveBeenCalled();
   });
 
+  it("frames without changing focus, deferring until a revealed target paints", () => {
+    rf.renderedIds = [];
+    const props = makeProps();
+    const { result, rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    act(() => result.current.frameTargets(["n1", "n2"]));
+    expect(props.setFocus).not.toHaveBeenCalled();
+    expect(props.setSelectedId).not.toHaveBeenCalled();
+    expect(fitViewSpy).not.toHaveBeenCalled();
+
+    rf.renderedIds = ["n1", "n2"];
+    rerender({ ...props, paintEpoch: 1 });
+    expect(fitViewSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ nodes: [{ id: "n1" }, { id: "n2" }] }),
+    );
+  });
+
+  it("frames already-rendered targets immediately", () => {
+    rf.renderedIds = ["n1"];
+    const { result } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: makeProps() });
+    fitViewSpy.mockClear();
+
+    act(() => result.current.frameTargets(["n1"]));
+
+    expect(followCalls("n1")).toBe(1);
+  });
+
+  it("a newer immediate frame cancels an older paint-deferred frame", () => {
+    rf.renderedIds = ["n2"];
+    const props = makeProps();
+    const { result, rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    act(() => result.current.frameTargets(["n1"], true));
+    act(() => result.current.frameTargets(["n2"]));
+    expect(followCalls("n2")).toBe(1);
+
+    rf.renderedIds = ["n1", "n2"];
+    rerender({ ...props, paintEpoch: 1 });
+    expect(followCalls("n1")).toBe(0);
+  });
+
+  it("user navigation cancels an older paint-deferred agent frame", () => {
+    rf.renderedIds = ["n2"];
+    const props = makeProps({ focus: "n2" });
+    const { result, rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    act(() => result.current.frameTargets(["n1"], true));
+    act(() => result.current.onNavigate("n2"));
+    expect(followCalls("n2")).toBe(1);
+
+    rf.renderedIds = ["n1", "n2"];
+    rerender({ ...props, paintEpoch: 1 });
+    expect(followCalls("n1")).toBe(0);
+  });
+
   it("fits the whole view once per workflow|direction|node key — focus restyles never refit; a direction flip does", () => {
     rf.renderedIds = ["n1"];
     const props = makeProps();

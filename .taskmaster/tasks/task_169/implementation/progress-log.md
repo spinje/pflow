@@ -188,3 +188,91 @@ additive later — no rework.
 **Meta-lesson for the next agent:** don't add a confirmation protocol when a human closes the loop.
 "Validate hard up front + always reveal + report honestly" beats "do it blind, then build machinery to
 check whether it worked."
+
+---
+
+## 2026-06-20 — Phase 1 implementation started
+
+Scope is intentionally server-only: the in-memory hub, target resolver, five interaction endpoints,
+security note, and Python tests. Baseline before code: `tests/test_cli/test_ui.py` plus the React Flow
+renderer suite produced **73 passed, 3 failed**; all three failures require binding a localhost socket,
+which this sandbox denies (`PermissionError`) before project code runs. Phase 0's ADR-0007 was the only
+pre-existing worktree change and is being preserved.
+
+Phase 1 complete. The hub is per-`create_app()` and loop-owned; SSE uses a 15-second keepalive send so
+disconnect cleanup is ASGI-version-independent. Name/path subscriptions converge on one resolved key,
+and Point validation resolves only to structural refs. One necessary plan correction: edge descriptors
+now include `source_path`. Existing `RFEdge.output_path` is part of edge identity, so omitting it made
+distinct sub-key edges resolve to different addresses but become indistinguishable after broadcast.
+No frontend or CLI code was changed; their wiring and user-facing docs remain in their planned later
+phases rather than documenting a partial surface.
+
+Verification: **21 focused tests passed** (including real nested/batch renders and raw-ASGI SSE
+broadcast+disconnect), **94 relevant regressions passed**, pre-commit/Ruff, full mypy (237 files), and
+deptry passed. Near-full sandbox run: **8030 passed, 18 skipped** after excluding ten environment-only
+cases (Homebrew `uv` panics before Python or localhost socket binds denied); an unfiltered run confirmed
+the four additional exclusions fail inside Homebrew `uv`, not project code.
+
+---
+
+## 2026-06-20 — Phase 2 implementation started
+
+Scope is frontend-only: the SSE/reporting API seam, structural target mapping, total reveal before
+focus/frame, and deliberate-interaction reporting. Lockfile dependencies restored with `npm ci`;
+baseline before edits is **40 test files / 509 tests passed** plus a clean TypeScript typecheck. Real
+browser verification is required after the bundle build because jsdom does not render edge geometry or
+prove camera behavior.
+
+Phase 2 complete. `events.ts` validates the vocabulary-agnostic SSE envelope, tracks reconnect-issued
+connection ids/visibility, and makes interaction POST failures inert. Graph mapping uses full `RFRef`
+identity; Point expands collapsed ancestor chains before focus/frame, edge focus reveals both endpoints,
+and frame is camera-only and paint-deferred when reveal changes layout. User clicks, row/chip focus,
+clear, view toggles, and workflow open report structural + local flat identity; agent commands do not
+echo into Watch.
+
+Two implementation refinements from seam verification: (1) subscription starts only after the graph is
+loaded, so `--open` cannot count a Viewer that is not yet able to apply its first command; (2) edge
+resolution first finds the browser's contract `RFEdge` by original endpoint refs + fields + full
+`source_path`, then focuses that local edge id after reveal. This is simpler than searching the current
+FlowEdge by render anchors and preserves the plan's load-bearing rule: re-anchored `edge.source/target`
+are never used as identity.
+
+Verification: **41 frontend files / 521 tests passed** (baseline +12), TypeScript typecheck and two
+production `make ui-build` runs passed, plus **94 Python UI/renderer regressions**. A real headless Chrome
+run successfully subscribed, accepted focus/frame commands (`HTTP 200`), dispatched a real node click,
+and produced `/private/tmp/pflow-shots/task169-phase2-live-200.png`; the final image shows the clicked
+`process-small` selection/panel after the command sequence. Its final result-aggregation node had a local
+MCP-result type mismatch; the corrected rerun was blocked by the environment execution quota, so the
+intermediate focus-vs-frame DOM JSON could not be recovered. Unit/jsdom tests directly pin that state
+transition; the remaining live-verification limitation is explicit rather than inferred away.
+
+---
+
+## 2026-06-21 — Phases 3–4 complete
+
+The CLI now preserves bare `pflow ui [workflow]` through a custom `UiGroup` while adding `focus`,
+`frame`, `clear-focus`, and `user-activity`; all verbs support structured JSON failures and actionable
+no-server/zero-window output. Unresolved, ambiguous, zero-window, and open-timeout Point outcomes exit
+nonzero so shell/agent callers cannot mistake a no-op for success. `--no-watch` is renamed
+`--no-auto-update` without changing the private
+`?watch=0` contract. Server/frontend/CLI docs now describe the stateful hub, target grammar, security,
+and deferred boundaries; Task 169 is marked done.
+
+One plan deviation was necessary after seam verification: `focus --open` re-posts every target after
+the Viewer subscribes, not only edges. Load-time `focus=` accepts bare node/flat ids but not qualified
+nested or `in:`/`out:` addresses; retrying the already-validated structural command keeps one parser and
+makes all target types reliable. Review also found and fixed reconnect-stale visibility, stale deferred
+camera frames, non-round-trippable nested IO output, blocking graph builds on the hub loop, unbounded
+connection queues, unknown-workflow Watch ambiguity, and production-inaccurate fixtures. Control-edge
+identity remains deferred by plan; data-edge `frame` remains camera-only, while `focus` reveals the line.
+
+Verification: **76 focused Python UI tests passed** (including localhost lifecycle tests), **523 frontend
+tests passed**, production build/typecheck passed, and the full non-LLM suite passed **8077 tests** after
+excluding one confirmed Homebrew-`uv` environment failure (`test_dry_run_json_mode_emits_no_stderr`;
+`uv` cannot spawn `pflow` from its temporary cwd). Pre-commit, full mypy (237 files), deptry (240 files),
+and docs tests passed. Phase 2's real Chrome Point/Watch run remains the live-browser evidence; the final
+same-page rerun also passed using `scratchpads/task169-live-rerun/point-watch-rerun.pflow.md`: CLI
+clear/focus each reported `sent_to: 1`, a real pointer drag moved the canvas, repeated focus restored the
+node on-screen with its focus ring/panel, and Watch returned the real `node_click` with structural ref,
+flat id, and view state. An earlier false negative mutated only the viewport DOM style (desynchronizing
+React Flow's internal camera state); replacing it with a real pointer drag made the check production-faithful.
