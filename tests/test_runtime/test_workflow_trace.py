@@ -125,7 +125,15 @@ class TestWorkflowTraceCollector:
         assert len(output_value) == 11000
 
     def test_save_to_file_interns_large_strings_without_mutating_live_events(self, collector, temp_home):
-        """Large duplicate strings are interned only on disk; live events stay resolved."""
+        """Large duplicate strings are interned only on disk; live events stay resolved.
+
+        Task 133 Phase C: the on-disk format is now JSONL (a ``meta`` line, one
+        ``event`` line per node, a ``run.complete`` trailer, and a ``blobs``
+        trailer) rather than a single pretty-printed JSON object. The interning
+        contract is unchanged — a large leaf is replaced by a blob ref on disk
+        and resolved back on read — but it is now pinned against the JSONL shape.
+        The full blob-ref round-trip is also covered in tests/test_core/test_trace_io.py.
+        """
         large_string = "trace-payload-" + ("x" * 2048)
         collector.record_node_execution(
             node_id="large-node",
@@ -138,14 +146,26 @@ class TestWorkflowTraceCollector:
         with patch("pathlib.Path.home", return_value=temp_home):
             filepath = collector.save_to_file()
 
-        raw_trace = json.loads(filepath.read_text(encoding="utf-8"))
-        raw_value = raw_trace["nodes"][0]["node_output"]["large_data"]
+        # On disk: one JSON object per line (JSONL transport).
+        lines = [json.loads(line) for line in filepath.read_text(encoding="utf-8").splitlines() if line.strip()]
+        # First line is the meta line carrying the positive format marker.
+        assert lines[0]["kind"] == "meta"
+        assert lines[0]["pflow_trace"]
+        # A blobs trailer line carries the interned blob map.
+        blobs_lines = [line for line in lines if line.get("kind") == "blobs"]
+        assert len(blobs_lines) == 1
+        blob_map = blobs_lines[0]["blobs"]
+        # The large leaf was interned (stored once, keyed by digest) — not inlined.
+        assert large_string in blob_map.values()
+        # The event line carries a blob ref in place of the large leaf, not the raw string.
+        event_lines = [line for line in lines if line.get("kind") == "event"]
+        raw_value = event_lines[0]["node_output"]["large_data"]
         assert set(raw_value) == {BLOB_SENTINEL}
-        digest = raw_value[BLOB_SENTINEL]
-        assert raw_trace["blobs"] == {digest: large_string}
-        assert list(raw_trace.keys())[-1] == "blobs"
+        assert blob_map[raw_value[BLOB_SENTINEL]] == large_string
 
+        # Live in-memory events stay fully resolved (interning is a disk-only transform).
         assert collector.events[0]["node_output"]["large_data"] == large_string
+        # Round-trip: the loader resolves the blob ref back to the full string.
         assert load_trace_file(filepath)["nodes"][0]["node_output"]["large_data"] == large_string
 
     def test_sanitize_for_json_binary_data(self, collector):
@@ -420,8 +440,7 @@ class TestWorkflowTraceCollector:
             filepath = collector.save_to_file()
 
             # Read and verify content
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             # Verify metadata
             assert trace_data["workflow_name"] == "test-workflow"
@@ -449,7 +468,7 @@ class TestWorkflowTraceCollector:
         """A full run writes ``only_node: null`` (2.4.0) so it's a usable snapshot source."""
         with patch("pathlib.Path.home", return_value=temp_home):
             filepath = collector.save_to_file()
-            trace_data = json.loads(filepath.read_text())
+            trace_data = load_trace_file(filepath)
             assert trace_data["only_node"] is None
 
     def test_only_node_recorded_when_set(self, collector, temp_home):
@@ -457,7 +476,7 @@ class TestWorkflowTraceCollector:
         collector.only_node = "summarize"
         with patch("pathlib.Path.home", return_value=temp_home):
             filepath = collector.save_to_file()
-            trace_data = json.loads(filepath.read_text())
+            trace_data = load_trace_file(filepath)
             assert trace_data["only_node"] == "summarize"
 
     def test_execution_id_is_valid_uuid(self, collector):
@@ -479,8 +498,7 @@ class TestWorkflowTraceCollector:
             assert collector.execution_id not in str(filepath)
 
             # Verify execution_id IS in the JSON content
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
             assert trace_data["execution_id"] == collector.execution_id
 
     def test_final_status_success(self, collector, temp_home):
@@ -497,8 +515,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "success"
             assert trace_data["nodes_failed"] == 0
@@ -524,8 +541,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "failed"
             assert trace_data["nodes_failed"] == 1
@@ -550,8 +566,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "success"
             assert trace_data["warnings"][0]["source"] == "parser"
@@ -576,8 +591,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "success"
             assert trace_data["warnings"][0]["source"] == source
@@ -603,8 +617,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "degraded"
             assert trace_data["warnings"][0]["source"] == "runtime"
@@ -637,8 +650,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "degraded"
             assert trace_data["nodes_failed"] == 0
@@ -672,8 +684,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "degraded"
             assert trace_data["nodes_failed"] == 0
@@ -723,8 +734,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert "llm_summary" in trace_data
             summary = trace_data["llm_summary"]
@@ -745,8 +755,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert "llm_summary" not in trace_data
 
@@ -842,8 +851,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert "llm_summary" in trace_data
             summary = trace_data["llm_summary"]
@@ -870,8 +878,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert "llm_summary" in trace_data
             assert trace_data["llm_summary"]["total_calls"] == 1
@@ -894,8 +901,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             assert "llm_summary" not in trace_data
 
@@ -983,8 +989,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
             assert summary["total_calls"] == 2
@@ -1015,8 +1020,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
             assert summary["total_calls"] == 2
@@ -1052,8 +1056,7 @@ class TestWorkflowTraceCollector:
             )
 
             filepath = collector.save_to_file()
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
             assert summary["total_calls"] == 2
@@ -1077,8 +1080,7 @@ class TestWorkflowTraceCollector:
             )
 
             filepath = collector.save_to_file()
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
             assert summary["total_cost_usd"] is None
@@ -1120,8 +1122,7 @@ class TestWorkflowTraceCollector:
 
             filepath = collector.save_to_file()
 
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
             assert summary["total_input_tokens"] == 800
@@ -1155,8 +1156,7 @@ class TestWorkflowTraceCollector:
             )
 
             filepath = collector.save_to_file()
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
             # Sorted by name for determinism
@@ -1383,8 +1383,7 @@ class TestWarmupItemAccounting:
                 ],
             )
             filepath = collector.save_to_file()
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
         summary = trace_data["llm_summary"]
         # 3 real items, NOT 4 (warmup excluded from count)
@@ -1405,8 +1404,7 @@ class TestWarmupItemAccounting:
                 batch_items=[self._warmup_item(), self._real_item(0), self._real_item(1)],
             )
             filepath = collector.save_to_file()
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
         summary = trace_data["llm_summary"]
         # Tokens: warmup (4107) + 2 real (2 * 4153) = 12413
@@ -1429,8 +1427,7 @@ class TestWarmupItemAccounting:
                 ],
             )
             filepath = collector.save_to_file()
-            with open(filepath) as f:
-                trace_data = json.load(f)
+            trace_data = load_trace_file(filepath)
 
         summary = trace_data["llm_summary"]
         unavailable = summary.get("unavailable_models", [])
@@ -1893,8 +1890,7 @@ class TestSaveToFileFailedNodeIds:
         return home_dir
 
     def _read_trace(self, filepath):
-        with open(filepath) as f:
-            return json.load(f)
+        return load_trace_file(filepath)
 
     def test_writes_failed_node_ids_key(self, collector, temp_home):
         with patch("pathlib.Path.home", return_value=temp_home):

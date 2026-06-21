@@ -19,13 +19,13 @@ cache_source, cache_age_sec, and cache_chunks_skipped (all on the
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from pflow.core.trace_io import load_trace_file
 from pflow.runtime.engine.instrumentation import (
     _augment_llm_usage_with_cache_metadata,
     _should_write_cache_metadata,
@@ -48,7 +48,9 @@ def test_saved_trace_includes_workflow_path_field(tmp_path, monkeypatch) -> None
     )
 
     trace_path = collector.save_to_file()
-    trace_data = json.loads(trace_path.read_text())
+    # save_to_file now writes JSONL (Task 133); load_trace_file reconstructs the
+    # identical nested dict the legacy single-object read produced.
+    trace_data = load_trace_file(trace_path)
 
     assert trace_data["format_version"] == TRACE_FORMAT_VERSION
     assert trace_data["workflow_path"] == "/abs/path/to/workflow.pflow.md"
@@ -62,7 +64,9 @@ def test_saved_trace_workflow_path_null_when_not_set(tmp_path, monkeypatch) -> N
     collector = WorkflowTraceCollector(workflow_name="test-workflow")
 
     trace_path = collector.save_to_file()
-    trace_data = json.loads(trace_path.read_text())
+    # save_to_file now writes JSONL (Task 133); load_trace_file reconstructs the
+    # identical nested dict including the top-level workflow_path (None when unset).
+    trace_data = load_trace_file(trace_path)
 
     assert "workflow_path" in trace_data
     assert trace_data["workflow_path"] is None

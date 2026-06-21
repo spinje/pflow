@@ -2077,7 +2077,7 @@ pflow settings show                                 # View settings
 pflow settings llm show                             # View configured LLM models
 
 # Trace Debugging
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.'   # Inspect trace (for debugging)
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.'   # Inspect trace — JSONL: one JSON object per line (meta / event / run.complete / blobs)
 ```
 
 ### Template Variable Quick Reference

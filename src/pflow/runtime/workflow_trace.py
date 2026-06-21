@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.node_type_display import is_llm_node_type
-from pflow.core.trace_io import intern_blobs, load_trace_file
+from pflow.core.trace_io import flatten_trace_to_lines, load_trace_file
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
@@ -947,9 +947,14 @@ class WorkflowTraceCollector:
         if self.json_output is not None:
             trace_data["json_output"] = self.json_output
 
-        # Write to file with proper formatting
+        # Write as JSONL (Task 133): one `meta` line + one line per flattened event +
+        # `run.complete`/`blobs` trailers. `flatten_trace_to_lines` derives correlation
+        # (id/parent_id/seq/run_id) from the nested tree at save time and interns large leaves;
+        # `load_trace_file` reconstructs the exact nested dict for every existing reader.
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(intern_blobs(trace_data), f, indent=2, default=str)
+            for line in flatten_trace_to_lines(trace_data):
+                f.write(json.dumps(line, default=str))
+                f.write("\n")
 
         return filepath
 

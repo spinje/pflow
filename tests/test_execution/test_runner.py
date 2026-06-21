@@ -4,7 +4,6 @@ Verifies that validation gates compilation (spec 9b) and that a valid
 workflow runs through the full pipeline producing structured results.
 """
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,6 +11,7 @@ import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
+from pflow.core.trace_io import load_trace_file
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.result import ExecutionResult, RunnerConfig
@@ -301,7 +301,7 @@ def test_llm_rendered_below_min_warning_reaches_trace_json(mock_llm_client, monk
     assert result.success is True
     assert result.trace is not None
     trace_path = result.trace.save_to_file()
-    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace_data = load_trace_file(trace_path)
 
     llm_call = trace_data["nodes"][0]["llm_call"]
     assert llm_call["cache_skipped_reason"] == "below_min"
@@ -344,7 +344,7 @@ def test_batch_prewarm_disabled_below_min_reaches_trace_json(mock_llm_client) ->
     assert result.success is True
     assert result.trace is not None
     trace_path = result.trace.save_to_file()
-    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace_data = load_trace_file(trace_path)
 
     batch_items = trace_data["nodes"][0]["batch_items"]
     assert {item["llm_call"]["prewarm_disabled_reason"] for item in batch_items} == {"below_min"}
@@ -401,7 +401,7 @@ def test_batch_prewarm_not_disabled_when_declared_prompt_cache_exists(mock_llm_c
     assert result.success is True, f"diagnostics: {result.diagnostics}"
     assert result.trace is not None
     trace_path = result.trace.save_to_file()
-    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace_data = load_trace_file(trace_path)
 
     batch_items = trace_data["nodes"][0]["batch_items"]
     non_warmup = [item for item in batch_items if not item.get("llm_call", {}).get("is_warmup")]
@@ -452,7 +452,7 @@ def test_exception_trace_preserves_prior_runtime_cache_warnings(mock_llm_client,
     assert result.trace is not None
     assert any(warning.id == "cache.below-min-rendered" for warning in result.warnings)
     trace_path = result.trace.save_to_file()
-    trace_data = json.loads(trace_path.read_text(encoding="utf-8"))
+    trace_data = load_trace_file(trace_path)
 
     assert trace_data["nodes"][0]["llm_call"]["cache_skipped_reason"] == "below_min"
     assert any(warning.get("id") == "cache.below-min-rendered" for warning in trace_data["warnings"])

@@ -228,14 +228,17 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 166: Declarative Stateful Loop Primitive
 - ✅ Task 155: Workflow Graph Model for Multi-Renderer Support
 - ✅ Task 168: Workflow Visualization Web UI
+- ✅ Task 133: Trace/Cache Storage Architecture
 
 ### Planned Features (in order of priority)
 
 **Next?** (in build order)
-1. Task 125: Human-in-the-Loop Approval Gates
-2. Task 164: Resume Workflow From a Failed Node
-3. Task 171: Durable Resume Tokens & Non-TTY Gates
-4. Task 169: Agent↔Browser Interaction Channel
+- Task 172: Streamable trace
+- Task 169: Live UI transport (SSE)
+- Task 173: Live execution overlay
+- Task 125: Human-in-the-Loop Approval Gates
+- Task 164: Resume Workflow From a Failed Node
+- Task 171: Durable Resume Tokens & Non-TTY Gates
 
 **v0.14.0**
 - Task 142: Explore Function-Based Code Node Syntax
@@ -250,7 +253,6 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
-- Task 133: Trace/Cache Storage Architecture
 
 **v1.0.0 - Security & Sandboxing:**
 - Task 87: Sandboxed Execution Runtime
