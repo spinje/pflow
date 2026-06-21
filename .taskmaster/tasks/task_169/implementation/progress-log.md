@@ -276,3 +276,47 @@ clear/focus each reported `sent_to: 1`, a real pointer drag moved the canvas, re
 node on-screen with its focus ring/panel, and Watch returned the real `node_click` with structural ref,
 flat id, and view state. An earlier false negative mutated only the viewport DOM style (desynchronizing
 React Flow's internal camera state); replacing it with a real pointer drag made the check production-faithful.
+
+---
+
+## 2026-06-21 — Independent review pass + post-review fixes (PR #527)
+
+The staged implementation was reviewed independently (not by its author): four specialist agents in
+parallel (concurrency, agent-ux, feature-interactions, test-fidelity) plus a direct read of `server.py` +
+`targets.py`. Verdict: faithful to the plan, **0 Critical**, and — notably — the three self-reported
+deviations all held up and each closed a real PLAN gap:
+- the edge descriptor's `source_path` (without it the plan would broadcast sub-key edges indistinguishably);
+- `--open` re-posting *every* target, not just edges (load-time `?focus=` can't parse qualified addresses);
+- subscribing only after the graph loads (so `--open` can't count a not-yet-ready Viewer).
+The reviews confirmed the load-bearing claims in the actual code: async-only/no-locks holds, the SSE
+keepalive disconnect is correct, the address grammar carries full identity, and the tests are real
+(raw-ASGI disconnect — not TestClient theater; qualify round-trips; production-faithful fixtures).
+
+Three fixes applied on top (commit `378cd952`):
+1. **Edge-dedup "shown-nothing"** (the one review Warning). The frontend FlowEdge dedup key excludes
+   `output_field`/`output_path`, so two field-level data edges between the same nodes collapse to one
+   line in beautiful — and a Point at the deduped-away one focused an id that was never rendered →
+   nothing lit. Fixed at the dedup seam: the build records dropped ids on the kept edge's
+   `data.mergedIds`, and `applyFocus` matches a focused id against `e.id` OR `mergedIds`. Paint-safe;
+   GraphView needed no change. A synchronous fallback in `applyPoint` was rejected — at apply time the
+   `edges` snapshot is pre-reveal, so it can't tell "deduped, stays deduped" from "collapsed, reveal
+   will build it".
+2. **CLI second-grammar drift** (test-fidelity finding). The Watch display re-implemented the address
+   grammar in `ui.py` — the exact "two sources of truth" the plan's one-parser rule forbids. Moved it
+   into `targets.py` (`_format_ref`/`_format_target` + tolerant `address_for_*`); `ui.py` delegates.
+   Byte-identical (existing tests green) + a new round-trip drift guard.
+3. **Keepalive coverage.** Added a raw-ASGI test that an idle connection emits the `:` keepalive (what
+   surfaces dropped sockets on ASGI ≥2.4). Deliberately NOT a send-failure-finalization test — that
+   path depends on asyncio async-gen finalization subtleties and would be fragile/theater.
+
+Skipped, per the reviewers' own guidance: moving `render_react_flow` off-loop (the concurrency reviewer
+judged the current split better than the plan's wording), the stdout/stderr split (defensible), and an
+off-loop-build *behavior* test (low marginal value over the mechanism assertion).
+
+Correction to an earlier note in this log: the Phase-1 "sandbox denies localhost socket binding" claim
+was the *original implementer's* environment — **verified false here**. The full Task 169 Python set
+(78 tests, including the socket/port-probe ones) passes in this environment with 0 skipped.
+
+Verification: ruff + mypy clean; **78 Task 169 Python tests pass**; tsc clean; **524 web vitest pass**.
+Shipped as **PR #527** (`04faa88e` implementation + `378cd952` review fixes). The distilled
+invariants / patterns / gotchas now live in `task-review.md`.
