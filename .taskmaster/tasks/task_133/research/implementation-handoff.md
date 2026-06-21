@@ -1,5 +1,14 @@
 # Task 133 — Implementation Handoff: Streamable Span-Model Trace Event Log
 
+> **⚠️ SUPERSEDED (2026-06) — read this first.** This handoff's *directive* ("do the **full** work now;
+> do NOT defer or minimize") predates the live-overlay scoping session. The plan is now: build
+> producer/transport/consumer as **three separate tasks**, **skeleton-first**, with a **bounded** Phase D
+> (node-granularity v1; the span taxonomy stays deferred). Authoritative artifacts:
+> `context/adr/0008-live-execution-overlay.md`, `../design/d1-event-schema.md`, and **Tasks 172
+> (producer) / 169 (transport) / 173 (consumer)**. This file stays useful for its verified current-state
+> map (§3, §5) and downstream-consumer requirements (§6) — but where its directive/sequencing conflicts
+> with ADR-0008, **ADR-0008 wins**.
+
 > **Audience:** the agent implementing the remaining (deferred) half of Task 133.
 > **Directive from the task owner:** do the **full** work — pin the D1/D2/D3 event-model contract,
 > run the spikes, build the streamable span-shaped append-only event log, migrate the readers, and

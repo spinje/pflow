@@ -118,8 +118,7 @@ trailers); `pflow report`/`analyze-cache` read them back via reconstruction.
 
 ## A–C COMPLETE — status & what's next
 **Phases A, B, C are done and green.** pflow's trace is now a flat, greppable, **D-stable JSONL** log on
-disk, reconstructed transparently for every existing reader; nothing user-visible changed. **Nothing is
-committed** (user commits). **Deferred to Phase D (with the live overlay):** collector unification +
+disk, reconstructed transparently for every existing reader; nothing user-visible changed. **Committed** `ad1c1958`, rebased onto main (see *Post-A–C* below). **Deferred to Phase D (with the live overlay):** collector unification +
 incremental/streaming append (`seq` at emit time, the no-lock main-thread design), inline-first-occurrence
 blobs, and the D1 span taxonomy — none built; the on-disk format A–C established does not change, only
 *when* correlation is assigned. The `run.complete` trailer is already in place, so Task 164 inherits its
@@ -169,10 +168,29 @@ graceful-vs-crash discriminator for free.
    trace-shape change *can* use it as a read-path cross-check, but must first reconcile its pre-existing
    drift (a separate main-branch task — do not regenerate `expected-*.txt` as part of a feature PR).
 
-> **For the Phase D agent:** the buildable contract + invariants are in `implementation-plan.md` §3
-> ("Deferred to Phase D") and §6 (Risks). One-line summary: the **on-disk JSONL format is fixed — don't
-> change it**; Phase D changes *when* correlation is assigned (save→emit), *how* events are collected
-> (per-sub-workflow collectors → one run-scoped collector via the `engine.run` save/restore +
-> `WorkflowExecutor` change — the invasive piece, untouched by A–C), and blob placement (trailer →
-> inline-first-occurrence for live tailing). The D1 span taxonomy stays unpinned until the overlay
-> validates it.
+## Post-A–C (2026-06): committed, rebased, design pinned, task 133 done
+
+- **Committed** `ad1c1958` and **rebased onto main** (23 commits). Reconciliation: re-added an
+  `import json` main's new tests needed (a *semantic* conflict `git`/`merge-tree` reported as clean), and
+  renumbered our ADR **0006 → 0007** (it collided with main's `0006-template-language-no-shared-walk.md`).
+  `make check` + full suite green (**8005 passed**).
+- **Design pinned (DRAFT).** Choosing the **live execution overlay** as the runtime consumer made the
+  liveness bet *earned*, so the deferred span-model design was pinned: **ADR-0008**
+  (`context/adr/0008-live-execution-overlay.md`) + the **D1 event contract** (`design/d1-event-schema.md`).
+  Hardened by **two adversarial review passes (six agents)**.
+- **Phase D split into three tasks:** **172** (emit-time producer = Phase D), **169** (SSE transport),
+  **173** (live overlay consumer). **Task 133 is now DONE** (decision + design complete; A–C shipped;
+  implementation tracked in 172/173).
+- **Key refinements the reviews forced** (so `implementation-plan.md` §3's framing is now superseded by
+  ADR-0008/172): flat **in-memory** store + a derived `tree()` view (not the nested tree); per-node status
+  `{success, cached, failed}` with **`degraded` as a run-level outcome** (not knowable at emit);
+  **`ancestor_path`** is the graph-join field and must be *built* (no host stack exists today); the
+  **in-memory readers** (cost summary, `final_events_by_node`) are their own blast radius. Full detail +
+  tacit knowledge in `task_172/starting-context/braindump-design-and-review-session.md`.
+
+> **For the Phase D agent → this is now Task 172.** Start from `.taskmaster/tasks/task_172/task-172.md` +
+> its braindump, **ADR-0008**, and **`design/d1-event-schema.md`** — these **refine/supersede** the older
+> `implementation-plan.md` §3 framing. The durable one-liner still holds: the **on-disk JSONL format is
+> fixed — don't change it**; Phase D changes *when* correlation is assigned (save→emit) and *how* events
+> are collected (per-sub-workflow collectors → one run-scoped collector — the invasive piece, untouched by
+> A–C). The D1 span taxonomy stays unpinned until the overlay validates it.

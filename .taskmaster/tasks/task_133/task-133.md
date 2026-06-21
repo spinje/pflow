@@ -6,7 +6,7 @@ Architecture decision record for how pflow stores execution data: how node outpu
 
 ## Status
 
-in progress
+done
 
 ## Priority
 
@@ -20,6 +20,19 @@ generated artifact. That premise is rejected (see **Decision** below). Task 133 
 **trace/cache storage architecture decision record**: how execution data (node outputs, prompts,
 events) is stored across the trace and cache subsystems, why they stay separate, and where each
 piece of future work lives.
+
+## Update (2026-06): design pinned, implementation spawned
+
+- **A–C shipped** (the transport): the trace is now flat JSONL on disk, reconstructed transparently for
+  every reader. (On `feat/unified-node-storage`; see `implementation/progress-log.md`.)
+- **The deferred span-model design is now pinned as a DRAFT:** `context/adr/0008-live-execution-overlay.md`
+  (architecture) + `design/d1-event-schema.md` (the D1 event contract). The live-overlay consumer makes
+  the liveness bet *earned*, so the Trigger below is now met.
+- **Implementation split into three tasks** (this task stays the decision record + contract): **Task 172**
+  (emit-time producer / Phase D), **Task 169** (SSE transport), **Task 173** (live execution overlay /
+  consumer). Tasks 164 (resume) + 125 (HITL) inherit the substrate.
+- *Status: **done*** — the decision + design (this task's deliverable) are complete and A–C shipped; the
+  remaining implementation lives in Tasks 172/173 (tracked separately).
 
 ## In scope
 
@@ -228,6 +241,10 @@ rename (**not** an exporter — build only when a second real consumer appears):
 
 ## Trigger conditions
 
+> ✅ **The span-log trigger is now MET (2026-06)** — see "Update" above. Design pinned in ADR-0008 +
+> `design/d1-event-schema.md`; build split into Tasks 172 (producer) / 169 (transport) / 173 (consumer),
+> skeleton-first with a bounded Phase D (node-granularity v1; span taxonomy deferred).
+
 - **Pin D1/D2/D3 + build the span log** when: the live-overlay work begins (after static Task 155;
   alongside Task 164 / Task 125). Record it explicitly as a *liveness bet* — the disk fix alone
   would not require it.
@@ -251,4 +268,5 @@ rename (**not** an exporter — build only when a second real consumer appears):
 - Root-cause measurement: Task 159 `BASELINE-AUDIT.md` L-8
 - Related issues: #370 (typed trace contract → folds into D1), #366 (per-event `workflow_path`), #357 (cache-key vs config-hash filter asymmetry), #492 (`input_tokens` semantics inconsistency — prereq for the unified `llm` event)
 - Related tasks: 106 (memo cache — SQLite, `output_hash` hook), 108 (trace — "execution IS a tree", no-truncation), 155 (static GraphModel), 164 (resume), 125 (escalation/HITL)
+- **Live-overlay design (added 2026-06):** ADR `context/adr/0008-live-execution-overlay.md` + D1 contract `design/d1-event-schema.md`; implementation tasks **172** (emit-time producer / Phase D), **169** (SSE transport), **173** (live execution overlay).
 - Key source: `src/pflow/runtime/workflow_trace.py`, `src/pflow/runtime/cache.py`, `src/pflow/runtime/engine/instrumentation.py`, `src/pflow/core/trace_tree.py`, `src/pflow/core/trace_report.py`
