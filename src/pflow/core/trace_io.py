@@ -154,6 +154,11 @@ def flatten_trace_to_lines(trace_data: dict[str, Any]) -> list[dict[str, Any]]:
         for ev in node_events:
             collision = _RESERVED_LINE_KEYS.intersection(ev)
             if collision:
+                # Intentional vanilla ValueError, NOT a PflowError: an internal programmer-error guard
+                # for a future producer bug (an event emitting a reserved correlation key), caught
+                # fail-loud at run.py:148 → trace_file=None. It is unreachable from user/runtime input,
+                # so it deliberately stays out of the agent-facing diagnostic pipeline a PflowError
+                # would route it into.
                 raise ValueError(
                     f"trace event {ev.get('node_id')!r} already carries reserved correlation "
                     f"key(s) {sorted(collision)}; the flatten writer derives these and the reader "
@@ -254,9 +259,17 @@ def reconstruct_trace_from_lines(lines: list[dict[str, Any]]) -> dict[str, Any]:
 
     Corruption raises ``json.JSONDecodeError`` so the three trace-content readers degrade/skip rather
     than surface a half-built dict (Task 133 B/C-checkpoint: "corrupt" must be a distinct, visible
-    state, never silent-wrong-output). A trailer-less new trace (crash before ``run.complete`` was
-    written) is reconstructed with ``final_status="incomplete"`` — NOT defaulted to success — so the
-    snapshot loader and analyze-cache autoload reject it instead of treating a crash as a reusable run.
+    state, never silent-wrong-output). A cleanly-parsed but trailer-less line set (the ``run.complete``
+    line is absent) is reconstructed with ``final_status="incomplete"`` — NOT defaulted to success — so
+    the snapshot loader and analyze-cache autoload reject it instead of treating it as a reusable run.
+
+    Scope (A-C): this operates on already-parsed lines. At the byte layer ``load_trace_file`` parses
+    every line eagerly, so a crash that truncates the *final* line raises ``JSONDecodeError`` and the
+    whole trace is skipped rather than reconstructed-as-incomplete — and today's all-at-once
+    ``save_to_file`` writes the trailer in the same end-of-run flush, so trailer-less files are rare.
+    Robust crash-tail tolerance (drop only a truncated final line) lands with Phase D streaming +
+    inline-first-occurrence blobs (Task 172), where the trailing line is an event/``run.complete`` and
+    crash-tails become the common case.
     """
     meta, run_complete, blob_map, event_lines = _partition_trace_lines(lines)
     trace: dict[str, Any] = {key: value for key, value in meta.items() if key not in ("kind", "pflow_trace")}

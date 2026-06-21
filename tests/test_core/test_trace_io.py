@@ -263,6 +263,23 @@ def test_load_trace_file_raises_jsondecodeerror_on_corrupt_jsonl(tmp_path: Path)
         load_trace_file(path)
 
 
+def test_load_trace_file_skips_truncated_tail_line(tmp_path: Path) -> None:
+    # Crash-tail scope (A-C, PR #525 review): a crash that truncates the FINAL line of a JSONL trace
+    # (a half-written event — no closing brace, no trailing newline) makes load_trace_file raise
+    # json.JSONDecodeError, so the 3 readers skip the whole trace; it is NOT reconstructed as
+    # final_status="incomplete". save_to_file writes the entire file (incl. trailers) in one end-of-run
+    # flush, so trailer-less files are rare and this window is narrow today. Robust trailing-line
+    # tolerance (drop only the truncated last line → incomplete) is deferred to Phase D / Task 172,
+    # where D3 inline blobs make the trailing line an event/run.complete rather than the `blobs` trailer.
+    meta = json.dumps({"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r"})
+    good_event = json.dumps({"kind": "event", "id": 0, "seq": 0, "parent_id": None, "run_id": "r", "node_id": "a"})
+    truncated = '{"kind": "event", "id": 1, "seq": 1, "parent_id": null, "node_i'  # half-written, no newline
+    path = tmp_path / "workflow-trace-truncated.json"
+    path.write_text(f"{meta}\n{good_event}\n{truncated}")
+    with pytest.raises(json.JSONDecodeError):
+        load_trace_file(path)
+
+
 def test_reconstruct_unknown_kind_raises() -> None:
     with pytest.raises(json.JSONDecodeError, match="unknown trace line kind"):
         reconstruct_trace_from_lines([{"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER}, {"kind": "bogus"}])

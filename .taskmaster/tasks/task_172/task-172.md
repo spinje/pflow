@@ -96,6 +96,15 @@ additional, bounded). The scary concurrency question is already retired (no-lock
 - Flush each event as a JSONL line when recorded; finalize writes `run.complete` + `blobs` trailers.
 - Inline-first-occurrence blobs (D3); a crash-truncated prefix must still load (no `run.complete` →
   `final_status="incomplete"`).
+- **Trailing-line tolerance (deferred from A–C — PR #525 review).** `load_trace_file` must drop a
+  single *truncated final line* and reconstruct-as-incomplete, while still raising on corruption
+  anywhere earlier. This is **coherent only once D3 lands**: in A–C the last line is the `blobs`
+  *trailer*, so tolerating a truncated tail would drop blobs → unresolved `$pflow_blob` refs, not
+  `incomplete`. With inline-first-occurrence blobs the trailing line is an event/`run.complete`, so the
+  tolerance yields a clean `incomplete`. Until then A–C eagerly parses every line (a truncated tail →
+  `JSONDecodeError`, whole trace skipped); soften-only docs shipped in A–C. Add the real
+  trailing-line-tolerance test here (see "Crash-tail" in Verification), replacing the A–C
+  documenting test (`test_load_trace_file_skips_truncated_tail_*`) that pins today's skip behavior.
 - The on-disk format and the reconstructed nested dict are **unchanged** vs A–C, except `ancestor_path`
   is stripped on read.
 
