@@ -458,51 +458,19 @@ def clear_focus_cmd(ctx: click.Context, workflow: str, output_json: bool, port: 
         ctx.exit(1)
 
 
-def _ref_address(ref: object) -> str | None:
-    if not isinstance(ref, dict):
-        return None
-    node_id = ref.get("node_id")
-    if not isinstance(node_id, str):
-        return None
-    segments: list[str] = []
-    ancestors = ref.get("ancestor_path")
-    if isinstance(ancestors, list):
-        for ancestor in ancestors:
-            if not isinstance(ancestor, dict) or not isinstance(ancestor.get("node_id"), str):
-                continue
-            segment = str(ancestor["node_id"])
-            batch_index = ancestor.get("batch_index")
-            if isinstance(batch_index, int):
-                segment += f"[{batch_index}]"
-            segments.append(segment)
-    address = ".".join([*segments, node_id])
-    port = ref.get("port")
-    return f"{port}:{address}" if port in {"in", "out"} else address
-
-
 def _target_address(target: object) -> tuple[str | None, str | None]:
-    if not isinstance(target, dict):
-        return None, None
-    flat_id = target.get("flat_id") if isinstance(target.get("flat_id"), str) else None
-    if target.get("kind") == "node":
-        return _ref_address(target.get("ref")), flat_id
-    if target.get("kind") != "edge":
-        return None, flat_id
+    """Render a Watch event's structural target in the Point address grammar.
 
-    source = _ref_address(target.get("source"))
-    destination = _ref_address(target.get("target"))
-    if source is None or destination is None:
-        return None, flat_id
-    source_field = target.get("source_field")
-    if isinstance(source_field, str):
-        source += f".{source_field}"
-    source_path = target.get("source_path")
-    if isinstance(source_path, list):
-        source += "".join(f".{part}" for part in source_path if isinstance(part, str))
-    input_name = target.get("input_name")
-    if isinstance(input_name, str):
-        destination += f".{input_name}"
-    return f"{source} -> {destination}", flat_id
+    Delegates to ``targets.address_for_target`` so the address shown by
+    ``user-activity`` is the SAME grammar ``resolve_target`` accepts — an agent
+    copies the line straight back into ``pflow ui focus``. One parser, no drift.
+    Lazy import keeps ``pflow.ui.targets`` out of module load (the lazy-import
+    boundary test asserts the server stack isn't pulled in by importing the CLI).
+    """
+    from pflow.ui.targets import address_for_target
+
+    flat_id = target.get("flat_id") if isinstance(target, dict) and isinstance(target.get("flat_id"), str) else None
+    return address_for_target(target), flat_id
 
 
 def _format_age(value: object) -> str:

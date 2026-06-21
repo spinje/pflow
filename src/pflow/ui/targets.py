@@ -74,20 +74,88 @@ def _ref_payload(ref: RFRef) -> RefPayload:
     }
 
 
-def _scope_prefix(ref: RFRef) -> str:
-    parts = []
-    for step in ref.ancestor_path:
+def _format_ref(payload: RefPayload) -> str:
+    """The ONE canonical scoped address for a structural ref payload.
+
+    Shared by resolution (the qualify/address strings) AND the CLI Watch display
+    (`address_for_ref` below), so an address `user-activity` prints always
+    round-trips back through `resolve_target` — one grammar, no second source of
+    truth to drift.
+    """
+    segments: list[str] = []
+    for step in payload["ancestor_path"]:
         node_id = str(step["node_id"])
-        index = step.get("batch_index")
-        parts.append(f"{node_id}[{index}]" if index is not None else node_id)
-    return ".".join(parts)
+        batch_index = step.get("batch_index")
+        segments.append(f"{node_id}[{batch_index}]" if isinstance(batch_index, int) else node_id)
+    address = ".".join([*segments, payload["node_id"]])
+    port = payload["port"]
+    return f"{port}:{address}" if port in {"in", "out"} else address
+
+
+def _format_target(descriptor: TargetDescriptor) -> str:
+    """Canonical address for a well-formed target descriptor."""
+    if descriptor["kind"] == "node":
+        return _format_ref(descriptor["ref"])
+    source = _format_ref(descriptor["source"])
+    if descriptor["source_field"]:
+        source += f".{descriptor['source_field']}"
+    source += "".join(f".{part}" for part in descriptor["source_path"])
+    destination = _format_ref(descriptor["target"])
+    if descriptor["input_name"]:
+        destination += f".{descriptor['input_name']}"
+    return f"{source} -> {destination}"
+
+
+def address_for_ref(payload: object) -> str | None:
+    """Tolerant scoped address for a raw ref payload off the wire (CLI Watch).
+
+    Same grammar as `_format_ref`, but validates an untrusted dict first so a
+    malformed browser report degrades to ``None`` instead of raising.
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get("node_id"), str):
+        return None
+    steps: list[dict[str, object]] = []
+    ancestors = payload.get("ancestor_path")
+    if isinstance(ancestors, list):
+        for step in ancestors:
+            if isinstance(step, dict) and isinstance(step.get("node_id"), str):
+                steps.append({"node_id": step["node_id"], "batch_index": step.get("batch_index")})
+    port = payload.get("port")
+    return _format_ref({
+        "node_id": payload["node_id"],
+        "ancestor_path": steps,
+        "port": port if isinstance(port, str) else None,
+    })
+
+
+def address_for_target(descriptor: object) -> str | None:
+    """Tolerant address for a raw target descriptor off the wire (CLI Watch)."""
+    if not isinstance(descriptor, dict):
+        return None
+    kind = descriptor.get("kind")
+    if kind == "node":
+        return address_for_ref(descriptor.get("ref"))
+    if kind != "edge":
+        return None
+    source = address_for_ref(descriptor.get("source"))
+    destination = address_for_ref(descriptor.get("target"))
+    if source is None or destination is None:
+        return None
+    field = descriptor.get("source_field")
+    if isinstance(field, str):
+        source += f".{field}"
+    path = descriptor.get("source_path")
+    if isinstance(path, list):
+        source += "".join(f".{part}" for part in path if isinstance(part, str))
+    input_name = descriptor.get("input_name")
+    if isinstance(input_name, str):
+        destination += f".{input_name}"
+    return f"{source} -> {destination}"
 
 
 def _node_addresses(ref: RFRef) -> tuple[str, str]:
-    scoped = ".".join(part for part in (_scope_prefix(ref), ref.node_id) if part)
-    bare = ref.node_id
-    if ref.port is not None:
-        return f"{ref.port}:{bare}", f"{ref.port}:{scoped}"
+    scoped = _format_ref(_ref_payload(ref))
+    bare = f"{ref.port}:{ref.node_id}" if ref.port in {"in", "out"} else ref.node_id
     return bare, scoped
 
 
@@ -144,22 +212,19 @@ def _edge_elements(graph: RFGraph, nodes_by_id: dict[str, RFNode]) -> list[_Addr
                 for target_address in target_addresses
             )
         )
-        qualified = (
-            f"{_with_field(source_scoped, edge.output_field, edge.output_path)} -> "
-            f"{_with_field(target_scoped, edge.input_name, [])}"
-        )
+        descriptor: EdgeTarget = {
+            "kind": "edge",
+            "source": _ref_payload(source.ref),
+            "source_field": edge.output_field,
+            "source_path": list(edge.output_path),
+            "target": _ref_payload(target.ref),
+            "input_name": edge.input_name,
+        }
         elements.append(
             _Addressable(
                 addresses=addresses,
-                qualified=qualified,
-                descriptor={
-                    "kind": "edge",
-                    "source": _ref_payload(source.ref),
-                    "source_field": edge.output_field,
-                    "source_path": list(edge.output_path),
-                    "target": _ref_payload(target.ref),
-                    "input_name": edge.input_name,
-                },
+                qualified=_format_target(descriptor),
+                descriptor=descriptor,
             )
         )
     return elements
@@ -196,4 +261,4 @@ def resolve_target(graph: RFGraph, target: str) -> TargetResolution:
     )
 
 
-__all__ = ["TargetDescriptor", "TargetResolution", "resolve_target"]
+__all__ = ["TargetDescriptor", "TargetResolution", "address_for_ref", "address_for_target", "resolve_target"]

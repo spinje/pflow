@@ -14,7 +14,7 @@ from pflow.core.workflow.graph.renderers.react_flow import (
     RFRef,
 )
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
-from pflow.ui.targets import resolve_target
+from pflow.ui.targets import address_for_target, resolve_target
 
 
 def _ref(
@@ -235,3 +235,28 @@ def test_not_found_uses_fuzzy_node_suggestions() -> None:
 
     assert resolution.matched == 0
     assert resolution.suggestions[0] == "fetch-data"
+
+
+def test_display_grammar_matches_resolver_and_round_trips() -> None:
+    """`address_for_target` (the CLI Watch display formatter) and `resolve_target`
+    share ONE grammar — an address `pflow ui user-activity` prints re-points to
+    exactly one element. Guards the two-source-of-truth drift the plan warned
+    about (the Watch display path used to re-implement the grammar in ui.py)."""
+    graph = _graph(
+        [
+            _node("n0", _ref("gen", ("create", 0))),
+            _node("n1", _ref("summarize", ("create", 0))),
+            _node("n2", _ref("data", port="in")),
+        ],
+        edges=[RFEdge("e0", "n0", "n1", "data_flow", None, "result", "prompt", False, output_path=["ok"])],
+    )
+
+    for probe in ("gen", "in:data", "gen.result.ok -> summarize.prompt"):
+        resolution = resolve_target(graph, probe)
+        assert resolution.matched == 1, probe
+        assert resolution.descriptor is not None
+        # The CLI renders the recorded descriptor via the SAME formatter; it must
+        # equal the resolver's canonical address and itself re-point to one element.
+        rendered = address_for_target(resolution.descriptor)
+        assert rendered == resolution.address
+        assert resolve_target(graph, rendered).matched == 1

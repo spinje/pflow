@@ -180,6 +180,13 @@ export type EdgeData = {
   // node OR an individual IO port (whose edges re-anchor onto a shared ports node).
   from: string;
   to: string;
+  // Contract edge ids this rendered line ABSORBED at build-time dedup — two edges
+  // sharing a render key (same anchored endpoints / kind / label / handles) collapse
+  // to one line, e.g. two field-level data edges between the same nodes that fall back
+  // to node-level handles in beautiful. applyFocus matches a focused id against these,
+  // so an agent Point at a deduped-away edge still lights the kept line instead of
+  // focusing an id that was never rendered (a "resolvable but shown nothing" no-op).
+  mergedIds?: string[];
   // Set ONCE by the build: "this edge renders hidden unless revealed by focus"
   // (beautiful mode's data-flow lines). applyFocus must read THIS, never the mutable
   // `hidden` flag it also writes — otherwise re-processing its own output would
@@ -660,7 +667,7 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     return detailed || expandedSet.has(id);
   };
   const flowEdges: FlowEdge[] = [];
-  const seen = new Set<string>();
+  const keptByKey = new Map<string, FlowEdge>();
   for (const e of graph.edges) {
     const source = renderAnchor(e.source);
     const target = renderAnchor(e.target);
@@ -678,8 +685,14 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     const targetHandle = targetHandleFor(e, target, rowsVisible(e.target), nodeById, ioNodeToOwner, refRowsByNode);
 
     const key = `${source}->${target}|${e.kind}|${e.label ?? ""}|${sourceHandle}|${targetHandle}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const kept = keptByKey.get(key);
+    if (kept) {
+      // Same render key as an already-kept edge → it collapses onto that one line.
+      // Record the dropped contract id so a Point at it still resolves (focus.ts
+      // matches mergedIds) rather than targeting an id that was never rendered.
+      if (kept.data) (kept.data.mergedIds ??= []).push(e.id);
+      continue;
+    }
     // Control edges (sequential/branch) draw as a source-node-color → target-node-
     // color gradient (the GradientEdge custom edge). Colors come from the ORIGINAL
     // endpoints (the real producer→consumer), even when re-anchored — via nodeColor,
@@ -708,23 +721,23 @@ export function buildFlow(graph: RFGraph, view: BuildOptions): { nodes: FlowNode
     // LR target entries get their outcome name (TD-style bare text) whenever the
     // source's rows show — rows + target labels appear together.
     const lrOutcomeLabel = view.direction === "LR" && e.kind === "branch" && rowsVisible(e.source);
-    flowEdges.push(
-      toFlowEdge(
-        e,
-        source,
-        target,
-        sourceHandle,
-        targetHandle,
-        detailed,
-        view.direction,
-        sourceColor,
-        targetColor,
-        rowsVisible(e.source) && !conditionOnRow,
-        lrOutcomeLabel,
-        ioBinding,
-        decisionEnd,
-      ),
+    const flowEdge = toFlowEdge(
+      e,
+      source,
+      target,
+      sourceHandle,
+      targetHandle,
+      detailed,
+      view.direction,
+      sourceColor,
+      targetColor,
+      rowsVisible(e.source) && !conditionOnRow,
+      lrOutcomeLabel,
+      ioBinding,
+      decisionEnd,
     );
+    flowEdges.push(flowEdge);
+    keptByKey.set(key, flowEdge);
   }
 
   // The root IO cards JOIN THE CONTROL SKELETON (user-decided 2026-06-10): the
