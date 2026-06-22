@@ -12,7 +12,7 @@ import json
 import socket
 import time
 import webbrowser
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import NoReturn
 from urllib.parse import urlencode
 
@@ -592,7 +592,7 @@ def _render_activity(workflow: str | None, payload: dict[str, object]) -> None:
             continue
         timestamp = raw_event.get("ts")
         when = (
-            datetime.fromtimestamp(timestamp, tz=UTC).isoformat(timespec="seconds")
+            datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(timespec="seconds")
             if isinstance(timestamp, (int, float))
             else "timestamp unknown"
         )

@@ -551,3 +551,15 @@ was real but only shifted **line numbers**; none of the pre-polish findings had 
 
 Verification: `make check` clean (ruff, ruff-format, mypy 237, deptry 240); **`make test` 8066 passed** (8063 +3
 new regression tests); the four Task 169 Python suites 90 → 93. No frontend change (no `make ui-build` needed).
+
+### Merge attempt surfaced a latent Python 3.10 incompatibility (fixed)
+Squash-merging (the repo's only allowed method; main is rules-gated on CI, auto-merge disabled) ran the full check
+matrix and the **`tests-and-type-check (3.10)`** job went red while 3.11–3.14 were green. Root cause: `ui.py` did
+`from datetime import UTC` — `datetime.UTC` is **3.11+**, so on 3.10 `pflow`'s import chain broke and cascaded
+across the suite. It's Task 169's own code (the `user-activity` timestamp formatter), latent since the original
+implementation; nothing local caught it because **mypy has no pinned `python_version`** (defaults to the local
+3.11+ interpreter) and local pytest runs on 3.11+ — only the CI 3.10 job exercises it, and an unmerged PR's red
+3.10 check sat unnoticed until an actual merge forced the matrix. Fixed with the 3.10-safe `timezone.utc`
+(`ui.py:15`/`:595`); ruff (target `py39`) does not rewrite it back to `UTC` (UP017 is 3.11+ only). 99 Task 169 +
+error-boundary tests pass. *Follow-up worth considering (out of scope here): pin mypy `python_version = "3.10"` so
+this class of regression is caught locally, not only in CI.*
