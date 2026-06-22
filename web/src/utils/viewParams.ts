@@ -31,7 +31,7 @@ export interface ViewParams {
   // state rides the URL so screenshots/deep links can reproduce it.
   source: boolean;
   // Live source watch: poll for `.pflow.md` edits and re-fetch the graph in
-  // place. On by default; `pflow ui --no-watch` opens with `watch=0` to freeze
+  // place. On by default; `pflow ui --no-auto-update` opens with `watch=0` to freeze
   // the view. Read-only (a session preference), like the other view params.
   watch: boolean;
 }
@@ -40,7 +40,10 @@ export const DEFAULT_VIEW: ViewParams = { direction: null, density: "compact", n
 
 // The URL uses the USER-FACING density words (advanced/beautiful); the code uses the
 // internal density (detailed/compact). Keep the mapping in one place so they can't drift.
-const DENSITY_TO_PARAM: Record<Density, string> = { detailed: "advanced", compact: "beautiful" };
+export const DENSITY_TO_PARAM: Record<Density, "advanced" | "beautiful"> = {
+  detailed: "advanced",
+  compact: "beautiful",
+};
 const PARAM_TO_DENSITY: Record<string, Density> = { advanced: "detailed", beautiful: "compact" };
 
 /** Parse the three view params from a query string. Invalid/missing values fall back
@@ -60,7 +63,7 @@ export function readViewParams(search: string): ViewParams {
     focus: focus !== null && focus.trim() !== "" ? focus : null,
     collapse: collapse === "all" || collapse === "none" ? collapse : null,
     source: source === "1",
-    watch: p.get("watch") !== "0", // on unless explicitly disabled (pflow ui --no-watch)
+    watch: p.get("watch") !== "0", // on unless explicitly disabled (pflow ui --no-auto-update)
   };
 }
 

@@ -52,7 +52,7 @@ describe("useSourceWatch", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  it("does not poll at all when disabled (pflow ui --no-watch)", async () => {
+  it("does not poll at all when disabled (pflow ui --no-auto-update)", async () => {
     mockedFetchVersion.mockResolvedValue("v1");
     const onChange = vi.fn();
     renderHook(() => useSourceWatch("wf", false, onChange));

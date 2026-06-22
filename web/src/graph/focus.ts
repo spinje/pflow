@@ -170,7 +170,13 @@ export function applyFocus(
   // Selecting an EDGE: deliberately NOT the unit machinery below — seeding the
   // unit with the endpoints would light their entire neighborhoods, when the
   // subject is one connection.
-  const focusedEdge = focus != null ? (edges.find((e) => e.id === focus) ?? null) : null;
+  // Match the focus id against the rendered edge's own id OR any contract edge id
+  // it absorbed at build-time dedup (`mergedIds`). An agent Point can resolve to a
+  // contract edge that collapsed into a node-level render representative (two
+  // field-level data edges between the same nodes in beautiful); without this it
+  // would focus an id that was never rendered and reveal nothing.
+  const focusedEdge =
+    focus != null ? (edges.find((e) => e.id === focus || (e.data?.mergedIds?.includes(focus) ?? false)) ?? null) : null;
   // Selecting a CONTAINER (focus = a group node's id) selects the whole UNIT:
   // the group, ALL its descendants, and every edge touching any of them —
   // internal wiring and external bindings light up, everything else dims
@@ -201,7 +207,7 @@ export function applyFocus(
     unit.has(e.source) || unit.has(e.target) || (e.data != null && (unit.has(e.data.from) || unit.has(e.data.to)));
   // Incidence: for an edge focus, exactly the focused edge; otherwise any edge
   // touching the unit.
-  const incidentTo = (e: FlowEdge): boolean => (focusedEdge ? e.id === focus : touches(e));
+  const incidentTo = (e: FlowEdge): boolean => (focusedEdge ? e === focusedEdge : touches(e));
   const connected = new Set<string>(unit);
   if (focusedEdge) {
     // The lit nodes are the selected edge's endpoints — both the rendered anchors
@@ -271,7 +277,7 @@ export function applyFocus(
   });
   const outEdges = edges.map((e) => {
     const incident = focus != null && incidentTo(e);
-    const selected = focusedEdge != null && e.id === focus ? true : undefined;
+    const selected = e === focusedEdge ? true : undefined;
     // A default-hidden edge (beautiful mode's data-flow lines) is revealed when it
     // touches the focus — "show me this node's / port's data wiring." Edges hidden
     // by the build stay hidden otherwise; control edges are never default-hidden.

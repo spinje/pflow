@@ -531,6 +531,34 @@ describe("buildFlow — density governs edge density (beautiful = control skelet
     expect(buildFlow(g, DETAILED).edges.find((e) => e.id === "df")?.label).toBeUndefined();
   });
 
+  it("collapsed data edges keep the dropped id in mergedIds so a Point at it lights the kept line", () => {
+    // Two distinct contract data edges between the same nodes that fall back to
+    // node-level handles in beautiful collapse to ONE rendered line. The dropped
+    // id must survive on mergedIds so an agent Point that the server resolves to
+    // it still focuses the kept line — never a "resolvable but shown nothing" no-op.
+    const g: RFGraph = {
+      nodes: [node("a"), node("b")],
+      edges: [
+        edge("df0", "a", "b", "data_flow", { output_field: "out", input_name: "x" }),
+        edge("df1", "a", "b", "data_flow", { output_field: "out", input_name: "x" }),
+      ],
+      groups: [],
+    };
+    const { nodes, edges } = buildFlow(g, COMPACT);
+    const dataEdges = edges.filter((e) => e.data?.kind === "data_flow");
+    expect(dataEdges).toHaveLength(1);
+    expect(dataEdges[0]?.id).toBe("df0");
+    expect(dataEdges[0]?.data?.mergedIds).toEqual(["df1"]);
+
+    // Focusing the deduped-away id lights (selects + reveals) the kept line.
+    const viaMerged = applyFocus(nodes, edges, "df1").edges.find((e) => e.id === "df0");
+    expect(viaMerged?.data?.selected).toBe(true);
+    expect(viaMerged?.hidden).toBe(false);
+    // The kept id still selects it; an unrelated id does not.
+    expect(applyFocus(nodes, edges, "df0").edges.find((e) => e.id === "df0")?.data?.selected).toBe(true);
+    expect(applyFocus(nodes, edges, "nope").edges.find((e) => e.id === "df0")?.data?.selected).toBeUndefined();
+  });
+
   it("a cache edge's label presents the reserved prompt_cache name as the cached prefix", () => {
     // A cache edge can never land row-to-row (no param row exists for it), so
     // the beautiful label always shows — the raw sentinel must never reach it.

@@ -10,7 +10,7 @@ the canvas a shared surface for human↔agent conversation about a workflow.
 
 ## Status
 
-not started
+done
 
 ## Priority
 
@@ -70,9 +70,13 @@ incoming/outgoing edge highlighting the feature wants IS what focus already does
 - **Agent-pointing = focus, reused verbatim.** No separate "agent highlight" visual state in v1.
   If "the agent is pointing here" should later look different from "I clicked here" (e.g. a
   pulsing ring), that's an additive style on top — not a parallel mechanism.
-- **Single-node commands, extensible shape.** Explaining often involves a path ("data flows
-  A → B → C"); v1 is one node per command, but the command payload shape should not preclude a
-  multi-node form later.
+- **Single-target commands, extensible shape.** One target per command. **v1 target types expanded
+  during planning** to: a node, a container (sub-workflow/batch box), a workflow/sub-workflow IO
+  port, AND a data edge (named by a `from -> to` pair, e.g. `gen.response -> summarize.prompt`).
+  Deferred to a fast-follow: standalone body-rows (an output/input field alone), control/branch
+  edges, and any multi-target form — the structural target-descriptor payload does not preclude
+  them. See `implementation/implementation-plan.md` for the addressing grammar (scope prefixes,
+  `in:`/`out:`, `[batch_index]`).
 - **Watch = deliberate interactions only.** Hover/pan/zoom are noise that would drown the
   buffer and the agent. Clicks, row clicks, focus changes, workflow switches.
 - **Delivered-count in every command response, with per-window visibility.** A broadcast into
@@ -147,10 +151,15 @@ incoming/outgoing edge highlighting the feature wants IS what focus already does
 - The channel carries no run/trace data and defines no run-event schema (Task 133 boundary).
 
 ### CLI
-- `pflow ui` (serve, with optional workflow + `--port`/`--no-open`) keeps its exact current
-  behavior; the new verbs are additive.
-- New verbs are thin HTTP clients; when no server is running they fail fast with an
-  agent-actionable hint (how to start one), not a hang or traceback.
+- `pflow ui` keeps serving with optional workflow + `--port`/`--no-open`; the new verbs are
+  additive. Mechanism: a custom `click.Group` modeled on `PflowCLI` (a plain group with a
+  positional arg cannot coexist with subcommands — see the implementation plan). The pre-existing
+  `--no-watch` serve flag is renamed `--no-auto-update` (Watch now means the agent watching the
+  user; that flag controls the source-file auto-update).
+- New verbs (thin HTTP clients, all taking `--json`): `pflow ui focus <wf> <target> [--open]`,
+  `pflow ui frame <wf> <target>`, `pflow ui clear-focus <wf>`, `pflow ui user-activity [wf]` (the
+  Watch read — named to avoid colliding with the renamed auto-update flag). When no server is
+  running they fail fast with an agent-actionable hint, not a hang or traceback.
 
 ### Packaging
 - No new runtime dependency beyond what `[ui]` already declares (SSE is within Starlette's
@@ -214,3 +223,9 @@ incoming/outgoing edge highlighting the feature wants IS what focus already does
   (`focus=`/`node=` resolution rules), `web/CLAUDE.md` (the `api/` seam).
 - **Task 133** (`.taskmaster/tasks/task_133/`) — the overlay whose schema this task must NOT
   pin; shares only the transport shape.
+- **`implementation/implementation-plan.md`** — the authoritative, deep-reviewed execution plan
+  (server hub + SSE, target resolver, frontend wiring, CLI group, phases, tests, edge cases).
+  Where any detail above conflicts with it (e.g. the ring buffer is one global tagged buffer, not
+  literally per-workflow), the plan wins.
+- **`context/CONTEXT.md`** — glossary terms added this task: Viewer, Point, Watch, Auto-update
+  (plus the Watch-vs-Auto-update ambiguity).

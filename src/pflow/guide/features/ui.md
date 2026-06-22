@@ -1,4 +1,4 @@
-# Visualization
+# Showing the workflow
 
 **Use when**: the USER wants to *see* a workflow — open it for them in the browser, most
 often while you build or edit one so they watch it take shape. Two tools, two audiences.
@@ -25,8 +25,37 @@ shape as you work.
   user sees each change land while keeping their zoom and focus. An edit that doesn't
   validate is held (the last valid version stays up, with an error banner) until you fix it.
 - With no workflow argument, it opens the catalog of saved workflows.
-- Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-watch`
+- Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-auto-update`
   (freeze — stop live-updating).
+
+Once a Viewer server is running, an agent can Point at things in the user's open
+windows and Watch what they deliberately click:
+
+- `pflow ui focus <workflow> <target> [--open]` — focus/reveal a target in every
+  matching Viewer.
+- `pflow ui frame <workflow> <target>` — move the camera without changing focus.
+- `pflow ui clear-focus <workflow>` — clear the current focus.
+- `pflow ui user-activity [workflow]` — read recent clicks and view changes.
+
+**A target is just the name you already read in the `.pflow.md` — there is no
+separate notation to learn:**
+
+- a **step** by its name — `process_content`
+- an **input** or **output** by its name — `source_file`
+- a **connection** as `source -> target`, each end named the same way —
+  `gen.response -> summarize.prompt`, or from an input `source_file -> read_source.file_path`
+
+You don't have to get it right first try. If a name matches more than one thing
+(the same step inside two sub-workflows, or an input and output that share a
+name), the command doesn't guess — it lists the qualified addresses to pick from.
+If a name isn't found, it suggests the closest real ones. So point, read the
+reply, re-point.
+
+All four take `--port N`. The command reports where it was sent (how
+many windows, visible vs backgrounded), not that the browser finished drawing it —
+the human looking at the screen is the confirmation. Point exits nonzero when
+resolution fails or no Viewer received it; an empty `user-activity` is still a
+successful read.
 
 Deep-link a specific view (to point the user at a node, or for a screenshot): append
 `?workflow=<name-or-path>&focus=<node-id>` — `focus=` highlights the node and reveals its

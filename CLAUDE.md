@@ -229,12 +229,12 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 155: Workflow Graph Model for Multi-Renderer Support
 - ✅ Task 168: Workflow Visualization Web UI
 - ✅ Task 133: Trace/Cache Storage Architecture
+- ✅ Task 169: Agent↔Browser Interaction Channel
 
 ### Planned Features (in order of priority)
 
 **Next?** (in build order)
 - Task 172: Streamable trace
-- Task 169: Live UI transport (SSE)
 - Task 173: Live execution overlay
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 164: Resume Workflow From a Failed Node

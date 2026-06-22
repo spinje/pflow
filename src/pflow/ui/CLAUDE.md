@@ -2,8 +2,10 @@
 
 Local **Starlette** server behind the `pflow-cli[ui]` extra. It serves a typed JSON
 contract (the Task 155 GraphModel → `render_react_flow`) plus the built frontend
-bundle. It runs **no workflows** — every request is read-only: resolve →
-validate → `build_graph` → `render_react_flow`.
+bundle. It runs **no workflows** and never mutates workflow files. Graph requests
+remain stateless (`resolve` → `validate` → `build_graph` →
+`render_react_flow`); the interaction hub is ephemeral, in-memory state scoped to
+one `create_app()` instance.
 
 The frontend that consumes this server lives in `web/` (its own CLAUDE.md
 suite). The design *why* is `task-168.md` + `ADR-0005`.
@@ -14,6 +16,7 @@ suite). The design *why* is `task-168.md` + `ADR-0005`.
 src/pflow/ui/
 ├── __init__.py     # package marker (docstring only)
 ├── server.py       # the Starlette app: create_app(), endpoints, static mount
+├── targets.py      # pure Point address resolution to structural RFRef descriptors
 └── static/         # built frontend bundle — GITIGNORED, built by `make ui-build`,
                     #   served at "/". Absent in a source checkout.
 ```
@@ -24,7 +27,8 @@ validate→build helper is `execution/graph_service.py`.
 
 ## The HTTP contract (what the frontend codes against)
 
-`web/src/api/client.ts` is the single data-loading seam. Endpoints:
+`web/src/api/` is the server-communication seam: `client.ts` owns graph/source
+reads and `events.ts` owns the live interaction channel. Endpoints:
 
 ### `GET /api/catalog`
 → `200` `[{name, description, path}]` — saved workflows with `ir` stripped.
@@ -93,6 +97,40 @@ on the next valid save. **Known limit:** a workflow mid-edit-invalid in a *sub-w
 file tracks only the entry file's mtime until it parses again (recovery still fires on the
 fixing save).
 
+### Live interaction channel
+
+- `GET /api/events?workflow=<name|path>&visibility=<visible|hidden>` subscribes a
+  Viewer to the SSE envelope `{type, ...}`. The envelope is vocabulary-agnostic:
+  this task defines `connected`, `focus`, `frame`, and `clear`; it deliberately
+  defines no run/trace event schema.
+- `POST /api/command` validates a `focus`/`frame` target against a fresh graph (or
+  broadcasts `clear`) and reports `sent_to`, per-window visibility, and the
+  canonical `workflow_key`. It reports messages queued to live connections, not
+  browser apply acknowledgments.
+- `POST /api/interaction` records deliberate user actions; `GET /api/activity`
+  returns the bounded, newest-first snapshot. `POST /api/visibility` updates one
+  connection. All POSTs require `application/json`.
+
+Name-opened and path-opened Viewers share one resolved workflow key. Point targets
+cross the wire only as structural refs; never send positional flat ids between
+independent graph renders. The `_Hub` is per-process and non-persistent: restart
+clears connections and activity.
+
+> **Hub concurrency invariant.** Every route touching `_Hub` must be `async def`.
+> Starlette runs sync handlers in a threadpool, while the hub's `asyncio.Queue`
+> instances and deque are intentionally lock-free and event-loop-owned. Point's
+> recursive validation/build runs via `asyncio.to_thread`; only the resulting
+> graph returns to the loop before broadcast. Each connection queue is bounded;
+> a Viewer that cannot consume 64 commands is evicted so memory and `sent_to`
+> stay truthful. The SSE
+> keepalive is required to surface silently dropped sockets across ASGI versions;
+> do not replace it with a second `request.is_disconnected()` receive consumer.
+
+The server binds loopback and sends no CORS headers. JSON POSTs force a cross-origin
+preflight, and EventSource responses are unreadable cross-origin. The worst live
+command changes focus in the user's Viewer; it has no file/system side effect. Any
+future mutating or live-run endpoint must re-evaluate this boundary.
+
 ### Static bundle (`/` + assets)
 The SPA builds into `src/pflow/ui/static/` (Vite `build.outDir`, `base = "./"`
 so relative asset paths serve from `/`). The server mounts it via
@@ -113,19 +151,43 @@ heuristically-cached stale entry; the content-hashed assets stay cacheable.
 
 ## The `pflow ui` command (`cli/commands/ui.py`)
 
-- `pflow ui [workflow] [--port 8765] [--no-open] [--no-watch]`. Behind the `[ui]` extra
+- `pflow ui [workflow] [--port 8765] [--no-open] [--no-auto-update]`. Behind the `[ui]` extra
   (lazy import of `uvicorn`/`starlette` → prints `uv tool install 'pflow-cli[ui]'` if
   absent; a real bug inside the server module surfaces as a loud traceback, not
   the hint).
 - **Opens the browser to `http://127.0.0.1:{port}/?workflow=<urlencoded>`**
   once the port is actually listening (polls, not a guessed delay). `App.tsx`
   reads `?workflow=` and auto-loads it; with no param, it shows the catalog.
-  `--no-watch` appends `?watch=0` to freeze the live-source poll.
+  `--no-auto-update` appends the private `?watch=0` URL param to freeze the
+  live-source poll.
+- Point: `pflow ui focus <workflow> <target> [--open]`, `frame`, and
+  `clear-focus`. Watch: `pflow ui user-activity [workflow]`. Each accepts `--port`
+  and the project-standard `--output-format json` and talks to an already-running
+  server. A saved workflow named like a subcommand is reachable by path (for
+  example `./focus.pflow.md`).
+- **Address grammar (`targets.py`):** a target is named the way it reads in the
+  `.pflow.md` — a step/input/output by its bare name, a connection as
+  `source -> target`. The grammar deliberately mirrors the file's own vocabulary
+  rather than inventing a parallel notation: `in:`/`out:` is **not** required up
+  front; the bare name of an IO port resolves like any node, and the prefix only
+  appears in the qualify list when an input and output genuinely share a name
+  (mirrors how a bare node name that occurs in two sub-workflows qualifies by
+  scope). A miss suggests in the shape of what was typed (a connection attempt
+  gets real connections back). `_node_addresses` returns the full alias set. A
+  **unique-match report echoes the file's vocabulary** — the `in:`/`out:`
+  side-prefix is dropped when the bare name still resolves to one element (a
+  collision never reaches that path), but scope (`create.echo`) is kept and the
+  prefix is *retained* if dropping it would re-introduce ambiguity. The **qualify
+  list** keeps the canonical prefixed/scoped form, where it disambiguates.
 - **Local dev loop:** run `pflow ui` (backend) and Vite's dev server
   concurrently; set `server.proxy` in `vite.config.ts` to forward `/api` →
   `http://127.0.0.1:<port>` so the React app hot-reloads against the live
   backend. Production serves the built bundle from the Python server directly
   (no proxy).
+
+Deferred interaction targets are standalone body rows and control/branch edges.
+Also deferred until a concrete consumer exists: activity `--follow`, replacing
+the Auto-update poll with SSE, and programmatic browser apply acknowledgments.
 
 ## The RFGraph contract + load-bearing rendering rules
 

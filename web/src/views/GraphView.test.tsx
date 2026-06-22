@@ -7,7 +7,7 @@
 // determinism; real ELK layout is covered in graph/flow.test.ts.
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { installReactFlowJsdomMocks } from "../test/rf-jsdom";
 import type { FlowNode } from "../graph/flow";
@@ -19,6 +19,17 @@ vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
   return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn() };
 });
+const live = vi.hoisted(() => ({
+  handlers: null as import("../api/events").PointHandlers | null,
+  report: vi.fn(),
+}));
+vi.mock("../api/events", () => ({
+  subscribe: vi.fn((_workflow: string, handlers: import("../api/events").PointHandlers) => {
+    live.handlers = handlers;
+    return vi.fn();
+  }),
+  reportInteraction: live.report,
+}));
 // Stub ELK so the component test is deterministic; overridable per-test.
 vi.mock("../graph/layout", () => ({ layoutGraph: vi.fn() }));
 // Keep the read panel's ParamBlocks synchronous: the real shiki load under
@@ -133,6 +144,8 @@ beforeEach(() => {
   vi.mocked(layoutGraph).mockReset();
   vi.mocked(layoutGraph).mockImplementation(layoutStub);
   fitViewSpy.mockClear();
+  live.handlers = null;
+  live.report.mockReset();
 });
 
 describe("GraphView mount", () => {
@@ -596,6 +609,132 @@ describe("GraphView mount", () => {
       (c) => (c[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "g_wf",
     );
     expect(followed).toBe(true);
+  });
+
+  it("applies live node focus/clear and camera-only frame without reporting agent actions", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    const reportsAfterOpen = live.report.mock.calls.length;
+
+    act(() => live.handlers!.focus({ kind: "node", ref: GRAPH.nodes[0]!.ref }));
+    await waitFor(() => expect(container.querySelector(".read-panel")).toBeTruthy());
+    expect(live.report).toHaveBeenCalledTimes(reportsAfterOpen);
+
+    act(() => live.handlers!.clear());
+    await waitFor(() => expect(container.querySelector(".read-panel")).toBeNull());
+
+    fitViewSpy.mockClear();
+    act(() => live.handlers!.frame({ kind: "node", ref: GRAPH.nodes[1]!.ref }));
+    await waitFor(() =>
+      expect(
+        fitViewSpy.mock.calls.some(
+          (call) => (call[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "n1",
+        ),
+      ).toBe(true),
+    );
+    expect(container.querySelector(".read-panel")).toBeNull();
+    expect(live.report).toHaveBeenCalledTimes(reportsAfterOpen);
+  });
+
+  it("reports deliberate user clicks with structural and flat identity", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("say hi"));
+
+    await waitFor(() =>
+      expect(live.report).toHaveBeenCalledWith(
+        "demo",
+        expect.objectContaining({
+          type: "node_click",
+          target: { kind: "node", flat_id: "n0", ref: GRAPH.nodes[0]!.ref },
+          view_state: expect.objectContaining({ focus: "greet" }),
+        }),
+      ),
+    );
+  });
+
+  it("resolves and selects a live data-edge descriptor by structural endpoints", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+
+    const target = {
+      kind: "edge" as const,
+      source: GRAPH.nodes[0]!.ref,
+      source_field: "stdout",
+      source_path: [],
+      target: GRAPH.nodes[1]!.ref,
+      input_name: "command",
+    };
+    act(() => live.handlers!.focus(target));
+
+    await waitFor(() => expect(container.querySelector(".read-panel")).toBeTruthy());
+    expect(screen.getByText("greet")).toBeTruthy();
+
+    // Re-pointing after the user pans must frame immediately: same focus
+    // produces no paint epoch for a deferred camera request to wait on.
+    fitViewSpy.mockClear();
+    act(() => live.handlers!.focus(target));
+    await waitFor(() => expect(fitViewSpy).toHaveBeenCalled());
+  });
+
+  it("reveals both collapsed endpoint chains before applying a live edge focus", async () => {
+    const sourceRef = { node_id: "produce", ancestor_path: [{ node_id: "left", batch_index: null }], port: null } as const;
+    const targetRef = { node_id: "consume", ancestor_path: [{ node_id: "right", batch_index: null }], port: null } as const;
+    const nested: RFGraph = {
+      nodes: [
+        { ...GRAPH.nodes[0]!, id: "h0", ref: { node_id: "left", ancestor_path: [], port: null }, kind: "workflow", is_group_host: true, params: [] },
+        { ...GRAPH.nodes[0]!, id: "a", ref: { ...sourceRef, ancestor_path: [...sourceRef.ancestor_path] }, purpose: "hidden producer", parent: "ga", params: [] },
+        { ...GRAPH.nodes[0]!, id: "h1", ref: { node_id: "right", ancestor_path: [], port: null }, kind: "workflow", is_group_host: true, params: [] },
+        { ...GRAPH.nodes[1]!, id: "b", ref: { ...targetRef, ancestor_path: [...targetRef.ancestor_path] }, purpose: "hidden consumer", parent: "gb", params: [] },
+      ],
+      edges: [
+        {
+          id: "e_nested",
+          source: "a",
+          target: "b",
+          kind: "data_flow",
+          label: null,
+          output_field: "stdout",
+          input_name: "command",
+          shadowed: false,
+          condition: null,
+          output_path: [],
+        },
+      ],
+      groups: [
+        { id: "ga", kind: "workflow", parent: null, host: "h0", members: ["a"], nesting_depth: 0, annotations: {} },
+        { id: "gb", kind: "workflow", parent: null, host: "h1", members: ["b"], nesting_depth: 0, annotations: {} },
+      ],
+    };
+    vi.mocked(fetchGraph).mockResolvedValue(nested);
+    window.history.replaceState({}, "", "/?collapse=all&density=beautiful");
+    try {
+      const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+      await waitFor(() => expect(screen.queryByText("hidden producer")).toBeNull());
+
+      act(() =>
+        live.handlers!.focus({
+          kind: "edge",
+          source: { ...sourceRef, ancestor_path: [...sourceRef.ancestor_path] },
+          source_field: "stdout",
+          source_path: [],
+          target: { ...targetRef, ancestor_path: [...targetRef.ancestor_path] },
+          input_name: "command",
+        }),
+      );
+
+      await waitFor(() => expect(screen.getByText("hidden producer")).toBeTruthy());
+      expect(screen.getByText("hidden consumer")).toBeTruthy();
+      expect(container.querySelector(".read-panel")).toBeTruthy();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
   });
 
   it("surfaces a layout failure as an error banner, not a permanent 'Laying out…' (C1)", async () => {

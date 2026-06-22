@@ -8,7 +8,7 @@
 // one clears. Identity is preserved when nothing renumbered (the common append
 // case), so the build memo doesn't needlessly re-run.
 
-import type { RFGraph, RFNode, RFRef } from "../types";
+import type { PointEdgeTarget, RFGraph, RFNode, RFRef } from "../types";
 
 /** Two structural refs denote the same node iff node_id, port, and the full
  *  ancestor path (node_id + batch_index per step) match — the contract's stable
@@ -20,6 +20,55 @@ export function sameRef(a: RFRef, b: RFRef): boolean {
     const other = b.ancestor_path[i];
     return other !== undefined && seg.node_id === other.node_id && seg.batch_index === other.batch_index;
   });
+}
+
+/** Resolve a stable structural ref into this render's positional flat id. */
+export function flatIdForRef(graph: RFGraph, ref: RFRef): string | null {
+  return graph.nodes.find((node) => sameRef(node.ref, ref))?.id ?? null;
+}
+
+/** Resolve a node, IO port, or represented container flat id back to its ref. */
+export function refForFlatId(graph: RFGraph, flatId: string): RFRef | null {
+  const direct = nodeByFlatId(graph, flatId);
+  if (direct) return direct.ref;
+  const host = graph.groups.find((group) => group.id === flatId)?.host;
+  return host ? (nodeByFlatId(graph, host)?.ref ?? null) : null;
+}
+
+/** Resolve an edge descriptor against original contract endpoints and fields. */
+export function edgeIdForTarget(graph: RFGraph, target: PointEdgeTarget): string | null {
+  const source = flatIdForRef(graph, target.source);
+  const destination = flatIdForRef(graph, target.target);
+  if (source === null || destination === null) return null;
+  return (
+    graph.edges.find(
+      (edge) =>
+        edge.kind === "data_flow" &&
+        edge.source === source &&
+        edge.target === destination &&
+        edge.output_field === target.source_field &&
+        edge.input_name === target.input_name &&
+        edge.output_path.length === target.source_path.length &&
+        edge.output_path.every((part, index) => part === target.source_path[index]),
+    )?.id ?? null
+  );
+}
+
+/** Rebuild a structural edge descriptor for a deliberate user edge click. */
+export function edgeTargetForId(graph: RFGraph, edgeId: string): PointEdgeTarget | null {
+  const edge = graph.edges.find((candidate) => candidate.id === edgeId && candidate.kind === "data_flow");
+  if (!edge) return null;
+  const source = nodeByFlatId(graph, edge.source);
+  const target = nodeByFlatId(graph, edge.target);
+  if (!source || !target) return null;
+  return {
+    kind: "edge",
+    source: source.ref,
+    source_field: edge.output_field,
+    source_path: edge.output_path,
+    target: target.ref,
+    input_name: edge.input_name,
+  };
 }
 
 function nodeByFlatId(graph: RFGraph, flatId: string): RFNode | undefined {

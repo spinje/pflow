@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { remapCollapsed, remapSelection, sameRef } from "./remap";
+import {
+  edgeIdForTarget,
+  edgeTargetForId,
+  flatIdForRef,
+  refForFlatId,
+  remapCollapsed,
+  remapSelection,
+  sameRef,
+} from "./remap";
 import type { AncestorStepRef, RFEdge, RFGraph, RFGroup, RFNode, RFRef } from "../types";
 
 // ---- fixtures --------------------------------------------------------------
@@ -54,6 +62,45 @@ describe("sameRef", () => {
     expect(sameRef(ref("a", path), ref("a", path))).toBe(true);
     expect(sameRef(ref("a", path), ref("a", [{ node_id: "wf", batch_index: 3 }]))).toBe(false);
     expect(sameRef(ref("a", path), ref("a", []))).toBe(false);
+  });
+});
+
+describe("live structural target mapping", () => {
+  const sourceRef = ref("gen", [{ node_id: "child", batch_index: 1 }]);
+  const targetRef = ref("use");
+  const g = graph({
+    nodes: [node("n7", sourceRef), node("n2", targetRef), node("n8", ref("host"), { is_group_host: true })],
+    edges: [
+      {
+        ...edge("e3", "n7", "n2"),
+        kind: "data_flow",
+        output_field: "result",
+        output_path: ["ok"],
+        input_name: "value",
+      },
+    ],
+    groups: [group("g4", { host: "n8" })],
+  });
+
+  it("maps full refs both ways without relying on node_id alone", () => {
+    expect(flatIdForRef(g, sourceRef)).toBe("n7");
+    expect(flatIdForRef(g, ref("gen", [{ node_id: "child", batch_index: 0 }]))).toBeNull();
+    expect(refForFlatId(g, "n7")).toEqual(sourceRef);
+    expect(refForFlatId(g, "g4")).toEqual(ref("host"));
+  });
+
+  it("matches data edges by original endpoints plus the complete field path", () => {
+    const target = {
+      kind: "edge" as const,
+      source: sourceRef,
+      source_field: "result",
+      source_path: ["ok"],
+      target: targetRef,
+      input_name: "value",
+    };
+    expect(edgeIdForTarget(g, target)).toBe("e3");
+    expect(edgeIdForTarget(g, { ...target, source_path: ["error"] })).toBeNull();
+    expect(edgeTargetForId(g, "e3")).toEqual(target);
   });
 });
 

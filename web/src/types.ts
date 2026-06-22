@@ -143,6 +143,41 @@ export interface RFGraph {
   kind_output_types?: Record<string, Record<string, string>>;
 }
 
+// Live Point command descriptors. These mirror src/pflow/ui/targets.py and
+// deliberately contain structural refs only — positional flat ids are local to
+// one render and must never cross the SSE channel.
+export interface PointNodeTarget {
+  kind: "node";
+  ref: RFRef;
+}
+
+export interface PointEdgeTarget {
+  kind: "edge";
+  source: RFRef;
+  source_field: string | null;
+  source_path: string[];
+  target: RFRef;
+  input_name: string | null;
+}
+
+export type PointTarget = PointNodeTarget | PointEdgeTarget;
+
+export interface InteractionViewState {
+  density: "advanced" | "beautiful";
+  direction: "LR" | "TD";
+  focus: string | null;
+}
+
+export type InteractionTarget =
+  | (PointNodeTarget & { flat_id: string })
+  | (PointEdgeTarget & { flat_id: string });
+
+export interface InteractionReport {
+  type: string;
+  target?: InteractionTarget;
+  view_state: InteractionViewState;
+}
+
 export interface SourceFiles {
   root: string | null;
   files: Record<string, string>;
