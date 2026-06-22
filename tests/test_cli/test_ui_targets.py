@@ -237,6 +237,75 @@ def test_not_found_uses_fuzzy_node_suggestions() -> None:
     assert resolution.suggestions[0] == "fetch-data"
 
 
+def test_io_port_resolves_by_its_bare_name_without_a_prefix() -> None:
+    """An agent points at an input by the name it reads under ``## Inputs`` — the
+    `in:`/`out:` prefix is never required when nothing collides."""
+    graph = _graph([_node("n0", _ref("source_file", port="in"))])
+
+    resolution = resolve_target(graph, "source_file")
+
+    assert resolution.matched == 1
+    assert resolution.descriptor is not None
+    assert resolution.descriptor["ref"]["port"] == "in"
+    # The canonical address keeps the prefix so the report stays unambiguous,
+    # even though the bare name is what the agent typed.
+    assert resolution.address == "in:source_file"
+
+
+def test_same_name_input_and_output_qualify_to_the_prefixed_forms() -> None:
+    """The one case the prefix exists for: a bare name that is genuinely two
+    elements returns a qualify list that teaches `in:`/`out:` exactly when needed."""
+    graph = _graph([
+        _node("n0", _ref("data", port="in")),
+        _node("n1", _ref("data", port="out")),
+    ])
+
+    resolution = resolve_target(graph, "data")
+
+    assert resolution.matched == 2
+    assert resolution.qualify == ("in:data", "out:data")
+    assert all(resolve_target(graph, address).matched == 1 for address in resolution.qualify)
+
+
+def test_edge_resolves_when_its_source_is_an_io_port_named_bare() -> None:
+    """A connection from a workflow input composes from the input's bare name —
+    `source_file -> read_source.file_path` resolves with no prefix."""
+    source = _node("n0", _ref("source_file", port="in"))
+    target = _node("n1", _ref("read_source"))
+    graph = _graph(
+        [source, target],
+        edges=[RFEdge("e0", "n0", "n1", "data_flow", None, None, "file_path", False)],
+    )
+
+    resolution = resolve_target(graph, "source_file -> read_source.file_path")
+
+    assert resolution.matched == 1
+    assert resolution.address == "in:source_file -> read_source.file_path"
+
+
+def test_not_found_input_typo_suggests_input_names_not_unrelated_steps() -> None:
+    graph = _graph([_node("n0", _ref("source_file", port="in")), _node("n1", _ref("read_source"))])
+
+    resolution = resolve_target(graph, "source_fil")
+
+    assert resolution.matched == 0
+    assert "source_file" in resolution.suggestions
+
+
+def test_not_found_edge_attempt_suggests_real_connections() -> None:
+    source = _node("n0", _ref("gen"))
+    target = _node("n1", _ref("summarize"))
+    graph = _graph(
+        [source, target],
+        edges=[RFEdge("e0", "n0", "n1", "data_flow", None, "response", "prompt", False)],
+    )
+
+    resolution = resolve_target(graph, "gen.response -> summarize.promt")
+
+    assert resolution.matched == 0
+    assert resolution.suggestions[0] == "gen.response -> summarize.prompt"
+
+
 def test_display_grammar_matches_resolver_and_round_trips() -> None:
     """`address_for_target` (the CLI Watch display formatter) and `resolve_target`
     share ONE grammar — an address `pflow ui user-activity` prints re-points to

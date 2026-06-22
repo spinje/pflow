@@ -320,3 +320,83 @@ was the *original implementer's* environment — **verified false here**. The fu
 Verification: ruff + mypy clean; **78 Task 169 Python tests pass**; tsc clean; **524 web vitest pass**.
 Shipped as **PR #527** (`04faa88e` implementation + `378cd952` review fixes). The distilled
 invariants / patterns / gotchas now live in `task-review.md`.
+
+---
+
+## 2026-06-22 — Post-merge dogfooding: Point address grammar aligned to the file's vocabulary
+
+Rebased the branch onto `main` (linear; only `CLAUDE.md` roadmap conflict — `main` had reorganized the
+overlay track into 172→169→173) and force-pushed. Then **used the feature as a fresh agent** against
+`examples/advanced/content-pipeline.pflow.md` and immediately tripped on the address grammar — the
+exact failure the spec exists to prevent, hit by its own author.
+
+### The root cause (the one thing the next agent must internalize)
+
+The Point grammar had invented a **parallel naming notation** that diverged from the `.pflow.md` the agent
+already reads:
+- the file says `source_file` under `## Inputs`; the grammar demanded `in:source_file`.
+- the file shows `read_source` consuming `${source_file}`; the grammar's `source.field -> target.input`
+  shape gave no hint the input end keeps its `in:` prefix.
+
+So the mistakes were **translation errors between the file's vocabulary and a made-up second notation**,
+not missing information. This is the *same* "two sources of truth" drift this codebase hunts elsewhere —
+here, "what is this element called" had two answers.
+
+### First instinct was a bandaid; the real fix is subtractive
+
+I initially added a `pflow ui targets <wf>` command to *list* the addresses (so an agent could read them
+instead of guess). The task owner correctly called it a bandaid: **the `.pflow.md` IS the target list** —
+a command that re-prints it fails the deletion test. The honest fix is to *delete the divergence*, not add
+a surface that bridges it. So `targets` was **added then removed** (don't re-add it without reading this).
+
+### What changed (all in `src/pflow/ui/targets.py` + `cli/commands/ui.py`)
+
+- **Bare IO names resolve** (`_node_addresses` now returns the full alias set incl. the unprefixed name;
+  the canonical prefixed/scoped form stays as the `qualified`/report value). `in:`/`out:` only surfaces in
+  the **qualify list** when an input and output genuinely share a name — same self-correcting loop as a
+  bare node name duplicated across two sub-workflows. Edges compose from the unprefixed endpoints, so
+  `source_file -> read_source.file_path` (my original miss) now resolves.
+- **Shape-aware not-found suggestions** (`resolve_target` 0-match arm): an edge attempt (`a -> b`) is
+  fuzzy-matched against real **connections**; a name attempt against **all** node/IO names (the old pool
+  excluded ports → an input typo used to suggest a random step).
+- **Orientation hint on the dead-end** (`_render_dispatch`): when there is **no** near-miss, append
+  "Targets are names from the workflow file: a step, input, or output, or a connection `source -> target`"
+  — rescues the fundamental-mismatch case that used to print a bare "not found." (a real typo still gets the
+  terse `Did you mean: …`).
+- **`--json` → project-standard `--output-format [text|json]`** (default `text`) via a tiny `_wants_json`
+  callback that maps onto the existing internal `output_json: bool` — zero signature/body churn. The CLI was
+  split (6 commands on `--output-format` incl. flagship `run`; 3 on `--json`); the plan's rationale for
+  `--json` ("no `--output-format` subcommand convention") was **inaccurate** (`probe`/`settings` use it).
+  `list`/`mcp` remain on `--json` → tracked in **GH issue #528** (option B: ui now, sweep the rest later).
+- **`workflow key:` → `workflow:`** in agent-facing output (internal-vocabulary leak), + the empty
+  `user-activity` message.
+- **Docs** now say it outright — guide `visualization.md`, `ui/CLAUDE.md`, CLI reference: *"a target is the
+  name you already read in the `.pflow.md` — there is no separate notation to learn."* Per-command `--json`
+  mentions stripped (it's an assumable universal escape hatch; text is the agent's read surface, JSON is for
+  scripting — don't push agents toward JSON).
+
+### Verification
+
+- `make check` clean (ruff, ruff-format, mypy 237 files, deptry); **`make test` 8055 passed**.
+- **Fresh-agent cold-use test** (a context-free general-purpose agent, docs+help only, barred from source):
+  focused a step, an input, AND an edge **all first-try, zero misses** — "it was easy." Its one honest flag:
+  the guide's input-edge example happens to be drawn from the same workflow it was tested on, so the example
+  doubles as the answer; it verified the rule held independently. (Left as-is; the guide also carries the
+  generic `gen.response -> summarize.prompt`.)
+- Real browser Point/Watch confirmed live (step/input/edge focus, per-window visible-vs-backgrounded
+  reporting). A **background-tab apply glitch** was reported once ("not highlighted correctly") but did **not
+  reproduce** under a controlled edge→node-while-hidden repro — concluded transient (rAF throttled in hidden
+  tabs frames the camera late), not a deterministic bug. Not formally closed; re-test if it recurs.
+
+### Sub-workflow addressing (answered for the record)
+
+Reference a nested element by the **container step's name**: `create.echo`, ports `in:create.data` /
+`out:create.data`, batched `create[0].name`; or just try the bare name and let the ambiguous→qualify list
+hand you the scoped forms. The scope segment is the `### create` `type: workflow` step — read from the file.
+
+**Standalone fields are NOT addressable alone** (deferred body-rows): `read_source.file_path` typed bare →
+"not found, did you mean: read_source" (redirects to the step). The field is only addressable as a connection
+endpoint (`X -> read_source.file_path`). Left as-is — the redirect is the sensible recovery.
+
+Status: **committed on `feat/agent-browser-interaction` (single follow-up commit), not yet pushed.** These
+changes sit on top of the rebased PR #527.

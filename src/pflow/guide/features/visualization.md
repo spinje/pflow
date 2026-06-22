@@ -28,20 +28,34 @@ shape as you work.
 - Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-auto-update`
   (freeze — stop live-updating).
 
-Once a Viewer server is running, an agent can Point in the user's open windows and
-Watch deliberate interactions:
+Once a Viewer server is running, an agent can Point at things in the user's open
+windows and Watch what they deliberately click:
 
-- `pflow ui focus <workflow> <target> [--open]` — focus/reveal a node, container,
-  IO port (`in:name` / `out:name`, scoped like `in:child.data`), or
-  `source.field -> target.input` data edge in every matching Viewer.
+- `pflow ui focus <workflow> <target> [--open]` — focus/reveal a target in every
+  matching Viewer.
 - `pflow ui frame <workflow> <target>` — move the camera without changing focus.
 - `pflow ui clear-focus <workflow>` — clear the current focus.
 - `pflow ui user-activity [workflow]` — read recent clicks and view changes.
 
-All four accept `--port N` and `--json`. Use the command's sent-window and
-visible/backgrounded counts honestly: it reports where the command was sent, not
-a browser apply acknowledgment. Point exits nonzero when resolution fails or no
-Viewer received the command; empty `user-activity` remains a successful read.
+**A target is just the name you already read in the `.pflow.md` — there is no
+separate notation to learn:**
+
+- a **step** by its name — `process_content`
+- an **input** or **output** by its name — `source_file`
+- a **connection** as `source -> target`, each end named the same way —
+  `gen.response -> summarize.prompt`, or from an input `source_file -> read_source.file_path`
+
+You don't have to get it right first try. If a name matches more than one thing
+(the same step inside two sub-workflows, or an input and output that share a
+name), the command doesn't guess — it lists the qualified addresses to pick from.
+If a name isn't found, it suggests the closest real ones. So point, read the
+reply, re-point.
+
+All four take `--port N`. The command reports where it was sent (how
+many windows, visible vs backgrounded), not that the browser finished drawing it —
+the human looking at the screen is the confirmation. Point exits nonzero when
+resolution fails or no Viewer received it; an empty `user-activity` is still a
+successful read.
 
 Deep-link a specific view (to point the user at a node, or for a screenshot): append
 `?workflow=<name-or-path>&focus=<node-id>` — `focus=` highlights the node and reveals its

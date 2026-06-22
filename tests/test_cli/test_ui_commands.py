@@ -78,7 +78,7 @@ class TestPointCommands:
         payload = _dispatch_payload()
         runner = CliRunner()
         with patch("httpx.request", return_value=_response(200, payload)):
-            result = runner.invoke(ui_module.ui_cmd, ["frame", "demo", "greet", "--json"])
+            result = runner.invoke(ui_module.ui_cmd, ["frame", "demo", "greet", "--output-format", "json"])
 
         assert result.exit_code == 0, result.output
         assert json.loads(result.output) == payload
@@ -101,10 +101,43 @@ class TestPointCommands:
         }
         runner = CliRunner()
         with patch("httpx.request", return_value=_response(200, payload)):
-            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "grete", "--json"])
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "grete", "--output-format", "json"])
 
         assert result.exit_code == 1
         assert json.loads(result.output) == payload
+
+    def test_not_found_without_suggestions_orients_to_file_vocabulary(self) -> None:
+        payload = {
+            "resolved": {"matched": 0, "suggestions": []},
+            "sent_to": 0,
+            "windows": [],
+            "workflow_key": "/workflows/demo.pflow.md",
+        }
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, payload)):
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "xyzzy"])
+
+        assert result.exit_code == 1
+        assert "not found." in result.output
+        assert "names from the workflow file" in result.output
+        # Nothing close — don't fabricate a "did you mean".
+        assert "Did you mean" not in result.output
+
+    def test_not_found_with_suggestions_stays_terse(self) -> None:
+        payload = {
+            "resolved": {"matched": 0, "suggestions": ["process_content"]},
+            "sent_to": 0,
+            "windows": [],
+            "workflow_key": "/workflows/demo.pflow.md",
+        }
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, payload)):
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "proces"])
+
+        assert result.exit_code == 1
+        assert "Did you mean: process_content?" in result.output
+        # The orientation line is only for the no-suggestion dead-end.
+        assert "names from the workflow file" not in result.output
 
     def test_connection_failure_has_actionable_start_hint(self) -> None:
         error = httpx.ConnectError(
@@ -127,7 +160,9 @@ class TestPointCommands:
         )
         runner = CliRunner()
         with patch("httpx.request", side_effect=error):
-            result = runner.invoke(ui_module.ui_cmd, ["clear-focus", "demo", "--port", "9000", "--json"])
+            result = runner.invoke(
+                ui_module.ui_cmd, ["clear-focus", "demo", "--port", "9000", "--output-format", "json"]
+            )
 
         assert result.exit_code == 1
         assert json.loads(result.output) == {
@@ -166,7 +201,7 @@ class TestPointCommands:
         }
         runner = CliRunner()
         with patch("httpx.request", return_value=_response(422, payload)):
-            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--json"])
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--output-format", "json"])
 
         assert result.exit_code == 1
         assert json.loads(result.output) == payload
@@ -249,7 +284,7 @@ class TestUserActivityCommand:
 
         assert result.exit_code == 0, result.output
         assert "user-activity 'demo' (0 events)" in result.output
-        assert "server up, no interactions recorded for this workflow key" in result.output
+        assert "server up, no interactions recorded for this workflow" in result.output
         assert "/workflows/demo.pflow.md" in result.output
 
     def test_activity_formats_structural_and_flat_identity_with_view_state(self) -> None:

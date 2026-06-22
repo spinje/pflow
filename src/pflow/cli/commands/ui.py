@@ -74,6 +74,15 @@ def _viewer_url(port: int, workflow: str, *, focus: str | None = None) -> str:
     return f"http://{_HOST}:{port}/?{urlencode(query)}"
 
 
+def _wants_json(ctx: click.Context, param: click.Parameter, value: str) -> bool:
+    """Map the project-standard ``--output-format`` flag onto the internal bool.
+
+    Keeps every command/helper signature on ``output_json: bool`` while the
+    user-facing flag matches the rest of the CLI (``run``, ``probe``, ``settings``).
+    """
+    return value == "json"
+
+
 def _request(
     ctx: click.Context,
     port: int,
@@ -215,10 +224,16 @@ def _render_dispatch(
 
     if resolution and matched == 0:
         suggestions = resolution.get("suggestions")
-        suffix = ""
         if isinstance(suggestions, list) and suggestions:
-            suffix = f" Did you mean: {', '.join(str(item) for item in suggestions)}?"
-        click.echo(f"{subject}: not found.{suffix}")
+            click.echo(f"{subject}: not found. Did you mean: {', '.join(str(item) for item in suggestions)}?")
+        else:
+            # No near-miss to offer — orient the agent to the file's vocabulary so
+            # a fundamental mismatch (wrong workflow, wrong idea of the grammar)
+            # recovers instead of dead-ending on a bare "not found".
+            click.echo(f"{subject}: not found.")
+            click.echo(
+                "  Targets are names from the workflow file: a step, input, or output, or a connection `source -> target`."
+            )
         return
     if matched > 1:
         click.echo(f"{subject}: ambiguous — {matched} matches, not sent. Qualify with one of:")
@@ -249,7 +264,7 @@ def _render_dispatch(
         click.echo(f"{subject}: resolved 1 ({address}) · sent to {sent_to} {window_word} ({visibility})")
     else:
         click.echo(f"{subject}: sent to {sent_to} {window_word} ({visibility})")
-    click.echo(f"  workflow key: {payload.get('workflow_key')}")
+    click.echo(f"  workflow: {payload.get('workflow_key')}")
     if sent_to == 0 and not opened and open_supported:
         click.echo(f"  → re-run with --open, or run `pflow ui {workflow}`")
     elif sent_to == 0 and not opened:
@@ -368,7 +383,14 @@ def serve_cmd(
 @click.argument("workflow")
 @click.argument("target")
 @click.option("--open", "open_if_absent", is_flag=True, help="Open a Viewer when no window is connected.")
-@click.option("--json", "output_json", is_flag=True, help="Output the server response as JSON.")
+@click.option(
+    "--output-format",
+    "output_json",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    callback=_wants_json,
+    help="Output format: text (default) or json.",
+)
 @click.option("--port", default=_DEFAULT_PORT, type=int, help="Viewer server port (default: 8765).")
 @click.pass_context
 def focus_cmd(
@@ -379,7 +401,14 @@ def focus_cmd(
     output_json: bool,
     port: int,
 ) -> None:
-    """Focus TARGET in every Viewer showing WORKFLOW."""
+    """Focus TARGET in every Viewer showing WORKFLOW.
+
+    TARGET is a name from the workflow file: a step (``process_content``), an
+    input or output (``source_file``), or a connection
+    (``gen.response -> summarize.prompt``). If a name matches more than one
+    element the command replies with qualified addresses to pick from — you never
+    have to guess the syntax.
+    """
     payload = _point_request(ctx, port, workflow, "focus", target, output_json=output_json)
     opened = False
     timed_out = False
@@ -422,11 +451,21 @@ def focus_cmd(
 @ui_cmd.command(name="frame")
 @click.argument("workflow")
 @click.argument("target")
-@click.option("--json", "output_json", is_flag=True, help="Output the server response as JSON.")
+@click.option(
+    "--output-format",
+    "output_json",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    callback=_wants_json,
+    help="Output format: text (default) or json.",
+)
 @click.option("--port", default=_DEFAULT_PORT, type=int, help="Viewer server port (default: 8765).")
 @click.pass_context
 def frame_cmd(ctx: click.Context, workflow: str, target: str, output_json: bool, port: int) -> None:
-    """Frame TARGET without changing focus state."""
+    """Frame TARGET without changing focus state.
+
+    TARGET uses the same names as ``pflow ui focus``.
+    """
     payload = _point_request(ctx, port, workflow, "frame", target, output_json=output_json)
     _emit_payload(payload, output_json)
     if not output_json:
@@ -437,7 +476,14 @@ def frame_cmd(ctx: click.Context, workflow: str, target: str, output_json: bool,
 
 @ui_cmd.command(name="clear-focus")
 @click.argument("workflow")
-@click.option("--json", "output_json", is_flag=True, help="Output the server response as JSON.")
+@click.option(
+    "--output-format",
+    "output_json",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    callback=_wants_json,
+    help="Output format: text (default) or json.",
+)
 @click.option("--port", default=_DEFAULT_PORT, type=int, help="Viewer server port (default: 8765).")
 @click.pass_context
 def clear_focus_cmd(ctx: click.Context, workflow: str, output_json: bool, port: int) -> None:
@@ -488,10 +534,10 @@ def _render_activity(workflow: str | None, payload: dict[str, object]) -> None:
     click.echo(f"user-activity {label} ({count} {event_word})")
     if not event_list:
         if workflow:
-            click.echo("  server up, no interactions recorded for this workflow key (is a window open on it?).")
+            click.echo("  server up, no interactions recorded for this workflow (is a window open on it?).")
         else:
             click.echo("  server up, no interactions recorded yet.")
-        click.echo(f"  workflow key: {payload.get('workflow_key')}")
+        click.echo(f"  workflow: {payload.get('workflow_key')}")
         return
 
     for raw_event in event_list:
@@ -518,12 +564,19 @@ def _render_activity(workflow: str | None, payload: dict[str, object]) -> None:
             f"  {when} ({_format_age(raw_event.get('age_seconds'))}) "
             f"{raw_event.get('type')} · {target_text} · {state}{workflow_text}"
         )
-    click.echo(f"  workflow key: {payload.get('workflow_key')}")
+    click.echo(f"  workflow: {payload.get('workflow_key')}")
 
 
 @ui_cmd.command(name="user-activity")
 @click.argument("workflow", required=False)
-@click.option("--json", "output_json", is_flag=True, help="Output the server response as JSON.")
+@click.option(
+    "--output-format",
+    "output_json",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    callback=_wants_json,
+    help="Output format: text (default) or json.",
+)
 @click.option("--port", default=_DEFAULT_PORT, type=int, help="Viewer server port (default: 8765).")
 @click.pass_context
 def user_activity_cmd(ctx: click.Context, workflow: str | None, output_json: bool, port: int) -> None:

@@ -499,13 +499,15 @@ The full view is described by the URL, so you can share or screenshot an exact s
 An agent can interact with every open Viewer showing a workflow:
 
 ```bash
-pflow ui focus <workflow> <target> [--open]  # focus and reveal a node, container, IO port, or data edge
+pflow ui focus <workflow> <target> [--open]  # focus and reveal a step, input/output, or connection
 pflow ui frame <workflow> <target>           # move the camera without changing focus
 pflow ui clear-focus <workflow>
 pflow ui user-activity [workflow]             # recent deliberate clicks and view changes
 ```
 
-These commands target the server on port 8765 by default; pass `--port N` for another instance or `--json` for structured output. Point commands exit nonzero when the target is unresolved/ambiguous or no Viewer received the command. `focus --open` opens a Viewer only when no window for that workflow is connected. Data edges use `source.field -> target.input`; IO ports use `in:name` / `out:name` (for example `in:child.data`); qualify duplicate nested node ids with their container path.
+Name a target the way it reads in the `.pflow.md`: a step, input, or output by its name (`process_content`, `source_file`), or a connection as `source -> target` (`gen.response -> summarize.prompt`) — there's no separate notation to learn. If a name matches more than one thing — the same step inside two sub-workflows, or an input and output that share a name — the command lists qualified addresses to pick from instead of guessing, and an unknown name returns the closest real matches. So you point, read the reply, and re-point.
+
+These commands target port 8765 by default (pass `--port N` for another instance). Point commands exit nonzero when the target is unresolved/ambiguous or no Viewer received the command. `focus --open` opens a Viewer only when no window for that workflow is connected.
 
 ## Mermaid command
 

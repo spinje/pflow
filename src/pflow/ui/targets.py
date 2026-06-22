@@ -153,10 +153,26 @@ def address_for_target(descriptor: object) -> str | None:
     return f"{source} -> {destination}"
 
 
-def _node_addresses(ref: RFRef) -> tuple[str, str]:
+def _node_addresses(ref: RFRef) -> tuple[tuple[str, ...], str]:
+    """Every string this element answers to, plus its one canonical address.
+
+    A node answers to its bare name and its scope-qualified name. An IO port
+    answers to those *unprefixed natural* forms too (`source_file`, `child.data`
+    — the names an agent reads under ``## Inputs``/``## Outputs``), so the prefix
+    is never required up front. ``in:``/``out:`` only has to appear when a real
+    same-name collision (an input and output both called ``data``) makes the bare
+    name ambiguous — at which point it surfaces in the qualify list and teaches
+    itself. The canonical (returned second) keeps the prefix so reports and
+    qualify entries stay unambiguous.
+    """
     scoped = _format_ref(_ref_payload(ref))
-    bare = f"{ref.port}:{ref.node_id}" if ref.port in {"in", "out"} else ref.node_id
-    return bare, scoped
+    addresses: tuple[str, ...]
+    if ref.port in {"in", "out"}:
+        unprefixed_scoped = scoped[len(ref.port) + 1 :]  # strip "in:"/"out:"
+        addresses = (ref.node_id, unprefixed_scoped, f"{ref.port}:{ref.node_id}", scoped)
+    else:
+        addresses = (ref.node_id, scoped)
+    return tuple(dict.fromkeys(addresses)), scoped
 
 
 def _with_field(address: str, field: str | None, path: list[str]) -> str:
@@ -174,11 +190,11 @@ def _normalize_address(address: str) -> str:
 def _node_elements(graph: RFGraph) -> list[_Addressable]:
     elements = []
     for node in graph.nodes:
-        bare, scoped = _node_addresses(node.ref)
+        addresses, qualified = _node_addresses(node.ref)
         elements.append(
             _Addressable(
-                addresses=tuple(dict.fromkeys((bare, scoped))),
-                qualified=scoped,
+                addresses=addresses,
+                qualified=qualified,
                 descriptor={"kind": "node", "ref": _ref_payload(node.ref)},
             )
         )
@@ -195,23 +211,18 @@ def _edge_elements(graph: RFGraph, nodes_by_id: dict[str, RFNode]) -> list[_Addr
         if source is None or target is None:
             continue
 
-        source_bare, source_scoped = _node_addresses(source.ref)
-        target_bare, target_scoped = _node_addresses(target.ref)
-        source_addresses = {
-            _with_field(source_bare, edge.output_field, edge.output_path),
-            _with_field(source_scoped, edge.output_field, edge.output_path),
-        }
-        target_addresses = {
-            _with_field(target_bare, edge.input_name, []),
-            _with_field(target_scoped, edge.input_name, []),
-        }
-        addresses = tuple(
-            sorted(
-                f"{source_address} -> {target_address}"
-                for source_address in source_addresses
-                for target_address in target_addresses
-            )
+        source_addrs, _ = _node_addresses(source.ref)
+        target_addrs, _ = _node_addresses(target.ref)
+        source_endpoints = {_with_field(addr, edge.output_field, edge.output_path) for addr in source_addrs}
+        target_endpoints = {_with_field(addr, edge.input_name, []) for addr in target_addrs}
+        # The natural form (both endpoints by their bare names) leads, so it is
+        # what `resolve_target` offers as a suggestion when an edge address misses.
+        natural = (
+            f"{_with_field(source_addrs[0], edge.output_field, edge.output_path)} -> "
+            f"{_with_field(target_addrs[0], edge.input_name, [])}"
         )
+        all_addresses = {f"{src} -> {tgt}" for src in source_endpoints for tgt in target_endpoints}
+        addresses = (natural, *sorted(all_addresses - {natural}))
         descriptor: EdgeTarget = {
             "kind": "edge",
             "source": _ref_payload(source.ref),
@@ -240,12 +251,21 @@ def resolve_target(graph: RFGraph, target: str) -> TargetResolution:
     """
     normalized = _normalize_address(target)
     nodes_by_id = {node.id: node for node in graph.nodes}
-    elements = [*_node_elements(graph), *_edge_elements(graph, nodes_by_id)]
+    node_elements = _node_elements(graph)
+    edge_elements = _edge_elements(graph, nodes_by_id)
+    elements = [*node_elements, *edge_elements]
     matches = [element for element in elements if normalized in element.addresses]
 
     if not matches:
-        bare_node_ids = sorted({node.ref.node_id for node in graph.nodes if node.ref.port is None})
-        suggestions = find_similar_items(normalized, bare_node_ids, method="fuzzy")
+        # Suggest in the shape of what was typed: an edge attempt (`a -> b`) gets
+        # real connections back, anything else gets step/input/output names. The
+        # pool is each element's natural (bare) address, so a miss steers to a
+        # name an agent can actually type — never a different kind of thing.
+        if "->" in normalized:
+            pool = sorted({element.addresses[0] for element in edge_elements})
+        else:
+            pool = sorted({element.addresses[0] for element in node_elements})
+        suggestions = find_similar_items(normalized, pool, method="fuzzy")
         return TargetResolution(matched=0, suggestions=tuple(suggestions))
     if len(matches) > 1:
         return TargetResolution(

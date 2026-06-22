@@ -162,8 +162,19 @@ heuristically-cached stale entry; the content-hashed assets stay cacheable.
   live-source poll.
 - Point: `pflow ui focus <workflow> <target> [--open]`, `frame`, and
   `clear-focus`. Watch: `pflow ui user-activity [workflow]`. Each accepts `--port`
-  and `--json` and talks to an already-running server. A saved workflow named
-  like a subcommand is reachable by path (for example `./focus.pflow.md`).
+  and the project-standard `--output-format json` and talks to an already-running
+  server. A saved workflow named like a subcommand is reachable by path (for
+  example `./focus.pflow.md`).
+- **Address grammar (`targets.py`):** a target is named the way it reads in the
+  `.pflow.md` — a step/input/output by its bare name, a connection as
+  `source -> target`. The grammar deliberately mirrors the file's own vocabulary
+  rather than inventing a parallel notation: `in:`/`out:` is **not** required up
+  front; the bare name of an IO port resolves like any node, and the prefix only
+  appears in the qualify list when an input and output genuinely share a name
+  (mirrors how a bare node name that occurs in two sub-workflows qualifies by
+  scope). A miss suggests in the shape of what was typed (a connection attempt
+  gets real connections back). `_node_addresses` returns the full alias set; the
+  canonical (prefixed, scoped) form is what reports and qualify entries echo.
 - **Local dev loop:** run `pflow ui` (backend) and Vite's dev server
   concurrently; set `server.proxy` in `vite.config.ts` to forward `/api` →
   `http://127.0.0.1:<port>` so the React app hot-reloads against the live
