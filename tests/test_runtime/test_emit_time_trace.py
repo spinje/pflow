@@ -693,6 +693,78 @@ def test_streamed_trace_is_read_by_all_disk_consumers(tmp_path, mock_llm_client,
     assert analysis.trace_path == str(streamed_path), "analyze-cache autoload must consume the STREAMED trace"
 
 
+@pytest.mark.trace_files
+def test_crash_truncated_streamed_trace_is_rejected_as_truth_by_consumers(tmp_path, mock_llm_client, monkeypatch):
+    """Cross-seam invariant streaming newly makes load-bearing. Before Task 172 a crash left NO file; now it
+    leaves an INCOMPLETE streamed trace (no run.complete) that ``load_trace_file`` reconstructs-as-incomplete
+    and ``_iter_workflow_traces`` YIELDS (it owns no ``final_status`` policy — consumers do). Both disk
+    consumers MUST reject it as truth, or a crashed/partial run silently becomes a ``--only`` snapshot
+    (stale/partial upstream seeded) or a "successful" analyze-cache source. The code is correct today; this
+    pins it so a regression in either the crash-tail (`final_status="incomplete"`) or a consumer's filter
+    can't silently start trusting partial crash data — which the producer/reader unit tests would NOT catch."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    mock_llm_client.set_response(MODEL, None, {"response": "ok"}, cost_usd=0.01)
+    wf = tmp_path / "crashy.pflow.md"
+    wf.write_text(
+        "# Crashy\n\nOne LLM node.\n\n## Steps\n\n### ask\n\nAsk.\n\n- type: llm\n- model: "
+        + MODEL
+        + "\n- prompt: hi\n",
+        encoding="utf-8",
+    )
+
+    result = _run(wf, cache_enabled=False)
+    path = result.trace.finalize()
+    wf_path = result.trace.workflow_path
+
+    # Simulate a crash: drop the run.complete trailer → an incomplete (but loadable) streamed trace.
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert json.loads(lines[-1])["kind"] == "run.complete"
+    path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    assert load_trace_file(path)["final_status"] == "incomplete", "crash trace loads as incomplete"
+
+    debug_dir = tmp_path / ".pflow" / "debug"
+    from pflow.core.prompt_cache_analysis.trace_loading import _collect_candidate_traces
+    from pflow.runtime.workflow_trace import _iter_workflow_traces, load_full_run_events
+
+    # The shared iterator MUST still yield it — moving a final_status filter in here would break the
+    # analyze-cache failed-bucket fallback (the load-bearing invariant on _iter_workflow_traces).
+    assert any(p == path for p, _ in _iter_workflow_traces(debug_dir, wf_path)), "iterator yields incomplete traces"
+    # --only: the incomplete trace is the only one → NO usable snapshot (never seeded as truth).
+    assert load_full_run_events(wf_path, debug_dir=debug_dir) is None, "crash trace must not be a --only snapshot"
+    # analyze-cache: incomplete is bucketed NON-reusable (failed), never 'successful'.
+    successful, failed = _collect_candidate_traces(debug_dir, wf_path)
+    assert not any(p == path for p, _ in successful), "crash trace must NOT be a 'successful' cache source"
+    assert any(p == path for p, _ in failed), "crash trace is bucketed non-reusable"
+
+
+@pytest.mark.trace_files
+def test_subworkflow_child_id_collision_does_not_corrupt_top_level_status(tmp_path, monkeypatch):
+    """The highest-severity flat-store failure mode — the reason status/count aggregations scope to
+    ``_top_level_events()`` (``parent_id is None``), not raw ``self.events``. A sub-workflow child sharing a
+    ``node_id`` with a FAILED top-level node must not overwrite it: ``final_events_by_node`` keys purely on
+    ``node_id``, so on a flat list the later child ``dup`` (success) would shadow the top-level ``dup``
+    (failed) → the run is silently reported successful. Every other sub-workflow test uses DISTINCT ids, so
+    nothing exercises the collision the scoping prevents. Driven at the collector (defensive invariant — the
+    engine repro is intricate; the scoping must hold regardless)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    c.record_node_execution("dup", "ShellNode", 1.0, False, error="top-level dup failed")  # top-level FAILS (seq 0)
+    frame = c.descend("host")
+    c.record_node_execution("dup", "ShellNode", 1.0, True)  # sub-workflow CHILD shares the id, succeeds (seq 2)
+    c.ascend()
+    c.record_node_execution("host", "WorkflowExecutor", 1.0, True, frame=frame)  # host success (seq 1)
+    disk = load_trace_file(c.finalize())
+
+    # The top-level 'dup' failure drives the run status; the child 'dup' (success) did NOT shadow it.
+    assert disk["final_status"] == "failed", "a failed top-level node must not be masked by a same-id child"
+    assert disk["failed_node_ids"] == ["dup"], "failed_node_ids scopes to top-level, not the child"
+    assert disk["nodes_executed"] == 2, "top-level count only (dup + host), excludes the flat child"
+    # Both 'dup' events survive, distinguishable by nesting: the child keeps its own (success) status.
+    host_node = next(n for n in disk["nodes"] if n["node_id"] == "host")
+    assert host_node["sub_workflow_events"][0]["node_id"] == "dup"
+    assert host_node["sub_workflow_events"][0]["status"] == "success"
+
+
 def test_non_trace_files_run_does_not_stream_to_disk(tmp_path, monkeypatch):
     """The conftest gate: a NON-trace_files run (no marker) no-ops _open_stream, so a streamed run-scoped
     collector writes nothing — the I/O-timing safety net the braindump flagged. (No @trace_files marker.)"""

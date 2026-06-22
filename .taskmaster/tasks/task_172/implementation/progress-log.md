@@ -477,3 +477,36 @@ intact — and **3 edge cases had no explicit test**, now closed (suite 8027 gre
   Already-covered edges (looped sub-wf, cached-inside-sub-wf, crash-mid-sub-wf, `ancestor_path batch_index=None`)
   re-confirmed; `default=str` lossiness is a test-data constraint (all tests use JSON-native outputs), not a
   feature to pin.
+
+---
+
+## 2026-06-22 — Step 3 follow-up: two HIGH-VALUE bug-catching tests (mutation-verified)
+
+User asked to step back and find tests that catch *actual bugs* (not coverage) — and to fix/remove shallow ones.
+Audited the risk surface for silent-wrong bugs at the producer→consumer seam that NO existing test guards.
+Found two, both real, both currently correct-but-unpinned; added them and **mutation-verified** each catches its
+bug (suite 8029 green, `make check` clean):
+- **`test_crash_truncated_streamed_trace_is_rejected_as_truth_by_consumers`** — the interaction streaming newly
+  makes load-bearing. Before Task 172 a crash left NO file; now it leaves an `incomplete` streamed trace that
+  `load_trace_file` reconstructs and `_iter_workflow_traces` *yields* (it owns no `final_status` policy). The
+  consumers correctly reject it (`--only`'s `load_full_run_events` skips non-success; analyze-cache's
+  `_collect_candidate_traces` buckets it `failed`) — but nothing pinned it. A regression in the crash-tail OR a
+  consumer filter would silently let a crashed run's partial data become a `--only` snapshot or "successful"
+  cache source; producer/reader unit tests would NOT catch it. **Mutation (`final_status`
+  incomplete→success) → test FAILS.**
+- **`test_subworkflow_child_id_collision_does_not_corrupt_top_level_status`** — the documented *highest-severity*
+  flat-store failure mode (wrong `final_status`, not just wrong cost). A sub-workflow child sharing a `node_id`
+  with a FAILED top-level node would, on raw `self.events`, shadow it via `final_events_by_node` (keys on
+  `node_id`) → run silently reported successful. The `_top_level_events()` scoping prevents it, but every other
+  sub-workflow test uses DISTINCT ids, so the collision was never exercised. **Mutation (`_top_level_events`
+  → raw `self.events`) → test FAILS** (`final_status` flips success).
+
+Shallow-test audit: no existing test was found tautological/passing-the-wrong-thing that warranted removal — the
+equivalence tests (hardcoded cost literals), gate tests (no-file), dead-end re-flush (both disk lines + dedup),
+and crash-tail (prefix recovered) all assert discriminating values. The `port: null` "emitted" assertion is mild
+(a v1 constant) but its paired stripped-on-read half is real; kept.
+
+**Final state:** suite **8029**, `make test-e2e` 43, `make check` clean. Step 3 done, reviewed (manual 4 +
+deep-review 5), edge-cases + Piece-5/6 audited, consumers verified, and the two highest-value silent-wrong-bug
+guards added (mutation-proven). Commits: `75dafe41` (producer) · `fd24fac3` (consumer verify + MCP docs) ·
+`97d8fa93` (edge cases) · `33b018f3` (audit log) · + this round.
