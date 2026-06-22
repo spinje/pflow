@@ -77,12 +77,18 @@ def test_emit_equivalence_subworkflow_fresh(tmp_path, mock_llm_client, monkeypat
     assert child_llm["parent_id"] == host["id"], "child must nest under its sub-workflow host (emit-time parent_id)"
     assert host["parent_id"] is None and by_node["top-llm"]["parent_id"] is None
     assert child_llm["ancestor_path"] == [{"node_id": "call-child", "batch_index": None}]
+    # `port` is emitted null on every flat event (v1 — only never-traced IO nodes carry "in"/"out").
+    assert all(e["port"] is None for e in events)
 
     # Equivalence: in-memory tree() == on-disk reconstruct(). Both run through the same
     # _rebuild_event_tree, so a JSON-native round-trip is exact.
     disk_path = collector.save_to_file()
     disk = load_trace_file(disk_path)
     assert collector.tree() == disk["nodes"]
+    # `ancestor_path`/`port` are reserved → STRIPPED on read (the reconstructed dict stays A-C-shaped;
+    # the overlay reads them off the live stream, never the disk dict). Check top-level + the nested child.
+    flat_nodes = disk["nodes"] + disk["nodes"][1].get("sub_workflow_events", [])
+    assert all("port" not in n and "ancestor_path" not in n for n in flat_nodes)
 
     # Cost as a hardcoded literal (top-llm + child-llm, both fresh @ 0.01). Asserted on the
     # SAVED trace's summary, computed by the production reader — not recomputed here.
@@ -577,6 +583,51 @@ def test_streaming_dead_end_re_flush_corrects_on_disk(tmp_path, monkeypatch):
     assert disk["nodes"][0]["status"] == "failed" and disk["nodes"][0]["error"] == "no successor edge matches"
     assert c.tree() == disk["nodes"], "in-memory mutated tree matches the deduped disk reconstruct"
     assert disk["final_status"] == "failed" and disk["failed_node_ids"] == ["a"]
+
+
+@pytest.mark.trace_files
+def test_streaming_dead_end_inside_subworkflow_reflushes_to_disk(tmp_path, monkeypatch):
+    """Edge case (GH #250 + Piece 5.4): a routing dead-end INSIDE a sub-workflow. The corrected CHILD line
+    re-flushes while the host frame is still on the stack — so the host line flushes LAST (after the child's
+    correction). Reconstruct sorts by seq + dedups by id, so linking is order-INDEPENDENT: the corrected child
+    nests under its host with status=failed, and tree()==reconstruct(disk). This pins the sub-workflow-internal
+    half of the dead-end re-flush (the top-level half is the test above)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    frame = c.descend("host")  # host reserves seq 0
+    c.record_node_execution("child", "ShellNode", 1.0, True, node_output={"v": 1})  # child seq 1, streamed success
+    c.mark_last_event_failed("child", error="no successor edge matches")  # re-flush child failed — BEFORE host
+    c.ascend()
+    c.record_node_execution("host", "WorkflowExecutor", 2.0, False, error="child routing error", frame=frame)
+    path = c.finalize()
+
+    raw = _read_lines(path)
+    child_lines = [ln for ln in raw if ln["kind"] == "event" and ln["node_id"] == "child"]
+    assert [ln["status"] for ln in child_lines] == ["success", "failed"], "child correction re-flushed"
+    host_idx = next(i for i, ln in enumerate(raw) if ln["kind"] == "event" and ln["node_id"] == "host")
+    assert all(i < host_idx for i, ln in enumerate(raw) if ln["kind"] == "event" and ln["node_id"] == "child"), (
+        "the host line flushes LAST — after both child lines (it records at completion, post-ascend)"
+    )
+
+    disk = load_trace_file(path)
+    assert c.tree() == disk["nodes"], "order-independent linking: tree()==reconstruct after the re-flush"
+    host_node = disk["nodes"][0]
+    assert host_node["node_id"] == "host"
+    sub = host_node["sub_workflow_events"]
+    assert len(sub) == 1 and sub[0]["node_id"] == "child" and sub[0]["status"] == "failed"
+
+
+@pytest.mark.trace_files
+def test_streaming_zero_event_run_writes_meta_and_run_complete(tmp_path, monkeypatch):
+    """Edge case: a zero-event run. finalize() opens the stream (writes meta) even with no events recorded,
+    then writes run.complete → a valid, loadable trace (final_status=success, nodes_executed=0)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("empty", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    path = c.finalize()
+    assert path is not None and path.exists()
+    assert [ln["kind"] for ln in _read_lines(path)] == ["meta", "run.complete"], "no events → meta + run.complete"
+    disk = load_trace_file(path)
+    assert disk["nodes"] == [] and disk["nodes_executed"] == 0 and disk["final_status"] == "success"
 
 
 @pytest.mark.trace_files
