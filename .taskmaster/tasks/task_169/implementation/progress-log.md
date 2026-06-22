@@ -400,3 +400,112 @@ endpoint (`X -> read_source.file_path`). Left as-is — the redirect is the sens
 
 Status: **committed on `feat/agent-browser-interaction` (single follow-up commit), not yet pushed.** These
 changes sit on top of the rebased PR #527.
+
+---
+
+## 2026-06-22 — Dogfooding polish round 2 (F1/F2/F4/F5/F6) + two agent-UX reviews → pushed
+
+> Same day as the grammar entry above, separate session. That entry's "not yet pushed" is now resolved: the
+> grammar commit (`3bb89fd5`) shipped together with this polish as `ab891ad2 [skip review]` — **PR #527 now
+> has 7 commits.** Trust boundary: the implementation and the A2 debunk are **[authored/verified]** here; the
+> two reviews are `review-agent-ux` subagent passes (read end-to-end, conclusions re-checked against code).
+
+### The method, because it paid off: a before/after review sandwich
+Drove the feature cold as a fresh agent, then ran **two `review-agent-ux` passes** — one on the **committed
+baseline** (read `HEAD` via `git show`, NOT the working tree, so it's a true pre-change picture) and one on
+the **changes**. Baseline scored **3.5/5**, the changes **4.5/5**. The split is the point: the baseline review
+caught a leak my own (contaminated) read missed (F6 below). Reviewing only your own diff is grading your own
+homework — the baseline pass is what makes the delta honest.
+
+### What landed and the why that isn't in the spec
+- **F2 — the success *report* must speak the file's vocabulary, not just resolution.** Typing the file's bare
+  `source_file` resolved fine, but the echo said `resolved 1 (in:source_file)` — re-teaching the exact
+  `in:`/`out:` notation the grammar fix worked to delete, and `in:output_file` (an input literally named
+  `output_file`) read as a contradiction. Fix: on a unique match, drop the side-prefix **iff the bare form
+  still resolves to exactly one element** (`targets.py` `_drop_side_prefixes` + a uniqueness guard in
+  `resolve_target`). The guard is load-bearing — naively stripping breaks the collision case (a typed
+  `in:data` in an in/out collision must stay `in:data` or it stops round-tripping). The qualify list keeps the
+  prefix where it disambiguates.
+- **F1 + F6 — two complementary `None`-repr leaks in `_render_activity`, found by different eyes.** I caught
+  `workflow: None` (no-arg `user-activity`); the **baseline review** caught `· focus None` (any unfocused
+  Watch event — the most common one). Same class, same function, neither of us saw both alone. Fix:
+  `_echo_workflow_key` suppresses the null line; view-state fields fall back to `none`/`unknown`.
+- **F4 — `pflow guide ui` was a dead topic; the command name and its docs disagreed.** Same "two names for
+  one thing" smell as F2. Renamed the topic `visualization → ui` (canonical, matches the command), kept
+  `visualization` as an alias (the existing `_TOPIC_ALIASES` idiom; it's still the accurate concept word),
+  aligned the H1 + `entry.md` menu. `ui` was *already* a reserved workflow name (it's a CLI command) — the
+  linter deleted my redundant add to the reserved set, which is the correct signal, not a problem.
+- **F5 — the visible/backgrounded line was a *stat*, not an *instruction*.** The user's "can we explain this
+  better?" wasn't about the vacuous `(0 visible, 0 backgrounded)` at 0 windows (dropped that too) — it was
+  that the report never said what to *do* about "all backgrounded." Added the actionable hint ("the Viewer is
+  a background tab — tell the user to switch to it"). Delivery report extracted to `_render_delivery` (the new
+  branch tripped C901; the split also reads better — dispatch decides not-found/ambiguous/delivered, delivery
+  owns the who-got-it report).
+
+### The most important judgment call: A2 was a non-bug — verify the reviewer
+The baseline review's one "critical" finding: `focus --open` timeout "exits 0 while nothing was delivered."
+The user approved fixing it. **It's false.** `_dispatch_failed` returns True on `sent_to==0` (ui.py:209) and
+runs on *every* path including the timeout (ui.py:483) → it exits **1**. The reviewer misread the control
+flow. Verified by direct read before touching code; did **not** implement the approved "fix." Lesson
+(reinforcing the manifesto): a same-model reviewer cites well but you own the conclusions — and "the user
+approved it" does not override "the code says otherwise." A2's other sub-points are defensible (text output
+goes to stdout like the rest of the report; `target!r` correctly quotes edge targets that contain spaces).
+
+### Left deliberately (so they're not re-litigated)
+- **Focus-echo vs activity-display prefix asymmetry**: `focus` now echoes `source_file`, but `user-activity`
+  still shows `in:source_file` for a clicked port. Both round-trip into `focus` (verified); the activity line
+  has no graph to run the uniqueness check against, so the prefixed form is the safe default. Review B: leave.
+- **F3 exit-code granularity** (bad-target vs resolved-but-0-windows both exit 1): left. The *message*
+  distinguishes them crystal-clearly in text AND JSON; the exit code is a coarse "did it land" backstop. The
+  user settled it: an agent reads the message, not just `$?`.
+- Review-A minors untouched: generic JSON/server-error fallbacks (A4/A5, only `ConnectError` is gold-standard),
+  mid-edit-held guide note (A7), clear-focus-to-0-windows exit code (A8/F3-adjacent).
+
+### Verification
+`make check` clean (ruff, mypy 237, deptry); **`make test` 8063 passed** (+4 regression tests: F2 prefix-
+retention guard, F1 no-None, F5 ×2, F6, F4 alias). F1/F2/F4/F5 confirmed live on a fresh server; F6 pinned by
+a unit test (a real focus-null event isn't reproducible from the CLI). Shipped `ab891ad2 [skip review]`,
+pushed; PR #527 → 7 commits.
+
+### Still standing (unchanged by this detour)
+The real next increment remains the live-overlay track: **172 (emit-time streamable trace producer — the
+keystone every downstream task, incl. 173/164/125, consumes) → 173 (overlay UI on 169's SSE bus).** This whole
+session was polish on a done feature.
+
+---
+
+## 2026-06-22 — SSE reconnect robustness: investigated, the "simple fix" was the wrong lever, reverted + handed off
+
+While dogfooding Point/Watch live, the server was hot-swapped (restarted) to load the polish build. The user's
+**backgrounded** browser tab then **silently stopped receiving Point** (`focus` reported `0 windows`) while
+**Watch kept working** — clicks still showed up. Root cause: `web/src/api/events.ts` `subscribe()` relies
+**entirely on native EventSource auto-reconnect** (no `onerror`), and a tab whose stream drops while hidden/frozen
+does not reliably re-register its SSE subscription. Watch survives because its reports are **connectionless POSTs**;
+Point needs the **live SSE registration**. Recovery today needs a manual page reload.
+
+**Tried (and reverted):** a `visibilitychange → if visible && readyState===CLOSED, re-subscribe` patch in
+`events.ts` (+ a jsdom regression test). It unit-tested green, but **live verification killed it** — and that's the
+lesson: the CLI cannot see the browser's EventSource state, so this is unverifiable from here, and the live run was
+**confounded**. Two findings:
+1. **`visibilitychange` is the wrong lever.** Switching to the terminal usually keeps the tab **`"visible"`** (the
+   Page Visibility API tracks the browser's foreground tab + non-minimized window, *not* which OS app has focus;
+   Chrome-macOS occlusion only flips it on a *full* cover) — so the event may never fire in a browser-plus-terminal
+   workflow, and the patch never runs.
+2. **`CLOSED` is likely the wrong state.** A server restart leaves the EventSource in **`CONNECTING`** (native
+   retrying), not `CLOSED`, so even if the event fired the check would skip.
+
+**The reframe (user's, and it's right):** this is **not** a rare edge case for where the UI is heading — a
+**persistent viewer that agents discover and reuse**. Two foundational capabilities fall out, both belonging to the
+**live-overlay track (172/173, ADR-0008)**, where the SSE stream becomes *load-bearing* (a dropped connection =
+missed **run events**, not just a missed point):
+- **(A) Robust live connection** — driven by **`onerror`, not visibility**: reconnect to a live server when the
+  stream drops *for any reason* (sleep/wake, network blip, tab freeze, restart). Trigger-agnostic.
+- **(B) Server discovery / reuse** — an agent should **probe the port and reuse** a running viewer rather than
+  spawn a new one (or fail on port-in-use). No discovery exists today.
+
+**Decision:** reverted the patch (working tree clean again; the committed polish `ab891ad2` never included it),
+bundle rebuilt clean. **Not fixed in this context window** (Task 172 is already in progress in another worktree).
+Written up for the next agent: `scratchpads/handoffs/ui-sse-reconnect-and-discovery.md` — to be solved **properly,
+real-browser-verified** (headless Chrome where `readyState`/`visibilityState`/console are observable), folded into
+the overlay design. **Meta-lesson:** a browser-behavior fix that can't be verified from the CLI must be verified in
+a real browser *before* shipping — a green unit test over a wrong assumption is worse than no test.
