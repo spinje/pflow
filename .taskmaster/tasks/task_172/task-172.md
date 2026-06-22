@@ -13,7 +13,11 @@ new `ancestor_path`/`port` (stripped on read). See Design Decisions.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-06-22
 
 ## Priority
 
