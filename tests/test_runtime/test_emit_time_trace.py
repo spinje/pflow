@@ -592,6 +592,56 @@ def test_streaming_gated_off_when_stream_to_disk_false(tmp_path, monkeypatch):
     assert not debug.exists() or not list(debug.glob("*.json"))
 
 
+@pytest.mark.trace_files
+def test_streamed_trace_is_read_by_all_disk_consumers(tmp_path, mock_llm_client, monkeypatch):
+    """Every post-hoc consumer of ``~/.pflow/debug`` must read a STREAMED trace end-to-end — not just the
+    legacy single-object traces the analyze-cache unit tests hand-build. The three real consumers all
+    funnel through ``load_trace_file``: ``generate_report`` (``pflow report`` / ``--report``), the shared
+    ``_iter_workflow_traces`` autoload (analyze-cache **and** the ``--only`` snapshot loader), and the full
+    ``analyze()`` autoload. Drives a real LLM run → streamed trace → each consumer, on the production
+    loaders. (The ``--only`` engine path itself is also covered by ``test_only_snapshot.py``'s
+    ``@trace_files`` real-run tests, which now read streamed snapshots.)"""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    mock_llm_client.set_response(MODEL, None, {"response": "ok"}, cost_usd=0.01)
+    wf = tmp_path / "consumed.pflow.md"
+    wf.write_text(
+        "# Consumed\n\nOne LLM node.\n\n## Steps\n\n### ask\n\nAsk.\n\n- type: llm\n- model: "
+        + MODEL
+        + "\n- prompt: hi\n",
+        encoding="utf-8",
+    )
+
+    result = _run(wf, cache_enabled=False)
+    assert result.success
+    streamed_path = result.trace.finalize()
+    assert streamed_path is not None and streamed_path.exists()
+    wf_path = result.trace.workflow_path
+
+    # Consumer 1 — generate_report reads the streamed JSONL trace into a report directory.
+    from pflow.core.trace_report import generate_report
+
+    generate_report(str(streamed_path), str(tmp_path / "report"), None, None)
+    assert "ask" in (tmp_path / "report" / "summary.md").read_text(encoding="utf-8")
+
+    # Consumer 2 — the shared autoload iterator (analyze-cache + --only snapshot) finds + parses it.
+    from pflow.runtime.workflow_trace import _iter_workflow_traces, load_full_run_events
+
+    debug_dir = tmp_path / ".pflow" / "debug"
+    found = list(_iter_workflow_traces(debug_dir, wf_path))
+    assert any(p == streamed_path for p, _ in found), "autoload must find the streamed trace"
+    assert all(d.get("final_status") == "success" for _, d in found)
+    # --only snapshot loader returns the streamed run's nodes (the engine seeds upstream from this).
+    loaded = load_full_run_events(wf_path, debug_dir=debug_dir)
+    assert loaded is not None and [n["node_id"] for n in loaded[0]] == ["ask"] and loaded[1] == "success"
+
+    # Consumer 3 — analyze-cache autoload reads the streamed trace via the real analyze() entry point.
+    from pflow.core.prompt_cache_analysis.analyze import analyze
+    from pflow.execution.workflow_resolver import resolve_workflow
+
+    analysis = analyze(resolve_workflow(str(wf)).ir, workflow_path=wf_path, auto_load_trace=True)
+    assert analysis.trace_path == str(streamed_path), "analyze-cache autoload must consume the STREAMED trace"
+
+
 def test_non_trace_files_run_does_not_stream_to_disk(tmp_path, monkeypatch):
     """The conftest gate: a NON-trace_files run (no marker) no-ops _open_stream, so a streamed run-scoped
     collector writes nothing — the I/O-timing safety net the braindump flagged. (No @trace_files marker.)"""

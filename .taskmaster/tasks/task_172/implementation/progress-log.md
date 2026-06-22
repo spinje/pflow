@@ -426,3 +426,30 @@ the re-home mutations (mutation-confirmed); the `_aggregates`/`_meta_fields` fac
 
 **State: Step 3 COMPLETE — producer done, reviewed (manual 4 + deep-review 5), gap-closed, committed.** This
 producer is the dependency for Task 169 (SSE transport) and Task 173 (live overlay consumer).
+
+---
+
+## 2026-06-22 — Step 3 follow-up: consumer verification + MCP doc accuracy
+
+User asked the "fully happy / loose ends" probe. Closed the residuals concretely (suite 8025 green, `make check`
+clean):
+- **Measured per-event flush overhead = 8.9 µs/event** (17.8 ms for 2000 nodes). It's `file.flush()` to the OS
+  page cache, NOT `os.fsync`, so it's negligible for any real run. Closes the "unmeasured performance" residual.
+- **Verified ALL debug-trace consumers read a real STREAMED trace** (the user's "have we verified all works?").
+  Enumerated every `load_trace_file` consumer: `generate_report` (`pflow report`/`--report`), the shared
+  `_iter_workflow_traces` autoload (analyze-cache **and** the `--only` snapshot loader), and full `analyze()`.
+  Found the gap: the analyze-cache unit tests all hand-build *legacy single-object* JSON, so analyze-cache on a
+  *streamed* trace was unverified. Added `test_streamed_trace_is_read_by_all_disk_consumers` (real LLM run →
+  streamed trace → drives `generate_report` + `_iter_workflow_traces` + `load_full_run_events` + `analyze(auto_load_trace=True)`,
+  asserting each consumes the streamed file). `--only` is *also* already covered by `test_only_snapshot.py`'s
+  `@trace_files` real-run tests (they now read streamed snapshots). All consumers verified.
+- **Fixed 3 agent-facing MCP docs** that claimed MCP execute saves a trace (it never did, and Task 172 makes it
+  explicit via `trace_enabled=False`; ADR-0008 locks streaming as CLI-only v1): `execution_tools.py`
+  (`workflow_execute` tool docstring — LLM-facing), `mcp_server/CLAUDE.md`, and `mcp-agent-instructions.md`. Left
+  the `instruction_resources.py` "can access trace files" lines (those describe filesystem-access capability —
+  true for full-access agents reading CLI-written traces — not an MCP-saves claim).
+- **Verified the test gate is airtight (the "tests shouldn't save files" question):** non-`trace_files` tests
+  write nothing (conftest no-ops `save_to_file` + `_open_stream`; pinned by `test_non_trace_files_run_does_not_stream_to_disk`);
+  `@trace_files` tests intentionally write to **isolated tmp homes** (their purpose — testing the on-disk format
+  round-trip). Confirmed the real `~/.pflow/debug` count is unchanged (1138→1138) across the heaviest streaming
+  test files — zero real-dir pollution.
