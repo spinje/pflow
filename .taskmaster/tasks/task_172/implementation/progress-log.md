@@ -453,3 +453,27 @@ clean):
   `@trace_files` tests intentionally write to **isolated tmp homes** (their purpose — testing the on-disk format
   round-trip). Confirmed the real `~/.pflow/debug` count is unchanged (1138→1138) across the heaviest streaming
   test files — zero real-dir pollution.
+
+---
+
+## 2026-06-22 — Step 3 follow-up: plan Piece-5/6 + Edge-cases audit (user verification request)
+
+Audited the plan's Piece 5, 5.4, 6 and the **## Edge cases** list item-by-item against the actual code/tests
+(not from memory). Result: Pieces 5/5.4 done (step 3), Piece 6 done (step 1), Piece 5.5 scoped-out items left
+intact — and **3 edge cases had no explicit test**, now closed (suite 8027 green, `make check` clean):
+- **Piece 5** ✅ — `_RESERVED_LINE_KEYS` += `ancestor_path`/`port`; `blob` arm (no `blobs`); two-pass
+  `_rebuild_event_tree(is_incomplete=)`; `load_trace_file` crash-tail. **Piece 5.5 "do NOT touch"** verified
+  LEFT INTACT: the `... or "success"` defaults (4+ sites still present) and the legacy single-object reader
+  (`resolve_blobs(data)`).
+- **Piece 5.4** ✅ — `mark_last_event_failed` mutates + scans ALL events + re-flushes.
+- **Piece 6 (status enum, landed step 1)** ✅ — confirmed against current code: `trace_tree.py` cost boundaries
+  all read `status == "cached"`, `_unrecovered_failed_node_ids` reads `status == "failed"`, and a grep found
+  **no residual event-level `cached`/`success` reads** in the production readers.
+- **Edge cases — added the 3 missing pins** (`97d8fa93`): (a) `test_streaming_zero_event_run_writes_meta_and_run_complete`
+  (zero-event finalize → meta + run.complete, `nodes_executed=0`); (b) `port: null` emitted on every flat event
+  + stripped on read (assertions added to `test_emit_equivalence_subworkflow_fresh`); (c)
+  `test_streaming_dead_end_inside_subworkflow_reflushes_to_disk` — the sub-workflow-internal dead-end where the
+  host line flushes LAST (after the corrected child), pinning order-independent `tree()==reconstruct(disk)`.
+  Already-covered edges (looped sub-wf, cached-inside-sub-wf, crash-mid-sub-wf, `ancestor_path batch_index=None`)
+  re-confirmed; `default=str` lossiness is a test-data constraint (all tests use JSON-native outputs), not a
+  feature to pin.
