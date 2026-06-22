@@ -141,6 +141,9 @@ class WorkflowRunner:
             trace_collector = WorkflowTraceCollector(
                 workflow_name=workflow_name or resolved.file_path or "unnamed",
                 workflow_path=trace_workflow_path,
+                # Task 172: THE single run-scoped collector. Sub-workflows record flat into it with
+                # emit-time correlation; the per-sub-workflow buffer collectors stay is_run_scoped=False.
+                is_run_scoped=True,
             )
 
             mcp_pool = MCPConnectionPool()

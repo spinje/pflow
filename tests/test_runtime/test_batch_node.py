@@ -1808,7 +1808,7 @@ class TestParallelThreadSafety:
         assert len(trace_items) == 3
         for i, entry in enumerate(trace_items):
             assert entry["index"] == i
-            assert entry["success"] is True
+            assert entry["status"] == "success"
             assert "llm_call" in entry
             assert entry["llm_call"]["model"] == "test-model"
             assert entry["llm_call"]["input_tokens"] == 100

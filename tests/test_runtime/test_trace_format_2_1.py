@@ -714,7 +714,7 @@ def test_engine_memo_hit_writes_cache_source_memo_not_in_process(
     # Run-1 sanity: not a cached event (we just populated the cache).
     summarize_events = [e for e in trace1.events if e.get("node_id") == "summarize"]
     assert summarize_events, "no summarize event in run-1 trace"
-    assert not summarize_events[-1].get("cached"), "run-1 must not be cached"
+    assert summarize_events[-1].get("status") != "cached", "run-1 must not be cached"
 
     # --- Run 2: same memo cache, fresh shared+trace → memo HIT -------------
     shared2: dict[str, Any] = {"topic": "hello"}
@@ -731,7 +731,7 @@ def test_engine_memo_hit_writes_cache_source_memo_not_in_process(
     summarize_events_2 = [e for e in trace2.events if e.get("node_id") == "summarize"]
     assert summarize_events_2, "no summarize event in run-2 trace"
     event = summarize_events_2[-1]
-    assert event.get("cached") is True, "run-2 must be a cache hit"
+    assert event.get("status") == "cached", "run-2 must be a cache hit"
 
     llm_call = event.get("llm_call")
     assert isinstance(llm_call, dict), f"missing llm_call dict on cached event: {event!r}"

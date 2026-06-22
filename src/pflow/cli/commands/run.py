@@ -208,11 +208,21 @@ def _echo_target_node_path(ctx: click.Context, report_dir: Path, events: list[di
     this_only, _ = parse_only_path(only_node)
     if this_only is None:
         return
-    for i, event in enumerate(events, 1):
+    # Task 172: the collector store is now FLAT — sub-workflow children are sibling events carrying
+    # parent_id != None. Enumerate TOP-LEVEL only (parent_id is None) so the 1-based index matches the
+    # report's per-top-level-node prefix and flat children aren't miscounted. And a sub-workflow host
+    # carries no stored `sub_workflow_events` in the flat store (those exist only in the reconstructed
+    # tree the report is built from), so detect a container by node_type=="WorkflowExecutor" too.
+    top_level = [event for event in events if event.get("parent_id") is None]
+    for i, event in enumerate(top_level, 1):
         if event.get("node_id") == this_only:
             safe_id = _safe_name(this_only)
             prefix = f"{i:02d}"
-            is_container = event.get("batch_items") or event.get("sub_workflow_events")
+            is_container = (
+                event.get("batch_items")
+                or event.get("sub_workflow_events")
+                or event.get("node_type") == "WorkflowExecutor"
+            )
             target = (
                 report_dir / f"{prefix}-{safe_id}" / "summary.md"
                 if is_container

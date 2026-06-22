@@ -70,6 +70,18 @@ class WorkflowExecutor(BaseNode):
     MAX_DEPTH_DEFAULT = 10
     RESERVED_KEY_PREFIX = "_pflow_"
 
+    # The compiler stamps the authored node id onto the instance (compilation/compiler.py). Declared
+    # here (only where read — by descend, Task 172) so it's typed; "" only for uncompiled construction.
+    # NOT declared on BaseNode: some nodes (ClaudeCodeNode) distinguish an ABSENT node_id, so a global
+    # default would change their fallback behavior.
+    node_id: str = ""
+
+    # Task 172: the sub-workflow host's reserved correlation frame on the NEW (run-collector) path.
+    # Declared at class level so the per-run reset (exec) and the descent assignment (_open_child_trace)
+    # are plain assignments — not annotation-redefinitions — and so the engine's getattr read is safe
+    # even when exec never ran (e.g. a parallel-batch original node).
+    _host_frame: Any = None
+
     # Closed top-level schema for workflow nodes. The validator's unknown-param
     # step (Step 8) reads this attribute to reject unknown top-level fields at
     # parse time, matching the closure it applies to every other node via
@@ -311,6 +323,37 @@ class WorkflowExecutor(BaseNode):
                 suggestion=getattr(e, "suggestion", None),
             ) from e
 
+    def _open_child_trace(self, parent_shared: dict[str, Any], workflow_path: Any) -> tuple[Any, Any]:
+        """Choose + enter the trace path for a sub-workflow run (Task 172).
+
+        Returns ``(trace_for_child, run_collector)`` — DECIDES the path, does NOT descend (the caller
+        descends right before its try/finally so the ascend balance holds — see exec()):
+
+        - **NEW path** — the installed collector is THE run-scoped one AND we're not inside a batch item:
+          return it as BOTH values. The caller ``descend``s into it, the child engine records FLAT into
+          it, and the caller ``ascend``s ``run_collector`` on exit.
+        - **OLD path** — a batch item, or a non-run-scoped collector: a per-sub-workflow buffer collector
+          as ``trace_for_child`` with ``run_collector=None``; the caller embeds its events as
+          ``sub_workflow_events`` (byte-for-byte unchanged).
+
+        ``__index__`` (set only on batch-item stores, NOT propagated to grandchildren) and the buffer's
+        ``is_run_scoped=False`` are the two independent clauses that keep batch + every deeper node on OLD.
+        """
+        installed = parent_shared.get("__trace_collector__")
+        if installed and getattr(installed, "is_run_scoped", False) and "__index__" not in parent_shared:
+            return installed, installed
+        if installed:
+            from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+            # Task 159 E.1 trace 2.1.0: the buffer records the child's workflow_path (NOT the parent's)
+            # so analyze-cache --from-trace can correlate. is_run_scoped=False (default) → no correlation.
+            buffer = WorkflowTraceCollector(
+                workflow_name=str(workflow_path or "sub-workflow"),
+                workflow_path=str(workflow_path or "sub-workflow"),
+            )
+            return buffer, None
+        return None, None
+
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""
         from pflow.runtime.engine import WorkflowEngine
@@ -322,6 +365,11 @@ class WorkflowExecutor(BaseNode):
         # via getattr at _execute_batch_item). Parallel batch is unaffected
         # because workers deep-copy the node.
         self._child_trace_events: list[dict[str, Any]] | None = None
+        # Task 172: same instance-reuse reset for the host correlation frame — a NEW-path frame from a
+        # prior sequential-batch iteration must not leak into a later item's host event (nor its
+        # deepcopy in a parallel worker). The deepcopy path is always the OLD batch path, so this is
+        # inert plain data there; no __deepcopy__ hook needed.
+        self._host_frame = None
 
         # Prep captured a recoverable failure — surface it through the same
         # success=False dict shape exec's own failure paths use. post() then
@@ -348,20 +396,8 @@ class WorkflowExecutor(BaseNode):
 
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
-        # Create child trace collector for sub-workflow visibility
-        parent_trace = parent_shared.get("__trace_collector__")
-        child_trace = None
-        if parent_trace:
-            from pflow.runtime.workflow_trace import WorkflowTraceCollector
-
-            # Task 159 E.1 trace 2.1.0: child trace records the child's
-            # workflow_path (NOT the parent's) so analyze-cache --from-trace
-            # can correlate the child's events back to the child workflow's
-            # cache plan.
-            child_trace = WorkflowTraceCollector(
-                workflow_name=str(workflow_path or "sub-workflow"),
-                workflow_path=str(workflow_path or "sub-workflow"),
-            )
+        # Choose + enter the trace path for this sub-workflow run (Task 172) — see _open_child_trace.
+        trace_for_child, run_collector = self._open_child_trace(parent_shared, workflow_path)
 
         # Compile (with compile-once caching)
         compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)
@@ -386,14 +422,23 @@ class WorkflowExecutor(BaseNode):
         child_storage.update(child_params)
 
         child_only = parent_shared.get("_pflow_child_only_node")
-        engine = WorkflowEngine(trace_collector=child_trace, only_node=child_only)
+        engine = WorkflowEngine(trace_collector=trace_for_child, only_node=child_only)
+
+        # Descend immediately before the try whose finally ascends, so the push/pop balance holds even
+        # if engine.run raises. A CompilationError from _compile_sub_workflow above (which must PROPAGATE
+        # unrouted) happens BEFORE any descend, so it never orphans a frame on the host stack. descend()
+        # asserts the owner thread BEFORE pushing, so a routing violation fails loud here — not masked by
+        # the except below as a sub-workflow failure.
+        if run_collector is not None:
+            self._host_frame = run_collector.descend(self.node_id)
 
         try:
             result = engine.run(compiled, child_storage)
 
-            # Store child trace events for parent engine to embed in trace
-            if child_trace and child_trace.events:
-                self._child_trace_events = child_trace.events
+            # OLD path only (run_collector is None): hand the buffer's events to the parent engine to
+            # embed. On the NEW path the child's nodes already recorded flat into the run collector.
+            if run_collector is None and trace_for_child and trace_for_child.events:
+                self._child_trace_events = trace_for_child.events
 
             # Detect sub-workflow failure via action string
             if isinstance(result, str) and result.startswith("error"):
@@ -401,8 +446,8 @@ class WorkflowExecutor(BaseNode):
 
             return {"success": True, "result": result, "child_storage": child_storage}
         except Exception as e:
-            if child_trace and child_trace.events:
-                self._child_trace_events = child_trace.events
+            if run_collector is None and trace_for_child and trace_for_child.events:
+                self._child_trace_events = trace_for_child.events
             # A strict-mode template failure carries its structured Diagnostic
             # (unresolved_references, peer suggestions) ONLY on the exception — it
             # is never in child_storage — so capture it here for full fidelity.
@@ -413,6 +458,13 @@ class WorkflowExecutor(BaseNode):
                 template_diagnostic=getattr(e, "_pflow_template_diagnostic", None),
                 fallback_summary=f"Sub-workflow execution failed: {e!s}",
             )
+        finally:
+            # Balance the descent push (guarded by _host_frame: pop ONLY if we actually descended — so a
+            # CompilationError before the descend, or the OLD path, never over-pops). The frame is already
+            # captured into self._host_frame for the parent engine; popping just restores the stack depth —
+            # the frame is plain data and stays valid after the pop.
+            if run_collector is not None and self._host_frame is not None:
+                run_collector.ascend()
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Auto-expose child outputs and update parent storage."""

@@ -55,7 +55,7 @@ class TestWorkflowTraceCollector:
         assert event["node_id"] == "node-1"
         assert event["node_type"] == "TestNode"
         assert event["duration_ms"] == 123.46  # Rounded to 2 decimal places
-        assert event["success"] is True
+        assert event["status"] == "success"
         assert "timestamp" in event
         assert "error" not in event
 
@@ -75,7 +75,7 @@ class TestWorkflowTraceCollector:
         )
 
         event = collector.events[0]
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert event["error"] == "Division by zero"
 
     def test_mutation_calculation(self, collector):
@@ -1632,16 +1632,15 @@ class TestCachedCostExclusion:
                     "node_id": "say-hello",
                     "node_type": "LLMNode",
                     "duration_ms": 0.0,
-                    "success": True,
-                    "cached": True,  # Unchanged inner node served from cache
+                    "status": "cached",  # Unchanged inner node served from cache
                     "llm_call": {"model": "gpt-4o", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.05},
                 },
                 {
                     "node_id": "format-output",
                     "node_type": "LLMNode",
                     "duration_ms": 800.0,
-                    "success": True,
-                    # No cached flag — this node actually executed
+                    "status": "success",
+                    # This node actually executed
                     "llm_call": {"model": "gpt-4o", "input_tokens": 200, "output_tokens": 100, "cost_usd": 0.10},
                 },
             ],
@@ -1668,7 +1667,7 @@ class TestCachedNodeEvent:
             cached=True,
         )
         assert len(collector.events) == 1
-        assert collector.events[0]["cached"] is True
+        assert collector.events[0]["status"] == "cached"
 
     def test_non_cached_has_no_flag(self) -> None:
         collector = WorkflowTraceCollector("test")
@@ -1678,7 +1677,7 @@ class TestCachedNodeEvent:
             duration_ms=100.0,
             success=True,
         )
-        assert "cached" not in collector.events[0]
+        assert collector.events[0]["status"] == "success"
 
 
 class TestFinalEventsByNode:
@@ -1699,8 +1698,8 @@ class TestFinalEventsByNode:
         final = final_events_by_node(collector.events)
 
         assert set(final.keys()) == {"a", "b"}
-        assert final["a"]["success"] is True
-        assert final["b"]["success"] is False
+        assert final["a"]["status"] == "success"
+        assert final["b"]["status"] == "failed"
 
     def test_loop_recovery_returns_latest(self, collector):
         collector.record_node_execution(
@@ -1711,7 +1710,7 @@ class TestFinalEventsByNode:
 
         final = final_events_by_node(collector.events)
 
-        assert final["maybe-fail"]["success"] is True
+        assert final["maybe-fail"]["status"] == "success"
         # Error from the first visit must NOT bleed into the final state
         assert final["maybe-fail"].get("error") is None
 
@@ -1757,9 +1756,9 @@ class TestDetermineTraceStatusAggregation:
 
         Locks the cached+loop invariant: when a cached hit follows a failure
         in the same node, aggregation treats the cached hit as the final state.
-        The ``cached=True`` flag is preserved on the event (audit view) but does
+        The ``status == "cached"`` is preserved on the event (audit view) but does
         NOT exclude it from aggregation — it participates like any other
-        success=True event.
+        non-failed event.
         """
         collector.record_node_execution(node_id="n", node_type="T", duration_ms=1.0, success=False, error="boom")
         collector.record_node_execution(node_id="n", node_type="T", duration_ms=0.0, success=True, cached=True)
@@ -1768,8 +1767,7 @@ class TestDetermineTraceStatusAggregation:
         # Verify the final event actually IS the cached one — guards against
         # a future "exclude cached from aggregation" rule silently flipping behavior.
         final = final_events_by_node(collector.events)
-        assert final["n"].get("cached") is True
-        assert final["n"]["success"] is True
+        assert final["n"]["status"] == "cached"
 
     def test_cached_hit_does_not_mask_failure_on_other_node(self, collector):
         """Negative variant: a cached success on node A does NOT mask a
@@ -1797,9 +1795,9 @@ class TestMarkLastEventFailed:
         # Only 'a' flipped; 'b' untouched
         flipped = next(e for e in collector.events if e["node_id"] == "a")
         untouched = next(e for e in collector.events if e["node_id"] == "b")
-        assert flipped["success"] is False
+        assert flipped["status"] == "failed"
         assert flipped["error"] == "routing failed: action 'x' not in successors"
-        assert untouched["success"] is True
+        assert untouched["status"] == "success"
         assert "error" not in untouched
 
     def test_flips_most_recent_when_multiple_events_for_node(self, collector):
@@ -1810,10 +1808,10 @@ class TestMarkLastEventFailed:
         collector.mark_last_event_failed("n", error="routing boom")
 
         # Visit 1 event retains its original error
-        assert collector.events[0]["success"] is False
+        assert collector.events[0]["status"] == "failed"
         assert collector.events[0]["error"] == "visit1"
         # Visit 2 event is now flipped with the new error
-        assert collector.events[1]["success"] is False
+        assert collector.events[1]["status"] == "failed"
         assert collector.events[1]["error"] == "routing boom"
 
     def test_no_op_for_unknown_node(self, collector):
@@ -1823,7 +1821,7 @@ class TestMarkLastEventFailed:
         collector.mark_last_event_failed("does-not-exist", error="ignored")
 
         # 'a' untouched
-        assert collector.events[0]["success"] is True
+        assert collector.events[0]["status"] == "success"
 
     def test_preserves_node_output(self, collector):
         """Flipped event retains node_output from the successful execution.
@@ -1842,7 +1840,7 @@ class TestMarkLastEventFailed:
         collector.mark_last_event_failed("router", error="routing boom")
 
         event = collector.events[0]
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert event["error"] == "routing boom"
         assert event["node_output"] == {"result": "custom_route"}
 
@@ -1860,8 +1858,8 @@ class TestMarkLastEventFailed:
             duration_ms=1.0,
             success=True,
             batch_items=[
-                {"index": 0, "success": True, "duration_ms": 0.5},
-                {"index": 1, "success": True, "duration_ms": 0.5},
+                {"index": 0, "status": "success", "duration_ms": 0.5},
+                {"index": 1, "status": "success", "duration_ms": 0.5},
             ],
         )
 
@@ -1869,11 +1867,11 @@ class TestMarkLastEventFailed:
 
         event = collector.events[0]
         # Top-level flipped
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert event["error"] == "routing boom"
         # Per-item status untouched — audit view preserved
-        assert event["batch_items"][0]["success"] is True
-        assert event["batch_items"][1]["success"] is True
+        assert event["batch_items"][0]["status"] == "success"
+        assert event["batch_items"][1]["status"] == "success"
 
 
 class TestSaveToFileFailedNodeIds:

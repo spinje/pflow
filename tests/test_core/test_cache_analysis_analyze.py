@@ -1551,8 +1551,7 @@ def test_memo_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path:
                 {
                     "node_id": "summarize",
                     "node_type": "LLMNode",
-                    "success": True,
-                    "cached": True,
+                    "status": "cached",
                     "llm_call": {
                         "model": "gemini/gemini-2.5-flash-lite",
                         "input_tokens": 6000,
@@ -1624,8 +1623,7 @@ def test_in_process_hit_trace_does_not_count_historical_provider_cache_reads(tmp
                 {
                     "node_id": "summarize",
                     "node_type": "LLMNode",
-                    "success": True,
-                    "cached": True,
+                    "status": "cached",
                     "llm_call": {
                         "model": "gemini/gemini-2.5-flash-lite",
                         "input_tokens": 6000,

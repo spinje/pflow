@@ -45,7 +45,7 @@ class WalkEvent:
 
     @property
     def is_cached(self) -> bool:
-        return bool(self.event.get("cached"))
+        return self.event.get("status") == "cached"
 
     @property
     def has_llm_call(self) -> bool:
@@ -161,7 +161,7 @@ class TraceTree:
         for raw_event in source:
             if not isinstance(raw_event, Mapping):
                 continue
-            if raw_event.get("cached") and not descend_cached_subtrees:
+            if raw_event.get("status") == "cached" and not descend_cached_subtrees:
                 continue
 
             event_node_id = str(raw_event.get("node_id", owner_node_id or "unknown"))
@@ -176,7 +176,7 @@ class TraceTree:
             for item in raw_event.get("batch_items") or []:
                 if not isinstance(item, Mapping):
                     continue
-                if item.get("cached") and not descend_cached_subtrees:
+                if item.get("status") == "cached" and not descend_cached_subtrees:
                     continue
                 # Per-item attribution priority for batch_items:
                 # 1. ``workflow_path`` — canonical child path recorded after
@@ -394,7 +394,7 @@ class TraceTree:
     ) -> Iterator[WalkEvent]:
         event_node_id = str(event.get("node_id", owner_node_id or "unknown"))
         leaf_owner = owner_node_id or event_node_id
-        if event.get("cached"):
+        if event.get("status") == "cached":
             if _has_llm_cost_evidence(
                 event,
                 assume_llm_event=assume_llm_event,
@@ -450,7 +450,7 @@ class TraceTree:
         edges: Mapping[str, str] | None,
         assume_llm_event: bool,
     ) -> Iterator[WalkEvent]:
-        if item.get("cached"):
+        if item.get("status") == "cached":
             if _has_llm_cost_evidence(
                 item,
                 assume_llm_event=assume_llm_event,

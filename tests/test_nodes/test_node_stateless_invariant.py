@@ -38,6 +38,14 @@ ALLOWLIST: list[tuple[str, str, str, str, str]] = [
         "_child_trace_events",
         "Reset to None at start of each exec(). Read by engine for sub-workflow trace embedding.",
     ),
+    (
+        "pflow.runtime.workflow_executor",
+        "WorkflowExecutor",
+        "exec",
+        "_host_frame",
+        "Task 172: reset to None at start of each exec(); set only on the NEW run-collector path to the "
+        "host's reserved correlation frame, which the engine reads at step 16 to stamp the host event.",
+    ),
 ]
 
 

@@ -7,6 +7,28 @@
 > impact-completeness; round 2: silent-failures + concurrency-safety + feature-interactions) — their
 > findings are folded in below.
 
+> **Pre-flight verification corrections (2026-06-22, implementing agent).** Re-grep against current code
+> confirmed every cited line lands, with these corrections folded in:
+> - **Batch→collector drain is `engine.py:1180`** (`_collect_batch_trace`, feeding `record_trace` at :1181),
+>   NOT `batch_executor.py:1180` (that file is 1172 lines and never drains into the collector by design).
+>   Symmetric drains at `engine.py:1127` (api-warning) and `:1260` (except).
+> - **`_pflow_stack` is composed via an f-string** (`workflow_executor.py:805`,
+>   `child_storage[f"{self.RESERVED_KEY_PREFIX}stack"] = child_stack`) — there is no `_pflow_stack` literal,
+>   so the `:177` cite is stale. (Still in "do not touch"; just don't grep for the literal.)
+> - **`trace_report.py` has 16 distinct status/cached read expressions** (Piece 6.3 said ~13) — full set
+>   re-verified; the hand-derived enum strings at :944-946 / :1016-1018 (`_row_status`) / :1489-1491 collapse
+>   to direct `status` reads.
+> - **`run.py:_echo_target_node_path` (:203) reads NEITHER `success` NOR `cached`** (matches on `node_id` +
+>   container-ness) and `_save_trace_file` (:147) is the save trigger — both are scoping/finalize sites, not
+>   `status`-read sites, so neither is in the §6 status-read migration. `_echo_target_node_path` still needs
+>   the Piece-2.B top-level scoping (load-bearing only once step-2 flattens children).
+> - **Status migration uses booleans-at-the-boundary**: `record_node_execution` keeps its `success`/`cached`
+>   params and derives `status` once (the single event-producing seam); `instrumentation.py:586/594` +
+>   `engine.py:1192` are therefore UNCHANGED (they still compute the booleans). Only direct event/item dict
+>   writers change: `record_node_execution` (the `status` field), `mark_last_event_failed` (`status="failed"`),
+>   and the batch-item/warmup inline dicts in `batch_executor.py` (:891/:819). This concentrates the
+>   `success`/`cached`→`status` mapping in one place (deletion test) instead of scattering it across callers.
+
 ---
 
 ## Context — why this change
@@ -221,7 +243,8 @@ collector re-installs the same object (no-op). **Leave `__pflow_prompt_cache__` 
 
 **Concurrency (no-lock `seq`):** workers only touch **buffer** collectors (OLD path) and the GIL-safe
 `shared["_batch_trace"]` list append (`batch_executor.py:929`); the run collector's `_seq_counter`/`_host_stack`
-are main-thread-only (sequential descent + the batch-node drain at `:1180`), now backed by the Piece-1 assert.
+are main-thread-only (sequential descent + the batch-node drain at `engine.py:1180` `_collect_batch_trace`),
+now backed by the Piece-1 assert.
 *(Forward note, Task 87: `shared["_batch_trace"]` is the GIL-protected worker→main handoff channel; under
 subprocess batch it no longer survives a process boundary and is the seam Task 87 must replace — `seq` stays
 main-thread-assigned regardless.)*
@@ -373,7 +396,7 @@ Keep `is_warmup` inline on the warmup item and filtered from call-counting (`_LL
 - `__pflow_prompt_cache__` save/restore (`engine.py:640/648/653-655`) — per-workflow, leave alone.
 - The OLD batch-nested embed path — preserve byte-for-byte.
 - Step-16-before-step-17.5 ordering (`engine.py:1181` before `:1235`).
-- `_pflow_stack` (`workflow_executor.py:177/800`) — file-path cycle detection.
+- `_pflow_stack` (composed via f-string at `workflow_executor.py:805`; no literal — `:177` cite stale) — file-path cycle detection.
 - The `or "success"` defaults + legacy single-object reader (Piece 5.5).
 
 ---
@@ -445,18 +468,46 @@ env HOME=$(mktemp -d) uv run pflow examples/<sub-workflow + batch>.pflow.md
 Each phase has an explicit **exit gate** — do not start the next until it is green. (The "Verification"
 section above is the full test menu; this maps each test to the phase that must make it pass.)
 
-1. **Pieces 1 + 2 + the `status` half of Piece 6 (atomic).** Flat store, emit-time correlation, `status` enum,
-   reader migration — file still whole-written at finalize (no per-event streaming yet).
-   **Gate:** captured baseline still green **+** the headline equivalence test passes on this flat,
-   not-yet-streamed producer, asserting cost/`final_status`/`failed_node_ids` against **hardcoded literals**
-   (NOT raw `tree()`-dict equality — until Piece 5.1 strips `ancestor_path`/`port`, `tree()` still carries
-   them). A **top-level** routing dead-end already works here (the whole-file write reflects the corrected
-   in-memory event — no re-flush needed yet); assert its `failed_node_ids`/`final_status`.
-2. **Piece 3** (host-descent stack, sequential unification).
-   **Gate:** equivalence **+** OLD-path preservation (2-deep sub-wf→batch→sub-wf **and** a sequential-batch
-   variant) **+** looped-sub-workflow **+** loop-recovery **+** cached-node-inside-a-sub-workflow tests green,
-   **and** the ADR-0008 intermediate checkpoint (one sub-workflow **and** one parallel batch end-to-end) green.
-   This is the real "producer works" bar — a green skeleton (step 1) does **not** prove the hard part.
+> **Boundary re-cut (2026-06-22, pre-flight; approved by the planning agent).** The original step 1 bundled
+> the `status` migration *with* emit-time correlation + a whole-file `finalize()` writer. But pre-stamping
+> `id`/`seq`/`parent_id` onto `self.events` (a) **collides** with `flatten_trace_to_lines`'s reserved-key
+> guard (`trace_io.py:155` asserts those keys are absent), forcing a writer replacement, and (b) is
+> **incoherent before Piece 3**: with sub-workflow children still nested (old buffer path), only top-level
+> events get stamped, in *completion* order — a different seq space than flatten's DFS-derived nested-child
+> seqs, with no single coherent seq space until Piece 3's flat store + reserve-at-descent. Pre-stamping buys
+> nothing before Piece 3 — `flatten` already derives correct correlation at save today. So the `status`
+> migration (wide, mechanical, depends on nothing) and emit-time correlation (deep, depends on Piece 3) are
+> **split**: status → step 1; correlation + unification + the new whole-file writer → step 2 (with Piece 3).
+> Same end-state and final code; the boundary moved so each milestone's code stays clean and the
+> genuinely-hard machinery lands as one coherent step. There was no load-bearing intent behind a Phase-1
+> `finalize()` — the whole-file writer belongs *with* correlation, in step 2.
+
+1. **The `status` migration, end to end (Pieces 1-write + 2-reads + the `status` half of Piece 6, atomic).**
+   Producer writes the `status` enum; **every** reader (`trace_tree.py` cached boundaries, `trace_report.py`'s
+   16 status/cached sites, `_unrecovered_failed_node_ids`) + central fixtures + the direct-assertion tests
+   read `status` **in the same step**. Plus the cheap structural scaffolding Piece 2 sets up but that is
+   **no-op while `is_run_scoped=False`**: the `is_run_scoped` flag (root constructed `False` *this* step),
+   the `tree()` accessor, the `_top_level_events()` helper, cost/status readers routed through them. **Writer
+   UNCHANGED** — `flatten_trace_to_lines` stays and carries `status` through (not a reserved key → no
+   collision); `success`/`cached` are NOT pre-stamped, correlation is still derived at save.
+   **Gate:** the captured baseline suite green again (now asserting `status`) — a clean, low-risk
+   wide-mechanical milestone (the "skeleton" is deliberately *small and safe*; it does not prove the hard part).
+2. **Flat store + emit-time correlation + collector unification + new writer (Piece 1-correlation + Piece 3 +
+   the `tree()`-flip + the whole-file writer), one coherent step.** Flip the root collector to
+   `is_run_scoped=True`; build the host-descent stack; unify collectors (sequential sub-workflow children
+   record flat into the run collector with emit-time `parent_id`/`ancestor_path` via reserve-at-descent);
+   switch `tree()` to `_rebuild_event_tree`; replace the save path with a **whole-file** writer that emits
+   directly from the now-flat store (**NO per-event flush yet — that is step 3**). Batch keeps the OLD
+   buffer-and-embed path byte-for-byte.
+   **Gate:** the headline equivalence test (cost/`final_status`/`failed_node_ids` against **hardcoded
+   literals** + the cached-node-inside-a-sub-workflow `parent_id == host.seq` assertion) **+** OLD-path
+   preservation (2-deep sub-wf→batch→sub-wf **and** a sequential-batch variant) **+** looped-sub-workflow **+**
+   loop-recovery **+** routing dead-end (top-level AND sub-workflow-internal) **+** the ADR-0008 intermediate
+   checkpoint (one sub-workflow **and** one parallel batch end-to-end) green. This is the real "producer
+   works" bar — a green step-1 skeleton does **not** prove the hard part. **Write the equivalence + OLD-path
+   tests BEFORE cutting this step** — they are the driver, not an afterthought. Until Piece 5.1 strips
+   `ancestor_path`/`port`, both `tree()` and `reconstruct(disk)` carry them, so lean on the literal
+   assertions, not raw dict equality.
 3. **Pieces 4 + 5** (streaming flush, inline blobs, two-pass reconstruct, 5.4 re-flush).
    **Gate:** incremental-flush **+** D3 crash-tail (and the A–C `test_load_trace_file_skips_truncated_tail_line`
    **deleted**) **+** transitive-orphan **+** the **streaming** dead-end re-flush (`tree()==reconstruct(disk)`

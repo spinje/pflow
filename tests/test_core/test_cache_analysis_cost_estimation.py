@@ -1127,7 +1127,7 @@ def test_cost_usd_for_node_treats_cached_event_as_zero_not_unavailable() -> None
             {
                 "node_id": "cached-node",
                 "node_type": "LLMNode",
-                "cached": True,
+                "status": "cached",
                 # No llm_call — cache hit skipped LLM execution.
             }
         ],

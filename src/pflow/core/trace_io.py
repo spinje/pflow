@@ -198,6 +198,37 @@ def flatten_trace_to_lines(trace_data: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def emit_flat_events_to_lines(trace_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """JSONL lines for a trace whose ``nodes`` are ALREADY flat + correlation-stamped.
+
+    The Task 172 emit-time counterpart to :func:`flatten_trace_to_lines`. Where ``flatten`` walks a
+    NESTED tree at save time — deriving ``id``/``seq``/``parent_id``/``run_id`` and promoting
+    ``sub_workflow_events`` to child lines — this takes events the run-scoped collector already stamped
+    at emit and writes them VERBATIM as ``event`` lines (only adding ``kind``). Sequential sub-workflow
+    children are already flat with their own ``parent_id``; ``batch_items`` stay inline (v1 does not
+    promote them). Same ``meta`` + ``run.complete`` + ``blobs`` trailer shape, so ``load_trace_file``
+    reconstructs identically. Pure: copies each event, never mutates ``trace_data`` or aliases its dicts.
+    """
+    meta: dict[str, Any] = {"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER}
+    for key in _META_KEYS:
+        if key in trace_data:
+            meta[key] = trace_data[key]
+    events = [{**dict(ev), "kind": "event"} for ev in trace_data.get("nodes", []) if isinstance(ev, dict)]
+    run_complete: dict[str, Any] = {
+        key: value for key, value in trace_data.items() if key not in _META_KEYS and key not in ("nodes", "blobs")
+    }
+    run_complete["kind"] = "run.complete"
+
+    interned = intern_blobs({"meta": meta, "events": events, "run_complete": run_complete})
+    blob_map = interned.pop("blobs")
+    return [
+        interned["meta"],
+        *interned["events"],
+        interned["run_complete"],
+        {"kind": "blobs", "blobs": blob_map},
+    ]
+
+
 def _partition_trace_lines(
     lines: list[dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, str], list[dict[str, Any]]]:

@@ -736,7 +736,7 @@ def test_warmup_cost_in_trace_as_synthetic_batch_item() -> None:
     warmup = warmup_items[0]
     assert warmup["index"] == -1
     assert warmup["item"] == "__cache_warmup__"
-    assert warmup["success"] is True
+    assert warmup["status"] == "success"
     assert warmup["duration_ms"] > 0
     assert warmup["llm_call"]["cost_usd"] == 0.0015
     assert warmup["llm_call"]["is_warmup"] is True

@@ -414,7 +414,7 @@ class TestErrorHandling:
         event = trace.events[0]
         assert event["node_id"] == "error_node"
         assert event["node_type"] == "ShellNode"
-        assert not event["success"]
+        assert event["status"] == "failed"
         assert event["error"] is not None
         assert "does not exist" in event["error"]
         # Format 2.0.0: no shared_before/shared_after
@@ -450,7 +450,7 @@ class TestCollectorIntegration:
         assert len(trace.events) == 1
         event = trace.events[0]
         assert event["node_id"] == "test"
-        assert event["success"]
+        assert event["status"] == "success"
         assert isinstance(event["duration_ms"], float)
         # Format 2.0.0: no shared_before/shared_after
         assert "shared_before" not in event

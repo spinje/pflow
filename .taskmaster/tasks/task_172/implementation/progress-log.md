@@ -116,3 +116,182 @@ built. ~300 LOC is a **floor**.
 Capture the test baseline (`pytest -m trace_files` + the named-files set in the plan), then build **Pieces
 1+2+status atomically** and get the skeleton equivalence test green **before** touching the engine. Then
 Piece 3 + the checkpoint. Then Pieces 4+5 (streaming). Run the code-stage review trio after.
+
+---
+
+## 2026-06-22 — Session: pre-flight + boundary re-cut (implementation start)
+
+**Pre-flight done (baseline + re-grep).** Baseline captured & green: `pytest -m trace_files` = **164 passed**,
+the named set = **549 passed**, 0 failures (saved to `baseline-trace_files.txt` / `baseline-named.txt`). Four
+parallel `pflow-codebase-searcher` passes re-verified every cited line against current code. All land; minor
+doc-drift corrected **in the plan itself** (consolidated note at top): batch→collector drain is `engine.py:1180`
+(not `batch_executor.py`); `_pflow_stack` is f-string-composed (`:177` stale); `trace_report.py` has 16
+status-read sites (not ~13); `run.py:_echo_target_node_path`/`_save_trace_file` read neither `success`/`cached`
+(scoping/finalize sites, not status-read sites). Confirmed cached + api-warning paths funnel through
+`record_trace → record_node_execution`, and the two collector construction sites (`runner.py:141` root,
+`workflow_executor.py:361` buffer).
+
+**Decision (approved by planning agent): re-cut the Phase-1/Phase-2 boundary.** The original plan bundled
+the `status` migration with emit-time correlation + a whole-file writer in step 1. Pre-flight found that
+pre-stamping correlation onto `self.events` (a) collides with `flatten_trace_to_lines`'s reserved-key guard
+(forces a writer swap), and (b) is incoherent before Piece 3 — top-level events would be stamped in
+*completion* order, a different seq space than flatten's DFS-derived nested-child seqs, with no single
+coherent seq space until Piece 3's reserve-at-descent. **Pre-stamping buys nothing before Piece 3** (flatten
+already derives correct correlation at save). So the boundary moved: **step 1 = `status` migration only
+(writer untouched, `is_run_scoped=False` so correlation is dormant scaffolding); step 2 = correlation +
+collector unification + the whole-file writer, as one coherent change (with Piece 3).** Same G2 end-state and
+final code. The planning agent confirmed there was no hidden intent behind a Phase-1 `finalize()`. Plan's
+build-order section updated with the rationale.
+
+**Status migration approach — booleans at the boundary.** `record_node_execution` keeps its `success`/`cached`
+params and derives the `status` enum once (the single event-producing seam); the engine/instrumentation call
+sites that compute those booleans (`instrumentation.py:586/594`, `engine.py:1192`) are UNCHANGED. Only direct
+event/item dict writers change. This is a deliberate deviation from Piece 6.2's literal call-site list —
+rationale: concentrate the `success`/`cached`→`status` mapping in one place rather than scatter it across
+callers (deletion test). `_status(success, cached) = "cached" if cached else ("failed" if not success else
+"success")` — `cached` implies success at write time (errors aren't cached); a later routing dead-end flips to
+`"failed"` via `mark_last_event_failed`, so the old `(cached, !success)`→`failed` ambiguity collapses cleanly
+into the single field.
+
+**Next:** implement step 1 (status migration), run the suite to green, report the delta, then step 2.
+
+---
+
+## 2026-06-22 — Step 1 COMPLETE: `status` enum migration (green-suite gate met)
+
+**Result:** full suite **8006 passed / 0 failed** (`uv run pytest tests/ -n4 -m "not e2e" --ignore=…/test_llm_integration.py`); `make check` green (ruff + ruff-format + mypy "no issues in 236 source files" + deptry). Baseline delta: **0 regressions** (baseline was trace_files=164 + named=549 green; both subsets remain green inside the 8006). Writer UNCHANGED (still `flatten_trace_to_lines`, now carrying `status`) — correlation still derived at save; `is_run_scoped` stays `False` everywhere this step (scaffolding dormant).
+
+**What changed (per-node `success`/`cached` → one `status` enum):**
+- **Producer** (`workflow_trace.py`): new `_node_status(success, cached)` (the single mapping site); `record_node_execution` writes `status`; `mark_last_event_failed` sets `status="failed"`; `_unrecovered_failed_node_ids` reads `status == "failed"`. Plus dormant scaffolding: `is_run_scoped` ctor flag, `tree()` (rebuild when run-scoped, else `self.events`), `_top_level_events()`, cost readers routed through `tree()`, status/count readers through `_top_level_events()` (all no-op while `is_run_scoped=False`).
+- **Batch** (`batch_executor.py`): item + warmup dicts write `status` (items carry no `cached`).
+- **Readers**: `trace_tree.py` 5 cached sites → `status == "cached"` (covers `trace_loading.py` transitively via `WalkEvent.is_cached`); `trace_report.py` 16 sites → `status` reads; `_row_status` collapses to `str(event_or_item.get("status", "success"))` (the `str()` is load-bearing — mypy `no-any-return`).
+- **Fixtures/tests**: `trace_fixture_builder.py` + `_make_event` (kept `success`/`cached` params as intent, map to `status`); 4 static `cache_analysis/*.json` regenerated via `_generate.py`; ~14 test files migrated (10 via parallel `test-writer-fixer`, one per file; + `test_batch_node`/`test_batch_prewarm` stragglers; + a fidelity sweep of 6 residual `"cached": True` fixtures across `test_trace_tree`/`test_cache_analysis_*`).
+
+**Key learnings / deviations (with rationale):**
+- **Booleans-at-the-boundary (deviation from Piece 6.2's literal call-site list).** `record_node_execution` keeps its `success`/`cached` params and derives `status` once; `instrumentation.py:586/594` + `engine.py:1192` are UNCHANGED. Rationale: concentrate the mapping in the single event-producing seam (deletion test) rather than scatter `status` strings across callers. Already noted in the plan's pre-flight corrections.
+- **Display preserved, not modernized.** A cached node still renders `Status: success [cached]`; `_row_status` table shows `success`/`cached`/`failed`. Changing the display is a separate, user-visible decision — out of scope for a shape migration.
+- **`(cached, !success)` ambiguity is gone.** `_node_status` is cached-wins (a cached node succeeded this run); a cached-then-failed routing dead-end is recorded `status="failed"` via the flip. Updated `_row_status`'s docstring + the one test (`test_cached_and_failed_event_renders_failed_not_cached`) that pinned the old dual-field shape.
+- **Every failure was a stale fixture/assertion, never a src bug** — each fixer independently confirmed cost/count assertions passed UNCHANGED once fixtures carried `status` (the strongest evidence the migration is behavior-preserving). The `'trace' != 'trace'` cache-analysis scare was a stale `"cached": True` inline fixture, not a cost-reader regression.
+- **Fidelity (pitfall #19):** residual `"cached": True` fixtures silently stop exercising the cached path (reader now keys on `status`) — swept 6. One (`per_id_emission`) had a PAIRED assertion reading `cached` that also needed migrating; the lesson is to migrate fixture + its assertions together.
+- **Enforced atomicity:** the builder↔producer shape-parity test (`TestTraceFixtureBuilderShapeParity`) + the committed-JSON drift test made the builder + static-fixture migration mandatory, not optional — exactly as `tests/CLAUDE.md` #19 intends.
+
+**Next: step 2** (the deep core) — flip root `is_run_scoped=True`, host-descent stack, collector unification (flat children w/ emit-time `parent_id`/`ancestor_path` via reserve-at-descent), `tree()`→rebuild, whole-file emit-direct writer. Per the planning agent: WRITE the equivalence (hardcoded cost literals + nested-cached `parent_id == host.seq`) + OLD-path-preservation tests FIRST as the driver. Streaming stays step 3.
+
+---
+
+## 2026-06-22 — Step 2 COMPLETE: collector unification + emit-time correlation + new writer (G2 met)
+
+**Result:** full suite **8011 passed / 0 failed**; `make check` green (mypy "no issues in 236 source files",
+ruff + ruff-format + deptry). The deep surgery caused **only 2 net regressions**, both expected and fixed
+(see below). Smoke + 5 dedicated driver tests prove the *new* behavior (the existing suite only proves
+no-regression).
+
+**What changed (the producer goes flat + emit-time):**
+- **`workflow_trace.py`**: `_HostFrame` dataclass; run-scoped `__init__` state (`_seq_counter`,
+  `_host_stack`, `_owner_thread`); `descend`/`ascend`/`_next_seq`/`_current_ancestor_path` (reserve-seq-at-
+  descent = DFS pre-order); `_assert_owner_thread` (loud no-lock guard); `record_node_execution(frame=...)`
+  stamps `id`/`seq`/`parent_id`/`run_id`/`ancestor_path`/`port` when run-scoped (frame → reserved seq, else
+  `_next_seq` + `_host_stack[-1]`); `save_to_file` is **dual-path** — run-scoped → `emit_flat_events_to_lines`
+  (verbatim flat events), buffer/test → A-C `flatten_trace_to_lines` (derive at save).
+- **`trace_io.py`**: new `emit_flat_events_to_lines` (emit-time counterpart to `flatten`).
+- **`runner.py`**: root collector `is_run_scoped=True`.
+- **`workflow_executor.py`**: `_open_child_trace` helper decides NEW (descend into run collector) vs OLD
+  (per-sub-workflow buffer) path; `exec` reuses the run collector on NEW, ascends in `finally`, embeds only
+  on OLD; `_host_frame` reset per run.
+- **`engine.py`**: reads `_host_frame` after `node._run`, threads it into all three `record_trace` paths
+  (step-16, except, api-warning). **`instrumentation.py`**: `frame` param on `record_trace` + `handle_api_warning`.
+
+**Driver tests (`tests/test_runtime/test_emit_time_trace.py`, all green):** equivalence (sub-workflow, NEW
+flat path: `tree()==reconstruct(disk)` + cost literal + `parent_id==host.id` + `ancestor_path`); **cached node
+nested inside a sub-workflow** (two-run memo hit — the load-bearing case: cached child still nests under host,
+run-2 cost EXCLUDES it); **OLD-path preservation** (parallel batch of sub-workflows stays inline with NO
+correlation keys — the highest-risk silent regression, asserted discriminatingly); looped-sub-workflow
+re-descend (distinct host seq per visit, balanced stack); ADR-0008 checkpoint (sequential sub-workflow AND
+parallel batch in ONE run). Routing-dead-end (top-level + sub-workflow-internal) + loop-recovery covered by
+existing tests (updated for the flat shape).
+
+**Deviations / decisions (CLEAR reasons):**
+- **api-warning frame threading (correctness addition, not in the plan's explicit list).** A `WorkflowExecutor`
+  host that descended and then hits api-warning records its completion via `handle_api_warning` (step 10),
+  BEFORE step 16 — without the frame there, the host event would take a fresh `seq` while its children
+  reference the reserved one → orphaned children. So `frame` is threaded into all THREE record paths
+  (step-16, except, api-warning), not just step-16. Required for correctness; the plan only named step-16.
+- **`node_id` declared on `WorkflowExecutor`, NOT `BaseNode`.** `descend(self.node_id)` needs the typed attr.
+  Declaring it on `BaseNode` (the "universal" view — the compiler sets it on every node) BROKE 2 ClaudeCode
+  tests that distinguish an ABSENT `node_id` for their schema-error fallback. Localizing to WorkflowExecutor
+  (the only `self.node_id` reader) keeps every other node's absent-node_id behavior intact. (Caught by the
+  full suite — exactly the blast-radius the manifesto warns about for core changes.)
+- **Dual-path writer keeps `flatten_trace_to_lines`** (for buffer/test collectors that save under
+  `@trace_files`) rather than removing it now — Piece 4's "remove flatten" lands in step 3. `emit_flat_events_to_lines`
+  duplicates the meta/run.complete/blob-trailer assembly; step 3/4 consolidates.
+- **`_open_child_trace` helper** extracted from `exec` to fold C901 complexity (the NEW-path branching pushed
+  exec 10→11). Two intentional invariant `assert`s carry `# noqa: S101` (the plan wants loud asserts).
+- **The 2 expected regressions, fixed:** (1) the stateless-invariant meta-test (added `_host_frame` to its
+  WorkflowExecutor allowlist, next to `_child_trace_events`); (2) `test_routing_failure_in_sub_workflow...`
+  asserted the OLD nested `sub_workflow_events` shape — updated to the flat `parent_id == host.id` linkage
+  (strengthened with the explicit linkage assertion, the failed-node analogue of the cached-nested check).
+
+**Not done (step 3 = streaming):** per-event flush, inline-first-occurrence blobs, two-pass reconstruct
+(dedup + lenient transitive orphan-drop), crash-tail tolerance, dead-end re-flush. The writer is whole-file
+(emit-direct from the flat store) — the clean seam the plan specifies before streaming.
+
+### Self-audit finding (fixed): `only_node` clobber on `--only <sub-workflow>` (issue #443 class)
+
+Introspection found — and a new regression test pins — a real bug Phase 2 introduced: `engine.run` stamped
+`self.trace.only_node = self.only_node` unconditionally. With collector unification, a sub-workflow's child
+engine REUSES the run collector, so `--only <a-sub-workflow-node>` had the child engine re-stamp `only_node`
+to its own `None`, wiping the root's `--only` marker → the saved trace would masquerade as a full-run
+snapshot source (the exact issue #443 the field exists to prevent). The full suite did NOT catch it (no
+existing test does `--only` on a WorkflowExecutor node + checks the marker). **Fix:** only the ROOT engine
+(`_pflow_depth == 0`) stamps `only_node`; nested engines reuse the collector untouched. (A first attempt
+keyed on `saved_trace is self.trace` was wrong — true for the root too if the collector is pre-installed —
+which is itself a useful lesson: the depth check is the robust root/child discriminator.) Regression test:
+`test_only_on_subworkflow_does_not_clobber_only_node`. Suite still 8012 green, `make check` clean.
+
+---
+
+## 2026-06-22 — Code-stage review round (4 specialists) + gap-closing + manual e2e
+
+Ran the 4 most relevant reviewers on the staged diff: **impact-completeness, silent-failures,
+feature-interactions, concurrency-safety** (chose these over test-fidelity to spend the slots on code bugs
+I can't self-see; covered the known test gaps myself below). **No Critical bugs.** Strong cross-corroboration:
+the `status` migration is complete, the only_node clobber hunt is exhaustive (only_node was the only
+run-level attr a child could corrupt), and concurrency-safety **could not construct a worker→run-collector
+race** (verified with a live probe; both routing clauses independently hold). The headline equivalence test
+was explicitly validated as "not a paper tiger."
+
+**Findings + fixes (all applied; suite 8014 green, `make check` clean):**
+- **descend/ascend imbalance** (flagged by 3 of 4 reviewers — strongest signal). `descend()` sat outside the
+  `try/finally` that `ascend()`s, so a `CompilationError` in the gap orphaned a host frame (latent today —
+  aborts the run — but one refactor from silently mis-nesting sibling sub-workflows). **Fix:** `_open_child_trace`
+  no longer descends; `exec` does compile/storage/engine-creation FIRST (so a `CompilationError` propagates
+  unrouted, before any descend), then descends immediately before the `try`; `finally` ascends guarded by
+  `_host_frame is not None`. The descend's owner-thread assert stays outside the `except` (stays loud, not
+  masked as a sub-workflow failure). Balance pinned by Test C + D's `_host_stack == []` asserts.
+- **`_echo_target_node_path` walked the flat store** (`run.py`) — the Piece-2.B top-level scoping I had
+  *documented but not applied*; the reviewer disproved the plan's "unreachable" claim (`--only <sub-workflow>
+  --report` reaches it via NEW-path descent). **Fix:** enumerate top-level (`parent_id is None`) + detect a
+  container by `node_type == "WorkflowExecutor"` too (a flat host has no stored `sub_workflow_events`). Low
+  severity (only a stderr hint; the report itself is correct) but a genuine sibling of the only_node class.
+- **Tests added:** `test_host_recorded_after_ascend_with_frame_keeps_children_linked` (the api-warning timing —
+  host recorded AFTER ascend must reuse its reserved frame or children orphan → `reconstruct` raises on a
+  COMPLETE trace; a regression there hard-fails the whole trace, so it's locked) and
+  `test_old_path_sequential_batch_of_subworkflows_stays_nested` (the instance-reuse path the parallel test
+  didn't cover; locks the `_host_frame` reset).
+- **Docs:** legacy `trace_report` fallback comments (now modern-`status`-only under no-back-compat) + the stale
+  `_add_llm_data` comment (NEW path shares `llm_prompts`, safe via record-at-completion ordering). Deleted the
+  concurrency reviewer's scratch probe file.
+- **Left untested (judged acceptable):** 2-deep OLD-path (sub-wf→batch→sub-wf) — clause-2 (buffer
+  `is_run_scoped=False`) is independently sufficient and the ADR-0008 checkpoint + reasoning cover it.
+
+**Manual e2e (the braindump's "verification you can reproduce").** The chained `uv run pflow` readback
+subprocesses STALLED (exactly the env issue the braindump warned about — not a pflow bug; the real `pflow run`
+itself exited 0 and wrote the trace). Did it the recommended way instead: ONE in-process driver (real engine →
+`save_to_file` flat-emit → `load_trace_file` reconstruct → real `generate_report`). Green:
+`greet`(seq0,parent None) · `call-child`(seq1 reserved-at-descent, parent None) · `child-greet`(seq2,
+parent_id=1, ancestor=[call-child]); reconstruct re-nests `child-greet` under `call-child`;
+`tree()==reconstruct(disk)`; `generate_report` reads it back into a `summary.md`. `nodes_executed=2` (top-level
+only). Confirms producer → flat JSONL → reconstruct → report end-to-end on a real sub-workflow.
+
+**State:** Phases 1+2 complete, reviewed, gap-closed. Full suite **8014 passed**, `make check` clean. Step 3
+(streaming: per-event flush, inline blobs, two-pass reconstruct, crash-tail, dead-end re-flush) remains.

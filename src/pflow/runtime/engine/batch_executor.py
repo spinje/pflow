@@ -816,7 +816,7 @@ def _execute_parallel(
                 batch_trace.append({
                     "index": -1,
                     "item": "__cache_warmup__",
-                    "success": True,
+                    "status": "success",
                     "duration_ms": round(warmup_duration_ms, 2),
                     "node_output": {},
                     "llm_call": warmup_usage,
@@ -888,7 +888,10 @@ def _capture_item_trace(
     item_event: dict[str, Any] = {
         "index": idx,
         "item": item,
-        "success": error is None,
+        # Batch items carry no `cached` (per-item caching lives at the host level;
+        # cached sub-workflow inner nodes ride in the nested `events`), so the
+        # item status is just failed/success. Task 172.
+        "status": "failed" if error is not None else "success",
         "duration_ms": round(duration_ms, 2) if duration_ms else 0,
     }
     item_event.update({"workflow_path": child_workflow_path} if child_workflow_path else {})
