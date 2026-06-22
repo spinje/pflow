@@ -187,6 +187,24 @@ def _normalize_address(address: str) -> str:
     return address.strip()
 
 
+def _drop_prefix(endpoint: str) -> str:
+    for prefix in ("in:", "out:"):
+        if endpoint.startswith(prefix):
+            return endpoint[len(prefix) :]
+    return endpoint
+
+
+def _drop_side_prefixes(address: str) -> str:
+    """``address`` with each endpoint's leading ``in:``/``out:`` removed.
+
+    The bare form an agent reads in the file. ``resolve_target`` only adopts it
+    when it still resolves uniquely, so the side-prefix returns in the qualify
+    list exactly when an input and output share a name — the one case it exists
+    for.
+    """
+    return " -> ".join(_drop_prefix(endpoint) for endpoint in address.split(" -> "))
+
+
 def _node_elements(graph: RFGraph) -> list[_Addressable]:
     elements = []
     for node in graph.nodes:
@@ -274,10 +292,19 @@ def resolve_target(graph: RFGraph, target: str) -> TargetResolution:
         )
 
     match = matches[0]
+    # Report the address in the file's own vocabulary: drop the in:/out: side-prefix
+    # when the bare form still names exactly one element. The prefix exists only to
+    # disambiguate an input/output name collision — and a collision never lands here
+    # (it returns a qualify list above), so on a unique match it is notation the agent
+    # never typed. It stays in the qualify list, where it earns its place.
+    address = match.qualified
+    relaxed = _drop_side_prefixes(address)
+    if relaxed != address and sum(relaxed in element.addresses for element in elements) == 1:
+        address = relaxed
     return TargetResolution(
         matched=1,
         descriptor=match.descriptor,
-        address=match.qualified,
+        address=address,
     )
 
 

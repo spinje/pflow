@@ -173,8 +173,12 @@ heuristically-cached stale entry; the content-hashed assets stay cacheable.
   appears in the qualify list when an input and output genuinely share a name
   (mirrors how a bare node name that occurs in two sub-workflows qualifies by
   scope). A miss suggests in the shape of what was typed (a connection attempt
-  gets real connections back). `_node_addresses` returns the full alias set; the
-  canonical (prefixed, scoped) form is what reports and qualify entries echo.
+  gets real connections back). `_node_addresses` returns the full alias set. A
+  **unique-match report echoes the file's vocabulary** — the `in:`/`out:`
+  side-prefix is dropped when the bare name still resolves to one element (a
+  collision never reaches that path), but scope (`create.echo`) is kept and the
+  prefix is *retained* if dropping it would re-introduce ambiguity. The **qualify
+  list** keeps the canonical prefixed/scoped form, where it disambiguates.
 - **Local dev loop:** run `pflow ui` (backend) and Vite's dev server
   concurrently; set `server.proxy` in `vite.config.ts` to forward `/api` →
   `http://127.0.0.1:<port>` so the React app hot-reloads against the live

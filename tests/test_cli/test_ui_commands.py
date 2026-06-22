@@ -92,6 +92,35 @@ class TestPointCommands:
         assert "open the workflow first" in result.output
         assert "--open" not in result.output
 
+    def test_zero_window_focus_omits_the_vacuous_visibility_breakdown(self) -> None:
+        # At 0 windows the "(0 visible, 0 backgrounded)" split is just 0 = 0 + 0.
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, _dispatch_payload(sent_to=0))):
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet"])
+
+        assert result.exit_code == 1, result.output
+        assert "sent to 0 windows" in result.output
+        assert "0 visible, 0 backgrounded" not in result.output
+        assert "--open" in result.output
+
+    def test_focus_to_only_background_tabs_says_to_switch_to_it(self) -> None:
+        # Delivered to >=1 window but every one is a background tab: the highlight
+        # applied where the user isn't looking, so the report must say what to do.
+        payload = {
+            "resolved": {"matched": 1, "address": "greet"},
+            "sent_to": 1,
+            "windows": [{"visibility": "hidden"}],
+            "workflow_key": "/workflows/demo.pflow.md",
+        }
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, payload)):
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet"])
+
+        assert result.exit_code == 0, result.output
+        assert "0 visible, 1 backgrounded" in result.output
+        assert "background tab" in result.output
+        assert "switch to it" in result.output
+
     def test_unresolved_target_exits_nonzero_with_json_payload_intact(self) -> None:
         payload = {
             "resolved": {"matched": 0, "suggestions": ["greet"]},
@@ -286,6 +315,45 @@ class TestUserActivityCommand:
         assert "user-activity 'demo' (0 events)" in result.output
         assert "server up, no interactions recorded for this workflow" in result.output
         assert "/workflows/demo.pflow.md" in result.output
+
+    def test_unfiltered_activity_does_not_leak_none_workflow_key(self) -> None:
+        # No workflow arg → the server returns workflow_key: null. The text must not
+        # echo a bare "workflow: None" (a Python repr leaking into agent output); the
+        # "all workflows" label already conveys that nothing is filtered.
+        payload = {"events": [], "workflow_key": None}
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, payload)):
+            result = runner.invoke(ui_module.ui_cmd, ["user-activity"])
+
+        assert result.exit_code == 0, result.output
+        assert "user-activity all workflows (0 events)" in result.output
+        assert "server up, no interactions recorded yet" in result.output
+        assert "None" not in result.output
+        assert "workflow:" not in result.output
+
+    def test_activity_renders_unfocused_view_state_without_python_none(self) -> None:
+        # A pan / zoom / density-toggle event has no focused node → focus is null
+        # over the wire. The line must read "focus none", never a raw Python "None".
+        payload = {
+            "workflow_key": "/workflows/demo.pflow.md",
+            "events": [
+                {
+                    "ts": 1_750_000_000.0,
+                    "age_seconds": 1.0,
+                    "type": "density_change",
+                    "target": None,
+                    "view_state": {"density": "advanced", "direction": "LR", "focus": None},
+                    "workflow_key": "/workflows/demo.pflow.md",
+                }
+            ],
+        }
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, payload)):
+            result = runner.invoke(ui_module.ui_cmd, ["user-activity", "demo"])
+
+        assert result.exit_code == 0, result.output
+        assert "focus none" in result.output
+        assert "None" not in result.output
 
     def test_activity_formats_structural_and_flat_identity_with_view_state(self) -> None:
         payload = {

@@ -20,6 +20,9 @@ _FRAME_THRESHOLD_BYTES = 20_000
 # menu text so generated guide pointers use the clearest public topic name.
 _TOPIC_ALIASES: dict[str, str] = {
     "caching": PROMPT_CACHING_TOPIC,
+    # The feature lives under `pflow ui`, so `ui` is the canonical topic; the
+    # accurate concept word stays reachable for an agent who reaches for it.
+    "visualization": "ui",
 }
 
 # Node types that don't map 1:1 to guide topic names.

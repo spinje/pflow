@@ -111,6 +111,13 @@ def test_caching_topic_alias_resolves_to_prompt_caching() -> None:
     assert compose_guide(["caching"]) == compose_guide(["prompt-caching"])
 
 
+def test_ui_is_canonical_topic_and_visualization_is_an_alias() -> None:
+    # The feature lives under `pflow ui`, so `ui` is the canonical topic that an
+    # agent reaches for by the command name; the concept word stays reachable.
+    assert compose_guide(["visualization"]) == compose_guide(["ui"])
+    assert "pflow ui" in compose_guide(["ui"])
+
+
 def test_prompt_caching_guide_does_not_repeat_cached_values_in_quick_start() -> None:
     result = compose_guide(["prompt-caching"])
     assert 'prompt: "Pick a creative direction for the cached concept."' in result

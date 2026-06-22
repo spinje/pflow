@@ -1,4 +1,4 @@
-# Visualization
+# Showing the workflow
 
 **Use when**: the USER wants to *see* a workflow — open it for them in the browser, most
 often while you build or edit one so they watch it take shape. Two tools, two audiences.

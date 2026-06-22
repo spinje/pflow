@@ -209,6 +209,67 @@ def _dispatch_failed(payload: dict[str, object]) -> bool:
     return _int_field(payload, "sent_to") == 0
 
 
+def _echo_workflow_key(payload: dict[str, object]) -> None:
+    """Echo the resolved workflow key, but never the bare ``None`` an unfiltered
+    ``user-activity`` returns — the ``all workflows`` label already conveys it."""
+    key = payload.get("workflow_key")
+    if key is not None:
+        click.echo(f"  workflow: {key}")
+
+
+def _visibilities(payload: dict[str, object]) -> list[str]:
+    windows = payload.get("windows")
+    if not isinstance(windows, list):
+        return []
+    return [
+        visibility
+        for window in windows
+        if isinstance(window, dict) and isinstance(visibility := window.get("visibility"), str)
+    ]
+
+
+def _render_delivery(
+    subject: str,
+    resolution: dict[str, object] | None,
+    payload: dict[str, object],
+    *,
+    workflow: str,
+    opened: bool,
+    open_supported: bool,
+) -> None:
+    """The matched/sent report: how many windows received the command, their
+    visibility, and what to do when nobody — or nobody looking — got it."""
+    sent_to = _int_field(payload, "sent_to")
+    visibilities = _visibilities(payload)
+    visible = visibilities.count("visible")
+    backgrounded = visibilities.count("hidden")
+    window_word = "window" if sent_to == 1 else "windows"
+
+    # The visible/backgrounded split only carries information once something was
+    # sent — at 0 it is just 0 = 0 + 0. The `resolved 1` line already confirms the
+    # target was valid; the hint below says what to do about the empty audience.
+    if sent_to == 0:
+        delivery = f"sent to 0 {window_word}"
+    else:
+        delivery = f"sent to {sent_to} {window_word} ({visible} visible, {backgrounded} backgrounded)"
+
+    if resolution:
+        click.echo(f"{subject}: resolved 1 ({resolution.get('address')}) · {delivery}")
+    else:
+        click.echo(f"{subject}: {delivery}")
+    _echo_workflow_key(payload)
+
+    if sent_to == 0 and not opened and open_supported:
+        click.echo(f"  → re-run with --open, or run `pflow ui {workflow}`")
+    elif sent_to == 0 and not opened:
+        click.echo(f"  → open the workflow first: `pflow ui {workflow}`")
+    elif resolution and visible == 0 and not opened:
+        # Reached >=1 window, but every one is a background tab — the target was
+        # revealed where the user is not looking. The fix is to get them to the
+        # tab, not to re-point; say so rather than leave a silent count.
+        click.echo("  → the Viewer is a background tab — tell the user to switch to it to see it")
+
+
 def _render_dispatch(
     action: str,
     workflow: str,
@@ -243,32 +304,7 @@ def _render_dispatch(
                 click.echo(f"  {address}")
         return
 
-    sent_to = _int_field(payload, "sent_to")
-    windows = payload.get("windows")
-    visibilities = (
-        [
-            window.get("visibility")
-            for window in windows
-            if isinstance(window, dict) and isinstance(window.get("visibility"), str)
-        ]
-        if isinstance(windows, list)
-        else []
-    )
-    visible = visibilities.count("visible")
-    backgrounded = visibilities.count("hidden")
-    window_word = "window" if sent_to == 1 else "windows"
-    visibility = f"{visible} visible, {backgrounded} backgrounded"
-
-    if resolution:
-        address = resolution.get("address")
-        click.echo(f"{subject}: resolved 1 ({address}) · sent to {sent_to} {window_word} ({visibility})")
-    else:
-        click.echo(f"{subject}: sent to {sent_to} {window_word} ({visibility})")
-    click.echo(f"  workflow: {payload.get('workflow_key')}")
-    if sent_to == 0 and not opened and open_supported:
-        click.echo(f"  → re-run with --open, or run `pflow ui {workflow}`")
-    elif sent_to == 0 and not opened:
-        click.echo(f"  → open the workflow first: `pflow ui {workflow}`")
+    _render_delivery(subject, resolution, payload, workflow=workflow, opened=opened, open_supported=open_supported)
 
 
 def _emit_payload(payload: dict[str, object], output_json: bool) -> None:
@@ -537,7 +573,7 @@ def _render_activity(workflow: str | None, payload: dict[str, object]) -> None:
             click.echo("  server up, no interactions recorded for this workflow (is a window open on it?).")
         else:
             click.echo("  server up, no interactions recorded yet.")
-        click.echo(f"  workflow: {payload.get('workflow_key')}")
+        _echo_workflow_key(payload)
         return
 
     for raw_event in event_list:
@@ -555,7 +591,10 @@ def _render_activity(workflow: str | None, payload: dict[str, object]) -> None:
             target_text += f" [{flat_id}]"
         view = raw_event.get("view_state")
         if isinstance(view, dict):
-            state = f"{view.get('density')}/{view.get('direction')} · focus {view.get('focus')}"
+            density = view.get("density") or "unknown"
+            direction = view.get("direction") or "unknown"
+            focus = view.get("focus") or "none"
+            state = f"{density}/{direction} · focus {focus}"
         else:
             state = "view state unknown"
         workflow_key = raw_event.get("workflow_key")
@@ -564,7 +603,7 @@ def _render_activity(workflow: str | None, payload: dict[str, object]) -> None:
             f"  {when} ({_format_age(raw_event.get('age_seconds'))}) "
             f"{raw_event.get('type')} · {target_text} · {state}{workflow_text}"
         )
-    click.echo(f"  workflow: {payload.get('workflow_key')}")
+    _echo_workflow_key(payload)
 
 
 @ui_cmd.command(name="user-activity")

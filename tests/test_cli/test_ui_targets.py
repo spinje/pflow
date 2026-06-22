@@ -247,9 +247,11 @@ def test_io_port_resolves_by_its_bare_name_without_a_prefix() -> None:
     assert resolution.matched == 1
     assert resolution.descriptor is not None
     assert resolution.descriptor["ref"]["port"] == "in"
-    # The canonical address keeps the prefix so the report stays unambiguous,
-    # even though the bare name is what the agent typed.
-    assert resolution.address == "in:source_file"
+    # On a unique match the report speaks the file's vocabulary back: the in:/out:
+    # side-prefix is dropped when the bare name still resolves to exactly one
+    # element (it only ever exists to break an input/output collision, which never
+    # reaches this path). The structural descriptor still carries port == "in".
+    assert resolution.address == "source_file"
 
 
 def test_same_name_input_and_output_qualify_to_the_prefixed_forms() -> None:
@@ -267,6 +269,24 @@ def test_same_name_input_and_output_qualify_to_the_prefixed_forms() -> None:
     assert all(resolve_target(graph, address).matched == 1 for address in resolution.qualify)
 
 
+def test_unique_match_keeps_prefix_when_bare_form_would_be_ambiguous() -> None:
+    """When an input and output share a name, the in:/out: prefix the agent typed to
+    disambiguate is KEPT in the unique-match report — dropping it to the bare name
+    would no longer resolve to one element, so the round-trip guard retains it."""
+    graph = _graph([
+        _node("n0", _ref("data", port="in")),
+        _node("n1", _ref("data", port="out")),
+    ])
+
+    resolution = resolve_target(graph, "in:data")
+
+    assert resolution.matched == 1
+    assert resolution.descriptor is not None
+    assert resolution.descriptor["ref"]["port"] == "in"
+    assert resolution.address == "in:data"
+    assert resolve_target(graph, resolution.address).matched == 1
+
+
 def test_edge_resolves_when_its_source_is_an_io_port_named_bare() -> None:
     """A connection from a workflow input composes from the input's bare name —
     `source_file -> read_source.file_path` resolves with no prefix."""
@@ -280,7 +300,9 @@ def test_edge_resolves_when_its_source_is_an_io_port_named_bare() -> None:
     resolution = resolve_target(graph, "source_file -> read_source.file_path")
 
     assert resolution.matched == 1
-    assert resolution.address == "in:source_file -> read_source.file_path"
+    # The unique-match report drops the input endpoint's in: prefix (the bare name
+    # still resolves uniquely) — the connection reads exactly as it does in the file.
+    assert resolution.address == "source_file -> read_source.file_path"
 
 
 def test_not_found_input_typo_suggests_input_names_not_unrelated_steps() -> None:
@@ -324,8 +346,13 @@ def test_display_grammar_matches_resolver_and_round_trips() -> None:
         resolution = resolve_target(graph, probe)
         assert resolution.matched == 1, probe
         assert resolution.descriptor is not None
-        # The CLI renders the recorded descriptor via the SAME formatter; it must
-        # equal the resolver's canonical address and itself re-point to one element.
+        # The CLI Watch display renders the recorded descriptor via the SAME
+        # formatter (no second grammar in ui.py); the address it prints re-points
+        # to exactly one element.
         rendered = address_for_target(resolution.descriptor)
-        assert rendered == resolution.address
-        assert resolve_target(graph, rendered).matched == 1
+        assert resolve_target(graph, rendered).matched == 1, probe
+        # The unique-match report address also re-points to exactly one element —
+        # it may be the file-vocabulary form with the in:/out: prefix dropped, so it
+        # need not equal the canonical Watch-display form, but it must still resolve.
+        assert resolution.address is not None
+        assert resolve_target(graph, resolution.address).matched == 1, probe
