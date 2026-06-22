@@ -13,12 +13,18 @@ set -e
 
 TASKS_DIR=".taskmaster/tasks"
 
+if [ ! -d "$TASKS_DIR" ]; then
+    echo "Error: '$TASKS_DIR' not found — run this from the repo root." >&2
+    exit 1
+fi
+
 # Colors (disabled if not terminal)
 if [ -t 1 ]; then
     GREEN='\033[0;32m'
     YELLOW='\033[0;33m'
     RED='\033[0;31m'
     BLUE='\033[0;34m'
+    MAGENTA='\033[0;35m'
     BOLD='\033[1m'
     NC='\033[0m'
 else
@@ -26,6 +32,7 @@ else
     YELLOW=''
     RED=''
     BLUE=''
+    MAGENTA=''
     BOLD=''
     NC=''
 fi
@@ -241,6 +248,7 @@ search_tasks() {
     local term=$1
     local found_done=""
     local found_in_progress=""
+    local found_blocked=""
     local found_pending=""
     local found_deprecated=""
 
@@ -262,6 +270,7 @@ search_tasks() {
                 case "$task_status" in
                     done) found_done="$found_done$title\n" ;;
                     "in progress") found_in_progress="$found_in_progress$title\n" ;;
+                    blocked) found_blocked="$found_blocked$title\n" ;;
                     deprecated) found_deprecated="$found_deprecated$title\n" ;;
                     *) found_pending="$found_pending$title\n" ;;
                 esac
@@ -275,6 +284,12 @@ search_tasks() {
     if [ -n "$found_in_progress" ]; then
         echo -e "${BLUE}## In Progress${NC}"
         echo -e "$found_in_progress" | grep -v '^$' | while read -r line; do echo "- $line"; done
+        echo ""
+    fi
+
+    if [ -n "$found_blocked" ]; then
+        echo -e "${MAGENTA}## Blocked${NC}"
+        echo -e "$found_blocked" | grep -v '^$' | while read -r line; do echo "- $line"; done
         echo ""
     fi
 
@@ -296,23 +311,61 @@ search_tasks() {
     fi
 }
 
+# Validate that every task file has a recognized status (and that done tasks
+# carry a date). Catches the silent drift where an unrecognized status string
+# falls into no bucket and quietly vanishes from the counts.
+check_tasks() {
+    local errors=0 warnings=0 n=0
+    for dir in "$TASKS_DIR"/task_*/; do
+        [ -d "$dir" ] || continue
+        local num=$(basename "$dir" | sed 's/task_//')
+        local file="$dir/task-$num.md"
+        if [ ! -f "$file" ]; then
+            echo -e "${RED}✗ task_$num${NC}: no task-$num.md"
+            errors=$((errors + 1)); continue
+        fi
+        n=$((n + 1))
+        local st=$(get_section_value "$file" "Status")
+        case "$st" in
+            done|"in progress"|"not started"|deprecated|blocked) ;;
+            "") echo -e "${RED}✗ task_$num${NC}: missing ## Status"; errors=$((errors + 1)) ;;
+            *)  echo -e "${RED}✗ task_$num${NC}: unrecognized status \"$st\""; errors=$((errors + 1)) ;;
+        esac
+        if [ "$st" = "done" ]; then
+            local comp=$(get_section_value "$file" "Completed")
+            if [ -z "$comp" ] || [ "$comp" = "unknown" ]; then
+                echo -e "${YELLOW}⚠ task_$num${NC}: status is done but no ## Completed date"
+                warnings=$((warnings + 1))
+            fi
+        fi
+    done
+    echo ""
+    echo "Checked $n task file(s): $errors error(s), $warnings warning(s)."
+    [ "$errors" -eq 0 ]
+}
+
 # Show all tasks
 show_summary() {
     local verbose=$1
 
     local done_count=$(count_tasks "done")
     local in_progress_count=$(count_tasks "in progress")
+    local blocked_count=$(count_tasks "blocked")
     local pending_count=$(count_tasks "not started")
     local deprecated_count=$(count_tasks "deprecated")
-    local total_count=$((done_count + in_progress_count + pending_count + deprecated_count))
+    local total_count=$((done_count + in_progress_count + blocked_count + pending_count + deprecated_count))
 
     echo -e "${BOLD}# pflow Tasks${NC}"
     echo ""
-    echo -e "${GREEN}✅ $done_count done${NC} | ${BLUE}🔧 $in_progress_count in progress${NC} | ${YELLOW}⏳ $pending_count pending${NC} | ${RED}❌ $deprecated_count deprecated${NC}"
+    echo -e "${GREEN}✅ $done_count done${NC} | ${BLUE}🔧 $in_progress_count in progress${NC} | ${MAGENTA}🚧 $blocked_count blocked${NC} | ${YELLOW}⏳ $pending_count pending${NC} | ${RED}❌ $deprecated_count deprecated${NC}"
     echo ""
 
     echo -e "${BLUE}## In Progress${NC}"
     list_by_status "in progress" "$verbose"
+    echo ""
+
+    echo -e "${MAGENTA}## Blocked${NC}"
+    list_by_status "blocked" "$verbose"
     echo ""
 
     echo -e "${GREEN}## Done${NC}"
@@ -333,6 +386,7 @@ show_summary() {
     echo "  ./scripts/tasks --all        Dump EVERY task's compact summary in one command"
     echo "  ./scripts/tasks --since DATE Same, for tasks completed on/after DATE (YYYY-MM-DD)"
     echo "  ./scripts/tasks --search X   Find tasks mentioning X"
+    echo "  ./scripts/tasks --check      Validate every task's status + completed date"
     echo ""
     echo -e "${BOLD}▶ Reading tasks:${NC} run the commands above and read the output directly — don't delegate to subagents."
     echo "  Each task is ~100 tokens (all ${total_count} fit in ~13k), so cost isn't the constraint — relevance is."
@@ -374,6 +428,16 @@ while [[ $# -gt 0 ]]; do
             echo -e "${BOLD}# Deprecated Tasks${NC}"
             echo ""
             list_by_status "deprecated" "$VERBOSE"
+            exit 0
+            ;;
+        --blocked)
+            echo -e "${BOLD}# Blocked Tasks${NC}"
+            echo ""
+            list_by_status "blocked" "$VERBOSE"
+            exit 0
+            ;;
+        --check)
+            check_tasks || exit 1
             exit 0
             ;;
         --all)
@@ -454,7 +518,9 @@ while [[ $# -gt 0 ]]; do
             echo "  ./scripts/tasks --done       List completed tasks"
             echo "  ./scripts/tasks --in-progress List in-progress tasks"
             echo "  ./scripts/tasks --pending    List pending tasks"
+            echo "  ./scripts/tasks --blocked    List blocked tasks"
             echo "  ./scripts/tasks --search X   Find tasks mentioning X"
+            echo "  ./scripts/tasks --check      Validate task statuses + completed dates"
             exit 0
             ;;
         *)
