@@ -509,3 +509,45 @@ Written up for the next agent: `scratchpads/handoffs/ui-sse-reconnect-and-discov
 real-browser-verified** (headless Chrome where `readyState`/`visibilityState`/console are observable), folded into
 the overlay design. **Meta-lesson:** a browser-behavior fix that can't be verified from the CLI must be verified in
 a real browser *before* shipping — a green unit test over a wrong assumption is worse than no test.
+
+---
+
+## 2026-06-22 — Bot-review evaluation + polish commit (PR #527, pre-merge)
+
+Evaluated the two `claude[bot]` reviews on PR #527 (`#issuecomment-4763394321` pre-polish, `…4770265223`
+post-polish). User flagged them as possibly stale — verified every finding against current code (3 parallel
+`pflow-codebase-searcher` passes + direct reads of `server.py`/`ui.py`/`types.ts`/`GraphView.tsx`). Staleness
+was real but only shifted **line numbers**; none of the pre-polish findings had been silently fixed. **8 findings:
+6 confirmed + applied, 1 deferred, 1 disputed.**
+
+### Applied (one commit, `[skip review]`)
+- **R1-W1 — dropped the inoperative `path.suffix == ".pflow.md"` clause** (`server.py` `_workflow_key`). `Path.suffix`
+  is only `.md`, so the clause was always False; behavior already rested on `path.exists()`. Took the reviewer's
+  fix **(a)** (drop it), *not* (b) (`value.endswith`) — (b) would have *changed* behavior to accept non-existent
+  paths as phantom keys, worse than the current "non-existent → not found." Behavior-identical; added the missing
+  branch test (`_workflow_key("/no/such/x.pflow.md") is None`).
+- **R2-S2 — `clear-focus` at 0 windows no longer prints the circular "→ open the workflow first"** (open a window
+  only to clear focus on it?). Threaded a `clearing` flag through `_render_dispatch`/`_render_delivery`; clear now
+  says "→ no Viewer open — nothing to clear." `frame`'s "open first" is left (not circular). +CLI test.
+- **R1-S2 — whitelisted the recorded interaction fields** (`server.py` `interaction()`) to `(type, target,
+  view_state)` instead of passing through every client key. Verified safe: `InteractionReport` is exactly those
+  three (`types.ts:175`) and the GraphView callsite sends only them, so it's a no-op for the real client and only
+  filters unexpected extras → predictable Watch shape for the consuming agent. +endpoint test (junk key dropped).
+- **R1-S3 / R1-Nit / R2-S3 — three clarity comments only** (no behavior change): the deliberate `workflow_key=None`
+  fire-and-forget choice in `interaction()` (vs `command`/`activity` 404), the `err=output_json` stdout-cleanliness
+  idiom in `focus --open` timeout, and that `not opened` intentionally suppresses the background-tab nudge.
+
+### Deferred → GH #529
+- **R1-S4 — `focus --open` re-POSTs the full (graph-rebuilding) command ~60× while waiting for the new window.**
+  Confirmed, but benign on the localhost `--open`-only path; the reviewer's fix (poll a cheap connection-count,
+  send once) needs exactly the lightweight count/health endpoint #529's discovery/probe work introduces. Folded
+  there rather than adding surface now.
+
+### Disputed → kept as-is (user decision)
+- **R2-S1 — docs no longer mention `--output-format json` for the `ui` commands.** Technically true, but the omission
+  was a **deliberate** earlier decision (text is the agent's read surface; JSON is an assumable universal escape
+  hatch — *don't push agents toward JSON*). The bot lacked that intent. Not staleness; the reviewer disagreeing with
+  a settled call. Left removed.
+
+Verification: `make check` clean (ruff, ruff-format, mypy 237, deptry 240); **`make test` 8066 passed** (8063 +3
+new regression tests); the four Task 169 Python suites 90 → 93. No frontend change (no `make ui-build` needed).

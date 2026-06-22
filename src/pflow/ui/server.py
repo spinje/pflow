@@ -315,7 +315,7 @@ def _workflow_key(value: str) -> str | None:
     """Canonical identity shared by name-opened and path-opened Viewers."""
     path = Path(value)
     try:
-        if path.suffix == ".pflow.md" or path.exists():
+        if path.exists():
             return str(path.resolve())
     except OSError:
         return None
@@ -468,7 +468,12 @@ async def interaction(request: Request) -> Response:
             status_code=400,
         )
 
-    event = {key: value for key, value in body.items() if key != "workflow"}
+    # Whitelist the recorded fields so the Watch snapshot the agent reads from
+    # /api/activity keeps a predictable shape; arbitrary client keys are dropped.
+    event = {key: body[key] for key in ("type", "target", "view_state") if key in body}
+    # An unknown workflow records workflow_key=None and still returns 204 — unlike
+    # command()/activity() which 404 — because a Watch report is fire-and-forget and
+    # must never break the Viewer. Such events surface only in an unfiltered query.
     event.update({"workflow_key": _workflow_key(workflow), "ts": time.time()})
     hub: _Hub = request.app.state.hub
     hub.record(event)

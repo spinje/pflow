@@ -236,6 +236,7 @@ def _render_delivery(
     workflow: str,
     opened: bool,
     open_supported: bool,
+    clearing: bool = False,
 ) -> None:
     """The matched/sent report: how many windows received the command, their
     visibility, and what to do when nobody — or nobody looking — got it."""
@@ -259,14 +260,19 @@ def _render_delivery(
         click.echo(f"{subject}: {delivery}")
     _echo_workflow_key(payload)
 
-    if sent_to == 0 and not opened and open_supported:
+    if sent_to == 0 and clearing:
+        # Nothing to clear when no Viewer is open; the "open the workflow first"
+        # hint below would be circular here (open a window only to clear it).
+        click.echo("  → no Viewer open — nothing to clear")
+    elif sent_to == 0 and not opened and open_supported:
         click.echo(f"  → re-run with --open, or run `pflow ui {workflow}`")
     elif sent_to == 0 and not opened:
         click.echo(f"  → open the workflow first: `pflow ui {workflow}`")
     elif resolution and visible == 0 and not opened:
         # Reached >=1 window, but every one is a background tab — the target was
         # revealed where the user is not looking. The fix is to get them to the
-        # tab, not to re-point; say so rather than leave a silent count.
+        # tab, not to re-point; say so rather than leave a silent count. `not opened`
+        # suppresses this for a window this invocation just opened (it lands in front).
         click.echo("  → the Viewer is a background tab — tell the user to switch to it to see it")
 
 
@@ -278,6 +284,7 @@ def _render_dispatch(
     *,
     open_supported: bool = False,
     opened: bool = False,
+    clearing: bool = False,
 ) -> None:
     resolution = _resolution(payload)
     matched = _int_field(resolution, "matched")
@@ -304,7 +311,9 @@ def _render_dispatch(
                 click.echo(f"  {address}")
         return
 
-    _render_delivery(subject, resolution, payload, workflow=workflow, opened=opened, open_supported=open_supported)
+    _render_delivery(
+        subject, resolution, payload, workflow=workflow, opened=opened, open_supported=open_supported, clearing=clearing
+    )
 
 
 def _emit_payload(payload: dict[str, object], output_json: bool) -> None:
@@ -475,6 +484,8 @@ def focus_cmd(
             opened=opened,
         )
     if timed_out:
+        # err=output_json routes this human note to stderr in JSON mode so the
+        # parseable payload already emitted on stdout stays clean for consumers.
         click.echo(
             "Opened a window but it didn't connect within 15s.\n"
             f"→ re-run `pflow ui focus {workflow} {target!r}` now that it may be up.",
@@ -535,7 +546,7 @@ def clear_focus_cmd(ctx: click.Context, workflow: str, output_json: bool, port: 
     )
     _emit_payload(payload, output_json)
     if not output_json:
-        _render_dispatch("clear focus", workflow, None, payload)
+        _render_dispatch("clear focus", workflow, None, payload, clearing=True)
     if _dispatch_failed(payload):
         ctx.exit(1)
 

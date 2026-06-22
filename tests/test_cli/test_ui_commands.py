@@ -92,6 +92,18 @@ class TestPointCommands:
         assert "open the workflow first" in result.output
         assert "--open" not in result.output
 
+    def test_clear_focus_zero_windows_says_nothing_to_clear_not_open_first(self) -> None:
+        # Clearing with no Viewer open has nothing to clear; the "open the workflow
+        # first" hint would be circular (open a window only to clear focus on it).
+        payload = {"sent_to": 0, "windows": [], "workflow_key": "/workflows/demo.pflow.md"}
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, payload)):
+            result = runner.invoke(ui_module.ui_cmd, ["clear-focus", "demo"])
+
+        assert result.exit_code == 1, result.output
+        assert "nothing to clear" in result.output
+        assert "open the workflow first" not in result.output
+
     def test_zero_window_focus_omits_the_vacuous_visibility_breakdown(self) -> None:
         # At 0 windows the "(0 visible, 0 backgrounded)" split is just 0 = 0 + 0.
         runner = CliRunner()

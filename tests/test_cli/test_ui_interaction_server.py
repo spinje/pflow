@@ -40,6 +40,13 @@ def test_workflow_key_groups_saved_name_and_resolved_path() -> None:
     assert _workflow_key("interaction") == _workflow_key(str(path)) == str(path.resolve())
 
 
+def test_workflow_key_returns_none_for_a_nonexistent_pflow_md_path() -> None:
+    # A ".pflow.md" path that does not exist is "not found", not a phantom key:
+    # the suffix is not a special case (Path.suffix is only ".md"), so identity
+    # rests entirely on exists() — you cannot Point at a graph that cannot be built.
+    assert _workflow_key("/no/such/workflow.pflow.md") is None
+
+
 class TestHub:
     def test_register_broadcast_visibility_and_unregister(self) -> None:
         hub = _Hub()
@@ -219,6 +226,24 @@ class TestInteractionEndpoints:
         assert payload["events"][0]["type"] == "node_click"
         assert payload["events"][0]["target"]["flat_id"] == "n0"
         assert payload["events"][0]["age_seconds"] >= 0
+
+    def test_interaction_records_only_whitelisted_fields(self, tmp_path: Path) -> None:
+        # Arbitrary client-supplied keys must not leak into the Watch snapshot, so
+        # the agent reading /api/activity sees a predictable event shape.
+        workflow = _workflow(tmp_path)
+        client = TestClient(create_app())
+        event = {
+            "workflow": str(workflow),
+            "type": "node_click",
+            "view_state": {"density": "beautiful", "direction": "LR", "focus": None},
+            "injected": "should-not-be-recorded",
+        }
+
+        assert client.post("/api/interaction", json=event).status_code == 204
+        recorded = client.get("/api/activity", params={"workflow": str(workflow)}).json()["events"]
+        assert len(recorded) == 1
+        assert "injected" not in recorded[0]
+        assert recorded[0]["type"] == "node_click"
 
     def test_unknown_workflow_activity_is_actionable_404(self) -> None:
         response = TestClient(create_app()).get(
