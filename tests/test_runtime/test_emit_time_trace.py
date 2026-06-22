@@ -14,6 +14,7 @@ These are marked ``trace_files`` so ``save_to_file`` actually writes; ``Path.hom
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,11 @@ from pflow.core.trace_io import load_trace_file
 from pflow.execution import WorkflowRunner
 from pflow.execution.result import RunnerConfig
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+
+def _read_lines(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
 
 MODEL = "anthropic/claude-sonnet-4-5"
 
@@ -380,20 +386,19 @@ def test_only_on_subworkflow_does_not_clobber_only_node(tmp_path, mock_llm_clien
     assert only.trace.only_node == "call-child", "child engine must not clobber the root's --only marker"
 
 
-def test_host_recorded_after_ascend_with_frame_keeps_children_linked():
+@pytest.mark.trace_files
+def test_host_recorded_after_ascend_with_frame_keeps_children_linked(tmp_path, monkeypatch):
     """api-warning timing (Task 172): a sub-workflow host's completion event can be recorded AFTER its
     descent frame is popped — api-warning fires at engine step 10, by which point exec()'s finally has
     already ascended. The host MUST reuse its reserved frame (not take a fresh seq), or its
-    already-recorded children orphan and ``reconstruct`` raises on a COMPLETE trace (all three readers
-    then skip it). This pins the reconstruct-survives invariant; the engine achieves it by threading
-    ``frame=host_frame`` into ``handle_api_warning`` (confirmed correct by review + the live equivalence
-    tests — this collector-level test locks the mechanic the wiring exists to protect).
+    already-STREAMED children orphan and ``reconstruct`` raises on a COMPLETE trace (all three readers
+    then skip it). Driven through the REAL streaming writer + ``finalize()`` + ``load_trace_file`` — the
+    production path — so the reconstruct-survives invariant is pinned on-disk, not via a hand-built emit.
     """
-    from pflow.core.trace_io import emit_flat_events_to_lines, reconstruct_trace_from_lines
-
-    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
     frame = c.descend("host")
-    c.record_node_execution("child", "LLMNode", 1.0, True)  # child seq is AFTER the host's reserved seq
+    c.record_node_execution("child", "LLMNode", 1.0, True)  # child seq is AFTER the host's reserved seq; flushed first
     c.ascend()  # frame popped (exec's finally) BEFORE the host records (mirrors the step-10 api-warning)
     c.record_node_execution("host", "WorkflowExecutor", 2.0, False, error="api warning", frame=frame)
     assert c._host_stack == [], "balanced descend/ascend"
@@ -401,17 +406,8 @@ def test_host_recorded_after_ascend_with_frame_keeps_children_linked():
     by_node = {e["node_id"]: e for e in c.events}
     assert by_node["child"]["parent_id"] == by_node["host"]["id"], "child must still link to the host's reserved id"
 
-    trace_data = {
-        "format_version": "2.5.0",
-        "execution_id": c.execution_id,
-        "workflow_name": "t",
-        "workflow_path": "wf",
-        "start_time": "2026-06-22T00:00:00",
-        "only_node": None,
-        "nodes": c.events,
-    }
-    reconstructed = reconstruct_trace_from_lines(emit_flat_events_to_lines(trace_data))  # must NOT raise
-    host_node = reconstructed["nodes"][0]
+    disk = load_trace_file(c.finalize())  # COMPLETE streamed trace; reconstruct must NOT raise
+    host_node = disk["nodes"][0]
     assert host_node["node_id"] == "host"
     assert [e["node_id"] for e in host_node.get("sub_workflow_events", [])] == ["child"]
 
@@ -479,3 +475,133 @@ parallel: false
     disk_path = collector.save_to_file()
     disk = load_trace_file(disk_path)
     assert collector.tree() == disk["nodes"]
+
+
+# --- Task 172 step 3: per-event streaming (incremental flush + finalize + dead-end re-flush + gate) ---
+
+
+@pytest.mark.trace_files
+def test_streaming_flushes_incrementally_then_finalize_caps_with_run_complete(tmp_path, mock_llm_client, monkeypatch):
+    """Per-event streaming: events land on disk DURING the run (incremental flush), run.complete only at
+    finalize(). Proven by reading the still-open stream BEFORE finalize — events present, no run.complete —
+    then re-reading after finalize."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    mock_llm_client.set_response(MODEL, None, {"response": "ok"}, cost_usd=0.01)
+    wf = tmp_path / "stream.pflow.md"
+    wf.write_text(
+        "# Stream\n\nTwo LLM nodes.\n\n## Steps\n\n"
+        "### one\n\nGen.\n\n- type: llm\n- model: " + MODEL + "\n- prompt: one\n\n"
+        "### two\n\nGen.\n\n- type: llm\n- model: " + MODEL + "\n- prompt: two\n",
+        encoding="utf-8",
+    )
+
+    result = _run(wf, cache_enabled=False)
+    assert result.success
+    collector = result.trace
+    assert collector.is_run_scoped and collector._stream_path is not None
+
+    # BEFORE finalize: meta + both event lines already flushed; the run.complete trailer is NOT yet written.
+    pre = _read_lines(collector._stream_path)
+    pre_kinds = [ln["kind"] for ln in pre]
+    assert pre_kinds[0] == "meta"
+    assert [ln["node_id"] for ln in pre if ln["kind"] == "event"] == ["one", "two"], "one event line per node"
+    assert "run.complete" not in pre_kinds, "run.complete is written only at finalize(), not per-event"
+
+    # finalize() caps the stream with run.complete and closes; the path is the same streamed file.
+    path = collector.finalize()
+    assert path == collector._stream_path
+    post = _read_lines(path)
+    assert post[-1]["kind"] == "run.complete"
+    assert sum(1 for ln in post if ln["kind"] == "event") == 2
+    disk = load_trace_file(path)
+    assert disk["final_status"] == "success"
+    assert collector.tree() == disk["nodes"]
+    assert disk["llm_summary"]["total_cost_usd"] == pytest.approx(0.02)
+
+
+@pytest.mark.trace_files
+def test_streaming_finalize_is_idempotent(tmp_path, monkeypatch):
+    """finalize() is guarded across the two CLI call sites (text-success + the finally block) — calling it
+    twice writes run.complete once and returns the same path."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    c.record_node_execution("a", "ShellNode", 1.0, True, node_output={"v": 1})
+    first = c.finalize()
+    second = c.finalize()
+    assert first == second
+    lines = _read_lines(first)
+    assert sum(1 for ln in lines if ln["kind"] == "run.complete") == 1, "run.complete written exactly once"
+
+
+@pytest.mark.trace_files
+def test_streaming_blob_shared_across_events_declared_once(tmp_path, monkeypatch):
+    """Streaming dedups blobs ACROSS per-event flushes via the persistent ``_declared_blobs`` set: two
+    nodes emitting the SAME >1KB payload produce ONE ``blob`` line (declared on the first flush, a
+    backward ref on the second). The whole-file ``_inline_blobs`` path dedups within a single call; this
+    pins the streaming cross-flush accumulation (a distinct never-run path — a bug that reset
+    ``_declared_blobs`` per event would re-emit the blob)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    big = "SHARED-" + ("q" * 2000)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    c.record_node_execution("a", "ShellNode", 1.0, True, node_output={"r": big})
+    c.record_node_execution("b", "ShellNode", 1.0, True, node_output={"r": big})
+    path = c.finalize()
+
+    raw = _read_lines(path)
+    blob_lines = [ln for ln in raw if ln["kind"] == "blob"]
+    assert len(blob_lines) == 1, "the shared payload is declared exactly once across the two event flushes"
+    assert blob_lines[0]["value"] == big
+    disk = load_trace_file(path)  # both events resolve the ref back to the full payload
+    assert disk["nodes"][0]["node_output"]["r"] == big and disk["nodes"][1]["node_output"]["r"] == big
+
+
+@pytest.mark.trace_files
+def test_streaming_dead_end_re_flush_corrects_on_disk(tmp_path, monkeypatch):
+    """Piece 5.4 — the routing dead-end re-flush, the ONLY path where an event flushes (status=success)
+    BEFORE its correction. mark_last_event_failed re-flushes the SAME id with status=failed; the two-pass
+    reconstruct dedups by id (last-wins) so the corrected line wins on disk → tree() == reconstruct(disk).
+    Driven at the collector to exercise re-flush + dedup precisely (engine wiring is covered by
+    test_failed_node_invariant)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    c.record_node_execution("a", "ShellNode", 1.0, True, node_output={"v": 1})  # flushed status=success
+    c.mark_last_event_failed("a", error="no successor edge matches")  # re-flushes the corrected line
+    path = c.finalize()
+
+    raw = _read_lines(path)
+    a_lines = [ln for ln in raw if ln["kind"] == "event" and ln["node_id"] == "a"]
+    assert [ln["status"] for ln in a_lines] == ["success", "failed"], "the correction was re-flushed as a 2nd line"
+
+    disk = load_trace_file(path)
+    assert len(disk["nodes"]) == 1, "dedup-by-id collapses the original + correction to one node"
+    assert disk["nodes"][0]["status"] == "failed" and disk["nodes"][0]["error"] == "no successor edge matches"
+    assert c.tree() == disk["nodes"], "in-memory mutated tree matches the deduped disk reconstruct"
+    assert disk["final_status"] == "failed" and disk["failed_node_ids"] == ["a"]
+
+
+@pytest.mark.trace_files
+def test_streaming_gated_off_when_stream_to_disk_false(tmp_path, monkeypatch):
+    """The production gate: stream_to_disk=False (the MCP path and --no-trace) writes NOTHING, even with the
+    trace_files marker (so the real _open_stream runs and the gate — not the conftest patch — is under test).
+    The in-memory collector still works for the cost summary; only disk streaming is suppressed."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=False)
+    c.record_node_execution("a", "ShellNode", 1.0, True)
+    assert c.finalize() is None, "stream_to_disk=False must not write a trace file"
+    debug = tmp_path / ".pflow" / "debug"
+    assert not debug.exists() or not list(debug.glob("*.json"))
+
+
+def test_non_trace_files_run_does_not_stream_to_disk(tmp_path, monkeypatch):
+    """The conftest gate: a NON-trace_files run (no marker) no-ops _open_stream, so a streamed run-scoped
+    collector writes nothing — the I/O-timing safety net the braindump flagged. (No @trace_files marker.)"""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "g.pflow.md"
+    wf.write_text(
+        "# G\n\nOne shell node.\n\n## Steps\n\n### s\n\nEcho.\n\n- type: shell\n- command: echo hi\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+    assert result.success
+    debug = tmp_path / ".pflow" / "debug"
+    assert not debug.exists() or not list(debug.glob("*.json")), "non-trace_files run must not stream to disk"

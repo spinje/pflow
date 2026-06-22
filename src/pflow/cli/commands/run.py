@@ -135,16 +135,19 @@ def _handle_workflow_success(
 
 
 def _save_trace_file(ctx: click.Context, workflow_trace: Any) -> Any | None:
-    """Save the trace to disk once; cache and return its path.
+    """Finalize the streamed trace once; cache and return its path.
 
+    Task 172: the run-scoped collector streamed one JSONL line per node DURING the
+    run; ``finalize()`` writes the ``run.complete`` trailer and closes the file
+    (returning its path, or ``None`` when streaming was off — ``--no-trace``).
     Idempotent across the two callers — the text-success path (which renders the
     path in the summary's meta block above the data) and the ``finally`` block
-    (report generation + the failure/JSON-path trace echo) — so the file is
-    written exactly once. Returns ``None`` if the save fails.
+    (report generation + the failure/JSON-path trace echo) — so the trailer is
+    written exactly once (``finalize`` self-guards too). Returns ``None`` on error.
     """
     if "trace_file" not in ctx.obj:
         try:
-            ctx.obj["trace_file"] = workflow_trace.save_to_file()
+            ctx.obj["trace_file"] = workflow_trace.finalize()
         except Exception as trace_err:
             logger.error("Failed to save trace: %s", trace_err, exc_info=True)
             ctx.obj["trace_file"] = None

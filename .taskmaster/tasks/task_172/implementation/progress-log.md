@@ -295,3 +295,134 @@ only). Confirms producer → flat JSONL → reconstruct → report end-to-end on
 
 **State:** Phases 1+2 complete, reviewed, gap-closed. Full suite **8014 passed**, `make check` clean. Step 3
 (streaming: per-event flush, inline blobs, two-pass reconstruct, crash-tail, dead-end re-flush) remains.
+
+---
+
+## 2026-06-22 — Step 3 COMPLETE: per-event streaming (Pieces 4+5+5.4) + 4-specialist review
+
+**Result:** full suite **8023 passed / 0 failed**; `make check` clean (ruff + ruff-format + mypy "no issues in
+236 source files" + deptry); in-process e2e green. Baseline delta (captured pre-change): `pytest -m trace_files`
+**170→174**, named set **557→565**, full suite **8014→8023** — **0 regressions** (all deltas are new step-3
+tests). 4-specialist code review (silent-failures, impact-completeness, test-fidelity, feature-interactions)
+found **no Critical/High** — only the suggestions folded in below.
+
+**What changed (the producer streams; the reader gains two-pass + crash-tail):**
+- **`core/trace_io.py`** — `_RESERVED_LINE_KEYS` += `ancestor_path`/`port` (stripped on read); `_partition_trace_lines`
+  swapped the plural `blobs` arm for a singular `blob` arm (and now RAISES on a `blob` line missing
+  `md5`/`value` — corruption stays a visible `JSONDecodeError`, silent-failures finding); `_rebuild_event_tree`
+  is **two-pass** (dedup-by-`id` last-wins + lenient **transitive** orphan-drop when `is_incomplete`);
+  `reconstruct_trace_from_lines` threads `is_incomplete = not run_complete`; `load_trace_file` **tolerates a
+  truncated final line** → `incomplete` (malformed earlier line still raises). New shared primitives
+  `intern_event_leaves` + `_inline_blobs` give ONE on-disk blob representation (inline first-occurrence
+  `blob` lines, backward-only) across the streaming writer AND the whole-file writers (`flatten_trace_to_lines` /
+  `emit_flat_events_to_lines` refactored to `_inline_blobs`; `blobs` trailer removed everywhere).
+- **`runtime/workflow_trace.py`** — `__init__(stream_to_disk=...)` + streaming state (`_stream`/`_stream_path`/
+  `_declared_blobs`/`_finalized`); `_open_stream` (lazy, meta-first, the single pytest-gate target),
+  `_flush_event`/`_flush_line`/`_emit_blob_line`, `_meta_line`/`_meta_fields`/`_aggregates`, `finalize()`
+  (run.complete trailer + close, idempotent), `__del__` (defensive close). `record_node_execution` flushes each
+  event after append; `mark_last_event_failed` **re-flushes** the corrected line; `save_to_file` dispatches
+  (run-scoped→`finalize`, buffer→whole-file `flatten`); filename timestamp moved save-time→`self.start_time`.
+- **Gate wiring:** `runner.py` passes `stream_to_disk=config.trace_enabled`; `mcp_server/.../execution_service.py`
+  both `run()` sites pass `trace_enabled=False`; `cli/commands/run.py::_save_trace_file` → `finalize()`;
+  `tests/conftest.py` no-ops `_open_stream` (in addition to `save_to_file`) for non-`trace_files` tests.
+- **Tests:** new reader tests (inline-blob, dedup-last-wins, transitive-orphan, complete-orphan-raises,
+  crash-tail tolerate) replacing the two now-inverted A–C tests; new streaming tests (incremental-flush-then-
+  finalize, finalize-idempotent, dead-end re-flush, shared-blob-declared-once, both gates); `test_filename_format`
+  rewritten to `start_time`. **Docs:** refreshed the canonical format references (`runtime/CLAUDE.md`,
+  `prompt_cache_analysis/CLAUDE.md`, the MCP agent `jq` example) — `blobs` trailer → inline `blob` lines,
+  streaming/crash-tail now shipped (were "deferred Phase D").
+
+**Decisions / deviations (with reasoning):**
+- **Flatten KEPT, blob representation UNIFIED (deviation from Piece 4's "remove flatten").** `flatten_trace_to_lines`
+  is the A–C round-trip oracle in `test_trace_io.py` AND the buffer/test whole-file writer across 9 files —
+  removing it guts real coverage and forces migrating every bare-collector save. Instead I unified the *on-disk
+  blob representation* to inline `blob` lines via one shared `_inline_blobs`/`intern_event_leaves` (used by both
+  streaming and whole-file), achieving the plan's "one representation" intent (one reader arm, one disk shape)
+  without the churn. The braindump explicitly flagged this as a conscious choice (keep-dual vs remove-and-migrate).
+- **MCP `trace_enabled=False` (deviation from "no MCP changes needed").** Pre-flight VERIFIED MCP persists no
+  trace today (no `save_to_file`/`finalize` call; `WorkflowTraceCollector` has no `trace_path` attr, so the MCP
+  error-path `hasattr(..., "trace_path")` is always False). MCP free-rides on the `trace_enabled=True` default,
+  so WITHOUT this flag the new streaming would start writing MCP traces to `~/.pflow/debug` → unintended
+  `--only`/analyze-cache snapshot sources (a regression). Setting `trace_enabled=False` is behavior-preserving
+  AND closes that latent regression — and makes `trace_enabled` the single coherent "persist this trace" gate
+  (CLI=True/`--report`-forced, MCP=False, `--no-trace`=False). The impact reviewer independently confirmed.
+  **Discovered (pre-existing, OUT OF SCOPE):** `mcp_server/CLAUDE.md` + `execution_tools.py` docstring claim MCP
+  "traces always saved" — wrong before this diff (MCP never saved); flagged, not fixed (a separate cleanup).
+- **Two-layer gate.** `stream_to_disk` (production: CLI yes / MCP+`--no-trace` no) + the conftest `_open_stream`
+  no-op (tests: non-`trace_files` no). The conftest must gate `_open_stream` (not just `save_to_file`) because
+  streaming now happens DURING `record_node_execution`, not at an end-of-run save — the braindump's "I/O timing
+  reveals things" made concrete.
+- **`save_to_file()` kept as a run-scoped→`finalize()` delegator.** The CLI calls `finalize()` directly (plan),
+  but delegation means the existing `@trace_files` equivalence tests that call `collector.save_to_file()` keep
+  working unchanged (events already streamed during the run; `save_to_file`→`finalize` just caps the trailer).
+- **Self-audit added `__del__`** (defensive stream close) for the streamed-but-never-`finalize`d handle-leak case
+  (a `trace_files` test that runs a workflow but never saves) — production always finalizes via the CLI.
+
+**Review findings folded in (all 4 specialists, no Critical/High):**
+- *test-fidelity (real):* the transitive-orphan test asserted only top-level node_ids → couldn't distinguish a
+  clean transitive drop from a silently re-homed node (mutation-confirmed). Strengthened to the full-structure
+  assertion `trace["nodes"] == [{"node_id": "top"}]` + "child"/"grandchild" absent anywhere; renamed honestly.
+- *test-fidelity (gap):* added `test_streaming_blob_shared_across_events_declared_once` — the streaming cross-flush
+  `_declared_blobs` dedup (distinct from the whole-file within-call dedup; never-run path).
+- *silent-failures (take-or-leave → applied):* `_partition_trace_lines` now raises on a `blob` line missing
+  `md5`/`value` instead of silently skipping (which would leave a later event's `$pflow_blob` ref unresolved).
+- *impact-completeness (docs):* refreshed the stale format docs (above).
+- *Verified clean by the panel:* the new shared file handle is **main-thread-only** by the SAME `__index__`/
+  `is_run_scoped` routing gate that protects no-lock `seq` (workers route to `stream_to_disk=False` buffers →
+  `_flush_event` no-ops); gate correct both directions; dead-end re-flush wins via dedup; crash-tail scoped to
+  the final line + incomplete traces only; `finalize`/`__del__` robust against double-call/partial-construction;
+  JSON-mode `json_output` correctly rides the `finalize()` trailer.
+
+**Manual e2e (in-process driver, the reproducible verification):** real engine (shell sub-workflow with a >1KB
+payload) → STREAMED JSONL (`['meta','event','blob','blob','event','event','run.complete']`) → both blob lines
+precede their ref (backward-only) → child `big` nests under `call-child` via emit-time `parent_id`/`ancestor_path`
+→ `load_trace_file` reconstructs (blobs resolved, `ancestor_path`/`port` stripped, `tree()==reconstruct`) →
+`generate_report` reads it back. `nodes_executed=2` (top-level only).
+
+**Per-event flush PERFORMANCE on a big run not measured** (don't pre-optimize; batched-flush-with-periodic-fsync
+is the lever if needed). The MCP "traces always saved" doc/code mismatch is pre-existing and left for a separate
+cleanup.
+
+---
+
+## 2026-06-22 — Step 3: `/deep-review` round (5 specialists) + fixes
+
+Ran the user-requested `/deep-review` (5 agents: concurrency-safety, simplicity, test-fidelity, silent-failures,
+impact-completeness) on the full step-3 diff after the manual 4-agent round, focused on the post-round fixes.
+**No Critical/High.** Also ran the one verification not yet done: `make test-e2e` = **43 passed**.
+
+**Confirmed findings + fixes (all applied; suite 8024 green, `make check` clean, e2e green):**
+- **(simplicity) Deleted `emit_flat_events_to_lines`.** It had NO production caller after streaming (run-scoped
+  saves stream; buffer saves use `flatten_trace_to_lines`) and near-duplicated `flatten`. Its one test (the
+  host-after-ascend canary) was **re-pointed at the real streaming path** (`stream_to_disk=True` → `finalize()`
+  → `load_trace_file`), which is *stronger* — it now pins the reconstruct-survives invariant on-disk through the
+  production writer instead of a hand-built emit. This reverses my step-3 self-audit "keep it" call; the fresh
+  reviewer's deletion-test framing (a third writer no production path calls) was decisive. Removed ~24 LOC, one
+  fewer writer (minimal set is now `flatten` for buffer/nested + the streaming path).
+- **(test-fidelity + silent-failures, 2 reviewers converged) Added `test_reconstruct_blob_line_missing_value_raises`.**
+  The blob-arm raise (the prior round's own fix) was the last unguarded corruption arm with no regression pin —
+  an unexercised guard is itself a silent-failure risk. Closes it (mirrors `test_reconstruct_unknown_kind_raises`).
+- **(impact-completeness, 2 Warnings) Refreshed 2 stale `blobs`-trailer claims my first doc sweep missed:**
+  `runtime/CLAUDE.md:133` (the 2.5.0 bullet's "save_to_file calls intern_blobs … blobs trailer" — now false) and
+  the `workflow_trace.py` class docstring ("2.5.0 on disk … top-level blobs trailer"). Plus the `TRACE_FORMAT_VERSION`
+  comment, the `substitute_refs` "future JSONL reader" wording, and my own Task 172 CLAUDE.md bullet (which still
+  named the now-deleted `emit_flat`).
+- **(concurrency, cheap hardening) Added `_assert_owner_thread()` to `_flush_event`.** Makes the no-lock invariant
+  LOCAL: a future caller that flushes the run collector off the main thread fails loud rather than racing silently
+  (no-op for buffer collectors — owner is None). Aligns with the Piece-1 loud-guard philosophy.
+
+**Verified clean by the panel (cross-corroborated):** the new shared file handle (`_stream`) is **main-thread-only
+by the SAME `__index__`/`is_run_scoped` gate that protects no-lock `seq`** — concurrency-safety could not construct
+a worker→run-collector-stream path and confirmed it with the empirical `len(collector.events)==1` parallel-batch
+test; `__del__` is shutdown-safe and the streamed handle is never shared cross-thread; the crash-tail tolerance and
+the blob-arm raise are structurally disjoint (truncated tail = invalid JSON dropped pre-partition; the raise only
+fires on valid-JSON-missing-field lines no writer emits); the strengthened transitive-orphan test now discriminates
+the re-home mutations (mutation-confirmed); the `_aggregates`/`_meta_fields` factoring, the two intern walks,
+`__del__`, and the flush asymmetry all survive the deletion test; `finalize()` mid-write failure reconstructs as
+`incomplete`, never silent success.
+
+**Final verification:** `pytest -m trace_files` **176**, full `make test` **8024**, `make test-e2e` **43**,
+`make check` clean (mypy 236 files), in-process e2e green. **0 regressions** vs the captured baseline.
+
+**State: Step 3 COMPLETE — producer done, reviewed (manual 4 + deep-review 5), gap-closed, committed.** This
+producer is the dependency for Task 169 (SSE transport) and Task 173 (live overlay consumer).

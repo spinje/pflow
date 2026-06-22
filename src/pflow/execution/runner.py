@@ -144,6 +144,10 @@ class WorkflowRunner:
                 # Task 172: THE single run-scoped collector. Sub-workflows record flat into it with
                 # emit-time correlation; the per-sub-workflow buffer collectors stay is_run_scoped=False.
                 is_run_scoped=True,
+                # Stream one JSONL line per node to disk as the run executes (so a live overlay can tail
+                # it) — gated by trace_enabled: the CLI persists (True); MCP reads cost from the in-memory
+                # collector and passes trace_enabled=False; --no-trace is False.
+                stream_to_disk=config.trace_enabled,
             )
 
             mcp_pool = MCPConnectionPool()

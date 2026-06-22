@@ -1,5 +1,6 @@
 """Detailed trace collection for workflow debugging."""
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -11,27 +12,28 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.node_type_display import is_llm_node_type
 from pflow.core.trace_io import (
     _RESERVED_LINE_KEYS,
+    TRACE_JSONL_MARKER,
     _rebuild_event_tree,
-    emit_flat_events_to_lines,
     flatten_trace_to_lines,
+    intern_event_leaves,
     load_trace_file,
 )
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
 
-# Trace format version. 2.5.0 adds the top-level ``blobs`` map with
-# ``{"$pflow_blob": hash}`` refs for large string leaves, and canonicalizes
-# LLM prompt/system into ``llm_prompt``/``llm_system`` by removing redundant
-# LLM copies from node_output/template_resolutions/node_params. Consumers gate
-# on ``startswith("2.")``; old traces remain readable.
+# Trace format version. 2.5.0 introduced large-string-leaf interning (now written as inline
+# ``{"$pflow_blob": hash}`` refs with the bodies in inline ``blob`` lines per Task 172 — originally a
+# top-level ``blobs`` map) and canonicalized LLM prompt/system into ``llm_prompt``/``llm_system`` by
+# removing redundant LLM copies from node_output/template_resolutions/node_params. Consumers gate on
+# ``startswith("2.")``; old traces remain readable.
 TRACE_FORMAT_VERSION = "2.5.0"
 
 
@@ -493,10 +495,11 @@ class WorkflowTraceCollector:
       the adapter's ``trace_hook`` ``before_call`` event; sourced from
       ``prep_res["system_blocks"]`` when prep built one, else
       ``prep_res["system"]``.
-    - 2.5.0 on disk: large string leaves may be replaced by
-      ``{"$pflow_blob": hash}`` refs with plaintext bodies in the top-level
-      ``blobs`` trailer. All content readers resolve these through
-      ``pflow.core.trace_io.load_trace_file`` before consumers inspect events.
+    - On disk: large string leaves may be replaced by ``{"$pflow_blob": hash}``
+      refs with plaintext bodies in inline-first-occurrence ``blob`` lines
+      (Task 172; originally a top-level ``blobs`` trailer). All content readers
+      resolve these through ``pflow.core.trace_io.load_trace_file`` before
+      consumers inspect events.
     - 2.5.0 LLM events: the rendered prompt/effective system live in
       canonical ``llm_prompt`` / ``llm_system`` fields. Redundant LLM copies
       are stripped from ``node_output`` / ``template_resolutions`` and
@@ -514,6 +517,7 @@ class WorkflowTraceCollector:
         *,
         workflow_path: str | None = None,
         is_run_scoped: bool = False,
+        stream_to_disk: bool = False,
     ):
         """Initialize the trace collector.
 
@@ -538,8 +542,16 @@ class WorkflowTraceCollector:
                 ``True``; per-sub-workflow buffer collectors (``WorkflowExecutor``)
                 keep the ``False`` default. Run-scoped collectors expose the nested
                 ``tree()`` via ``_rebuild_event_tree``; buffer collectors stay
-                tree-shaped. (Dormant until step 2 flips on emit-time correlation —
-                a ``False`` collector behaves exactly as before.)
+                tree-shaped.
+            stream_to_disk: Whether the run-scoped collector flushes one JSONL line
+                per node AS the run executes (Task 172 step 3 — so a live overlay can
+                tail it). The runner sets this from ``RunnerConfig.trace_enabled``: the
+                CLI persists traces (``True``); the MCP path reads cost from the
+                in-memory collector and never persists (``False``); ``--no-trace`` is
+                ``False``. Only meaningful when ``is_run_scoped`` (buffer collectors
+                never stream). Default ``False`` so bare-constructed collectors don't
+                write files. A second, test-only gate lives in ``tests/conftest.py``
+                (``_open_stream`` is no-op'd unless the test is marked ``trace_files``).
         """
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
@@ -547,6 +559,15 @@ class WorkflowTraceCollector:
         self.execution_id = str(uuid.uuid4())
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
+        # Task 172 step 3: per-event streaming state (run-scoped + stream_to_disk only). The stream opens
+        # lazily on the first flush (writing the meta line), one event line is appended as each node
+        # records, and finalize() writes the run.complete trailer + closes. _declared_blobs tracks
+        # first-occurrence interning so a blob is written once, before its first (backward-only) ref.
+        self._stream_to_disk = stream_to_disk and is_run_scoped
+        self._stream: TextIO | None = None
+        self._stream_path: Path | None = None
+        self._declared_blobs: set[str] = set()
+        self._finalized = False
         # Task 172: emit-time correlation state (run-scoped only). Children record
         # flat into one run collector; ``seq`` is reserved at descent so a host span
         # precedes its children in DFS pre-order. Assigned only on the owner thread
@@ -656,6 +677,10 @@ class WorkflowTraceCollector:
             }
 
         self.events.append(event)
+        # Task 172 step 3: stream this event as a JSONL line the instant it's recorded (run-scoped +
+        # stream_to_disk only; a no-op otherwise, and under the pytest gate). Buffer collectors never
+        # stream — their children embed and the whole nested tree is written at save_to_file.
+        self._flush_event(event)
 
     def tree(self) -> list[dict[str, Any]]:
         """Nested event view over the store — the derived projection (Task 172).
@@ -730,6 +755,128 @@ class WorkflowTraceCollector:
         """Leave a sub-workflow host (pop its frame). Balanced with ``descend`` via try/finally."""
         self._assert_owner_thread()
         self._host_stack.pop()
+
+    # --- Task 172 step 3: per-event streaming to disk -----------------------------------------------
+
+    def _open_stream(self) -> None:
+        """Open the streamed trace file and write the ``meta`` line — lazy, idempotent, run-scoped only.
+
+        The SINGLE entry point the pytest gate patches to a no-op
+        (``tests/conftest.py::disable_trace_file_writes_by_default``): when patched, ``self._stream``
+        stays ``None``, so per-event flush and finalize both short-circuit → zero disk writes for
+        non-``trace_files`` tests. Returns early when streaming is disabled (``stream_to_disk=False`` — the
+        MCP path / ``--no-trace``), already open, or already finalized (never re-open a closed stream).
+        Uses ``self.start_time`` (microsecond-granular) for the filename so the name is stable from the
+        first flush and the #443 ``--only``-collision entropy is preserved (separate processes start at
+        distinct microseconds)."""
+        if self._stream is not None or not self._stream_to_disk or self._finalized:
+            return
+        trace_dir = Path.home() / ".pflow" / "debug"
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = self.start_time.strftime("%Y%m%d-%H%M%S-%f")
+        self._stream_path = trace_dir / format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
+        self._stream = open(self._stream_path, "w", encoding="utf-8")  # noqa: SIM115 — closed in finalize()
+        self._flush_line(self._meta_line())
+
+    def _flush_line(self, line: dict[str, Any]) -> None:
+        """Intern the line's large leaves (emitting each first-seen ``blob`` line FIRST, so refs are
+        backward-only), write the line, and flush so a live tailer/crash sees a self-consistent prefix."""
+        if self._stream is None:
+            return
+        interned = intern_event_leaves(line, self._declared_blobs, self._emit_blob_line)
+        self._stream.write(json.dumps(interned, default=str))
+        self._stream.write("\n")
+        self._stream.flush()
+
+    def _emit_blob_line(self, digest: str, value: str) -> None:
+        if self._stream is not None:
+            self._stream.write(json.dumps({"kind": "blob", "md5": digest, "value": value}, default=str))
+            self._stream.write("\n")
+
+    def _flush_event(self, event: dict[str, Any]) -> None:
+        """Stream one ``event`` line (run-scoped + ``stream_to_disk``). Opens the stream lazily on the
+        first call. Builds a ``kind``-tagged copy — never mutates ``event`` (the live ``self.events``
+        entry stays plain; interning is a disk-only transform). A no-op when streaming is off/gated."""
+        # Make the no-lock invariant LOCAL: the shared file handle is main-thread-only (workers route to
+        # buffer collectors). `record_node_execution` already asserts via `_next_seq` before reaching here,
+        # but asserting here too means a future caller that flushes the run collector without going through
+        # `_next_seq` fails loud rather than racing silently (no-op for buffer collectors — owner is None).
+        self._assert_owner_thread()
+        self._open_stream()
+        if self._stream is None:
+            return
+        self._flush_line({**event, "kind": "event"})
+
+    def _meta_line(self) -> dict[str, Any]:
+        line: dict[str, Any] = {"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER}
+        line.update(self._meta_fields())
+        return line
+
+    def _meta_fields(self) -> dict[str, Any]:
+        """The run-identity keys (``_META_KEYS``), all knowable at run start — the ``meta`` line payload."""
+        return {
+            "format_version": TRACE_FORMAT_VERSION,
+            "execution_id": self.execution_id,
+            "workflow_name": self.workflow_name,
+            "workflow_path": self.workflow_path,
+            "start_time": self.start_time.isoformat(),
+            "only_node": self.only_node,
+        }
+
+    def _aggregates(self) -> dict[str, Any]:
+        """The end-of-run ``run.complete`` payload, scoped to ``_top_level_events()`` (NOT raw
+        ``self.events``) so a flat store's sub-workflow child can't overwrite a top-level node's
+        status/count. Shared by the streaming ``finalize`` and the buffer-collector whole-file
+        ``save_to_file`` so the two writers can never drift on what an aggregate means."""
+        duration_ms = (datetime.now() - self.start_time).total_seconds() * 1000
+        final_events = final_events_by_node(self._top_level_events())
+        final_status = self._determine_trace_status(final_events)
+        failed_node_ids = sorted(_unrecovered_failed_node_ids(final_events, self.execution_warnings))
+        agg: dict[str, Any] = {
+            "end_time": datetime.now().isoformat(),
+            "duration_ms": round(duration_ms, 2),
+            "final_status": final_status,
+            "nodes_executed": len(self._top_level_events()),
+            "nodes_failed": len(failed_node_ids),
+            "failed_node_ids": failed_node_ids,
+        }
+        llm_summary = self._collect_llm_summary(self.tree())
+        if llm_summary["total_calls"] > 0:
+            agg["llm_summary"] = llm_summary
+        if self.execution_warnings:
+            agg["warnings"] = self.execution_warnings
+        if self.json_output is not None:
+            agg["json_output"] = self.json_output
+        return agg
+
+    def finalize(self) -> Path | None:
+        """Close a streamed run: write the ``run.complete`` trailer (its aggregates), flush, and close.
+
+        The run-scoped counterpart of ``save_to_file`` (events were flushed per-node DURING the run; this
+        only caps the file). Opens the stream first so a zero-event run still produces ``meta`` +
+        ``run.complete``. Idempotent — the CLI calls it from both the text-success path and the ``finally``
+        block (``_save_trace_file`` is the guard, this is belt-and-suspenders). Returns the trace path, or
+        ``None`` when streaming is off/gated (so the CLI renders no trace line, exactly as before)."""
+        if self._finalized:
+            return self._stream_path
+        self._open_stream()
+        self._finalized = True  # after _open_stream (which guards on it) so the meta line is written first
+        if self._stream is None:
+            return None
+        self._flush_line({**self._aggregates(), "kind": "run.complete"})
+        self._stream.close()
+        self._stream = None
+        return self._stream_path
+
+    def __del__(self) -> None:
+        """Defensively close a still-open stream (no run.complete) so a collector that streamed but was
+        never ``finalize()``d doesn't leak its file handle. In production the CLI always finalizes (which
+        closes + nulls ``self._stream``), so this only fires for a GC'd test collector that ran a workflow
+        without saving. Best-effort and shutdown-safe — ``getattr`` survives partial ``__init__``."""
+        stream = getattr(self, "_stream", None)
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.close()
 
     @staticmethod
     def aggregate_llm_usage_with_retries(llm_usage: dict[str, Any]) -> dict[str, Any]:
@@ -979,11 +1126,26 @@ class WorkflowTraceCollector:
         archival). This is intentional: the node DID produce output, and
         then routing failed. Per-node report files show both the output
         and the failed status — this is semantically correct.
+
+        Scans ALL events (not just top-level): a routing dead-end INSIDE a
+        sub-workflow (GH #250) targets a child event whose `parent_id` is
+        set, which top-level scoping would miss. The most-recent match is
+        unambiguous (it's the just-dead-ended node), so scanning all events
+        carries no overwrite risk.
+
+        Streaming (Task 172 step 3): the event's line was already flushed
+        (status="success") DURING the run. This is the ONLY post-flush
+        correction, so it RE-FLUSHES the corrected line (same id/seq, now
+        status="failed"). The two-pass reconstruct dedups by id (last-wins),
+        so the corrected line wins on disk → reconstruct(disk) matches the
+        mutated tree(). Flush order is immaterial (reconstruct sorts by seq).
+        A no-op flush when streaming is off/gated.
         """
         for event in reversed(self.events):
             if event.get("node_id") == node_id:
                 event["status"] = "failed"
                 event["error"] = error
+                self._flush_event(event)  # re-flush the correction (same id/seq) for the open stream
                 return
 
     def _determine_trace_status(self, final_events: dict[str, dict[str, Any]] | None = None) -> str:
@@ -1030,97 +1192,42 @@ class WorkflowTraceCollector:
                 agg.add_leaf(dict(leaf.llm_call))
         return agg.as_dict()
 
-    def save_to_file(self) -> Path:
-        """Save trace to JSON file in ~/.pflow/debug/.
+    def save_to_file(self) -> Path | None:
+        """Persist the trace to ``~/.pflow/debug/`` and return its path (``None`` if not written).
 
-        Returns:
-            Path to the saved trace file
+        Two paths, by collector kind (Task 172 step 3):
+          - **Run-scoped** (the production root): events were STREAMED per-node during the run, so
+            "saving" just delegates to ``finalize()`` (write the ``run.complete`` trailer + close). Returns
+            ``None`` when streaming was off/gated (``stream_to_disk=False`` / the pytest gate).
+          - **Buffer/test** (``is_run_scoped=False``, never saved in production): the store is a NESTED
+            unstamped tree, so this WHOLE-FILE writes it via ``flatten_trace_to_lines`` (derives
+            correlation + promotes ``sub_workflow_events`` + inline blobs at save). Several ``@trace_files``
+            tests construct a bare collector and call this directly.
         """
-        # Create directory if it doesn't exist
+        if self.is_run_scoped:
+            return self.finalize()
+
         trace_dir = Path.home() / ".pflow" / "debug"
         trace_dir.mkdir(parents=True, exist_ok=True)
-
-        # Microsecond granularity (issue #443): a full run followed within the
-        # SAME second by an ``--only`` run would otherwise write the same filename,
-        # and the ``--only`` trace (excluded as a snapshot source) would overwrite
-        # the full-run snapshot — breaking every subsequent ``--only`` until the
-        # next full run. ``%f`` keeps the two filenames distinct; ordering still
-        # sorts correctly (``_trace_recency_key`` parses this timestamp) and the
-        # autoload glob keys on the hash prefix, not the timestamp.
-        # Caveat (PR #459 S5): ``%f`` is unique within ONE process, but two
-        # concurrent processes running the SAME workflow could in principle write
-        # the same microsecond filename and have one overwrite the other.
-        # Vanishingly unlikely under normal (sequential) agent use; a high-throughput
-        # orchestrator sharing ~/.pflow/debug should not assume per-write uniqueness.
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        filename = format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
-        filepath = trace_dir / filename
-
-        # Calculate total duration
-        duration_ms = (datetime.now() - self.start_time).total_seconds() * 1000
-
-        # Per-node final state — drives BOTH final_status AND failed_node_ids.
-        # Loop recovery: last event per node_id wins (visit 2 success overwrites
-        # visit 1 failure) so nodes_failed reflects UNIQUE failed nodes, not
-        # total failed invocations. nodes_executed still counts per-visit.
-        # Computed once and passed to _determine_trace_status so the events
-        # list is walked once per save. See GH #240.
-        final_events = final_events_by_node(self._top_level_events())
-        final_status = self._determine_trace_status(final_events)
-        failed_node_ids = sorted(_unrecovered_failed_node_ids(final_events, self.execution_warnings))
-
-        # Prepare trace data with format version
-        trace_data: dict[str, Any] = {
-            "format_version": TRACE_FORMAT_VERSION,
-            "execution_id": self.execution_id,
-            "workflow_name": self.workflow_name,
-            # Task 159 trace 2.1.0: emitted unconditionally. None when the
-            # caller didn't set it (test fixtures, legacy harnesses); the
-            # production paths (``execution/runner.py``,
-            # ``runtime/workflow_executor.py``) always provide a value.
-            "workflow_path": self.workflow_path,
-            "start_time": self.start_time.isoformat(),
-            "end_time": datetime.now().isoformat(),
-            "duration_ms": round(duration_ms, 2),
-            "final_status": final_status,
-            # 2.4.0: ``None`` for a full run; the ``--only`` target name for an
-            # ``--only`` run. The snapshot loader (``_iter_workflow_traces``)
-            # excludes any trace where this is non-null — an ``--only`` run is
-            # not a coherent full-run snapshot.
-            "only_node": self.only_node,
-            "nodes_executed": len(self._top_level_events()),
-            "nodes_failed": len(failed_node_ids),
-            "failed_node_ids": failed_node_ids,
-            "nodes": self.events,
-        }
-
-        # Add LLM summary by recursively scanning tree-structured events
-        llm_summary = self._collect_llm_summary(self.tree())
-        if llm_summary["total_calls"] > 0:
-            trace_data["llm_summary"] = llm_summary
-
-        # Add runtime warnings (e.g., API warnings, batch degradation)
-        if self.execution_warnings:
-            trace_data["warnings"] = self.execution_warnings
-
-        # Add JSON output if it was generated (e.g., when --output-format json was used)
-        if self.json_output is not None:
-            trace_data["json_output"] = self.json_output
-
-        # Write as JSONL: a `meta` line + one `event` line per node + `run.complete`/`blobs` trailers;
-        # `load_trace_file` reconstructs the exact nested dict for every reader.
-        #   - Run-scoped (Task 172): the store is already FLAT and correlation-stamped at emit, so
-        #     `emit_flat_events_to_lines` writes those events verbatim (no re-derivation, no promotion).
-        #   - Buffer/test collectors (is_run_scoped=False): the store is a NESTED unstamped tree, so the
-        #     A-C `flatten_trace_to_lines` derives correlation + promotes sub_workflow_events at save.
-        # (Phase D streams per-event; this whole-file write is the step-2 form.)
-        lines = emit_flat_events_to_lines(trace_data) if self.is_run_scoped else flatten_trace_to_lines(trace_data)
+        # start_time (microsecond-granular) is the filename sample time — symmetric with the streaming
+        # path and preserving the #443 ``--only``-collision entropy (separate processes start at distinct
+        # microseconds; PR #459 S5: not a cross-process uniqueness guarantee).
+        timestamp = self.start_time.strftime("%Y%m%d-%H%M%S-%f")
+        filepath = trace_dir / format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
+        lines = flatten_trace_to_lines(self._build_trace_data())
         with open(filepath, "w", encoding="utf-8") as f:
             for line in lines:
                 f.write(json.dumps(line, default=str))
                 f.write("\n")
-
         return filepath
+
+    def _build_trace_data(self) -> dict[str, Any]:
+        """The full nested trace dict (meta keys + aggregates + ``nodes``) for the whole-file writer.
+
+        Shares ``_meta_fields()`` + ``_aggregates()`` with the streaming ``meta``/``run.complete`` lines so
+        the two write paths can never disagree on a field's value or scoping (e.g. ``failed_node_ids``
+        derives from ``_top_level_events()`` in both)."""
+        return {**self._meta_fields(), **self._aggregates(), "nodes": self.events}
 
     def get_trace_hook(self, node_id: str) -> Callable[[dict[str, Any]], None]:
         """Return a callable that the LLM adapter invokes around its API call.

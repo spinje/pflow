@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 INTERN_MIN_BYTES = 1024
 BLOB_SENTINEL = "$pflow_blob"
@@ -26,11 +26,13 @@ TRACE_JSONL_MARKER = "jsonl/1"
 # (`_iter_workflow_traces`), so a future head-only reader can reject `--only` traces without reading
 # to the trailer. `final_status` is NOT here — it is an end-of-run aggregate.
 _META_KEYS = ("format_version", "execution_id", "workflow_name", "workflow_path", "start_time", "only_node")
-# Correlation/line keys the flatten writer derives onto each event line; the reader strips them to
-# restore the exact nested event. A producer must never emit these at an event's top level — the
-# writer asserts this so a future collision (e.g. an OTel `kind` field, or a Phase D span id) fails
-# loud at the producing seam, not silently on a round-trip.
-_RESERVED_LINE_KEYS = frozenset({"kind", "id", "seq", "parent_id", "run_id"})
+# Correlation/line keys the writer derives onto each event line; the reader strips them to restore the
+# exact nested event. A producer must never emit these at an event's top level — the writer asserts this
+# so a future collision (e.g. an OTel `kind` field, or a Phase D span id) fails loud at the producing
+# seam, not silently on a round-trip. Task 172: `ancestor_path` (the overlay graph-join field) and
+# `port` are emit-time-stamped by the run-scoped collector and stripped on read, so disk readers see the
+# same nested dict as A-C (the overlay reads them off the LIVE stream, never the reconstructed dict).
+_RESERVED_LINE_KEYS = frozenset({"kind", "id", "seq", "parent_id", "run_id", "ancestor_path", "port"})
 
 
 def intern_blobs(trace: dict[str, Any]) -> dict[str, Any]:
@@ -85,8 +87,9 @@ def substitute_refs(obj: Any, blob_map: dict[str, str]) -> Any:
     """Replace ``{BLOB_SENTINEL: digest}`` refs in ``obj`` with their blob text.
 
     ``blob_map`` maps digest -> original string. Shared by ``resolve_blobs`` (map
-    from the trace's ``blobs`` trailer) and the future JSONL reader (map accumulated
-    from inline first-occurrence declarations). Only the ``{sentinel: real-digest}``
+    from a legacy single-object trace's ``blobs`` trailer) and the JSONL reader
+    (``reconstruct_trace_from_lines``, map accumulated from inline first-occurrence
+    ``blob`` lines). Only the ``{sentinel: real-digest}``
     shape is substituted; every other container is rebuilt structurally. ``__``-keyed
     subtrees need no special-casing: ``intern_blobs`` never mints a ref under them, so
     the sentinel shape never appears there.
@@ -103,6 +106,74 @@ def substitute_refs(obj: Any, blob_map: dict[str, str]) -> Any:
     if isinstance(obj, list):
         return [substitute_refs(child, blob_map) for child in obj]
     return obj
+
+
+def intern_event_leaves(  # noqa: C901 — a recursive container walk (mirrors intern_blobs); one branch over
+    obj: dict[str, Any],
+    declared: set[str],
+    emit_blob: Callable[[str, str], None],
+) -> dict[str, Any]:
+    """First-occurrence interning for streaming/incremental writers (Task 172 D3).
+
+    Returns a COPY of ``obj`` with large string leaves (>= ``INTERN_MIN_BYTES``) replaced by
+    ``{BLOB_SENTINEL: digest}`` refs. For each digest not already in ``declared``, calls
+    ``emit_blob(digest, value)`` and records it in ``declared`` — so a blob is written exactly once,
+    and (because the caller emits the blob line BEFORE the line that first references it) every ref is
+    **backward-only**. That backward-only property is what makes a crash-truncated tail self-consistent
+    for a forward tailer (Task 173). Skips ``__``-prefixed subtrees, mirroring :func:`intern_blobs`
+    (``resolve``/``substitute_refs`` never expect a ref there). The streaming counterpart of
+    ``intern_blobs``: where ``intern_blobs`` interns a whole tree into one trailer map, this interns one
+    object against an accumulating ``declared`` set so per-event flushes and the whole-file writers share
+    ONE representation. Pure w.r.t. ``obj`` (every container is rebuilt; ``obj`` is never mutated)."""
+
+    def copy_without_interning(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: copy_without_interning(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [copy_without_interning(child) for child in value]
+        return value
+
+    def walk(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: copy_without_interning(child) if isinstance(key, str) and key.startswith("__") else walk(child)
+                for key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [walk(child) for child in value]
+        if isinstance(value, str):
+            encoded = value.encode("utf-8")
+            if len(encoded) >= INTERN_MIN_BYTES:
+                digest = hashlib.md5(encoded, usedforsecurity=False).hexdigest()
+                if digest not in declared:
+                    declared.add(digest)
+                    emit_blob(digest, value)
+                return {BLOB_SENTINEL: digest}
+        return value
+
+    interned = walk(obj)
+    if not isinstance(interned, dict):  # obj is a dict, so walk returns a dict — guard for the type checker
+        raise TypeError("event line must be a dict")
+    return interned
+
+
+def _inline_blobs(content_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Interleave first-occurrence ``{kind: blob}`` lines before the content lines that reference them.
+
+    The whole-file counterpart to the streaming collector's per-event interning: takes the ordered
+    content lines (``meta`` + ``event``s + ``run.complete``) and threads them through ONE accumulating
+    ``declared`` set, so a blob shared across lines is written once, before its first ref. No trailer —
+    inline ``blob`` lines are the single on-disk blob representation (Task 172), the same shape a
+    crash-truncated stream produces."""
+    declared: set[str] = set()
+    out: list[dict[str, Any]] = []
+
+    def emit_blob(digest: str, value: str) -> None:
+        out.append({"kind": "blob", "md5": digest, "value": value})
+
+    for line in content_lines:
+        out.append(intern_event_leaves(line, declared, emit_blob))
+    return out
 
 
 def resolve_blobs(trace: dict[str, Any]) -> dict[str, Any]:
@@ -129,18 +200,20 @@ def flatten_trace_to_lines(trace_data: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten a nested trace dict into ordered JSONL line objects (Task 133 Phase B).
 
     Pure: never mutates ``trace_data`` or aliases its live event dicts into the result (every
-    container is rebuilt — ``dict(ev)`` + ``intern_blobs``'s deep rebuild). Line kinds, each a JSON
+    container is rebuilt — ``dict(ev)`` + ``_inline_blobs``'s deep rebuild). Line kinds, each a JSON
     object tagged with ``kind``:
 
     - ``meta`` (first line) — the ``pflow_trace`` transport marker + run-identity keys (``_META_KEYS``).
+    - ``blob`` — an interned large string leaf (``{md5, value}``), emitted INLINE before the first line
+      that references it (Task 172; backward-only refs, the same single representation a streamed trace
+      produces — no ``blobs`` trailer).
     - ``event`` — one per node event in **DFS pre-order**; ``sub_workflow_events`` are promoted to
       their own ``event`` lines (recursively), while ``batch_items`` and everything nested under them
       stay INLINE in the host line. Carries derived ``id``/``seq``/``parent_id``/``run_id``; ``id`` IS
       ``seq`` (a fresh pre-order index — NEVER ``node_id``, which repeats across loop visits and
       sub-workflows).
-    - ``run.complete`` (trailer) — every top-level key not in ``_META_KEYS`` (generic fold, so a
+    - ``run.complete`` (last) — every top-level key not in ``_META_KEYS`` (generic fold, so a
       conditional key like ``json_output`` is never dropped).
-    - ``blobs`` (trailer) — the interned blob map (possibly empty).
 
     Correlation is derived from the existing nesting at save time, single-threaded; spike #2's
     no-lock concern is a Phase D (emit-time) matter and does not apply here.
@@ -186,47 +259,9 @@ def flatten_trace_to_lines(trace_data: dict[str, Any]) -> list[dict[str, Any]]:
     }
     run_complete["kind"] = "run.complete"
 
-    # Intern across meta + events + trailer in one pass (a large json_output lives in the trailer),
-    # then split back into lines. intern_blobs is shape-agnostic and emits a "blobs" trailer.
-    interned = intern_blobs({"meta": meta, "events": events, "run_complete": run_complete})
-    blob_map = interned.pop("blobs")
-    return [
-        interned["meta"],
-        *interned["events"],
-        interned["run_complete"],
-        {"kind": "blobs", "blobs": blob_map},
-    ]
-
-
-def emit_flat_events_to_lines(trace_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """JSONL lines for a trace whose ``nodes`` are ALREADY flat + correlation-stamped.
-
-    The Task 172 emit-time counterpart to :func:`flatten_trace_to_lines`. Where ``flatten`` walks a
-    NESTED tree at save time — deriving ``id``/``seq``/``parent_id``/``run_id`` and promoting
-    ``sub_workflow_events`` to child lines — this takes events the run-scoped collector already stamped
-    at emit and writes them VERBATIM as ``event`` lines (only adding ``kind``). Sequential sub-workflow
-    children are already flat with their own ``parent_id``; ``batch_items`` stay inline (v1 does not
-    promote them). Same ``meta`` + ``run.complete`` + ``blobs`` trailer shape, so ``load_trace_file``
-    reconstructs identically. Pure: copies each event, never mutates ``trace_data`` or aliases its dicts.
-    """
-    meta: dict[str, Any] = {"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER}
-    for key in _META_KEYS:
-        if key in trace_data:
-            meta[key] = trace_data[key]
-    events = [{**dict(ev), "kind": "event"} for ev in trace_data.get("nodes", []) if isinstance(ev, dict)]
-    run_complete: dict[str, Any] = {
-        key: value for key, value in trace_data.items() if key not in _META_KEYS and key not in ("nodes", "blobs")
-    }
-    run_complete["kind"] = "run.complete"
-
-    interned = intern_blobs({"meta": meta, "events": events, "run_complete": run_complete})
-    blob_map = interned.pop("blobs")
-    return [
-        interned["meta"],
-        *interned["events"],
-        interned["run_complete"],
-        {"kind": "blobs", "blobs": blob_map},
-    ]
+    # Inline-first-occurrence blobs across meta + events + run.complete in document order (a large
+    # json_output lives in run.complete) — ONE blob representation, no trailer (Task 172).
+    return _inline_blobs([meta, *events, run_complete])
 
 
 def _partition_trace_lines(
@@ -249,9 +284,17 @@ def _partition_trace_lines(
             event_lines.append(line)
         elif kind == "run.complete":
             run_complete = line
-        elif kind == "blobs":
-            blobs = line.get("blobs")
-            blob_map = blobs if isinstance(blobs, dict) else {}
+        elif kind == "blob":
+            # Task 172 inline-first-occurrence blob (singular). The map is accumulated across ALL blob
+            # lines before substitution, so file order is immaterial to the reader (it matters only to a
+            # forward tailer / crash-truncation, which the writer guarantees by emitting backward-only).
+            md5, value = line.get("md5"), line.get("value")
+            if not (isinstance(md5, str) and isinstance(value, str)):
+                # A valid-JSON blob line missing its md5/value is corruption — raise rather than skip,
+                # or a later event's $pflow_blob ref would silently survive unresolved (the same
+                # "corrupt = visible JSONDecodeError, never silent-wrong" rule as the unknown-kind arm).
+                raise json.JSONDecodeError("blob line missing string md5/value", "", 0)
+            blob_map[md5] = value
         else:
             raise json.JSONDecodeError(f"unknown trace line kind {kind!r}", "", 0)
     if meta is None:
@@ -259,27 +302,45 @@ def _partition_trace_lines(
     return meta, run_complete, blob_map, event_lines
 
 
-def _rebuild_event_tree(event_lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Rebuild the nested ``nodes`` tree from flat event lines via ``(id, parent_id)`` + ``seq`` order.
+def _rebuild_event_tree(event_lines: list[dict[str, Any]], *, is_incomplete: bool = False) -> list[dict[str, Any]]:
+    """Rebuild the nested ``nodes`` tree from flat event lines — TWO passes (Task 172).
 
-    Strips the five derived correlation keys; re-nests children under their host's
-    ``sub_workflow_events`` (omitted when empty). An orphan ``parent_id`` or a line missing its
-    correlation fields is corruption → ``json.JSONDecodeError``.
+    One mechanism serving three Phase-D needs (dead-end re-flush, crash-tail recovery, host-after-ascend
+    ordering): flush order is immaterial because we sort by ``seq`` and dedup by ``id``.
+
+    - **Pass 1 — dedup by id, last-wins.** A re-emitted correction (``mark_last_event_failed`` re-flushes
+      the same ``id`` with ``status="failed"``) replaces the original, so it appears exactly once.
+    - **Pass 2 — link in ``seq`` order.** ``seq`` is reserved at host descent, so ``parent.seq <
+      child.seq`` always holds → a parent is linked before its children. Strips the reserved correlation
+      keys; re-nests children under their host's ``sub_workflow_events`` (omitted when empty).
+
+    Orphan policy depends on completeness: in an **incomplete** trace (no ``run.complete`` — a crash) a
+    dangling ``parent_id`` drops that child WITHOUT inserting it into ``by_id``, so its descendants dangle
+    and drop too (TRANSITIVE) — recovering everything well-formed before a crash-mid-sub-workflow. In a
+    **complete** trace the same dangling ``parent_id`` is corruption → ``json.JSONDecodeError`` (today's
+    behavior, so the 3 readers skip rather than silently drop real data).
     """
     nodes: list[dict[str, Any]] = []
     by_id: dict[Any, dict[str, Any]] = {}
     try:
-        for ev in sorted(event_lines, key=lambda e: e["seq"]):
+        deduped: dict[Any, dict[str, Any]] = {}
+        for ev in event_lines:
+            deduped[ev["id"]] = ev  # last-wins: a re-flushed correction replaces the original
+        for ev in sorted(deduped.values(), key=lambda e: e["seq"]):
             clean = {key: value for key, value in ev.items() if key not in _RESERVED_LINE_KEYS}
-            by_id[ev["id"]] = clean
             parent_id = ev["parent_id"]
             if parent_id is None:
+                by_id[ev["id"]] = clean
                 nodes.append(clean)
                 continue
             parent = by_id.get(parent_id)
-            if parent is None:
+            if parent is not None:
+                by_id[ev["id"]] = clean
+                parent.setdefault("sub_workflow_events", []).append(clean)
+            elif is_incomplete:
+                continue  # transitive drop: NOT inserted into by_id, so descendants also dangle and drop
+            else:
                 raise json.JSONDecodeError(f"orphan event: parent_id {parent_id!r} not found", "", 0)
-            parent.setdefault("sub_workflow_events", []).append(clean)
     except (KeyError, TypeError) as exc:
         raise json.JSONDecodeError(f"corrupt trace event line: {exc}", "", 0) from exc
     return nodes
@@ -290,24 +351,19 @@ def reconstruct_trace_from_lines(lines: list[dict[str, Any]]) -> dict[str, Any]:
 
     Corruption raises ``json.JSONDecodeError`` so the three trace-content readers degrade/skip rather
     than surface a half-built dict (Task 133 B/C-checkpoint: "corrupt" must be a distinct, visible
-    state, never silent-wrong-output). A cleanly-parsed but trailer-less line set (the ``run.complete``
-    line is absent) is reconstructed with ``final_status="incomplete"`` — NOT defaulted to success — so
-    the snapshot loader and analyze-cache autoload reject it instead of treating it as a reusable run.
-
-    Scope (A-C): this operates on already-parsed lines. At the byte layer ``load_trace_file`` parses
-    every line eagerly, so a crash that truncates the *final* line raises ``JSONDecodeError`` and the
-    whole trace is skipped rather than reconstructed-as-incomplete — and today's all-at-once
-    ``save_to_file`` writes the trailer in the same end-of-run flush, so trailer-less files are rare.
-    Robust crash-tail tolerance (drop only a truncated final line) lands with Phase D streaming +
-    inline-first-occurrence blobs (Task 172), where the trailing line is an event/``run.complete`` and
-    crash-tails become the common case.
+    state, never silent-wrong-output). A cleanly-parsed but ``run.complete``-less line set (a crash, or a
+    truncated final line dropped by ``load_trace_file``) is reconstructed with
+    ``final_status="incomplete"`` — NOT defaulted to success — and its dangling sub-workflow children are
+    dropped transitively (``_rebuild_event_tree(is_incomplete=True)``), so the snapshot loader and
+    analyze-cache autoload reject it as non-reusable while still recovering everything well-formed.
     """
     meta, run_complete, blob_map, event_lines = _partition_trace_lines(lines)
     trace: dict[str, Any] = {key: value for key, value in meta.items() if key not in ("kind", "pflow_trace")}
     trace.update({key: value for key, value in run_complete.items() if key != "kind"})
-    if not run_complete:  # crash-tail: no trailer was written
+    is_incomplete = not run_complete
+    if is_incomplete:  # crash-tail: no run.complete line was written
         trace.setdefault("final_status", "incomplete")
-    trace["nodes"] = _rebuild_event_tree(event_lines)
+    trace["nodes"] = _rebuild_event_tree(event_lines, is_incomplete=is_incomplete)
     return substitute_refs(trace, blob_map) if blob_map else trace
 
 
@@ -317,6 +373,13 @@ def load_trace_file(path: Path) -> Any:
     Detects the new JSONL transport positively: if the first line is a JSON object carrying the
     ``pflow_trace`` marker, reconstruct from JSONL; otherwise fall back to the legacy single-object
     path (``resolve_blobs``). Old ``~/.pflow/debug`` traces keep working (dual-read).
+
+    Crash-tail tolerance (Task 172 D3): a hard crash during a streamed run can leave a half-written
+    FINAL line (no closing brace). Drop ONLY that truncated last line and reconstruct-as-incomplete
+    (``final_status="incomplete"``) — inline-first-occurrence blobs make the trailing line an
+    event/``run.complete``, and backward-only refs mean a dropped tail never strands a blob. A malformed
+    line anywhere EARLIER is real corruption and still raises ``json.JSONDecodeError`` (the 3 readers
+    skip the whole trace) — never a silently-dropped middle event.
     """
     text = path.read_text(encoding="utf-8")
     stripped = text.lstrip()
@@ -327,7 +390,16 @@ def load_trace_file(path: Path) -> Any:
         except json.JSONDecodeError:
             head = None
         if isinstance(head, dict) and head.get("pflow_trace"):
-            return reconstruct_trace_from_lines([json.loads(ln) for ln in stripped.splitlines() if ln.strip()])
+            raw_lines = [ln for ln in stripped.splitlines() if ln.strip()]
+            parsed: list[dict[str, Any]] = []
+            for index, raw in enumerate(raw_lines):
+                try:
+                    parsed.append(json.loads(raw))
+                except json.JSONDecodeError:
+                    if index == len(raw_lines) - 1:
+                        break  # tolerate a single truncated FINAL line (crash-tail) → reconstruct incomplete
+                    raise  # a malformed EARLIER line is corruption, not a crash-tail
+            return reconstruct_trace_from_lines(parsed)
     data = json.loads(text)
     if isinstance(data, dict):
         return resolve_blobs(data)

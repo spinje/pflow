@@ -258,6 +258,15 @@ def disable_trace_file_writes_by_default(monkeypatch, request):
     Runtime tests still get an in-memory ``WorkflowTraceCollector`` via
     ``ExecutionResult.trace``. Only the expensive side effect of writing JSON
     into ``~/.pflow/debug`` is disabled by default.
+
+    Task 172 streaming: a run-scoped collector now flushes one JSONL line per node
+    DURING the run (``record_node_execution`` → ``_flush_event`` → ``_open_stream``),
+    so disabling ``save_to_file`` alone is no longer enough — without gating the
+    lazy stream-open too, every non-``trace_files`` workflow run would write a real
+    streamed file. ``_open_stream`` is the single entry point both per-event flush
+    and ``finalize()`` route through, so no-op'ing it (``self._stream`` stays
+    ``None``) makes both short-circuit. The ``save_to_file`` no-op still covers the
+    buffer/test whole-file path (which opens its own handle, not via ``_open_stream``).
     """
     if request.node.get_closest_marker("trace_files"):
         yield
@@ -268,7 +277,11 @@ def disable_trace_file_writes_by_default(monkeypatch, request):
     def _skip_save_to_file(_self):
         return None
 
+    def _skip_open_stream(_self):
+        return None
+
     monkeypatch.setattr(WorkflowTraceCollector, "save_to_file", _skip_save_to_file)
+    monkeypatch.setattr(WorkflowTraceCollector, "_open_stream", _skip_open_stream)
     yield
 
 
