@@ -510,3 +510,19 @@ and crash-tail (prefix recovered) all assert discriminating values. The `port: n
 deep-review 5), edge-cases + Piece-5/6 audited, consumers verified, and the two highest-value silent-wrong-bug
 guards added (mutation-proven). Commits: `75dafe41` (producer) · `fd24fac3` (consumer verify + MCP docs) ·
 `97d8fa93` (edge cases) · `33b018f3` (audit log) · + this round.
+
+---
+
+## 2026-06-22 — TASK COMPLETE: review, status, PR
+
+- **Task review written** → `.taskmaster/tasks/task_172/task-review.md` (the distilled forward-reference for the
+  next agent: invariants, patterns, gotchas, integration, and the mutation-verified tests-that-matter). This
+  progress log holds the *journey*; the review is the durable layer on top.
+- **Spec marked done** → `task-172.md` Status `done`, Completed `2026-06-22`.
+- **PR opened** → **https://github.com/spinje/pflow/pull/530** (`feat: streamable trace — emit-time per-event
+  producer (Task 172)`), base `main`, 7 commits (`d9d4c53c`..HEAD), 48 files +4042/-464. No dedicated GitHub
+  issue exists for Task 172 (taskmaster-tracked); related to the consumer-side foundation #529 (not closed by
+  this PR). The producer now unblocks **Task 169** (SSE transport) and **Task 173** (live overlay consumer),
+  which are the real validators of the streamed shape.
+- **Honest residual (unchanged):** the producer is shipped ahead of its consumer (Task 173), so final
+  shape-validation against a live tailer is pending — no producer-side testing can close that.
