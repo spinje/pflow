@@ -19,7 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from pflow.core.trace_io import load_trace_file
+from pflow.core.markdown_parser import parse_markdown
+from pflow.core.trace_io import BLOB_SENTINEL, load_trace_file, substitute_refs
+from pflow.core.workflow.graph import build_graph, render_react_flow
+from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution import WorkflowRunner
 from pflow.execution.result import RunnerConfig
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
@@ -1030,3 +1033,183 @@ def test_runner_finalizes_a_complete_trace_when_the_run_fails(tmp_path, monkeypa
     loaded = load_trace_file(files[0])
     assert loaded["final_status"] == "failed"  # complete trailer reflecting the failure, NOT "incomplete"
     assert loaded["failed_node_ids"] == ["boom"]
+
+
+# --- The consumer's-eye wire contract (Task 173) ---------------------------------------------------
+# These two tests read the RAW streamed JSONL exactly as Task 173's server-side tailer will — NOT through
+# load_trace_file. They pin the producer-side-testable slice of the consumer contract, which had no guard:
+# every other test reads ancestor_path off in-memory ``collector.events`` (never stripped) or asserts it
+# ABSENT after ``load_trace_file`` (which strips the reserved join keys). A regression in the strip set,
+# the emit-time stamping, blob emission ORDER, or the re-flush id would keep the whole suite green while
+# silently breaking the bytes the live overlay depends on. (See task_172 progress-log 2026-06-23.)
+
+
+@pytest.mark.trace_files
+def test_streamed_wire_is_joinable_and_blob_resolvable_by_a_tailer(tmp_path, mock_llm_client, monkeypatch):
+    """A tailer reading the RAW lines can (a) join each event onto the static graph via
+    ``(node_id, ancestor_path)`` and (b) resolve every blob ref from a single forward walk — no trailer.
+
+    THE uncovered coverage: ancestor_path (the overlay's join key) is in ``_RESERVED_LINE_KEYS``, so the
+    post-hoc reader STRIPS it — the obvious "reuse load_trace_file for the tailer" move destroys the very
+    field the overlay joins on. This asserts the key survives onto the wire (present + correct, incl. a
+    nested sub-workflow child), contrasts it against the stripped reconstruct, and proves blobs resolve
+    backward-only with no ``blobs`` trailer.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    big = "WIRE-" + ("z" * 2000)  # > INTERN_MIN_BYTES (1024) → interned to an inline `blob` line
+    mock_llm_client.set_response(MODEL, None, {"response": big}, cost_usd=0.01)
+
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\nChild workflow with one LLM node.\n\n## Steps\n\n"
+        "### child-llm\n\nGenerate child text.\n\n- type: llm\n- model: "
+        + MODEL
+        + "\n- prompt: child please respond\n",
+        encoding="utf-8",
+    )
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        "# Parent\n\nTop LLM then a sub-workflow.\n\n## Steps\n\n"
+        "### top-llm\n\nGenerate top text.\n\n- type: llm\n- model: " + MODEL + "\n- prompt: top please respond\n\n"
+        "### call-child\n\nDelegate to the child.\n\n- type: workflow\n- workflow: " + str(child) + "\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(parent), {}, config=RunnerConfig(cache_enabled=False))
+    assert result.success
+    path = result.trace.finalize()  # idempotent — the runner already finalized this streamed file
+
+    # A minimal tailer: ONE forward pass over the raw lines, exactly as Task 173's server does.
+    blob_map: dict[str, str] = {}
+    joined: dict[tuple, dict] = {}  # (node_id, ancestor_path) -> resolved event — the overlay's join index
+    events_raw: list[dict] = []
+    blob_lines = 0
+    for ln in _read_lines(path):
+        assert ln["kind"] != "blobs", "no `blobs` trailer on the wire — blobs are inline first-occurrence lines"
+        if ln["kind"] == "blob":
+            blob_map[ln["md5"]] = ln["value"]
+            blob_lines += 1
+        elif ln["kind"] == "event":
+            events_raw.append(ln)
+            assert "ancestor_path" in ln and "port" in ln, (
+                f"event {ln['node_id']!r} is missing a join key on the wire — the overlay can't join it"
+            )
+            resolved = substitute_refs(ln, blob_map)  # resolve against the map built SO FAR
+            assert BLOB_SENTINEL not in json.dumps(resolved), (
+                f"event {ln['node_id']!r} referenced a blob not yet declared — refs must be backward-only"
+            )
+            key = (ln["node_id"], tuple((s["node_id"], s["batch_index"]) for s in ln["ancestor_path"]))
+            joined[key] = resolved
+
+    # (a) The JOIN KEY survives onto the wire — the nested child joins at its real descent path (the exact
+    #     field load_trace_file would strip). port is null on every body event (the v1 join contract).
+    assert ("top-llm", ()) in joined and ("call-child", ()) in joined, "top-level events carry an empty ancestor_path"
+    child_key = ("child-llm", (("call-child", None),))
+    assert child_key in joined, "the nested child must be joinable by (node_id, ancestor_path) off the raw stream"
+    assert all(e["port"] is None for e in events_raw), "port is null on every body event"
+
+    # (b) Blobs resolve from the forward walk alone: the shared >1KB payload is declared ONCE and the
+    #     nested child resolves it — proving a tailer never needs the (now-removed) trailer.
+    assert blob_lines == 1, "the shared payload is declared exactly once (cross-event backward-only dedup)"
+    assert big in json.dumps(joined[child_key]), "the child's blob ref resolved to the full payload"
+
+    # Contrast — the executable form of "a tailer must NOT reuse load_trace_file": the reconstruct STRIPS
+    # the join key, so the same child read post-hoc cannot be joined onto the graph.
+    disk = load_trace_file(path)
+    host = next(n for n in disk["nodes"] if n["node_id"] == "call-child")
+    disk_child = host["sub_workflow_events"][0]
+    assert disk_child["node_id"] == "child-llm"
+    assert "ancestor_path" not in disk_child and "port" not in disk_child, (
+        "the post-hoc reader strips the join key — the tailer must read the raw stream, not the reconstruct"
+    )
+
+
+@pytest.mark.trace_files
+def test_streamed_wire_dead_end_correction_is_last_wins_by_id_for_a_tailer(tmp_path, monkeypatch):
+    """A routing dead-end re-flushes the SAME event with a corrected status → TWO ``event`` lines sharing
+    one ``id`` on the wire. So a live SSE consumer must key on ``id`` and last-wins-UPDATE, never append —
+    else it renders a duplicate node and shows the dead-ended node as success.
+
+    ``load_trace_file``'s two-pass dedup hides the duplicate from every existing test (which assert via the
+    reader or on node_id). This pins the wire fact — the shared ``id`` is the stable dedup KEY — and proves
+    a tailer's own last-wins-by-id fold reproduces the reader's verdict.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("t", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    c.record_node_execution("a", "ShellNode", 1.0, True, node_output={"v": 1})  # flushed status=success
+    c.mark_last_event_failed("a", error="no successor edge matches")  # re-flushes the SAME id, status=failed
+    path = c.finalize()
+
+    a_lines = [ln for ln in _read_lines(path) if ln["kind"] == "event" and ln["node_id"] == "a"]
+    assert len(a_lines) == 2, "the correction is a second wire line, not an in-place edit"
+    assert a_lines[0]["id"] == a_lines[1]["id"] == a_lines[0]["seq"], (
+        "both lines share one id/seq — the stable dedup KEY a tailer must use (NOT node_id, NOT append order)"
+    )
+    assert [ln["status"] for ln in a_lines] == ["success", "failed"]
+
+    # A tailer keying on `id` with last-wins reproduces the reader's verdict — the consumer's dedup rule
+    # == the reader's two-pass dedup.
+    by_id = {ln["id"]: ln for ln in _read_lines(path) if ln["kind"] == "event"}  # last-wins
+    assert by_id[a_lines[0]["id"]]["status"] == "failed"
+    assert load_trace_file(path)["failed_node_ids"] == ["a"]
+
+
+def _ref_tuple(node_id: str, ancestor_path: list[dict], port) -> tuple:
+    """The structural join key, in the exact shape ``web/src/graph/remap.ts::sameRef`` compares."""
+    return (node_id, tuple((s["node_id"], s["batch_index"]) for s in ancestor_path), port)
+
+
+@pytest.mark.trace_files
+def test_runtime_event_refs_join_onto_the_static_graph(tmp_path, monkeypatch):
+    """ADR-0003 Runtime Overlay Join Contract — the highest-value producer↔consumer pin.
+
+    The producer's emit-time ``ancestor_path`` and the renderer's ``RFRef.ancestor_path`` are INDEPENDENT
+    derivations of the same path (producer ← the host-descent stack; renderer ← the IR). The overlay lights a
+    node by joining ``(node_id, ancestor_path, port)`` via ``sameRef``. If the two derivations DRIFT — a wrong
+    ``batch_index``, an extra/missing step, a qualified-vs-bare ``node_id`` — the join silently fails: the node
+    never lights up and NOTHING raises. The producer suite AND the renderer suite both stay green. This is the
+    only end-to-end check that the bytes the producer emits actually join onto the graph the overlay draws.
+
+    Runtime ⊆ graph: a node that RAN must join; the converse need not hold (batch internals are inline in v1,
+    untaken branches don't run). Shell nodes — node TYPE is irrelevant; only the (node_id, ancestor_path)
+    structure is under test.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\nChild wf.\n\n## Steps\n\n### child-step\n\nEcho.\n\n- type: shell\n- command: echo hi\n",
+        encoding="utf-8",
+    )
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        "# Parent\n\nTop then a sub-workflow.\n\n## Steps\n\n"
+        "### top-step\n\nEcho.\n\n- type: shell\n- command: echo top\n\n"
+        "### call-child\n\nDelegate to the child.\n\n- type: workflow\n- workflow: " + str(child) + "\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(parent), {}, config=RunnerConfig(cache_enabled=False))
+    assert result.success
+
+    # The static graph the overlay draws and joins against — the SAME workflow, rendered independently.
+    ir = parse_markdown(parent.read_text(encoding="utf-8")).ir
+    graph = build_graph(
+        ir, resolve_child=resolve_sub_workflow, base_path=parent.parent, source_file=parent, max_depth=5
+    )
+    graph_refs = {_ref_tuple(n.ref.node_id, n.ref.ancestor_path, n.ref.port) for n in render_react_flow(graph).nodes}
+
+    # Runtime refs read off the RAW wire — exactly what Task 173's tailer feeds into sameRef.
+    runtime_refs = [
+        _ref_tuple(ln["node_id"], ln["ancestor_path"], ln["port"])
+        for ln in _read_lines(result.trace.finalize())
+        if ln["kind"] == "event"
+    ]
+
+    unjoined = [r for r in runtime_refs if r not in graph_refs]
+    assert not unjoined, (
+        f"runtime events that DON'T join onto any static-graph node (overlay never lights them): {unjoined}"
+    )
+    # Not a vacuous all-top-level pass: the sub-workflow child must join via a NON-EMPTY ancestor_path on BOTH sides.
+    child_ref = ("child-step", (("call-child", None),), None)
+    assert child_ref in runtime_refs, "the producer must emit the nested child's descent path"
+    assert child_ref in graph_refs, "the renderer must expose the same descent path (the join target)"

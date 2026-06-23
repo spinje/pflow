@@ -705,3 +705,51 @@ the baseline expected files (git-confirmed). Root-caused the pre-existing drift:
 regenerated since. Proved 100% key-driven (same case: 4 "Missing API key" lines keyless → 0 with a key,
 matches expected). Filed **https://github.com/spinje/pflow/issues/532** (Option A recommended: make the
 harness key-aware, then `regenerate.sh`). Independent of Task 172; left for a Task-159 harness fix.
+
+---
+
+## 2026-06-23 — Pre-merge handoff: consumer wire-contract tests + D1 fix + Task 173 braindump
+
+Before merging, stepped back on "what does the next task (173) MISS by reading only `task-review.md`?" The
+review is **producer-centric** (how to safely MODIFY the producer); Task 173 is a **consumer** (how to READ
+the wire). The gap: the consumer-facing contract — and the doc meant to carry it (**D1**) was **stale vs.
+what shipped**. Closed it three ways (suite green, `make check` clean, **0 src changes — all test-only**):
+
+- **3 new consumer's-eye tests** (`tests/test_runtime/test_emit_time_trace.py`), each **mutation-verified**
+  (reverted prod behavior → test fails with a clean message; reverted → green). They read the **RAW** streamed
+  lines exactly as a tailer will (NOT via `load_trace_file`), pinning the producer-side-testable slice of the
+  173 contract that had **zero** coverage (every prior `ancestor_path` assertion reads in-memory
+  `collector.events`, never the stripped-on-read disk path):
+  - **`test_runtime_event_refs_join_onto_the_static_graph`** — THE headline. The producer's emit-time
+    `ancestor_path` and the renderer's `RFRef.ancestor_path` are **two independent derivations**; the overlay's
+    `sameRef` join silently fails (node never lights, nothing raises) if they drift. Runs a real sub-workflow,
+    renders the same workflow's graph, asserts every runtime event joins (runtime ⊆ graph) incl. the nested
+    child via a non-empty `ancestor_path`. Verified the contract holds live with a probe first; mutation
+    (`batch_index 0`) → `('child-step', (('call-child', 0),), None)` won't join → fails. This pins ADR-0003's
+    Runtime Overlay Join Contract end-to-end — untested before.
+  - **`test_streamed_wire_is_joinable_and_blob_resolvable_by_a_tailer`** — join key present on the wire +
+    blobs resolve backward-only from a forward walk (no trailer) + the strip-contrast (`load_trace_file`
+    strips the join key → "tailer must read raw").
+  - **`test_streamed_wire_dead_end_correction_is_last_wins_by_id_for_a_tailer`** — a re-flush repeats an `id`
+    on the wire → consumer must key-on-`id`/last-wins, never append.
+  - *Rejected as low-value (NOT added — anti-coverage-padding):* in-memory sub-workflow cost (already pinned by
+    the disk literal + `test_collect_llm_calls_sub_workflow` + the cached-inside test), top-level scoping /
+    crash-tail / prompt-bleed (already mutation-pinned), and 164/125 contracts (speculative — no consumer yet).
+    Shallow-test sweep found nothing warranting removal (the 2026-06-23 audit already concluded this; the only
+    mild spot — `port is None` — now has teeth via the join test matching on `port`).
+- **D1 schema fixed to as-built** (`task_133/design/d1-event-schema.md`) — it was the doc ADR-0008 + `task-173.md`
+  both call "the contract," and it still described the PRE-172 shape: a `blobs` trailer (→ inline `blob` lines),
+  `status` as an "open decision" (→ SHIPPED enum), `success: bool` on events (→ gone), `success=false`
+  consumer-derivation (→ read `status`), `meta` "known at start" (→ lazy-open + eager-`meta` deferral noted).
+  Status header, trust boundary, line-kinds, §c, consumer-derivation, producer notes, deferred, references all
+  corrected. Left the genuinely-still-open consumer-derivation framing as draft-pending-overlay.
+- **Consumer-handoff braindump** (`task_173/starting-context/braindump-producer-handoff-2026-06-23.md`) — the
+  tailer trap list a producer review can't carry: read-raw-not-`load_trace_file`, truncated-final-line-is-normal,
+  `incomplete`-is-live, inline-backward-only-blob resolution, same-`id`-last-wins, the two-derivation join risk,
+  MCP-doesn't-stream, and eager-`meta` as 173's first (scoped) producer change.
+
+**eager-`meta` decision: kept deferred to 173** (NOT pulled into this PR) — it's a behavior change whose
+`report.py`/analyze-cache ripple guards are best validated against the actual consumer. Three prior decisions
+(progress log, GH #531, `task-173.md`) already converged on this; not reversed.
+
+Trace oracle `-m trace_files` **190 → 193** (the +3), `make check` clean, `git diff src/` **empty**.

@@ -1,10 +1,17 @@
-# D1 — Run-Event Schema (DRAFT)
+# D1 — Run-Event Schema
 
-> **Status: DRAFT.** Validated *skeleton-first* against the live overlay (the real consumer) before
-> pinning — see ADR-0008. **The on-disk JSONL format from Task 133 A–C does NOT change here.** D1 is the
-> same line shape, with correlation assigned at *emit* time (Phase D) and **one new join field**
-> (`ancestor_path`). The span *taxonomy* (separate `llm`/`gate` events, `node.start`, batch-item
-> promotion) is deferred until the shipped overlay validates it.
+> **Status: producer SHIPPED (Task 172, PR #530); consumer-derivation pending the live overlay (Task 173).**
+> The producer/disk facts below are **as-built and pinned by tests** (`tests/test_runtime/test_emit_time_trace.py`,
+> `tests/test_core/test_trace_io.py`, `-m trace_files`). The *consumer-derivation* contract (how the overlay
+> maps events → display state + the `sameRef` join) is still validated skeleton-first against the real overlay
+> before final pinning — see ADR-0008.
+>
+> **The on-disk JSONL shape DID change from Task 133 A–C** (bounded, no-back-compat — there are no external
+> readers): per-node `status` **enum** replaces `success: bool`+`cached`; blobs are **inline first-occurrence
+> `blob` lines** (no `blobs` trailer); `ancestor_path`/`port` are emit-stamped (stripped on read); correlation
+> is assigned at *emit* time and the file **streams** one line per node as the run executes. The span
+> *taxonomy* (separate `llm`/`gate` events, `node.start`, batch-item promotion) is deferred until the shipped
+> overlay validates it.
 
 ## Why this exists
 
@@ -15,20 +22,23 @@ renderers."
 
 ## Trust boundary
 
-- **Verified against current code** (this session's probes; file:line in each): the A–C line structure
-  and every payload field below.
-- **Decided now:** `ancestor_path` as the graph-join field (stripped on read); the in-memory store goes
-  **flat (events carry `id`/`seq`/`parent_id`) with a derived `tree()` view**; v1 streams at **node
-  granularity** (batch items inline).
-- **Open (low-stakes, producer task):** whether to promote `success: bool`+`cached` to an explicit
-  per-node `status` enum (see §c).
+- **As-built (Task 172), pinned by tests:** the line structure, the `status` enum, inline `blob` lines,
+  emit-time correlation, and `ancestor_path` on the wire.
+- **Shipped:** `ancestor_path` as the graph-join field (stripped on read); the in-memory store is **flat
+  (events carry `id`/`seq`/`parent_id`) with a derived `tree()` view**; v1 streams at **node granularity**
+  (batch items inline); per-node `status` is an explicit **enum** (`success`/`cached`/`failed`) — the
+  one-time `~15-site` reader migration is done.
+- **Pending the live overlay (Task 173):** the consumer-derivation contract (display-state mapping + the
+  `sameRef` join) — pinned producer-side by `test_runtime_event_refs_join_onto_the_static_graph`, but the
+  end-to-end overlay rendering is the final validator.
 - **Deferred** (pin against the shipped overlay): the span taxonomy + the OTel exporter (see end).
 
 ## The model in one sentence
 
-One JSON object per line: a `meta` line, then one `event` line per node execution (emit order), then
-`run.complete` and `blobs` trailer lines. (A–C already writes exactly this; D1 changes *when* correlation
-is assigned and *adds the join field*.)
+One JSON object per line, **streamed as the run executes**: a `meta` line, then — interleaved in emit order
+— one `event` line per node execution and an inline `blob` line before the first event that references each
+large payload, then a `run.complete` trailer at finalize. (No `blobs` trailer: blobs are inline and
+backward-only, so a forward tailer / crash-truncated prefix stays self-consistent.)
 
 ---
 
@@ -38,14 +48,20 @@ is assigned and *adds the join field*.)
 
 | `kind` | Role | Notes |
 |---|---|---|
-| `meta` | run identity, known at start | first line |
+| `meta` | run identity, first line | written **lazily on first node completion** in v1 — see caveat |
 | `event` | one node execution | the bulk; see below |
+| `blob` | one interned payload | **inline**, `{kind, md5, value}`, written **before** the first event that references it (backward-only); replaces the A–C `blobs` trailer |
 | `run.complete` | run aggregates | trailer; **absence = crash-tail** (the resume discriminator) |
-| `blobs` | interned blob map | trailer; `{md5: str}` |
 
-**`meta`** (verbatim `_META_KEYS`, `trace_io.py:28`): `format_version`, `execution_id` (**= `run_id`**),
-`workflow_name`, `workflow_path`, `start_time`, `only_node`. (`only_node` rides *here*, not the trailer,
-so a head-only reader can reject `--only` traces early.)
+> **⚠ meta is written LAZILY (v1).** The producer opens the file on the **first node completion**
+> (`_open_stream` ← `_flush_event`), not at run start — so a still-running first node (e.g. a 30 s LLM call)
+> is **undiscoverable until it finishes**, and a crash mid-first-node leaves no file. The eager-`meta`-at-run-start
+> fix is a small Task 172 follow-up scoped to Task 173 (it ripples to `report.py` newest-by-mtime + analyze-cache
+> disclosure, which must then guard against `meta`-only files) — see `task-173.md` Requirements.
+
+**`meta`** (verbatim `_META_KEYS`, `trace_io.py`): `format_version`, `execution_id` (**= `run_id`**),
+`workflow_name`, `workflow_path`, `start_time`, `only_node`. (`only_node` rides *here*, so a head-only reader
+can reject `--only` traces early.)
 
 **`run.complete`** (folded at finalize, `workflow_trace.py:913-948`): always `end_time`, `duration_ms`,
 `final_status` (**this is where `degraded` lives** — a *run* outcome), `nodes_executed`, `nodes_failed`,
@@ -77,7 +93,7 @@ The overlay joins each event onto the static graph's `RFRef` via `sameRef()`, wh
 |---|---|---|
 | `node_id` | already present | authored node id |
 | `ancestor_path` | **NEW** | ordered list of `{node_id, batch_index}` — one per real host descent (sub-workflow / batch). `batch_index` is the inline batch item's index, `null` for dynamic batches. |
-| `port` | implicit | **always `null`** for any traced (body) node → omittable; only never-traced IO nodes carry `"in"/"out"` |
+| `port` | emit-stamped | the producer writes `"port": null` on **every** body event (not omitted); the graph's never-traced IO nodes carry `"in"/"out"`, but no `event` ever does → the join always uses `port = null` |
 
 `ancestor_path` is **NOT derivable from anything that exists today** — there is no runtime host stack
 (`_pflow_stack` is file-path cycle detection; batch host-descent has no runtime carrier). Phase D must
@@ -94,23 +110,17 @@ records. It mirrors `NodeId.ancestor_path` (`graph/model.py`, emitted as `RFRef`
 
 ### c. Node payload (refines A–C; verified field sets)
 
-- **Always:** `node_id`, `node_type`, `duration_ms`, `success` (bool), `timestamp`.
-- **Per-node completion status** — the node's own outcome is one of **`success` / `cached` / `failed`**,
-  encoded today as `success: bool` + the `cached` flag (written *only when true*; absence = not cached) +
-  `error` (message on failure). The overlay derives the three display states from these. **`degraded` is
-  NOT a node status — it is a *run* outcome** (`run.complete.final_status`, computed from `__warnings__`):
-  a node that fails-then-recovers is `failed` at the node level, while the *run* is degraded. (Confirmed:
-  recovery is decided at engine step 17.5, *after* `record_trace` at step 16 — so an emit-time per-node
-  `degraded` isn't achievable regardless.)
-  - **Open decision (producer task):** optionally promote `success`+`cached` to an explicit `status` enum
-    (`success`/`cached`/`failed`) — one producer-set field vs. derivation repeated across readers
-    (cleaner), but a ~15-site reader migration (`trace_tree` cached-skip, ~10 `trace_report` sites,
-    `_unrecovered_failed_node_ids`, `mark_last_event_failed`, batch items) + an old-trace map on read.
-    Low-stakes; does not change this contract.
+- **Always:** `node_id`, `node_type`, `duration_ms`, `status`, `timestamp`.
+- **Per-node completion status** — `status` is an explicit **enum**: `"success" | "cached" | "failed"`
+  (SHIPPED in Task 172 — `success: bool`/`cached` no longer appear on an `event`). The consumer reads
+  `status` directly; no derivation. `error` (message) accompanies a `"failed"` status. **`degraded` is NOT
+  a node status — it is a *run* outcome** (`run.complete.final_status`, computed from `__warnings__`): a node
+  that fails-then-recovers is `"failed"` at the node level, while the *run* is degraded. (Recovery is decided
+  at engine step 17.5, *after* `record_trace` at step 16 — so an emit-time per-node `degraded` isn't
+  achievable regardless.)
 - **Conditional:** `error` (message, on failure), `node_params`, `template_resolutions`, `node_output`,
-  `mutations`, `batch_items` (inline — **v1 does not promote** them; their own `success`/`cached` ride
-  inline too), `sub_workflow_events` (on disk these become child `event` lines via `parent_id`, not an
-  inline key).
+  `mutations`, `batch_items` (inline — **v1 does not promote** them; each carries its own `status` inline
+  too), `sub_workflow_events` (on disk these become child `event` lines via `parent_id`, not an inline key).
 - **LLM siblings (conditional):** `llm_prompt` (str), `llm_system` (str | list[dict]), `llm_response`
   (str), `llm_call` (dict — below). Canonical post-#382: redundant prompt/system copies in
   `node_output`/`template_resolutions`/`node_params` are stripped.
@@ -144,11 +154,14 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
 
 ## Consumer-derivation contract (the overlay)
 
-- **Status:** the overlay maps a completed node to a display state — `failed` (`success=false`), else
-  `cached` (the `cached` flag), else `success`. **`degraded` is a run banner**, read from
-  `run.complete.final_status`, not per-node. `running` / `pending` are **inferred** from the static graph
-  (an `event` exists only on completion; there is no `node.start` in v1).
-- **Join:** match `event` → graph node by `(node_id, ancestor_path)`, `port = null`.
+- **Status:** the overlay reads the `event.status` **enum** directly (`"success" | "cached" | "failed"`) —
+  no derivation. **`degraded` is a run banner**, read from `run.complete.final_status`, not per-node.
+  `running` / `pending` are **inferred** from the static graph (an `event` exists only on completion; there
+  is no `node.start` in v1).
+- **Join:** match `event` → graph node by `(node_id, ancestor_path)`, `port = null`, via `sameRef`. **Read
+  these off the RAW stream — NOT through `load_trace_file`/`reconstruct`, which STRIPS `ancestor_path`/`port`
+  (`_RESERVED_LINE_KEYS`).** A re-flushed correction (routing dead-end) repeats an `id` → key on `id`,
+  last-wins. See the consumer-handoff braindump in `task_173/starting-context/` for the full tailer trap list.
 - **Liveness level:** L1 (per-completion) + the static graph. **Known v1 limitation:** for parallel/batch,
   the overlay can't show *which* of N is running until items complete — a per-completion flipbook there
   (the `node.start`/L2 fix is deferred). Rich detail (resolved IO, cost, tokens) comes from the event
@@ -156,26 +169,34 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
 
 ---
 
-## Producer notes (Phase D — the constraints that make this work)
+## Producer notes (Task 172 — AS-BUILT; the constraints that make this work)
 
-- **In-memory store goes flat (events carry `id`/`seq`/`parent_id`); nested is a derived view.** One
-  run-scoped collector naturally produces the flat list — and **eliminates the per-child collectors** (and
-  their child→parent embed). The nested tree is exposed via a single **`tree()` accessor** reusing A–C's
-  `_rebuild_event_tree` (which *requires* `id`/`seq`/`parent_id` on each event). In-memory readers split:
-  the **cost readers** (`collect_llm_calls` — CLI + MCP — and `_collect_llm_summary`) walk `tree()`
-  recursively (else they under-count sub-workflow cost); **`final_events_by_node`** (and the
-  status/`failed_node_ids` it feeds) must use **top-level-only scoping** (`tree()` roots / `parent_id is
-  None`) — on a flat list a child's `node_id` can overwrite a parent's → wrong `final_status`. The full
-  reader set is Phase D implementation detail.
-- **No-lock `seq` is a routing rule:** worker threads must never *call* the run-scoped collector's
-  recording/`seq` methods (the collector is reachable from a worker via the shallow-copied `shared`). They
-  route to worker-local buffers (`_batch_trace`, child events) folded in, with `seq` assigned, at the
-  **main-thread drain**. Break it and a parallel-batch-of-sub-workflows run races `seq`.
-- **Host-descent stack:** built by the collector unification; supplies emit-time `parent_id` +
-  `ancestor_path`. Lives on the run-scoped collector, not the per-child engine.
-- **Verification:** a live-engine → on-disk JSONL → existing-reader integration test (the round-trip
-  oracle only covers `flatten`↔`reconstruct`, not the new emit path) + the intermediate
-  sub-workflow-and-parallel-batch checkpoint.
+- **In-memory store is flat (events carry `id`/`seq`/`parent_id`); nested is a derived view.** One
+  run-scoped collector produces the flat list and **eliminates the per-child collectors** (and their
+  child→parent embed). The nested tree is exposed via a single **`tree()` accessor** reusing A–C's
+  `_rebuild_event_tree`. In-memory readers split: the **cost readers** (`collect_llm_calls` — CLI + MCP —
+  and `_collect_llm_summary`) walk `tree()` recursively (else they under-count sub-workflow cost);
+  **`final_events_by_node`** (and the status/`failed_node_ids` it feeds) uses **top-level-only scoping**
+  (`parent_id is None`) — on a flat list a child's `node_id` can overwrite a parent's → wrong `final_status`.
+- **Streaming + inline blobs + two-pass reconstruct (all shipped).** The collector **streams** one line per
+  node during the run (`_flush_event`), gated by `RunnerConfig.trace_enabled` (CLI=on / MCP=off / `--no-trace`=off).
+  Large leaves intern to **inline `blob` lines** written before their first reference (backward-only). The
+  reader's `_rebuild_event_tree` is **two-pass**: dedup-by-`id` last-wins (a routing-dead-end re-flush wins) +
+  lenient **transitive** orphan-drop when there's no `run.complete` (crash mid-sub-workflow recovers the
+  well-formed prefix). `load_trace_file` tolerates a **single truncated final line** → `incomplete`. The
+  streamed file is a **best-effort tail**: an I/O fault disables streaming, never alters the run.
+- **No-lock `seq` is a routing rule:** worker threads never *call* the run-scoped collector's recording/`seq`
+  methods (it's reachable from a worker via the shallow-copied `shared`). They route to worker-local buffers
+  (`_batch_trace`, child events) folded in, with `seq` assigned, at the **main-thread drain** — enforced by the
+  `__index__`/`is_run_scoped` gate + a main-thread assert. Break it and a parallel-batch-of-sub-workflows run
+  races `seq` AND corrupts the shared file handle.
+- **Host-descent stack:** the run-scoped collector's `descend`/`ascend` (reserve-`seq`-at-descent = DFS
+  pre-order); supplies emit-time `parent_id` + `ancestor_path`.
+- **MCP does NOT stream** (`trace_enabled=False`): only CLI / spawned `pflow run` / library-callers-with-`finalize_trace`
+  produce a watchable trace. An agent run via the MCP server tool is **not** watchable; an agent run via the CLI is.
+- **Verification (the as-built pins):** `test_emit_time_trace.py` (equivalence + the wire/join contracts:
+  `test_runtime_event_refs_join_onto_the_static_graph`, `test_streamed_wire_*`), `test_trace_io.py` (reader),
+  `-m trace_files` (the format oracle). Task 172 `task-review.md` is the producer's forward-reference.
 
 ---
 
@@ -191,15 +212,17 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
 - **OTel exporter:** align field names so export is a rename; build only when a second real consumer
   appears.
 
-*(An explicit per-node `status` enum is an **optional** producer-task cleanup, not deferred-by-design —
-see §c.)*
+*(The per-node `status` enum — formerly an open producer-task decision — is now SHIPPED, see §c.)*
 
 ## References
 
 - **ADR-0008** (the architecture this schema serves); ADR-0003 (NodeId / Runtime Overlay Join Contract);
   ADR-0007 (trace/cache separation).
-- A–C format: `core/trace_io.py` (`_META_KEYS`, `_RESERVED_LINE_KEYS`, `flatten_trace_to_lines`,
-  `reconstruct_trace_from_lines`/`_rebuild_event_tree`).
+- **Task 172** (the producer that shipped this): `task_172/task-review.md` (forward-reference),
+  `task_172/implementation/progress-log.md` (the journey); **consumer-handoff braindump:**
+  `task_173/starting-context/braindump-producer-handoff-2026-06-23.md` (the tailer trap list).
+- As-built format: `core/trace_io.py` (`_META_KEYS`, `_RESERVED_LINE_KEYS`, `substitute_refs`,
+  `intern_event_leaves`, `reconstruct_trace_from_lines`/`_rebuild_event_tree`, `load_trace_file`).
 - Verified field sets (this session): `runtime/workflow_trace.py`, `nodes/llm/llm.py`,
   `nodes/claude/claude_code.py`, `core/llm_client.py`, `core/llm_usage.py`,
   `runtime/engine/instrumentation.py`, `core/workflow/graph/model.py`,
