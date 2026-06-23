@@ -75,7 +75,7 @@
     "models_in_use": [
       "anthropic/claude-haiku-4-5"
     ],
-    "ir_default_model": null,
+    "ir_default_model": "gemini/gemini-2.5-flash",
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
     "unavailable_models": [],

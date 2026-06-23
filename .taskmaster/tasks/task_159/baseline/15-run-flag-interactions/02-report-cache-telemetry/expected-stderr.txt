@@ -1,1 +1,21 @@
 Report generated: <BASELINE_CASE_DIR>/.run-home/report
+
+# Execution Report: workflow
+
+- Status: success
+- Duration: 7.8s
+- Nodes: 2
+- LLM calls: 2
+- Tokens: 12,083 in / 378 out
+- Total cost: $0.0013
+- Models: gemini/gemini-2.5-flash
+- Generated: <TIMESTAMP>
+
+## Pipeline
+
+| # | Node | Type | Status | Time | Tokens | Cost |
+|---|------|------|--------|------|--------|------|
+| 1 | answer-a | llm | success | 4.9s | 6,043 in / 182 out | $0.0006 |
+| 2 | answer-b | llm | success | 2.8s | 6,040 in / 196 out | $0.0007 |
+
+*Full trace: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/fixtures/live-gemini-translation.trace.json*

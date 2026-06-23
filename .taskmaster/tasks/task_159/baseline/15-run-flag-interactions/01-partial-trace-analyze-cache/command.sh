@@ -3,13 +3,15 @@ set -uo pipefail
 cd "$BASELINE_REPO_ROOT"
 
 TRACE="$BASELINE_HOME/partial-trace.json"
-python3 - <<'PY'
-import json
+uv run python - <<'PY'
 import os
 from pathlib import Path
 
+from pflow.core.trace_io import load_trace_file
+from tests.shared.trace_jsonl import write_trace_jsonl
+
 src = Path(os.environ["BASELINE_DIR"]) / "_shared/fixtures/live-gemini-translation.trace.json"
-data = json.loads(src.read_text())
+data = load_trace_file(src)
 first = data["nodes"][0]
 data["workflow_name"] = "workflow"
 data["workflow_path"] = str(Path(os.environ["BASELINE_CASE_DIR"]) / "workflow.pflow.md")
@@ -47,7 +49,7 @@ summary["total_cost_usd"] = call["cost_usd"]
 summary["models_used"] = [call["model"]]
 summary["pricing_available"] = True
 
-Path(os.environ["BASELINE_HOME"], "partial-trace.json").write_text(json.dumps(data, indent=2))
+write_trace_jsonl(Path(os.environ["BASELINE_HOME"], "partial-trace.json"), data)
 PY
 
 uv run pflow analyze-cache \

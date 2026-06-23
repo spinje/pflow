@@ -1,8 +1,7 @@
 # Cache Analysis: lyrics-generator.pflow.md
   File: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md
 
-  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes)
-  Models: not resolved (set settings.default_model)
+  Workflow: 25 LLM nodes, invocation count unavailable (3 dynamic batch nodes) using gemini/gemini-2.5-flash
   Heterogeneous: generate-chorus-options (model varies per batch item)
   (2 in lyrics-generator.pflow.md, 23 in 14 sub-workflows)
 
@@ -10,16 +9,17 @@
 
   Cost per run:                unavailable
 
-  6 recommended actions
+  5 recommended actions
 
-  Cost data unavailable: no model resolved for LLM nodes (set settings.default_model or add per-node `- model:`).
+  Cost data unavailable: run the workflow once for cost figures.
+  Suggested:  pflow run .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md sources=<value> output_base=<value>
 
 ## Blocking errors
 
   1. In step 'fetch-sources' sub-workflow: Unknown node type: 'mcp-klavis-youtube-get_youtube_video_transcript'
      fetch-youtube-mcp in fetch-source.pflow.md
 
-## Recommended actions (6)
+## Recommended actions (5, ordered by impact)
 
   Each item below is a cache-optimization opportunity for this workflow.
   Declared values are sent once and reused at 0.1× input cost.
@@ -29,33 +29,27 @@
     (2) Add the listed values as named entries under the child workflow's ## Cache section.
     (3) Reference that named entry in `prompt_cache:` on each consumer node.
 
-  1. Dynamic ref blocks caching on write-lyrics — move `${choose-chorus.chorus_guide}` after stable content  savings unavailable
-     write-lyrics in song-creator.pflow.md
-     write-lyrics: dynamic `${choose-chorus.chorus_guide}` reference at line 68 appears before ~1002 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
-     → Move the cacheable content (everything stable across calls) to BEFORE `${choose-chorus.chorus_guide}` in the prompt template.
-     → Projected cache ratio after fix: ?%.
-
-  2. Dynamic ref blocks caching on rewrite-emotional — move `${write-lyrics.response}` after stable content  savings unavailable
-     rewrite-emotional in song-creator.pflow.md
-     rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~2028 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
-     → Move the cacheable content (everything stable across calls) to BEFORE `${write-lyrics.response}` in the prompt template.
-     → Projected cache ratio after fix: ?%.
-
-  3. Dynamic ref blocks caching on rewrite-craft — move `${extract-emotional-lyrics.result.lyrics}` after stable content  savings unavailable
+  1. Dynamic ref blocks caching on rewrite-craft — move `${extract-emotional-lyrics.result.lyrics}` after stable content  saves ~$0.0005/run
      rewrite-craft in song-creator.pflow.md
-     rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~2170 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
+     rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~1904 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
      → Move the cacheable content (everything stable across calls) to BEFORE `${extract-emotional-lyrics.result.lyrics}` in the prompt template.
      → Projected cache ratio after fix: ?%.
 
-  4. Dynamic ref blocks caching on generate-suno-prompt — move `${extract-lyrics.result.lyrics}` after stable content  savings unavailable
+  2. Dynamic ref blocks caching on rewrite-emotional — move `${write-lyrics.response}` after stable content  saves ~$0.0005/run
+     rewrite-emotional in song-creator.pflow.md
+     rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~1784 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
+     → Move the cacheable content (everything stable across calls) to BEFORE `${write-lyrics.response}` in the prompt template.
+     → Projected cache ratio after fix: ?%.
+
+  3. Dynamic ref blocks caching on generate-suno-prompt — move `${extract-lyrics.result.lyrics}` after stable content  saves ~$0.0003/run
      generate-suno-prompt in song-creator.pflow.md
-     generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1223 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
+     generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1044 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run
      → Move the cacheable content (everything stable across calls) to BEFORE `${extract-lyrics.result.lyrics}` in the prompt template.
      → Projected cache ratio after fix: 92%.
 
-  5. Sub-workflow cache undeclared in chorus-chooser.pflow.md — add 4 entries in ## Cache  unmeasurable
+  4. Sub-workflow cache undeclared in chorus-chooser.pflow.md — add 4 entries in ## Cache  not yet cacheable
      chorus-chooser.pflow.md
-     Four values flow in but no consumer node has a resolved model — cannot compute the cache threshold.
+     Four values ~0 tokens per call, below the smallest provider cache minimum (1,024 — Anthropic Sonnet 4.5).
      Only these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.
      Edit child workflow:
        Add or extend ## Cache:
@@ -82,35 +76,41 @@
        • `concept.title` unmeasurable — node(s) `select-chorus` use `${concept.title}`
        • `creative_brief` unmeasurable — node(s) `select-chorus` use `${creative_brief}`
            flows in from parent as `${concept_brief}`
-     → Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.
+     → Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.
+     → Verify: confirm ~0 tokens is the realistic per-call size.
      → Edit: .taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md
 
-  6. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
+  5. Prompt opaque to static analysis on generate-chorus-options — refactor inline for cache detection  savings unavailable
      generate-chorus-options in chorus-chooser.pflow.md
      generate-chorus-options: prompt is `${item.prompt}`, assembled by `build-grouped-items` (type: code). Static analysis cannot inspect the assembled prompt's structure, so cache opportunities (shared prefixes, prewarm) are not detected. If the assembled prompt has a stable prefix and per-call dynamic content, refactoring to an inline declarative prompt unlocks detection.
      → Inline the prompt template on `generate-chorus-options`: replace `${item.prompt}` with the literal prompt content, with stable bytes BEFORE per-call dynamic references.
      → See `pflow guide prompt-caching` (Python-assembled prompts section) for the refactor pattern.
 
 ## Per-call cache report
+  How to read each row:
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
+    · — means the column does not apply to this row.
+    · ? means the column applies but the token count can't be measured yet (run the workflow once to populate).
   Showing 8 of 25 LLM nodes; low-signal rows hidden (--all-rows shows everything).
 
-  node                     model         input  notes
-  ----------------------------------------------
+  node                     model                    input  ready  notes
+  ----------------------------------------------------------------
 
 ### song-creator.pflow.md (called by create-songs)
-  write-lyrics             <unresolved>  3,684  dynamic-before-static
-  song-architecture        <unresolved>  2,886
-  rewrite-emotional        <unresolved>  2,575  dynamic-before-static
-  rewrite-craft            <unresolved>  2,454  dynamic-before-static
-  generate-suno-prompt     <unresolved>  1,340  dynamic-before-static
-  creative-direction       <unresolved>  1,248
-  easter-eggs              <unresolved>  1,066
+  write-lyrics             gemini/gemini-2.5-flash  3,247      ?
+  song-architecture        gemini/gemini-2.5-flash  2,568      ?
+  rewrite-emotional        gemini/gemini-2.5-flash  2,239      ?  dynamic-before-static
+  rewrite-craft            gemini/gemini-2.5-flash  2,141      ?  dynamic-before-static
+  generate-suno-prompt     gemini/gemini-2.5-flash  1,137      ?  dynamic-before-static
+  creative-direction       gemini/gemini-2.5-flash  1,084      ?
+  easter-eggs              gemini/gemini-2.5-flash    898      ?
 
 ### chorus-chooser.pflow.md (called by choose-chorus)
-  generate-chorus-options  <varies>          ?  opaque-prompt
+  generate-chorus-options  <varies>                     ?      —  opaque-prompt
 
   Token estimate confidence:
-    · Projected input tokens for: write-lyrics, song-architecture, rewrite-emotional, rewrite-craft, generate-suno-prompt, creative-direction, easter-eggs, generate-chorus-options.
+    · Projected input tokens for: song-architecture, creative-direction, easter-eggs, generate-chorus-options.
 
 ## Per-child analyze-cache commands
 

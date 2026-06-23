@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 MODEL = "anthropic/claude-sonnet-4-5"
 PROVIDER_NOTE = "cache_control markers will silently no-op at the provider"
@@ -168,12 +169,11 @@ def main(argv: list[str]) -> int:
     if mode not in builders:
         print(f"unknown mode: {mode}", file=sys.stderr)
         return 2
-    # Trailing newline matches what pre-commit's pretty-format-json +
-    # end-of-file-fixer produce on the committed trace.json files. Without
-    # it, every verify.sh run strips the newline and `git status` shows
-    # drift on these 4 cases. Symmetric with run-case.sh's
-    # `_write_with_newline` helper used for expected-stdout/stderr.
-    Path(output_path).write_text(json.dumps(builders[mode](workflow_path), indent=2) + "\n", encoding="utf-8")
+    # Write the Task-172 JSONL trace format — the only on-disk format ``load_trace_file``
+    # / ``analyze-cache --from-trace`` accept since #531. ``write_trace_jsonl`` appends the
+    # trailing newline; these per-case ``trace.json`` files are gitignored (regenerated
+    # every run), so there is no committed-format or ``git status`` drift to manage.
+    write_trace_jsonl(Path(output_path), builders[mode](workflow_path))
     return 0
 
 

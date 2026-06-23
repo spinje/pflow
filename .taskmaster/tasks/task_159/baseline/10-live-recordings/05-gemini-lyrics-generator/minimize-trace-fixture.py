@@ -12,19 +12,34 @@ preserving the analyzer facts this baseline is meant to exercise:
 - one prompt source per LLM event (``llm_prompt``)
 - producer values needed for cross-workflow cache projections
 
-Run from the repository root, for example:
+The committed fixture is Task-172 JSONL — the only on-disk format ``load_trace_file``
+reads since #531 — so this tool reads the raw trace and writes the minimized fixture via
+the shared JSONL helpers (``load_trace_file`` / ``tests.shared.trace_jsonl.write_trace_jsonl``).
+Run from the repository root with ``uv run python`` (so pflow is importable), for example:
 
-    python .taskmaster/tasks/task_159/baseline/10-live-recordings/05-gemini-lyrics-generator/minimize-trace-fixture.py \
-      /Users/andfal/.pflow/debug/workflow-trace-c2f89d56-lyrics-generator-20260508-221119.json \
+    uv run python .taskmaster/tasks/task_159/baseline/10-live-recordings/05-gemini-lyrics-generator/minimize-trace-fixture.py \
+      ~/.pflow/debug/workflow-trace-<hash>-lyrics-generator-<timestamp>.json \
       .taskmaster/tasks/task_159/baseline/_shared/fixtures/live-gemini-lyrics-generator.trace.json
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
+
+# One-shot authoring tool: it imports repo-internal helpers (pflow + tests.shared). Run via
+# `uv run python` so pflow resolves; bootstrap the repo root onto sys.path so `tests.shared`
+# resolves too (a `python <path>` run puts the SCRIPT dir on sys.path[0], not the repo root).
+_REPO_ROOT = Path(__file__).resolve()
+while not (_REPO_ROOT / "pyproject.toml").exists():
+    if _REPO_ROOT.parent == _REPO_ROOT:
+        raise SystemExit("minimize-trace-fixture.py: could not locate repo root (pyproject.toml)")
+    _REPO_ROOT = _REPO_ROOT.parent
+sys.path.insert(0, str(_REPO_ROOT))
+
+from pflow.core.trace_io import load_trace_file  # noqa: E402 — needs the sys.path bootstrap above
+from tests.shared.trace_jsonl import write_trace_jsonl  # noqa: E402 — needs the sys.path bootstrap above
 
 DROP_STRING_KEYS = {
     # Direct LLM/request echoes duplicated elsewhere.
@@ -123,10 +138,10 @@ def main(argv: list[str]) -> int:
 
     source = Path(argv[1])
     output = Path(argv[2])
-    data = json.loads(source.read_text(encoding="utf-8"))
+    data = load_trace_file(source)
     minimize_trace(data)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+    write_trace_jsonl(output, data)
     print(f"wrote {output} ({output.stat().st_size:,} bytes)")
     return 0
 

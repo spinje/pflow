@@ -3,7 +3,8 @@
 
   Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
   Evidence: complete trace (2 LLM nodes executed)
-  Trace: workflow-trace-b3b96a76-smoke-with-cache-<TIMESTAMP>.json (failed, recorded 2026-05-08 16:30)
+  Trace: workflow-trace-3333c34d-smoke-with-cache-<TIMESTAMP>.json (failed, recorded 2026-05-08 16:30)
+  IR/settings declares: gemini/gemini-2.5-flash (overridden by trace evidence)
 
 ## Summary
 
@@ -22,5 +23,5 @@
 
 ## Notes
 
-  · Auto-loaded `workflow-trace-b3b96a76-smoke-with-cache-<TIMESTAMP>.json` (failed run); no successful trace exists for this workflow. Trace-dependent recommendations may be suppressed. Re-run the workflow to record a successful trace, or pass `--from-trace <path>` to use a specific trace.
+  · Auto-loaded `workflow-trace-3333c34d-smoke-with-cache-<TIMESTAMP>.json` (failed run); no successful trace exists for this workflow. Trace-dependent recommendations may be suppressed. Re-run the workflow to record a successful trace, or pass `--from-trace <path>` to use a specific trace.
   · Cache fidelity check skipped: this is a first run (no prior runs to compare cached vs uncached against). On later runs, specific cache misfires (TTL expired, chunks skipped) will appear here.

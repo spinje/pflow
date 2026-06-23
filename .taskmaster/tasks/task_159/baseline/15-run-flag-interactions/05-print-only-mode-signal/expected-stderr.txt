@@ -1,1 +1,1 @@
-  ⤷ Stopped after 'step-b' (--only), 1 remaining node skipped
+  ⤷ Ran only 'step-b' (--only), 2 other nodes not executed

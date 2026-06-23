@@ -14,20 +14,20 @@
 
 ## Pipeline
 
-| # | Node | Type | Time | Cost | Status |
-|---|------|------|------|------|--------|
-| 1 | answer-a | LLMNode | 4918ms | $0.0006 | ok |
-| 2 | answer-b | LLMNode | 2824ms | $0.0007 | ok |
+| # | Node | Type | Status | Time | Tokens | Cost |
+|---|------|------|--------|------|--------|------|
+| 1 | answer-a | llm | success | 4.9s | 6,043 in / 182 out | $0.0006 |
+| 2 | answer-b | llm | success | 2.8s | 6,040 in / 196 out | $0.0007 |
 
 *Full trace: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/fixtures/live-gemini-translation.trace.json*
 --- 01-answer-a.md ---
 # answer-a
 
 - Type: LLMNode
-- Time: 4918ms
+- Time: 4.9s
 - Status: success
 - Model: gemini/gemini-2.5-flash
-- Tokens: 6,043 in / 182 out
+- Tokens: 6,043 in / 182 out  ·  100% of input cached
 - Thinking: 151 tokens
 - Paid this run: $0.0006
 - max_tokens: 200

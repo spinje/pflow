@@ -142,6 +142,18 @@ graph LR
     generate-suno-prompt(["generate-suno-prompt (llm)"]):::llm
     input_concept --> choose-chorus__in_concept
     input_concept_brief --> choose-chorus__in_creative_brief
+    input_concept --> creative-direction
+    input_concept_brief --> creative-direction
+    input_concept --> song-architecture
+    input_concept_brief --> song-architecture
+    input_concept --> easter-eggs
+    input_concept_brief --> easter-eggs
+    input_concept --> write-lyrics
+    input_concept_brief --> write-lyrics
+    input_concept --> rewrite-emotional
+    input_concept_brief --> rewrite-emotional
+    input_concept --> rewrite-craft
+    input_concept_brief --> rewrite-craft
     subgraph workflow-outputs ["workflow outputs"]
         out_finished_song(["finished_song"]):::output
         out_emotional_rewrite_deliberation(["emotional_rewrite_deliberation"]):::output
@@ -173,16 +185,13 @@ graph LR
     generate-suno-prompt --> out_suno_style_prompt
     creative-direction --> song-architecture
     song-architecture --> easter-eggs
+    easter-eggs --> choose-chorus
     choose-chorus__out_winning_chorus --> write-lyrics
     choose-chorus__out_runner_up_choruses --> write-lyrics
     choose-chorus__out_all_scored_text --> write-lyrics
     choose-chorus__out_selection_text --> write-lyrics
     choose-chorus__out_chorus_guide --> write-lyrics
     choose-chorus__out_total_generated --> write-lyrics
-    write-lyrics --> emotional-reviews__emotional-architecture
-    write-lyrics --> emotional-reviews__narrative
-    write-lyrics --> emotional-reviews__imagery
-    write-lyrics --> emotional-reviews__stranger-summary
     emotional-reviews__emotional-architecture__out_review_text --> format-emotional-reviews
     emotional-reviews__narrative__out_review_text --> format-emotional-reviews
     emotional-reviews__imagery__out_review_text --> format-emotional-reviews
