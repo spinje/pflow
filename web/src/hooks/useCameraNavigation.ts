@@ -134,6 +134,37 @@ export function useCameraNavigation({
       fitView({ nodes: frameIds.map((target) => ({ id: target })), padding: 0.45, maxZoom: 1.2, duration: 300 });
     }
   }, [paintEpoch, fitView, getNodes]);
+
+  // Hidden-tab camera re-frame. A focus that lands while the tab is hidden applies
+  // its STATE (panel, dim/reveal) but never moves the camera: fitView is rAF-driven
+  // and rAF is throttled/paused in a hidden tab, so the transition never runs and is
+  // not re-issued on return — the focused node ends up off-screen (user-confirmed
+  // 2026-06-23). Capture a focus that CHANGES while hidden and re-fit when the tab
+  // is shown again, so an agent Point made while the user was away is actually framed.
+  // Only a change-while-hidden re-frames — an ordinary tab return where focus didn't
+  // move leaves the user's viewport alone. (Connection recovery must NOT key on
+  // visibilitychange — see api/events.ts — but CAMERA re-framing legitimately does.)
+  const pendingReframeRef = useRef<string | null>(null);
+  const prevFocusRef = useRef(focus);
+  useEffect(() => {
+    if (focus === prevFocusRef.current) return;
+    prevFocusRef.current = focus;
+    if (document.visibilityState === "hidden") pendingReframeRef.current = focus;
+  }, [focus]);
+  useEffect(() => {
+    const reframeOnShow = (): void => {
+      if (document.visibilityState !== "visible") return;
+      const id = pendingReframeRef.current;
+      pendingReframeRef.current = null;
+      if (id == null) return;
+      const rendered = new Set(getNodes().map((node) => node.id));
+      const owner = ioPorts?.get(id);
+      const fitId = rendered.has(id) ? id : owner != null && rendered.has(owner) ? owner : null;
+      if (fitId != null) fitView({ nodes: [{ id: fitId }], padding: 0.45, maxZoom: 1.2, duration: 300 });
+    };
+    document.addEventListener("visibilitychange", reframeOnShow);
+    return () => document.removeEventListener("visibilitychange", reframeOnShow);
+  }, [fitView, getNodes, ioPorts]);
   const onNavigate = useCallback(
     (focusId: string, selected?: string | null) => {
       // The clicked chip may unmount with the panel swap — its mouseleave never

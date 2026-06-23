@@ -54,7 +54,13 @@ const followCalls = (id: string): number =>
 beforeEach(() => {
   fitViewSpy.mockClear();
   rf.renderedIds = [];
+  // Default visible; the hidden-tab re-frame tests flip it and must not leak it.
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
 });
+
+const setVisibility = (value: "visible" | "hidden"): void => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, value });
+};
 
 describe("useCameraNavigation", () => {
   it("a NEW-focus navigate defers the follow to the paint the click produces (paintEpoch), never click time", () => {
@@ -165,6 +171,50 @@ describe("useCameraNavigation", () => {
     rf.renderedIds = ["n1", "n2"];
     rerender({ ...props, paintEpoch: 1 });
     expect(followCalls("n1")).toBe(0);
+  });
+
+  it("re-frames a focus that CHANGED while the tab was hidden, once it returns to visible", () => {
+    rf.renderedIds = ["n1", "n2"];
+    const props = makeProps({ focus: "n1" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    // Tab hidden, then an agent Point moves focus to n2 — fitView is rAF-throttled,
+    // so nothing frames while hidden.
+    setVisibility("hidden");
+    rerender({ ...props, focus: "n2" });
+    expect(followCalls("n2")).toBe(0);
+
+    // Back to visible → the missed focus is framed exactly once.
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(1);
+  });
+
+  it("an io-PORT focus that changed while hidden re-frames its OWNER card on return", () => {
+    rf.renderedIds = ["g1"];
+    const props = makeProps({ focus: null, ioPorts: new Map([["p1", "g1"]]) });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "p1" });
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("g1")).toBe(1);
+  });
+
+  it("does NOT re-frame when focus changed while VISIBLE — an ordinary tab return leaves the viewport alone", () => {
+    rf.renderedIds = ["n1", "n2"];
+    const props = makeProps({ focus: "n1" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    rerender({ ...props, focus: "n2" }); // focus moved while visible → the normal follow owns it
+    setVisibility("hidden");
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(0);
   });
 
   it("fits the whole view once per workflow|direction|node key — focus restyles never refit; a direction flip does", () => {
