@@ -110,6 +110,16 @@ fixing save).
 - `POST /api/interaction` records deliberate user actions; `GET /api/activity`
   returns the bounded, newest-first snapshot. `POST /api/visibility` updates one
   connection. All POSTs require `application/json`.
+- `GET /api/health` is the cheap liveness + identity probe for discovery/reuse:
+  `{"service": "pflow-ui"}` always, plus `{"workflow_key", "windows"}` when a
+  resolvable `workflow` is supplied (`windows = len(windows_for(key))`, **no graph
+  build**). An unresolvable workflow reports identity only (no 404 — a liveness probe
+  must answer regardless, unlike `events()`/`command()`). It reads the hub, so it is
+  `async def` per the invariant below. **`windows` can transiently over-count by 1**
+  for up to one `_KEEPALIVE_S` cycle after a Viewer's `onerror` reconnect to *this*
+  server (the dropped connection lingers until its next keepalive write fails); a
+  server *restart* frees the whole hub, so that path is clean. Benign for a local
+  single-user viewer; the count self-corrects.
 
 Name-opened and path-opened Viewers share one resolved workflow key. Point targets
 cross the wire only as structural refs; never send positional flat ids between
@@ -160,6 +170,21 @@ heuristically-cached stale entry; the content-hashed assets stay cacheable.
   reads `?workflow=` and auto-loads it; with no param, it shows the catalog.
   `--no-auto-update` appends the private `?watch=0` URL param to freeze the
   live-source poll.
+- **Discovery / reuse (probe-then-reuse-or-start).** On a port-in-use, `serve` probes
+  `GET /api/health`; if a pflow viewer answers it **reuses** it — opens a tab against
+  the running server (honoring `--no-open` / `--no-auto-update` via `_serve_url`) and
+  exits 0, so `pflow ui <wf>` is idempotent. A *foreign* process on the port keeps the
+  "port in use, try `--port`" error. `focus --open` polls the same cheap
+  `/api/health?workflow=X` for `windows > 0` (then sends `focus` once) instead of
+  re-POSTing the build-triggering command on a timer (which re-ran the full graph build
+  ~60×). `windows > 0` means "SSE registered" (which only happens after the graph
+  builds), not "render-acked" — the same readiness proxy the old `sent_to > 0` loop used.
+  A server *restart* needs no cross-process cleanup (the killed process frees its whole
+  `_Hub`); `SO_REUSEADDR` lets a fast double-invoke briefly "reuse" a dying server
+  (benign — the frontend's reconnect + the `--open` poll recover). The probe
+  (`_probe_health`) is non-failing (returns `None`, never `ctx.exit`) with a short
+  `_PROBE_TIMEOUT_S` so a foreign socket can't stall it. Reuse composes only within one
+  port (per-process `_Hub`, no cross-port broadcast).
 - Point: `pflow ui focus <workflow> <target> [--open]`, `frame`, and
   `clear-focus`. Watch: `pflow ui user-activity [workflow]`. Each accepts `--port`
   and the project-standard `--output-format json` and talks to an already-running

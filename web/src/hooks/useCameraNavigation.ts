@@ -8,7 +8,7 @@ import { useNodesInitialized, useReactFlow } from "@xyflow/react";
 
 import type { Direction } from "../graph/flow";
 import type { GraphStatus } from "./useWorkflowGraph";
-import { resolveNodeFlatId, type ViewParams } from "../utils/viewParams";
+import { resolveEndpointFlatId, resolveNodeFlatId, type ViewParams } from "../utils/viewParams";
 import type { RFGraph } from "../types";
 
 interface CameraNavigationArgs {
@@ -134,6 +134,58 @@ export function useCameraNavigation({
       fitView({ nodes: frameIds.map((target) => ({ id: target })), padding: 0.45, maxZoom: 1.2, duration: 300 });
     }
   }, [paintEpoch, fitView, getNodes]);
+
+  // Hidden-tab camera re-frame. A focus that lands while the tab is hidden applies
+  // its STATE (panel, dim/reveal) but never moves the camera: fitView is rAF-driven
+  // and rAF is throttled/paused in a hidden tab, so the transition never runs and is
+  // not re-issued on return — the focused node ends up off-screen (user-confirmed
+  // 2026-06-23). Capture a focus that CHANGES while hidden and re-fit when the tab
+  // is shown again, so an agent Point made while the user was away is actually framed.
+  // Only a change-while-hidden re-frames — an ordinary tab return where focus didn't
+  // move leaves the user's viewport alone. (Connection recovery must NOT key on
+  // visibilitychange — see api/events.ts — but CAMERA re-framing legitimately does.)
+  const pendingReframeRef = useRef<string | null>(null);
+  const prevFocusRef = useRef(focus);
+  useEffect(() => {
+    if (focus === prevFocusRef.current) return;
+    prevFocusRef.current = focus;
+    // Arm a re-frame only for a focus that moves WHILE HIDDEN; a focus change while
+    // visible (including Clear Focus → null) clears any pending one, so a stale
+    // pending can't jerk the camera to a since-dismissed target on the next paint.
+    pendingReframeRef.current = document.visibilityState === "hidden" ? focus : null;
+  }, [focus]);
+  useEffect(() => {
+    const reframeOnShow = (): void => {
+      if (document.visibilityState !== "visible") return;
+      const id = pendingReframeRef.current;
+      if (id == null) return;
+      const graph = graphRef.current;
+      const rendered = new Set(getNodes().map((node) => node.id));
+      // Resolve to the SAME on-canvas representative the live Point path uses: a node
+      // (or group HOST → its rendered group / io-wrapper) via resolveEndpointFlatId; an
+      // io-PORT → its owner card; an EDGE focus → its rendered endpoints. A target not
+      // painted yet (an agent Point that revealed a collapsed node while hidden) resolves
+      // to null — DON'T clear; the paintEpoch dep re-runs this once the reveal paints.
+      const resolve = (flatId: string): string | null => {
+        const port = ioPorts?.get(flatId);
+        if (port != null) return rendered.has(port) ? port : null;
+        if (graph) return resolveEndpointFlatId(graph, rendered, flatId);
+        return rendered.has(flatId) ? flatId : null;
+      };
+      const edge = graph?.edges.find((e) => e.id === id);
+      const fitIds = (edge ? [edge.source, edge.target] : [id])
+        .map(resolve)
+        .filter((fitId): fitId is string => fitId !== null);
+      if (fitIds.length === 0) return; // nothing rendered yet — keep pending, retry on the next paint
+      pendingReframeRef.current = null;
+      fitView({ nodes: fitIds.map((fitId) => ({ id: fitId })), padding: 0.45, maxZoom: 1.2, duration: 300 });
+    };
+    // Re-fit when the tab returns to visible, AND on each paint while a re-frame is
+    // pending (so a focus whose node hadn't painted when the tab was shown still lands).
+    reframeOnShow();
+    document.addEventListener("visibilitychange", reframeOnShow);
+    return () => document.removeEventListener("visibilitychange", reframeOnShow);
+  }, [paintEpoch, fitView, getNodes, ioPorts]);
   const onNavigate = useCallback(
     (focusId: string, selected?: string | null) => {
       // The clicked chip may unmount with the panel swap — its mouseleave never

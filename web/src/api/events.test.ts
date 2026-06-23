@@ -10,6 +10,7 @@ class FakeEventSource {
 
   readonly url: string;
   onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
   closed = false;
 
   constructor(url: string | URL) {
@@ -19,6 +20,10 @@ class FakeEventSource {
 
   emit(message: unknown): void {
     this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(message) }));
+  }
+
+  fail(): void {
+    this.onerror?.(new Event("error"));
   }
 
   close(): void {
@@ -32,6 +37,9 @@ beforeEach(() => {
   FakeEventSource.instances = [];
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+  // Reset visibility every test: a later test flips it to "hidden" and does not
+  // restore it, which would otherwise leak into whatever test runs next.
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -94,6 +102,71 @@ describe("subscribe", () => {
       }),
     );
     unsubscribe();
+  });
+});
+
+describe("subscribe reconnect", () => {
+  // The logic test (necessary, NOT sufficient — a jsdom FakeEventSource can't prove a
+  // real backgrounded/slept tab recovers; that's the real-browser harness's job).
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const handlers = () => ({ focus: vi.fn(), frame: vi.fn(), clear: vi.fn() });
+
+  it("closes the dead source and reopens a fresh one after the retry delay", () => {
+    const unsubscribe = subscribe("wf", handlers());
+    const first = FakeEventSource.instances[0]!;
+
+    first.fail();
+    expect(first.closed).toBe(true);
+    expect(FakeEventSource.instances).toHaveLength(1); // not yet — reconnect is scheduled, not immediate
+
+    vi.advanceTimersByTime(1000);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FakeEventSource.instances[1]!.url).toContain("workflow=wf");
+    unsubscribe();
+  });
+
+  it("schedules at most one reconnect for repeated errors before the timer fires (churn guard)", () => {
+    const unsubscribe = subscribe("wf", handlers());
+    const first = FakeEventSource.instances[0]!;
+
+    first.fail();
+    first.fail();
+    first.fail();
+    vi.advanceTimersByTime(1000);
+
+    expect(FakeEventSource.instances).toHaveLength(2); // exactly one new source, not three
+    unsubscribe();
+  });
+
+  it("re-seeds the connection id and reports visibility after a reconnect", () => {
+    const unsubscribe = subscribe("wf", handlers());
+    FakeEventSource.instances[0]!.fail();
+    vi.advanceTimersByTime(1000);
+
+    FakeEventSource.instances[1]!.emit({ type: "connected", conn_id: "viewer-9" });
+    // The reconnected source's `connected` re-seeds connId, so the visibility POST
+    // targets the NEW id (not the dead pre-reconnect connection).
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/visibility",
+      expect.objectContaining({ body: JSON.stringify({ conn_id: "viewer-9", visibility: "visible" }) }),
+    );
+    unsubscribe();
+  });
+
+  it("cancels a pending reconnect on unsubscribe and never reconnects after teardown", () => {
+    const unsubscribe = subscribe("wf", handlers());
+    const first = FakeEventSource.instances[0]!;
+
+    first.fail(); // schedules a retry
+    unsubscribe(); // must clear it
+    vi.advanceTimersByTime(5000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    first.fail(); // an error after teardown must not resurrect a connection
+    vi.advanceTimersByTime(5000);
+    expect(FakeEventSource.instances).toHaveLength(1);
   });
 });
 

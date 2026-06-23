@@ -54,7 +54,13 @@ const followCalls = (id: string): number =>
 beforeEach(() => {
   fitViewSpy.mockClear();
   rf.renderedIds = [];
+  // Default visible; the hidden-tab re-frame tests flip it and must not leak it.
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
 });
+
+const setVisibility = (value: "visible" | "hidden"): void => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, value });
+};
 
 describe("useCameraNavigation", () => {
   it("a NEW-focus navigate defers the follow to the paint the click produces (paintEpoch), never click time", () => {
@@ -165,6 +171,122 @@ describe("useCameraNavigation", () => {
     rf.renderedIds = ["n1", "n2"];
     rerender({ ...props, paintEpoch: 1 });
     expect(followCalls("n1")).toBe(0);
+  });
+
+  it("re-frames a focus that CHANGED while the tab was hidden, once it returns to visible", () => {
+    rf.renderedIds = ["n1", "n2"];
+    const props = makeProps({ focus: "n1" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    // Tab hidden, then an agent Point moves focus to n2 — fitView is rAF-throttled,
+    // so nothing frames while hidden.
+    setVisibility("hidden");
+    rerender({ ...props, focus: "n2" });
+    expect(followCalls("n2")).toBe(0);
+
+    // Back to visible → the missed focus is framed exactly once.
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(1);
+  });
+
+  it("an io-PORT focus that changed while hidden re-frames its OWNER card on return", () => {
+    rf.renderedIds = ["g1"];
+    const props = makeProps({ focus: null, ioPorts: new Map([["p1", "g1"]]) });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "p1" });
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("g1")).toBe(1);
+  });
+
+  it("does NOT re-frame when focus changed while VISIBLE — an ordinary tab return leaves the viewport alone", () => {
+    rf.renderedIds = ["n1", "n2"];
+    const props = makeProps({ focus: "n1" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    rerender({ ...props, focus: "n2" }); // focus moved while visible → the normal follow owns it
+    setVisibility("hidden");
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(0);
+  });
+
+  it("re-frames an EDGE focus that changed while hidden to its rendered endpoints", () => {
+    rf.renderedIds = ["n1", "n2"];
+    const graph = { nodes: [], edges: [{ id: "e0", source: "n1", target: "n2" }], groups: [] } as unknown as Args["graph"];
+    const props = makeProps({ focus: null, graph });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "e0" }); // an agent edge Point while hidden
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+
+    expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ nodes: [{ id: "n1" }, { id: "n2" }] }));
+  });
+
+  it("defers the hidden re-frame until the focused node paints (not-yet-rendered on return)", () => {
+    rf.renderedIds = ["other"]; // n2 was revealed while hidden but hasn't painted yet
+    const props = makeProps({ focus: "other" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "n2" }); // pending = n2
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(0); // not rendered yet → not fit, pending kept (NOT cleared)
+
+    rf.renderedIds = ["other", "n2"]; // the reveal paints
+    rerender({ ...props, focus: "n2", paintEpoch: 1 }); // paintEpoch bump re-runs the re-frame
+    expect(followCalls("n2")).toBe(1); // now it lands, exactly once
+  });
+
+  it("re-frames an edge endpoint to its rendered REPRESENTATIVE, not the raw (suppressed) flat id", () => {
+    // The endpoint `member1` isn't rendered (its leaf box is suppressed); its io-wrapper
+    // group `wrap1` is. The re-frame must resolve to the representative like the live path,
+    // else an edge touching a sub-workflow/batch host fits the wrong subset (or nothing).
+    rf.renderedIds = ["wrap1", "n2"];
+    const graph = {
+      nodes: [],
+      edges: [{ id: "e0", source: "member1", target: "n2" }],
+      groups: [{ id: "wrap1", kind: "input_wrapper", host: null, members: ["member1"], parent: null }],
+    } as unknown as Args["graph"];
+    const props = makeProps({ focus: null, graph });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "e0" });
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+
+    expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ nodes: [{ id: "wrap1" }, { id: "n2" }] }));
+  });
+
+  it("drops a pending re-frame when focus is cleared while visible (no jump to a dismissed node)", () => {
+    rf.renderedIds = ["other"]; // the focused node hasn't painted yet, so the re-frame stays pending
+    const props = makeProps({ focus: "other" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "n2" }); // agent Point while hidden → pending = n2
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(0); // n2 not painted → pending kept
+
+    rerender({ ...props, focus: null }); // user Clear Focus while visible → pending must clear
+    rf.renderedIds = ["other", "n2"]; // n2 finally paints
+    rerender({ ...props, focus: null, paintEpoch: 1 });
+    expect(followCalls("n2")).toBe(0); // the dismissed node is NOT jumped to
   });
 
   it("fits the whole view once per workflow|direction|node key — focus restyles never refit; a direction flip does", () => {

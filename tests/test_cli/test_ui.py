@@ -635,13 +635,14 @@ class TestUiCommand:
         assert (host, port) == ("127.0.0.1", 9124)
         assert url.startswith("http://127.0.0.1:9124/?workflow=")
 
-    def test_port_in_use_prints_actionable_hint(self) -> None:
-        """An occupied port → exit 1 with an actionable hint; uvicorn is never reached.
+    def test_port_in_use_by_foreign_process_prints_actionable_hint(self) -> None:
+        """An occupied port held by a NON-pflow process → exit 1 with an actionable hint.
 
         Regression guard: uvicorn swallows the bind OSError and sys.exit(1)s with
         only its own log line, so the command pre-flights the bind to own the
-        message. ``uvicorn.run`` is stubbed as a safety net against a hang if the
-        pre-flight check ever wrongly passes.
+        message. ``_probe_health`` is patched to ``None`` (not a pflow viewer) so
+        the reuse branch is skipped — and so the real probe doesn't stall on the
+        bound-but-non-HTTP socket. ``uvicorn.run`` is stubbed as a hang safety net.
         """
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
@@ -649,7 +650,10 @@ class TestUiCommand:
         port = sock.getsockname()[1]
         try:
             runner = CliRunner()
-            with patch("uvicorn.run") as mock_run:
+            with (
+                patch("pflow.cli.commands.ui._probe_health", return_value=None),
+                patch("uvicorn.run") as mock_run,
+            ):
                 result = runner.invoke(ui_cmd, ["--no-open", "--port", str(port)])
         finally:
             sock.close()
@@ -658,6 +662,185 @@ class TestUiCommand:
         assert "already in use" in result.output
         assert "--port" in result.output
         mock_run.assert_not_called()
+
+    def test_port_in_use_by_pflow_viewer_reuses_it(self, tmp_path: Path) -> None:
+        """An occupied port held by a pflow viewer → reuse: open a tab, exit 0, no new server.
+
+        ``pflow ui <wf>`` becomes idempotent. ``_port_available`` is False (occupied)
+        and ``_probe_health`` confirms a pflow viewer, so the command opens a browser
+        tab against the running server and exits 0 without starting uvicorn.
+        """
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        runner = CliRunner()
+        with (
+            patch("pflow.cli.commands.ui._port_available", return_value=False),
+            patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
+            patch("uvicorn.run") as mock_run,
+            patch("webbrowser.open") as mock_open,
+        ):
+            result = runner.invoke(ui_cmd, [str(workflow_path), "--port", "9131"])
+
+        assert result.exit_code == 0, result.output
+        assert "opened a view" in result.output  # a tab WAS opened (no --no-open)
+        mock_run.assert_not_called()
+        mock_open.assert_called_once()
+        assert "9131" in mock_open.call_args.args[0]
+
+    def test_port_in_use_by_pflow_viewer_honors_no_open(self, tmp_path: Path) -> None:
+        """Reuse path respects ``--no-open``: open nothing, and the message says so."""
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(_VALID_IR, workflow_path)
+
+        runner = CliRunner()
+        with (
+            patch("pflow.cli.commands.ui._port_available", return_value=False),
+            patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
+            patch("uvicorn.run") as mock_run,
+            patch("webbrowser.open") as mock_open,
+        ):
+            result = runner.invoke(ui_cmd, [str(workflow_path), "--no-open", "--port", "9132"])
+
+        assert result.exit_code == 0, result.output
+        # The message must NOT falsely claim a view was opened under --no-open.
+        assert "view available" in result.output
+        assert "opened a view" not in result.output
+        mock_run.assert_not_called()
+        mock_open.assert_not_called()
+
+    def test_reuse_resolves_a_relative_workflow_path_to_absolute(self) -> None:
+        """The already-running server may have a different cwd, so the reuse URL must
+        carry an ABSOLUTE path — a relative one would resolve against the server's cwd
+        and open the wrong/missing workflow."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("wf.pflow.md").write_text(
+                "# x\n\n## Steps\n\n### a\n\nDo a thing now.\n\n- type: shell\n- command: echo hi\n"
+            )
+            with (
+                patch("pflow.cli.commands.ui._port_available", return_value=False),
+                patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
+                patch("uvicorn.run"),
+                patch("webbrowser.open") as mock_open,
+            ):
+                result = runner.invoke(ui_cmd, ["wf.pflow.md", "--port", "9135"])
+
+        assert result.exit_code == 0, result.output
+        encoded_workflow = mock_open.call_args.args[0].split("workflow=")[1]
+        # An absolute path url-encodes its slashes (%2F); the relative "wf.pflow.md" has none.
+        assert "%2F" in encoded_workflow
+
+
+class TestServeUrl:
+    """``_serve_url`` — the shared browser-URL builder for fresh-start AND reuse paths."""
+
+    def test_includes_workflow_and_freezes_watch_when_no_auto_update(self) -> None:
+        from pflow.cli.commands.ui import _serve_url
+
+        url = _serve_url(8765, "wf", True)
+        assert "workflow=wf" in url
+        assert "watch=0" in url  # --no-auto-update must survive the reuse path (parity guard)
+
+    def test_includes_workflow_without_watch_when_auto_update_on(self) -> None:
+        from pflow.cli.commands.ui import _serve_url
+
+        url = _serve_url(8765, "wf", False)
+        assert "workflow=wf" in url
+        assert "watch" not in url
+
+    def test_bare_url_when_no_workflow(self) -> None:
+        from pflow.cli.commands.ui import _serve_url
+
+        assert _serve_url(8765, None, False) == "http://127.0.0.1:8765/"
+
+
+class TestProbeHealth:
+    """``_probe_health`` — the non-failing GET probe (returns body or None, never exits)."""
+
+    def test_returns_body_for_a_pflow_viewer(self) -> None:
+        import httpx
+
+        from pflow.cli.commands.ui import _probe_health
+
+        # A real httpx.get() always sets .request (raise_for_status needs it).
+        request = httpx.Request("GET", "http://127.0.0.1:8765/api/health")
+        response = httpx.Response(200, json={"service": "pflow-ui", "windows": 2}, request=request)
+        with patch("pflow.cli.commands.ui.httpx.get", return_value=response):
+            assert _probe_health(8765) == {"service": "pflow-ui", "windows": 2}
+
+    def test_returns_none_for_a_non_pflow_json_body(self) -> None:
+        import httpx
+
+        from pflow.cli.commands.ui import _probe_health
+
+        request = httpx.Request("GET", "http://127.0.0.1:8765/api/health")
+        response = httpx.Response(200, json={"some": "other-server"}, request=request)
+        with patch("pflow.cli.commands.ui.httpx.get", return_value=response):
+            assert _probe_health(8765) is None
+
+    def test_returns_none_on_transport_error(self) -> None:
+        import httpx
+
+        from pflow.cli.commands.ui import _probe_health
+
+        with patch("pflow.cli.commands.ui.httpx.get", side_effect=httpx.ConnectError("refused")):
+            assert _probe_health(8765) is None
+
+
+class TestFocusOpen:
+    def test_polls_health_then_delivers_once(self) -> None:
+        """``focus --open`` polls the cheap /api/health for windows>0, then sends focus ONCE.
+
+        Replaces the old loop that re-POSTed the build-triggering ``focus`` each tick
+        (~60 graph builds). Now: one initial probe-POST + cheap health polls until a
+        window registers + one final delivery = 2 ``_point_request`` calls total.
+        """
+        initial = {"resolved": {"matched": 1, "address": "greet"}, "sent_to": 0, "windows": [], "workflow_key": "k"}
+        delivered = {
+            "resolved": {"matched": 1, "address": "greet"},
+            "sent_to": 1,
+            "windows": [{"visibility": "visible"}],
+            "workflow_key": "k",
+        }
+        runner = CliRunner()
+        with (
+            patch("pflow.cli.commands.ui._point_request", side_effect=[initial, delivered]) as mock_point,
+            patch(
+                "pflow.cli.commands.ui._probe_health",
+                side_effect=[{"service": "pflow-ui", "windows": 0}, {"service": "pflow-ui", "windows": 1}],
+            ) as mock_probe,
+            patch("webbrowser.open") as mock_open,
+            patch("time.sleep"),
+        ):
+            result = runner.invoke(ui_cmd, ["focus", "wf", "greet", "--open", "--port", "9133"])
+
+        assert result.exit_code == 0, result.output
+        assert mock_point.call_count == 2  # initial POST + ONE delivery (not ~60 re-POSTs)
+        assert mock_probe.call_count == 2  # cheap polls until windows>0
+        mock_open.assert_called_once()
+
+    def test_open_timeout_still_delivers_once_for_accurate_status(self) -> None:
+        """If no window ever connects, the final delivery still runs so ``timed_out``
+        reflects a real send (not a stale pre-open payload) — and an edge re-send stays
+        unconditional. The window-never-connects case ⇒ exit 1 + the 'didn't connect' note."""
+        initial = {"resolved": {"matched": 1, "address": "greet"}, "sent_to": 0, "windows": [], "workflow_key": "k"}
+        still_empty = {"resolved": {"matched": 1, "address": "greet"}, "sent_to": 0, "windows": [], "workflow_key": "k"}
+        runner = CliRunner()
+
+        # monotonic: start, then a value past the deadline so the poll loop exits immediately.
+        with (
+            patch("pflow.cli.commands.ui._point_request", side_effect=[initial, still_empty]) as mock_point,
+            patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui", "windows": 0}),
+            patch("webbrowser.open"),
+            patch("time.sleep"),
+            patch("time.monotonic", side_effect=[0.0, 100.0, 100.0]),
+        ):
+            result = runner.invoke(ui_cmd, ["focus", "wf", "greet", "--open", "--port", "9134"])
+
+        assert result.exit_code == 1
+        assert "didn't connect" in result.output
+        assert mock_point.call_count == 2  # initial + one final delivery even on timeout
 
 
 class TestLazyImportBoundary:

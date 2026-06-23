@@ -13,6 +13,7 @@ import socket
 import time
 import webbrowser
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlencode
 
@@ -25,6 +26,7 @@ from pflow.core.diagnostic_render import format_diagnostic
 _HOST = "127.0.0.1"
 _DEFAULT_PORT = 8765
 _REQUEST_TIMEOUT_S = 5.0
+_PROBE_TIMEOUT_S = 1.0
 _OPEN_TIMEOUT_S = 15.0
 _OPEN_INTERVAL_S = 0.25
 
@@ -72,6 +74,38 @@ def _viewer_url(port: int, workflow: str, *, focus: str | None = None) -> str:
     if focus is not None:
         query["focus"] = focus
     return f"http://{_HOST}:{port}/?{urlencode(query)}"
+
+
+def _serve_url(port: int, workflow: str | None, no_auto_update: bool) -> str:
+    """The browser URL ``serve`` opens — for both a fresh start and a reuse-existing.
+
+    ``no_auto_update`` appends the private ``watch=0`` param that freezes the live
+    source poll, so a reused tab honors ``--no-auto-update`` just like a fresh start.
+    """
+    query: dict[str, str] = {}
+    if workflow:
+        query["workflow"] = workflow
+    if no_auto_update:
+        query["watch"] = "0"
+    return f"http://{_HOST}:{port}/" + (f"?{urlencode(query)}" if query else "")
+
+
+def _probe_health(port: int, workflow: str | None = None) -> dict[str, object] | None:
+    """Return the ``/api/health`` body if a pflow viewer is on the port, else ``None``.
+
+    Never raises or exits — unlike ``_request`` (which ``ctx.exit``s on any failure),
+    this is safe to call in a poll loop and to probe a port that may hold a foreign
+    process. Uses a short ``_PROBE_TIMEOUT_S`` so a non-pflow socket on the port does
+    not stall the caller for the full ``_REQUEST_TIMEOUT_S`` before falling through.
+    """
+    params = {"workflow": workflow} if workflow else None
+    try:
+        response = httpx.get(f"http://{_HOST}:{port}/api/health", params=params, timeout=_PROBE_TIMEOUT_S)
+        response.raise_for_status()
+        body = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    return body if isinstance(body, dict) and body.get("service") == "pflow-ui" else None
 
 
 def _wants_json(ctx: click.Context, param: click.Parameter, value: str) -> bool:
@@ -392,6 +426,22 @@ def serve_cmd(
     from pflow.ui.server import create_app
 
     if not _port_available(_HOST, port):
+        # Port taken. If it's our own viewer, reuse it (open a tab) rather than fail —
+        # `pflow ui <wf>` becomes idempotent. A foreign process keeps the hard error.
+        if _probe_health(port) is not None:
+            # The already-running server may have a DIFFERENT cwd, so a relative path
+            # would resolve against ITS cwd, not the caller's — opening the wrong/
+            # missing workflow. Send an absolute path for a path-like arg; a saved
+            # NAME resolves via the registry regardless of cwd, so leave it untouched.
+            reuse_workflow = str(Path(workflow).resolve()) if workflow and Path(workflow).exists() else workflow
+            url = _serve_url(port, reuse_workflow, no_auto_update)
+            if not no_open:
+                webbrowser.open(url)
+                click.echo(f"pflow UI already running on port {port} — opened a view at {url}", err=True)
+            else:
+                click.echo(f"pflow UI already running on port {port} — view available at {url}", err=True)
+            ctx.exit(0)
+            return
         click.echo(
             f"Port {port} is already in use.\n→ try a different --port (e.g. --port {port + 1})",
             err=True,
@@ -400,16 +450,9 @@ def serve_cmd(
         return
 
     app = create_app()
-    url = f"http://{_HOST}:{port}/"
-    query: dict[str, str] = {}
-    if workflow:
-        query["workflow"] = workflow
-    if no_auto_update:
-        # `watch` is the stable private CLI↔frontend URL contract. Only the
-        # user-facing flag changed to avoid colliding with Watch terminology.
-        query["watch"] = "0"
-    if query:
-        url += f"?{urlencode(query)}"
+    # `watch=0` (in _serve_url) is the stable private CLI↔frontend URL contract; only
+    # the user-facing flag is named --no-auto-update to avoid colliding with Watch.
+    url = _serve_url(port, workflow, no_auto_update)
 
     if not no_open:
         import threading
@@ -461,16 +504,22 @@ def focus_cmd(
         opened = True
         is_edge = "->" in target
         webbrowser.open(_viewer_url(port, workflow, focus=None if is_edge else target))
-        # The URL focus parser accepts a bare node_id/flat id, but Point also
-        # accepts qualified nested and in:/out: addresses. Re-send for every
-        # target once the graph-ready Viewer subscribes; applying bare focus a
-        # second time is harmless and keeps one reliable open path.
+        # Poll a CHEAP readiness signal (the live window count) instead of re-POSTing
+        # the build-triggering `focus` on a timer (that re-ran the full graph build
+        # ~60x). `windows > 0` means the Viewer has registered its SSE connection,
+        # which only happens after its graph is built, so it is the same readiness
+        # proxy the old `sent_to > 0` loop used.
         deadline = time.monotonic() + _OPEN_TIMEOUT_S
         while time.monotonic() < deadline:
             time.sleep(_OPEN_INTERVAL_S)
-            payload = _point_request(ctx, port, workflow, "focus", target, output_json=output_json)
-            if _int_field(payload, "sent_to") > 0:
+            health = _probe_health(port, workflow)
+            if health is not None and _int_field(health, "windows") > 0:
                 break
+        # Deliver once after the loop, unconditionally: this makes `timed_out` reflect
+        # a real send (a window that connects in the final poll interval must not be
+        # reported "didn't connect"), and an edge focus can ONLY arrive over SSE — the
+        # opened URL carries no edge focus. Applying a bare focus once is harmless.
+        payload = _point_request(ctx, port, workflow, "focus", target, output_json=output_json)
         timed_out = _int_field(payload, "sent_to") == 0
 
     _emit_payload(payload, output_json)

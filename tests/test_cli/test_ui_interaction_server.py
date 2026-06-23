@@ -92,6 +92,46 @@ class TestHub:
         assert filtered[-1]["sequence"] == 6
 
 
+class TestHealthEndpoint:
+    """``/api/health`` — the discovery/reuse probe. It TOUCHES THE HUB, so the
+    load-bearing invariant is that it counts live connections under the SAME
+    ``_workflow_key`` a Viewer registers under. If health derived a different key
+    than ``events()``, a connected Viewer would read as ``windows: 0`` forever —
+    discovery would re-spawn duplicates and ``focus --open`` would silently time
+    out instead of sending. This is the same register-then-assert-count pattern as
+    ``test_focus_resolves_and_broadcasts_to_matching_windows``."""
+
+    def test_counts_live_windows_under_the_resolved_key_for_a_saved_name(self) -> None:
+        # The realistic case: `pflow ui <name>` opens the Viewer (registers under the
+        # resolved PATH); `pflow ui focus <name> --open` polls health by NAME. Health
+        # must resolve name→path to see the connection — a raw-string lookup would read
+        # 0 (name != path) on EVERY platform, so this pins the resolution unambiguously.
+        manager = WorkflowManager()
+        wf_dir = manager.workflows_dir / "discoverable"
+        wf_dir.mkdir(parents=True)
+        path = wf_dir / "discoverable.pflow.md"
+        write_workflow_file(_VALID_IR, path)
+        key = str(path.resolve())
+
+        app = create_app()
+        app.state.hub.register(key, "visible")
+        app.state.hub.register(key, "hidden")
+        app.state.hub.register("/different.pflow.md", "visible")  # other workflow — must NOT count
+
+        body = TestClient(app).get("/api/health", params={"workflow": "discoverable"}).json()
+
+        assert body == {"service": "pflow-ui", "workflow_key": key, "windows": 2}
+
+    def test_identity_only_without_a_workflow(self) -> None:
+        assert TestClient(create_app()).get("/api/health").json() == {"service": "pflow-ui"}
+
+    def test_unknown_workflow_is_identity_only_not_404(self) -> None:
+        # A liveness probe must answer regardless — unlike command()/activity(), which 404.
+        response = TestClient(create_app()).get("/api/health", params={"workflow": "no-such-workflow-xyz"})
+        assert response.status_code == 200
+        assert response.json() == {"service": "pflow-ui"}
+
+
 class TestInteractionEndpoints:
     def test_focus_resolves_and_broadcasts_to_matching_windows(self, tmp_path: Path) -> None:
         workflow = _workflow(tmp_path)

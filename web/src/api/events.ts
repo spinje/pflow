@@ -40,11 +40,21 @@ function isTarget(value: unknown): value is PointTarget {
   );
 }
 
-/** Subscribe one Viewer. EventSource reconnects automatically after transport failures. */
+const RETRY_MS = 1000; // localhost single-user: a fixed beat beats exponential backoff's moving parts
+
+/**
+ * Subscribe one Viewer to Point commands. Drives its OWN reconnect on drop —
+ * native EventSource auto-reconnect is unreliable for backgrounded/slept/frozen
+ * tabs (it may stay in CONNECTING and never re-register). On any `onerror` we
+ * explicitly close the dead source and reopen a fresh one after a fixed delay,
+ * trigger-agnostic: recovers from server restart, sleep/wake, network blip, and
+ * tab freeze uniformly, without ever reading `readyState` or `visibilityState`.
+ */
 export function subscribe(workflow: string, handlers: PointHandlers): () => void {
-  const params = new URLSearchParams({ workflow, visibility: visibility() });
-  const source = new EventSource(`/api/events?${params.toString()}`);
+  let source: EventSource | null = null;
   let connId: string | null = null;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
 
   const reportVisibility = (): void => {
     if (connId === null) return;
@@ -56,32 +66,58 @@ export function subscribe(workflow: string, handlers: PointHandlers): () => void
     }).catch(() => undefined);
   };
 
-  source.onmessage = (event: MessageEvent<string>): void => {
-    let message: unknown;
-    try {
-      message = JSON.parse(event.data) as unknown;
-    } catch {
-      return;
-    }
-    if (!isRecord(message) || typeof message.type !== "string") return;
-    if (message.type === "connected" && typeof message.conn_id === "string") {
-      connId = message.conn_id;
-      // EventSource reconnects with its original URL, whose visibility value
-      // may now be stale. Correct every newly registered connection
-      // immediately; do not wait for another visibility transition.
-      reportVisibility();
-    } else if (message.type === "clear") {
-      handlers.clear();
-    } else if ((message.type === "focus" || message.type === "frame") && isTarget(message.target)) {
-      handlers[message.type](message.target);
-    }
+  const connect = (): void => {
+    if (stopped) return; // defensive: a fired-but-not-yet-cleared timer must not resurrect a connection
+    const params = new URLSearchParams({ workflow, visibility: visibility() });
+    source = new EventSource(`/api/events?${params.toString()}`);
+
+    source.onmessage = (event: MessageEvent<string>): void => {
+      let message: unknown;
+      try {
+        message = JSON.parse(event.data) as unknown;
+      } catch {
+        return;
+      }
+      if (!isRecord(message) || typeof message.type !== "string") return;
+      if (message.type === "connected" && typeof message.conn_id === "string") {
+        connId = message.conn_id;
+        // A reconnect reopens with the original URL, whose visibility value may
+        // now be stale. Correct every newly registered connection immediately;
+        // do not wait for another visibility transition.
+        reportVisibility();
+      } else if (message.type === "clear") {
+        handlers.clear();
+      } else if ((message.type === "focus" || message.type === "frame") && isTarget(message.target)) {
+        handlers[message.type](message.target);
+      }
+    };
+
+    source.onerror = (): void => {
+      // Any drop (restart/sleep/blip/freeze). Tear down the dead source and reopen
+      // against the live server — do NOT trust native retry, do NOT read readyState.
+      // The single-flight guard (retry === null) + close-before-schedule mean at most
+      // one reconnect is ever pending and at most one EventSource is ever live.
+      source?.close();
+      connId = null;
+      if (!stopped && retry === null) {
+        retry = setTimeout(() => {
+          retry = null;
+          connect();
+        }, RETRY_MS);
+      }
+    };
   };
 
+  connect();
+  // visibilitychange reports visible/hidden ONLY; it never drives reconnection.
   document.addEventListener("visibilitychange", reportVisibility);
 
   return () => {
+    stopped = true;
+    if (retry !== null) clearTimeout(retry);
     document.removeEventListener("visibilitychange", reportVisibility);
-    source.close();
+    source?.close();
+    connId = null;
   };
 }
 

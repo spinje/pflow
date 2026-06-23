@@ -61,6 +61,13 @@ produces — a fit started at click time aims at the target's PRE-re-layout posi
 landed wrong, second right). A same-focus navigate repaints nothing and fits immediately. An
 io-port chip resolves to its OWNER card via `ioOwners` (graph/) for both the follow and the
 expansion anchor (a port id is never a rendered node — unresolved, the follow silently skipped).
+**Hidden-tab re-frame:** a focus that CHANGES while the tab is `hidden` applies its state but
+its camera fit (rAF-driven) never runs and is not re-issued on return, leaving the node
+off-screen (agent Point at a backgrounded Viewer, user-confirmed 2026-06-23). The hook captures
+a change-while-hidden and re-fits on `visibilitychange → visible` — change-while-hidden ONLY, so
+an ordinary tab return where focus didn't move leaves the viewport alone. This is the ONE place a
+camera concern legitimately keys on `visibilitychange`; SSE *connection* recovery (`api/events.ts`)
+deliberately must NOT (it's `onerror`-driven).
 
 ## `usePanelPair` — the two side panes
 

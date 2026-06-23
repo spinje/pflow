@@ -12,6 +12,8 @@ Endpoints:
   the workflow's source files, so the frontend can poll it and re-fetch the
   graph in place (no page reload) when the author edits the ``.pflow.md``.
 - ``GET /api/events?workflow=<name|path>`` — SSE commands for each open Viewer.
+- ``GET /api/health`` — liveness + identity probe for discovery/reuse; reports the
+  live window count when a resolvable ``workflow`` is supplied.
 - ``POST /api/command`` — validate and broadcast an agent Point command.
 - ``POST /api/interaction`` — record one deliberate Viewer interaction.
 - ``POST /api/visibility`` — update a Viewer's visible/backgrounded state.
@@ -404,6 +406,38 @@ async def events(request: Request) -> Response:
     )
 
 
+async def health(request: Request) -> Response:
+    """Liveness + identity probe for discovery/reuse. Cheap: no graph build.
+
+    Always reports the service identity (``{"service": "pflow-ui"}``) so a probe can
+    tell a pflow viewer from any other process on the port. When a resolvable
+    ``workflow`` is supplied, also reports the live window count for that key — the
+    cheap readiness signal ``pflow ui focus --open`` polls instead of re-running the
+    build-triggering ``/api/command`` on a timer.
+
+    Unknown/unresolvable ``workflow`` reports identity only (no ``windows``): a
+    liveness probe must answer regardless, unlike ``events()``/``command()`` which 404.
+
+    ``async def`` is load-bearing: it reads the hub (``windows_for``), so it MUST run
+    on the event loop, never the threadpool (see the hub concurrency invariant).
+
+    Note: ``windows`` can transiently over-count by 1 for up to one ``_KEEPALIVE_S``
+    cycle after a viewer's ``onerror`` reconnect to *this* server (the dropped
+    connection lingers in the hub until its next keepalive write fails). Benign for a
+    local single-user viewer; a server restart frees the whole hub, so that path is
+    clean.
+    """
+    hub: _Hub = request.app.state.hub
+    body: dict[str, object] = {"service": "pflow-ui"}
+    workflow = request.query_params.get("workflow")
+    if workflow:
+        workflow_key = _workflow_key(workflow)
+        if workflow_key is not None:
+            body["workflow_key"] = workflow_key
+            body["windows"] = len(hub.windows_for(workflow_key))
+    return _json(body)
+
+
 async def command(request: Request) -> Response:
     """Validate and broadcast one agent Point command."""
     body = await _json_body(request)
@@ -559,6 +593,7 @@ def create_app() -> Starlette:
         Route("/api/source", source),
         Route("/api/version", version),
         Route("/api/events", events),
+        Route("/api/health", health),
         Route("/api/command", command, methods=["POST"]),
         Route("/api/interaction", interaction, methods=["POST"]),
         Route("/api/visibility", visibility, methods=["POST"]),
