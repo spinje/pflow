@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import cli
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 
 def _write_workflow(tmp_path: Path, content: str) -> Path:
@@ -670,32 +671,30 @@ Score each item.
     )
     trace_path = tmp_path / "trace.json"
     builder = TraceFixtureBuilder()
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=str(workflow_path),
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "anthropic/claude-sonnet-4-5",
-                                    "input_tokens": 1300,
-                                    "output_tokens": 5,
-                                    "total_tokens": 1305,
-                                    "cost_usd": 0.01,
-                                },
-                            }
-                            for index in range(4)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=str(workflow_path),
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 1300,
+                                "output_tokens": 5,
+                                "total_tokens": 1305,
+                                "cost_usd": 0.01,
+                            },
+                        }
+                        for index in range(4)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     runner = CliRunner(mix_stderr=False)
@@ -1047,10 +1046,7 @@ def test_conflicting_flags_exits_nonzero(tmp_path: Path) -> None:
     """--from-trace and --no-trace-autoload are mutually exclusive."""
     workflow_path = _write_workflow(tmp_path, _MINIMAL_VALID_WORKFLOW)
     trace = tmp_path / "trace.json"
-    trace.write_text(
-        json.dumps({"format_version": "2.1.0", "workflow_path": str(workflow_path)}),
-        encoding="utf-8",
-    )
+    write_trace_jsonl(trace, {"format_version": "2.1.0", "workflow_path": str(workflow_path)})
     runner = CliRunner(mix_stderr=False)
     result = runner.invoke(
         cli,

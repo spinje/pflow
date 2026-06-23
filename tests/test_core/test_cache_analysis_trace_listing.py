@@ -11,6 +11,7 @@ from pflow.core.prompt_cache_analysis.trace_loading import (
     _resolve_current_workflow_model_set,
     list_traces_for_workflow,
 )
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 
 def _write_workflow(tmp_path: Path, *, model: str = "anthropic/claude-sonnet-4-5") -> Path:
@@ -77,8 +78,9 @@ def _write_trace(
     models: list[str] | None = None,
 ) -> Path:
     trace_path = debug_dir / _trace_name(workflow_path, suffix)
-    trace_path.write_text(
-        json.dumps({
+    return write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.3.0",
             "workflow_path": workflow_path,
             "final_status": status,
@@ -90,10 +92,8 @@ def _write_trace(
                 "models_used": models or ["anthropic/claude-sonnet-4-5"],
             },
             "nodes": [],
-        }),
-        encoding="utf-8",
+        },
     )
-    return trace_path
 
 
 def test_list_traces_marks_newest_successful_autoload_choice(tmp_path: Path) -> None:
@@ -127,8 +127,9 @@ def test_list_traces_excludes_only_node_traces(tmp_path: Path) -> None:
     full = _write_trace(debug_dir, str(workflow), "20260515-100000", status="success")
     # A newer --only trace must be excluded entirely.
     only_path = debug_dir / _trace_name(str(workflow), "20260515-110000")
-    only_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        only_path,
+        {
             "format_version": "2.4.0",
             "workflow_path": str(workflow),
             "only_node": "review",
@@ -137,8 +138,7 @@ def test_list_traces_excludes_only_node_traces(tmp_path: Path) -> None:
             "duration_ms": 1234,
             "llm_summary": {"total_calls": 1, "total_cost_usd": 0.001, "models_used": ["anthropic/claude-sonnet-4-5"]},
             "nodes": [],
-        }),
-        encoding="utf-8",
+        },
     )
 
     entries, _note = list_traces_for_workflow(str(workflow), debug_dir=debug_dir)
@@ -215,8 +215,9 @@ def test_list_traces_long_duration_matches_shared_format_duration(tmp_path: Path
     debug_dir = tmp_path / "debug"
     debug_dir.mkdir()
     trace_path = debug_dir / _trace_name(str(workflow), "20260515-120000")
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.3.0",
             "workflow_path": str(workflow),
             "final_status": "success",
@@ -228,8 +229,7 @@ def test_list_traces_long_duration_matches_shared_format_duration(tmp_path: Path
                 "models_used": ["anthropic/claude-sonnet-4-5"],
             },
             "nodes": [],
-        }),
-        encoding="utf-8",
+        },
     )
 
     entries, note = list_traces_for_workflow(str(workflow), debug_dir=debug_dir)
@@ -248,8 +248,9 @@ def test_list_traces_duration_unavailable_when_field_missing(tmp_path: Path) -> 
     debug_dir = tmp_path / "debug"
     debug_dir.mkdir()
     trace_path = debug_dir / _trace_name(str(workflow), "20260515-120000")
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.3.0",
             "workflow_path": str(workflow),
             "final_status": "success",
@@ -261,8 +262,7 @@ def test_list_traces_duration_unavailable_when_field_missing(tmp_path: Path) -> 
                 "models_used": ["anthropic/claude-sonnet-4-5"],
             },
             "nodes": [],
-        }),
-        encoding="utf-8",
+        },
     )
 
     entries, note = list_traces_for_workflow(str(workflow), debug_dir=debug_dir)

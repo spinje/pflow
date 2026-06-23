@@ -1049,7 +1049,7 @@ def test_streamed_wire_is_joinable_and_blob_resolvable_by_a_tailer(tmp_path, moc
     """A tailer reading the RAW lines can (a) join each event onto the static graph via
     ``(node_id, ancestor_path)`` and (b) resolve every blob ref from a single forward walk — no trailer.
 
-    THE uncovered coverage: ancestor_path (the overlay's join key) is in ``_RESERVED_LINE_KEYS``, so the
+    THE uncovered coverage: ancestor_path (the overlay's join key) is in ``RESERVED_LINE_KEYS``, so the
     post-hoc reader STRIPS it — the obvious "reuse load_trace_file for the tailer" move destroys the very
     field the overlay joins on. This asserts the key survives onto the wire (present + correct, incl. a
     nested sub-workflow child), contrasts it against the stripped reconstruct, and proves blobs resolve

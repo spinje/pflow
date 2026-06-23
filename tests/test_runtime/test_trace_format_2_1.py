@@ -45,6 +45,8 @@ def test_saved_trace_includes_workflow_path_field(tmp_path, monkeypatch) -> None
     collector = WorkflowTraceCollector(
         workflow_name="test-workflow",
         workflow_path="/abs/path/to/workflow.pflow.md",
+        is_run_scoped=True,
+        stream_to_disk=True,
     )
 
     trace_path = collector.save_to_file()
@@ -61,7 +63,7 @@ def test_saved_trace_workflow_path_null_when_not_set(tmp_path, monkeypatch) -> N
     JSON null. Production paths always set it; this is forward-compat for
     legacy harnesses."""
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    collector = WorkflowTraceCollector(workflow_name="test-workflow")
+    collector = WorkflowTraceCollector(workflow_name="test-workflow", is_run_scoped=True, stream_to_disk=True)
 
     trace_path = collector.save_to_file()
     # save_to_file now writes JSONL (Task 133); load_trace_file reconstructs the

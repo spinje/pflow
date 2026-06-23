@@ -319,9 +319,9 @@ def test_committed_cache_analysis_fixtures_match_generator_output() -> None:
     Re-run ``python -m tests.fixtures.cache_analysis._generate`` to regenerate
     after intentional shape changes; commit the diff.
     """
-    import json
     from pathlib import Path
 
+    from pflow.core.trace_io import load_trace_file
     from tests.fixtures.cache_analysis._generate import (
         FIXTURE_DIR,
         build_parent_child_erroring_trace,
@@ -338,7 +338,9 @@ def test_committed_cache_analysis_fixtures_match_generator_output() -> None:
         ("parent-child-grandchild-trace.json", build_parent_child_grandchild_trace()),
     )
     for filename, generated in cases:
-        committed = json.loads((fixture_dir / filename).read_text())
+        # Committed fixtures are now Task-172 JSONL; load via the production reader (the round-trip
+        # reconstruct of write_trace_jsonl's flatten) and compare to the generator's nested dict.
+        committed = load_trace_file(fixture_dir / filename)
         assert committed == generated, (
             f"{filename} drifted from generator output. Run: python -m tests.fixtures.cache_analysis._generate"
         )

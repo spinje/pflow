@@ -1,6 +1,5 @@
 """Tests for the pflow CLI."""
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +7,7 @@ import click.testing
 import pytest
 
 from pflow.cli.main import main
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 
 def _make_trace(nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -140,7 +140,7 @@ def test_report_command_refuses_non_empty_unmarked_output_dir(tmp_path: Path, mo
     """pflow report -o protects arbitrary non-empty user directories."""
     monkeypatch.setenv("HOME", str(tmp_path))
     trace_file = tmp_path / "trace.json"
-    trace_file.write_text(json.dumps(_make_trace()))
+    write_trace_jsonl(trace_file, _make_trace())
     report_dir = tmp_path / "report"
     report_dir.mkdir()
     existing = report_dir / "notes.md"
@@ -221,20 +221,19 @@ def test_auto_report_rerun_with_only_removes_downstream_pages(tmp_path: Path, mo
 def test_report_command_echoes_summary_to_stderr(tmp_path: Path, monkeypatch):
     """pflow report writes summary.md AND echoes its content to stderr."""
     trace_file = tmp_path / "trace.json"
-    trace_file.write_text(
-        json.dumps(
-            _make_trace(
-                nodes=[
-                    {
-                        "node_id": "fetch",
-                        "node_type": "ShellNode",
-                        "duration_ms": 200.0,
-                        "success": True,
-                        "timestamp": "2026-03-23T10:00:01",
-                    }
-                ]
-            )
-        )
+    write_trace_jsonl(
+        trace_file,
+        _make_trace(
+            nodes=[
+                {
+                    "node_id": "fetch",
+                    "node_type": "ShellNode",
+                    "duration_ms": 200.0,
+                    "success": True,
+                    "timestamp": "2026-03-23T10:00:01",
+                }
+            ]
+        ),
     )
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = click.testing.CliRunner(mix_stderr=False)
@@ -254,7 +253,7 @@ def test_report_command_echoes_summary_to_stderr(tmp_path: Path, monkeypatch):
 def test_report_command_stdout_remains_just_the_path(tmp_path: Path, monkeypatch):
     """Pipe-safety regression guard: stdout MUST stay equal to <report_dir>\\n."""
     trace_file = tmp_path / "trace.json"
-    trace_file.write_text(json.dumps(_make_trace()))
+    write_trace_jsonl(trace_file, _make_trace())
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = click.testing.CliRunner(mix_stderr=False)
     report_dir = tmp_path / "report"

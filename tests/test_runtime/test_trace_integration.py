@@ -12,9 +12,10 @@ from typing import Any
 
 import pytest
 
-from pflow.core.trace_io import BLOB_SENTINEL, intern_blobs
+from pflow.core.trace_io import BLOB_SENTINEL
 from pflow.runtime.engine.batch_executor import _capture_item_trace
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
+from tests.shared.trace_jsonl import flatten_trace_to_lines, write_trace_jsonl
 
 
 def _run_with_trace(
@@ -150,8 +151,6 @@ class TestTraceToReportFormatCompatibility:
     def test_batch_trace_produces_valid_report(self, tmp_path: "Any") -> None:
         """Run a batch through real engine, save trace, generate report,
         verify the report has real content from execution."""
-        import json
-
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -181,7 +180,7 @@ class TestTraceToReportFormatCompatibility:
             "nodes": collector.events,
         }
         trace_path = tmp_path / "trace.json"
-        trace_path.write_text(json.dumps(trace_data, default=str))
+        write_trace_jsonl(trace_path, trace_data)
 
         # Generate report from the real trace
         from pflow.core.trace_report import generate_report
@@ -1226,18 +1225,22 @@ class TestParallelBatchOfLLMs:
         for result in batch_results:
             assert "user_message_blocks" not in result
 
-        interned = intern_blobs({"format_version": "2.5.0", "nodes": [scorer_event]})
+        # Disk-interning (Task 172 JSONL): the byte-identical static prefix shared across the two batch
+        # items must dedup to EXACTLY ONE inline `blob` line, and BOTH per-item refs must point at its md5.
+        # The dynamic parts stay distinct ("red"/"blue") so dropping/duplicating one item can't pass.
+        lines = flatten_trace_to_lines({"format_version": "2.5.0", "execution_id": "r", "nodes": [scorer_event]})
+        static_blob_lines = [
+            ln for ln in lines if ln.get("kind") == "blob" and ln.get("value") == expected_static_block
+        ]
+        assert len(static_blob_lines) == 1, "shared static prefix must intern to exactly one blob line"
+        digest = static_blob_lines[0]["md5"]
+        event_line = next(ln for ln in lines if ln.get("kind") == "event")
         interned_real_items = [
-            item
-            for item in interned["nodes"][0].get("batch_items", [])
-            if not item.get("llm_call", {}).get("is_warmup")
+            item for item in event_line.get("batch_items", []) if not item.get("llm_call", {}).get("is_warmup")
         ]
         static_refs = [item["llm_prompt"][0]["text"] for item in interned_real_items]
         assert len(static_refs) == 2
-        assert static_refs[0] == static_refs[1]
-        assert isinstance(static_refs[0], dict)
-        digest = static_refs[0][BLOB_SENTINEL]
-        assert interned["blobs"][digest] == expected_static_block
+        assert all(isinstance(ref, dict) and ref[BLOB_SENTINEL] == digest for ref in static_refs)
         assert {item["llm_prompt"][1]["text"] for item in interned_real_items} == {"red", "blue"}
 
 
@@ -1335,8 +1338,6 @@ class TestCachedSystemEndToEnd:
         ``llm_system`` AND the generated report has a ``## Cached System``
         section with the cache_control marker visible.
         """
-        import json
-
         # Bypass the runtime pre-dispatch strip so the tiny fixture content
         # ("Reference doc body") doesn't get its marker stripped. The strip
         # is exercised in tests/test_nodes/test_llm/test_prompt_cache_below_min_runtime.py.
@@ -1398,7 +1399,7 @@ class TestCachedSystemEndToEnd:
             "nodes": collector.events,
         }
         trace_path = tmp_path / "trace.json"
-        trace_path.write_text(json.dumps(trace_data, default=str))
+        write_trace_jsonl(trace_path, trace_data)
 
         from pflow.core.trace_report import generate_report
 

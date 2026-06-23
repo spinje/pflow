@@ -721,40 +721,24 @@ def _write_node_files(events: list[dict[str, Any]], parent_dir: Path, node_index
 
 
 def _resolve_final_status(trace: dict[str, Any]) -> str:
-    """Return the workflow-level final status, recomputing for legacy traces.
+    """Return the workflow-level final status — modern (``status``-enum) traces only.
 
-    New traces (post-GH #240 fix) carry ``failed_node_ids``; their
-    ``final_status`` was written using the per-node-last-event rule and we
-    trust it. Legacy traces (pre-fix) carry a ``final_status`` written with
-    the old per-event rule — for a loop-recovery run that would incorrectly
-    read "failed". ``_collect_errors`` already applies the corrected per-node
-    rule to old traces via its fallback; recomputing status here keeps the
-    Status line and Errors section in sync. Without this, a legacy trace
-    renders "Status: failed" with zero entries under "## Errors".
+    A trace that carries ``failed_node_ids`` (every post-GH-#240 trace, including modern crash-truncated
+    ``incomplete`` ones once finalized) is authoritative — trust its stored ``final_status``. The
+    fallback below exists only for a trace that lacks ``failed_node_ids`` (e.g. an ``incomplete`` trace
+    whose ``run.complete`` was never written): apply the canonical per-node-last-event rule over the
+    ``status`` enum, overriding a stored ``"failed"`` only when no node's FINAL state is failed (a
+    recovered loop). Pre-status single-object traces no longer reach this code at all — they fail to load
+    (#531). ``_collect_errors`` (its ``status``-only fallback) and ``_halt_node_id`` stay consistent.
     """
     if "failed_node_ids" in trace:
         return str(trace.get("final_status", "unknown"))
 
-    # Fallback for traces without ``failed_node_ids``: apply the canonical per-node-last-event rule and
-    # override the JSON's stored value when the old rule was wrong. Preserve non-"failed" stored values
-    # ("success"/"degraded") because the fallback can't reconstruct the degraded vs success distinction.
-    # NOTE (Task 172): reads the modern per-node ``status`` enum — a pre-status trace (old ``success``
-    # shape) isn't reclassified here; acceptable under no-back-compat (every post-GH-#240 trace has
-    # ``failed_node_ids`` and takes the branch above).
     latest = final_events_by_node(trace.get("nodes", []))
-    # Read BOTH the modern `status` enum AND the legacy `success` bool so this is NOT blind to an old
-    # pre-status trace. The migration changed `not e.get("success")` → `e.get("status") == "failed"`,
-    # which made a genuinely-FAILED old trace (events carry `success: false`, no `status`) look
-    # failure-free here, so the rewrite below silently flipped it to "success" (Codex/claude review of
-    # PR #530). Both reads keep this fallback honest for old traces while the recovered-loop recompute
-    # still works (the failed event is shadowed by the later success event in final_events_by_node).
-    has_failure = any(e.get("status") == "failed" or e.get("success") is False for e in latest.values())
+    has_failure = any(e.get("status") == "failed" for e in latest.values())
     if has_failure:
         return "failed"
-    legacy = str(trace.get("final_status", "success"))
-    # Old code wrote "failed" for recovered loops (no per-node failure remains); recompute to "success".
-    # Leave "degraded" and other values alone. Modern traces never reach here (they carry failed_node_ids).
-    return "success" if legacy == "failed" else legacy
+    return str(trace.get("final_status", "success"))
 
 
 def _halt_node_id(trace: dict[str, Any]) -> str | None:

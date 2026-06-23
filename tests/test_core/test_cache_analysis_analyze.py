@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import json
 import logging
 import math
 import os
@@ -32,12 +31,13 @@ from pflow.core.prompt_cache_analysis.types import (
     TraceUnexecutedLLMRow,
     invocation_count_for,
 )
-from pflow.core.trace_io import intern_blobs
+from pflow.core.trace_io import load_trace_file
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
 from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 _STAGE_ATTR_MODULES: dict[str, tuple[str, ...]] = {
     "estimate_tokens": (
@@ -86,12 +86,10 @@ def _write_trace_fixture(
     final_status: str | None = None,
 ) -> Path:
     builder = TraceFixtureBuilder()
-    trace_path = tmp_path / name
-    trace_path.write_text(
-        json.dumps(builder.trace(workflow_path=workflow_path, nodes=nodes, final_status=final_status)),
-        encoding="utf-8",
+    return write_trace_jsonl(
+        tmp_path / name,
+        builder.trace(workflow_path=workflow_path, nodes=nodes, final_status=final_status),
     )
-    return trace_path
 
 
 def _llm_trace_event(
@@ -712,8 +710,9 @@ def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
         ],
     }
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": "parent.pflow.md",
             "nodes": [
@@ -731,8 +730,7 @@ def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
                     ],
                 },
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -934,7 +932,7 @@ def test_checked_in_haiku_rerun_trace_uses_total_input_token_semantics(tmp_path:
         workflow_name="anthropic-haiku-smoke-with-cache",
     )
     trace_path = tmp_path / "anthropic-haiku-rerun-trace.json"
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    write_trace_jsonl(trace_path, trace)
 
     result = analyze(
         workflow_ir,
@@ -989,8 +987,9 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
         ],
     }
     trace_path = tmp_path / "truncated-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             # final_status="failed" + unexecuted rows = truncated coverage
@@ -1010,8 +1009,7 @@ def test_truncated_trace_marks_unexecuted_rows_and_suppresses_row_warnings(tmp_p
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1146,8 +1144,9 @@ def test_truncated_trace_filters_cost_projection_findings(tmp_path: Path) -> Non
         ],
     }
     trace_path = tmp_path / "truncated-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             # final_status=failed is what makes this truncated under the new logic.
@@ -1167,8 +1166,7 @@ def test_truncated_trace_filters_cost_projection_findings(tmp_path: Path) -> Non
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1254,8 +1252,9 @@ def test_complete_trace_with_conditional_dispatch_keeps_ir_findings(tmp_path: Pa
         ],
     }
     trace_path = tmp_path / "complete-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             # Workflow finished successfully — the unexecuted "skipped" node
@@ -1275,8 +1274,7 @@ def test_complete_trace_with_conditional_dispatch_keeps_ir_findings(tmp_path: Pa
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1344,8 +1342,9 @@ def test_truncated_trace_filters_first_call_write_penalty_only(tmp_path: Path) -
         ],
     }
     trace_path = tmp_path / "truncated-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             # final_status=failed + unexecuted = truncated.
@@ -1365,8 +1364,7 @@ def test_truncated_trace_filters_first_call_write_penalty_only(tmp_path: Path) -
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1446,8 +1444,9 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
         ]
     }
     trace_path = tmp_path / "batch-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             "nodes": [
@@ -1483,8 +1482,7 @@ def test_dynamic_batch_trace_preserves_observed_model_truth(tmp_path: Path) -> N
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1542,8 +1540,9 @@ def test_memo_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path:
         ],
     }
     trace_path = tmp_path / "memo-hit-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             "final_status": "success",
@@ -1563,8 +1562,7 @@ def test_memo_hit_trace_does_not_count_historical_provider_cache_reads(tmp_path:
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1614,8 +1612,9 @@ def test_in_process_hit_trace_does_not_count_historical_provider_cache_reads(tmp
         ],
     }
     trace_path = tmp_path / "in-process-hit-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             "final_status": "success",
@@ -1635,8 +1634,7 @@ def test_in_process_hit_trace_does_not_count_historical_provider_cache_reads(tmp
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1683,8 +1681,9 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
         ]
     }
     trace_path = tmp_path / "mixed-batch-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             "nodes": [
@@ -1727,8 +1726,7 @@ def test_complete_trace_with_heterogeneous_exclusion_renders_priced_cohort_actua
                     },
                 },
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -1876,8 +1874,9 @@ def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
         ]
     }
     trace_path = tmp_path / "multi-observed-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             "final_status": "success",
@@ -1910,8 +1909,7 @@ def test_multi_observed_sets_model_empty_without_promoting_heterogeneous(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -2008,8 +2006,9 @@ def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
         ]
     }
     trace_path = tmp_path / "mixed-model-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             "final_status": "success",
@@ -2044,8 +2043,7 @@ def test_mixed_per_node_explicit_default_and_heterogeneous_integration(
                     ],
                 },
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -2718,8 +2716,9 @@ def test_truncated_trace_preserves_non_cache_validator_errors(tmp_path: Path) ->
         ],
     }
     trace_path = tmp_path / "truncated-trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "x",
             # Truncated coverage: workflow died, only one of two nodes ran.
@@ -2737,8 +2736,7 @@ def test_truncated_trace_preserves_non_cache_validator_errors(tmp_path: Path) ->
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(
@@ -2993,8 +2991,7 @@ def _write_trace(
         payload["failed_node_ids"] = failed_node_ids
     if start_time is not None:
         payload["start_time"] = start_time
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    return path
+    return write_trace_jsonl(path, payload)
 
 
 def _llm_ir_node(
@@ -3512,13 +3509,13 @@ def test_explicit_from_trace_loads_regardless_of_model(tmp_path: Path) -> None:
     via the Notes entry (same path as auto-load now that the gate is gone)."""
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "/abs/x.pflow.md",
             "nodes": [builder.llm_event("ask", model="gemini/gemini-2.5-flash")],
-        }),
-        encoding="utf-8",
+        },
     )
     result = analyze(
         {"nodes": [_llm_ir_node(model="anthropic/claude-haiku-4-5")]},
@@ -3547,7 +3544,7 @@ def test_explicit_from_trace_resolves_interned_content(tmp_path: Path) -> None:
             }
         ],
     }
-    trace_path.write_text(json.dumps(intern_blobs(trace)), encoding="utf-8")
+    write_trace_jsonl(trace_path, trace)
 
     loaded = _load_trace_explicit(trace_path, [])
 
@@ -3606,6 +3603,30 @@ def test_autoload_skips_unparseable_files_silently(tmp_path: Path, monkeypatch: 
 
     workflow_ir = {"nodes": []}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path is None
+
+
+def test_autoload_skips_legacy_single_object_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # #531 skip-regression (review S1): the autoload reader-path proof for a WELL-FORMED pre-Task-172
+    # single-object trace — distinct from the *malformed*-input skip above and the format_version path.
+    # A valid-JSON single-object trace (no pflow_trace marker) no longer loads; _iter_workflow_traces
+    # catches the JSONDecodeError and skips it, so autoload finds no usable trace and the analyzer
+    # proceeds greenfield (result.trace_path is None) — degrade, never crash, never silently consume it.
+    import json
+
+    from pflow.runtime.workflow_trace import format_trace_filename
+
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    name = format_trace_filename("/abs/x.pflow.md", "legacy", "20260430-000002")
+    (debug_dir / name).write_text(
+        json.dumps({"format_version": "2.2.0", "workflow_path": "/abs/x.pflow.md", "nodes": []}),
+        encoding="utf-8",
+    )
+
+    result = analyze({"nodes": []}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
     assert result.trace_path is None
 
 
@@ -3685,6 +3706,25 @@ def test_explicit_from_trace_invalid_json_raises(tmp_path: Path) -> None:
             auto_load_trace=False,
             trace_path=path,
         )
+
+
+def test_explicit_from_trace_rejects_legacy_single_object(tmp_path: Path) -> None:
+    # #531 skip-regression (review S1): the _load_trace_explicit reader-path proof for a WELL-FORMED
+    # pre-Task-172 single-object trace (distinct from the *malformed*-JSON raise above). load_trace_file
+    # raises JSONDecodeError on the unmarked single-object file; _load_trace_explicit wraps it as a
+    # ValueError so an explicit --from-trace fails with a non-zero exit instead of silently analyzing
+    # greenfield. Proven both directly and through analyze(trace_path=...).
+    import json
+
+    legacy = tmp_path / "legacy-single-object.json"
+    legacy.write_text(
+        json.dumps({"format_version": "2.2.0", "workflow_path": "/abs/x.pflow.md", "nodes": []}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError):
+        _load_trace_explicit(legacy, [])
+    with pytest.raises(ValueError):
+        analyze({"nodes": []}, workflow_path="/abs/x.pflow.md", auto_load_trace=False, trace_path=legacy)
 
 
 # ---------------------------------------------------------------------------
@@ -4766,8 +4806,9 @@ def test_brownfield_trace_populates_cacheable_via_trace_tier_with_asymmetric_val
     }
 
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": workflow_path,
             "nodes": [
@@ -4781,7 +4822,7 @@ def test_brownfield_trace_populates_cacheable_via_trace_tier_with_asymmetric_val
                     },
                 }
             ],
-        })
+        },
     )
 
     analysis = analyze(
@@ -4951,8 +4992,9 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
     # the case where the analyzer's static threshold check would falsely
     # contradict trace evidence.
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": workflow_path,
             "nodes": [
@@ -4966,7 +5008,7 @@ def test_below_min_tokens_suppressed_when_trace_evidence_shows_cache_fired(
                     },
                 }
             ],
-        })
+        },
     )
 
     analysis = analyze(
@@ -5014,8 +5056,9 @@ def test_per_call_row_carries_raw_cache_token_splits_from_trace(
     }
 
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": workflow_path,
             "nodes": [
@@ -5030,7 +5073,7 @@ def test_per_call_row_carries_raw_cache_token_splits_from_trace(
                     },
                 }
             ],
-        })
+        },
     )
 
     analysis = analyze(
@@ -5305,8 +5348,9 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
 
     # Trace records cache declared but didn't fire — Tier 1 MUST fall through.
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": workflow_path,
             "nodes": [
@@ -5320,7 +5364,7 @@ def test_declared_with_zero_creation_zero_read_falls_through_to_memo_e2e(
                     },
                 }
             ],
-        })
+        },
     )
 
     analysis = analyze(
@@ -5495,12 +5539,11 @@ def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
     # a temp file. Simpler: the analyzer accepts trace_path, so we'd need
     # a real file. Instead, drive via an explicit test-only path: write
     # the trace JSON to tmp.
-    import json
     import tempfile
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(trace, f)
         trace_file = f.name
+    write_trace_jsonl(Path(trace_file), trace)
 
     try:
         analysis = analyze(
@@ -5563,7 +5606,7 @@ def test_build_trace_execution_index_excludes_cached_llm_cost() -> None:
 def test_build_trace_execution_index_collects_top_level_and_batch_node_outputs() -> None:
     """Trace-output projection must see both node-output producers."""
     trace_path = Path(".taskmaster/tasks/task_159/baseline/_shared/fixtures/live-gemini-lyrics-generator.trace.json")
-    trace_data = json.loads(trace_path.read_text())
+    trace_data = load_trace_file(trace_path)
     root_workflow_path = str(trace_data.get("workflow_path") or "")
 
     index = _build_trace_execution_index(trace_data, root_workflow_path, {})
@@ -5943,32 +5986,30 @@ def test_batch_prefix_projection_uses_trace_call_count_for_dynamic_batch(tmp_pat
     }
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": model,
-                                    "input_tokens": 50_000,
-                                    "output_tokens": 10,
-                                    "total_tokens": 50_010,
-                                    "cost_usd": 0.01,
-                                },
-                            }
-                            for index in range(3)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": model,
+                                "input_tokens": 50_000,
+                                "output_tokens": 10,
+                                "total_tokens": 50_010,
+                                "cost_usd": 0.01,
+                            },
+                        }
+                        for index in range(3)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(
@@ -6025,32 +6066,30 @@ def test_batch_prefix_projection_promotes_dynamic_batch_prewarm_action(
     }
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": model,
-                                    "input_tokens": 20_000,
-                                    "output_tokens": 10,
-                                    "total_tokens": 20_010,
-                                    "cost_usd": 0.01,
-                                },
-                            }
-                            for index in range(4)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": model,
+                                "input_tokens": 20_000,
+                                "output_tokens": 10,
+                                "total_tokens": 20_010,
+                                "cost_usd": 0.01,
+                            },
+                        }
+                        for index in range(4)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(
@@ -6244,32 +6283,30 @@ def test_batch_prefix_projection_does_not_ripple_into_rerun_cost_for_undeclared_
     }
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": model,
-                                    "input_tokens": 50_000,
-                                    "output_tokens": 10,
-                                    "total_tokens": 50_010,
-                                    "cost_usd": 0.01,
-                                },
-                            }
-                            for index in range(3)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": model,
+                                "input_tokens": 50_000,
+                                "output_tokens": 10,
+                                "total_tokens": 50_010,
+                                "cost_usd": 0.01,
+                            },
+                        }
+                        for index in range(3)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(
@@ -6330,23 +6367,21 @@ def test_batch_prefix_projection_does_not_fire_for_non_batch_repeated_call_nodes
     }
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.llm_event(
-                        "judge",
-                        model=model,
-                        input_tokens=1_000,
-                        output_tokens=10,
-                        cost_usd=0.001,
-                    )
-                    for _ in range(4)  # invoked 4 times via parent batch
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.llm_event(
+                    "judge",
+                    model=model,
+                    input_tokens=1_000,
+                    output_tokens=10,
+                    cost_usd=0.001,
+                )
+                for _ in range(4)  # invoked 4 times via parent batch
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(
@@ -6687,8 +6722,6 @@ def test_homogeneous_static_workflow_batch_child_cost_attributed_to_child(
     which mirrors the production trace shape (no
     ``template_resolutions["workflow"]`` per item; only ``inputs``).
     """
-    import json
-
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
     # Build a parent + child workflow on disk.
@@ -6721,7 +6754,7 @@ def test_homogeneous_static_workflow_batch_child_cost_attributed_to_child(
     )
     trace = builder.trace(workflow_path=str(parent_path), nodes=[parent_event])
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    write_trace_jsonl(trace_path, trace)
 
     resolved = resolve_workflow(str(parent_path))
     result = analyze(
@@ -6790,7 +6823,7 @@ def test_dynamic_workflow_batch_old_relative_trace_attributed_to_child(
     )
     trace = builder.trace(workflow_path=str(parent_path), nodes=[parent_event])
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    write_trace_jsonl(trace_path, trace)
 
     resolved = resolve_workflow(str(parent_path))
     result = analyze(
@@ -6834,8 +6867,6 @@ def test_memo_hit_trace_recovers_input_and_output_tokens_via_index(
     output ``None``). Cost summation must remain $0 for cached events
     (Bug 1 invariant).
     """
-    import json
-
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
     workflow_path = tmp_path / "smoke.pflow.md"
@@ -6858,7 +6889,7 @@ def test_memo_hit_trace_recovers_input_and_output_tokens_via_index(
     )
     trace = builder.trace(workflow_path=str(workflow_path), nodes=[cached_event])
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    write_trace_jsonl(trace_path, trace)
 
     resolved = resolve_workflow(str(workflow_path))
     result = analyze(
@@ -7339,7 +7370,7 @@ def test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent(
         item["workflow_path"] = str(child_path)
     trace_dict = builder.trace(parent_path, [padding, child_batch])
     trace_file = tmp_path / "parent-trace.json"
-    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+    write_trace_jsonl(trace_file, trace_dict)
 
     # Analyze the CHILD with the parent's trace.
     result = analyze(
@@ -7456,7 +7487,7 @@ def test_workflow_appears_as_child_detects_sub_workflow_via_default_edges(
         "execution_id": "test",
     }
     trace_file = tmp_path / "parent-trace.json"
-    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+    write_trace_jsonl(trace_file, trace_dict)
 
     result = analyze(
         child_ir,
@@ -7509,7 +7540,7 @@ def test_scope_mismatch_emits_generic_note_when_analyzed_workflow_absent_from_tr
     other_llm = builder.llm_event("other-llm", cost_usd=0.01, input_tokens=100, output_tokens=10)
     trace_dict = builder.trace(other_path, [other_llm])
     trace_file = tmp_path / "other-trace.json"
-    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+    write_trace_jsonl(trace_file, trace_dict)
 
     result = analyze(
         analyzed_ir,
@@ -7578,7 +7609,7 @@ def test_actually_paid_unchanged_when_trace_root_matches_analyzed_workflow(
     child_wf = builder.workflow_event("call-child", [child_llm], workflow_path=str(child_path))
     trace_dict = builder.trace(parent_path, [parent_llm, child_wf])
     trace_file = tmp_path / "parent-trace.json"
-    trace_file.write_text(json.dumps(trace_dict), encoding="utf-8")
+    write_trace_jsonl(trace_file, trace_dict)
 
     result = analyze(
         parent_ir,
