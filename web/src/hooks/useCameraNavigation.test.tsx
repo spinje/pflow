@@ -249,6 +249,46 @@ describe("useCameraNavigation", () => {
     expect(followCalls("n2")).toBe(1); // now it lands, exactly once
   });
 
+  it("re-frames an edge endpoint to its rendered REPRESENTATIVE, not the raw (suppressed) flat id", () => {
+    // The endpoint `member1` isn't rendered (its leaf box is suppressed); its io-wrapper
+    // group `wrap1` is. The re-frame must resolve to the representative like the live path,
+    // else an edge touching a sub-workflow/batch host fits the wrong subset (or nothing).
+    rf.renderedIds = ["wrap1", "n2"];
+    const graph = {
+      nodes: [],
+      edges: [{ id: "e0", source: "member1", target: "n2" }],
+      groups: [{ id: "wrap1", kind: "input_wrapper", host: null, members: ["member1"], parent: null }],
+    } as unknown as Args["graph"];
+    const props = makeProps({ focus: null, graph });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "e0" });
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+
+    expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ nodes: [{ id: "wrap1" }, { id: "n2" }] }));
+  });
+
+  it("drops a pending re-frame when focus is cleared while visible (no jump to a dismissed node)", () => {
+    rf.renderedIds = ["other"]; // the focused node hasn't painted yet, so the re-frame stays pending
+    const props = makeProps({ focus: "other" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "n2" }); // agent Point while hidden → pending = n2
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(0); // n2 not painted → pending kept
+
+    rerender({ ...props, focus: null }); // user Clear Focus while visible → pending must clear
+    rf.renderedIds = ["other", "n2"]; // n2 finally paints
+    rerender({ ...props, focus: null, paintEpoch: 1 });
+    expect(followCalls("n2")).toBe(0); // the dismissed node is NOT jumped to
+  });
+
   it("fits the whole view once per workflow|direction|node key — focus restyles never refit; a direction flip does", () => {
     rf.renderedIds = ["n1"];
     const props = makeProps();

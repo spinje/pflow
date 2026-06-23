@@ -8,7 +8,7 @@ import { useNodesInitialized, useReactFlow } from "@xyflow/react";
 
 import type { Direction } from "../graph/flow";
 import type { GraphStatus } from "./useWorkflowGraph";
-import { resolveNodeFlatId, type ViewParams } from "../utils/viewParams";
+import { resolveEndpointFlatId, resolveNodeFlatId, type ViewParams } from "../utils/viewParams";
 import type { RFGraph } from "../types";
 
 interface CameraNavigationArgs {
@@ -149,28 +149,34 @@ export function useCameraNavigation({
   useEffect(() => {
     if (focus === prevFocusRef.current) return;
     prevFocusRef.current = focus;
-    if (document.visibilityState === "hidden") pendingReframeRef.current = focus;
+    // Arm a re-frame only for a focus that moves WHILE HIDDEN; a focus change while
+    // visible (including Clear Focus → null) clears any pending one, so a stale
+    // pending can't jerk the camera to a since-dismissed target on the next paint.
+    pendingReframeRef.current = document.visibilityState === "hidden" ? focus : null;
   }, [focus]);
   useEffect(() => {
     const reframeOnShow = (): void => {
       if (document.visibilityState !== "visible") return;
       const id = pendingReframeRef.current;
       if (id == null) return;
+      const graph = graphRef.current;
       const rendered = new Set(getNodes().map((node) => node.id));
-      // A node focus fits the node (or its io-port OWNER card); an EDGE focus fits
-      // its rendered endpoints (focus can be an edge id — GraphView sets it, and the
-      // CLI re-sends edge focus over SSE). Endpoints/owner may not be painted yet
-      // (an agent Point that revealed a collapsed target while hidden) — in that case
-      // DON'T clear: the paintEpoch dep re-runs this once the reveal paints.
-      let fitIds: string[];
-      const owner = ioPorts?.get(id);
-      if (rendered.has(id)) fitIds = [id];
-      else if (owner != null && rendered.has(owner)) fitIds = [owner];
-      else {
-        const edge = graphRef.current?.edges.find((e) => e.id === id);
-        fitIds = edge ? [edge.source, edge.target].filter((endpoint) => rendered.has(endpoint)) : [];
-      }
-      if (fitIds.length === 0) return; // not rendered yet — keep pending, retry on the next paint
+      // Resolve to the SAME on-canvas representative the live Point path uses: a node
+      // (or group HOST → its rendered group / io-wrapper) via resolveEndpointFlatId; an
+      // io-PORT → its owner card; an EDGE focus → its rendered endpoints. A target not
+      // painted yet (an agent Point that revealed a collapsed node while hidden) resolves
+      // to null — DON'T clear; the paintEpoch dep re-runs this once the reveal paints.
+      const resolve = (flatId: string): string | null => {
+        const port = ioPorts?.get(flatId);
+        if (port != null) return rendered.has(port) ? port : null;
+        if (graph) return resolveEndpointFlatId(graph, rendered, flatId);
+        return rendered.has(flatId) ? flatId : null;
+      };
+      const edge = graph?.edges.find((e) => e.id === id);
+      const fitIds = (edge ? [edge.source, edge.target] : [id])
+        .map(resolve)
+        .filter((fitId): fitId is string => fitId !== null);
+      if (fitIds.length === 0) return; // nothing rendered yet — keep pending, retry on the next paint
       pendingReframeRef.current = null;
       fitView({ nodes: fitIds.map((fitId) => ({ id: fitId })), padding: 0.45, maxZoom: 1.2, duration: 300 });
     };
