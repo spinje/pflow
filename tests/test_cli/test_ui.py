@@ -683,13 +683,13 @@ class TestUiCommand:
             result = runner.invoke(ui_cmd, [str(workflow_path), "--port", "9131"])
 
         assert result.exit_code == 0, result.output
-        assert "already running" in result.output
+        assert "opened a view" in result.output  # a tab WAS opened (no --no-open)
         mock_run.assert_not_called()
         mock_open.assert_called_once()
         assert "9131" in mock_open.call_args.args[0]
 
     def test_port_in_use_by_pflow_viewer_honors_no_open(self, tmp_path: Path) -> None:
-        """Reuse path respects ``--no-open``: report it, open nothing, exit 0."""
+        """Reuse path respects ``--no-open``: open nothing, and the message says so."""
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
@@ -703,9 +703,33 @@ class TestUiCommand:
             result = runner.invoke(ui_cmd, [str(workflow_path), "--no-open", "--port", "9132"])
 
         assert result.exit_code == 0, result.output
-        assert "already running" in result.output
+        # The message must NOT falsely claim a view was opened under --no-open.
+        assert "view available" in result.output
+        assert "opened a view" not in result.output
         mock_run.assert_not_called()
         mock_open.assert_not_called()
+
+    def test_reuse_resolves_a_relative_workflow_path_to_absolute(self) -> None:
+        """The already-running server may have a different cwd, so the reuse URL must
+        carry an ABSOLUTE path — a relative one would resolve against the server's cwd
+        and open the wrong/missing workflow."""
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            Path("wf.pflow.md").write_text(
+                "# x\n\n## Steps\n\n### a\n\nDo a thing now.\n\n- type: shell\n- command: echo hi\n"
+            )
+            with (
+                patch("pflow.cli.commands.ui._port_available", return_value=False),
+                patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
+                patch("uvicorn.run"),
+                patch("webbrowser.open") as mock_open,
+            ):
+                result = runner.invoke(ui_cmd, ["wf.pflow.md", "--port", "9135"])
+
+        assert result.exit_code == 0, result.output
+        encoded_workflow = mock_open.call_args.args[0].split("workflow=")[1]
+        # An absolute path url-encodes its slashes (%2F); the relative "wf.pflow.md" has none.
+        assert "%2F" in encoded_workflow
 
 
 class TestServeUrl:

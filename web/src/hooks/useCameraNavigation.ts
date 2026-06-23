@@ -155,16 +155,31 @@ export function useCameraNavigation({
     const reframeOnShow = (): void => {
       if (document.visibilityState !== "visible") return;
       const id = pendingReframeRef.current;
-      pendingReframeRef.current = null;
       if (id == null) return;
       const rendered = new Set(getNodes().map((node) => node.id));
+      // A node focus fits the node (or its io-port OWNER card); an EDGE focus fits
+      // its rendered endpoints (focus can be an edge id — GraphView sets it, and the
+      // CLI re-sends edge focus over SSE). Endpoints/owner may not be painted yet
+      // (an agent Point that revealed a collapsed target while hidden) — in that case
+      // DON'T clear: the paintEpoch dep re-runs this once the reveal paints.
+      let fitIds: string[];
       const owner = ioPorts?.get(id);
-      const fitId = rendered.has(id) ? id : owner != null && rendered.has(owner) ? owner : null;
-      if (fitId != null) fitView({ nodes: [{ id: fitId }], padding: 0.45, maxZoom: 1.2, duration: 300 });
+      if (rendered.has(id)) fitIds = [id];
+      else if (owner != null && rendered.has(owner)) fitIds = [owner];
+      else {
+        const edge = graphRef.current?.edges.find((e) => e.id === id);
+        fitIds = edge ? [edge.source, edge.target].filter((endpoint) => rendered.has(endpoint)) : [];
+      }
+      if (fitIds.length === 0) return; // not rendered yet — keep pending, retry on the next paint
+      pendingReframeRef.current = null;
+      fitView({ nodes: fitIds.map((fitId) => ({ id: fitId })), padding: 0.45, maxZoom: 1.2, duration: 300 });
     };
+    // Re-fit when the tab returns to visible, AND on each paint while a re-frame is
+    // pending (so a focus whose node hadn't painted when the tab was shown still lands).
+    reframeOnShow();
     document.addEventListener("visibilitychange", reframeOnShow);
     return () => document.removeEventListener("visibilitychange", reframeOnShow);
-  }, [fitView, getNodes, ioPorts]);
+  }, [paintEpoch, fitView, getNodes, ioPorts]);
   const onNavigate = useCallback(
     (focusId: string, selected?: string | null) => {
       // The clicked chip may unmount with the panel swap — its mouseleave never

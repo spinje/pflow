@@ -217,6 +217,38 @@ describe("useCameraNavigation", () => {
     expect(followCalls("n2")).toBe(0);
   });
 
+  it("re-frames an EDGE focus that changed while hidden to its rendered endpoints", () => {
+    rf.renderedIds = ["n1", "n2"];
+    const graph = { nodes: [], edges: [{ id: "e0", source: "n1", target: "n2" }], groups: [] } as unknown as Args["graph"];
+    const props = makeProps({ focus: null, graph });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "e0" }); // an agent edge Point while hidden
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+
+    expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ nodes: [{ id: "n1" }, { id: "n2" }] }));
+  });
+
+  it("defers the hidden re-frame until the focused node paints (not-yet-rendered on return)", () => {
+    rf.renderedIds = ["other"]; // n2 was revealed while hidden but hasn't painted yet
+    const props = makeProps({ focus: "other" });
+    const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+    fitViewSpy.mockClear();
+
+    setVisibility("hidden");
+    rerender({ ...props, focus: "n2" }); // pending = n2
+    setVisibility("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(followCalls("n2")).toBe(0); // not rendered yet → not fit, pending kept (NOT cleared)
+
+    rf.renderedIds = ["other", "n2"]; // the reveal paints
+    rerender({ ...props, focus: "n2", paintEpoch: 1 }); // paintEpoch bump re-runs the re-frame
+    expect(followCalls("n2")).toBe(1); // now it lands, exactly once
+  });
+
   it("fits the whole view once per workflow|direction|node key — focus restyles never refit; a direction flip does", () => {
     rf.renderedIds = ["n1"];
     const props = makeProps();

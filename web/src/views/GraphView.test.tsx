@@ -135,6 +135,24 @@ const GRAPH: RFGraph = {
 beforeAll(() => installReactFlowJsdomMocks());
 beforeEach(() => {
   cleanup();
+  // Pin the SNAP path (force prefers-reduced-motion ON) so the paint-deferred camera
+  // follow is DETERMINISTIC. The animated path bumps paintEpoch only when its rAF
+  // glide lands; that's fine at ~100ms locally but races the `waitFor` under CI load,
+  // so the follow intermittently never fires. Animation is not the subject of these
+  // mount/integration tests — same lever useWorkflowGraph.test.tsx's setReducedMotion uses.
+  Object.defineProperty(window, "matchMedia", {
+    writable: true,
+    value: (query: string) => ({
+      matches: query.includes("prefers-reduced-motion"),
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
   vi.mocked(fetchGraph).mockReset();
   vi.mocked(fetchSource).mockReset();
   vi.mocked(fetchSource).mockResolvedValue({

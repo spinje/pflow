@@ -13,6 +13,7 @@ import socket
 import time
 import webbrowser
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import NoReturn
 from urllib.parse import urlencode
 
@@ -428,10 +429,17 @@ def serve_cmd(
         # Port taken. If it's our own viewer, reuse it (open a tab) rather than fail —
         # `pflow ui <wf>` becomes idempotent. A foreign process keeps the hard error.
         if _probe_health(port) is not None:
-            url = _serve_url(port, workflow, no_auto_update)
+            # The already-running server may have a DIFFERENT cwd, so a relative path
+            # would resolve against ITS cwd, not the caller's — opening the wrong/
+            # missing workflow. Send an absolute path for a path-like arg; a saved
+            # NAME resolves via the registry regardless of cwd, so leave it untouched.
+            reuse_workflow = str(Path(workflow).resolve()) if workflow and Path(workflow).exists() else workflow
+            url = _serve_url(port, reuse_workflow, no_auto_update)
             if not no_open:
                 webbrowser.open(url)
-            click.echo(f"pflow UI already running on port {port} — opened a view at {url}", err=True)
+                click.echo(f"pflow UI already running on port {port} — opened a view at {url}", err=True)
+            else:
+                click.echo(f"pflow UI already running on port {port} — view available at {url}", err=True)
             ctx.exit(0)
             return
         click.echo(
