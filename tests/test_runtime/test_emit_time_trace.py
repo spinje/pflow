@@ -967,3 +967,66 @@ def test_streaming_large_meta_field_stays_readable(tmp_path, monkeypatch):
     loaded = load_trace_file(path)  # loads via the JSONL path, not the whole-file fallback
     assert loaded["workflow_path"] == big_path
     assert loaded["final_status"] == "success"
+
+
+@pytest.mark.trace_files
+def test_child_llm_prompt_does_not_bleed_into_same_id_parent_node(tmp_path, mock_llm_client, monkeypatch):
+    """C4 END-TO-END (the real bug, not just the mechanism): with collector unification one run-scoped
+    collector is shared across parent + child, so a parent node sharing a child sub-workflow LLM node's
+    bare ``node_id`` could inherit the child's captured prompt. Drives a REAL run (collector unification +
+    record ordering + the trace_hook), then asserts the parent's event carries NO ``llm_prompt`` while the
+    child's keeps its own. MUTATION-VERIFIED: revert ``_add_llm_data``'s ``.pop`` → ``.get`` and the
+    parent's shell event inherits ``"child secret prompt"``.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    mock_llm_client.set_response(MODEL, None, {"response": "child"}, cost_usd=0.01)
+
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\nChild with an LLM node named 'answer'.\n\n## Steps\n\n"
+        "### answer\n\nLLM.\n\n- type: llm\n- model: " + MODEL + "\n- prompt: child secret prompt\n",
+        encoding="utf-8",
+    )
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        "# Parent\n\nCalls the child, then a NON-LLM node also named 'answer'.\n\n## Steps\n\n"
+        "### call-child\n\nDelegate to the child.\n\n- type: workflow\n- workflow: " + str(child) + "\n\n"
+        "### answer\n\nA shell node sharing the child's node_id.\n\n- type: shell\n- command: echo parent\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(parent), {}, config=RunnerConfig(cache_enabled=False))
+    assert result.success
+
+    events = result.trace.events
+    # The flat store distinguishes them by nesting: parent 'answer' is top-level; child 'answer' nests.
+    parent_answer = next(e for e in events if e["node_id"] == "answer" and e.get("parent_id") is None)
+    child_answer = next(e for e in events if e["node_id"] == "answer" and e.get("parent_id") is not None)
+    assert "llm_prompt" not in parent_answer, "parent non-LLM node must NOT inherit the child's captured prompt"
+    assert child_answer.get("llm_prompt") == "child secret prompt", "the child LLM node keeps its own prompt"
+
+
+@pytest.mark.trace_files
+def test_runner_finalizes_a_complete_trace_when_the_run_fails(tmp_path, monkeypatch):
+    """The runner finalizes in its ``finally`` — which runs on the FAILURE path too — so a library run that
+    fails still leaves a COMPLETE trace (``final_status="failed"``), not an incomplete one. This is the only
+    guard on that ``finally``'s ``contextlib.suppress(Exception)``: if ``finalize()`` ever broke on a
+    failed-run's partial state, the suppress would hide it and library callers would silently get incomplete
+    traces. MUTATION-VERIFIED: drop the runner-side finalize (or set ``finalize_trace=False``) → the file
+    reconstructs ``incomplete`` and this fails.
+    """
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "boom.pflow.md"
+    wf.write_text(
+        "# Boom\n\nA failing shell node.\n\n## Steps\n\n### boom\n\nFail.\n\n- type: shell\n- command: false\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert not result.success
+    assert result.trace._finalized and result.trace._stream is None  # finalized + closed on the failure path
+    files = list((tmp_path / ".pflow" / "debug").glob("*.json"))
+    assert len(files) == 1
+    loaded = load_trace_file(files[0])
+    assert loaded["final_status"] == "failed"  # complete trailer reflecting the failure, NOT "incomplete"
+    assert loaded["failed_node_ids"] == ["boom"]

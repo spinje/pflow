@@ -646,3 +646,15 @@ hardened (I/O isolation, exception-safe + runner-owned finalize, no prompt-bleed
 reader rejects content after `run.complete`) and the remaining cleanup/extensibility work is tracked in #531 +
 Task 173. Honest ceiling unchanged: the streamed shape is still validated only producer-side until Task 173
 tails it live.
+
+---
+
+## 2026-06-23 — High-value test audit: 2 added (end-to-end, mutation-proven)
+
+The C4 fix had only a *unit* test (`_add_llm_data` in isolation) — it pinned the mechanism, not the real
+cross-workflow bug. Added the **end-to-end** test (`test_child_llm_prompt_does_not_bleed_into_same_id_parent_node`)
+and **mutation-proved the bug is real**: reverting `pop`→`get`, a real parent+child run produced a top-level
+shell node whose event carried `llm_prompt: "child secret prompt"` (the child LLM node's prompt bleeding into a
+non-LLM parent). Also added `test_runner_finalizes_a_complete_trace_when_the_run_fails` — guards the runner
+finally's `suppress(Exception)` (a failed library run must still leave a COMPLETE trace, not a silently-hidden
+incomplete one); mutation-verified. Suite **8102** green, `make check` clean.
