@@ -31,7 +31,7 @@ from typing import Any
 # One-shot authoring tool: it imports repo-internal helpers (pflow + tests.shared). Run via
 # `uv run python` so pflow resolves; bootstrap the repo root onto sys.path so `tests.shared`
 # resolves too (a `python <path>` run puts the SCRIPT dir on sys.path[0], not the repo root).
-_REPO_ROOT = Path(__file__).resolve()
+_REPO_ROOT = Path(__file__).resolve().parent
 while not (_REPO_ROOT / "pyproject.toml").exists():
     if _REPO_ROOT.parent == _REPO_ROOT:
         raise SystemExit("minimize-trace-fixture.py: could not locate repo root (pyproject.toml)")
