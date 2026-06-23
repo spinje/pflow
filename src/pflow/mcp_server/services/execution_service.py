@@ -276,7 +276,11 @@ class ExecutionService(BaseService):
         result = runner.run(
             resolved,
             validated_params,
-            RunnerConfig(),
+            # Task 172: MCP reads cost/results from the in-memory collector and never persists a trace
+            # file today, so it opts OUT of the new per-event streaming (trace_enabled=False). Streaming
+            # is CLI-only in v1; otherwise MCP runs would write to ~/.pflow/debug and become unintended
+            # --only / analyze-cache snapshot sources.
+            RunnerConfig(trace_enabled=False),
             workflow_manager=wm,
             workflow_name=workflow_name,
         )
@@ -681,7 +685,9 @@ class ExecutionService(BaseService):
             # Passing them as Runner params causes WorkflowValidator Step 7
             # to flag all node params as "unknown workflow inputs".
             runner = WorkflowRunner()
-            result = runner.run(synthetic_ir, {}, RunnerConfig(cache_enabled=False))
+            # registry_run is a single-node probe — no trace persisted (Task 172: trace_enabled=False so
+            # it never streams to ~/.pflow/debug), matching its pre-streaming behavior.
+            result = runner.run(synthetic_ir, {}, RunnerConfig(cache_enabled=False, trace_enabled=False))
 
             if result.success:
                 # Extract node output from shared store

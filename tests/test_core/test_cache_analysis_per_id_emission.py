@@ -5093,14 +5093,14 @@ def test_iter_llm_events_includes_cached_events() -> None:
     events = [
         {
             "node_id": "memoized-llm",
-            "cached": True,
+            "status": "cached",
             "llm_call": {"model": "anthropic/claude-sonnet-4-5", "cache_creation_input_tokens": 0},
         }
     ]
     yielded = list(_iter_llm_events(events))
     assert len(yielded) == 1
     assert yielded[0][0] == "memoized-llm"
-    assert yielded[0][1].get("cached") is True
+    assert yielded[0][1].get("status") == "cached"
 
 
 def test_iter_llm_events_recurses_into_batch_items() -> None:

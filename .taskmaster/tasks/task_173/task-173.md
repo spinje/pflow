@@ -68,6 +68,17 @@ and the whole pipe *before* the full producer (Task 172) is done.
 ### Server-side tailer
 - Discover the live run's trace file (newest-by-workflow-hash in `~/.pflow/debug`, or the run registers
   its path; trivial when the UI *launched* it). Tail incrementally as lines append.
+- **Producer eager-`meta` write — DO THIS as a small Task 172 follow-up (discoverability gate).** Today the
+  producer opens the trace file **lazily, on the first node *completion*** (`runtime/workflow_trace.py::
+  _open_stream`, called from `_flush_event`). So a still-running first node (e.g. a 30 s LLM call) is
+  **undiscoverable until it finishes**, and a crash mid-first-node leaves no file at all — directly
+  undercutting "watch a run live." Fix: write the `meta` line **eagerly at run start** (after `only_node` is
+  set) so the file exists from t=0 and the tailer can find an in-flight run immediately. **Ripple to handle
+  when adding it:** `meta`-only files from crashed/empty runs would then surface to `pflow report`'s
+  newest-by-mtime auto-detect (`cli/commands/report.py`) and analyze-cache's "found other traces" disclosure
+  (`prompt_cache_analysis/trace_loading.py`) — review/guard those (they currently never see a contentless
+  trace). Compatible with the pytest gate (it patches `_open_stream`). Surfaced by the PR #530 review;
+  context also in GH #531 (related section) and `task_172/implementation/progress-log.md` (2026-06-23).
 - Tolerate a crash-tail / partial file (no `run.complete`). Cross-platform file watching.
 - Push each new event as a run-event SSE message on Task 169's bus.
 

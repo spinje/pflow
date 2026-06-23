@@ -531,8 +531,14 @@ def record_trace(
     cached: bool = False,
     error: Optional[Exception | str] = None,
     success: Optional[bool] = None,
+    frame: Any = None,
 ) -> None:
     """Record trace event. Receives data directly, no chain traversal.
+
+    ``frame`` (Task 172) is the sub-workflow host's reserved correlation (``_HostFrame``), passed only
+    for a ``WorkflowExecutor`` host so its completion event reuses the ``seq`` reserved at descent;
+    ``None`` for every other node (the run collector then takes the next ``seq``). Opaque here — the
+    collector interprets it.
 
     The ``error`` parameter accepts either an ``Exception`` (from raised-exception
     failure paths) or a ``str`` (from action="error" happy-path failures where no
@@ -592,6 +598,7 @@ def record_trace(
         batch_items=batch_trace_items if batch_trace_items else None,
         sub_workflow_events=child_trace_events,
         cached=cached,
+        frame=frame,
     )
 
 
@@ -755,6 +762,7 @@ def handle_api_warning(
     node_type_name: str,
     node_params: dict,
     recovered: bool = False,
+    frame: Any = None,
 ) -> str:
     """Handle API warning: record trace/metrics, archive via ``mark_node_failed``.
 
@@ -794,6 +802,7 @@ def handle_api_warning(
         node_params,
         trace_collector,
         error=Exception(warning),
+        frame=frame,
     )
 
     # Emit node_complete so progress UIs stop showing this node as still running

@@ -30,7 +30,7 @@ class TraceFixtureBuilder:
             "node_id": node_id,
             "node_type": "LLMNode",
             "duration_ms": 1.0,
-            "success": success,
+            "status": "success" if success else "failed",
             "timestamp": "2026-05-02T00:00:00",
             "node_output": {"response": "ok"},
             "llm_call": {
@@ -63,9 +63,8 @@ class TraceFixtureBuilder:
             "node_id": node_id,
             "node_type": "LLMNode",
             "duration_ms": 0.0,
-            "success": True,
+            "status": "cached",
             "timestamp": "2026-05-02T00:00:00",
-            "cached": True,
         }
 
     def cached_llm_event_with_call(
@@ -113,9 +112,8 @@ class TraceFixtureBuilder:
             "node_id": node_id,
             "node_type": "LLMNode",
             "duration_ms": 0.0,
-            "success": True,
+            "status": "cached",
             "timestamp": "2026-05-02T00:00:00",
-            "cached": True,
             "node_params": {"model": model},
             "node_output": {"response": "ok", "llm_usage": dict(llm_call)},
             "llm_call": llm_call,
@@ -131,7 +129,7 @@ class TraceFixtureBuilder:
             "node_id": node_id,
             "node_type": "LLMNode",
             "duration_ms": 1.0,
-            "success": all(bool(item.get("success", True)) for item in items),
+            "status": "failed" if any(item.get("status") == "failed" for item in items) else "success",
             "timestamp": "2026-05-02T00:00:00",
             "batch_items": items,
         }
@@ -156,9 +154,9 @@ class TraceFixtureBuilder:
             "node_id": node_id,
             "node_type": "WorkflowExecutor",
             "duration_ms": 1.0,
-            "success": success
+            "status": ("success" if success else "failed")
             if success is not None
-            else all(bool(child.get("success", True)) for child in sub_workflow_events),
+            else ("failed" if any(child.get("status") == "failed" for child in sub_workflow_events) else "success"),
             "timestamp": "2026-05-02T00:00:00",
             "node_params": {"workflow": workflow_path},
         }
@@ -185,14 +183,14 @@ class TraceFixtureBuilder:
             "node_id": node_id,
             "node_type": "WorkflowExecutor",
             "duration_ms": 1.0,
-            "success": True,
+            "status": "success",
             "timestamp": "2026-05-02T00:00:00",
             "node_params": {"workflow": "${item.workflow}"},
             "batch_items": [
                 {
                     "index": i,
                     "item": {"workflow": child_path},
-                    "success": True,
+                    "status": "success",
                     "duration_ms": 0.0,
                     "template_resolutions": {
                         "workflow": {"template": "${item.workflow}", "resolved": child_path},
@@ -231,14 +229,14 @@ class TraceFixtureBuilder:
             "node_id": node_id,
             "node_type": "WorkflowExecutor",
             "duration_ms": 1.0,
-            "success": True,
+            "status": "success",
             "timestamp": "2026-05-02T00:00:00",
             "node_params": {"workflow": workflow_path, "inputs": {"input": item_input_template}},
             "batch_items": [
                 {
                     "index": i,
                     "item": item_value,
-                    "success": True,
+                    "status": "success",
                     "duration_ms": 0.0,
                     "template_resolutions": {
                         "inputs": {

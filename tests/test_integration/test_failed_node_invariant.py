@@ -91,7 +91,7 @@ def test_trace_captures_failed_node_data():
     events = result.trace.events
     primary_event = next((event for event in events if event.get("node_id") == "primary"), None)
     assert primary_event is not None
-    assert primary_event.get("success") is False
+    assert primary_event.get("status") == "failed"
     output = primary_event.get("node_output") or {}
     assert output.get("exit_code") == 1
     assert output.get("command") == "exit 1"
@@ -1314,19 +1314,21 @@ def test_loop_recovery_trace_reports_success_end_to_end(tmp_path):
     # Audit history preserved in the events list — BOTH visits of maybe-fail present
     maybe_fail_events = [e for e in trace_data["nodes"] if e.get("node_id") == "maybe-fail"]
     assert len(maybe_fail_events) == 2
-    assert maybe_fail_events[0]["success"] is False  # visit 1
-    assert maybe_fail_events[1]["success"] is True  # visit 2
+    assert maybe_fail_events[0]["status"] == "failed"  # visit 1
+    assert maybe_fail_events[1]["status"] == "success"  # visit 2 (recovered)
 
 
 def test_routing_failure_in_sub_workflow_propagates_to_parent_trace(tmp_path):
     """GH #250 sub-workflow variant — when a routing failure happens INSIDE a
     sub-workflow, the child engine's ``_handle_no_successor`` calls
-    ``mark_last_event_failed`` on the CHILD collector. The flipped event is
-    embedded in the parent's ``sub_workflow_events`` list, and the parent's
-    own trace event for the sub-workflow node shows success=False because
-    the child engine returned "error".
+    ``mark_last_event_failed``. Under Task 172 the child records FLAT into the one
+    run-scoped collector, so the flipped event is a top-of-store flat event whose
+    emit-time ``parent_id`` is the sub-workflow host's ``id`` (it nests under the host
+    in the reconstructed tree). The parent's own event for the sub-workflow node shows
+    ``status="failed"`` because the child engine returned "error".
 
-    Pins the child-engine → child-collector → parent-sub_workflow_events wiring.
+    Pins the child-engine → run-collector flat-record → emit-time ``parent_id`` wiring
+    (``mark_last_event_failed`` scans ALL events, so it still reaches the child event).
     """
     child_file = tmp_path / "child.pflow.md"
     child_file.write_text(
@@ -1400,19 +1402,22 @@ Delegate to the child workflow.
     parent_events = [e for e in result.trace.events if e.get("node_id") == "invoke-child"]
     assert len(parent_events) == 1
     parent_event = parent_events[0]
-    assert parent_event["success"] is False, "parent sub-workflow event must reflect child failure"
+    assert parent_event["status"] == "failed", "parent sub-workflow event must reflect child failure"
 
-    # Child-level: the child collector flipped the router event. That event
-    # lives inside parent_event["sub_workflow_events"].
-    sub_events = parent_event.get("sub_workflow_events") or []
-    child_router_events = [e for e in sub_events if e.get("node_id") == "child-router"]
-    assert len(child_router_events) == 1, (
-        f"expected exactly one child-router event in sub_workflow_events, got {sub_events}"
-    )
+    # Child-level (Task 172): the child router records FLAT into the run collector, and
+    # _handle_no_successor flips it (mark_last_event_failed scans ALL events, so it reaches
+    # the child). It is no longer embedded in the parent's `sub_workflow_events`; it's a flat
+    # event whose emit-time `parent_id` equals the sub-workflow host's `id` — i.e. it nests
+    # under its host (the failed-node analogue of the cached-nested `parent_id == host.seq` check).
+    child_router_events = [e for e in result.trace.events if e.get("node_id") == "child-router"]
+    assert len(child_router_events) == 1, f"expected exactly one flat child-router event, got {result.trace.events}"
     child_router = child_router_events[0]
-    assert child_router["success"] is False, (
-        "child engine's _handle_no_successor must flip the child collector's event — "
-        "otherwise trace says success=True while __failures__ says routing_error"
+    assert child_router["status"] == "failed", (
+        "child engine's _handle_no_successor must flip the child's event — "
+        "otherwise trace says status=success while __failures__ says routing_error"
+    )
+    assert child_router["parent_id"] == parent_event["id"], (
+        "the flipped child event must nest under its sub-workflow host via emit-time parent_id"
     )
     assert "child_custom_route" in (child_router.get("error") or "")
     assert "no successor edge matches" in (child_router.get("error") or "")
@@ -1462,8 +1467,8 @@ def test_routing_failure_on_custom_action_propagates_to_trace():
     router_events = [e for e in result.trace.events if e.get("node_id") == "router"]
     assert len(router_events) == 1
     event = router_events[0]
-    assert event["success"] is False, (
-        "Trace event for router must show success=False even though action='custom_route' "
+    assert event["status"] == "failed", (
+        "Trace event for router must show status=failed even though action='custom_route' "
         "did not literally start with 'error'. This was the GH #250 bug."
     )
     assert "custom_route" in (event.get("error") or "")

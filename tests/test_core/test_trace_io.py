@@ -129,7 +129,7 @@ def test_flatten_trace_to_lines_contract() -> None:
     assert lines[0]["kind"] == "meta"
     assert lines[0]["pflow_trace"] == TRACE_JSONL_MARKER
     assert lines[0]["format_version"] == "2.5.0"
-    assert lines[-1]["kind"] == "blobs"
+    assert lines[-1]["kind"] == "run.complete"  # inline blobs → no trailer; run.complete is last
 
     events = [ln for ln in lines if ln["kind"] == "event"]
     run_complete = next(ln for ln in lines if ln["kind"] == "run.complete")
@@ -178,15 +178,18 @@ def test_flatten_trace_to_lines_contract() -> None:
     assert meta_keys | trailer_keys == set(trace) - {"nodes"}
     assert meta_keys.isdisjoint(trailer_keys)
 
-    # interning: the large leaf in a promoted sub-workflow event → blob ref on the line, body in trailer
+    # interning: the large leaf in a promoted sub-workflow event → blob ref on the line, body in an
+    # inline {kind:blob} line that PRECEDES the event referencing it (backward-only — crash-tail safe).
     digest = _assert_blob_ref(by_seq[2]["node_output"]["r"])
-    assert lines[-1]["blobs"][digest] == large
+    blob_line_idx = next(i for i, ln in enumerate(lines) if ln["kind"] == "blob" and ln["md5"] == digest)
+    assert lines[blob_line_idx]["value"] == large
+    first_ref_idx = next(i for i, ln in enumerate(lines) if ln["kind"] == "event" and ln["seq"] == 2)
+    assert blob_line_idx < first_ref_idx, "blob declaration must precede its first reference"
 
 
-def test_flatten_empty_trace_yields_three_lines() -> None:
+def test_flatten_empty_trace_yields_two_lines() -> None:
     lines = flatten_trace_to_lines({"format_version": "2.5.0", "execution_id": "r", "nodes": []})
-    assert [ln["kind"] for ln in lines] == ["meta", "run.complete", "blobs"]
-    assert lines[-1]["blobs"] == {}
+    assert [ln["kind"] for ln in lines] == ["meta", "run.complete"]  # inline blobs → no trailer
 
 
 def test_flatten_rejects_event_with_reserved_correlation_key() -> None:
@@ -206,7 +209,8 @@ def test_flatten_preserves_non_json_native_leaf_and_blob_round_trips() -> None:
     event = next(ln for ln in lines if ln["kind"] == "event")
 
     assert event["node_output"]["ts"] is ts  # preserved verbatim; stringification is json.dump's job
-    restored = substitute_refs(event["node_output"], lines[-1]["blobs"])
+    blob_map = {ln["md5"]: ln["value"] for ln in lines if ln["kind"] == "blob"}
+    restored = substitute_refs(event["node_output"], blob_map)
     assert restored["r"] == large
 
 
@@ -241,41 +245,16 @@ def test_reconstruct_trailer_absent_marks_incomplete() -> None:
     assert reconstruct_trace_from_lines(lines)["final_status"] == "incomplete"
 
 
-def test_reconstruct_orphan_parent_raises() -> None:
-    lines = [
-        {"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r"},
-        {"kind": "event", "id": 0, "seq": 0, "parent_id": 99, "run_id": "r", "node_id": "orphan"},
-        {"kind": "blobs", "blobs": {}},
-    ]
-    with pytest.raises(json.JSONDecodeError, match="orphan"):
-        reconstruct_trace_from_lines(lines)
-
-
 def test_load_trace_file_raises_jsondecodeerror_on_corrupt_jsonl(tmp_path: Path) -> None:
-    # Disk-seam corruption: a marker-bearing JSONL file with a malformed line must raise
+    # Disk-seam corruption: a marker-bearing JSONL file with a malformed EARLIER line must raise
     # json.JSONDecodeError — the type all 3 trace readers catch to degrade/skip, so a corrupt
-    # trace is a visible, distinct state, never a silent half-built dict.
-    path = tmp_path / "workflow-trace-corrupt.json"
-    path.write_text(
-        json.dumps({"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r"}) + "\n{ not valid json\n"
-    )
-    with pytest.raises(json.JSONDecodeError):
-        load_trace_file(path)
-
-
-def test_load_trace_file_skips_truncated_tail_line(tmp_path: Path) -> None:
-    # Crash-tail scope (A-C, PR #525 review): a crash that truncates the FINAL line of a JSONL trace
-    # (a half-written event — no closing brace, no trailing newline) makes load_trace_file raise
-    # json.JSONDecodeError, so the 3 readers skip the whole trace; it is NOT reconstructed as
-    # final_status="incomplete". save_to_file writes the entire file (incl. trailers) in one end-of-run
-    # flush, so trailer-less files are rare and this window is narrow today. Robust trailing-line
-    # tolerance (drop only the truncated last line → incomplete) is deferred to Phase D / Task 172,
-    # where D3 inline blobs make the trailing line an event/run.complete rather than the `blobs` trailer.
+    # trace is a visible, distinct state, never a silent half-built dict. (A malformed FINAL line is a
+    # tolerated crash-tail — see test_load_trace_file_tolerates_truncated_final_line — so the corruption
+    # here is mid-file, with a valid line after it.)
     meta = json.dumps({"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r"})
-    good_event = json.dumps({"kind": "event", "id": 0, "seq": 0, "parent_id": None, "run_id": "r", "node_id": "a"})
-    truncated = '{"kind": "event", "id": 1, "seq": 1, "parent_id": null, "node_i'  # half-written, no newline
-    path = tmp_path / "workflow-trace-truncated.json"
-    path.write_text(f"{meta}\n{good_event}\n{truncated}")
+    good = json.dumps({"kind": "run.complete", "final_status": "success"})
+    path = tmp_path / "workflow-trace-corrupt.json"
+    path.write_text(f"{meta}\n{{ not valid json\n{good}\n")
     with pytest.raises(json.JSONDecodeError):
         load_trace_file(path)
 
@@ -283,6 +262,107 @@ def test_load_trace_file_skips_truncated_tail_line(tmp_path: Path) -> None:
 def test_reconstruct_unknown_kind_raises() -> None:
     with pytest.raises(json.JSONDecodeError, match="unknown trace line kind"):
         reconstruct_trace_from_lines([{"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER}, {"kind": "bogus"}])
+
+
+# --- Task 172 step 3: streaming reader (inline blobs + two-pass reconstruct + crash-tail) ---
+
+
+def _meta_line(**extra: Any) -> dict[str, Any]:
+    return {"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r", **extra}
+
+
+def _event_line(node_id: str, *, eid: int, parent_id: int | None, **extra: Any) -> dict[str, Any]:
+    return {"kind": "event", "id": eid, "seq": eid, "parent_id": parent_id, "run_id": "r", "node_id": node_id, **extra}
+
+
+_RUN_COMPLETE = {"kind": "run.complete", "final_status": "success"}
+
+
+def test_reconstruct_reads_inline_blob_line() -> None:
+    # Streaming writes a singular {kind:blob} line BEFORE the event that first references it; the reader
+    # accumulates the map and resolves the ref. (The plural `blobs` trailer arm is gone.)
+    large = _large_text()
+    digest = _assert_blob_ref(intern_blobs({"x": large})["x"])  # the md5 the writer would mint
+    lines = [
+        _meta_line(),
+        {"kind": "blob", "md5": digest, "value": large},
+        _event_line("a", eid=0, parent_id=None, node_output={"r": {BLOB_SENTINEL: digest}}),
+        _RUN_COMPLETE,
+    ]
+    trace = reconstruct_trace_from_lines(lines)
+    assert trace["nodes"][0]["node_output"]["r"] == large
+
+
+def test_reconstruct_blob_line_missing_value_raises() -> None:
+    # A valid-JSON {kind:blob} line missing its md5/value is corruption — it must RAISE (the last
+    # corruption arm, mirroring unknown-kind/orphan). Without the guard, a later event's $pflow_blob ref
+    # would never enter blob_map and would survive unresolved as a sentinel dict (silent-wrong content)
+    # instead of the visible JSONDecodeError the 3 readers catch to skip.
+    lines = [_meta_line(), {"kind": "blob", "md5": "deadbeef"}, _RUN_COMPLETE]  # no "value"
+    with pytest.raises(json.JSONDecodeError, match="blob line missing"):
+        reconstruct_trace_from_lines(lines)
+
+
+def test_reconstruct_dedup_by_id_last_wins() -> None:
+    # The dead-end re-flush (Piece 5.4) emits a second event line with the SAME id, now status=failed.
+    # Pass 1 dedups last-wins, so the correction replaces the original — exactly once in the tree.
+    lines = [
+        _meta_line(),
+        _event_line("x", eid=0, parent_id=None, status="success", node_output={"v": 1}),
+        _event_line("x", eid=0, parent_id=None, status="failed", error="dead end"),  # re-flushed correction
+        _RUN_COMPLETE,
+    ]
+    nodes = reconstruct_trace_from_lines(lines)["nodes"]
+    assert len(nodes) == 1, "the corrected line must REPLACE the original, not duplicate it"
+    assert nodes[0]["status"] == "failed" and nodes[0]["error"] == "dead end"
+
+
+def test_reconstruct_incomplete_drops_dangling_subtree_and_recovers_prefix() -> None:
+    # Crash mid-sub-workflow: children flush before their host's completion event, so a crash leaves them
+    # referencing a never-written host. An INCOMPLETE trace (no run.complete) drops the whole dangling
+    # subtree (the child, AND its grandchild transitively — the grandchild's parent_id points at the
+    # never-linked child id), recovering everything well-formed before the sub-workflow. The full-structure
+    # assertion is load-bearing: a `[node_id] == ["top"]` top-level-only check can't tell a clean drop
+    # from a dangling node silently re-homed to top level or nested under a recovered node.
+    lines = [
+        _meta_line(),
+        _event_line("top", eid=0, parent_id=None),  # well-formed, survives
+        _event_line("child", eid=2, parent_id=1),  # host id=1 never written (crash) → drop
+        _event_line("grandchild", eid=3, parent_id=2),  # parent id=2 dropped → grandchild dangles too
+        # NO run.complete line → incomplete
+    ]
+    trace = reconstruct_trace_from_lines(lines)
+    assert trace["final_status"] == "incomplete"
+    # Reserved keys stripped → top recovers as exactly {"node_id": "top"}, with NO sub_workflow_events and
+    # no second top-level node: the dangling subtree was neither re-homed to top level nor nested anywhere.
+    assert trace["nodes"] == [{"node_id": "top"}]
+    serialized = json.dumps(trace["nodes"])
+    assert "child" not in serialized and "grandchild" not in serialized, "dangling subtree must not leak"
+
+
+def test_reconstruct_complete_trace_orphan_still_raises() -> None:
+    # The SAME dangling parent_id in a COMPLETE trace (run.complete present) is corruption, not a crash —
+    # it must still raise so the 3 readers skip it rather than silently dropping real data.
+    lines = [_meta_line(), _event_line("orphan", eid=0, parent_id=99), _RUN_COMPLETE]
+    with pytest.raises(json.JSONDecodeError, match="orphan"):
+        reconstruct_trace_from_lines(lines)
+
+
+def test_load_trace_file_tolerates_truncated_final_line(tmp_path: Path) -> None:
+    # D3 crash-tail (REPLACES the deleted A-C whole-trace-skip test): a crash truncating the FINAL line
+    # of a streamed trace drops only that line and reconstructs-as-incomplete. With inline-first-occurrence
+    # blobs the trailing line is an event/run.complete (never the blobs trailer), so the tolerance is
+    # coherent — a backward-only ref means a dropped tail never strands a blob.
+    meta = json.dumps(_meta_line())
+    good = json.dumps(_event_line("a", eid=0, parent_id=None))
+    truncated = '{"kind": "event", "id": 1, "seq": 1, "parent_id": null, "node_i'  # half-written, no newline
+    path = tmp_path / "workflow-trace-truncated.json"
+    path.write_text(f"{meta}\n{good}\n{truncated}")
+    trace = load_trace_file(path)
+    assert trace["final_status"] == "incomplete"
+    assert [n["node_id"] for n in trace["nodes"]] == ["a"], "the well-formed prefix is recovered"
+    # The malformed-EARLIER-line-still-raises half of this contract is pinned by
+    # test_load_trace_file_raises_jsondecodeerror_on_corrupt_jsonl (mid-file corruption).
 
 
 def test_round_trip_identity_for_nested_trace_shapes() -> None:
@@ -438,3 +518,30 @@ def test_intern_blobs_does_not_mutate_or_alias_input_containers() -> None:
     assert encoded["nodes"][0]["node_output"] is not trace["nodes"][0]["node_output"]
     assert encoded["metadata"] is not trace["metadata"]
     assert encoded["metadata"]["tags"] is not trace["metadata"]["tags"]
+
+
+def test_reconstruct_rejects_content_after_run_complete() -> None:
+    # run.complete is the FINAL content line (the writer closes the stream right after it). A stray
+    # event AFTER it is corruption, not a tolerable crash-tail — the reader must raise so the 3 readers
+    # skip the whole trace rather than silently absorb the trailing content and report it complete.
+    lines = [
+        _meta_line(),
+        _event_line("a", eid=0, parent_id=None),
+        _RUN_COMPLETE,
+        _event_line("late", eid=1, parent_id=None),
+    ]
+    with pytest.raises(json.JSONDecodeError, match="after run.complete"):
+        reconstruct_trace_from_lines(lines)
+
+
+def test_load_trace_file_rejects_malformed_line_after_run_complete(tmp_path: Path) -> None:
+    # A garbage/truncated line AFTER a valid run.complete is corruption, NOT a crash-tail: the writer
+    # never writes past run.complete, so the tail tolerance must apply ONLY to a trace that has not yet
+    # seen run.complete. Here load_trace_file must raise, not silently drop the tail and report success.
+    meta = json.dumps({"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r"})
+    complete = json.dumps({"kind": "run.complete", "final_status": "success"})
+    garbage = '{"kind": "event", "id": 1, "seq": 1, "parent_i'  # truncated final line
+    path = tmp_path / "workflow-trace-after-complete.json"
+    path.write_text(f"{meta}\n{complete}\n{garbage}")
+    with pytest.raises(json.JSONDecodeError):
+        load_trace_file(path)

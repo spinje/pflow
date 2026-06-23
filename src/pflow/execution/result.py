@@ -21,6 +21,11 @@ class RunnerConfig:
     cache_enabled: bool = True
     verbose: bool = False
     only_node: str | None = None
+    # When True (default), WorkflowRunner.run finalizes the streamed trace it opened, so ANY caller —
+    # including a library caller that just inspects the result and never saves — gets a COMPLETE, closed
+    # trace file instead of an open handle + a trailer-less "incomplete" file. The CLI sets this False
+    # because it alone mutates the trace AFTER the run (set_json_output) and finalizes itself afterward.
+    finalize_trace: bool = True
 
 
 @dataclass(frozen=True)

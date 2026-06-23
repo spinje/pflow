@@ -195,6 +195,9 @@ class RunnerConfig:
     cache_enabled: bool = True
     verbose: bool = False
     only_node: Optional[str] = None
+    finalize_trace: bool = True   # runner finalizes the streamed trace it opened (any caller gets a
+                                  # complete, closed file). CLI sets False — it finalizes itself after
+                                  # mutating the trace post-run (set_json_output). MCP never streams.
 
 @dataclass(frozen=True)
 class ResolvedWorkflow:

@@ -17,7 +17,7 @@
       "node_id": "draft",
       "node_type": "LLMNode",
       "duration_ms": 1.0,
-      "success": true,
+      "status": "success",
       "timestamp": "2026-05-02T00:00:00",
       "node_output": {
         "response": "ok"
@@ -38,7 +38,7 @@
       "node_id": "call-child",
       "node_type": "WorkflowExecutor",
       "duration_ms": 1.0,
-      "success": false,
+      "status": "failed",
       "timestamp": "2026-05-02T00:00:00",
       "node_params": {
         "workflow": "tests/fixtures/cache_analysis/child.pflow.md"
@@ -49,7 +49,7 @@
           "node_id": "draft",
           "node_type": "LLMNode",
           "duration_ms": 1.0,
-          "success": true,
+          "status": "success",
           "timestamp": "2026-05-02T00:00:00",
           "node_output": {
             "response": "ok"

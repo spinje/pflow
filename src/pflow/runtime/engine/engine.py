@@ -641,10 +641,13 @@ class WorkflowEngine:
         new_prompt_cache = MappingProxyType(build_prompt_cache_dict(workflow, shared))
         if self.trace is not None:
             shared["__trace_collector__"] = self.trace
-            # 2.4.0: stamp the run's ``--only`` target (None for a full run) so
-            # the saved trace excludes itself as a snapshot source when it's an
-            # ``--only`` run. Only the root collector's value is persisted.
-            self.trace.only_node = self.only_node
+            # 2.4.0: stamp the run's ``--only`` target (None for a full run) so the saved trace excludes
+            # itself as a snapshot source when it's an ``--only`` run. Only the ROOT engine (depth 0)
+            # stamps it — a nested sub-workflow engine REUSES the same run-scoped collector (Task 172) and
+            # must not clobber the root's target to its own ``None``, or an ``--only <sub-workflow>`` trace
+            # would masquerade as a full-run snapshot source (issue #443).
+            if shared.get("_pflow_depth", 0) == 0:
+                self.trace.only_node = self.only_node
         shared["__pflow_prompt_cache__"] = new_prompt_cache
         try:
             return self._run_inner(workflow, shared)
@@ -1016,6 +1019,7 @@ class WorkflowEngine:
         resolved_params: Optional[dict] = None
         batch_trace_items: Optional[list] = None
         child_trace_events: Optional[list] = None
+        host_frame: Any = None  # Task 172: a sub-workflow host's reserved correlation (run-scoped)
 
         try:
             plan = plan_node(node, config, shared)
@@ -1104,9 +1108,12 @@ class WorkflowEngine:
                 store = NamespacedSharedStore(shared, config.node_id) if config.namespaced else shared
                 action = node._run(store)
 
-                # Read child trace events from WorkflowExecutor
+                # Read child trace events + host correlation frame from WorkflowExecutor.
+                # `_child_trace_events` is set only on the OLD buffer path (events to embed);
+                # `_host_frame` only on the NEW run-collector path (its reserved seq/parent_id).
                 if config.node_type_name == "WorkflowExecutor":
                     child_trace_events = getattr(node, "_child_trace_events", None)
+                    host_frame = getattr(node, "_host_frame", None)
 
             # 10. API warning detection. Only run it on a clean-success verdict — see
             # _CLEAN_SUCCESS_ACTIONS. A node that returned an error action (GH #474) or a
@@ -1136,6 +1143,7 @@ class WorkflowEngine:
                     config.node_type_name,
                     node.params,
                     recovered=node.successors.get("error") is not None,
+                    frame=host_frame,
                 )
 
             # 11. Cache result (in-process only — not gated by cache_enabled)
@@ -1191,6 +1199,7 @@ class WorkflowEngine:
                 self.trace,
                 success=not is_error_action,
                 error=trace_error,
+                frame=host_frame,
             )
 
             # 17. Completion callback
@@ -1271,6 +1280,7 @@ class WorkflowEngine:
                 node.params,
                 self.trace,
                 error=e,
+                frame=host_frame,
             )
 
             call_completion_callback(config.node_id, shared, "error", duration_ms, error=e)

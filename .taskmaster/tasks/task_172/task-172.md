@@ -5,12 +5,19 @@
 Make pflow's trace stream **incrementally, at emit time**, so a live UI overlay can tail it as a run
 executes (and so crash-resume / observability inherit a self-consistent partial log). This is the
 **producer** half of the live-execution-overlay architecture (ADR-0008) — the deferred "Phase D" of
-Task 133. The on-disk JSONL format from Task 133 A–C does **not** change; this changes only *when*
-correlation is assigned (save-time → emit-time) and *how* events are collected.
+Task 133. It **reuses** Task 133 A–C's JSONL reader/reconstruction machinery; the changes are *when*
+correlation is assigned (save-time → emit-time), *how* events are collected (one run-scoped collector), and
+a set of **bounded, intentional on-disk shape changes** enabled by the no-backward-compat decision below:
+per-node `status` enum (replacing `success`/`cached`), inline-first-occurrence blobs (was a trailer), and a
+new `ancestor_path`/`port` (stripped on read). See Design Decisions.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-06-22
 
 ## Priority
 
@@ -50,12 +57,24 @@ additional, bounded). The scary concurrency question is already retired (no-lock
   `record_trace` at step 16, so emit-time per-node `degraded` is impossible — and a failed-then-recovered
   node is honestly `failed` at the node level while the *run* is degraded (`final_status`, already
   computed). Per-node status = `success`/`cached`/`failed`.
-- **Open (low-stakes): explicit `status` enum vs. keep `success: bool` + `cached`.** Promoting to an enum
-  is cleaner (one producer-set field vs. derivation repeated across readers) but a ~15-site reader
-  migration. The overlay works either way. Decide during build; does not change the contract.
-- **`ancestor_path` is writer-owned and stripped on read.** Add it to `_RESERVED_LINE_KEYS` so the
-  reconstructed dict stays byte-identical to today; the writer must *own* it (like `id`/`seq`/...) so the
-  flatten collision-guard doesn't reject a producer-set value.
+- **DECIDED — adopt the explicit `status` enum** (`success`/`cached`/`failed`), replacing `success: bool` +
+  `cached`. One producer-set field beats derivation repeated across ~15 reader sites; the no-backward-compat
+  decision removes the only objection (an enum would otherwise coexist forever with legacy booleans). This
+  *does* change the on-disk event shape + reconstructed dict — so the verification anchor is **`tree()` ≡
+  on-disk reconstruct ≡ correct cost/`final_status`/`failed_node_ids`** (asserted via literals), **not**
+  byte-identity to A–C.
+- **DECIDED — no backward-compat with old traces.** Old on-disk traces need not be readable and test fixtures
+  may be regenerated — this is what makes the `status` enum and inline blobs clean (no legacy dual-read).
+  *Out of scope (left intact):* the `... or "success"` absent-`final_status` defaults and the legacy
+  single-object reader path — entangled with `analyze-cache` reuse policy + synthetic fixtures, inert for
+  modern traces, and removing them is a separate cleanup.
+- **DECIDED — lenient reconstruct for *incomplete* (crash) traces only.** A dangling `parent_id` in a trace
+  with no `run.complete` drops the dangling child **transitively** (recovering everything well-formed); the
+  same in a *complete* trace still raises. This makes a crash-mid-sub-workflow trace recoverable (children
+  flush before their host's completion event). Robust resume remains Task 164.
+- **`ancestor_path`/`port` are writer-owned and stripped on read.** Add them to `_RESERVED_LINE_KEYS` so they
+  don't appear in the reconstructed dict; the writer must *own* them (like `id`/`seq`/...) — the producer's
+  collision-guard imports the same `_RESERVED_LINE_KEYS` constant the reader strips with (one source of truth).
 - **No-lock `seq` is a routing rule, not absence.** The collector is reachable from workers via the
   shallow-copied `shared`; the discipline is workers never *call* its recording/`seq` methods — they route
   to worker-local buffers (`_batch_trace`, child events) folded in, with `seq` assigned, at the
@@ -105,8 +124,10 @@ additional, bounded). The scary concurrency question is already retired (no-lock
   `JSONDecodeError`, whole trace skipped); soften-only docs shipped in A–C. Add the real
   trailing-line-tolerance test here (see "Crash-tail" in Verification), replacing the A–C
   documenting test (`test_load_trace_file_skips_truncated_tail_*`) that pins today's skip behavior.
-- The on-disk format and the reconstructed nested dict are **unchanged** vs A–C, except `ancestor_path`
-  is stripped on read.
+- The reconstruction *machinery* (`reconstruct_trace_from_lines`/`_rebuild_event_tree`/`substitute_refs`) is
+  reused; the reconstructed nested dict changes only in the **bounded, intentional** ways above (`status`
+  replaces `success`/`cached`; `ancestor_path`/`port` stripped on read; blobs relocate inline). The
+  reader gains a two-pass rebuild (dedup-by-id last-wins + transitive lenient orphan-drop) — see the plan.
 
 ### Boundaries (do not break)
 - **Leave the `__pflow_prompt_cache__` save/restore alone** — it is intentionally per-workflow; only the
@@ -125,11 +146,16 @@ additional, bounded). The scary concurrency question is already retired (no-lock
 
 ## Verification
 
+> **The operational test plan + per-phase exit gates are in `implementation/implementation-plan.md`
+> (§Verification, §Build order). This section is the *rationale* (why no separate baseline harness) — keep it.**
+
 **No separate baseline harness for this task** (decided 2026-06-21). A golden-output baseline (like
 Task 159's) earns its keep on a *wide, shallow, subtly-formatted* surface; Task 172 is the opposite —
-a *deep, narrow* change behind one hard invariant (**the reconstructed nested dict, and the cost/status
-totals derived from it, stay identical**; on-disk format is frozen by A–C). For that shape you assert the
-invariant directly. A bespoke harness would mostly re-test the unchanged reader/analyzer and duplicate
+a *deep, narrow* change behind one hard invariant: **the trace's *meaning* — cost / `final_status` /
+`failed_node_ids` — stays identical**, while the reconstructed dict's *shape* changes only in bounded ways
+(`status` enum, `ancestor_path`/`port` stripped, inline blobs). You assert it directly via **`tree()` ≡
+on-disk reconstruct ≡ cost/status literals** (not byte-identity to A–C; `flatten_trace_to_lines` is removed,
+so the old `flatten↔reconstruct` round-trip is replaced by the live-engine→JSONL→reader equivalence test). A bespoke harness would mostly re-test the unchanged reader/analyzer and duplicate
 existing trace tests (fails the deletion test). The two real failure modes — **sub-workflow cost
 under-count** and **wrong `final_status`** (child `node_id` overwriting a parent) — are loud and already
 largely covered by the existing suite.

@@ -135,16 +135,19 @@ def _handle_workflow_success(
 
 
 def _save_trace_file(ctx: click.Context, workflow_trace: Any) -> Any | None:
-    """Save the trace to disk once; cache and return its path.
+    """Finalize the streamed trace once; cache and return its path.
 
+    Task 172: the run-scoped collector streamed one JSONL line per node DURING the
+    run; ``finalize()`` writes the ``run.complete`` trailer and closes the file
+    (returning its path, or ``None`` when streaming was off — ``--no-trace``).
     Idempotent across the two callers — the text-success path (which renders the
     path in the summary's meta block above the data) and the ``finally`` block
-    (report generation + the failure/JSON-path trace echo) — so the file is
-    written exactly once. Returns ``None`` if the save fails.
+    (report generation + the failure/JSON-path trace echo) — so the trailer is
+    written exactly once (``finalize`` self-guards too). Returns ``None`` on error.
     """
     if "trace_file" not in ctx.obj:
         try:
-            ctx.obj["trace_file"] = workflow_trace.save_to_file()
+            ctx.obj["trace_file"] = workflow_trace.finalize()
         except Exception as trace_err:
             logger.error("Failed to save trace: %s", trace_err, exc_info=True)
             ctx.obj["trace_file"] = None
@@ -208,11 +211,21 @@ def _echo_target_node_path(ctx: click.Context, report_dir: Path, events: list[di
     this_only, _ = parse_only_path(only_node)
     if this_only is None:
         return
-    for i, event in enumerate(events, 1):
+    # Task 172: the collector store is now FLAT — sub-workflow children are sibling events carrying
+    # parent_id != None. Enumerate TOP-LEVEL only (parent_id is None) so the 1-based index matches the
+    # report's per-top-level-node prefix and flat children aren't miscounted. And a sub-workflow host
+    # carries no stored `sub_workflow_events` in the flat store (those exist only in the reconstructed
+    # tree the report is built from), so detect a container by node_type=="WorkflowExecutor" too.
+    top_level = [event for event in events if event.get("parent_id") is None]
+    for i, event in enumerate(top_level, 1):
         if event.get("node_id") == this_only:
             safe_id = _safe_name(this_only)
             prefix = f"{i:02d}"
-            is_container = event.get("batch_items") or event.get("sub_workflow_events")
+            is_container = (
+                event.get("batch_items")
+                or event.get("sub_workflow_events")
+                or event.get("node_type") == "WorkflowExecutor"
+            )
             target = (
                 report_dir / f"{prefix}-{safe_id}" / "summary.md"
                 if is_container
@@ -266,6 +279,9 @@ def execute_json_workflow(  # noqa: C901
         cache_enabled=ctx.obj.get("cache", True),
         verbose=effective_verbose,
         only_node=ctx.obj.get("only_node"),
+        # The CLI finalizes the trace itself (after set_json_output mutates it post-run), so the runner
+        # must not finalize early — see _save_trace_file / _finalize_trace_and_report.
+        finalize_trace=False,
     )
 
     if not effective_verbose:

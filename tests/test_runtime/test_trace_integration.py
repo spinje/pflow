@@ -72,7 +72,7 @@ class TestTemplateResolutionsInTrace:
         assert len(collector.events) == 1
         event = collector.events[0]
 
-        assert event["success"] is True
+        assert event["status"] == "success"
         assert event["node_type"] == "ShellNode"
 
         # Template resolutions should be captured
@@ -117,7 +117,7 @@ class TestBatchNodeTraceEvents:
         assert len(collector.events) == 1
         event = collector.events[0]
 
-        assert event["success"] is True
+        assert event["status"] == "success"
         assert event["node_type"] == "ShellNode"
 
         # Batch items should be captured
@@ -132,7 +132,7 @@ class TestBatchNodeTraceEvents:
             item_trace = batch_items[i]
             assert item_trace["index"] == i
             assert item_trace["item"] == expected_item
-            assert item_trace["success"] is True
+            assert item_trace["status"] == "success"
             assert "duration_ms" in item_trace
             assert isinstance(item_trace["duration_ms"], (int, float))
 
@@ -249,7 +249,7 @@ class TestParallelBatchTraceCapture:
         # Parallel batch items may complete in any order — match by content
         resolved_commands = set()
         for item in batch_items:
-            assert item["success"] is True
+            assert item["status"] == "success"
             # Template resolutions captured from per-item resolution
             resolutions = item.get("template_resolutions", {})
             assert "command" in resolutions, (
@@ -286,12 +286,12 @@ class TestFailedBatchItemsInTrace:
         assert len(batch_items) == 3
 
         # Item 0 and 2: success
-        assert batch_items[0]["success"] is True
+        assert batch_items[0]["status"] == "success"
         assert batch_items[0]["item"] == "good"
-        assert batch_items[2]["success"] is True
+        assert batch_items[2]["status"] == "success"
 
         # Item 1: failure
-        assert batch_items[1]["success"] is False
+        assert batch_items[1]["status"] == "failed"
         assert batch_items[1]["item"] == "bad"
 
     def test_failed_batch_with_completed_nested_llm_persists_to_trace(
@@ -403,7 +403,7 @@ class TestFailedBatchItemsInTrace:
         assert len(before_failure_events) == 1, (
             f"completed nested 'before-failure' event missing from batch item: {first_item!r}"
         )
-        assert before_failure_events[0].get("success") is True
+        assert before_failure_events[0].get("status") == "success"
 
     def test_succeeded_batch_persists_items_when_post_exec_step_raises(
         self,
@@ -633,7 +633,7 @@ class TestTemplateResolutionsOnError:
         # Trace event should be recorded for execution errors
         assert len(collector.events) == 1
         event = collector.events[0]
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert "error" in event
         assert "does not exist" in event["error"]
 
@@ -690,7 +690,7 @@ class TestTemplateResolutionsOnError:
         # Consumer's trace event should have partial template_resolutions
         consumer_event = collector.events[1]
         assert consumer_event["node_id"] == "consumer"
-        assert consumer_event["success"] is False
+        assert consumer_event["status"] == "failed"
         assert "template_resolutions" in consumer_event
         resolutions = consumer_event["template_resolutions"]
         # The 'command' param should be resolved (it was processed before 'cwd' failed)
@@ -741,9 +741,11 @@ class TestLLMTraceHookCapture:
 
         _, collector = _run_with_trace(ir)
 
-        # The trace_hook must have fired AND written the rendered prompt
-        # under this node's id. Pre-fix this dict was always empty.
-        assert collector.llm_prompts == {"ask": "Say hello to the world."}
+        # The trace_hook fired and the rendered prompt reached the EVENT (asserted below) — the contract
+        # downstream consumers (`pflow report`) read. The internal llm_prompts capture is CONSUMED on
+        # record (popped, Task 172 C4 fix) so a later node sharing this id can't inherit it, so the dict
+        # is empty again post-run.
+        assert collector.llm_prompts == {}
 
         # And the trace event must surface it (downstream consumers like
         # `pflow report` read this field).
@@ -1074,17 +1076,17 @@ class TestParallelBatchSubWorkflowTrace:
         # save/restore boundary.
         a_batch_item, a_llm = outcomes_by_item["A"]
         b_batch_item, b_llm = outcomes_by_item["B"]
-        assert a_batch_item["success"] is True
-        assert b_batch_item["success"] is True
+        assert a_batch_item["status"] == "success"
+        assert b_batch_item["status"] == "success"
         assert a_llm is not None and a_llm.get("llm_prompt") == "Process item A."
         assert b_llm is not None and b_llm.get("llm_prompt") == "Process item B."
 
         # Failing item: success=False at the batch-item boundary; child's
         # internal child-llm trace event records the failure.
         fail_batch_item, fail_llm = outcomes_by_item["FAIL"]
-        assert fail_batch_item["success"] is False
+        assert fail_batch_item["status"] == "failed"
         assert fail_llm is not None
-        assert fail_llm.get("success") is False
+        assert fail_llm.get("status") == "failed"
 
         # The structured ``_diagnostic_context`` (category="llm_failure",
         # error_class, model) is what JSON output consumers filter on.

@@ -141,6 +141,13 @@ class WorkflowRunner:
             trace_collector = WorkflowTraceCollector(
                 workflow_name=workflow_name or resolved.file_path or "unnamed",
                 workflow_path=trace_workflow_path,
+                # Task 172: THE single run-scoped collector. Sub-workflows record flat into it with
+                # emit-time correlation; the per-sub-workflow buffer collectors stay is_run_scoped=False.
+                is_run_scoped=True,
+                # Stream one JSONL line per node to disk as the run executes (so a live overlay can tail
+                # it) — gated by trace_enabled: the CLI persists (True); MCP reads cost from the in-memory
+                # collector and passes trace_enabled=False; --no-trace is False.
+                stream_to_disk=config.trace_enabled,
             )
 
             mcp_pool = MCPConnectionPool()
@@ -170,6 +177,15 @@ class WorkflowRunner:
             return self._exception_to_result(e, start_time, trace_collector, validation_warnings)
 
         finally:
+            # The runner owns finalization of the streamed trace it opened: any caller — CLI, MCP, or a
+            # library caller that just inspects the result — ends with a COMPLETE, closed trace rather
+            # than an open handle + a trailer-less "incomplete" file. Idempotent + suppressed so it can
+            # never mask the run result. The CLI opts out (finalize_trace=False) because it finalizes
+            # itself AFTER mutating the trace post-run (set_json_output); MCP's trace never streams, so
+            # finalize is a harmless no-op there.
+            if config.finalize_trace and trace_collector is not None:
+                with contextlib.suppress(Exception):
+                    trace_collector.finalize()
             self._cleanup(mcp_pool, trace_collector, metrics_collector)
 
     def _prepare_workflow(

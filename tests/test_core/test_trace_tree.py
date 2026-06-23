@@ -423,7 +423,7 @@ def test_walk_skips_cached_subtree_when_kwarg_false() -> None:
         events=(
             {
                 "node_id": "cached-parent",
-                "cached": True,
+                "status": "cached",
                 "sub_workflow_events": [{"node_id": "child", "llm_call": {"cost_usd": 0.10}}],
             },
         ),
@@ -528,7 +528,7 @@ def test_cost_for_node_partial_batch_some_cached() -> None:
                 "batch_items": [
                     {"index": 0, "llm_call": {"cost_usd": 0.01}},
                     {"index": 1, "llm_call": {"cost_usd": 0.01}},
-                    {"index": 2, "cached": True, "llm_call": {"cost_usd": 0.0}},
+                    {"index": 2, "status": "cached", "llm_call": {"cost_usd": 0.0}},
                 ],
             },
         ),
@@ -576,7 +576,7 @@ def test_cost_for_batch_item_cached_no_llm_call_returns_zero_trace() -> None:
     inventing cost on a memo-hit run.
     """
     tree = TraceTree(events=(), format_version="2.1")
-    cached_item = {"index": 0, "cached": True}
+    cached_item = {"index": 0, "status": "cached"}
 
     assert tree.cost_for_batch_item(cached_item) == (0.0, "trace")
 
@@ -595,7 +595,7 @@ def test_total_cost_includes_cached_when_kwarg_true() -> None:
     tree = TraceTree(
         events=(
             {"node_id": "uncached", "llm_call": {"cost_usd": 0.05}},
-            {"node_id": "cached-llm", "cached": True, "llm_call": {"cost_usd": 0.0}},
+            {"node_id": "cached-llm", "status": "cached", "llm_call": {"cost_usd": 0.0}},
         ),
         format_version="2.1",
     )
@@ -660,7 +660,7 @@ def test_total_cost_cached_llm_batch_item_without_call_is_zero_trace() -> None:
             {
                 "node_id": "fanout",
                 "node_type": "LLMNode",
-                "batch_items": [{"index": 0, "cached": True}],
+                "batch_items": [{"index": 0, "status": "cached"}],
             },
         ),
         format_version="2.1",
@@ -678,8 +678,8 @@ def test_total_cost_cached_non_llm_event_is_not_llm_cost_evidence() -> None:
     """
     tree = TraceTree(
         events=(
-            {"node_id": "shell", "node_type": "ShellNode", "cached": True},
-            {"node_id": "workflow", "node_type": "WorkflowExecutor", "cached": True},
+            {"node_id": "shell", "node_type": "ShellNode", "status": "cached"},
+            {"node_id": "workflow", "node_type": "WorkflowExecutor", "status": "cached"},
         ),
         format_version="2.1",
     )
@@ -699,7 +699,7 @@ def test_total_cost_cached_workflow_boundary_does_not_leak_historical_child_cost
             {
                 "node_id": "call-child",
                 "node_type": "WorkflowExecutor",
-                "cached": True,
+                "status": "cached",
                 "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.08}}],
             },
         ),
@@ -718,7 +718,7 @@ def test_total_cost_mixed_fresh_and_cached_workflow_boundary_sums_fresh_only() -
             {
                 "node_id": "cached-child",
                 "node_type": "WorkflowExecutor",
-                "cached": True,
+                "status": "cached",
                 "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.08}}],
             },
         ),
@@ -736,7 +736,7 @@ def test_total_cost_fresh_unpriced_plus_cached_boundary_is_trace_partial() -> No
             {
                 "node_id": "cached-child",
                 "node_type": "WorkflowExecutor",
-                "cached": True,
+                "status": "cached",
                 "sub_workflow_events": [{"node_id": "child-llm", "llm_call": {"cost_usd": 0.08}}],
             },
         ),

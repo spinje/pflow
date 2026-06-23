@@ -68,12 +68,19 @@ def _make_event(
     success: bool = True,
     **overrides: Any,
 ) -> dict[str, Any]:
-    """Build a minimal trace event dict."""
+    """Build a minimal trace event dict.
+
+    Keeps the ``success`` param + ``cached`` override as intent and maps both to
+    the single per-node ``status`` enum (Task 172), matching the producer's
+    ``_node_status`` (cached wins, since a cached node succeeded this run). A node
+    that cached then failed by a routing dead-end is just ``status="failed"``.
+    """
+    cached = bool(overrides.pop("cached", False))
     event: dict[str, Any] = {
         "node_id": node_id,
         "node_type": node_type,
         "duration_ms": 100.0,
-        "success": success,
+        "status": "cached" if cached else ("success" if success else "failed"),
         "timestamp": "2026-03-23T10:00:01",
     }
     event.update(overrides)
@@ -1395,9 +1402,9 @@ class TestBuildNodeSummary:
             node_id="batch-process",
             node_type="ShellNode",
             batch_items=[
-                {"index": 0, "success": True, "duration_ms": 50, "node_output": {"stdout": "ok", "exit_code": 0}},
-                {"index": 1, "success": False, "duration_ms": 30},
-                {"index": 2, "success": True, "duration_ms": 40, "node_output": {"stdout": "ok", "exit_code": 0}},
+                {"index": 0, "status": "success", "duration_ms": 50, "node_output": {"stdout": "ok", "exit_code": 0}},
+                {"index": 1, "status": "failed", "duration_ms": 30},
+                {"index": 2, "status": "success", "duration_ms": 40, "node_output": {"stdout": "ok", "exit_code": 0}},
             ],
         )
         md = _build_node_summary(event)
@@ -1472,8 +1479,7 @@ class TestBuildBatchItemFile:
         parent = _make_event(node_id="batch", node_type="LLMNode")
         item = {
             "index": 0,
-            "success": True,
-            "cached": True,
+            "status": "cached",
             "duration_ms": 0,
             "node_output": {"response": "ok"},
             "llm_call": {
@@ -1557,7 +1563,7 @@ class TestBuildBatchItemFile:
         item = {
             "index": 1,
             "item": "bad-url",
-            "success": False,
+            "status": "failed",
             "duration_ms": 200,
             "error": "Connection timeout",
         }
@@ -2022,8 +2028,8 @@ class TestBatchItemWarnings:
     def test_skips_failed_batch_items(self) -> None:
         """Failed batch items should not generate anomaly warnings."""
         batch_items = [
-            {"index": 0, "success": False, "duration_ms": 50, "node_output": {"response": ""}},
-            {"index": 1, "success": True, "duration_ms": 60, "node_output": {"response": "good"}},
+            {"index": 0, "status": "failed", "duration_ms": 50, "node_output": {"response": ""}},
+            {"index": 1, "status": "success", "duration_ms": 60, "node_output": {"response": "good"}},
         ]
         parent = _make_event(node_id="summarize", node_type="LLMNode")
         warnings = _detect_batch_item_anomalies(batch_items, parent)
@@ -2531,7 +2537,7 @@ class TestCompactBatchSummary:
             {"index": i, "success": True, "duration_ms": 100, "node_output": {"stdout": "ok", "exit_code": 0}}
             for i in range(5)
         ]
-        items[2] = {"index": 2, "success": False, "duration_ms": 50, "error": "exit code 1"}
+        items[2] = {"index": 2, "status": "failed", "duration_ms": 50, "error": "exit code 1"}
         event = _make_event(node_id="batch", node_type="ShellNode", batch_items=items)
         md = _build_node_summary(event)
         assert "## Items" in md
@@ -2711,8 +2717,8 @@ class TestPipelineTableBatchExplosion:
             node_id="greet",
             node_type="ShellNode",
             batch_items=[
-                {"index": 0, "success": True, "duration_ms": 50},
-                {"index": 1, "success": False, "duration_ms": 60},
+                {"index": 0, "status": "success", "duration_ms": 50},
+                {"index": 1, "status": "failed", "duration_ms": 60},
             ],
         )
         trace = _make_trace(nodes=[batch_event])
@@ -3052,16 +3058,16 @@ class TestPipelineTableCachedStatus:
         assert "0 in / 0 out" in pipeline
 
     def test_cached_and_failed_event_renders_failed_not_cached(self) -> None:
-        """``_row_status`` must prefer ``failed`` over ``cached`` when both
-        flags are set. The rare (cached, !success) shape should not silently
-        mask the failure signal as it did in a prior revision.
+        """Under the single-``status`` model (Task 172), a node that cached then
+        failed (e.g. via a routing dead-end) is recorded ``status="failed"`` —
+        the old ambiguous ``(cached=True, success=False)`` shape no longer
+        exists. ``_row_status`` must surface that failure, not mask it as cached.
         """
         event = _make_event(
             node_id="impossible",
             node_type="LLMNode",
             duration_ms=10,
-            cached=True,
-            success=False,
+            status="failed",
             llm_call={"model": "gpt-4", "input_tokens": 10, "output_tokens": 20},
         )
         trace = _make_trace(nodes=[event])
@@ -3099,3 +3105,16 @@ class TestPipelineTableWarmupOnlyEdgeCase:
         # No header, no separator, no table at all.
         assert "## Pipeline" not in md
         assert "| # | Node | Type | Status | Time | Tokens | Cost |" not in md
+
+
+def test_resolve_final_status_does_not_flip_failed_legacy_trace_to_success():
+    """W1 (Codex/claude review of PR #530): a genuinely-FAILED old pre-status trace (events carry
+    ``success: false``, no ``status``/``failed_node_ids``) must report ``failed``, not ``success``. The
+    fallback's ``has_failure`` check read only the modern ``status`` enum and so was BLIND to old
+    ``success: false`` events, letting the recovered-loop rewrite flip a real failure to ``success``."""
+    from pflow.core.trace_report import _resolve_final_status
+
+    old_failed = {"final_status": "failed", "nodes": [{"node_id": "a", "success": False}]}
+    assert _resolve_final_status(old_failed) == "failed"  # was wrongly "success" before the fix
+    modern = {"failed_node_ids": ["a"], "final_status": "failed", "nodes": []}
+    assert _resolve_final_status(modern) == "failed"  # authoritative branch, unchanged

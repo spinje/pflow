@@ -72,6 +72,10 @@ _Avoid_: partial, warning-state.
 Degraded (an empty batch, a Loop hitting its cap, a section typo parsed around). Contrast
 with a degrading warning. _Avoid_: note, hint, info.
 
+**Run** — one execution of a Workflow from start to finish, producing a trace and ending in one
+terminal status (Success, Degraded, or Failed). One Workflow definition yields many Runs; Runs of
+the same Workflow may execute concurrently. _Avoid_: invocation, execution, session.
+
 **Snapshot** — the frozen prior-run state that `--only <step>` runs a single step against:
 every *prior* step's output reused from the most recent full run, so only the target
 re-executes and upstream side effects never re-fire. Requires a prior full run.
@@ -149,3 +153,7 @@ nodes differently — see ADR-0003.
 watching the *source file* to live-rebuild the canvas (the `--no-auto-update` flag freezes it);
 Watch is the *agent* watching the *user's* interactions (the `user-activity` command reads them).
 Different watcher, different watched.
+
+**Workflow vs Run** — both name "the thing that ran." Discriminator: the Workflow is the reusable
+`.pflow.md` *definition* (authored once); a Run is one *execution* of it (one per `pflow run`). One
+Workflow → many Runs (1→N); concurrent Runs of one Workflow are normal.

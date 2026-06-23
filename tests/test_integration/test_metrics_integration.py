@@ -341,7 +341,7 @@ class TestTraceGeneration:
                     assert "shared_after" not in event
                     assert "mutations" in event
                     assert "node_output" in event
-                    assert event["success"] is True
+                    assert event["status"] == "success"
 
         finally:
             Path(workflow_file).unlink()
@@ -515,7 +515,7 @@ class TestWrapperIntegration:
         # Test 4: Trace was collected (proves both wrappers integrate)
         assert len(trace.events) == 1
         assert trace.events[0]["node_id"] == "shell1"
-        assert trace.events[0]["success"] is True
+        assert trace.events[0]["status"] == "success"
 
     def test_llm_accumulation_across_nodes(self, temp_home, temp_registry, monkeypatch):
         """Test that LLM usage metrics accumulate correctly across multiple nodes.

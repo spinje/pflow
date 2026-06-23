@@ -142,7 +142,7 @@ Shared formatters from `execution/formatters/` ensure identical output between C
 ## Agent-Optimized Defaults
 
 MCP execution differs from CLI:
-- Traces always saved to `~/.pflow/debug/workflow-trace-{timestamp}.json`
+- **No trace file persisted.** Cost/tokens/results come from the in-memory collector and are returned in the response; trace streaming to `~/.pflow/debug/` is CLI-only (ADR-0008 — `ExecutionService` passes `RunnerConfig(trace_enabled=False)`). A CLI run is the way to get a saved trace for `pflow report` / `analyze-cache`.
 - Text output format (LLMs parse text better than nested JSON)
 - Auto-normalization of workflow IR (`ir_version`, `edges`)
 - Services **raise exceptions** (ValueError, RuntimeError, FileExistsError, and pflow types like WorkflowValidationError / MarkdownParseError) with pre-rendered rich text. The `PflowMCP.call_tool` and `PflowMCP.read_resource` overrides (`server.py`) catch unhandled producer bugs and any self-describing exception (anything with `to_diagnostics()` — includes all `PflowError` subclasses plus `MaxNodeVisitsError`) and convert them to structured `CallToolResult(isError=True)` / rendered resource text via `exception_to_diagnostics()` + `format_diagnostic()`, matching the CLI's outer error boundary. Bare pre-formatted `ValueError` / `TypeError` / `RuntimeError` / `FileExistsError` pass through so their hand-rolled rich text survives unchanged.

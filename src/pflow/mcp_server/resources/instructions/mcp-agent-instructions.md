@@ -851,7 +851,7 @@ workflow_execute(
 
 Keep iterating on the `.pflow.md` file until the workflow executes successfully. Do NOT save until it works.
 
-**Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` — saved automatically every run. Use `--report` to generate a readable execution report, or `pflow report` post-hoc.
+**Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` — saved automatically on every **CLI** run (the `workflow_execute` MCP tool returns cost/results inline and does NOT persist a trace). Use `--report` to generate a readable execution report, or `pflow report` post-hoc.
 
 ### Step 10: SAVE - Make It Executable by Name (Final Step)
 
@@ -2077,7 +2077,7 @@ pflow settings show                                 # View settings
 pflow settings llm show                             # View configured LLM models
 
 # Trace Debugging
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.'   # Inspect trace — JSONL: one JSON object per line (meta / event / run.complete / blobs)
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.'   # Inspect trace — JSONL: one JSON object per line (meta / blob / event / run.complete)
 ```
 
 ### Template Variable Quick Reference

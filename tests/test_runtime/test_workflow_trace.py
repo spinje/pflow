@@ -3,7 +3,7 @@
 import json
 import uuid
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -55,7 +55,7 @@ class TestWorkflowTraceCollector:
         assert event["node_id"] == "node-1"
         assert event["node_type"] == "TestNode"
         assert event["duration_ms"] == 123.46  # Rounded to 2 decimal places
-        assert event["success"] is True
+        assert event["status"] == "success"
         assert "timestamp" in event
         assert "error" not in event
 
@@ -75,7 +75,7 @@ class TestWorkflowTraceCollector:
         )
 
         event = collector.events[0]
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert event["error"] == "Division by zero"
 
     def test_mutation_calculation(self, collector):
@@ -127,12 +127,12 @@ class TestWorkflowTraceCollector:
     def test_save_to_file_interns_large_strings_without_mutating_live_events(self, collector, temp_home):
         """Large duplicate strings are interned only on disk; live events stay resolved.
 
-        Task 133 Phase C: the on-disk format is now JSONL (a ``meta`` line, one
-        ``event`` line per node, a ``run.complete`` trailer, and a ``blobs``
-        trailer) rather than a single pretty-printed JSON object. The interning
-        contract is unchanged — a large leaf is replaced by a blob ref on disk
-        and resolved back on read — but it is now pinned against the JSONL shape.
-        The full blob-ref round-trip is also covered in tests/test_core/test_trace_io.py.
+        On-disk format is JSONL (a ``meta`` line, inline-first-occurrence ``blob``
+        lines, one ``event`` line per node, a ``run.complete`` line) rather than a
+        single pretty-printed JSON object. The interning contract is unchanged — a
+        large leaf is replaced by a blob ref on disk and resolved back on read — but
+        it is now pinned against the Task 172 inline-blob shape (no trailer). The
+        full blob-ref round-trip is also covered in tests/test_core/test_trace_io.py.
         """
         large_string = "trace-payload-" + ("x" * 2048)
         collector.record_node_execution(
@@ -151,15 +151,17 @@ class TestWorkflowTraceCollector:
         # First line is the meta line carrying the positive format marker.
         assert lines[0]["kind"] == "meta"
         assert lines[0]["pflow_trace"]
-        # A blobs trailer line carries the interned blob map.
-        blobs_lines = [line for line in lines if line.get("kind") == "blobs"]
-        assert len(blobs_lines) == 1
-        blob_map = blobs_lines[0]["blobs"]
-        # The large leaf was interned (stored once, keyed by digest) — not inlined.
+        # Inline-first-occurrence blob lines (Task 172, no trailer): the large leaf is interned once.
+        blob_lines = [line for line in lines if line.get("kind") == "blob"]
+        assert len(blob_lines) == 1
+        blob_map = {line["md5"]: line["value"] for line in blob_lines}
         assert large_string in blob_map.values()
+        # The blob line PRECEDES the event line that references it (backward-only ref).
+        blob_idx = next(i for i, line in enumerate(lines) if line.get("kind") == "blob")
+        event_idx = next(i for i, line in enumerate(lines) if line.get("kind") == "event")
+        assert blob_idx < event_idx, "blob declaration must precede its first reference"
         # The event line carries a blob ref in place of the large leaf, not the raw string.
-        event_lines = [line for line in lines if line.get("kind") == "event"]
-        raw_value = event_lines[0]["node_output"]["large_data"]
+        raw_value = lines[event_idx]["node_output"]["large_data"]
         assert set(raw_value) == {BLOB_SENTINEL}
         assert blob_map[raw_value[BLOB_SENTINEL]] == large_string
 
@@ -350,32 +352,24 @@ class TestWorkflowTraceCollector:
         assert event["node_output"]["system"] == "local-system"
 
     def test_filename_format(self, collector, temp_home):
-        """Test that trace files are saved with correct filename format."""
-        with (
-            patch("pathlib.Path.home", return_value=temp_home),
-            patch("pflow.runtime.workflow_trace.datetime") as mock_datetime,
-        ):
-            # Set up mock datetime
-            mock_now = Mock()
-            mock_now.strftime.return_value = "20240115-143022"
-            mock_now.isoformat.return_value = "2024-01-15T14:30:22"
-            mock_datetime.now.return_value = mock_now
-            mock_datetime.now().total_seconds = Mock(return_value=1000)
+        """Test that trace files are saved with correct filename format.
 
-            # Subtract method for duration calculation
-            mock_now.__sub__ = Mock()
-            mock_now.__sub__().total_seconds = Mock(return_value=1.5)
-
+        Task 172: the filename timestamp is sampled from ``start_time`` (construction
+        time, microsecond-granular) — not save time — so the streaming filename is
+        stable from the first flush and the #443 ``--only`` collision entropy survives.
+        """
+        collector.start_time = datetime(2024, 1, 15, 14, 30, 22)
+        with patch("pathlib.Path.home", return_value=temp_home):
             filepath = collector.save_to_file()
 
-            # Filename includes an 8-char md5 hash of workflow_path (None here →
-            # md5("") = "d41d8cd9...") followed by sanitized workflow name and
-            # timestamp. See runtime/workflow_trace.format_trace_filename.
-            expected_path = (
-                temp_home / ".pflow" / "debug" / "workflow-trace-d41d8cd9-test-workflow-20240115-143022.json"
-            )
-            assert filepath == expected_path
-            assert filepath.exists()
+        # Filename includes an 8-char md5 hash of workflow_path (None here →
+        # md5("") = "d41d8cd9...") followed by sanitized workflow name and the
+        # start_time timestamp (%Y%m%d-%H%M%S-%f). See format_trace_filename.
+        expected_path = (
+            temp_home / ".pflow" / "debug" / "workflow-trace-d41d8cd9-test-workflow-20240115-143022-000000.json"
+        )
+        assert filepath == expected_path
+        assert filepath.exists()
 
     def test_file_saving_location(self, collector, temp_home):
         """Test that trace files are saved to ~/.pflow/debug/."""
@@ -1632,16 +1626,15 @@ class TestCachedCostExclusion:
                     "node_id": "say-hello",
                     "node_type": "LLMNode",
                     "duration_ms": 0.0,
-                    "success": True,
-                    "cached": True,  # Unchanged inner node served from cache
+                    "status": "cached",  # Unchanged inner node served from cache
                     "llm_call": {"model": "gpt-4o", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.05},
                 },
                 {
                     "node_id": "format-output",
                     "node_type": "LLMNode",
                     "duration_ms": 800.0,
-                    "success": True,
-                    # No cached flag — this node actually executed
+                    "status": "success",
+                    # This node actually executed
                     "llm_call": {"model": "gpt-4o", "input_tokens": 200, "output_tokens": 100, "cost_usd": 0.10},
                 },
             ],
@@ -1668,7 +1661,7 @@ class TestCachedNodeEvent:
             cached=True,
         )
         assert len(collector.events) == 1
-        assert collector.events[0]["cached"] is True
+        assert collector.events[0]["status"] == "cached"
 
     def test_non_cached_has_no_flag(self) -> None:
         collector = WorkflowTraceCollector("test")
@@ -1678,7 +1671,7 @@ class TestCachedNodeEvent:
             duration_ms=100.0,
             success=True,
         )
-        assert "cached" not in collector.events[0]
+        assert collector.events[0]["status"] == "success"
 
 
 class TestFinalEventsByNode:
@@ -1699,8 +1692,8 @@ class TestFinalEventsByNode:
         final = final_events_by_node(collector.events)
 
         assert set(final.keys()) == {"a", "b"}
-        assert final["a"]["success"] is True
-        assert final["b"]["success"] is False
+        assert final["a"]["status"] == "success"
+        assert final["b"]["status"] == "failed"
 
     def test_loop_recovery_returns_latest(self, collector):
         collector.record_node_execution(
@@ -1711,7 +1704,7 @@ class TestFinalEventsByNode:
 
         final = final_events_by_node(collector.events)
 
-        assert final["maybe-fail"]["success"] is True
+        assert final["maybe-fail"]["status"] == "success"
         # Error from the first visit must NOT bleed into the final state
         assert final["maybe-fail"].get("error") is None
 
@@ -1757,9 +1750,9 @@ class TestDetermineTraceStatusAggregation:
 
         Locks the cached+loop invariant: when a cached hit follows a failure
         in the same node, aggregation treats the cached hit as the final state.
-        The ``cached=True`` flag is preserved on the event (audit view) but does
+        The ``status == "cached"`` is preserved on the event (audit view) but does
         NOT exclude it from aggregation — it participates like any other
-        success=True event.
+        non-failed event.
         """
         collector.record_node_execution(node_id="n", node_type="T", duration_ms=1.0, success=False, error="boom")
         collector.record_node_execution(node_id="n", node_type="T", duration_ms=0.0, success=True, cached=True)
@@ -1768,8 +1761,7 @@ class TestDetermineTraceStatusAggregation:
         # Verify the final event actually IS the cached one — guards against
         # a future "exclude cached from aggregation" rule silently flipping behavior.
         final = final_events_by_node(collector.events)
-        assert final["n"].get("cached") is True
-        assert final["n"]["success"] is True
+        assert final["n"]["status"] == "cached"
 
     def test_cached_hit_does_not_mask_failure_on_other_node(self, collector):
         """Negative variant: a cached success on node A does NOT mask a
@@ -1797,9 +1789,9 @@ class TestMarkLastEventFailed:
         # Only 'a' flipped; 'b' untouched
         flipped = next(e for e in collector.events if e["node_id"] == "a")
         untouched = next(e for e in collector.events if e["node_id"] == "b")
-        assert flipped["success"] is False
+        assert flipped["status"] == "failed"
         assert flipped["error"] == "routing failed: action 'x' not in successors"
-        assert untouched["success"] is True
+        assert untouched["status"] == "success"
         assert "error" not in untouched
 
     def test_flips_most_recent_when_multiple_events_for_node(self, collector):
@@ -1810,10 +1802,10 @@ class TestMarkLastEventFailed:
         collector.mark_last_event_failed("n", error="routing boom")
 
         # Visit 1 event retains its original error
-        assert collector.events[0]["success"] is False
+        assert collector.events[0]["status"] == "failed"
         assert collector.events[0]["error"] == "visit1"
         # Visit 2 event is now flipped with the new error
-        assert collector.events[1]["success"] is False
+        assert collector.events[1]["status"] == "failed"
         assert collector.events[1]["error"] == "routing boom"
 
     def test_no_op_for_unknown_node(self, collector):
@@ -1823,7 +1815,7 @@ class TestMarkLastEventFailed:
         collector.mark_last_event_failed("does-not-exist", error="ignored")
 
         # 'a' untouched
-        assert collector.events[0]["success"] is True
+        assert collector.events[0]["status"] == "success"
 
     def test_preserves_node_output(self, collector):
         """Flipped event retains node_output from the successful execution.
@@ -1842,7 +1834,7 @@ class TestMarkLastEventFailed:
         collector.mark_last_event_failed("router", error="routing boom")
 
         event = collector.events[0]
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert event["error"] == "routing boom"
         assert event["node_output"] == {"result": "custom_route"}
 
@@ -1860,8 +1852,8 @@ class TestMarkLastEventFailed:
             duration_ms=1.0,
             success=True,
             batch_items=[
-                {"index": 0, "success": True, "duration_ms": 0.5},
-                {"index": 1, "success": True, "duration_ms": 0.5},
+                {"index": 0, "status": "success", "duration_ms": 0.5},
+                {"index": 1, "status": "success", "duration_ms": 0.5},
             ],
         )
 
@@ -1869,11 +1861,11 @@ class TestMarkLastEventFailed:
 
         event = collector.events[0]
         # Top-level flipped
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert event["error"] == "routing boom"
         # Per-item status untouched — audit view preserved
-        assert event["batch_items"][0]["success"] is True
-        assert event["batch_items"][1]["success"] is True
+        assert event["batch_items"][0]["status"] == "success"
+        assert event["batch_items"][1]["status"] == "success"
 
 
 class TestSaveToFileFailedNodeIds:

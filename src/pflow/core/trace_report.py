@@ -257,7 +257,7 @@ def _find_notable_items(
     notable: list[dict[str, Any]] = []
     for item in batch_items:
         # Failed items are always notable
-        if not item.get("success"):
+        if item.get("status") == "failed":
             notable.append(item)
             continue
 
@@ -452,8 +452,11 @@ def _collect_errors(
     if failed_node_ids is not None:
         failed_set = set(failed_node_ids)
         return [e for nid, e in latest.items() if nid in failed_set]
-    # Legacy fallback: derive from per-event success flag directly (pre-fix traces).
-    return [e for e in latest.values() if not e.get("success")]
+    # Fallback for traces without ``failed_node_ids``: derive per-node failure from the ``status`` enum.
+    # NOTE (Task 172): this reads the modern ``status`` field — a pre-status trace (old ``success: false``
+    # shape) is NOT classified here. That is acceptable under the no-back-compat decision; every trace
+    # since GH #240 carries ``failed_node_ids`` and takes the authoritative branch above.
+    return [e for e in latest.values() if e.get("status") == "failed"]
 
 
 def _suggest_template_fixes(
@@ -559,7 +562,7 @@ def _detect_anomalies(events: list[dict[str, Any]]) -> list[str]:
     """
     warnings: list[str] = []
     for event in events:
-        if not event.get("success"):
+        if event.get("status") == "failed":
             continue  # Failed nodes already shown in Errors section
         warning = _check_event_anomaly(event)
         if warning:
@@ -732,17 +735,25 @@ def _resolve_final_status(trace: dict[str, Any]) -> str:
     if "failed_node_ids" in trace:
         return str(trace.get("final_status", "unknown"))
 
-    # Legacy fallback: apply the canonical per-node-last-event rule and
-    # override the JSON's stored value when the old rule was wrong. Preserve
-    # non-"failed" legacy values ("success"/"degraded") because the fallback
-    # can't reconstruct the degraded vs success distinction on its own.
+    # Fallback for traces without ``failed_node_ids``: apply the canonical per-node-last-event rule and
+    # override the JSON's stored value when the old rule was wrong. Preserve non-"failed" stored values
+    # ("success"/"degraded") because the fallback can't reconstruct the degraded vs success distinction.
+    # NOTE (Task 172): reads the modern per-node ``status`` enum — a pre-status trace (old ``success``
+    # shape) isn't reclassified here; acceptable under no-back-compat (every post-GH-#240 trace has
+    # ``failed_node_ids`` and takes the branch above).
     latest = final_events_by_node(trace.get("nodes", []))
-    has_failure = any(not e.get("success", True) for e in latest.values())
+    # Read BOTH the modern `status` enum AND the legacy `success` bool so this is NOT blind to an old
+    # pre-status trace. The migration changed `not e.get("success")` → `e.get("status") == "failed"`,
+    # which made a genuinely-FAILED old trace (events carry `success: false`, no `status`) look
+    # failure-free here, so the rewrite below silently flipped it to "success" (Codex/claude review of
+    # PR #530). Both reads keep this fallback honest for old traces while the recovered-loop recompute
+    # still works (the failed event is shadowed by the later success event in final_events_by_node).
+    has_failure = any(e.get("status") == "failed" or e.get("success") is False for e in latest.values())
     if has_failure:
         return "failed"
     legacy = str(trace.get("final_status", "success"))
-    # Old code wrote "failed" for recovered loops; replace with "success"
-    # since no per-node failures remain. Leave "degraded" and other values alone.
+    # Old code wrote "failed" for recovered loops (no per-node failure remains); recompute to "success".
+    # Leave "degraded" and other values alone. Modern traces never reach here (they carry failed_node_ids).
     return "success" if legacy == "failed" else legacy
 
 
@@ -758,7 +769,7 @@ def _halt_node_id(trace: dict[str, Any]) -> str | None:
     if trace.get("final_status") != "failed":
         return None
     for event in reversed(trace.get("nodes", []) or []):
-        if event.get("success") is False:
+        if event.get("status") == "failed":
             node_id = event.get("node_id")
             if isinstance(node_id, str):
                 return node_id
@@ -895,7 +906,7 @@ def _append_warning_section(events: list[dict[str, Any]], lines: list[str]) -> N
 
     # Also surface batch item anomalies at the top level
     for event in events:
-        if not event.get("success"):
+        if event.get("status") == "failed":
             continue
         batch_items = event.get("batch_items", [])
         if not batch_items:
@@ -941,9 +952,8 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
     """Append metadata lines for a node event."""
     lines.append(f"- Type: {event.get('node_type', 'unknown')}")
     lines.append(f"- Time: {format_duration(event.get('duration_ms', 0))}")
-    status = "success" if event.get("success") else "failed"
-    if event.get("cached"):
-        status += " [cached]"
+    raw_status = event.get("status", "success")
+    status = "success [cached]" if raw_status == "cached" else raw_status
     lines.append(f"- Status: {status}")
 
     llm_call = event.get("llm_call")
@@ -952,7 +962,7 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
             llm_call,
             lines,
             paid_cost=_compute_event_cost(event),
-            cached=bool(event.get("cached")),
+            cached=event.get("status") == "cached",
         )
 
     # Show retry metadata for claude-code schema retries
@@ -1009,13 +1019,12 @@ def _row_batch_item_label(node_id: str, item: dict[str, Any]) -> str:
 def _row_status(event_or_item: dict[str, Any]) -> str:
     """Lowercase status for the summary table: ``success``/``failed``/``cached``.
 
-    Failure is checked BEFORE ``cached`` so the failure signal survives the
-    rare ``(cached=True, success=False)`` shape. Cache hits in normal pflow
-    flow imply success, so the cached branch wins for the common case.
+    Reads the single per-node ``status`` enum (Task 172). A node cached then
+    failed by a routing dead-end is recorded ``failed`` (``mark_last_event_failed``
+    flips it), so the old ``(cached=True, success=False)`` ambiguity no longer
+    needs resolving here. Batch items carry only ``success``/``failed``.
     """
-    if not event_or_item.get("success"):
-        return "failed"
-    return "cached" if event_or_item.get("cached") else "success"
+    return str(event_or_item.get("status", "success"))
 
 
 def _row_tokens(event_or_item: dict[str, Any]) -> str:
@@ -1357,7 +1366,7 @@ def _detect_batch_item_anomalies(batch_items: list[dict[str, Any]], parent_event
     node_type = parent_event.get("node_type", "")
     item_warnings: list[str] = []
     for item in batch_items:
-        if not item.get("success"):
+        if item.get("status") == "failed":
             continue
         if _is_warmup_item(item):
             continue
@@ -1401,7 +1410,7 @@ def _build_node_summary(event: dict[str, Any]) -> str:
     lines = [f"# {node_id}", ""]
     lines.append(f"- Type: {event.get('node_type', '?')}")
     lines.append(f"- Time: {format_duration(event.get('duration_ms', 0))}")
-    lines.append(f"- Status: {'success' if event.get('success') else 'failed'}")
+    lines.append(f"- Status: {'failed' if event.get('status') == 'failed' else 'success'}")
     container_cost = _compute_event_cost(event)
     if container_cost is not None:
         lines.append(f"- Cost: ${container_cost:.4f}")
@@ -1409,7 +1418,7 @@ def _build_node_summary(event: dict[str, Any]) -> str:
     batch_items = event.get("batch_items", [])
     real_batch_items = [i for i in batch_items if not _is_warmup_item(i)]
     if batch_items:
-        succeeded = sum(1 for i in real_batch_items if i.get("success"))
+        succeeded = sum(1 for i in real_batch_items if i.get("status") != "failed")
         lines.append(f"- Items: {len(real_batch_items)} ({succeeded}/{len(real_batch_items)} succeeded)")
         lines.append("")
 
@@ -1486,9 +1495,8 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
     label = _item_label_or_index(item)
     lines = [f"# {node_id} — {label}", ""]
     lines.append(f"- Time: {format_duration(item.get('duration_ms', 0))}")
-    status = "success" if item.get("success") else "failed"
-    if item.get("cached"):
-        status += " [cached]"
+    raw_status = item.get("status", "success")
+    status = "success [cached]" if raw_status == "cached" else raw_status
     lines.append(f"- Status: {status}")
 
     llm_call = item.get("llm_call")
@@ -1497,7 +1505,7 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
             llm_call,
             lines,
             paid_cost=_compute_batch_item_cost(item),
-            cached=bool(item.get("cached")),
+            cached=item.get("status") == "cached",
         )
 
     error = item.get("error")
@@ -1516,7 +1524,7 @@ def _build_batch_item_summary(item: dict[str, Any]) -> str:
     label = _item_label_or_index(item)
     lines = [f"# {label}", ""]
     lines.append(f"- Time: {format_duration(item.get('duration_ms', 0))}")
-    lines.append(f"- Status: {'success' if item.get('success') else 'failed'}")
+    lines.append(f"- Status: {'failed' if item.get('status') == 'failed' else 'success'}")
     lines.append("")
 
     child_events = item.get("events", [])

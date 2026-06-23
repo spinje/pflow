@@ -768,8 +768,8 @@ class TestBatchTemplateErrorPropagation:
 class TestRoutingFailureTraceEventSync:
     """GH #250 — when a node returns a custom non-error action that has no
     matching successor, _handle_no_successor archives it as a routing failure.
-    The trace event (recorded at step 16 with success=True because the action
-    didn't start with "error") must be flipped to success=False so the trace
+    The trace event (recorded at step 16 with status="success" because the action
+    didn't start with "error") must be flipped to status="failed" so the trace
     agrees with __failures__.
     """
 
@@ -817,12 +817,12 @@ class TestRoutingFailureTraceEventSync:
         assert failure is not None
         assert failure["category"] == "routing_error"
 
-        # Trace invariant: event agrees with __failures__ — success=False with
-        # routing-mention in error (not success=True silently disagreeing)
+        # Trace invariant: event agrees with __failures__ — status="failed" with
+        # routing-mention in error (not status="success" silently disagreeing)
         router_events = [e for e in collector.events if e.get("node_id") == "router"]
         assert len(router_events) == 1
         event = router_events[0]
-        assert event["success"] is False
+        assert event["status"] == "failed"
         assert "custom_route" in event.get("error", "")
         assert "no successor edge matches" in event.get("error", "")
 
@@ -886,9 +886,9 @@ class TestRoutingFailureTraceEventSync:
         events = [e for e in collector.events if e.get("node_id") == "failing"]
         assert len(events) == 1
         event = events[0]
-        # Step 16 recorded success=False (is_error_action=True) with the
+        # Step 16 recorded status="failed" (is_error_action=True) with the
         # node's own error text.
-        assert event["success"] is False
+        assert event["status"] == "failed"
         # Trace event anti-regression: error text must be the shell's error,
         # NOT the generic routing warning (which would indicate mark_last_event_failed
         # fired and overwrote it).
@@ -913,7 +913,7 @@ class TestRoutingFailureTraceEventSync:
         target via _run_only_snapshot — it never reaches the walk's
         _handle_no_successor. So even when the router returns a custom action with
         no matching edge, mark_last_event_failed is NOT called; the trace event
-        retains success=True (the node's execution genuinely succeeded — the
+        retains status="success" (the node's execution genuinely succeeded — the
         routing concern doesn't apply in --only mode).
         """
         from pflow.runtime.node_state import get_node_failure
@@ -959,10 +959,10 @@ class TestRoutingFailureTraceEventSync:
 
         # Runtime: no routing failure record — snapshot path never routes
         assert get_node_failure(shared, "router") is None
-        # Trace event preserves the successful execution result — success=True
+        # Trace event preserves the successful execution result — status="success"
         router_events = [e for e in collector.events if e.get("node_id") == "router"]
         assert len(router_events) == 1
-        assert router_events[0]["success"] is True
+        assert router_events[0]["status"] == "success"
         assert "error" not in router_events[0] or router_events[0]["error"] is None
 
 
