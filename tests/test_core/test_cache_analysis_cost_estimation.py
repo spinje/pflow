@@ -25,7 +25,6 @@ These tests lock:
 from __future__ import annotations
 
 import dataclasses
-import json
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +45,7 @@ from pflow.core.prompt_cache_analysis.cost_estimation import (
 from pflow.core.prompt_cache_analysis.types import PerCallRow, ProjectionExclusion
 from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 
 def _row(
@@ -135,11 +135,7 @@ def test_row_first_run_with_cache_cost_matches_single_row_projection() -> None:
 
 def _write_trace(tmp_path: Path, workflow_path: str, nodes: list[dict[str, Any]]) -> Path:
     path = tmp_path / "trace.json"
-    path.write_text(
-        json.dumps(TraceFixtureBuilder().trace(workflow_path=workflow_path, nodes=nodes)),
-        encoding="utf-8",
-    )
-    return path
+    return write_trace_jsonl(path, TraceFixtureBuilder().trace(workflow_path=workflow_path, nodes=nodes))
 
 
 def _static_batch_ir(*, declared: bool = False, batch_items: list[str] | None = None) -> dict:

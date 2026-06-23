@@ -30,7 +30,7 @@ def test_format_version_is_2_5_0() -> None:
 def test_saved_trace_records_format_version(tmp_path, monkeypatch) -> None:
     """Saved trace JSON carries the current format_version constant."""
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    collector = WorkflowTraceCollector(workflow_name="t", workflow_path=None)
+    collector = WorkflowTraceCollector(workflow_name="t", workflow_path=None, is_run_scoped=True, stream_to_disk=True)
 
     trace_path = collector.save_to_file()
     trace_data = load_trace_file(trace_path)
@@ -119,7 +119,7 @@ def test_2_2_0_trace_omits_llm_system_for_non_llm_nodes() -> None:
 def test_2_2_0_llm_system_serializes_through_save_roundtrip(tmp_path, monkeypatch) -> None:
     """list[dict] survives JSON serialization with cache_control intact."""
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    collector = WorkflowTraceCollector(workflow_name="t")
+    collector = WorkflowTraceCollector(workflow_name="t", is_run_scoped=True, stream_to_disk=True)
     system_blocks: list[dict[str, Any]] = [
         {"type": "text", "text": "Reference"},
         {"type": "text", "text": "Body", "cache_control": {"type": "ephemeral"}},

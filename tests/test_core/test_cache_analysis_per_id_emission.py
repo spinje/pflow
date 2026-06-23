@@ -9,7 +9,6 @@ full-path chunk names.
 from __future__ import annotations
 
 import importlib
-import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -26,6 +25,7 @@ from pflow.core.prompt_cache_analysis.rendering.text import render_text
 from pflow.core.prompt_cache_analysis.types import CrossWorkflowInputContribution
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 from pflow.core.workflow.validator import WorkflowValidator
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 
 def _iter_llm_events(events: list[dict[str, Any]]) -> Iterator[tuple[str, dict[str, Any]]]:
@@ -177,32 +177,30 @@ def test_batch_prewarm_recommended_fires_only_when_prewarm_absent(tmp_path: Path
     }
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "anthropic/claude-sonnet-4-5",
-                                    "input_tokens": 200,
-                                    "output_tokens": 5,
-                                    "total_tokens": 205,
-                                    "cost_usd": 0.01,
-                                },
-                            }
-                            for index in range(34)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 200,
+                                "output_tokens": 5,
+                                "total_tokens": 205,
+                                "cost_usd": 0.01,
+                            },
+                        }
+                        for index in range(34)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
@@ -327,32 +325,30 @@ def test_cache_batch_prewarm_below_min_fires_on_undeclared_measurable_below_min_
     }
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "anthropic/claude-sonnet-4-5",
-                                    "input_tokens": 50,
-                                    "output_tokens": 5,
-                                    "total_tokens": 55,
-                                    "cost_usd": 0.001,
-                                },
-                            }
-                            for index in range(34)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 50,
+                                "output_tokens": 5,
+                                "total_tokens": 55,
+                                "cost_usd": 0.001,
+                            },
+                        }
+                        for index in range(34)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path, memo_cache=None)
@@ -641,42 +637,40 @@ def test_dynamic_before_static_silent_for_heterogeneous_batch_with_no_stable_tai
     # heterogeneous-batch ``row.model = ""`` code path that the bug needed.
     builder = TraceFixtureBuilder()
     trace_path = tmp_path / "hetero-trace.json"
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.batch_event(
-                        "generate-chorus-options",
-                        [
-                            {
-                                "index": 0,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "gemini/gemini-2.5-flash",
-                                    "input_tokens": 200,
-                                    "output_tokens": 5,
-                                    "total_tokens": 205,
-                                    "cost_usd": 0.01,
-                                },
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.batch_event(
+                    "generate-chorus-options",
+                    [
+                        {
+                            "index": 0,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/gemini-2.5-flash",
+                                "input_tokens": 200,
+                                "output_tokens": 5,
+                                "total_tokens": 205,
+                                "cost_usd": 0.01,
                             },
-                            {
-                                "index": 1,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "gemini/gemini-2.5-flash-lite",
-                                    "input_tokens": 200,
-                                    "output_tokens": 5,
-                                    "total_tokens": 205,
-                                    "cost_usd": 0.01,
-                                },
+                        },
+                        {
+                            "index": 1,
+                            "success": True,
+                            "llm_call": {
+                                "model": "gemini/gemini-2.5-flash-lite",
+                                "input_tokens": 200,
+                                "output_tokens": 5,
+                                "total_tokens": 205,
+                                "cost_usd": 0.01,
                             },
-                        ],
-                    )
-                ],
-            )
+                        },
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path)
@@ -730,33 +724,31 @@ def test_conditional_warmup_recommended_fires_when_static_prefix_has_unresolvabl
     trace_path = tmp_path / "mixed-size-trace.json"
 
     builder = TraceFixtureBuilder()
-    trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=workflow_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "anthropic/claude-sonnet-4-5",
-                                    "input_tokens": 200,
-                                    "output_tokens": 5,
-                                    "total_tokens": 205,
-                                    "cost_usd": 0.01,
-                                    **({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else {}),
-                                },
-                            }
-                            for index in range(4)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        trace_path,
+        builder.trace(
+            workflow_path=workflow_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 200,
+                                "output_tokens": 5,
+                                "total_tokens": 205,
+                                "cost_usd": 0.01,
+                                **({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else {}),
+                            },
+                        }
+                        for index in range(4)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
 
     result = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path)
@@ -1500,13 +1492,13 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
     # Synthetic trace with the parent's recorded ``node_output`` for ``creative``
     # under the parent workflow path. The analyzer's trace-fallback walker
     # filters on ``(workflow_path, node_id)`` to find this event.
-    import json as _json
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
         trace_path = Path(tmpdir) / "trace.json"
-        trace_path.write_text(
-            _json.dumps({
+        write_trace_jsonl(
+            trace_path,
+            {
                 "format_version": "2.2.0",
                 "workflow_path": "parent.pflow.md",
                 "final_status": "success",
@@ -1545,8 +1537,7 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_trace(
                         ],
                     },
                 ],
-            }),
-            encoding="utf-8",
+            },
         )
 
         result = analyze(
@@ -1624,13 +1615,13 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_node_invo
     # carries the resolved value for ``concept``. Crucially, NO event for a
     # node id ``concept`` exists — that's the whole point: input passthrough
     # means the value isn't a node output, so Tier 2 cannot find it.
-    import json as _json
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
         trace_path = Path(tmpdir) / "trace.json"
-        trace_path.write_text(
-            _json.dumps({
+        write_trace_jsonl(
+            trace_path,
+            {
                 "format_version": "2.2.0",
                 "workflow_path": "parent.pflow.md",
                 "final_status": "success",
@@ -1668,8 +1659,7 @@ def test_sub_workflow_cache_undeclared_savings_populated_from_workflow_node_invo
                         ],
                     },
                 ],
-            }),
-            encoding="utf-8",
+            },
         )
 
         result = analyze(
@@ -2542,8 +2532,9 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
         lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -2575,8 +2566,7 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -2638,8 +2628,9 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
         lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -2670,8 +2661,7 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -2737,8 +2727,9 @@ def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
         lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -2770,8 +2761,7 @@ def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -2826,8 +2816,9 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
         lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -2851,8 +2842,7 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -2903,8 +2893,9 @@ def test_sub_workflow_cache_undeclared_groups_multiple_inputs_per_child(
         cross_module, "resolve_sub_workflow", lambda _p, _b: SubWorkflowResult(child_ir, child_path, ())
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -2935,8 +2926,7 @@ def test_sub_workflow_cache_undeclared_groups_multiple_inputs_per_child(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -2997,8 +2987,9 @@ def test_sub_workflow_cache_undeclared_case_model_switch(
     # Two inputs sized so per-call sum lands between 1024 (MODEL_SWITCH_BAND)
     # and 2000 (mocked strictest threshold). 1500 reps x "alpha " ≈ 1500 tokens
     # each input → ~3000 tokens per call → model_switch range.
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -3021,8 +3012,7 @@ def test_sub_workflow_cache_undeclared_case_model_switch(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     # Override the mocked threshold for THIS test so the per-call prefix lands
@@ -3097,8 +3087,9 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
     # events give cohort ~2500-3000 (above 1024, would falsely trigger
     # model_switch under cohort gating).
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -3118,8 +3109,7 @@ def test_sub_workflow_cache_undeclared_case_uses_per_call_not_cohort(
                     * 10,
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -3189,8 +3179,9 @@ def test_sub_workflow_cache_undeclared_splits_mixed_consumer_cases(
         lambda _params, _base_path: SubWorkflowResult(child_ir, Path("/abs/child.pflow.md"), ()),
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -3225,8 +3216,7 @@ def test_sub_workflow_cache_undeclared_splits_mixed_consumer_cases(
                     * 2,
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -3722,8 +3712,9 @@ def test_sub_workflow_cache_undeclared_trace_fallback_resolves_child_suffix(
         lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -3755,8 +3746,7 @@ def test_sub_workflow_cache_undeclared_trace_fallback_resolves_child_suffix(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -3813,8 +3803,9 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
         lambda _params, _base_path: SubWorkflowResult(child_ir, child_path, ()),
     )
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.2.0",
             "workflow_path": "parent.pflow.md",
             "final_status": "success",
@@ -3846,8 +3837,7 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
                     ],
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
@@ -4257,15 +4247,14 @@ def test_rename_warning_FIRES_when_child_has_cache(monkeypatch: pytest.MonkeyPat
 
 def _write_trace(tmp_path: Path, events: list[dict[str, Any]], *, format_version: str = "2.1.0") -> Path:
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    return write_trace_jsonl(
+        trace_path,
+        {
             "format_version": format_version,
             "workflow_path": "parent.pflow.md",
             "nodes": events,
-        }),
-        encoding="utf-8",
+        },
     )
-    return trace_path
 
 
 def test_discrepancy_fires_for_chunk_skipped_with_dotted_path(tmp_path: Path) -> None:
@@ -5386,8 +5375,9 @@ def test_discrepancy_key_mismatch_via_real_planner_consumption(
 
     # Build a synthetic 2.1.0 trace recording the engine's cache_key.
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": str(workflow_path.resolve()),
             "nodes": [
@@ -5403,8 +5393,7 @@ def test_discrepancy_key_mismatch_via_real_planner_consumption(
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     # Now invoke analyze() with DIFFERENT params — planner predicts a
@@ -5703,8 +5692,9 @@ def test_analyze_cache_emits_discrepancy_for_sub_workflow_node_via_subprocess(
 
     # Build a synthetic trace with WRONG cache_keys for both LLM nodes.
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": str(parent_path.resolve()),
             "nodes": [
@@ -5736,8 +5726,7 @@ def test_analyze_cache_emits_discrepancy_for_sub_workflow_node_via_subprocess(
                     ],
                 },
             ],
-        }),
-        encoding="utf-8",
+        },
     )
 
     cache_db = isolate_pflow_config["pflow_dir"] / "cache" / "cache.db"

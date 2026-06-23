@@ -18,10 +18,9 @@ from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.node_type_display import is_llm_node_type
 from pflow.core.trace_io import (
-    _RESERVED_LINE_KEYS,
+    RESERVED_LINE_KEYS,
     TRACE_JSONL_MARKER,
     _rebuild_event_tree,
-    flatten_trace_to_lines,
     intern_event_leaves,
     load_trace_file,
 )
@@ -713,7 +712,7 @@ class WorkflowTraceCollector:
     def _check_reserved_collision(event: dict[str, Any], node_id: str) -> None:
         """Loud guard (Task 172): a producer must never pre-set a reserved correlation key — the writer
         derives them and the reader strips them. ``if/raise`` (not ``assert``) so it survives ``python -O``."""
-        collision = _RESERVED_LINE_KEYS.intersection(event)
+        collision = RESERVED_LINE_KEYS.intersection(event)
         if collision:
             raise RuntimeError(
                 f"trace event {node_id!r} already carries reserved correlation key(s) {sorted(collision)}; "
@@ -844,7 +843,7 @@ class WorkflowTraceCollector:
         return line
 
     def _meta_fields(self) -> dict[str, Any]:
-        """The run-identity keys (``_META_KEYS``), all knowable at run start — the ``meta`` line payload."""
+        """The run-identity keys (``META_KEYS``), all knowable at run start — the ``meta`` line payload."""
         return {
             "format_version": TRACE_FORMAT_VERSION,
             "execution_id": self.execution_id,
@@ -1243,41 +1242,14 @@ class WorkflowTraceCollector:
         return agg.as_dict()
 
     def save_to_file(self) -> Path | None:
-        """Persist the trace to ``~/.pflow/debug/`` and return its path (``None`` if not written).
+        """Thin alias for :meth:`finalize` — the run-scoped streaming writer is the ONE trace writer (#531).
 
-        Two paths, by collector kind (Task 172 step 3):
-          - **Run-scoped** (the production root): events were STREAMED per-node during the run, so
-            "saving" just delegates to ``finalize()`` (write the ``run.complete`` trailer + close). Returns
-            ``None`` when streaming was off/gated (``stream_to_disk=False`` / the pytest gate).
-          - **Buffer/test** (``is_run_scoped=False``, never saved in production): the store is a NESTED
-            unstamped tree, so this WHOLE-FILE writes it via ``flatten_trace_to_lines`` (derives
-            correlation + promotes ``sub_workflow_events`` + inline blobs at save). Several ``@trace_files``
-            tests construct a bare collector and call this directly.
+        Events were streamed per-node during the run; this writes the ``run.complete`` trailer and closes.
+        Returns ``None`` when streaming was off/gated (``stream_to_disk=False`` / the pytest ``trace_files``
+        gate) or disabled mid-run by an I/O fault. No production caller — the CLI calls ``finalize()``
+        directly; this alias is kept for the run-scoped collector tests that call it.
         """
-        if self.is_run_scoped:
-            return self.finalize()
-
-        trace_dir = Path.home() / ".pflow" / "debug"
-        trace_dir.mkdir(parents=True, exist_ok=True)
-        # start_time (microsecond-granular) is the filename sample time — symmetric with the streaming
-        # path and preserving the #443 ``--only``-collision entropy (separate processes start at distinct
-        # microseconds; PR #459 S5: not a cross-process uniqueness guarantee).
-        timestamp = self.start_time.strftime("%Y%m%d-%H%M%S-%f")
-        filepath = trace_dir / format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
-        lines = flatten_trace_to_lines(self._build_trace_data())
-        with open(filepath, "w", encoding="utf-8") as f:
-            for line in lines:
-                f.write(json.dumps(line, default=str))
-                f.write("\n")
-        return filepath
-
-    def _build_trace_data(self) -> dict[str, Any]:
-        """The full nested trace dict (meta keys + aggregates + ``nodes``) for the whole-file writer.
-
-        Shares ``_meta_fields()`` + ``_aggregates()`` with the streaming ``meta``/``run.complete`` lines so
-        the two write paths can never disagree on a field's value or scoping (e.g. ``failed_node_ids``
-        derives from ``_top_level_events()`` in both)."""
-        return {**self._meta_fields(), **self._aggregates(), "nodes": self.events}
+        return self.finalize()
 
     def get_trace_hook(self, node_id: str) -> Callable[[dict[str, Any]], None]:
         """Return a callable that the LLM adapter invokes around its API call.

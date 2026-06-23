@@ -38,7 +38,7 @@ src/pflow/core/
 ├── file_resolver.py         # External file reference detection and resolution
 ├── duration_format.py       # Human-readable duration formatting
 ├── trace_tree.py            # Tree-structured trace helpers
-├── trace_io.py              # Trace blob interning/resolution + trace-file load
+├── trace_io.py              # JSONL trace transport: inline-blob interning (intern_event_leaves) + reconstruct + JSONL-only load_trace_file
 ├── node_type_display.py     # Short display tags for node-class names (node_type_tag, is_llm_node_type)
 ├── workflow_id.py           # Synthetic ID for inline-workflow cache scoping (ir-hash:<md5>)
 ├── llm_capabilities.py      # Per-model capability table for prompt caching (Task 159)
@@ -320,7 +320,7 @@ directories for migration.
 
 **Pipeline table**: `_row_status()` returns lowercase `success` / `failed` / `cached` for the new column shape (`| # | Node | Type | Status | Time | Tokens | Cost |`). Failure is checked before `cached` so a `(cached, !success)` event correctly shows `failed`. The table is **per-invocation** — under loop recovery it shows both visits (visit 1 failed, visit 2 success) even though the node's final aggregation state is success. Batch hosts are exploded into per-item rows with bracket labels (`node_id[index] (model-tail)`); synthetic `is_warmup` items are filtered. Rows are buffered and the table header is only emitted when at least one row survives the filter, so a warmup-only batch produces no `## Pipeline` section.
 
-**Errors section — per-node, not per-event**: `_collect_errors(events, failed_node_ids=trace.get("failed_node_ids"))` reads the trace's authoritative `failed_node_ids` list when present (new format) or derives per-node final state from events (fallback for older traces). A node that failed on visit 1 and succeeded on visit 2 is NOT in `failed_node_ids` and correctly omitted from Errors. See GH #240. Other `event.get("success")` readers in this module (pipeline table, `_detect_anomalies`, `_check_event_anomaly`, batch-item display, per-node metadata) are **per-invocation** and MUST stay per-event — they are the audit view of loop recovery and batch items.
+**Errors section — per-node, not per-event**: `_collect_errors(events, failed_node_ids=trace.get("failed_node_ids"))` reads the trace's authoritative `failed_node_ids` list when present (every post-GH-#240 trace) or, for a trace lacking it (a modern crash-truncated `incomplete` trace), derives per-node final state from the `status` enum. A node that failed on visit 1 and succeeded on visit 2 is NOT in `failed_node_ids` and correctly omitted from Errors. See GH #240. Both `_collect_errors` and `_resolve_final_status` are **modern-`status`-only** — the pre-status `success`-bool fallback was removed in #531 (single-object traces no longer load), so all event-level reads in this module use the `status` enum, never `event.get("success")`.
 
 **Per-node files include**: metadata (type, timing, status, LLM model/tokens/cost, error), resolved inputs (`## Command` for shell, `## Prompt` for LLM, `## Code` + `## Inputs` for python), outputs (`## stdout`, `## stderr`, `## Result`, `## Response`), and a catch-all for remaining output keys.
 

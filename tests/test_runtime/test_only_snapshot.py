@@ -15,7 +15,6 @@ graph — so side-effecting upstream nodes never re-fire. These tests pin:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +22,6 @@ import pytest
 
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.node import BaseNode
-from pflow.core.trace_io import intern_blobs
 from pflow.execution.execution_state import build_execution_steps
 from pflow.execution.result import RunnerConfig, WorkflowStatus
 from pflow.execution.runner import WorkflowRunner
@@ -36,6 +34,7 @@ from pflow.runtime.workflow_trace import (
     seed_snapshot_into_shared,
 )
 from tests.shared.markdown_utils import write_workflow_file
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,9 +93,7 @@ def _write_trace(
         data["only_node"] = only_node
     if warnings is not None:
         data["warnings"] = warnings
-    path = debug_dir / fname
-    path.write_text(json.dumps(data))
-    return path
+    return write_trace_jsonl(debug_dir / fname, data)
 
 
 def _write_interned_trace(
@@ -117,9 +114,9 @@ def _write_interned_trace(
         "only_node": None,
         "nodes": nodes,
     }
-    path = debug_dir / fname
-    path.write_text(json.dumps(intern_blobs(data)), encoding="utf-8")
-    return path
+    # write_trace_jsonl interns large leaves inline (the streaming writer's blob shape), so this
+    # exercises the same on-disk interning a real run produces, in the JSONL transport.
+    return write_trace_jsonl(debug_dir / fname, data)
 
 
 # ---------------------------------------------------------------------------

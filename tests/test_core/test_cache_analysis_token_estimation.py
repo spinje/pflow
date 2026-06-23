@@ -189,6 +189,8 @@ def test_tier_1_trace_works_with_real_collector_round_trip(tmp_path: Any, monkey
     collector = WorkflowTraceCollector(
         workflow_name="test-roundtrip",
         workflow_path="/some/path/test.pflow.md",
+        is_run_scoped=True,
+        stream_to_disk=True,
     )
     collector.record_node_execution(
         node_id="emit",

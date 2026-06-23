@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 
@@ -249,6 +250,22 @@ class TraceFixtureBuilder:
                 for i, (item_value, sub_events) in enumerate(items)
             ],
         }
+
+    def write_jsonl(
+        self,
+        path: Path,
+        workflow_path: str,
+        nodes: list[dict[str, Any]],
+        **trace_kwargs: Any,
+    ) -> Path:
+        """Build a trace via :meth:`trace` and write it to ``path`` as JSONL (#531).
+
+        The fixture-side counterpart to the streaming producer: ``load_trace_file`` reads only the
+        Task-172 JSONL format, so a trace fixture written to disk for loading/report/discovery tests
+        must go through the flatten serializer, not ``json.dumps(self.trace(...))``."""
+        from tests.shared.trace_jsonl import write_trace_jsonl
+
+        return write_trace_jsonl(path, self.trace(workflow_path, nodes, **trace_kwargs))
 
     def trace(
         self,

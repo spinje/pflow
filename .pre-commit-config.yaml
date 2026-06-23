@@ -7,10 +7,22 @@ repos:
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml
+      # Committed pflow trace fixtures are Task-172 JSONL (one JSON object per line, .json extension —
+      # matching production ~/.pflow/debug traces); the single-object JSON hooks can't parse them (#531).
       - id: check-json
-        exclude: ^.devcontainer/devcontainer.json
+        exclude: |
+          (?x)^(
+            \.devcontainer/devcontainer\.json|
+            tests/fixtures/cache_analysis/.*\.json|
+            \.taskmaster/tasks/task_159/baseline/_shared/fixtures/.*\.json
+          )$
       - id: pretty-format-json
-        exclude: ^.devcontainer/devcontainer.json
+        exclude: |
+          (?x)^(
+            \.devcontainer/devcontainer\.json|
+            tests/fixtures/cache_analysis/.*\.json|
+            \.taskmaster/tasks/task_159/baseline/_shared/fixtures/.*\.json
+          )$
         args: [--autofix, --no-sort-keys]
       - id: end-of-file-fixer
         exclude: \.md$

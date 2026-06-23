@@ -41,6 +41,7 @@ from pflow.core.prompt_cache_analysis.types import (
     invocation_count_for,
 )
 from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 
 def _patch_default_model(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
@@ -572,9 +573,8 @@ def _make_exclusion() -> ProjectionExclusion:
     )
 
 
-def _write_trace(path: Path, trace_data: object) -> Path:
-    path.write_text(json.dumps(trace_data), encoding="utf-8")
-    return path
+def _write_trace(path: Path, trace_data: dict[str, Any]) -> Path:
+    return write_trace_jsonl(path, trace_data)
 
 
 def _test_delta(

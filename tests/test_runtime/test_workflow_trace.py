@@ -29,6 +29,14 @@ class TestWorkflowTraceCollector:
         home_dir.mkdir()
         return home_dir
 
+    @pytest.fixture
+    def streaming_collector(self, temp_home, monkeypatch):
+        """Run-scoped streaming collector for disk-write tests (#531): the production
+        whole-file buffer writer is gone, so a written trace now comes from the streaming
+        path. Path.home → temp_home covers the lazy stream open + finalize."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: temp_home)
+        return WorkflowTraceCollector("test-workflow", is_run_scoped=True, stream_to_disk=True)
+
     def test_initialization(self, collector):
         """Test that collector initializes with correct defaults."""
         assert collector.workflow_name == "test-workflow"
@@ -124,7 +132,7 @@ class TestWorkflowTraceCollector:
         assert output_value == large_string
         assert len(output_value) == 11000
 
-    def test_save_to_file_interns_large_strings_without_mutating_live_events(self, collector, temp_home):
+    def test_save_to_file_interns_large_strings_without_mutating_live_events(self, streaming_collector, temp_home):
         """Large duplicate strings are interned only on disk; live events stay resolved.
 
         On-disk format is JSONL (a ``meta`` line, inline-first-occurrence ``blob``
@@ -135,7 +143,7 @@ class TestWorkflowTraceCollector:
         full blob-ref round-trip is also covered in tests/test_core/test_trace_io.py.
         """
         large_string = "trace-payload-" + ("x" * 2048)
-        collector.record_node_execution(
+        streaming_collector.record_node_execution(
             node_id="large-node",
             node_type="LargeDataNode",
             duration_ms=5.0,
@@ -144,7 +152,7 @@ class TestWorkflowTraceCollector:
         )
 
         with patch("pathlib.Path.home", return_value=temp_home):
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
         # On disk: one JSON object per line (JSONL transport).
         lines = [json.loads(line) for line in filepath.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -166,7 +174,7 @@ class TestWorkflowTraceCollector:
         assert blob_map[raw_value[BLOB_SENTINEL]] == large_string
 
         # Live in-memory events stay fully resolved (interning is a disk-only transform).
-        assert collector.events[0]["node_output"]["large_data"] == large_string
+        assert streaming_collector.events[0]["node_output"]["large_data"] == large_string
         # Round-trip: the loader resolves the blob ref back to the full string.
         assert load_trace_file(filepath)["nodes"][0]["node_output"]["large_data"] == large_string
 
@@ -351,16 +359,16 @@ class TestWorkflowTraceCollector:
         assert event["node_output"]["prompt"] == "Prompt value"
         assert event["node_output"]["system"] == "local-system"
 
-    def test_filename_format(self, collector, temp_home):
+    def test_filename_format(self, streaming_collector, temp_home):
         """Test that trace files are saved with correct filename format.
 
         Task 172: the filename timestamp is sampled from ``start_time`` (construction
         time, microsecond-granular) — not save time — so the streaming filename is
         stable from the first flush and the #443 ``--only`` collision entropy survives.
         """
-        collector.start_time = datetime(2024, 1, 15, 14, 30, 22)
+        streaming_collector.start_time = datetime(2024, 1, 15, 14, 30, 22)
         with patch("pathlib.Path.home", return_value=temp_home):
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
         # Filename includes an 8-char md5 hash of workflow_path (None here →
         # md5("") = "d41d8cd9...") followed by sanitized workflow name and the
@@ -371,11 +379,11 @@ class TestWorkflowTraceCollector:
         assert filepath == expected_path
         assert filepath.exists()
 
-    def test_file_saving_location(self, collector, temp_home):
+    def test_file_saving_location(self, streaming_collector, temp_home):
         """Test that trace files are saved to ~/.pflow/debug/."""
         with patch("pathlib.Path.home", return_value=temp_home):
             # Add some test events
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="node-11",
                 node_type="TestNode",
                 duration_ms=100.0,
@@ -383,7 +391,7 @@ class TestWorkflowTraceCollector:
                 node_output={"result": "success"},
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             # Verify directory structure
             debug_dir = temp_home / ".pflow" / "debug"
@@ -394,7 +402,7 @@ class TestWorkflowTraceCollector:
             assert filepath.exists()
             assert filepath.parent == debug_dir
 
-    def test_save_to_file_filename_is_subsecond_granular(self, collector, temp_home):
+    def test_save_to_file_filename_is_subsecond_granular(self, streaming_collector, temp_home):
         """The saved filename carries microsecond granularity (issue #443).
 
         The --only snapshot loader excludes --only traces, so a full run followed
@@ -406,16 +414,16 @@ class TestWorkflowTraceCollector:
         import re
 
         with patch("pathlib.Path.home", return_value=temp_home):
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
         # ...-YYYYMMDD-HHMMSS-ffffff.json
         assert re.search(r"-\d{8}-\d{6}-\d{6}\.json$", filepath.name), filepath.name
 
-    def test_save_to_file_content(self, collector, temp_home):
+    def test_save_to_file_content(self, streaming_collector, temp_home):
         """Test the content of saved trace file."""
         with patch("pathlib.Path.home", return_value=temp_home):
             # Add successful and failed nodes
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="success-node",
                 node_type="SuccessNode",
                 duration_ms=100.0,
@@ -423,7 +431,7 @@ class TestWorkflowTraceCollector:
                 node_output={"status": "ok"},
             )
 
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="fail-node",
                 node_type="FailNode",
                 duration_ms=50.0,
@@ -431,14 +439,14 @@ class TestWorkflowTraceCollector:
                 error="Something went wrong",
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             # Read and verify content
             trace_data = load_trace_file(filepath)
 
             # Verify metadata
             assert trace_data["workflow_name"] == "test-workflow"
-            assert trace_data["execution_id"] == collector.execution_id
+            assert trace_data["execution_id"] == streaming_collector.execution_id
             assert "start_time" in trace_data
             assert "end_time" in trace_data
             assert "duration_ms" in trace_data
@@ -458,18 +466,18 @@ class TestWorkflowTraceCollector:
             assert trace_data["nodes"][0]["node_id"] == "success-node"
             assert trace_data["nodes"][1]["node_id"] == "fail-node"
 
-    def test_only_node_defaults_to_null(self, collector, temp_home):
+    def test_only_node_defaults_to_null(self, streaming_collector, temp_home):
         """A full run writes ``only_node: null`` (2.4.0) so it's a usable snapshot source."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
             assert trace_data["only_node"] is None
 
-    def test_only_node_recorded_when_set(self, collector, temp_home):
+    def test_only_node_recorded_when_set(self, streaming_collector, temp_home):
         """An --only run stamps the target name, excluding the trace as a snapshot source."""
-        collector.only_node = "summarize"
+        streaming_collector.only_node = "summarize"
         with patch("pathlib.Path.home", return_value=temp_home):
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
             assert trace_data["only_node"] == "summarize"
 
@@ -483,49 +491,49 @@ class TestWorkflowTraceCollector:
         except ValueError:
             pytest.fail("execution_id is not a valid UUID")
 
-    def test_execution_id_in_saved_file(self, collector, temp_home):
+    def test_execution_id_in_saved_file(self, streaming_collector, temp_home):
         """Test that execution_id is stored inside the JSON, not in filename."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             # Verify execution_id is NOT in filename
-            assert collector.execution_id not in str(filepath)
+            assert streaming_collector.execution_id not in str(filepath)
 
             # Verify execution_id IS in the JSON content
             trace_data = load_trace_file(filepath)
-            assert trace_data["execution_id"] == collector.execution_id
+            assert trace_data["execution_id"] == streaming_collector.execution_id
 
-    def test_final_status_success(self, collector, temp_home):
+    def test_final_status_success(self, streaming_collector, temp_home):
         """Test that final_status is 'success' when all nodes succeed."""
         with patch("pathlib.Path.home", return_value=temp_home):
             # Add only successful nodes
             for i in range(3):
-                collector.record_node_execution(
+                streaming_collector.record_node_execution(
                     node_id=f"node-{i}",
                     node_type="TestNode",
                     duration_ms=10.0,
                     success=True,
                 )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "success"
             assert trace_data["nodes_failed"] == 0
 
-    def test_final_status_failed(self, collector, temp_home):
+    def test_final_status_failed(self, streaming_collector, temp_home):
         """Test that final_status is 'failed' when any node fails."""
         with patch("pathlib.Path.home", return_value=temp_home):
             # Mix of successful and failed nodes
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="node-1",
                 node_type="TestNode",
                 duration_ms=10.0,
                 success=True,
             )
 
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="node-2",
                 node_type="TestNode",
                 duration_ms=10.0,
@@ -533,23 +541,23 @@ class TestWorkflowTraceCollector:
                 error="Failed",
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "failed"
             assert trace_data["nodes_failed"] == 1
 
-    def test_final_status_success_with_parser_warning(self, collector, temp_home):
+    def test_final_status_success_with_parser_warning(self, streaming_collector, temp_home):
         """Parser warnings should be recorded but should not mark the trace as degraded."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="node-1",
                 node_type="TestNode",
                 duration_ms=10.0,
                 success=True,
             )
-            collector.set_warnings([
+            streaming_collector.set_warnings([
                 Diagnostic(
                     severity=Severity.INFO,
                     message="Line 3: '## Input' looks like a typo for '## Inputs'.",
@@ -558,7 +566,7 @@ class TestWorkflowTraceCollector:
                 )
             ])
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -566,16 +574,16 @@ class TestWorkflowTraceCollector:
             assert trace_data["warnings"][0]["source"] == "parser"
 
     @pytest.mark.parametrize("source", ["parser", "validator"])
-    def test_final_status_success_with_definition_warning_dict(self, collector, temp_home, source):
+    def test_final_status_success_with_definition_warning_dict(self, streaming_collector, temp_home, source):
         """Dict-shaped parser/validator WARNINGs are definition advisories, not runtime degradation."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="node-1",
                 node_type="TestNode",
                 duration_ms=10.0,
                 success=True,
             )
-            collector.set_warnings([
+            streaming_collector.set_warnings([
                 {
                     "severity": "warning",
                     "source": source,
@@ -583,23 +591,23 @@ class TestWorkflowTraceCollector:
                 }
             ])
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "success"
             assert trace_data["warnings"][0]["source"] == source
 
-    def test_final_status_degraded_with_runtime_warning(self, collector, temp_home):
+    def test_final_status_degraded_with_runtime_warning(self, streaming_collector, temp_home):
         """Runtime warnings should still mark the trace as degraded."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="node-1",
                 node_type="TestNode",
                 duration_ms=10.0,
                 success=True,
             )
-            collector.set_warnings([
+            streaming_collector.set_warnings([
                 Diagnostic(
                     severity=Severity.WARNING,
                     message="Template resolution failed for ${fetch.response}",
@@ -609,30 +617,30 @@ class TestWorkflowTraceCollector:
                 )
             ])
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
             assert trace_data["final_status"] == "degraded"
             assert trace_data["warnings"][0]["source"] == "runtime"
 
-    def test_final_status_degraded_with_on_error_recovery(self, collector, temp_home):
+    def test_final_status_degraded_with_on_error_recovery(self, streaming_collector, temp_home):
         """Recovered error-route failures should be degraded, not failed."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="fail",
                 node_type="ShellNode",
                 duration_ms=10.0,
                 success=False,
                 error="exit 1",
             )
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="recover",
                 node_type="ShellNode",
                 duration_ms=10.0,
                 success=True,
             )
-            collector.set_warnings([
+            streaming_collector.set_warnings([
                 Diagnostic(
                     severity=Severity.WARNING,
                     message="Node 'fail' failed \u2014 on-error \u2192 'recover'",
@@ -642,7 +650,7 @@ class TestWorkflowTraceCollector:
                 )
             ])
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -650,23 +658,23 @@ class TestWorkflowTraceCollector:
             assert trace_data["nodes_failed"] == 0
             assert trace_data["failed_node_ids"] == []
 
-    def test_final_status_degraded_with_recovered_api_warning(self, collector, temp_home):
+    def test_final_status_degraded_with_recovered_api_warning(self, streaming_collector, temp_home):
         """API warnings routed through on-error should be degraded, not failed."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="api",
                 node_type="MCPNode",
                 duration_ms=10.0,
                 success=False,
                 error="API error: expired auth",
             )
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="recover",
                 node_type="PythonCodeNode",
                 duration_ms=10.0,
                 success=True,
             )
-            collector.set_warnings([
+            streaming_collector.set_warnings([
                 Diagnostic(
                     severity=Severity.WARNING,
                     message="API error: expired auth",
@@ -676,7 +684,7 @@ class TestWorkflowTraceCollector:
                 )
             ])
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -684,7 +692,7 @@ class TestWorkflowTraceCollector:
             assert trace_data["nodes_failed"] == 0
             assert trace_data["failed_node_ids"] == []
 
-    def test_llm_summary_in_trace(self, collector, temp_home):
+    def test_llm_summary_in_trace(self, streaming_collector, temp_home):
         """Test that LLM summary is included when LLM calls are present in events.
 
         In format 2.0.0, llm_summary is built by _collect_llm_summary() which
@@ -692,7 +700,7 @@ class TestWorkflowTraceCollector:
         """
         with patch("pathlib.Path.home", return_value=temp_home):
             # Add nodes with LLM calls via node_output
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-1",
                 node_type="LLMNode",
                 duration_ms=1000.0,
@@ -705,7 +713,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-2",
                 node_type="LLMNode",
                 duration_ms=1500.0,
@@ -719,14 +727,14 @@ class TestWorkflowTraceCollector:
             )
 
             # Add non-LLM node
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="normal",
                 node_type="NormalNode",
                 duration_ms=10.0,
                 success=True,
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -736,18 +744,18 @@ class TestWorkflowTraceCollector:
             assert summary["total_tokens"] == 150
             assert set(summary["models_used"]) == {"gpt-4", "gpt-3.5-turbo"}
 
-    def test_no_llm_summary_without_llm_calls(self, collector, temp_home):
+    def test_no_llm_summary_without_llm_calls(self, streaming_collector, temp_home):
         """Test that LLM summary is not included when no LLM calls are present."""
         with patch("pathlib.Path.home", return_value=temp_home):
             # Add only non-LLM nodes
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="node-1",
                 node_type="NormalNode",
                 duration_ms=10.0,
                 success=True,
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -759,7 +767,7 @@ class TestWorkflowTraceCollector:
             debug_dir = temp_home / ".pflow" / "debug"
             assert not debug_dir.exists()
 
-            collector = WorkflowTraceCollector("test-workflow")
+            collector = WorkflowTraceCollector("test-workflow", is_run_scoped=True, stream_to_disk=True)
             collector.save_to_file()
 
             assert debug_dir.exists()
@@ -796,7 +804,7 @@ class TestWorkflowTraceCollector:
         parsed = datetime.fromisoformat(timestamp)
         assert isinstance(parsed, datetime)
 
-    def test_llm_summary_from_events(self, collector, temp_home):
+    def test_llm_summary_from_events(self, streaming_collector, temp_home):
         """Test that llm_summary is built by scanning events for llm_call data.
 
         In format 2.0.0, save_to_file() uses _collect_llm_summary() which
@@ -804,7 +812,7 @@ class TestWorkflowTraceCollector:
         """
         with patch("pathlib.Path.home", return_value=temp_home):
             # Record events with LLM data in node_output
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="parent-llm",
                 node_type="LLMNode",
                 duration_ms=500.0,
@@ -817,7 +825,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="child-llm",
                 node_type="LLMNode",
                 duration_ms=300.0,
@@ -830,7 +838,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="child-llm-2",
                 node_type="LLMNode",
                 duration_ms=200.0,
@@ -843,7 +851,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -853,14 +861,14 @@ class TestWorkflowTraceCollector:
             assert summary["total_tokens"] == 525
             assert set(summary["models_used"]) == {"gpt-4", "claude-sonnet"}
 
-    def test_llm_summary_scans_events_only(self, collector, temp_home):
+    def test_llm_summary_scans_events_only(self, streaming_collector, temp_home):
         """Test that llm_summary is built from events (the only path in 2.0.0).
 
         save_to_file() no longer takes a llm_calls parameter. LLM data
         is extracted from llm_call fields in events via _collect_llm_summary().
         """
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-node",
                 node_type="LLMNode",
                 duration_ms=1000.0,
@@ -870,7 +878,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -878,14 +886,14 @@ class TestWorkflowTraceCollector:
             assert trace_data["llm_summary"]["total_calls"] == 1
             assert trace_data["llm_summary"]["total_tokens"] == 200
 
-    def test_no_llm_summary_when_events_have_no_llm_data(self, collector, temp_home):
+    def test_no_llm_summary_when_events_have_no_llm_data(self, streaming_collector, temp_home):
         """Test that no llm_summary is generated when events lack llm_call data.
 
         Even if events exist, if none contain llm_call, no summary should appear.
         """
         with patch("pathlib.Path.home", return_value=temp_home):
             # Node with output but no LLM data
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="shell-node",
                 node_type="ShellNode",
                 duration_ms=100.0,
@@ -893,7 +901,7 @@ class TestWorkflowTraceCollector:
                 node_output={"stdout": "hello world"},
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -953,11 +961,11 @@ class TestWorkflowTraceCollector:
         assert "sub_workflow_events" in event
         assert len(event["sub_workflow_events"]) == 2
 
-    def test_llm_summary_recurses_into_sub_workflow_events(self, collector, temp_home):
+    def test_llm_summary_recurses_into_sub_workflow_events(self, streaming_collector, temp_home):
         """Test that _collect_llm_summary recurses into sub_workflow_events."""
         with patch("pathlib.Path.home", return_value=temp_home):
             # Top-level LLM call
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="top-llm",
                 node_type="LLMNode",
                 duration_ms=100.0,
@@ -968,7 +976,7 @@ class TestWorkflowTraceCollector:
             )
 
             # Nested workflow node with LLM calls in sub-events
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="workflow-node",
                 node_type="WorkflowExecutor",
                 duration_ms=200.0,
@@ -981,7 +989,7 @@ class TestWorkflowTraceCollector:
                 ],
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -990,10 +998,10 @@ class TestWorkflowTraceCollector:
             assert summary["total_tokens"] == 175
             assert set(summary["models_used"]) == {"gpt-4", "claude-sonnet"}
 
-    def test_llm_summary_includes_cost(self, collector, temp_home):
+    def test_llm_summary_includes_cost(self, streaming_collector, temp_home):
         """Test that _collect_llm_summary accumulates total_cost_usd from llm_call events."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-1",
                 node_type="LLMNode",
                 duration_ms=100.0,
@@ -1002,7 +1010,7 @@ class TestWorkflowTraceCollector:
                     "llm_usage": {"model": "gpt-4", "total_tokens": 100, "cost_usd": 0.05},
                 },
             )
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-2",
                 node_type="LLMNode",
                 duration_ms=50.0,
@@ -1012,7 +1020,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -1022,7 +1030,7 @@ class TestWorkflowTraceCollector:
             assert summary["total_cost_usd"] == pytest.approx(0.08)
             assert summary["pricing_available"] is True
 
-    def test_llm_summary_unpriced_call_surfaces_as_none(self, collector, temp_home):
+    def test_llm_summary_unpriced_call_surfaces_as_none(self, streaming_collector, temp_home):
         """Regression: when any call has cost_usd=None (unknown-pricing model),
         total_cost_usd is None and partial_cost_usd carries the priced subset.
 
@@ -1030,7 +1038,7 @@ class TestWorkflowTraceCollector:
         cost silently collapsed to 0 and was summed away.
         """
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-priced",
                 node_type="LLMNode",
                 duration_ms=100.0,
@@ -1039,7 +1047,7 @@ class TestWorkflowTraceCollector:
                     "llm_usage": {"model": "gpt-4", "total_tokens": 100, "cost_usd": 0.05},
                 },
             )
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-unpriced",
                 node_type="LLMNode",
                 duration_ms=50.0,
@@ -1049,7 +1057,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
@@ -1060,10 +1068,10 @@ class TestWorkflowTraceCollector:
             # F#17 deferred: per-model call counts ride alongside model names.
             assert summary["unavailable_models"] == [{"name": "ollama/llama3.2", "calls": 1}]
 
-    def test_llm_summary_all_unpriced_no_partial(self, collector, temp_home):
+    def test_llm_summary_all_unpriced_no_partial(self, streaming_collector, temp_home):
         """When every call is unpriced, partial_cost_usd is None (not 0.0)."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-1",
                 node_type="LLMNode",
                 duration_ms=100.0,
@@ -1073,7 +1081,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
@@ -1082,10 +1090,10 @@ class TestWorkflowTraceCollector:
             assert summary["pricing_available"] is False
             assert summary["unavailable_models"] == [{"name": "ollama/llama3.2", "calls": 1}]
 
-    def test_llm_summary_includes_input_output_tokens(self, collector, temp_home):
+    def test_llm_summary_includes_input_output_tokens(self, streaming_collector, temp_home):
         """Test that _collect_llm_summary accumulates input/output token breakdown."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-1",
                 node_type="LLMNode",
                 duration_ms=100.0,
@@ -1099,7 +1107,7 @@ class TestWorkflowTraceCollector:
                     },
                 },
             )
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="llm-2",
                 node_type="LLMNode",
                 duration_ms=50.0,
@@ -1114,7 +1122,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
 
             trace_data = load_trace_file(filepath)
 
@@ -1123,14 +1131,14 @@ class TestWorkflowTraceCollector:
             assert summary["total_output_tokens"] == 350
             assert summary["total_tokens"] == 1150
 
-    def test_llm_summary_unavailable_models_per_model_call_counts(self, collector, temp_home):
+    def test_llm_summary_unavailable_models_per_model_call_counts(self, streaming_collector, temp_home):
         """F#17 deferred: when the same unpriced model is called multiple
         times, ``unavailable_models`` carries the per-model count so
         renderers can show ``model (N calls)``.
         """
         with patch("pathlib.Path.home", return_value=temp_home):
             for idx in range(3):
-                collector.record_node_execution(
+                streaming_collector.record_node_execution(
                     node_id=f"unpriced-{idx}",
                     node_type="LLMNode",
                     duration_ms=10.0,
@@ -1139,7 +1147,7 @@ class TestWorkflowTraceCollector:
                         "llm_usage": {"model": "ollama/llama3.2", "total_tokens": 5, "cost_usd": None},
                     },
                 )
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="other-unpriced",
                 node_type="LLMNode",
                 duration_ms=10.0,
@@ -1149,7 +1157,7 @@ class TestWorkflowTraceCollector:
                 },
             )
 
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
 
             summary = trace_data["llm_summary"]
@@ -1320,6 +1328,14 @@ class TestWarmupItemAccounting:
         home_dir.mkdir()
         return home_dir
 
+    @pytest.fixture
+    def streaming_collector(self, temp_home, monkeypatch):
+        """Run-scoped streaming collector for disk-write tests (#531): the production
+        whole-file buffer writer is gone, so a written trace now comes from the streaming
+        path. Path.home → temp_home covers the lazy stream open + finalize."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: temp_home)
+        return WorkflowTraceCollector("test-workflow", is_run_scoped=True, stream_to_disk=True)
+
     def _warmup_item(self, *, cost_usd: float | None = 0.0154) -> dict:
         """Build a synthetic batch warmup item matching the shape produced by
         _execute_parallel in batch_executor.py."""
@@ -1360,11 +1376,11 @@ class TestWarmupItemAccounting:
             },
         }
 
-    def test_warmup_cost_in_llm_summary_but_not_in_call_count(self, collector, temp_home):
+    def test_warmup_cost_in_llm_summary_but_not_in_call_count(self, streaming_collector, temp_home):
         """Trace JSON llm_summary: warmup cost adds to total_cost_usd but
         total_calls counts only the 3 real batch items."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="score-batch",
                 node_type="LLMNode",
                 duration_ms=4000.0,
@@ -1376,7 +1392,7 @@ class TestWarmupItemAccounting:
                     self._real_item(2),
                 ],
             )
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
 
         summary = trace_data["llm_summary"]
@@ -1385,31 +1401,31 @@ class TestWarmupItemAccounting:
         # Cost includes warmup: 0.0154 + 3 * 0.0016 = 0.0202
         assert summary["total_cost_usd"] == pytest.approx(0.0202, abs=1e-4)
 
-    def test_warmup_tokens_roll_into_summary_totals(self, collector, temp_home):
+    def test_warmup_tokens_roll_into_summary_totals(self, streaming_collector, temp_home):
         """Warmup tokens are real tokens consumed by the provider — they
         should be included in token totals even though warmup isn't counted
         as a 'call' for the user-facing count."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="score-batch",
                 node_type="LLMNode",
                 duration_ms=4000.0,
                 success=True,
                 batch_items=[self._warmup_item(), self._real_item(0), self._real_item(1)],
             )
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
 
         summary = trace_data["llm_summary"]
         # Tokens: warmup (4107) + 2 real (2 * 4153) = 12413
         assert summary["total_tokens"] == 4107 + 2 * 4153
 
-    def test_warmup_with_unavailable_pricing_does_not_inflate_unavailable_models(self, collector, temp_home):
+    def test_warmup_with_unavailable_pricing_does_not_inflate_unavailable_models(self, streaming_collector, temp_home):
         """When cost_usd is None (e.g., Ollama, new models), the warmup MUST NOT
         be counted in unavailable_models — only real user-visible calls should.
         Parallel to MetricsCollector.calculate_costs filtering."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="score-batch",
                 node_type="LLMNode",
                 duration_ms=4000.0,
@@ -1420,7 +1436,7 @@ class TestWarmupItemAccounting:
                     self._real_item(1, cost_usd=None),
                 ],
             )
-            filepath = collector.save_to_file()
+            filepath = streaming_collector.save_to_file()
             trace_data = load_trace_file(filepath)
 
         summary = trace_data["llm_summary"]
@@ -1881,55 +1897,75 @@ class TestSaveToFileFailedNodeIds:
         home_dir.mkdir()
         return home_dir
 
+    @pytest.fixture
+    def streaming_collector(self, temp_home, monkeypatch):
+        """Run-scoped streaming collector for disk-write tests (#531): the production
+        whole-file buffer writer is gone, so a written trace now comes from the streaming
+        path. Path.home → temp_home covers the lazy stream open + finalize."""
+        monkeypatch.setattr("pathlib.Path.home", lambda: temp_home)
+        return WorkflowTraceCollector("test", is_run_scoped=True, stream_to_disk=True)
+
     def _read_trace(self, filepath):
         return load_trace_file(filepath)
 
-    def test_writes_failed_node_ids_key(self, collector, temp_home):
+    def test_writes_failed_node_ids_key(self, streaming_collector, temp_home):
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(node_id="ok", node_type="T", duration_ms=1.0, success=True)
-            collector.record_node_execution(node_id="bad", node_type="T", duration_ms=1.0, success=False, error="boom")
-            trace_data = self._read_trace(collector.save_to_file())
+            streaming_collector.record_node_execution(node_id="ok", node_type="T", duration_ms=1.0, success=True)
+            streaming_collector.record_node_execution(
+                node_id="bad", node_type="T", duration_ms=1.0, success=False, error="boom"
+            )
+            trace_data = self._read_trace(streaming_collector.save_to_file())
 
             assert "failed_node_ids" in trace_data
             assert trace_data["failed_node_ids"] == ["bad"]
 
-    def test_invariants_hold(self, collector, temp_home):
+    def test_invariants_hold(self, streaming_collector, temp_home):
         """nodes_failed == len(failed_node_ids); final_status=='failed' iff list non-empty.
 
         This invariant is the architectural guarantee the #240 fix creates;
         pin it explicitly so a future refactor can't silently break it.
         """
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(node_id="a", node_type="T", duration_ms=1.0, success=False, error="x")
-            collector.record_node_execution(node_id="b", node_type="T", duration_ms=1.0, success=False, error="y")
-            trace_data = self._read_trace(collector.save_to_file())
+            streaming_collector.record_node_execution(
+                node_id="a", node_type="T", duration_ms=1.0, success=False, error="x"
+            )
+            streaming_collector.record_node_execution(
+                node_id="b", node_type="T", duration_ms=1.0, success=False, error="y"
+            )
+            trace_data = self._read_trace(streaming_collector.save_to_file())
 
             assert trace_data["nodes_failed"] == len(trace_data["failed_node_ids"])
             assert (trace_data["final_status"] == "failed") == (len(trace_data["failed_node_ids"]) > 0)
 
-    def test_loop_recovery_reports_zero_failed_nodes(self, collector, temp_home):
+    def test_loop_recovery_reports_zero_failed_nodes(self, streaming_collector, temp_home):
         """Loop recovery: 2 visits, 0 failed nodes. nodes_executed (per-visit) != nodes_failed (per-node).
 
         Documents the semantic shift — GH #240.
         """
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(
+            streaming_collector.record_node_execution(
                 node_id="maybe-fail", node_type="T", duration_ms=1.0, success=False, error="exit 9"
             )
-            collector.record_node_execution(node_id="maybe-fail", node_type="T", duration_ms=1.0, success=True)
-            trace_data = self._read_trace(collector.save_to_file())
+            streaming_collector.record_node_execution(
+                node_id="maybe-fail", node_type="T", duration_ms=1.0, success=True
+            )
+            trace_data = self._read_trace(streaming_collector.save_to_file())
 
             assert trace_data["nodes_executed"] == 2  # per-visit
             assert trace_data["nodes_failed"] == 0  # per-node (unique failed)
             assert trace_data["failed_node_ids"] == []
             assert trace_data["final_status"] == "success"
 
-    def test_failed_node_ids_sorted(self, collector, temp_home):
+    def test_failed_node_ids_sorted(self, streaming_collector, temp_home):
         """Sorted alphabetically for deterministic JSON output."""
         with patch("pathlib.Path.home", return_value=temp_home):
-            collector.record_node_execution(node_id="zebra", node_type="T", duration_ms=1.0, success=False, error="z")
-            collector.record_node_execution(node_id="alpha", node_type="T", duration_ms=1.0, success=False, error="a")
-            trace_data = self._read_trace(collector.save_to_file())
+            streaming_collector.record_node_execution(
+                node_id="zebra", node_type="T", duration_ms=1.0, success=False, error="z"
+            )
+            streaming_collector.record_node_execution(
+                node_id="alpha", node_type="T", duration_ms=1.0, success=False, error="a"
+            )
+            trace_data = self._read_trace(streaming_collector.save_to_file())
 
             assert trace_data["failed_node_ids"] == ["alpha", "zebra"]
 

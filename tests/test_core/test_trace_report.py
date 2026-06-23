@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 from pflow.core.exceptions import ReportGenerationError
-from pflow.core.trace_io import intern_blobs
 from pflow.core.trace_report import (
     _build_batch_item_file,
     _build_batch_item_summary,
@@ -37,6 +36,7 @@ from pflow.core.trace_report import (
     validate_report_output_dir,
 )
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 # --- Fixtures ---
 
@@ -97,15 +97,25 @@ class TestGenerateReport:
 
     def test_old_format_rejected(self, tmp_path: Path) -> None:
         trace_file = tmp_path / "old.json"
-        trace_file.write_text(json.dumps({"format_version": "1.2.0", "nodes": []}))
+        write_trace_jsonl(trace_file, {"format_version": "1.2.0", "nodes": []})
 
         result = generate_report(trace_file, str(tmp_path / "report"))
         assert result is None
 
+    def test_legacy_single_object_trace_skips_gracefully(self, tmp_path: Path) -> None:
+        # #531 skip-regression (review S1): a WELL-FORMED pre-Task-172 single-object 2.x trace (valid
+        # JSON, no pflow_trace marker) is no longer loadable. generate_report must catch the
+        # JSONDecodeError at the load_trace_file seam (the `except (JSONDecodeError, OSError)` guard) and
+        # return None — degrade, never crash. This is the generate_report reader-path proof; it is a
+        # DISTINCT path from the format_version rejection above (that one loads, then rejects by version).
+        legacy = tmp_path / "legacy-single-object.json"
+        legacy.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+        assert generate_report(legacy, str(tmp_path / "report")) is None
+
     def test_creates_report_directory(self, tmp_path: Path) -> None:
         trace = _make_trace(nodes=[_make_event()])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -127,7 +137,7 @@ class TestGenerateReport:
             ]
         )
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -139,7 +149,7 @@ class TestGenerateReport:
         large_prompt = "REPORT-PROMPT-" + ("x" * 2048)
         trace = _make_trace(nodes=[_make_event(node_id="ask", node_type="LLMNode", llm_prompt=large_prompt)])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(intern_blobs(trace)), encoding="utf-8")
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -186,7 +196,7 @@ class TestGenerateReport:
             failed_node_ids=["fail-batch"],
         )
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -230,7 +240,7 @@ class TestGenerateReport:
         )
         trace = _make_trace(nodes=[batch_event])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -251,7 +261,7 @@ class TestGenerateReport:
         )
         trace = _make_trace(nodes=[batch_event])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -280,7 +290,7 @@ class TestGenerateReport:
         )
         trace = _make_trace(nodes=[batch_event])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -302,7 +312,7 @@ class TestGenerateReport:
         )
         trace = _make_trace(nodes=[event])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -317,7 +327,7 @@ class TestGenerateReport:
 
         trace = _make_trace(nodes=[_make_event()])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, "auto")
 
@@ -327,18 +337,17 @@ class TestGenerateReport:
     def test_regenerating_report_removes_stale_top_level_pages(self, tmp_path: Path) -> None:
         report_path = tmp_path / "report"
         first_trace_file = tmp_path / "first.json"
-        first_trace_file.write_text(
-            json.dumps(
-                _make_trace(
-                    nodes=[
-                        _make_event(node_id="fetch"),
-                        _make_event(node_id="transform"),
-                    ]
-                )
-            )
+        write_trace_jsonl(
+            first_trace_file,
+            _make_trace(
+                nodes=[
+                    _make_event(node_id="fetch"),
+                    _make_event(node_id="transform"),
+                ]
+            ),
         )
         second_trace_file = tmp_path / "second.json"
-        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="fetch")])))
+        write_trace_jsonl(second_trace_file, _make_trace(nodes=[_make_event(node_id="fetch")]))
 
         generate_report(first_trace_file, str(report_path))
         assert (report_path / "02-transform.md").exists()
@@ -386,9 +395,9 @@ class TestGenerateReport:
             ],
         )
         first_trace_file = tmp_path / "first.json"
-        first_trace_file.write_text(json.dumps(_make_trace(nodes=[first_batch])))
+        write_trace_jsonl(first_trace_file, _make_trace(nodes=[first_batch]))
         second_trace_file = tmp_path / "second.json"
-        second_trace_file.write_text(json.dumps(_make_trace(nodes=[second_batch])))
+        write_trace_jsonl(second_trace_file, _make_trace(nodes=[second_batch]))
 
         generate_report(first_trace_file, str(report_path))
         assert (report_path / "01-batch" / "item-0-a" / "02-child-b.md").exists()
@@ -403,19 +412,18 @@ class TestGenerateReport:
     def test_regenerating_report_handles_leaf_to_container_shape_change(self, tmp_path: Path) -> None:
         report_path = tmp_path / "report"
         first_trace_file = tmp_path / "first.json"
-        first_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="process")])))
+        write_trace_jsonl(first_trace_file, _make_trace(nodes=[_make_event(node_id="process")]))
         second_trace_file = tmp_path / "second.json"
-        second_trace_file.write_text(
-            json.dumps(
-                _make_trace(
-                    nodes=[
-                        _make_event(
-                            node_id="process",
-                            sub_workflow_events=[_make_event(node_id="inner")],
-                        )
-                    ]
-                )
-            )
+        write_trace_jsonl(
+            second_trace_file,
+            _make_trace(
+                nodes=[
+                    _make_event(
+                        node_id="process",
+                        sub_workflow_events=[_make_event(node_id="inner")],
+                    )
+                ]
+            ),
         )
 
         generate_report(first_trace_file, str(report_path))
@@ -429,20 +437,19 @@ class TestGenerateReport:
     def test_regenerating_report_handles_container_to_leaf_shape_change(self, tmp_path: Path) -> None:
         report_path = tmp_path / "report"
         first_trace_file = tmp_path / "first.json"
-        first_trace_file.write_text(
-            json.dumps(
-                _make_trace(
-                    nodes=[
-                        _make_event(
-                            node_id="process",
-                            sub_workflow_events=[_make_event(node_id="inner")],
-                        )
-                    ]
-                )
-            )
+        write_trace_jsonl(
+            first_trace_file,
+            _make_trace(
+                nodes=[
+                    _make_event(
+                        node_id="process",
+                        sub_workflow_events=[_make_event(node_id="inner")],
+                    )
+                ]
+            ),
         )
         second_trace_file = tmp_path / "second.json"
-        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="process")])))
+        write_trace_jsonl(second_trace_file, _make_trace(nodes=[_make_event(node_id="process")]))
 
         generate_report(first_trace_file, str(report_path))
         assert (report_path / "01-process").is_dir()
@@ -458,7 +465,7 @@ class TestGenerateReport:
         existing = report_path / "notes.md"
         existing.write_text("do not replace")
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+        write_trace_jsonl(trace_file, _make_trace(nodes=[_make_event()]))
 
         with pytest.raises(ReportGenerationError, match="without \\.pflow-report\\.json"):
             generate_report(trace_file, str(report_path))
@@ -473,7 +480,7 @@ class TestGenerateReport:
         existing = report_path / "old.md"
         existing.write_text("old")
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+        write_trace_jsonl(trace_file, _make_trace(nodes=[_make_event()]))
 
         with pytest.raises(ReportGenerationError, match="invalid \\.pflow-report\\.json"):
             generate_report(trace_file, str(report_path))
@@ -491,7 +498,7 @@ class TestGenerateReport:
         report_path.mkdir(parents=True)
         (report_path / "stale.md").write_text("stale")
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="fresh")])))
+        write_trace_jsonl(trace_file, _make_trace(nodes=[_make_event(node_id="fresh")]))
 
         report_dir = generate_report(trace_file, "auto")
 
@@ -525,9 +532,9 @@ class TestGenerateReport:
 
         report_path = tmp_path / "report"
         first_trace_file = tmp_path / "first.json"
-        first_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="old")])))
+        write_trace_jsonl(first_trace_file, _make_trace(nodes=[_make_event(node_id="old")]))
         second_trace_file = tmp_path / "second.json"
-        second_trace_file.write_text(json.dumps(_make_trace(nodes=[_make_event(node_id="new")])))
+        write_trace_jsonl(second_trace_file, _make_trace(nodes=[_make_event(node_id="new")]))
 
         generate_report(first_trace_file, str(report_path))
         old_summary = (report_path / "summary.md").read_text()
@@ -2247,37 +2254,42 @@ class TestBuildSummaryLoopRecovery:
         assert "## Errors" in md
         assert "**bad**" in md
 
-    def test_legacy_trace_status_recomputed_when_failed_node_ids_absent(self) -> None:
-        """Pre-fix traces on disk carry ``final_status: "failed"`` for loop recovery
-        (old rule was monotonic over events). The report generator must recompute
-        the status from events when ``failed_node_ids`` is absent so Status and
-        Errors agree — otherwise users see "Status: failed" with zero entries
-        under "## Errors".
-        """
-        events = [
-            _make_event(node_id="maybe-fail", success=False, error="visit 1 exit 9"),
-            _make_event(node_id="maybe-fail", success=True),
-        ]
-        # Legacy trace shape: no failed_node_ids, wrong final_status from old rule
-        legacy_trace = {
-            "format_version": "2.0.0",
-            "execution_id": "legacy",
-            "workflow_name": "legacy-loop-recovery",
-            "start_time": "t0",
-            "end_time": "t1",
-            "duration_ms": 1.0,
-            "final_status": "failed",  # what old code wrote
-            "nodes_executed": 2,
-            "nodes_failed": 1,  # what old code counted
-            # NOTE: no failed_node_ids key
-            "nodes": events,
-        }
-        md = _build_summary(legacy_trace, source_path="test")
+    def test_incomplete_trace_status_resolves_from_events_when_failed_node_ids_absent(self) -> None:
+        """Modern crash-truncated traces are the ONLY traces that still reach the
+        ``_resolve_final_status`` fallback (no ``run.complete`` was written, so no
+        ``failed_node_ids`` and ``final_status="incomplete"``). The fallback applies the canonical
+        per-node-last-event rule over the ``status`` enum.
 
-        # Recomputed: last event per node wins → maybe-fail is success
-        assert "- Status: success" in md
-        # And no Errors section because no node's final state is failed
+        Replaces the deleted ``test_legacy_trace_status_recomputed_...`` (#531): pre-status
+        single-object traces no longer load, so the old per-event ``success: false`` recompute path is
+        gone — the fallback is now modern-``status``-only.
+        """
+        # Recovered loop in an incomplete trace: visit-1 failed, visit-2 succeeded → no per-node failure
+        # remains → the stored "incomplete" is preserved (NOT flipped), and Errors is empty.
+        recovered = {
+            "format_version": "2.5.0",
+            "workflow_name": "incomplete-recovered",
+            "final_status": "incomplete",
+            "nodes": [
+                _make_event(node_id="maybe-fail", success=False, error="visit 1 exit 9"),
+                _make_event(node_id="maybe-fail", success=True),
+            ],
+        }
+        md = _build_summary(recovered, source_path="test")
+        assert "- Status: incomplete" in md
         assert "## Errors" not in md
+
+        # A node whose FINAL event failed in an incomplete trace → recomputed "failed", with that node
+        # surfaced under Errors (Status + Errors stay in sync via the shared per-node ``status`` rule).
+        crashed = {
+            "format_version": "2.5.0",
+            "workflow_name": "incomplete-failed",
+            "final_status": "incomplete",
+            "nodes": [_make_event(node_id="boom", success=False, error="died mid-run")],
+        }
+        md2 = _build_summary(crashed, source_path="test")
+        assert "- Status: failed" in md2
+        assert "## Errors" in md2 and "**boom**" in md2
 
 
 class TestFormatCost:
@@ -2575,7 +2587,7 @@ class TestCompactBatchSummary:
         )
         trace = _make_trace(nodes=[batch_event])
         trace_file = tmp_path / "trace.json"
-        trace_file.write_text(json.dumps(trace))
+        write_trace_jsonl(trace_file, trace)
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
         assert report_dir is not None
@@ -3107,14 +3119,20 @@ class TestPipelineTableWarmupOnlyEdgeCase:
         assert "| # | Node | Type | Status | Time | Tokens | Cost |" not in md
 
 
-def test_resolve_final_status_does_not_flip_failed_legacy_trace_to_success():
-    """W1 (Codex/claude review of PR #530): a genuinely-FAILED old pre-status trace (events carry
-    ``success: false``, no ``status``/``failed_node_ids``) must report ``failed``, not ``success``. The
-    fallback's ``has_failure`` check read only the modern ``status`` enum and so was BLIND to old
-    ``success: false`` events, letting the recovered-loop rewrite flip a real failure to ``success``."""
+def test_resolve_final_status_does_not_flip_stored_failed_without_failed_node_ids():
+    """#531: with the W1 dual-read (``e.get("success") is False``) and the recovered-loop rewrite
+    (``"success" if legacy == "failed"``) removed, ``_resolve_final_status`` is modern-``status``-only and
+    no longer flips a stored value. A fallback trace (no ``failed_node_ids``) whose events show NO modern
+    per-node failure preserves its stored ``final_status`` verbatim — it is NOT recomputed to ``success``.
+    (The pre-status ``success: false`` reclassification is gone; such single-object traces no longer load
+    at all.) A trace carrying ``failed_node_ids`` takes the authoritative branch and returns its stored
+    value."""
     from pflow.core.trace_report import _resolve_final_status
 
-    old_failed = {"final_status": "failed", "nodes": [{"node_id": "a", "success": False}]}
-    assert _resolve_final_status(old_failed) == "failed"  # was wrongly "success" before the fix
+    # No failed_node_ids, and the (modern) per-node final status is not failed → the stored "failed" is
+    # preserved verbatim, never flipped to success.
+    stored_failed = {"final_status": "failed", "nodes": [{"node_id": "a", "status": "success"}]}
+    assert _resolve_final_status(stored_failed) == "failed"
+    # Authoritative branch: failed_node_ids present → trust the stored final_status.
     modern = {"failed_node_ids": ["a"], "final_status": "failed", "nodes": []}
-    assert _resolve_final_status(modern) == "failed"  # authoritative branch, unchanged
+    assert _resolve_final_status(modern) == "failed"

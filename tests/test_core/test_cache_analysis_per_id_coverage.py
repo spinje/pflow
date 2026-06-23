@@ -24,6 +24,7 @@ from pflow.core.prompt_cache_analysis.warning_catalog import (
     EXPECTED_CATALOG_COUNT,
     make_diagnostic,
 )
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 # Minimal context kwargs per ID — copy of test_cache_analysis_warnings.py's
 # helper, kept here so this coverage test is self-contained.
@@ -519,7 +520,7 @@ def test_analyze_rehydrates_catalog_warnings_from_trace(tmp_path: Any) -> None:
     trace = builder.trace(workflow_path, [builder.llm_event("ask")])
     trace["format_version"] = "2.3.0"
     trace["warnings"] = [rendered.to_display_dict(), prewarm_disabled.to_display_dict()]
-    trace_path.write_text(json.dumps(trace), encoding="utf-8")
+    write_trace_jsonl(trace_path, trace)
 
     analysis = analyze(workflow_ir, workflow_path=workflow_path, trace_path=trace_path)
     warnings_by_id = {warning.id: warning for warning in analysis.warnings}
@@ -886,33 +887,31 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     from tests.shared.trace_fixture_builder import TraceFixtureBuilder
 
     builder = TraceFixtureBuilder()
-    conditional_trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=conditional_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "anthropic/claude-sonnet-4-5",
-                                    "input_tokens": 200,
-                                    "output_tokens": 5,
-                                    "total_tokens": 205,
-                                    "cost_usd": 0.01,
-                                    **({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else {}),
-                                },
-                            }
-                            for index in range(4)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        conditional_trace_path,
+        builder.trace(
+            workflow_path=conditional_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": "anthropic/claude-sonnet-4-5",
+                                "input_tokens": 200,
+                                "output_tokens": 5,
+                                "total_tokens": 205,
+                                "cost_usd": 0.01,
+                                **({"prewarm_disabled_reason": "below_min"} if index in {0, 1} else {}),
+                            },
+                        }
+                        for index in range(4)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
     analysis = analyze(conditional_ir, workflow_path=conditional_path, trace_path=conditional_trace_path)
     found = [d for d in analysis.warnings if d.id == "cache.conditional-warmup-recommended"]
@@ -939,32 +938,30 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
     batch_recommended_path = str(tmp_path / "batch-recommended.pflow.md")
     batch_recommended_trace_path = tmp_path / "batch-recommended-trace.json"
     builder = TraceFixtureBuilder()
-    batch_recommended_trace_path.write_text(
-        json.dumps(
-            builder.trace(
-                workflow_path=batch_recommended_path,
-                nodes=[
-                    builder.batch_event(
-                        "score",
-                        [
-                            {
-                                "index": index,
-                                "success": True,
-                                "llm_call": {
-                                    "model": "priced/model",
-                                    "input_tokens": 10_000,
-                                    "output_tokens": 5,
-                                    "total_tokens": 10_005,
-                                    "cost_usd": 0.01,
-                                },
-                            }
-                            for index in range(34)
-                        ],
-                    )
-                ],
-            )
+    write_trace_jsonl(
+        batch_recommended_trace_path,
+        builder.trace(
+            workflow_path=batch_recommended_path,
+            nodes=[
+                builder.batch_event(
+                    "score",
+                    [
+                        {
+                            "index": index,
+                            "success": True,
+                            "llm_call": {
+                                "model": "priced/model",
+                                "input_tokens": 10_000,
+                                "output_tokens": 5,
+                                "total_tokens": 10_005,
+                                "cost_usd": 0.01,
+                            },
+                        }
+                        for index in range(34)
+                    ],
+                )
+            ],
         ),
-        encoding="utf-8",
     )
     analysis = analyze(
         batch_recommended_ir, workflow_path=batch_recommended_path, trace_path=batch_recommended_trace_path
@@ -1383,8 +1380,9 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
 
     # cache.discrepancy: 2.1.0 trace event with skipped cache chunk.
     trace_path = tmp_path / "trace.json"
-    trace_path.write_text(
-        json.dumps({
+    write_trace_jsonl(
+        trace_path,
+        {
             "format_version": "2.1.0",
             "workflow_path": "parent.pflow.md",
             "nodes": [
@@ -1398,8 +1396,7 @@ def test_emitted_diagnostics_round_trip_for_real_producer_paths(tmp_path: Any, m
                     },
                 }
             ],
-        }),
-        encoding="utf-8",
+        },
     )
     analysis = analyze({"nodes": []}, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
     found = [d for d in analysis.warnings if d.id == "cache.discrepancy"]

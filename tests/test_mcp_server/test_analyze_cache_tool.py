@@ -274,6 +274,8 @@ def test_inline_workflow_autoload_finds_canonical_ir_hash_trace(tmp_path: Path, 
     collector = WorkflowTraceCollector(
         workflow_name="inline-mcp-test",
         workflow_path=expected_workflow_path,
+        is_run_scoped=True,
+        stream_to_disk=True,
     )
     collector.record_node_execution(
         node_id="review",

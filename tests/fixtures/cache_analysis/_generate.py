@@ -17,11 +17,11 @@ regenerate the JSON files when the builder shape changes.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 FIXTURE_DIR = Path(__file__).parent
 PARENT_WORKFLOW_PATH = "tests/fixtures/cache_analysis/parent.pflow.md"
@@ -192,15 +192,18 @@ def build_parent_child_grandchild_trace() -> dict[str, Any]:
 
 
 def write_fixtures() -> None:
-    """Overwrite the committed JSON fixtures with generator output."""
-    _write_json(FIXTURE_DIR / "parent-child-trace.json", build_parent_child_trace())
-    _write_json(FIXTURE_DIR / "parent-child-erroring-trace.json", build_parent_child_erroring_trace())
-    _write_json(FIXTURE_DIR / "parent-child-memo-hit-trace.json", build_parent_child_memo_hit_trace())
-    _write_json(FIXTURE_DIR / "parent-child-grandchild-trace.json", build_parent_child_grandchild_trace())
+    """Overwrite the committed JSONL fixtures with generator output."""
+    _write_jsonl(FIXTURE_DIR / "parent-child-trace.json", build_parent_child_trace())
+    _write_jsonl(FIXTURE_DIR / "parent-child-erroring-trace.json", build_parent_child_erroring_trace())
+    _write_jsonl(FIXTURE_DIR / "parent-child-memo-hit-trace.json", build_parent_child_memo_hit_trace())
+    _write_jsonl(FIXTURE_DIR / "parent-child-grandchild-trace.json", build_parent_child_grandchild_trace())
 
 
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+def _write_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    """Write a committed fixture as Task-172 JSONL (the only format ``load_trace_file`` reads). The
+    ``.json`` filename is kept — loaders content-detect via the ``pflow_trace`` marker line, not the
+    extension."""
+    write_trace_jsonl(path, payload)
 
 
 if __name__ == "__main__":
