@@ -13,6 +13,7 @@ from pflow.core.trace_io import (
     BLOB_SENTINEL,
     INTERN_MIN_BYTES,
     TRACE_JSONL_MARKER,
+    intern_event_leaves,
     load_trace_file,
     reconstruct_trace_from_lines,
     substitute_refs,
@@ -211,6 +212,21 @@ def test_flatten_preserves_non_json_native_leaf_and_blob_round_trips() -> None:
     blob_map = {ln["md5"]: ln["value"] for ln in lines if ln["kind"] == "blob"}
     restored = substitute_refs(event["node_output"], blob_map)
     assert restored["r"] == large
+
+
+def test_intern_event_leaves_skips_dunder_subtrees() -> None:
+    # #531 (PR review): restores the safety net deleted with intern_blobs's
+    # test_reserved_dunder_key_values_are_not_interned. intern_event_leaves — the SURVIVING production
+    # interning primitive — carries the same ``__``-prefixed-subtree skip, but the round-trip oracle can't
+    # catch its removal (substitute_refs resolves a ref ANYWHERE, so resolution succeeds either way). So a
+    # large value under a ``__`` key must be asserted NOT interned, and no blob emitted, directly here.
+    large = _large_text()
+    emitted: list[str] = []
+    out = intern_event_leaves(
+        {"__pflow_stats__": {"payload": large}}, set(), lambda digest, _value: emitted.append(digest)
+    )
+    assert out["__pflow_stats__"] == {"payload": large}  # plain content, not a {BLOB_SENTINEL: ...} ref
+    assert emitted == []  # no blob line emitted for a dunder-subtree leaf
 
 
 def test_flatten_reconstruct_round_trip() -> None:
