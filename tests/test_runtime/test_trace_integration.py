@@ -741,9 +741,11 @@ class TestLLMTraceHookCapture:
 
         _, collector = _run_with_trace(ir)
 
-        # The trace_hook must have fired AND written the rendered prompt
-        # under this node's id. Pre-fix this dict was always empty.
-        assert collector.llm_prompts == {"ask": "Say hello to the world."}
+        # The trace_hook fired and the rendered prompt reached the EVENT (asserted below) — the contract
+        # downstream consumers (`pflow report`) read. The internal llm_prompts capture is CONSUMED on
+        # record (popped, Task 172 C4 fix) so a later node sharing this id can't inherit it, so the dict
+        # is empty again post-run.
+        assert collector.llm_prompts == {}
 
         # And the trace event must surface it (downstream consumers like
         # `pflow report` read this field).

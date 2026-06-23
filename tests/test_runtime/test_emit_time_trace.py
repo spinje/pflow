@@ -501,7 +501,11 @@ def test_streaming_flushes_incrementally_then_finalize_caps_with_run_complete(tm
         encoding="utf-8",
     )
 
-    result = _run(wf, cache_enabled=False)
+    # finalize_trace=False mirrors the CLI: the run streams incrementally and the trace is finalized
+    # LATER (the CLI finalizes after set_json_output), so the pre-finalize file is inspectable here. With
+    # the default finalize_trace=True the runner finalizes at run end (closing this window) — covered by
+    # test_runner_finalizes_streamed_trace_for_library_callers.
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False, finalize_trace=False))
     assert result.success
     collector = result.trace
     assert collector.is_run_scoped and collector._stream_path is not None
@@ -778,3 +782,188 @@ def test_non_trace_files_run_does_not_stream_to_disk(tmp_path, monkeypatch):
     assert result.success
     debug = tmp_path / ".pflow" / "debug"
     assert not debug.exists() or not list(debug.glob("*.json")), "non-trace_files run must not stream to disk"
+
+
+# --- Trace-write I/O isolation (the streamed file is a best-effort tail, never alters execution) --------
+
+
+class _FailingWrite:
+    """Wraps a real text stream so every ``write`` raises ``OSError`` — simulates a disk-full / read-only
+    ``~/.pflow/debug`` mid-run. ``flush``/``close`` delegate so the handle still tears down cleanly."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def write(self, _data):
+        raise OSError("disk full (injected)")
+
+    def flush(self):
+        self._real.flush()
+
+    def close(self):
+        self._real.close()
+
+
+def _failing_debug_open(monkeypatch):
+    """Patch the trace module's ``open`` so any write to a path under ``debug/`` explodes; other opens
+    (workflow files, cache db) are untouched."""
+    real_open = open
+
+    def _open(file, *args, **kwargs):
+        handle = real_open(file, *args, **kwargs)
+        return _FailingWrite(handle) if "debug" in str(file) else handle
+
+    monkeypatch.setattr("pflow.runtime.workflow_trace.open", _open, raising=False)
+
+
+@pytest.mark.trace_files
+def test_streaming_io_fault_disables_streaming_but_keeps_in_memory(tmp_path, monkeypatch):
+    """A disk write fault during a per-node flush must NEVER propagate: streaming disables itself, the
+    in-memory trace stays intact, and recording does not raise — the core of finding #1."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("wf", is_run_scoped=True, stream_to_disk=True)
+    c._open_stream()  # opens a real handle + writes the meta line
+    assert c._stream is not None
+    c._stream = _FailingWrite(c._stream)  # the next write (the event line) explodes
+
+    c.record_node_execution("a", "ShellNode", 1.0, True)  # must not raise
+
+    assert [e["node_id"] for e in c.events] == ["a"]  # in-memory trace retained
+    assert c._stream is None and c._stream_failed  # streaming disabled, handle dropped
+    c.record_node_execution("b", "ShellNode", 1.0, True)  # later records are silent no-ops (no reopen storm)
+    assert [e["node_id"] for e in c.events] == ["a", "b"]
+    assert c.finalize() is None  # no path advertised for a disabled stream; does not raise
+
+
+@pytest.mark.trace_files
+def test_streaming_io_fault_does_not_fail_a_successful_run(tmp_path, monkeypatch):
+    """End-to-end: a trace-write fault during a real run leaves the run SUCCESSFUL and the in-memory
+    trace intact — trace persistence is a side-channel that can't change the execution outcome."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _failing_debug_open(monkeypatch)
+
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nOne shell node.\n\n## Steps\n\n### greet\n\nEcho.\n\n- type: shell\n- command: echo hi\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success  # the trace I/O fault did not fail the run
+    assert [e["node_id"] for e in result.trace.events] == ["greet"]  # in-memory trace retained
+    assert result.trace._stream_failed  # disk streaming was disabled
+    assert result.trace.finalize() is None  # no usable trace path; finalize doesn't raise
+
+
+@pytest.mark.trace_files
+def test_streaming_io_fault_preserves_original_node_error(tmp_path, monkeypatch):
+    """On the engine's failure path, a trace-write fault must NOT mask the node's real error: the run
+    fails for the NODE's reason and the injected I/O error never surfaces in the recorded failure."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _failing_debug_open(monkeypatch)
+
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nA failing shell node.\n\n## Steps\n\n### boom\n\nFail.\n\n- type: shell\n- command: false\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert not result.success  # the run failed for the NODE's reason, not the trace I/O fault
+    # The masking corollary: the error SURFACED to the user must be the node's, never the injected trace
+    # I/O fault. (Asserting on the in-memory event alone is too weak — that's appended before the flush,
+    # so it looks right even when the OSError later masks the run's failure.)
+    surfaced = " ".join(str(d) for d in result.diagnostics)
+    assert "disk full (injected)" not in surfaced, "trace I/O fault must not mask/replace the real node error"
+    boom = next(e for e in result.trace.events if e["node_id"] == "boom")
+    assert boom["status"] == "failed"
+
+
+@pytest.mark.trace_files
+def test_finalize_io_fault_closes_stream_and_returns_none(tmp_path, monkeypatch):
+    """finalize() always leaves the stream CLOSED and never falsely reports a saved path when the trailer
+    write fails — no handle leak, idempotent re-call (finding #2)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("wf", is_run_scoped=True, stream_to_disk=True)
+    c.record_node_execution("a", "ShellNode", 1.0, True)  # opens stream, writes meta + event
+    assert c._stream is not None
+    c._stream = _FailingWrite(c._stream)  # the run.complete trailer write will explode
+
+    assert c.finalize() is None  # no path to a trailer-less file; does not raise
+    assert c._stream is None and c._finalized  # closed (no leak), terminal
+    assert c.finalize() is None  # idempotent re-call
+
+
+# --- Runner-owned finalization (C3): library callers get a complete file, not an incomplete one --------
+
+
+@pytest.mark.trace_files
+def test_runner_finalizes_streamed_trace_for_library_callers(tmp_path, monkeypatch):
+    """C3: a non-CLI ``WorkflowRunner().run()`` with default config (finalize_trace=True) must leave a
+    COMPLETE, closed trace — not a half-written ``incomplete`` file with a handle open until GC."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nOne shell node.\n\n## Steps\n\n### greet\n\nEcho.\n\n- type: shell\n- command: echo hi\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success
+    assert result.trace._finalized and result.trace._stream is None  # runner finalized + closed the handle
+    files = list((tmp_path / ".pflow" / "debug").glob("*.json"))
+    assert len(files) == 1
+    assert load_trace_file(files[0])["final_status"] == "success"  # complete trailer, NOT "incomplete"
+
+
+@pytest.mark.trace_files
+def test_runner_defers_finalize_when_opted_out(tmp_path, monkeypatch):
+    """The CLI opts out (finalize_trace=False) because it finalizes itself AFTER mutating the trace
+    post-run (set_json_output). With opt-out, the runner leaves finalization to the caller."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nOne shell node.\n\n## Steps\n\n### greet\n\nEcho.\n\n- type: shell\n- command: echo hi\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False, finalize_trace=False))
+
+    assert result.success
+    assert not result.trace._finalized  # runner did NOT finalize; the caller owns it
+    assert load_trace_file(result.trace.finalize())["final_status"] == "success"  # caller finalizes → complete
+
+
+def test_add_llm_data_consumes_prompt_so_it_cannot_bleed_to_same_id_node():
+    """C4: ``_add_llm_data`` POPs the captured prompt/system, so a later node sharing the same node_id
+    (e.g. a parent non-LLM node named like a child sub-workflow LLM node) can't inherit the stale prompt.
+    Mutation: revert ``pop`` → ``get`` and the second node wrongly inherits 'child secret prompt'."""
+    c = WorkflowTraceCollector(is_run_scoped=True)
+    c.llm_prompts["answer"] = "child secret prompt"
+    c.llm_systems["answer"] = "child system"
+
+    e_llm: dict = {}  # the LLM node 'answer' records first → consumes its own captured prompt/system
+    c._add_llm_data(e_llm, "answer", {"llm_usage": {"cost_usd": 0.01}})
+    assert e_llm["llm_prompt"] == "child secret prompt"
+    assert e_llm["llm_system"] == "child system"
+
+    e_other: dict = {}  # a LATER node ALSO named 'answer' (no llm_usage, no hook) must inherit nothing
+    c._add_llm_data(e_other, "answer", {})
+    assert "llm_prompt" not in e_other
+    assert "llm_system" not in e_other
+
+
+@pytest.mark.trace_files
+def test_streaming_large_meta_field_stays_readable(tmp_path, monkeypatch):
+    """C5: a meta field over the intern threshold must NOT be replaced by a ``blob`` line BEFORE meta —
+    that would hide the ``pflow_trace`` marker on line 1 and make the trace unreadable. Meta is raw."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    big_path = "x" * 2000  # a workflow_path well over INTERN_MIN_BYTES (~1KB)
+    c = WorkflowTraceCollector("wf", workflow_path=big_path, is_run_scoped=True, stream_to_disk=True)
+    c.record_node_execution("a", "ShellNode", 1.0, True)
+    path = c.finalize()
+
+    first = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert first["kind"] == "meta" and first.get("pflow_trace")  # marker is on line 1, not behind a blob
+    loaded = load_trace_file(path)  # loads via the JSONL path, not the whole-file fallback
+    assert loaded["workflow_path"] == big_path
+    assert loaded["final_status"] == "success"

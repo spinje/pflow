@@ -518,3 +518,30 @@ def test_intern_blobs_does_not_mutate_or_alias_input_containers() -> None:
     assert encoded["nodes"][0]["node_output"] is not trace["nodes"][0]["node_output"]
     assert encoded["metadata"] is not trace["metadata"]
     assert encoded["metadata"]["tags"] is not trace["metadata"]["tags"]
+
+
+def test_reconstruct_rejects_content_after_run_complete() -> None:
+    # run.complete is the FINAL content line (the writer closes the stream right after it). A stray
+    # event AFTER it is corruption, not a tolerable crash-tail — the reader must raise so the 3 readers
+    # skip the whole trace rather than silently absorb the trailing content and report it complete.
+    lines = [
+        _meta_line(),
+        _event_line("a", eid=0, parent_id=None),
+        _RUN_COMPLETE,
+        _event_line("late", eid=1, parent_id=None),
+    ]
+    with pytest.raises(json.JSONDecodeError, match="after run.complete"):
+        reconstruct_trace_from_lines(lines)
+
+
+def test_load_trace_file_rejects_malformed_line_after_run_complete(tmp_path: Path) -> None:
+    # A garbage/truncated line AFTER a valid run.complete is corruption, NOT a crash-tail: the writer
+    # never writes past run.complete, so the tail tolerance must apply ONLY to a trace that has not yet
+    # seen run.complete. Here load_trace_file must raise, not silently drop the tail and report success.
+    meta = json.dumps({"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r"})
+    complete = json.dumps({"kind": "run.complete", "final_status": "success"})
+    garbage = '{"kind": "event", "id": 1, "seq": 1, "parent_i'  # truncated final line
+    path = tmp_path / "workflow-trace-after-complete.json"
+    path.write_text(f"{meta}\n{complete}\n{garbage}")
+    with pytest.raises(json.JSONDecodeError):
+        load_trace_file(path)

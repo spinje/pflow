@@ -742,12 +742,18 @@ def _resolve_final_status(trace: dict[str, Any]) -> str:
     # shape) isn't reclassified here; acceptable under no-back-compat (every post-GH-#240 trace has
     # ``failed_node_ids`` and takes the branch above).
     latest = final_events_by_node(trace.get("nodes", []))
-    has_failure = any(e.get("status") == "failed" for e in latest.values())
+    # Read BOTH the modern `status` enum AND the legacy `success` bool so this is NOT blind to an old
+    # pre-status trace. The migration changed `not e.get("success")` → `e.get("status") == "failed"`,
+    # which made a genuinely-FAILED old trace (events carry `success: false`, no `status`) look
+    # failure-free here, so the rewrite below silently flipped it to "success" (Codex/claude review of
+    # PR #530). Both reads keep this fallback honest for old traces while the recovered-loop recompute
+    # still works (the failed event is shadowed by the later success event in final_events_by_node).
+    has_failure = any(e.get("status") == "failed" or e.get("success") is False for e in latest.values())
     if has_failure:
         return "failed"
     legacy = str(trace.get("final_status", "success"))
-    # Old code wrote "failed" for recovered loops; replace with "success"
-    # since no per-node failures remain. Leave "degraded" and other values alone.
+    # Old code wrote "failed" for recovered loops (no per-node failure remains); recompute to "success".
+    # Leave "degraded" and other values alone. Modern traces never reach here (they carry failed_node_ids).
     return "success" if legacy == "failed" else legacy
 
 

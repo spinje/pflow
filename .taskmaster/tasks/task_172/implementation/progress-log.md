@@ -526,3 +526,123 @@ guards added (mutation-proven). Commits: `75dafe41` (producer) · `fd24fac3` (co
   which are the real validators of the streamed shape.
 - **Honest residual (unchanged):** the producer is shipped ahead of its consumer (Task 173), so final
   shape-validation against a live tailer is pending — no producer-side testing can close that.
+
+---
+
+## 2026-06-22 — Post-review hardening: trace-write I/O isolation + finalize exception-safety
+
+A Codex review + two `/deep-review` rounds (5 seeded specialists, then 3 **blind** ones — diff + dimension
+only, no findings handed to them) probed the streaming write path. **The blind pass came back materially
+cleaner: neither blind silent-failures nor blind concurrency independently surfaced the items below** —
+both rated the branch "no fix required for merge." So these are real-but-narrow error-path hardening (the
+seeded "Critical" was partly anchoring), worth landing because the invariant is clean and Task 171 (resume)
+will lean on trace-write robustness. Implemented (suite **8095** green, `make check` clean, `pytest -m
+trace_files` **181→185**, 0 regressions):
+
+- **#1 — trace I/O is now isolated from execution (the one genuine bug).** `record_node_execution` flushes
+  at engine step 16 *inside* the `_execute_node` try; pre-fix, an `OSError` from `_flush_event` (disk-full /
+  read-only `~/.pflow/debug`) propagated → a **successful node was recorded failed**, the except-path re-flush
+  could **mask the real node error**, and a duplicate event was appended. Fix: the streamed file is a
+  **best-effort tail** — `_open_stream`/`_flush_line` catch `OSError`, log once, set `_stream_failed`, and
+  disable streaming (`_disable_streaming` + `_close_stream`); the in-memory trace stays complete and the run
+  is unaffected. The owner-thread/reserved-key `assert`s stay OUTSIDE the catch (programming errors stay loud).
+- **#2 — `finalize()` is exception-safe.** Was `_finalized=True` before the trailer write → a trailer/aggregate
+  fault leaked the open handle and a retry falsely returned a path. Fix: `try/finally` always closes+nulls the
+  stream; returns `None` (no path) when disabled mid-run. (Ordering restored: `_open_stream` runs *before*
+  `_finalized=True` — it guards on `_finalized` — caught by the zero-event test during impl.)
+- **#3 — reader enforces "`run.complete` is the last line."** `_partition_trace_lines` raises on any content
+  after `run.complete`; `load_trace_file` tolerates a truncated final line ONLY before `run.complete` is seen
+  (`seen_complete`). Cheap, aligns with the existing "corrupt = visible `JSONDecodeError`" discipline.
+- **Doc:** `runtime/CLAUDE.md` Task-172 bullet records the best-effort-tail invariant + that a Ctrl+C now
+  leaves an `incomplete`-but-readable trace (expected, not a bug).
+
+**New tests (mutation-relevant):** `test_streaming_io_fault_disables_streaming_but_keeps_in_memory`,
+`..._does_not_fail_a_successful_run`, `..._preserves_original_node_error`,
+`test_finalize_io_fault_closes_stream_and_returns_none` (`test_emit_time_trace.py`);
+`test_reconstruct_rejects_content_after_run_complete`,
+`test_load_trace_file_rejects_malformed_line_after_run_complete` (`test_trace_io.py`). Fault injected via a
+`_FailingWrite` wrapper / a `debug`-scoped `open` patch (real `_flush_line` try/except exercised, not bypassed).
+
+**Deferred (with reason):** #4 (dedup immutable-field validation) — corruption-only, couples reader to writer's
+correction contract; the dual-writer dead-code cleanup (`flatten_trace_to_lines`, ~60 test migrations) — its
+own task; eager-`meta`-write (discoverability before first node completes) — a v1-scope decision best made
+*with* Task 173, and would need `report.py` newest-by-mtime auto-detect reviewed (impact-completeness flagged
+it would start seeing `meta`-only crash files).
+
+---
+
+## 2026-06-23 — PR #530 review (Codex 5×P2 + claude[bot]) evaluated + fixed
+
+Two PR reviews on `936000d46e`. Each finding was verified against code (3 parallel `pflow-codebase-searcher`
+passes + direct reads), then a **blind** re-review earlier had already shown the seeded panel partly anchored.
+Net: 5 fixed, 1 disputed, 2 deferred (suite **8100**, `make check` clean, e2e **43**, 0 regressions):
+
+- **C3 (runner-owned finalization).** A non-CLI `WorkflowRunner().run(RunnerConfig())` streamed but never
+  finalized → an `incomplete` trace + handle-until-GC in `~/.pflow/debug`. Fix = **(A)**: new
+  `RunnerConfig.finalize_trace=True`; the runner finalizes in `run()`'s `finally` (suppressed, idempotent).
+  The CLI sets `finalize_trace=False` because it alone mutates the trace post-run (`set_json_output`) then
+  finalizes itself — verified nothing READS `json_output` back, but kept the flag to preserve CLI behavior
+  exactly rather than silently drop it. `test_streaming_flushes_incrementally...` moved to `finalize_trace=False`
+  (its pre-finalize inspection window is the CLI's path).
+- **C4 (cross-workflow prompt bleed).** Collector unification shares `llm_prompts`/`llm_systems` keyed by BARE
+  node_id; `_add_llm_data` attached prompt/system UNCONDITIONALLY, so a parent node sharing a child LLM node's
+  id inherited the child's stale prompt. Verified `_add_llm_data` is the SOLE reader → fix = **pop-on-consume**
+  (`.get`→`.pop`); a prompt belongs only to the node execution that triggered the hook. `test_..._via_trace_hook`
+  updated (the capture is empty post-record now — the EVENT carries the prompt, which is the real contract).
+- **C5 (large meta field).** A meta field over the intern threshold emitted a `blob` line BEFORE meta → hid the
+  `pflow_trace` marker on line 1 → unreadable. Fix = `_flush_line(..., intern=False)` for the meta line.
+- **W1 (failed old trace → "success").** `_resolve_final_status`'s fallback `has_failure` read only `status`,
+  blind to old `success: false` events, so the recovered-loop rewrite flipped a real failure to "success".
+  Fix = read BOTH (`status == "failed" or success is False`). KEPT the rewrite — an existing test
+  (`test_legacy_trace_status_recomputed...`) proved it does a legitimate loop-recovery recompute, so "delete it"
+  (my first instinct + the user's lean) would have regressed that. Dual-read fixes the silent-success AND keeps
+  recovery correct; no behavior regression.
+- **S2 (bare asserts under -O).** `record_node_execution`'s reserved-key guard + `_assert_owner_thread` were
+  `assert` (stripped under `python -O`, defeating their documented "fail loud" intent). Converted to `if/raise
+  RuntimeError`; extracted `_check_reserved_collision` (also folds the C901 the new branch introduced).
+- **Disputed — C1** (old A–C `blobs`-trailer → `JSONDecodeError`): intended no-back-compat + all 3 readers skip
+  gracefully (no crash), transient format, no users. Left as-is.
+- **Deferred — C2** (old `cached:true` cost over-count): legacy-trace-only; consistent with no-back-compat to
+  leave (mooted by a future legacy single-object reader purge). **S3** (`WorkflowExecutor.node_id=""` →
+  `descend("")`): unreachable in production (compiler always stamps it) — left per "solve observed, not
+  theorized problems" (CLAUDE.md core directive).
+
+New tests: `test_runner_finalizes_streamed_trace_for_library_callers`,
+`test_runner_defers_finalize_when_opted_out`, `test_add_llm_data_consumes_prompt_so_it_cannot_bleed_to_same_id_node`,
+`test_streaming_large_meta_field_stays_readable`, `test_resolve_final_status_does_not_flip_failed_legacy_trace_to_success`.
+
+---
+
+## 2026-06-23 — Loose-ends sweep + deferred-work tracking
+
+Self-audit ("are you fully happy?") + capturing the deferred backlog so nothing rots:
+
+- **Doc accuracy fixes** (the user notices stale docs): `execution/CLAUDE.md` RunnerConfig snippet gained
+  `finalize_trace`; `runtime/CLAUDE.md` LLM-capture line now says `_add_llm_data` **consumes** (`.pop`) the
+  captured prompt/system (C4), not just "reads".
+- **W1 consistency — DECIDED to leave.** `_collect_errors`/`_halt_node_id` read only `status`, so an old
+  failed trace reports "failed" (the dangerous flip is fixed) but with an empty Errors section / no halt node.
+  Left modern-only on purpose (status — the critical signal — is correct; error *detail* degrades for
+  unsupported old traces) — consistent with no-back-compat. The `_resolve_final_status` dual-read stays only
+  because an existing loop-recovery test forces it.
+- **Verified C3 is correctly scoped** (grepped every `RunnerConfig(...)` in `src`): CLI opts out, both MCP
+  `run()` sites set `trace_enabled=False` (no stream → runner-finalize is a no-op), no internal caller streams
+  *and* relies on the default. Runner-owned finalization only affects external library callers — the C3 target.
+
+**Deferred work captured (so it's not lost):**
+- **GH #531** — "Trace: drop pre-Task-172 format support + consolidate to one writer/reader." The legacy
+  single-object reader (`resolve_blobs`/`intern_blobs` + the `load_trace_file` branch) + the dual/dead writer
+  (`flatten_trace_to_lines`, kept alive by ~60 bare-collector `save_to_file()` tests) + the W1 dual-read + C2.
+  NOT a trivial delete — entangled with the analyze-cache test suite's single-object-JSON fixtures (~9 files +
+  4 fixtures → JSONL migration). Codex #4 (dedup immutable-field validation) and claude S3 (`node_id=""`
+  guard) are noted there as low-priority defense-against-the-impossible.
+- **Eager-`meta` write → Task 173** (`task-173.md` §Server-side tailer): producer opens the file lazily on
+  first completion, so an in-flight/first-node-crash run is undiscoverable; write `meta` at run start. Slated
+  for Task 173 (the consumer that needs discoverability); ripple — `report.py` newest-by-mtime + analyze-cache
+  disclosure would see `meta`-only files.
+
+**Final state:** suite **8100** + e2e **43** green, `make check` clean, 0 regressions. The producer is
+hardened (I/O isolation, exception-safe + runner-owned finalize, no prompt-bleed, no failed-old-trace flip,
+reader rejects content after `run.complete`) and the remaining cleanup/extensibility work is tracked in #531 +
+Task 173. Honest ceiling unchanged: the streamed shape is still validated only producer-side until Task 173
+tails it live.

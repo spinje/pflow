@@ -279,6 +279,9 @@ def execute_json_workflow(  # noqa: C901
         cache_enabled=ctx.obj.get("cache", True),
         verbose=effective_verbose,
         only_node=ctx.obj.get("only_node"),
+        # The CLI finalizes the trace itself (after set_json_output mutates it post-run), so the runner
+        # must not finalize early — see _save_trace_file / _finalize_trace_and_report.
+        finalize_trace=False,
     )
 
     if not effective_verbose:

@@ -3105,3 +3105,16 @@ class TestPipelineTableWarmupOnlyEdgeCase:
         # No header, no separator, no table at all.
         assert "## Pipeline" not in md
         assert "| # | Node | Type | Status | Time | Tokens | Cost |" not in md
+
+
+def test_resolve_final_status_does_not_flip_failed_legacy_trace_to_success():
+    """W1 (Codex/claude review of PR #530): a genuinely-FAILED old pre-status trace (events carry
+    ``success: false``, no ``status``/``failed_node_ids``) must report ``failed``, not ``success``. The
+    fallback's ``has_failure`` check read only the modern ``status`` enum and so was BLIND to old
+    ``success: false`` events, letting the recovered-loop rewrite flip a real failure to ``success``."""
+    from pflow.core.trace_report import _resolve_final_status
+
+    old_failed = {"final_status": "failed", "nodes": [{"node_id": "a", "success": False}]}
+    assert _resolve_final_status(old_failed) == "failed"  # was wrongly "success" before the fix
+    modern = {"failed_node_ids": ["a"], "final_status": "failed", "nodes": []}
+    assert _resolve_final_status(modern) == "failed"  # authoritative branch, unchanged

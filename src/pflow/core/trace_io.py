@@ -278,6 +278,12 @@ def _partition_trace_lines(
     event_lines: list[dict[str, Any]] = []
     for line in lines:
         kind = line.get("kind") if isinstance(line, dict) else None
+        if run_complete:
+            # ``run.complete`` is the FINAL content line — the writer closes the stream right after it.
+            # Anything following it (a second run.complete, a stray event/blob) is corruption, NOT a
+            # tolerable crash-tail; raise so the 3 readers skip the whole trace rather than silently
+            # trust a trace with unexplained trailing content.
+            raise json.JSONDecodeError("trace content after run.complete line", "", 0)
         if kind == "meta":
             meta = line
         elif kind == "event":
@@ -392,13 +398,20 @@ def load_trace_file(path: Path) -> Any:
         if isinstance(head, dict) and head.get("pflow_trace"):
             raw_lines = [ln for ln in stripped.splitlines() if ln.strip()]
             parsed: list[dict[str, Any]] = []
+            seen_complete = False
             for index, raw in enumerate(raw_lines):
                 try:
-                    parsed.append(json.loads(raw))
+                    line = json.loads(raw)
                 except json.JSONDecodeError:
-                    if index == len(raw_lines) - 1:
-                        break  # tolerate a single truncated FINAL line (crash-tail) → reconstruct incomplete
-                    raise  # a malformed EARLIER line is corruption, not a crash-tail
+                    # Tolerate a single truncated FINAL line ONLY for a genuine crash (no run.complete
+                    # yet) → reconstruct incomplete. A malformed EARLIER line — or a malformed line AFTER
+                    # run.complete (the writer never writes past it) — is corruption and still raises.
+                    if index == len(raw_lines) - 1 and not seen_complete:
+                        break
+                    raise
+                parsed.append(line)
+                if isinstance(line, dict) and line.get("kind") == "run.complete":
+                    seen_complete = True
             return reconstruct_trace_from_lines(parsed)
     data = json.loads(text)
     if isinstance(data, dict):
