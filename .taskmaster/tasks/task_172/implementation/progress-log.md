@@ -658,3 +658,50 @@ shell node whose event carried `llm_prompt: "child secret prompt"` (the child LL
 non-LLM parent). Also added `test_runner_finalizes_a_complete_trace_when_the_run_fails` — guards the runner
 finally's `suppress(Exception)` (a failed library run must still leave a COMPLETE trace, not a silently-hidden
 incomplete one); mutation-verified. Suite **8102** green, `make check` clean.
+
+---
+
+## 2026-06-23 — Manual adversarial e2e (real CLI) + Task 159 baseline comparison
+
+User asked to verify the producer works with **no regressions** via hand-built `.pflow.md` workflows
+through the real `pflow` CLI (not the test suite) — "try to break it, find the last 20%." Ran 13 workflows
++ 5 corrupted-trace variants in an isolated `HOME` (settings copied so LLM keys work, traces isolated from
+the real `~/.pflow/debug` — confirmed 1138→1138 untouched). **Found zero defects.** Every load-bearing
+invariant held end-to-end:
+- **Incremental streaming** (the headline): polled a slow run's file → 1 event @1.66s → 2 @2.70s →
+  3 + `run.complete` @3.74s. One line per node as it completes (and confirmed the lazy-open: no file until
+  the first node finishes — the documented eager-`meta` deferral to Task 173).
+- **Correlation/nesting:** reserve-seq-at-descent (`parent.seq < child.seq`), `parent_id` links,
+  `ancestor_path` mirrors structure incl. **3-level deep** (leaf carries `[go-deep, inner]`), `port:null`.
+- **OLD batch path** (highest-risk silent regression): parallel-batch-of-sub-workflows + a **24-way**
+  concurrency stress → children stay inline under `batch_items[*].events`, **zero** correlation keys, never
+  leak flat; top-level `seq` gap-free/no-dupes. No-lock `seq` + main-thread-only file handle hold under load.
+- **status enum:** success/cached/failed all observed; **degraded** run-level (failed-then-recovered node
+  honestly `failed`, `final_status=degraded`, excluded from `failed_node_ids`).
+- **Cost aggregation INTO sub-workflows** (the critical under-count risk): nested LLM call counted by the
+  in-memory `collect_llm_calls` (never touches disk) AND in disk `run.complete.llm_summary`; **cached node
+  inside a sub-workflow** → `status=cached`, nests under host, cost excluded on re-run.
+- **Genuinely-new/risky reader paths:** crash-tail (truncated tail→`incomplete`+prefix recovered; malformed
+  earlier→raises; content-after-`run.complete`→raises; dangling-incomplete→**transitive subtree drop**;
+  dangling-complete→raises); dedup-last-wins (re-flush correction wins); inline-blob backward-only refs incl.
+  **cross-event dedup** (declared once, referenced by both events).
+- **PR-review bug fixes verified live:** prompt-bleed C4 (parent shell sharing a child LLM `node_id` carries
+  NO prompt), `--only` #443 clobber (sub-wf-node `--only` keeps `only_node` marker), **best-effort tail**
+  (read-only debug dir → run exits 0, node NOT marked failed, one clean warning).
+- **Consumers:** `pflow report` + `analyze-cache` read streamed traces; an **incomplete** trace is rejected
+  as a `--only` snapshot ("reads the most recent *successful* trace"). `--no-trace` writes nothing.
+- Trace oracle re-confirmed in this worktree: `pytest -m trace_files` = **190 passed**.
+- *Honest gaps (each unit/mutation-covered, not CLI-reachable cheaply):* MCP non-streaming, producer-side
+  routing-dead-end trigger, >1KB meta field, exact cost penny-literal.
+
+**Task 159 baseline (`verify.sh`) — pre-drifted, NOT us.** Ran it on this branch (14 passed / **73 drifted**)
+and on the `main` worktree (`/Users/andfal/projects/pflow`, sitting at our merge-base `cb8cabd7`):
+**identical 14/73**, `comm` both directions empty. Path-normalized full-output diff = byte-identical except
+(a) trace-filename hashes (`md5(workflow_path)[:8]`, a worktree-path artifact — computed both, they match
+b4e4dec7/af191bc9) and (b) per-run microsecond suffixes. **Zero Task-172 drift.** This branch doesn't touch
+the baseline expected files (git-confirmed). Root-caused the pre-existing drift: the keyless `env -i` harness
+(no `*_API_KEY`, empty `.run-home`) now trips the **validate-time API-key preflight** added in #439/#440
+(`c19bcf41`, 2026-05-28) — which postdates the last baseline recording (#405, 2026-05-18) and was never
+regenerated since. Proved 100% key-driven (same case: 4 "Missing API key" lines keyless → 0 with a key,
+matches expected). Filed **https://github.com/spinje/pflow/issues/532** (Option A recommended: make the
+harness key-aware, then `regenerate.sh`). Independent of Task 172; left for a Task-159 harness fix.
