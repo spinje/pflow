@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyStatus, refKey } from "./focus";
-import type { FlowNode, LeafData } from "./flow";
+import type { FlowNode, GroupData, LeafData } from "./flow";
 import type { NodeStatus, RFNode, RFRef } from "../types";
 
 // A minimal type-correct RFNode (the contract node every leaf/end FlowNode wraps).
@@ -60,6 +60,32 @@ const ref = (over: Partial<RFRef> = {}): RFRef => ({ node_id: "a", ancestor_path
 // so TS knows `data` is LeafData before reading `status`.
 const statusOf = (node: FlowNode): NodeStatus | "NOT_A_NODE" | undefined =>
   node.type === "node" ? node.data.status : "NOT_A_NODE";
+
+const groupStatusOf = (node: FlowNode): NodeStatus | undefined => (node.type === "group" ? node.data.status : undefined);
+
+// A sub-workflow host group: its host leaf is suppressed (is_group_host), so the host renders AS this
+// group and applyStatus lights it by the HOST's ref — but only the host's PRIMARY group (showTitle).
+function hostGroup(id: string, hostRef: RFRef, opts: { showTitle: boolean; status?: NodeStatus }): FlowNode {
+  const data: GroupData = {
+    group: { id, kind: "workflow", parent: null, host: "hostflat", members: [], nesting_depth: 0, annotations: {} },
+    hostNode: rfNode("hostflat", hostRef),
+    collapsed: false,
+    showTitle: opts.showTitle,
+    direction: "LR",
+    density: "compact",
+    hasIncoming: false,
+    hasOutgoing: false,
+    memberCount: 0,
+    inputs: [],
+    outputs: [],
+    ioRowsVisible: false,
+    focusedPortId: null,
+    dimmed: false,
+    focused: false,
+    ...(opts.status !== undefined ? { status: opts.status } : {}),
+  };
+  return { id, type: "group", position: { x: 0, y: 0 }, data };
+}
 
 describe("refKey — stable key from a structural ref", () => {
   it("identical structure → identical key (the status-map join must hit)", () => {
@@ -130,7 +156,7 @@ describe("applyStatus — the run-status restyle pass", () => {
     expect(statusOf(out)).toBeUndefined();
   });
 
-  it("non-node FlowNodes (group/io/end) are returned unchanged", () => {
+  it("a HOSTLESS group and end nodes pass through untouched (no host ref to join on)", () => {
     const group: FlowNode = {
       id: "g0",
       type: "group",
@@ -180,5 +206,38 @@ describe("applyStatus — the run-status restyle pass", () => {
     expect(outA).not.toBe(a); // a changed
     expect(statusOf(outA)).toBe("running");
     expect(outB).toBe(b); // b's status matches the map → identity preserved (no re-render)
+  });
+});
+
+describe("applyStatus — sub-workflow HOST groups (Task 173 P2)", () => {
+  it("lights the host's PRIMARY group by the host's ref (the suppressed host leaf renders AS the group)", () => {
+    const hostRef = ref({ node_id: "call-child", ancestor_path: [], port: null });
+    const g = hostGroup("g0", hostRef, { showTitle: true });
+    const map = new Map<string, NodeStatus>([[refKey(hostRef), "running"]]);
+    const out = applyStatus([g], map)[0]!;
+    expect(out).not.toBe(g);
+    expect(groupStatusOf(out)).toBe("running");
+  });
+
+  it("does NOT light a NON-primary group for the same host (showTitle=false → a host backing >1 group lights once)", () => {
+    const hostRef = ref({ node_id: "call-child" });
+    const secondary = hostGroup("g1", hostRef, { showTitle: false });
+    const map = new Map<string, NodeStatus>([[refKey(hostRef), "running"]]);
+    expect(applyStatus([secondary], map)[0]).toBe(secondary); // untouched
+  });
+
+  it("an unchanged host-group status preserves identity (memo skip)", () => {
+    const hostRef = ref({ node_id: "call-child" });
+    const g = hostGroup("g0", hostRef, { showTitle: true, status: "success" });
+    const map = new Map<string, NodeStatus>([[refKey(hostRef), "success"]]);
+    expect(applyStatus([g], map)[0]).toBe(g);
+  });
+
+  it("joins on the HOST ref, not the group's flat id — a stale id never lights the wrong group", () => {
+    // The status map is keyed by the host's structural ref; the group's own flat id is irrelevant.
+    const hostRef = ref({ node_id: "call-child", ancestor_path: [{ node_id: "outer", batch_index: null }] });
+    const g = hostGroup("g7", hostRef, { showTitle: true });
+    const map = new Map<string, NodeStatus>([[refKey(hostRef), "failed"]]);
+    expect(groupStatusOf(applyStatus([g], map)[0]!)).toBe("failed");
   });
 });

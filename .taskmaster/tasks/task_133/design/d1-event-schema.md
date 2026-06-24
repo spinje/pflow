@@ -10,7 +10,7 @@
 > readers): per-node `status` **enum** replaces `success: bool`+`cached`; blobs are **inline first-occurrence
 > `blob` lines** (no `blobs` trailer); `ancestor_path`/`port` are emit-stamped (stripped on read); correlation
 > is assigned at *emit* time and the file **streams** one line per node as the run executes. The span
-> *taxonomy* (separate `llm`/`gate` events, `node.start`, batch-item promotion) is deferred until the shipped
+> *taxonomy* (separate `llm`/`gate` events, batch-ITEM `node.start`, batch-item promotion) is deferred until the shipped
 > overlay validates it.
 
 ## Why this exists
@@ -155,17 +155,22 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
 ## Consumer-derivation contract (the overlay)
 
 - **Status:** the overlay reads the `event.status` **enum** directly (`"success" | "cached" | "failed"`) —
-  no derivation. **`degraded` is a run banner**, read from `run.complete.final_status`, not per-node.
-  `running` / `pending` are **inferred** from the static graph (an `event` exists only on completion; there
-  is no `node.start` in v1).
+  no derivation. `running` comes from a **`node.start` line** (SHIPPED, Task 173): a disk-only marker the
+  producer flushes when a node BEGINS, sharing the node's `id`/`seq` so the terminal `event` supersedes it
+  (last-wins); the post-hoc reader (`_partition_trace_lines`) drops it, leaving on-disk `event` seqs
+  byte-identical. `pending` = no line yet for that node. **`degraded` is a run banner**, read from
+  `run.complete.final_status`, not per-node.
 - **Join:** match `event` → graph node by `(node_id, ancestor_path)`, `port = null`, via `sameRef`. **Read
   these off the RAW stream — NOT through `load_trace_file`/`reconstruct`, which STRIPS `ancestor_path`/`port`
   (`_RESERVED_LINE_KEYS`).** A re-flushed correction (routing dead-end) repeats an `id` → key on `id`,
   last-wins. See the consumer-handoff braindump in `task_173/starting-context/` for the full tailer trap list.
-- **Liveness level:** L1 (per-completion) + the static graph. **Known v1 limitation:** for parallel/batch,
-  the overlay can't show *which* of N is running until items complete — a per-completion flipbook there
-  (the `node.start`/L2 fix is deferred). Rich detail (resolved IO, cost, tokens) comes from the event
-  payload (`node_output`, `llm_call`).
+- **Liveness level:** L1.5 — per-completion `event` + emit-at-start `node.start` for every **main-thread**
+  node (leaf nodes via `begin_node` at engine step 8.5; sub-workflow and batch-of-LEAF hosts via
+  `descend`, sharing the host frame's seq). **Known v1 limitation:** a parallel/sequential
+  batch-OF-SUB-WORKFLOWS host and the individual batch ITEMS get NO `node.start` — they run off the owner
+  thread, and the no-lock rule forbids emitting to the run-scoped collector there → they show
+  pending-until-done; batch-item granularity stays deferred. Rich detail (resolved IO, cost, tokens) comes
+  from the event payload (`node_output`, `llm_call`).
 
 ---
 
@@ -202,8 +207,12 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
 
 ## Deferred — pin against the shipped overlay, NOT in v1
 
-- **`node.start` (L2):** light a node the instant it begins; the fix for real-time parallel/batch
-  "running". New emit points.
+- **`node.start` for batch ITEMS + the batch-of-sub-workflow HOST (L2):** the emit-at-start marker
+  SHIPPED for every main-thread node (Task 173 — see the Consumer-derivation section), so flat nodes plus
+  sub-workflow and batch-of-leaf hosts light `running` live. Still deferred: per-ITEM "running" inside a
+  parallel/sequential batch, and the batch-OF-sub-workflow host — both execute off the owner thread (the
+  no-lock rule forbids emitting there), so they stay pending-until-done. Couples to batch-item promotion
+  below.
 - **`llm` as its own child-span `kind`** (today nested as `llm_call`); **batch-item promotion** to
   first-class events (today inline) — which also requires teaching `_rebuild_event_tree`/`tree()` to
   re-nest `batch_items` (today only `sub_workflow_events`), so batch-promotion and the `tree()` view are

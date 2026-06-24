@@ -1224,6 +1224,11 @@ def test_runtime_event_refs_join_onto_the_static_graph(tmp_path, monkeypatch):
     assert child_ref in runtime_refs, "the producer must emit the nested child's descent path"
     assert child_ref in start_refs, "the nested child's node.start must carry the same descent path (running join)"
     assert child_ref in graph_refs, "the renderer must expose the same descent path (the join target)"
+    # Task 173 P2: the sub-workflow HOST now emits its OWN node.start (via descend) so its group lights
+    # `running` while the body runs — assert it joins (a top-level host → empty ancestor_path).
+    host_ref = ("call-child", (), None)
+    assert host_ref in start_refs, "the sub-workflow host must emit a node.start (so its group lights running)"
+    assert host_ref in graph_refs, "the host's node.start must join the static graph's host node"
 
 
 # --- Task 173: node.start producer contract + the routing-based no-lock safety net -------------------

@@ -264,3 +264,107 @@ path the unit tests don't exercise).
 | D1: `event`+`status:running`, last-wins | distinct `node.start` kind, reader-ignored | keeps `event`=completion; back-compat with all readers + the test suite; matches D1's own naming |
 | (frontend) seed `status` default in `buildFlow` | `status` optional, `applyStatus` is sole writer | fewer touch points; pending = absent = no styling |
 | (tailer) broadcast per-line | batch deltas per poll into one `run-events` | a fast run could exceed the hub's 64/conn queue and silently evict the viewer |
+
+## 2026-06-24 — Host node.start investigation (4 parallel subagents, pre-implementation)
+
+Per the user's directive to verify all assumptions/ambiguity before building host node.start. Outcome:
+the braindump's "producer one-liner in `descend()`" was INCOMPLETE — host node.start ALSO needs new
+FRONTEND work, and the checkpoint is smaller than thought. Four verified findings:
+
+1. **Producer `descend()` flush is SAFE — exact code in hand.** `descend()` is the ONLY production caller,
+   run-scoped + owner-thread only (the OLD buffer path never descends). The host completion already reuses
+   `frame.seq`, so the host node.start MUST emit with the frame's EXISTING seq (NOT a fresh `_next_seq()`)
+   and MUST stay disk-only (NOT appended to `self.events`) — else `nodes_executed` / `tree()==reconstruct`
+   break. Add a `stream_to_disk`-gated `_open_stream()` + `_flush_line(..., intern=False)` mirroring
+   `begin_node`; hardcode `node_type="WorkflowExecutor"` (not carried on the frame). All 3 host-frame pins
+   PASS unchanged (they read in-memory events or `load_trace_file`, which drops `node.start`).
+2. **Join target exists + matches — no drift.** A sub-workflow host has a joinable leaf `RFRef`
+   (`ancestor_path=[]` top-level, `port=null`); `descend` stamps the same (both exclude the host's own
+   frame). The join pin only asserts the CHILD joins today — EXTEND it to assert the HOST node.start joins.
+3. **Frontend CANNOT light a group/host today — the real gap.** `applyStatus` bails on `type !== "node"`
+   (`focus.ts:28`); `GroupData` has no `status`; `flatIdForRef` searches `graph.nodes` only and the host
+   leaf is suppressed (`buildFlow` skips `is_group_host`). So a host node.start lands unclaimed → nothing
+   lights. Needs ~5 frontend changes: `GroupData.status`; an `applyStatus` group-branch keyed on
+   `hostNode.ref` (only the PRIMARY group lights — mirror `showTitle`); a `GroupNode` `status-${status}`
+   class push; a CSS `.group` ring; (optional ChipRail chip).
+4. **The checkpoint SHRANK.** A parallel batch of LEAF nodes ALREADY lights its host running today (step
+   8.5 `begin_node` has NO batch guard — only sub-WORKFLOW hosts are skipped). And a sub-workflow's leaf
+   CHILDREN already light with a non-empty `ancestor_path`. So the riskiest thing (#6 join-drift on a
+   non-empty `ancestor_path`) is verifiable NOW with zero new code. Only the HOST GROUP lighting needs new
+   work — and it matters most for COLLAPSED sub-workflows. Batch-of-sub-workflows host stays
+   pending-until-done (v1 boundary, unchanged).
+
+**Reshaped sequence (verify-the-risk-first — inverts the braindump's "host node.start before checkpoint"):**
+- **P1 (no new code):** browser-verify an EXPANDED sub-workflow's children light (non-empty
+  `ancestor_path`; watch the join-miss `console.warn`) + a parallel-batch-of-leaves host lights + items
+  flipbook. This is the JOIN gate — the one risk that looks identical to "working" when broken.
+- **P2:** host-group lighting — the producer `descend()` flush + the ~5 frontend group changes + extend the
+  join pin + CSS. Browser-verify a sub-workflow host lights (expanded AND collapsed).
+- Then commit the checkpoint.
+Justification for the inversion: the investigation showed host-lighting is a bigger FRONTEND chunk, while
+the JOIN risk is testable with zero new code — so verify the risk first, build the polish second.
+
+### P1 verified (2026-06-24, real browser via a NEW overlay-status-probe)
+
+Built `scratchpads/task-173-live-overlay/verify/overlay-status-probe.pflow.md` — reads each node's
+`status-*` DOM class (reliable where eyeballing a ring colour is NOT; reuses the skill's `open-and-settle`
+by absolute path). Strong ELEVATE candidate (no existing tool reads overlay status). Results:
+- **Sub-workflow JOIN gate CLEARED.** On the completed `subworkflow-probe` run, `child-slow` (ref
+  `(child-slow, [{call-child,null}], null)`) and `child-fast` both lit `status-success` — the
+  non-empty-`ancestor_path` join works at the DOM level, not just the wire (the wire was byte-identical:
+  producer `node.start` ancestor_path == renderer RFRef). `top` success too. The #1 silent-join-failure
+  risk is gone.
+- **Live running renders.** On the live `batch-probe` run, the batch host `fanout` showed `status-running`
+  MID-FLIGHT — confirming both the cheat-sheet correction (batch LEAF host lights via `begin_node`, no
+  batch guard at step 8.5) AND the live snapshot+stream path (not just replay).
+- **Host group NOT lit.** `call-child` (the host GROUP, dataId `g0`) carried no status class — exactly the
+  P2 gap. → proceeding to P2.
+
+## 2026-06-24 — P2 complete: host node.start + frontend group-lighting (browser-verified)
+
+The host-lighting increment, scoped from the 4-subagent investigation. Shipped:
+- **Producer:** `descend()` now flushes a disk-only host `node.start` (reusing the host frame's reserved
+  seq) so a sub-workflow host group lights `running` while its body runs. Single-sourced the `node.start`
+  wire shape into a new `_emit_node_start` helper shared by `begin_node` (leaves, reserve here) + `descend`
+  (hosts, reuse the frame seq) — a deletion-test win (the contract line lives in ONE place). All 3
+  host-frame pins + the `tree()==reconstruct` equivalence tests stay green.
+- **Join pin:** extended `test_runtime_event_refs_join_onto_the_static_graph` to assert the HOST's
+  `node.start` joins the static graph (was child-only) — regression-guards the new behaviour.
+- **Frontend (the gap the braindump missed):** `GroupData.status`; an `applyStatus` group-branch keyed on
+  the HOST's ref (PRIMARY group only — `showTitle` — so a host backing >1 group lights once); `GroupNode`
+  pushes `status-${status}` (collapsed card → `.node.status-*`, expanded region → new `.group.status-*`
+  CSS). +4 `status.test.ts` cases (host-group lights, non-primary doesn't, identity preserved, host-ref
+  join).
+- **Browser-verified (authoritative DOM `status-*` read via the new overlay-status-probe):** the host
+  group `call-child` lights `status-running` MID-FLIGHT in BOTH expanded (g0=running, child-slow=running
+  inside) and collapsed (g0=running, children hidden — the case that matters most). The trace confirmed
+  the producer emits `node.start call-child running []`.
+
+**Gates:** `make test` 8129 (= baseline, 0 regressions); `make check` clean (mypy 238); vitest 561 (557 +
+4). Host `node.start` is now COMPLETE for every main-thread node; a parallel/sequential
+batch-OF-SUB-WORKFLOWS host + batch ITEMS stay pending-until-done (the v1 boundary — they never descend the
+run collector; workers can't touch it).
+
+## 2026-06-24 — Adversarial verification pass (fork specialist) + the one finding it surfaced
+
+Ran a fork verification specialist ("try to BREAK it; trace files + DOM over unit tests; find the last
+20%"). It built its own adversarial workflows and drove real CLI/UI. Verdict: **the overlay core is solid**
+— the join held under every shape (2-level nesting: producer ancestor_path == renderer RFRef at every
+depth; same node_id at two scopes lights independently; loop-leaf flipbook; branching untaken-branch stays
+pending), and state transitions all behaved (running→done/failed/degraded/cached; run-reset follows B not
+stale A at the SSE-wire level; crash leaves a sane dangling `running`; a bursty 60-node run delivered in 6
+batched SSE messages → NO 64-queue eviction; cached node emits no node.start; batch-of-subworkflow
+boundary holds). Honestly-unverified (low risk): in-page run-reset *visual*, looped *sub-workflow* host,
+genuinely-simultaneous concurrent runs, `status-cached` for an LLM (used a code node), the banner DOM
+element.
+
+**The one real finding — `--only` traces shadow the last full run — FIXED + verified.**
+`discover_live_trace` matched by `meta.workflow_path` but did NOT exclude `only_node` traces (inconsistent
+with `_iter_workflow_traces`, which excludes them). After a `--only` iteration, the overlay followed the
+`--only` trace (records only its target) → every other node falsely `pending`, shadowing the user's last
+full run (and would clutter D6 history). Fix: `discover_live_trace` now reads `meta` once per candidate
+and skips `only_node` traces (mirrors `_iter_workflow_traces`). Verified: unit
+(`test_discover_excludes_only_node_traces` — `--only` trace newer by mtime, discovery still returns the
+full run) AND end-to-end (real full run + `--only step-b` on a fresh server → overlay shows BOTH nodes
+`status-success`, not step-a pending). Decision for D6: `/api/runs` history should LABEL `--only` runs
+(not exclude) — distinct from the live overlay, which excludes them.

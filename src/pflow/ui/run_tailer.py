@@ -91,13 +91,25 @@ def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Pat
     normalization). PREFERS a LIVE run (has ``meta``, NO ``run.complete``) over a finished one, falling
     back to the newest finished trace (for replay) only when none is live. Newest-by-mtime alone is
     WRONG: eager-``meta`` (Task 173 A1) makes every run discoverable from t=0, so a just-finished run can
-    have a newer mtime than a still-streaming concurrent run and would shadow it (deep-review R2)."""
+    have a newer mtime than a still-streaming concurrent run and would shadow it (deep-review R2).
+
+    EXCLUDES ``--only`` traces (``meta.only_node`` set): an ``--only`` run records ONLY its target node,
+    so it is not a coherent full-run overlay — following it would leave every other node falsely
+    ``pending`` and shadow the user's last full run. Mirrors ``_iter_workflow_traces`` (report /
+    analyze-cache), which excludes ``--only`` traces for exactly this reason."""
     directory = debug_dir or _debug_dir()
     try:
         candidates = sorted(directory.glob("workflow-trace-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
         return None
-    matching = [p for p in candidates if _same_path((_read_meta(p) or {}).get("workflow_path"), workflow_key)]
+    matching = []
+    for p in candidates:
+        meta = _read_meta(p)
+        # Skip non-trace files and --only traces (a partial run, not a coherent overlay); match workflow.
+        if meta is None or meta.get("only_node") is not None:
+            continue
+        if _same_path(meta.get("workflow_path"), workflow_key):
+            matching.append(p)
     if not matching:
         return None
     # Prefer a live run (no run.complete) — newest-first — so a freshly-finished run never shadows a

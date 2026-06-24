@@ -12,9 +12,12 @@ from pathlib import Path
 from pflow.ui.run_tailer import RunTailer, discover_live_trace
 
 
-def _write_trace(path: Path, workflow_path: str, *, complete: bool) -> None:
+def _write_trace(path: Path, workflow_path: str, *, complete: bool, only_node: str | None = None) -> None:
+    meta: dict = {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": workflow_path, "execution_id": "x"}
+    if only_node is not None:
+        meta["only_node"] = only_node
     lines: list[dict] = [
-        {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": workflow_path, "execution_id": "x"},
+        meta,
         {
             "kind": "node.start",
             "node_id": "a",
@@ -66,6 +69,23 @@ def test_discover_falls_back_to_newest_finished_when_none_live(tmp_path):
     os.utime(older, (1000, 1000))
     os.utime(newer, (2000, 2000))
     assert discover_live_trace(wf, debug_dir=debug) == newer
+
+
+def test_discover_excludes_only_node_traces(tmp_path):
+    """An ``--only`` run records ONLY its target, so it must NOT shadow the last full run in the overlay
+    (consistent with ``_iter_workflow_traces``). Discovery returns the FULL run even though the ``--only``
+    trace is newer by mtime — else the user iterating with ``--only`` sees a partial, mostly-pending canvas
+    instead of their last full run."""
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    full = debug / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    only = debug / "workflow-trace-aaa-wf-20260101-000000-000002.json"
+    _write_trace(full, wf, complete=True)
+    _write_trace(only, wf, complete=True, only_node="b")
+    os.utime(full, (1000, 1000))
+    os.utime(only, (2000, 2000))  # the --only trace is NEWER — would win without the only_node exclusion
+    assert discover_live_trace(wf, debug_dir=debug) == full
 
 
 def test_discover_returns_none_for_unmatched_workflow(tmp_path):

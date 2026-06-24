@@ -168,6 +168,10 @@ export type GroupData = {
   focusedPortId: string | null;
   dimmed: boolean;
   focused: boolean;
+  // Live execution overlay (Task 173): the HOST's run status. A sub-workflow host's leaf box is
+  // suppressed (it renders AS this group), so the host's `running`/terminal ring shows here. Set by
+  // applyStatus on the host's PRIMARY group only (showTitle); `undefined` = pending / no run.
+  status?: NodeStatus;
 };
 
 export type EndData = {

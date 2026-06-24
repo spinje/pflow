@@ -99,6 +99,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
     focusedPortId,
     dimmed,
     focused,
+    status,
   } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
@@ -175,6 +176,9 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   if (ioRowsVisible) classes.push("has-io"); // full-width dividers + row areas
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
+  // Task 173 live overlay: the host's run status ring. Collapsed → `.node.status-*` (the card already
+  // carries `.node`); expanded → `.group.status-*`. Only the primary group carries `status` (applyStatus).
+  if (status) classes.push(`status-${status}`);
   // Hover marks this container — directly, or via one of ITS io ports (an
   // io-port chip marks the port id; the owner box rings so the port is
   // findable even when its rows aren't rendered).

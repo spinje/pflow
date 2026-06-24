@@ -19,16 +19,25 @@ export function refKey(ref: RFRef): string {
   return `${ref.node_id}|${ref.port}|${path}`;
 }
 
-/** Thread each leaf's live run status onto its `data` — a cheap pure restyle, the overlay sibling of
+/** Thread each node's live run status onto its `data` — a cheap pure restyle, the overlay sibling of
  *  applyFocus: NO re-layout, and it returns the SAME node object when a node's status is unchanged so
  *  memo'd nodes skip re-render (only changed nodes get new identity). Keyed on the stable structural
- *  ref so it survives a live-reload renumber. Leaf nodes only in v1 (group/io host status is deferred). */
+ *  ref so it survives a live-reload renumber. Lights leaf nodes by their own ref and sub-workflow HOST
+ *  groups by the host's ref (primary group only — a host's leaf box is suppressed, so it renders AS the
+ *  group); io/wrapper groups and end nodes carry no status. */
 export function applyStatus(nodes: FlowNode[], status: ReadonlyMap<string, NodeStatus>): FlowNode[] {
   return nodes.map((node) => {
-    if (node.type !== "node") return node;
-    const next = status.get(refKey(node.data.node.ref));
-    if (node.data.status === next) return node;
-    return { ...node, data: { ...node.data, status: next } };
+    if (node.type === "node") {
+      const next = status.get(refKey(node.data.node.ref));
+      return node.data.status === next ? node : { ...node, data: { ...node.data, status: next } };
+    }
+    // A sub-workflow HOST renders as a group (its leaf box suppressed), so light the GROUP by joining on
+    // the host's ref — but only its PRIMARY group (showTitle), so a host backing >1 group lights once.
+    if (node.type === "group" && node.data.hostNode && node.data.showTitle) {
+      const next = status.get(refKey(node.data.hostNode.ref));
+      return node.data.status === next ? node : { ...node, data: { ...node.data, status: next } };
+    }
+    return node;
   });
 }
 

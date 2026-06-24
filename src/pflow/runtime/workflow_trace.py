@@ -749,11 +749,16 @@ class WorkflowTraceCollector:
         return [{"node_id": f.node_id, "batch_index": f.batch_index} for f in self._host_stack]
 
     def descend(self, node_id: str) -> _HostFrame:
-        """Enter a sub-workflow host: reserve its ``seq`` and push its frame (run-scoped only).
+        """Enter a sub-workflow host: reserve its ``seq``, push its frame, and (when streaming) emit a
+        disk-only ``node.start`` so the overlay lights the host ``running`` as its body executes.
 
         Captures the host's OWN ``parent_id``/``ancestor_path`` BEFORE pushing, so the host nests under
         its enclosing host (if any) while its children nest under it. The reserved ``seq`` is reused by
-        the host's completion event (engine step 16), giving DFS pre-order. Balance with ``ascend``.
+        the host's completion event (engine step 16), giving DFS pre-order — and the ``node.start`` shares
+        that ``seq``, so the reader's last-wins dedup collapses start→completion (the marker is itself
+        dropped by ``_partition_trace_lines``, leaving on-disk ``event`` seqs byte-identical). ``begin_node``
+        does the same for leaf nodes; hosts reserve HERE (pre-order) rather than at engine step 8.5.
+        Balance with ``ascend``.
         """
         self._assert_owner_thread()
         parent_id = self._host_stack[-1].seq if self._host_stack else None
@@ -761,6 +766,8 @@ class WorkflowTraceCollector:
         seq = self._next_seq()
         frame = _HostFrame(seq=seq, node_id=node_id, parent_id=parent_id, ancestor_path=ancestor_path)
         self._host_stack.append(frame)
+        if self._stream_to_disk:  # host node.start: disk-only, reuses the frame's seq (Task 173)
+            self._emit_node_start(node_id, "WorkflowExecutor", seq, parent_id, ancestor_path)
         return frame
 
     def ascend(self) -> None:
@@ -768,26 +775,17 @@ class WorkflowTraceCollector:
         self._assert_owner_thread()
         self._host_stack.pop()
 
-    def begin_node(self, node_id: str, node_type: str) -> _HostFrame | None:
-        """Task 173 (``node.start``): flush a live in-flight marker as a node BEGINS, and reserve its
-        ``seq`` so the node's completion event reuses it.
+    def _emit_node_start(
+        self, node_id: str, node_type: str, seq: int, parent_id: int | None, ancestor_path: list[dict[str, Any]]
+    ) -> None:
+        """Flush a disk-only ``node.start`` running marker — the overlay's in-flight signal (Task 173).
 
-        The marker is a DISK-ONLY line (``kind: "node.start"``) — NOT appended to ``self.events`` and
-        DELIBERATELY IGNORED by the post-hoc reader (``_partition_trace_lines`` skips it). It exists
-        solely so a live overlay tailing the file can light the in-flight node ``running`` before any
-        completion line lands. The terminal ``event`` reuses this frame's ``seq`` (the caller threads the
-        returned frame into ``record_node_execution``), so on-disk ``event`` seqs stay byte-identical to a
-        run without ``node.start`` and the ``tree()``/``reconstruct`` equivalence is untouched.
-
-        Run-scoped + ``stream_to_disk`` only (returns ``None`` otherwise). Owner-thread only (``_next_seq``
-        asserts). The caller MUST pass the returned frame into the node's completion record on EVERY path
-        (success / api-warning / exception) so the reserved ``seq`` is reused, never re-taken. NOT called
-        for sub-workflow hosts — they reserve via ``descend``; a host ``node.start`` is deferred (L2)."""
-        if not (self.is_run_scoped and self._stream_to_disk):
-            return None
-        seq = self._next_seq()  # asserts owner thread
-        parent_id = self._host_stack[-1].seq if self._host_stack else None
-        ancestor_path = self._current_ancestor_path()
+        The SINGLE writer of the ``node.start`` wire shape, shared by ``begin_node`` (leaf nodes, which
+        reserve their ``seq`` here) and ``descend`` (sub-workflow hosts, which reuse the host frame's
+        ``seq``). DISK-ONLY — never appended to ``self.events``; the reader (``_partition_trace_lines``)
+        drops the line, so the node's terminal ``event`` (reusing this ``seq``) is what lands in the
+        reconstructed trace and on-disk ``event`` seqs stay byte-identical to a no-``node.start`` run.
+        ``intern=False``: a running marker carries no large leaves, so it never needs a ``blob`` line."""
         self._open_stream()
         self._flush_line(
             {
@@ -805,6 +803,29 @@ class WorkflowTraceCollector:
             },
             intern=False,
         )
+
+    def begin_node(self, node_id: str, node_type: str) -> _HostFrame | None:
+        """Task 173 (``node.start``): flush a live in-flight marker as a LEAF node BEGINS, and reserve its
+        ``seq`` so the node's completion event reuses it.
+
+        The marker is a DISK-ONLY line (``kind: "node.start"``, via ``_emit_node_start``) — NOT appended
+        to ``self.events`` and DELIBERATELY IGNORED by the post-hoc reader (``_partition_trace_lines``
+        skips it). It exists solely so a live overlay tailing the file can light the in-flight node
+        ``running`` before any completion line lands. The terminal ``event`` reuses this frame's ``seq``
+        (the caller threads the returned frame into ``record_node_execution``), so on-disk ``event`` seqs
+        stay byte-identical to a run without ``node.start`` and the ``tree()``/``reconstruct`` equivalence
+        is untouched.
+
+        Run-scoped + ``stream_to_disk`` only (returns ``None`` otherwise). Owner-thread only (``_next_seq``
+        asserts). The caller MUST pass the returned frame into the node's completion record on EVERY path
+        (success / api-warning / exception) so the reserved ``seq`` is reused, never re-taken. NOT called
+        for sub-workflow hosts — they reserve (and emit their own ``node.start``) via ``descend``."""
+        if not (self.is_run_scoped and self._stream_to_disk):
+            return None
+        seq = self._next_seq()  # asserts owner thread
+        parent_id = self._host_stack[-1].seq if self._host_stack else None
+        ancestor_path = self._current_ancestor_path()
+        self._emit_node_start(node_id, node_type, seq, parent_id, ancestor_path)
         return _HostFrame(seq=seq, node_id=node_id, parent_id=parent_id, ancestor_path=ancestor_path)
 
     # --- Task 172 step 3: per-event streaming to disk -----------------------------------------------
