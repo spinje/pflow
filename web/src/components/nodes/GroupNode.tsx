@@ -37,6 +37,7 @@ import { groupIconFor } from "../../utils/icons";
 import type { ContainerKind } from "../../types";
 import { useHoverMarks, useInteraction } from "../interaction";
 import { ChipRail } from "./ChipRail";
+import { StatusBadge } from "./StatusBadge";
 import { PortRows } from "./PortRows";
 import { Connector, NameLabel } from "./WorkflowNode";
 
@@ -176,9 +177,8 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   if (ioRowsVisible) classes.push("has-io"); // full-width dividers + row areas
   if (dimmed) classes.push("dimmed");
   if (focused) classes.push("focused");
-  // Task 173 live overlay: the host's run status ring. Collapsed → `.node.status-*` (the card already
-  // carries `.node`); expanded → `.group.status-*`. Only the primary group carries `status` (applyStatus).
-  if (status) classes.push(`status-${status}`);
+  // Task 173 run-status renders as the corner StatusBadge (below) — collapsed card AND expanded
+  // region. Only the primary group carries `status` (applyStatus), so a host backing >1 group badges once.
   // Hover marks this container — directly, or via one of ITS io ports (an
   // io-port chip marks the port id; the owner box rings so the port is
   // findable even when its rows aren't rendered).
@@ -187,6 +187,8 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
 
   return (
     <div className={classes.join(" ")} style={kindStyle}>
+      {/* Live run-status — the corner badge (Task 173); lights the host group on collapsed card + expanded region. */}
+      <StatusBadge status={status} />
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
       {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}
@@ -204,7 +206,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
           also focus the container; the dblclick stop keeps a fast double-press
           on the button from ALSO firing the node-level dblclick toggle (net
           no-op flicker). */}
-      <ChipRail node={showTitle ? hostNode : null}>
+      <ChipRail node={showTitle ? hostNode : null} shifted={!!status}>
         <span
           className="group-toggle"
           title={`${countLabel} — ${collapsed ? "expand" : "collapse"}`}

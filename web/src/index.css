@@ -514,43 +514,55 @@ button.active {
 }
 
 /* ---------- live execution overlay (Task 173) ---------- */
-/* A status RING on a node (outline, not box-shadow, so it coexists with the focus ring and never
-   shifts layout). pending = no class = no styling, so an idle canvas is unchanged. running pulses. */
-.node.status-running,
-.group.status-running {
-  outline: 2px solid #6ea8fe;
-  outline-offset: 1px;
-  animation: pflow-run-pulse 1.1s ease-in-out infinite;
+/* The corner run-status BADGE (StatusBadge.tsx) — an n8n-style overlay at the node's top-right.
+   The single per-node status surface: it replaced the status border RING (a green "done" border
+   read as confusing) AND the ChipRail's formerly-reserved status slot. pending = no badge, so an
+   idle canvas is unchanged. It overhangs the corner; the halo punches it off the node border. */
+.status-badge {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 10;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  pointer-events: none;
+  /* Halo in the canvas void: a #0d0d0d LITERAL (not `var(--bg)` — that token is chrome-scoped to
+     #0d0d0d but resolves to the :root #0f1117 on the canvas layer; see web/CLAUDE.md chrome note). */
+  box-shadow:
+    0 0 0 2.5px #0d0d0d,
+    0 1px 4px rgb(0 0 0 / 50%);
 }
-.node.status-success,
-.group.status-success {
-  outline: 2px solid #3fb950;
-  outline-offset: 1px;
+.status-badge svg {
+  width: 14px;
+  height: 14px;
 }
-.node.status-cached,
-.group.status-cached {
-  outline: 2px solid #8b949e;
-  outline-offset: 1px;
+.status-badge.status-running {
+  background: #6ea8fe;
 }
-.node.status-failed,
-.group.status-failed {
-  outline: 2px solid var(--danger);
-  outline-offset: 1px;
+.status-badge.status-success {
+  background: #3fb950;
 }
-/* `stopped` (Task 173 flock): a node still running when the run's process died — amber, NOT pulsing
-   (it's halted, not working). Distinct from failed (the node itself errored). */
-.node.status-stopped,
-.group.status-stopped {
-  outline: 2px solid #d29922;
-  outline-offset: 1px;
+.status-badge.status-cached {
+  background: #8b949e;
 }
-@keyframes pflow-run-pulse {
-  0%,
-  100% {
-    outline-color: #6ea8fe;
-  }
-  50% {
-    outline-color: rgb(110 168 254 / 30%);
+.status-badge.status-failed {
+  background: var(--danger);
+}
+/* `stopped` (Task 173 flock): the run's process died while this node was still running — amber. */
+.status-badge.status-stopped {
+  background: #d29922;
+}
+.status-badge.status-running svg {
+  animation: pflow-badge-spin 1s linear infinite;
+}
+@keyframes pflow-badge-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 /* The run-outcome banner — top-right so it never collides with the centered reload-banner. */
@@ -1269,9 +1281,10 @@ button.active {
    Behavior modifiers (loop amber / batch purple) + the group's merged count-expander,
    straddling the TOP border, right-aligned — in BOTH container states (header-parity:
    nothing moves across the fold). Grammar: ROUND/capsule tinted chip = info; the one
-   SQUARE element (.group-toggle) = button. Reserved as the future overlay's status-
-   chip home (status joins leftmost). The rail extends 11px above the box; ELK doesn't
-   know — same straddle the old group-pill had, no layout impact. */
+   SQUARE element (.group-toggle) = button. (Live run-status is NOT here — it shipped as
+   the corner `.status-badge` overlay, Task 173; this rail's old "status-chip slot" was
+   retired.) The rail extends 11px above the box; ELK doesn't know — same straddle the old
+   group-pill had, no layout impact. */
 .chip-rail {
   position: absolute;
   top: -11px;
@@ -1280,6 +1293,12 @@ button.active {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+/* When a corner StatusBadge overhangs the top-right (Task 173), shift the rail left so its
+   rightmost chip / count-expander clears the badge (~9px gap). Applied only when the node
+   carries a run-status badge — a badge-less node keeps the chips at the corner. */
+.chip-rail.shifted {
+  right: 22px;
 }
 .chip {
   display: inline-flex;

@@ -12,7 +12,13 @@ components in `edges/`.
 **Registered (every one must be `memo()`'d):** `nodes/` → `WorkflowNode` (`type:"node"`),
 `GroupNode` (`group`), `IOCardNode` (`io`), `EndNode` (`end`); `edges/` → `GradientEdge`
 (`gradient`), `DataEdge` (`data`), `LoopEdge` (`loop`). Plus `BranchPorts`, `PortRows`,
-`ChipRail` (under `nodes/`), `EdgeHalo`/`arrow.ts` (under `edges/`). **Panels:** `ReadPanel`,
+`ChipRail`, `StatusBadge` (under `nodes/`), `EdgeHalo`/`arrow.ts` (under `edges/`).
+`StatusBadge` is the corner run-status overlay (Task 173): the ONE per-node live-status
+surface (running/success/cached/failed/stopped), keyed off `LeafData/GroupData.status`
+(set by `applyStatus`) — pending = absent = no badge. It replaced the status border ring
+and the ChipRail's old status slot; three node surfaces now coexist — corner StatusBadge
+(live run-status), ChipRail chips (static behavior modifiers + the count button), inline
+`.badge` pills (static structural markers). **Panels:** `ReadPanel`,
 `EdgePanel`, `IoPanel`, `Chip` (+ `ConnectionSections`), `PanelHeader`, `BatchItems`,
 `Markdown`, `CodeBlock`. **Shell:** `Toolbar`, `ErrorBoundary`, `PanelResizer`, `SourcePane`,
 `interaction.ts` (the click-callback context + hover-set channel — keeps node `data`
@@ -79,8 +85,9 @@ region (workflow magenta, batch purple) with handles still at the icon column + 
 but NO ELK port (the compound-port crash — see graph/). Icon is always the host's KIND
 (`groupIconFor`); behavior rides the rail. The `ChipRail` straddles the top border in both
 states: loop = amber ↻, batch = `×{count}`/`×N` (count statically unknowable → the source rides
-the tooltip), + the group count-expander (the one SQUARE chip = button; round = info). It's the
-reserved home for future overlay status chips. `.node.compact/.detailed` are BOTH
+the tooltip), + the group count-expander (the one SQUARE chip = button; round = info). Live
+run-status is NOT here — it ships as the corner `StatusBadge` (below); the rail's old
+"reserved status-chip slot" was retired (Task 173). `.node.compact/.detailed` are BOTH
 `overflow: visible` for it (detailed was silently clipping the deck). Batch cards + `.batched`
 leaves draw a stacked DECK via pseudo-elements.
 

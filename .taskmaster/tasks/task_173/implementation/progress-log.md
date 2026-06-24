@@ -665,3 +665,75 @@ files); 1 Critical + 1 Warning confirmed and FIXED; 1 Warning disputed.
 **Gates after fixes (all green):** `make test` **8145** (+2 Python: clean-finish race guard + snapshot-stopped);
 `make check` clean (mypy 238); vitest **572** (+1); strict `tsc`. Browser-re-verified the killed-run→stopped
 path under the new confirming-read.
+
+## 2026-06-24 — UI polish: corner status BADGES replace the border ring (+ chip-rail shift)
+
+The first of the user's UI-polish items (the overlay's *visual* status treatment). The user found
+the **border ring confusing** — a success-green border on a node read as "is this node green by
+identity or by status?" (acute for a non-green kind: an HTTP node, blue by kind, turned green-bordered
+on success). They asked for **n8n-style corner badges** instead (ref images: a red `!` error badge; a
+spinning-arrows running marker; a checkmark for done).
+
+### Decisions (with the user, via AskUserQuestion + an HTML prototype)
+- **Badge-only — drop ALL status border rings.** The corner badge is the single per-node status
+  surface. (Chosen over "badge + keep a subtle running pulse" and "badge + faint rings".)
+- **Glyphs:** running = two spinning arrows (CSS-rotated); success = green check; failed = red `!`
+  (the Image #1 ref); stopped = amber stop-square; cached = grey check; pending = no badge.
+- **Relate-to-existing-badges plan (the user explicitly asked "how do these relate to the current
+  badges?").** Enumerated the 5 existing surfaces (ChipRail chips; inline `.badge` pills; the status
+  rings; the run-banner; the catalog running-dot). The coherence call: the corner badge **supersedes
+  the ChipRail's reserved status-chip slot** (the formerly-planned Phase 4 "ChipRail status chip" is
+  **DROPPED** — the corner badge solves the same expanded-region-visibility problem). Net: **three
+  distinct node surfaces** now — corner StatusBadge (live run-status) · ChipRail (static behavior
+  modifiers + the one count-expander button) · inline `.badge` pills (static structural markers).
+  Updated the 4 "reserved for status" docs (`ChipRail.tsx`, the `index.css` rail comment,
+  `components/CLAUDE.md`, `web/CLAUDE.md`).
+- **Prototype-before-code:** built a standalone HTML mockup (`scratchpads/.../badge-mockup/index.html`)
+  of all states + the two glyph picks, rendered it via the `shoot` skill on a `file://` URL, and the
+  user picked running-A (spinning arrows) + cached-A (grey check) from it before any real code. (Strong
+  tool-elevation candidate: "prototype a restyle as static HTML → shoot → user picks" — record in
+  `task-review.md`.)
+
+### Chip-rail shift (a follow-up the user spotted)
+When a corner badge overhangs the top-right, the rail's rightmost element (a `×3` batch chip, or a
+group's count-expander) tucked under it (badge on top → clipped). **Fix:** `ChipRail` gains a `shifted`
+prop (`.chip-rail.shifted { right: 22px }`, ~9px clearance), passed `shifted={!!status}` from
+`WorkflowNode`/`GroupNode` — so chips shift left ONLY when a badge is present; a badge-less node keeps
+its chips at the corner.
+
+### Files
+- **NEW** `web/src/components/nodes/StatusBadge.tsx` (+ `.test.tsx`) — the corner overlay; inline SVG
+  glyphs, `color:#fff`, per-status bg in CSS; renders nothing for pending. Memo-free (trivial child of
+  the memo'd node).
+- `WorkflowNode.tsx` / `GroupNode.tsx` — render `<StatusBadge status={status} />` on the node/group
+  root; **removed the now-dead `status-${status}` class push** (rings gone).
+- `index.css` — deleted all `.node/.group.status-*` outline rings + the `pflow-run-pulse` keyframe;
+  added `.status-badge` (corner, halo `#0d0d0d` literal — `var(--bg)` is chrome-scoped) + per-status
+  bg + `pflow-badge-spin`; added `.chip-rail.shifted`.
+- `ChipRail.tsx` — `shifted` prop. Docs: `ChipRail.tsx` / `components/CLAUDE.md` / `web/CLAUDE.md` /
+  the `index.css` rail comment all updated (status slot retired → corner badge).
+- **Frontend-only — NO Python touched** (`make test` 8145 / `make check` hold).
+
+### Verification (real browser, DOM-confirmed via the overlay-status-probe + screenshots)
+- **running** — blue spinning-arrows badge on a leaf (`slow`) AND a sub-workflow host group
+  (`call-child`); others pending/no-badge. DOM: `["status-badge","status-running"]`.
+- **success** — green check on every node + "Run success" banner.
+- **failed** — red `!` (matches Image #1) on `boom` + "Run failed · 1 failed" banner.
+- **ring removed** — proven against the BUILT bundle CSS (no `.node.status-*` outline rule); the green
+  on shell cards is the shell **kind color `#7ee787`** (identity), NOT status.
+- **host group** badge (expanded region) + **child join** via non-empty `ancestor_path`
+  (`child-slow` lit inside the host).
+- **coexistence** — the running badge sits beside the host's ChipRail count-expander with no overlap.
+- **chip shift** — `fanout`'s `×3` chip clears the success badge with a clean gap (the Image #4 fix).
+- **Honestly NOT separately browser-shot** (same `StatusBadge` code path; unit-tested; only color/glyph
+  or mount-identical differ): `stopped` (amber) + `cached` (grey) badges, and the *collapsed* host card.
+
+### Gates
+vitest **572 → 579** (+7: 6 `StatusBadge` + 1 chip-shift), zero regressions; strict `tsc` + `vite build`
+clean. Python untouched.
+
+### Status / artifacts
+**UNCOMMITTED** (awaiting the user's go). Throwaway artifacts (gitignored): `badge-mockup/index.html`,
+`verify/fail-badge-probe.pflow.md` — elevate-or-discard verdict at task end. The remaining D6 phases
+(3c global dashboard → Phase 5 detail panel → pin D1) are unchanged; Phase 4 (ChipRail status chip) is
+now **dropped** (absorbed by the corner badge).

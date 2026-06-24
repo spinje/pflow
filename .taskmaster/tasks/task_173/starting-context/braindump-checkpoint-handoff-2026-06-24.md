@@ -1,8 +1,9 @@
-# Braindump: Task 173 checkpoint handoff (2026-06-24, REWRITTEN at the D6-Phase-1 pause)
+# Braindump: Task 173 checkpoint handoff (2026-06-24, UPDATED post-flock / D6 Phase-3a-3b)
 
-> This file was the *slice → host-node.start* handoff; everything below "Next is the checkpoint" is now
-> DONE and has been replaced. It is now the **D6 Phase-1 pause** handoff. Tacit stuff only — the journey,
-> the DR-1..7 decisions, and the gates are in the files below; this is what ISN'T in them.
+> Living handoff, updated in place. SHIPPED since the original Phase-1 pause: D6 **Phase 1+2** (`/api/runs` +
+> `&run=` pin), **Phase 3a/3b** (catalog running-badge + run selector), and **EXACT `flock` liveness** (which
+> REPLACED the `STALE_RUN_S` heuristic). Tacit stuff only — the journey, the DR-1..7 decisions, and the gates
+> are in the files below; this is what ISN'T in them.
 
 **Read these FIRST, then this:**
 - `.taskmaster/tasks/task_173/implementation/d6-plan.md` — **the authoritative spec for what you're
@@ -18,23 +19,29 @@
 
 ## State in one line
 
-**P1 (join) + P2 (host node.start + group-lighting) + the `--only` fix + the D6 Phase-1 FOUNDATION (the
-shared `scan_traces`/`read_run_status` refactor) are all SHIPPED and COMMITTED** — 3 commits: `1fa6d7a6`
-(slice), `bbc1dd91` (P2 + `--only`), `48d7a24f` (Phase-1 foundation + deep-reviewed `d6-plan.md`). Clean
-tree. Next concrete move: `GET /api/runs` on `scan_traces`.
+**The live-overlay CORE + D6 Phase 1+2 + Phase 3a/3b + EXACT flock liveness are all SHIPPED and COMMITTED.**
+7 Task-173 commits: `c9f31a20` (slice) → `4c036b6d` (host-lighting + `--only` fix) → `29ed2fea` (shared
+scanner foundation) → `01721ca3` (keepalive test) → `075dc825` (`/api/runs` + `&run=` pin) → `05dd6d9c`
+(catalog badge + run selector) → `1bab750c` (flock liveness). Clean tree; `make test` **8145**, `make check`
+clean (mypy 238), vitest **572**, `tsc` clean. **Next: the user's UI-polish items (see the section below),
+THEN Phase 3c global dashboard → Phase 4 ChipRail chip → Phase 5 `/api/run-node` detail panel → pin D1 →
+`task-review.md` + tool-elevation verdict.**
+
+## UI items to address BEFORE the next plan phases (user-identified, 2026-06-24)
+
+> The user flagged these from clicking around the live overlay; they want them done before resuming the
+> Phase 3c/4/5 sequence. **(AWAITING the user's list — to be filled in this handoff before it's final.)**
 
 ## CRITICAL practical facts (would bite immediately)
 
-- **Everything is COMMITTED — clean tree at `48d7a24f`** (`make test` 8132, `make check` clean at commit).
-  The 3 commits: `1fa6d7a6` (slice), `bbc1dd91` (P2 host-lighting + `--only` fix + docs), `48d7a24f` (D6
-  Phase-1 shared scanner + deep-reviewed `d6-plan.md` + this handoff). You start from a clean slate — no
-  uncommitted work to reconcile.
-- **⚠ THE SERVER IMPORTS `run_tailer.py` AT STARTUP — you MUST restart `pflow ui` after any
-  server/tailer code change before browser-verifying.** This bit me with the `--only` fix (the running
-  server had stale code; I started a fresh one on :8766). **The :8766 server currently running has the
-  `--only` fix but NOT the Phase-1 `scan_traces` refactor** — restart it (`pkill -f "pflow ui"` then
-  `uv run pflow ui --no-open --port <port>`) before you trust a browser check of Phase-1 code. (:8765 was
-  killed; only :8766 may still be up.)
+- **Everything is COMMITTED — clean tree at `1bab750c`** (`make test` 8145, `make check` clean, vitest 572).
+  7 Task-173 commits (see "State in one line"). Clean slate — no uncommitted work. NOTE: hashes were rebased
+  since the original handoff — the old `1fa6d7a6`/`bbc1dd91`/`48d7a24f` are now `c9f31a20`/`4c036b6d`/`29ed2fea`.
+- **⚠ THE SERVER SERVES STALE CODE + A STALE BUNDLE until you restart it.** `pflow ui` imports
+  `run_tailer.py`/`server.py` at startup AND serves the *built* `web/` bundle. After ANY server/tailer change
+  → `pkill -f "pflow ui"` then `uv run pflow ui --no-open --port 8765`; after ANY `web/` change →
+  `make ui-build` (+ cache-bust the MCP browser with `&v=<new>`). This is the #1 "why didn't my change show
+  up" trap — it bit me repeatedly across phases.
 - **The authoritative status signal is the DOM `status-*` class, NOT a screenshot.** I built
   `scratchpads/task-173-live-overlay/verify/overlay-status-probe.pflow.md` (reads each node's `status-*`
   class via a chrome-devtools `evaluate_script` node, reusing the skill's `open-and-settle` by ABSOLUTE
@@ -49,30 +56,40 @@ tree. Next concrete move: `GET /api/runs` on `scan_traces`.
   `overlay-status-probe`) and screenshots. The old `producer_check.py`/`tailer_check.py` are superseded by
   committed tests — discard. `slice-probe.pflow.md` is the original template.
 
-## What you're building now (D6 Phase 1+) — the tacit shape
+## Shipped invariants to PRESERVE + remaining-phase traps
 
-`d6-plan.md` has the DR decisions; here's the stuff that bites that the plan states but you'll under-weight:
+`d6-plan.md` has the DR decisions; DR-1 / `/api/runs` / liveness are now SHIPPED — these are the invariants
+NOT to break + the traps for the phases still ahead:
 
-- **DR-1 (the structural one): `ensure_tailer` keys on `workflow_key` ALONE today** (`server.py:146`). A
-  pinned (`&run=`) replay and an unpinned live overlay of one workflow would fight over one tailer. You must
-  re-key on `(workflow_key, run_id|None)` — this is the biggest change in Phase 2, not a tweak. There is
-  **no `_poll_once`** — the poll body is inline in `RunTailer.run()`; branch once on `self._run_id`
-  (pinned skips `discover_live_trace` entirely; resolve `run_id→Path` ONCE via `to_thread`, not every poll).
-  A stale/missing `run_id` → broadcast `run-not-found` (don't sit on an all-`pending` canvas).
-- **`/api/runs` consumes `scan_traces` (the foundation I built), NOT `_iter_workflow_traces`** — the latter
-  does a full `load_trace_file` parse per candidate (defeats the cheap-read goal). The `--only` policy lives
-  in the CALLER: `scan_traces` yields it raw, `/api/runs` LABELS it, `discover_live_trace` EXCLUDES it.
-  `test_scan_traces_yields_raw_candidates_keeping_only_policy_in_callers` pins this — if you ever pull the
-  `--only` filter into `scan_traces`, that test fails loudly. **Don't.**
-- **`/api/run-node` (Phase 5) WILL leak `node_type` if you "return the full event."** Mirror
+- **DR-1 (SHIPPED): tailers are keyed on `(workflow_key, run_id|None)`** (`server.py`
+  `ensure_tailer`/`release_tailer`/`broadcast_run`/`windows_for_run`/`_send_or_evict`; `RunTailer.run()`
+  branches on `self._run_id` — pinned resolves `run_id→Path` ONCE via `_resolve_pinned`, never re-discovers;
+  stale id → `run-not-found`). **Invariant to PRESERVE:** run-events go via run-scoped `broadcast_run`
+  (pinned + unpinned of one workflow must NEVER cross-feed); Point's `broadcast` stays workflow-scoped. And
+  `ensure_tailer` treats a DONE task as ABSENT (the dead-tailer-reuse Critical fix from the Phase-1+2
+  deep-review) — don't undo that liveness check.
+- **`/api/runs` (SHIPPED) consumes `scan_traces`, NOT `_iter_workflow_traces`** (the latter full-parses per
+  candidate). **Invariant to PRESERVE:** the `--only` policy lives in the CALLER — `scan_traces` yields raw,
+  `/api/runs` LABELS `--only`, `discover_live_trace` EXCLUDES it.
+  `test_scan_traces_yields_raw_candidates_keeping_only_policy_in_callers` pins it — never pull the `--only`
+  filter into `scan_traces`.
+- **`/api/run-node` (Phase 5, NOT built) WILL leak `node_type` if you "return the full event."** Mirror
   `run_tailer._run_event` (the GOLD STANDARD — it projects an allowlist + drops `node_type` with a comment)
   and map kind via `node_type_tag()` (`core/node_type_display.py`, verified to exist). The full trace event
   carries `node_type` (Python class name) on EVERY line — a blacklist-by-omission will ship it.
-- **Liveness is a HEURISTIC — don't try to make it exact.** `STALE_RUN_S` (default 60s): not-complete +
-  fresh mtime = live; not-complete + stale = crashed. A slow LLM node (no append for 60s) false-reads as
-  crashed; observe-don't-host forbids process tracking, so this is the best available. Expose RAW facts
-  (`complete`/`final_status`/`live`/`only_node`) and let the UI compose the badge — do NOT invent an
-  `interrupted` wire word (use the producer's `incomplete`/null).
+- **Liveness is now EXACT via `flock` (SHIPPED `1bab750c`) — `STALE_RUN_S` is DELETED; do NOT bring it back.**
+  The producer holds an advisory `flock(LOCK_EX|LOCK_NB)` on its open trace handle for the run's lifetime
+  (`workflow_trace.py::_lock_trace_handle`); the kernel frees it on ANY process exit. The server probes it
+  (`run_tailer.is_trace_locked` — separate-fd `LOCK_NB`); `/api/runs` `live = not complete and
+  is_trace_locked is not False`. An incomplete run with a FREE lock → broadcast `run-stopped` ONCE → the
+  canvas flips dangling `running`→`stopped` (amber). **Subtle bug ALREADY FIXED (don't reintroduce):** a
+  clean `finalize()` landing in the read→probe gap looked like a free-lock crash → `_check_stopped`
+  re-confirms via `read_run_status` (the `run.complete` trailer flushes BEFORE the lock releases, so a free
+  lock + still-incomplete tail = a REAL crash). Caveats baked in: **`flock` not `lockf`** (per-handle / OFD —
+  `lockf` is a per-process footgun); Unix-only with a no-`fcntl` Windows fallback (incomplete=live); local-FS
+  assumption; `is_trace_locked`'s `except OSError: return True` degrades an unsupported FS to always-alive,
+  NOT false-stopped. **`flock` detects DEATH, not HANG** — the alive-but-stuck backstop is the ONLY deferred
+  liveness piece → **GH #538** (re-scoped).
 - **The hash-glob optimization is deferred.** `scan_traces` uses an unscoped `glob("workflow-trace-*.json")`
   + `meta.workflow_path` filter (correct, O(N)). DR-3 mentions a `workflow-trace-{md5(path)[:8]}-*` prefilter
   for `?workflow=X`; if you add it, reuse the producer's EXACT hash (`format_trace_filename` in
@@ -92,8 +109,10 @@ tree. Next concrete move: `GET /api/runs` on `scan_traces`.
   OFF otherwise). The `RunTailer` unit tests sidestep this by hand-writing trace files (`_write_trace`).
 - **Don't "simplify" back:** the distinct `node.start` *kind* (not `event`+`status:running`); the tailer's
   `to_thread` *split* (I/O in thread, parse/state on loop — wrapping the whole poll re-introduces a
-  `snapshot()` race); and `_emit_node_start` (the single-sourced node.start wire shape shared by
-  `begin_node` + `descend` — don't re-duplicate it). All load-bearing.
+  `snapshot()` race); `_emit_node_start` (single-sourced node.start shape shared by `begin_node` + `descend`);
+  and the flock pieces — `flock` not `lockf`, the free-lock `read_run_status` re-confirm (the clean-finish
+  race fix), and `is_trace_locked`'s `except OSError: return True` (unsupported-FS probe → always-alive, NOT
+  false-stopped). All load-bearing.
 - **v1 boundary that is NOT a bug:** a parallel/sequential batch-OF-SUB-WORKFLOWS host + batch ITEMS show
   pending-until-done (they never descend the run collector; workers can't touch it). For a batch that lights
   running, use a batch of LEAF nodes. Don't chase it.
@@ -115,20 +134,27 @@ tree. Next concrete move: `GET /api/runs` on `scan_traces`.
 - **They want reviewed, methodical progress.** They explicitly chose "commit → `/deep-review` the approach →
   build" before a verification-heavy chunk. Bring impactful decisions with reasoning + a recommendation
   (the AskUserQuestion pattern worked every time). They flagged context budget — efficiency-minded.
+- **"Simplicity of the FINAL code" is their literal tie-breaker — they invoke it verbatim to push past
+  band-aids.** On liveness they rejected BOTH heuristics by reasoning it out (fixed-60s → false
+  "interrupted" for LLM nodes; "incomplete=running" reframe → blue-blinks-forever on crash) and asked *"what's
+  the right solution the top 10% of codebases would build — have we considered it?"* → which landed on
+  `flock` (it DELETES code: the heuristic + all the per-node-timeout/retry bookkeeping a deadline approach
+  needs). They also probe relentlessly ("doesn't it just blink forever then?") — answer the failure mode
+  honestly, don't hand-wave. Lesson: when a heuristic feels unsatisfying, they want the exact primitive that
+  makes the final code SIMPLER, not a tuned guess.
 
 ## NEEDS VERIFICATION / still-unverified (the honest list)
 
-The fork pass verified a LOT (nesting, node_id collision, loops, branching, run-reset at the wire level,
-crash, degraded, cached, 64-queue under a bursty 60-node run). **Still NOT driven in a real browser** (low
-risk, mechanism sound — but the user will ask):
+Since the original list: **flock death-detection IS now browser-verified** (`kill -9` mid-node → `stopped`,
+no forever-blink; a 67s-silent node stays `live`), and **concurrent runs now have the `&run=` pin** as the
+fix. **Still NOT driven in a real browser** (low risk, mechanism sound — but the user WILL ask):
 - **Looped SUB-WORKFLOW host** flipbook (looped leaf + nested host tested separately, not combined).
-- **Genuinely simultaneous concurrent runs** of one workflow (tested sequential A→B; the unpinned default
-  picks newest-by-mtime among live and can flicker — DR-1/the pin is the fix).
 - **`status-cached` for a real LLM node** (used a `code` node with `cache:true`; no API key).
-- **In-page run-reset VISUAL** (proved at the SSE-wire level + fresh-page-follows-B, not one persistent page
-  resetting live).
-- The **expanded-region running ring is subtle** (the ChipRail status chip, Phase 4, is the fix — folded
-  into the Phase-3 group work).
+- **The in-place dropdown→pin SWAP as one live click** (covered by composition: `RunSelector` `onSelect` unit
+  test + the Phase-2 `&run=` browser proof — but not one continuous gesture).
+- **In-page run-reset / run-stopped VISUAL on ONE persistent page** (proved at the SSE-wire level + a
+  fresh-page reload; not a single page transitioning live).
+- The **expanded-region running ring is subtle** → the **ChipRail status chip (Phase 4)** is the fix.
 `d6-plan.md`'s 6 manual-test scenarios cover most of these — close them as you build the surfaces.
 
 ## What I'd tell myself
@@ -143,14 +169,22 @@ risk, mechanism sound — but the user will ask):
 
 ## For the next agent
 
-1. **Start by** reading `d6-plan.md` (DR-1..7) + the last 3 progress-log sections. Clean tree at
-   `48d7a24f` — restart the UI server (the running one has stale `run_tailer` code) before any browser check.
-2. **First move:** `GET /api/runs` on `scan_traces` (label `--only`, non-200 on scan error, `200+[]` for
-   zero runs, include inline `ir-hash:` runs by name) — then the `&run=` pin (DR-1 tailer re-keying), then
-   the 3 surfaces + the ChipRail chip, then `/api/run-node` (DR-4 projection).
-3. **The user cares most about:** the overlay actually working in a real browser (DOM-verified), being
-   brought into impactful decisions with your reasoning, and honest accounting of what you HAVEN'T verified.
-   Keep the progress log updated as you go; commit green milestones (ask first).
+1. **Start by** reading `d6-plan.md` (DR-1..7 — still the spec for the remaining surfaces) + the last few
+   progress-log sections (Phase 1+2, 3a/3b, flock + its deep-review). Clean tree at `1bab750c`. Restart
+   `pflow ui` + `make ui-build` before ANY browser check (see the stale-server trap above).
+2. **First move: the user's UI-polish items ("UI items to address" section above) — those come BEFORE the
+   next plan phases.** Then the remaining D6/closeout in order: **Phase 3c** global dashboard (`?view=runs`,
+   DR-7) → **Phase 4** ChipRail status chip (also fixes the subtle expanded-region ring) → **Phase 5**
+   `/api/run-node` detail panel (DR-4 allowlist projection — the `node_type`-leak trap above) → **pin D1** →
+   **`task-review.md`** + the tool-elevation verdict (the DOM-status-probe + drive-a-live-run loop is the
+   strong elevate candidate).
+3. **The user cares most about:** the overlay working in a real browser (DOM-verified, not just green tests);
+   being brought into impactful decisions with your reasoning + a recommendation (the AskUserQuestion
+   pattern); honest accounting of what you HAVEN'T verified; and simplicity of the FINAL code. Commit green
+   milestones — **ASK first** (NEVER `git commit` unprompted).
+4. **Cleanup owed:** remove the temp saved workflow `~/.pflow/workflows/zzz-badge-probe` (a sandbox blocked
+   the `rm`) + kill any leftover background `sleep` runs from the demo. The showcase workflows under
+   `scratchpads/task-173-live-overlay/showcase/` are demo artifacts (elevate-or-discard at task end).
 
 ---
 

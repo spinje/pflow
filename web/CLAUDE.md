@@ -98,9 +98,10 @@ Tests sit beside their subject.
 - **Predicates are Python facts; visual policy is TS.** `is_decision`/`is_terminal`/`shadowed`/
   `is_transform` ship as booleans from the contract; the frontend decides treatment. Don't
   re-derive them in JS.
-- **Overlay-ready seam.** Node components keep static data separate from a future `status`
-  prop; `api/events.ts` owns the vocabulary-agnostic SSE envelope. Point messages use it
-  today; a future run overlay adds message types without defining them here. Every React Flow
+- **Overlay seam (Task 173, shipped).** Node `data` keeps static structure separate from the
+  live `status` prop (`LeafData/GroupData.status`, set by `applyStatus`); it renders as the
+  corner `StatusBadge` (NOT a border ring, NOT a ChipRail chip — both retired). `api/events.ts`
+  owns the vocabulary-agnostic SSE envelope (Point + `run-*` message types). Every React Flow
   component the registries reference must be `memo()`'d.
 - **Chrome palette is SCOPED, never `:root`.** The dark UI tokens (`--bg/--border/--text/
   --accent/--bg-field`, surface ladder `#0d0d0d` void < `#151515` panel < `#1c1c1c` field) are
