@@ -16,6 +16,9 @@ import { RailSearch } from "./RailSearch";
 import type { RFNode } from "../types";
 
 interface RailProps {
+  // Task 173 D6: the run/status control for the reserved TOP slot (the RunSelector). An opaque node so
+  // the Rail stays decoupled from run state; present → the rail shows even with no search/toggles/focus.
+  runControl?: ReactNode;
   sourceOpen?: boolean;
   showSourceToggle?: boolean;
   // groupCount is the COLLAPSIBLE group total (the toggle hides at 0); openCount
@@ -69,11 +72,15 @@ export function Rail(props: RailProps): JSX.Element | null {
   const groupsExpanded = props.openCount > 0;
 
   // Nothing to offer (e.g. the error state) → no empty capsule. The back nav
-  // lives in the Toolbar, so the rail is purely search + contextual toggles + focus.
-  if (!showSearch && !showSource && !showGroups && !props.focused) return null;
+  // lives in the Toolbar, so the rail is purely the run control + search + contextual toggles + focus.
+  const showRun = Boolean(props.runControl);
+  if (!showRun && !showSearch && !showSource && !showGroups && !props.focused) return null;
 
   return (
     <nav className="rail" aria-label="Workflow controls">
+      {/* Task 173 D6: the run selector occupies the reserved TOP slot (web/CLAUDE.md). */}
+      {props.runControl}
+      {showRun && (showSearch || showSource || showGroups || props.focused) && <div className="rail-sep" />}
       {showSearch && <RailSearch nodes={props.searchNodes!} onSelect={props.onSelectNode!} />}
       {showSearch && (showSource || showGroups || props.focused) && <div className="rail-sep" />}
 

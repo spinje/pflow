@@ -571,6 +571,113 @@ button.active {
   border-color: var(--danger);
 }
 
+/* Catalog "● running" badge (Task 173 D6) — a pulsing dot + label on a workflow with a live run. */
+.catalog-item-running {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6ea8fe;
+  white-space: nowrap;
+}
+.catalog-item-running .run-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #6ea8fe;
+  animation: pflow-dot-pulse 1.1s ease-in-out infinite;
+}
+@keyframes pflow-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Run selector (Task 173 D6) — the rail's top-slot run control + its dropdown of this workflow's runs. */
+.run-selector {
+  position: relative;
+}
+.run-selector .rail-button.active {
+  color: #6ea8fe; /* a pinned run (viewing a specific run, not following live) */
+}
+.run-menu {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 0;
+  z-index: 9;
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+.run-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+.run-menu-item:hover,
+.run-menu-item.selected {
+  background: var(--bg-raised);
+}
+.run-menu-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.run-menu-time {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.run-menu-check {
+  color: var(--accent);
+}
+.run-menu-empty {
+  padding: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.run-mark {
+  width: 14px;
+  text-align: center;
+  flex: none;
+}
+.run-mark.run-live {
+  color: #6ea8fe;
+}
+.run-mark.run-success {
+  color: #3fb950;
+}
+.run-mark.run-failed {
+  color: var(--danger);
+}
+.run-mark.run-degraded {
+  color: #d29922;
+}
+.run-mark.run-stale {
+  color: #8b949e;
+}
+
 /* ---------- react flow surface ---------- */
 .react-flow {
   background: var(--bg);

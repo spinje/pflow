@@ -3,13 +3,16 @@
 
 import { useEffect, useState } from "react";
 
-import { ApiError, fetchCatalog } from "../api/client";
+import { ApiError, fetchCatalog, fetchRuns } from "../api/client";
 import { Markdown } from "../components/Markdown";
 import type { CatalogItem } from "../types";
 
 export function CatalogView({ onOpen }: { onOpen: (workflow: string) => void }): JSX.Element {
   const [items, setItems] = useState<CatalogItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Task 173 D6: the absolute paths of workflows with a LIVE run, so we can flag them "● running".
+  // Its OWN fetch + catch (DR-6) — a runs-fetch failure simply shows no badges, never blanks the catalog.
+  const [liveWorkflows, setLiveWorkflows] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -20,6 +23,12 @@ export function CatalogView({ onOpen }: { onOpen: (workflow: string) => void }):
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof ApiError ? e.message : String(e));
       });
+    fetchRuns()
+      .then((runs) => {
+        if (cancelled) return;
+        setLiveWorkflows(new Set(runs.filter((r) => r.live && r.workflow_path).map((r) => r.workflow_path as string)));
+      })
+      .catch(() => undefined); // DR-6: no badge on failure; the catalog itself is unaffected
     return () => {
       cancelled = true;
     };
@@ -44,7 +53,14 @@ export function CatalogView({ onOpen }: { onOpen: (workflow: string) => void }):
         {items?.map((item) => (
           <li key={item.path}>
             <button className="catalog-item" onClick={() => onOpen(item.name)}>
-              <span className="catalog-item-name">{item.name}</span>
+              <span className="catalog-item-name">
+                {item.name}
+                {liveWorkflows.has(item.path) && (
+                  <span className="catalog-item-running" title="A run is in progress">
+                    <span className="run-dot" aria-hidden /> running
+                  </span>
+                )}
+              </span>
               {/* inline-only markdown: bold/code render, block constructs
                   flatten — one row must stay one flowing line */}
               {item.description && (

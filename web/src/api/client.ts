@@ -2,7 +2,7 @@
 // future live-run overlay (Task 168 deferred increment) adds an events
 // subscription HERE — the components never learn where data comes from.
 
-import type { ApiErrorBody, CatalogItem, RFGraph, SourceFiles } from "../types";
+import type { ApiErrorBody, CatalogItem, RFGraph, RunInfo, SourceFiles } from "../types";
 
 /** A structured /api failure (400 missing param / 422 validation). Carries the
  *  server's diagnostics so the UI can render them instead of a blank canvas. */
@@ -95,4 +95,20 @@ export async function fetchSource(workflow: string): Promise<SourceFiles> {
     throw new ApiError(response.status, [{ message: "The server returned an unexpected source shape." }]);
   }
   return body;
+}
+
+/** Runs from the trace dir (Task 173 D6). No arg → every run; `workflow` → that workflow's history.
+ *  Each consumer (catalog badge, run selector, dashboard) owns its own catch (DR-6) so a runs-fetch
+ *  failure degrades that one surface, never blanks the page. */
+export async function fetchRuns(workflow?: string): Promise<RunInfo[]> {
+  const url = workflow ? `/api/runs?workflow=${encodeURIComponent(workflow)}` : "/api/runs";
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+  const body = (await response.json()) as unknown;
+  if (!Array.isArray(body)) {
+    throw new ApiError(response.status, [{ message: "The server returned an unexpected runs shape." }]);
+  }
+  return body as RunInfo[];
 }

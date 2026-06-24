@@ -45,6 +45,22 @@ export interface RunComplete {
   failed_node_ids?: string[];
 }
 
+// One run from GET /api/runs (Task 173 D6) — the catalog running-indicator + the run selector read this.
+// RAW facts (the UI composes the badge): `complete` has a run.complete trailer; `final_status` is that
+// trailer's outcome or null while not complete; `live` = not complete AND fresh mtime; `only_node` labels
+// an --only run. `workflow_path` is null for inline/stdin/MCP runs (no file).
+export interface RunInfo {
+  run_id: string;
+  workflow_name: string;
+  workflow_path: string | null;
+  start_time: string;
+  complete: boolean;
+  final_status: string | null;
+  live: boolean;
+  only_node: string | null;
+  trace_file: string;
+}
+
 export interface RFParam {
   name: string;
   // JSON-able authored value: string (incl. full prompt/code), number, bool,

@@ -531,8 +531,54 @@ nullability, the live/finished snapshot→delta catch-up, `broadcast_run` evicti
 list), closure capture, the thread/loop split, `release_tailer` ref-counting, the sync `runs()` handler, the
 DR-6 `200+[]` softening (sound + documented), frontend `runId` stability.
 
+### Liveness exactness — basic flock built NOW; hang backstop → GH #538
+
+User pushed on the `STALE_RUN_S=60s` heuristic: a real LLM node (120s default timeout) or claude-code node
+(300s) running >60s false-reads "interrupted" / loses its catalog badge. Reasoned it through: a pure
+"incomplete = running" reframe just flips the failure (a crashed run blinks blue forever). Conclusion
+(by the simplicity-of-final-code principle): the right fix is an **`flock` advisory lock on the trace
+handle** (kernel = exact source of truth for death; deletes `STALE_RUN_S` + all the per-node-timeout/retry
+bookkeeping a deadline approach would need). Verified the producer holds the trace handle open for the whole
+run (so the lock rides it), every node type is bounded (no unbounded node), and `Node._exec` retries are
+invisible in the trace (silent during backoff).
+
+**Decision (user, after weighing drawbacks):** build the **basic flock NOW** (this branch) — exact
+death-detection replacing `STALE_RUN_S`. The **only** deferred piece is the **hang-protection staleness
+backstop** for the rare *alive-but-stuck* process (`flock` detects death, not hang) → re-scoped into **GH
+#538**. Drawbacks carried into the build: Unix-only (`fcntl`) + Windows fallback, local-FS assumption,
+`flock` (per-handle) NOT `lockf` (per-process footgun), probe on `asyncio.to_thread`, a frontend "stopped"
+state for the exact death signal.
+
 **Gates after fixes (all green):** `make test` **8140** (8132 + 8 Python: +2 tailer pin, +5 runs/broadcast,
 +1 dead-tailer regression); `make check` clean (mypy 238); vitest **564** (561 + 3); strict `tsc`. **Browser
 re-verified** (rebuilt bundle + restarted server): pinned GOOD run still lights `first/second/third`
 `status-success` (the `ensure_tailer` fix didn't regress the happy path); the new run-not-found banner
 renders with the id + both causes + recovery (`/tmp/pflow-shots/runs-probe-typo-xyz-123-*.png`).
+
+## 2026-06-24 — D6 Phase 3a+3b: catalog running-badge + run selector (browser-verified)
+
+The first two run-discovery surfaces, on the `/api/runs` data layer (Phase 1+2). Frontend-only — no Python
+touched, so the Python gates hold.
+
+- **3a — catalog "● running" badge** (`CatalogView`): a second `/api/runs` fetch (its OWN catch, DR-6 — a
+  failure shows no badge, never blanks the catalog), filtered to `live`, matched by absolute
+  `workflow_path` → a pulsing dot on running workflows.
+- **3b — run selector** (`RunSelector`, in the Rail's reserved top slot): lists this workflow's runs
+  (`/api/runs?workflow=X`) with status marks composed from the RAW facts (running ● / success ✓ / failed ✗ /
+  `--only` ⊘). Picking a finished run **pins** it (`&run=`, the Phase-2 mechanism) → the overlay swaps
+  **in place** (no reload, camera/focus kept); "● Live — follow newest" un-pins. `runId` moved from a
+  mount-time `useMemo` to `useState`, written to the URL via `writeViewParams({run})`; the SSE effect
+  re-subscribes on `runId` change (the dep was already wired in Phase 2).
+- **Plumbing:** `RunInfo` type; `fetchRuns` in `client.ts`; `writeViewParams` gained `run`; `Rail` gained an
+  opaque `runControl` top slot; `_send_or_evict` (Phase-1+2 review) untouched.
+- **Tests:** `RunSelector.test.tsx` (run-mark mapping, fetch-on-open, pin/unpin callbacks, empty list) +
+  `CatalogView.test.tsx` (badge matched-by-path, DR-6 no-badge-on-failure). vitest **570** (564 + 6).
+- **Browser-verified:** catalog badge live (`/shoot` — `zzz-badge-probe ● running`); Rail shows the run
+  control top-slot; the dropdown lists runs with correct marks (skill `click` workflow). Pin end-state was
+  DOM-verified in Phase 2; the in-place dropdown→swap is covered by composition (RunSelector `onSelect` unit
+  test + the Phase-2 `&run=` browser proof).
+
+Gates: vitest **570** + strict `tsc` clean; Python unchanged (`make test` 8140 / `make check` clean hold).
+
+**Next:** basic **flock** liveness (this branch — see the liveness section above; hang backstop → #538), then
+Phase 3c global dashboard, Phase 4 ChipRail chip, Phase 5 detail panel.

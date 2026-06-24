@@ -48,6 +48,7 @@ import { nodeTypes } from "../components/nodes";
 import { PanelResizer } from "../components/PanelResizer";
 import { Rail } from "../components/Rail";
 import { ReadPanel } from "../components/ReadPanel";
+import { RunSelector } from "../components/RunSelector";
 import { SourcePane } from "../components/SourcePane";
 import { Toolbar } from "../components/Toolbar";
 
@@ -87,7 +88,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // run, or watch one of N concurrent runs) instead of the unpinned "follow newest live" overlay. Read
   // once at mount (changing it reloads the page in v1); `runMissing` shows when the pinned id resolves
   // to no trace (stale bookmark / rotated file).
-  const runId = useMemo(() => new URLSearchParams(window.location.search).get("run") || null, []);
+  const [runId, setRunId] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get("run") || null,
+  );
   const [runMissing, setRunMissing] = useState(false);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
@@ -196,11 +199,29 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
 
   // Mirror a density/direction toggle into the URL (replaceState so flips don't spam
   // the back button), preserving every other param (workflow, node).
-  const syncUrl = useCallback((patch: { direction?: Direction; density?: Density; source?: boolean }) => {
-    const url = new URL(window.location.href);
-    url.search = writeViewParams(window.location.search, patch);
-    window.history.replaceState({}, "", url);
-  }, []);
+  const syncUrl = useCallback(
+    (patch: { direction?: Direction; density?: Density; source?: boolean; run?: string | null }) => {
+      const url = new URL(window.location.href);
+      url.search = writeViewParams(window.location.search, patch);
+      window.history.replaceState({}, "", url);
+    },
+    [],
+  );
+  // Task 173 D6: pick a run to view — a run_id PINS it (replay, or watch one of N live runs via &run=);
+  // null = follow the newest live run (unpinned). In-place: only the overlay status swaps — the graph,
+  // camera, focus, and collapse all stay (no ELK re-layout). `?run=` is written to the URL (shareable +
+  // survives reload). Clear prior run-state synchronously so the switch never flashes the old run's status;
+  // the re-subscribe (the SSE effect depends on runId) repopulates from the new run's snapshot/deltas.
+  const selectRun = useCallback(
+    (next: string | null) => {
+      setRunId(next);
+      syncUrl({ run: next });
+      setRunStatus(new Map());
+      setRunBanner(null);
+      setRunMissing(false);
+    },
+    [syncUrl],
+  );
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   // The read panel's source-link click: open the pane (if closed) and bump a
   // counter so SourcePane re-scrolls to the selected node's line even when it's
@@ -583,6 +604,12 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const graphReady = graph !== null;
   useEffect(() => {
     if (!graphReady) return;
+    // A (re)subscribe starts clean: clear any prior run's status so switching WORKFLOW (or run) never
+    // briefly paints the previous run's state onto this graph before the new snapshot arrives. The new
+    // subscription repopulates via its snapshot/deltas. (selectRun also clears synchronously for no flash.)
+    setRunStatus(new Map());
+    setRunBanner(null);
+    setRunMissing(false);
     return subscribe(workflow, {
       focus: (target) => pointHandlers.current?.focus(target),
       frame: (target) => pointHandlers.current?.frame(target),
@@ -651,6 +678,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // it has nothing to show (the back nav lives in the toolbar).
   const rail = (showSourceToggle: boolean): JSX.Element => (
     <Rail
+      runControl={<RunSelector workflow={workflow} runId={runId} onSelect={selectRun} />}
       sourceOpen={sourceOpen}
       showSourceToggle={showSourceToggle}
       groupCount={collapsibleIds.length}
