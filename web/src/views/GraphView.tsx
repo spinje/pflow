@@ -217,6 +217,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // the re-subscribe (the SSE effect depends on runId) repopulates from the new run's snapshot/deltas.
   const selectRun = useCallback(
     (next: string | null) => {
+      // Re-picking the CURRENT selection is a no-op. Clearing run-state here relies on the SSE effect
+      // (deps include runId) to repopulate from the new run's snapshot — but an UNCHANGED runId never
+      // re-fires it, so we'd wipe the overlay markers with nothing to refill them. Only a genuine switch
+      // tears down + rebuilds. (The menu still closes: RunSelector.pick owns that, independent of onSelect.)
+      if (next === runId) return;
       setRunId(next);
       syncUrl({ run: next });
       setRunStatus(new Map());
@@ -224,7 +229,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       setRunMissing(false);
       setRunStopped(false);
     },
-    [syncUrl],
+    [runId, syncUrl],
   );
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   // The read panel's source-link click: open the pane (if closed) and bump a

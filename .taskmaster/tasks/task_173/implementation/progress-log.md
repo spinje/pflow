@@ -737,3 +737,28 @@ clean. Python untouched.
 `verify/fail-badge-probe.pflow.md` — elevate-or-discard verdict at task end. The remaining D6 phases
 (3c global dashboard → Phase 5 detail panel → pin D1) are unchanged; Phase 4 (ChipRail status chip) is
 now **dropped** (absorbed by the corner badge).
+
+## 2026-06-24 — UI-polish item: RunSelector re-pick wiped the overlay (user-found, fixed)
+
+The user, walking the live overlay, found: pick a run from the RunSelector, then pick the SAME run again →
+the node status markers vanish. **Root cause:** `selectRun` (`GraphView.tsx`) unconditionally cleared
+`runStatus` (+ banner/missing/stopped) and relied on the SSE re-subscribe effect (deps `[graphReady,
+workflow, runId]`) to repopulate from the new run's snapshot. Re-picking the SAME run leaves `runId`
+UNCHANGED → `setRunId(same)` is a React no-op → the effect never re-fires → the markers are wiped with
+nothing to refill them (same for re-clicking "Live — follow newest" while already unpinned).
+
+**Fix:** a one-line guard — `if (next === runId) return;` at the top of `selectRun` (+ `runId` added to its
+deps). Re-picking the current selection is now a no-op; the menu still closes (`RunSelector.pick` owns that,
+independent of `onSelect`); a genuine switch to a different run is unaffected (runId changes → effect re-fires
+→ repopulates).
+
+**Regression test** (`GraphView.test.tsx`, the first run-overlay coverage in this file): a faithful jsdom
+repro — start pinned to `r1`, light `greet` via a `runEvents` snapshot, re-pick `r1` from the menu, assert
+the `run status: success` badge survives. **Mutation-verified:** commenting out the guard makes it fail
+(badge gone) — it catches THIS bug, not something incidental.
+
+**Gates:** strict `tsc` clean; vitest **580** (579 + 1); Python untouched (frontend-only). **Process note:**
+the user first re-tested against a STALE bundle (I'd changed source but not run `make ui-build` + restarted
+`pflow ui`) → "it didn't work"; the fix was correct, it just wasn't deployed. Rebuilt + restarted (also
+force-killed two stuck `pflow ui` processes pegging CPU since earlier) → user confirmed working in the browser.
+Lesson re-learned: a `web/` source change is invisible until rebuild + server restart.

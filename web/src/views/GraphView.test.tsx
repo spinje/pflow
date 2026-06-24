@@ -17,7 +17,7 @@ import type { RFGraph } from "../types";
 // error contract (not a fabricated shape) is what the banner test exercises.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn() };
+  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn() };
 });
 const live = vi.hoisted(() => ({
   handlers: null as import("../api/events").PointHandlers | null,
@@ -64,7 +64,8 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
-import { ApiError, fetchGraph, fetchSource } from "../api/client";
+import { ApiError, fetchGraph, fetchRuns, fetchSource } from "../api/client";
+import type { RunHandlers } from "../api/events";
 import { layoutGraph } from "../graph/layout";
 import { highlight } from "../utils/highlight";
 import { GraphView } from "./GraphView";
@@ -154,6 +155,7 @@ beforeEach(() => {
     }),
   });
   vi.mocked(fetchGraph).mockReset();
+  vi.mocked(fetchRuns).mockReset();
   vi.mocked(fetchSource).mockReset();
   vi.mocked(fetchSource).mockResolvedValue({
     root: "/wf.pflow.md",
@@ -189,6 +191,48 @@ describe("GraphView mount", () => {
     // Advanced adds the body: the dynamic param's ${ref} connection chip.
     fireEvent.click(screen.getByText("advanced"));
     await waitFor(() => expect(screen.getByText("greet.stdout")).toBeTruthy());
+  });
+
+  it("re-picking the already-pinned run is a no-op — it must NOT wipe the overlay markers", async () => {
+    // Regression (Task 173, RunSelector bug): selectRun cleared runStatus and relied on the SSE effect
+    // (deps include runId) to repopulate from the new run's snapshot. But re-picking the SAME run leaves
+    // runId UNCHANGED, so the effect never re-fires — the markers were wiped with nothing to refill them.
+    // The guard makes re-selecting the current run a no-op. Faithful repro: start pinned to r1, light a
+    // node, re-pick r1 from the menu, assert the marker survives.
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([
+      {
+        run_id: "r1",
+        workflow_name: "demo",
+        workflow_path: "/wf.pflow.md",
+        start_time: "2026-06-24T20:00:00Z",
+        complete: true,
+        final_status: "success",
+        live: false,
+        only_node: null,
+        trace_file: "/t/r1.json",
+      },
+    ]);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1"); // runId reads ?run= once at mount
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+
+      // The pinned run's snapshot lights `greet` success — the overlay marker we must not lose.
+      const run = live.handlers as unknown as RunHandlers;
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
+      await waitFor(() => expect(screen.getByLabelText("run status: success")).toBeTruthy());
+
+      // Re-pick r1 (already the pinned run): open the Runs menu and click it again.
+      fireEvent.click(screen.getByLabelText("Runs"));
+      fireEvent.click(await screen.findByTitle("r1"));
+
+      // The marker SURVIVES the re-select (the bug wiped it; with no re-subscribe nothing refilled it).
+      expect(screen.getByLabelText("run status: success")).toBeTruthy();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
   });
 
   it("source toggle mounts the source pane, and node selection marks that node's authored line", async () => {
