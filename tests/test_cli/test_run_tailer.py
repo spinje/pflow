@@ -9,10 +9,12 @@ import json
 import os
 from pathlib import Path
 
-from pflow.ui.run_tailer import RunTailer, discover_live_trace
+from pflow.ui.run_tailer import RunTailer, discover_live_trace, read_run_status, scan_traces
 
 
-def _write_trace(path: Path, workflow_path: str, *, complete: bool, only_node: str | None = None) -> None:
+def _write_trace(
+    path: Path, workflow_path: str, *, complete: bool, only_node: str | None = None, final_status: str = "success"
+) -> None:
     meta: dict = {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": workflow_path, "execution_id": "x"}
     if only_node is not None:
         meta["only_node"] = only_node
@@ -38,7 +40,7 @@ def _write_trace(path: Path, workflow_path: str, *, complete: bool, only_node: s
             "port": None,
             "status": "success",
         })
-        lines.append({"kind": "run.complete", "final_status": "success", "nodes_executed": 1})
+        lines.append({"kind": "run.complete", "final_status": final_status, "nodes_executed": 1})
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
 
@@ -85,6 +87,40 @@ def test_discover_excludes_only_node_traces(tmp_path):
     _write_trace(only, wf, complete=True, only_node="b")
     os.utime(full, (1000, 1000))
     os.utime(only, (2000, 2000))  # the --only trace is NEWER — would win without the only_node exclusion
+    assert discover_live_trace(wf, debug_dir=debug) == full
+
+
+def test_read_run_status_extracts_final_status(tmp_path):
+    """DR-2: read_run_status returns (complete, final_status) from the cheap tail — the signal /api/runs
+    needs and the bool-only _has_run_complete could not give. A live (no run.complete) trace → (False, None)."""
+    wf = str(tmp_path / "wf.pflow.md")
+    finished = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    failed = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000002.json"
+    live = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000003.json"
+    _write_trace(finished, wf, complete=True, final_status="success")
+    _write_trace(failed, wf, complete=True, final_status="failed")
+    _write_trace(live, wf, complete=False)
+    assert read_run_status(finished) == (True, "success")
+    assert read_run_status(failed) == (True, "failed")
+    assert read_run_status(live) == (False, None)  # no run.complete trailer → live/crashed, status unknown
+
+
+def test_scan_traces_yields_raw_candidates_keeping_only_policy_in_callers(tmp_path):
+    """DR-3: the shared scanner yields RAW candidates with NO --only policy — so history (scan_traces)
+    INCLUDES an --only run while the live overlay (discover_live_trace) EXCLUDES it. A future refactor that
+    pulls the --only filter (or final_status policy) into the shared scanner fails THIS test loudly."""
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    full = debug / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    only = debug / "workflow-trace-aaa-wf-20260101-000000-000002.json"
+    _write_trace(full, wf, complete=True, final_status="success")
+    _write_trace(only, wf, complete=True, final_status="success", only_node="b")
+    cands = scan_traces(wf, debug_dir=debug)
+    by_only = {c["meta"].get("only_node"): c for c in cands}
+    assert set(by_only) == {None, "b"}, "the shared scanner must NOT drop the --only trace (policy is the caller's)"
+    assert by_only["b"]["complete"] is True and by_only["b"]["final_status"] == "success"
+    # The live-overlay CALLER applies the --only exclude → returns the full run, never the --only one.
     assert discover_live_trace(wf, debug_dir=debug) == full
 
 

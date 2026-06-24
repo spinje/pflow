@@ -368,3 +368,55 @@ and skips `only_node` traces (mirrors `_iter_workflow_traces`). Verified: unit
 full run) AND end-to-end (real full run + `--only step-b` on a fresh server → overlay shows BOTH nodes
 `status-success`, not step-a pending). Decision for D6: `/api/runs` history should LABEL `--only` runs
 (not exclude) — distinct from the live overlay, which excludes them.
+
+## 2026-06-24 — D6 plan + 5-agent `/deep-review` (plan mode) → plan revised
+
+Wrote `d6-plan.md` (the run-navigation chunk: `/api/runs` + replay/run-selection + 3 surfaces + ChipRail
+chip + detail panel), then ran `/deep-review` (5 specialists: plan-structure, concurrency, silent-failures,
+impact-completeness, agent-ux). **Verdict: no Critical foundation error — architecture verified sound** —
+but 7 convergent UNDER-SPECIFICATIONS, all confirmed against code, now resolved as decisions `[DR-1..7]` in
+`d6-plan.md`:
+- **DR-1 (3 agents):** the tailer is cached one-per-`workflow_key` → a pinned replay + an unpinned live
+  overlay of one workflow collide. Key the tailer on `(workflow_key, run_id|None)`; pinned resolves
+  `run_id→Path` once (to_thread) + never re-discovers; `run-not-found` on a stale `run_id`. The pinned-LIVE
+  path is the ONLY way to watch one of N concurrent runs → first-class.
+- **DR-2 (4 agents):** `_has_run_complete` is boolean-only (verified) → `final_status` would be silently
+  null. Expose RAW facts (`complete`/`final_status`-from-trailer/`live`/`only_node`), no synthesized
+  `interrupted` word; `STALE_RUN_S` (60s) heuristic with a documented false-positive window.
+- **DR-3 (4 agents):** shared scanner = MECHANISM ONLY (yields raw candidates, no `--only`/`final_status`/
+  sort policy — caller-applied); `/api/runs` uses cheap helpers NOT `_iter_workflow_traces` (full-parse
+  cost); symmetric `--only` meta-test. `report.py`/`trace_loading.py` stay out (verified).
+- **DR-4 (2 agents):** `/api/run-node` must be an allowlist PROJECTION (mirror `_run_event`), drop raw
+  `node_type`, map via `node_type_tag()` (verified exists), `ref`=`refKey` string.
+- **DR-5 (2 agents):** inline/MCP runs (`ir-hash:` path) included, surfaced by name, doc'd out of
+  `?workflow=<file>`.
+- **DR-6 (3 agents):** each new fetch owns its catch → degraded render; `/api/runs` non-200 on scan error,
+  `[]` only for zero runs; skip unreadable traces.
+- **DR-7 (1 agent, verified):** `App.tsx` `?view=runs` wins over `?workflow=`; param-based (no SPA
+  catch-all).
+User chose my recommended resolutions (pin keyed on `(workflow_key, run_id)`; producer vocabulary;
+fold all 7). `d6-plan.md` ends with 6 named manual-test scenarios. → building Phase 1 next.
+
+## 2026-06-24 — D6 Phase 1 FOUNDATION: the shared scanner (built, verified, UNCOMMITTED)
+
+Started Phase 1 per `d6-plan.md`. The delicate shared-scanner refactor (DR-3 — the review's #1 trap) is done
+in `src/pflow/ui/run_tailer.py`:
+- **`read_run_status(path) -> (complete: bool, final_status: str | None)`** (DR-2) — extends the bool-only
+  `_has_run_complete` to ALSO extract `final_status` from the `run.complete` trailer via the same cheap
+  64 KB tail read, so `/api/runs` reports a finished run's status WITHOUT a full `load_trace_file` parse.
+  `_has_run_complete` is now a thin wrapper over it.
+- **`scan_traces(workflow_key=None, debug_dir=None) -> list[TraceCandidate]`** — the ONE mechanism-only
+  trace-dir scanner: a raw `TraceCandidate` TypedDict per trace (`path`/`meta`/`complete`/`final_status`/
+  `mtime`), newest-first by mtime, with NO `--only`/`final_status`/sort policy (each CALLER filters its
+  own). One head-read + one tail-read per file, never a full parse — so the all-runs dashboard stays cheap.
+- **`discover_live_trace`** re-pointed at `scan_traces` (applies its `--only`-exclude + prefer-live as
+  CALLER policy) — **behavior preserved** (all 7 original tests green).
+- Tests: `read_run_status` extraction (success/failed/live=`(False, None)`) + the **DR-3 symmetric `--only`
+  meta-test** (`scan_traces` INCLUDES the `--only` run, `discover_live_trace` EXCLUDES it — a future
+  policy-collapse fails loudly).
+
+Gates: 9 tailer tests pass (7 + 2 new); ruff + mypy clean. **UNCOMMITTED** (`run_tailer.py` +
+`test_run_tailer.py` only — server/bundle untouched). NOT a full `make test` yet (do before committing).
+**Next:** `GET /api/runs` on `scan_traces` (label `--only`, non-200 on scan error, `200+[]` for zero runs
+per DR-5/DR-6) → the `&run=` pin (DR-1: tailer keyed on `(workflow_key, run_id)`) → the 3 surfaces + the
+ChipRail chip → the `/api/run-node` detail panel (DR-4 projection).

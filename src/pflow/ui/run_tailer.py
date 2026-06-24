@@ -24,7 +24,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +61,16 @@ def _read_meta(path: Path) -> dict[str, Any] | None:
     return line if isinstance(line, dict) and line.get("kind") == "meta" else None
 
 
-def _has_run_complete(path: Path) -> bool:
-    """True if the trace's LAST non-empty line is a ``run.complete`` trailer — i.e. the run FINISHED.
+def read_run_status(path: Path) -> tuple[bool, str | None]:
+    """The cheap-tail terminal state of a streamed trace: ``(complete, final_status)`` (deep-review DR-2).
 
-    Reads only a bounded tail (``run.complete`` is the small final line) so a multi-MB trace isn't
-    loaded to answer "is this run still live?". A truncated/partial final line (a run mid-flush) doesn't
-    parse → reported NOT complete (live), which is the safe direction."""
+    ``complete`` is True iff the LAST non-empty line is a ``run.complete`` trailer (the run FINISHED);
+    ``final_status`` is that trailer's ``final_status`` (``success``/``degraded``/``failed`` — the
+    producer's vocabulary), or ``None`` when the run is not complete (still live, or crashed). Reads only a
+    bounded 64 KB tail so a multi-MB trace isn't loaded to answer "is this run live?". A truncated/partial
+    final line (a run mid-flush) doesn't parse → ``(False, None)`` (live), the safe direction. Supersedes
+    the bool-only ``_has_run_complete`` so ``/api/runs`` reports a finished run's status WITHOUT a full
+    ``load_trace_file`` parse."""
     try:
         with open(path, "rb") as handle:
             handle.seek(0, 2)
@@ -74,14 +78,70 @@ def _has_run_complete(path: Path) -> bool:
             handle.seek(max(0, size - 65536))
             tail = handle.read()
     except OSError:
-        return False
+        return (False, None)
     for raw in reversed(tail.split(b"\n")):
-        if raw.strip():
-            try:
-                return isinstance(json.loads(raw), dict) and json.loads(raw).get("kind") == "run.complete"
-            except ValueError:
-                return False  # last line is a partial flush → run is still live
-    return False
+        if not raw.strip():
+            continue
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            return (False, None)  # last line is a partial flush → run is still live
+        if isinstance(line, dict) and line.get("kind") == "run.complete":
+            status = line.get("final_status")
+            return (True, status if isinstance(status, str) else None)
+        return (False, None)  # a complete-but-non-trailer last line → not finished
+    return (False, None)
+
+
+def _has_run_complete(path: Path) -> bool:
+    """True iff the run FINISHED — the bool half of ``read_run_status``, kept for ``discover_live_trace``'s
+    readable prefer-live loop."""
+    return read_run_status(path)[0]
+
+
+class TraceCandidate(TypedDict):
+    """One raw trace-dir candidate from ``scan_traces`` — the typed contract shared by ``discover_live_trace``
+    (live overlay) and ``/api/runs`` (history). ``meta`` is the head line; ``complete``/``final_status`` the
+    cheap-tail terminal state; ``mtime`` for liveness/recency. NO policy applied — callers filter."""
+
+    path: Path
+    meta: dict[str, Any]
+    complete: bool
+    final_status: str | None
+    mtime: float
+
+
+def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) -> list[TraceCandidate]:
+    """The ONE trace-dir scanner (deep-review DR-3): a RAW candidate per trace, newest-first by mtime, with
+    NO ``--only`` / ``final_status`` / coherence policy — each CALLER filters its own (mirroring
+    ``_iter_workflow_traces``'s "status policy in callers" invariant).
+
+    Each candidate is ``{"path", "meta", "complete", "final_status", "mtime"}`` — ``meta`` the head line
+    (identity: ``workflow_path`` / ``execution_id`` / ``workflow_name`` / ``start_time`` / ``only_node``),
+    ``complete`` / ``final_status`` the cheap-tail terminal state. With ``workflow_key`` set, keeps only
+    traces whose ``meta.workflow_path`` matches it (``_same_path`` — robust to path normalization). Cheap:
+    one head-read + one tail-read per file, never a full parse — so the all-runs dashboard stays light.
+    ``discover_live_trace`` applies the ``--only``-exclude + prefer-live; ``/api/runs`` labels ``--only`` —
+    neither policy lives here. An unreadable trace is skipped (``meta is None``), never fatal (DR-6)."""
+    directory = debug_dir or _debug_dir()
+    try:
+        paths = sorted(directory.glob("workflow-trace-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return []
+    out: list[TraceCandidate] = []
+    for path in paths:
+        meta = _read_meta(path)
+        if meta is None:
+            continue
+        if workflow_key is not None and not _same_path(meta.get("workflow_path"), workflow_key):
+            continue
+        complete, final_status = read_run_status(path)
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        out.append({"path": path, "meta": meta, "complete": complete, "final_status": final_status, "mtime": mtime})
+    return out
 
 
 def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Path | None:
@@ -97,27 +157,16 @@ def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Pat
     so it is not a coherent full-run overlay — following it would leave every other node falsely
     ``pending`` and shadow the user's last full run. Mirrors ``_iter_workflow_traces`` (report /
     analyze-cache), which excludes ``--only`` traces for exactly this reason."""
-    directory = debug_dir or _debug_dir()
-    try:
-        candidates = sorted(directory.glob("workflow-trace-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError:
+    # Caller policy over the shared scanner (DR-3): drop --only traces (a partial run, not a coherent
+    # overlay), then prefer a live run (no run.complete) newest-first so a just-finished run never shadows
+    # a still-streaming one; else the newest finished run (replay-a-finished-run).
+    candidates = [c for c in scan_traces(workflow_key, debug_dir) if c["meta"].get("only_node") is None]
+    if not candidates:
         return None
-    matching = []
-    for p in candidates:
-        meta = _read_meta(p)
-        # Skip non-trace files and --only traces (a partial run, not a coherent overlay); match workflow.
-        if meta is None or meta.get("only_node") is not None:
-            continue
-        if _same_path(meta.get("workflow_path"), workflow_key):
-            matching.append(p)
-    if not matching:
-        return None
-    # Prefer a live run (no run.complete) — newest-first — so a freshly-finished run never shadows a
-    # still-streaming one; else fall back to the newest finished run (replay-a-finished-run).
-    for path in matching:
-        if not _has_run_complete(path):
-            return path
-    return matching[0]
+    for cand in candidates:
+        if not cand["complete"]:
+            return cand["path"]
+    return candidates[0]["path"]
 
 
 class RunTailer:
