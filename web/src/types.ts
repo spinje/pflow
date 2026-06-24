@@ -22,7 +22,9 @@ export interface RFRef {
 // --- Live execution overlay (Task 173) ---------------------------------------------------------
 // A node's display state. `pending` (not started) is the ABSENCE of a status — only these four
 // arrive on the wire (the producer's per-node status enum + the live `node.start` → `running`).
-export type NodeStatus = "running" | "success" | "cached" | "failed";
+// "stopped" is consumer-derived (Task 173 flock): a node still `running` when the run's process exited
+// without finishing (crash/kill) — the server's `run-stopped` flips it (the producer never emits it).
+export type NodeStatus = "running" | "success" | "cached" | "failed" | "stopped";
 
 // One run-event the overlay joins onto a graph node by its structural `ref` (node_id + ancestor_path
 // + port=null), via sameRef/refKey. Carries only the join key + status (+ cheap cost/duration) — never

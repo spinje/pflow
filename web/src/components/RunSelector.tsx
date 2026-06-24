@@ -17,7 +17,7 @@ interface RunSelectorProps {
 // (running blue · success green · failed red · degraded amber · cached/interrupted grey).
 function runMark(run: RunInfo): { glyph: string; cls: string; label: string } {
   if (run.live) return { glyph: "●", cls: "run-live", label: "running" };
-  if (!run.complete) return { glyph: "⊗", cls: "run-stale", label: "interrupted" };
+  if (!run.complete) return { glyph: "⊗", cls: "run-stopped", label: "stopped" }; // exact (flock): not live + unfinished
   if (run.only_node) return { glyph: "⊘", cls: "run-degraded", label: `only: ${run.only_node}` };
   if (run.final_status === "success") return { glyph: "✓", cls: "run-success", label: "success" };
   if (run.final_status === "degraded") return { glyph: "⊘", cls: "run-degraded", label: "degraded" };

@@ -537,6 +537,13 @@ button.active {
   outline: 2px solid var(--danger);
   outline-offset: 1px;
 }
+/* `stopped` (Task 173 flock): a node still running when the run's process died — amber, NOT pulsing
+   (it's halted, not working). Distinct from failed (the node itself errored). */
+.node.status-stopped,
+.group.status-stopped {
+  outline: 2px solid #d29922;
+  outline-offset: 1px;
+}
 @keyframes pflow-run-pulse {
   0%,
   100% {
@@ -569,6 +576,9 @@ button.active {
 }
 .run-banner.run-failed {
   border-color: var(--danger);
+}
+.run-banner.run-stopped {
+  border-color: #d29922;
 }
 
 /* Catalog "● running" badge (Task 173 D6) — a pulsing dot + label on a workflow with a live run. */
@@ -676,6 +686,9 @@ button.active {
 }
 .run-mark.run-stale {
   color: #8b949e;
+}
+.run-mark.run-stopped {
+  color: #d29922;
 }
 
 /* ---------- react flow surface ---------- */

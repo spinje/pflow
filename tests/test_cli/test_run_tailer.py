@@ -6,11 +6,19 @@ and run.complete becomes the banner (deltas flushed first)."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import sys
 from pathlib import Path
 
-from pflow.ui.run_tailer import RunTailer, discover_live_trace, read_run_status, scan_traces
+import pytest
+
+from pflow.ui.run_tailer import RunTailer, discover_live_trace, is_trace_locked, read_run_status, scan_traces
+
+# Exact-liveness (flock) tests are Unix-only — `fcntl` doesn't exist on Windows (the producer + probe
+# degrade to a heuristic there; that path isn't what these pin).
+_unix_only = pytest.mark.skipif(sys.platform == "win32", reason="advisory-lock liveness needs fcntl (Unix)")
 
 
 def _write_trace(
@@ -207,6 +215,96 @@ def test_pinned_run_not_found_broadcasts_and_stops(tmp_path, monkeypatch):
     tailer = RunTailer("wf", lambda _k, message: messages.append(message), run_id="ghost")
     asyncio.run(tailer.run())  # terminates on the run-not-found path (does not loop)
     assert messages == [{"type": "run-not-found", "run_id": "ghost"}]
+
+
+@_unix_only
+def test_is_trace_locked_reflects_a_held_advisory_lock(tmp_path):
+    """The exact-liveness primitive: `is_trace_locked` is True while a writer holds the flock, False once
+    released. (flock conflicts across open-file-descriptions even within one process, so this is testable
+    in-process without spawning.)"""
+    import fcntl
+
+    path = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    path.write_text("{}\n", encoding="utf-8")
+    assert is_trace_locked(path) is False  # nobody holds it
+    with open(path, encoding="utf-8") as writer:
+        fcntl.flock(writer.fileno(), fcntl.LOCK_EX)
+        assert is_trace_locked(path) is True  # a writer holds it → the run is alive
+    assert is_trace_locked(path) is False  # released on close → free again
+
+
+@_unix_only
+@pytest.mark.trace_files
+def test_collector_holds_advisory_lock_while_streaming(tmp_path, monkeypatch):
+    """The producer holds the flock for the run's lifetime: the trace reads LOCKED while the stream is open
+    and FREE after `finalize` closes the handle — so the server's probe (`is_trace_locked`) tells a running
+    run from a finished/crashed one exactly."""
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    collector = WorkflowTraceCollector("wf", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
+    collector.record_node_execution("a", "ShellNode", 1.0, True)  # opens the stream + acquires the lock
+    assert collector._stream_path is not None
+    assert is_trace_locked(collector._stream_path) is True  # held while streaming
+    collector.finalize()  # closes the handle → releases the lock
+    assert is_trace_locked(collector._stream_path) is False
+
+
+@_unix_only
+def test_tailer_broadcasts_run_stopped_when_incomplete_and_unlocked(tmp_path, monkeypatch):
+    """Exact death-detection: an incomplete trace whose writer lock is FREE (the run crashed / was killed)
+    makes the tailer broadcast `run-stopped` ONCE — so the canvas flips its dangling `running` nodes to
+    `stopped` instead of pulsing blue forever. A finished run (has `run.complete`) never triggers it."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    debug = tmp_path / ".pflow" / "debug"
+    debug.mkdir(parents=True)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_trace(
+        debug / "workflow-trace-aaa-wf-20260101-000000-000001.json", wf, complete=False
+    )  # incomplete, UNLOCKED
+
+    messages: list[dict] = []
+
+    async def scenario() -> None:
+        tailer = RunTailer(wf, lambda _k, message: messages.append(message))
+        task = asyncio.create_task(tailer.run())
+        for _ in range(40):  # poll up to ~0.8s for the run-stopped broadcast (poll cadence is 0.25s)
+            if any(m.get("type") == "run-stopped" for m in messages):
+                break
+            await asyncio.sleep(0.02)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert sum(1 for m in messages if m.get("type") == "run-stopped") == 1, "incomplete + unlocked → run-stopped once"
+
+
+@_unix_only
+def test_check_stopped_does_not_false_fire_on_a_completed_run(tmp_path):
+    """Critical race guard (concurrency review): a run that wrote `run.complete` + released its lock in the
+    poll's read→probe gap must NOT get a false `run-stopped`. `_check_stopped` re-confirms via
+    `read_run_status` (the producer flushes the trailer BEFORE freeing the lock), so an unlocked-but-COMPLETE
+    trace broadcasts nothing even though `self._run` is still None (the trailer wasn't consumed yet)."""
+    wf = str(tmp_path / "wf.pflow.md")
+    path = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    _write_trace(path, wf, complete=True)  # has run.complete on disk; NOT locked (no writer process)
+    messages: list[dict] = []
+    tailer = RunTailer(wf, lambda _k, message: messages.append(message))
+    tailer._current = path
+    assert tailer._run is None  # the race: trailer on disk but not yet consumed by this tailer
+    asyncio.run(tailer._check_stopped(path))
+    assert not any(m["type"] == "run-stopped" for m in messages), "a completed run (lock free) must NOT false-stop"
+
+
+def test_snapshot_carries_stopped_for_a_late_subscriber():
+    """Warning-1 fix (silent-failures review): `run-stopped` is one-shot, so `snapshot()` must carry the
+    latched `stopped` flag — else a viewer subscribing AFTER the broadcast (reload / 2nd tab) never learns
+    the run died and blue-blinks forever."""
+    tailer = RunTailer("k", lambda _k, _m: None)
+    assert tailer.snapshot()["stopped"] is False
+    tailer._stopped = True
+    assert tailer.snapshot()["stopped"] is True
 
 
 def test_byte_split_multibyte_char_is_not_lost():

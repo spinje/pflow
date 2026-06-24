@@ -38,6 +38,7 @@ describe("RunSelector", () => {
     mockFetchRuns.mockResolvedValue([
       run({ run_id: "r-ok" }),
       run({ run_id: "r-live", complete: false, final_status: null, live: true }),
+      run({ run_id: "r-stopped", complete: false, final_status: null, live: false }),
       run({ run_id: "r-fail", final_status: "failed" }),
       run({ run_id: "r-only", only_node: "step-b" }),
     ]);
@@ -53,6 +54,7 @@ describe("RunSelector", () => {
     // Each run's label is derived from the raw facts (running / success / failed / only:<node>).
     expect(screen.getByText("success")).toBeTruthy();
     expect(screen.getByText("running")).toBeTruthy();
+    expect(screen.getByText("stopped")).toBeTruthy(); // exact: not live + unfinished (flock)
     expect(screen.getByText("failed")).toBeTruthy();
     expect(screen.getByText("only: step-b")).toBeTruthy();
   });

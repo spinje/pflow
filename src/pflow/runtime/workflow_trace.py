@@ -71,6 +71,25 @@ def format_trace_filename(workflow_path: str | None, workflow_name: str, timesta
     return f"workflow-trace-{wf_hash}-{timestamp}.json"
 
 
+def _lock_trace_handle(handle: TextIO) -> None:
+    """Task 173: take a best-effort advisory lock on the open trace handle, held for the run's lifetime.
+
+    The live-overlay server probes this lock to tell a RUNNING run from a CRASHED one EXACTLY — the kernel
+    releases it on ANY process exit (clean finish, crash, ``kill -9``), so "lock held" == "the run's process
+    is alive". The lock rides the already-open streaming handle (acquired here, released when the handle
+    closes in ``_close_stream`` or the process dies). Unix-only (``fcntl``); a no-op on Windows or any
+    failure (e.g. a filesystem without ``flock``) — liveness then degrades to the consumer's fallback, and
+    the run is NEVER affected (trace persistence is a side-channel)."""
+    try:
+        import fcntl
+    except ImportError:
+        return  # no fcntl (Windows) — degrade to the consumer's heuristic
+    # Suppress ANY failure (lock unavailable on this FS, or a wrapped/non-fd handle e.g. the I/O-fault
+    # test's stub) — same best-effort posture as _close_stream; never let it touch the run.
+    with contextlib.suppress(Exception):
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 def _trace_recency_key(path: Path) -> tuple[str, str]:
     """Sort key ranking trace files newest-first (under ``reverse=True``).
 
@@ -851,6 +870,7 @@ class WorkflowTraceCollector:
             timestamp = self.start_time.strftime("%Y%m%d-%H%M%S-%f")
             self._stream_path = trace_dir / format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
             self._stream = open(self._stream_path, "w", encoding="utf-8")  # noqa: SIM115 — closed in finalize()
+            _lock_trace_handle(self._stream)  # Task 173: hold the lock for the run's lifetime (overlay liveness)
         except OSError as exc:
             self._disable_streaming(exc)
             return

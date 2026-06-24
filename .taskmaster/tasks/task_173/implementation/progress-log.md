@@ -582,3 +582,86 @@ Gates: vitest **570** + strict `tsc` clean; Python unchanged (`make test` 8140 /
 
 **Next:** basic **flock** liveness (this branch — see the liveness section above; hang backstop → #538), then
 Phase 3c global dashboard, Phase 4 ChipRail chip, Phase 5 detail panel.
+
+## 2026-06-24 — Basic flock liveness: EXACT death-detection (built + browser-verified)
+
+Replaced the `STALE_RUN_S=60s` mtime heuristic with an **advisory lock** the producer holds on its trace
+handle for the run's lifetime; the server probes it. The kernel releases the lock on ANY process exit, so
+"lock held" == alive — exact, no time threshold. (Hang backstop deferred → #538.)
+
+- **Producer** (`workflow_trace.py`): `_lock_trace_handle` takes `flock(LOCK_EX|LOCK_NB)` on the open
+  streaming handle in `_open_stream`; released automatically by `_close_stream` / process exit. Behind
+  `try: import fcntl` + `contextlib.suppress(Exception)` (best-effort, same posture as `_close_stream` — a
+  wrapped/non-fd handle like the I/O-fault test's stub, or no fcntl on Windows, degrades silently; NEVER
+  affects the run). [Fixed a regression here: my first version let the stub's missing `.fileno()`
+  AttributeError propagate → 2 producer I/O-fault tests failed; the broad suppress fixes it.]
+- **Consumer** (`run_tailer.py`): `is_trace_locked(path) -> bool | None` (True=alive / False=free /
+  None=no-fcntl), a SEPARATE-fd `LOCK_NB` probe that releases immediately if it acquires. The tailer's
+  `_check_stopped` (extracted to keep `run()` under the C901 complexity cap) broadcasts **`run-stopped`
+  ONCE** when an incomplete run's lock is free → the canvas flips dangling `running` nodes to `stopped`.
+- **Server** (`server.py`): deleted `_STALE_RUN_S`; `_run_is_live` = `not complete and is_trace_locked is
+  not False` (Unix exact; no-fcntl → incomplete=live fallback). `/api/runs` `live` is now EXACT.
+- **Frontend**: `NodeStatus += "stopped"`; `events.ts` `run-stopped` arm; `GraphView` flips `running`→
+  `stopped` + a "Run stopped" banner (reset on snapshot/reset/select); `RunSelector` runMark shows
+  `stopped` (was the guessed "interrupted") for a not-live unfinished run; amber `.status-stopped` CSS.
+- **Tests:** `is_trace_locked` primitive (held vs free, in-process — flock conflicts across
+  open-descriptions), the producer holds the lock while streaming + frees on finalize, the tailer
+  broadcasts `run-stopped` on incomplete+unlocked, `/api/runs` exact-liveness (finished / leftover-crashed
+  / held-lock → False/False/True), `run-stopped` SSE dispatch, `RunSelector` stopped-mark. (`_unix_only`
+  skip for the fcntl tests.)
+
+**Gates (all green):** `make test` **8143** (8140 + 3 Python); `make check` clean (mypy 238); vitest **571**
+(+1); strict `tsc`.
+
+**Browser-verified (real runs, fresh bundle + restarted server):**
+- **False-interrupted FIXED:** a single `sleep 90` node, silent for **67s** with zero trace appends, still
+  read `live=True` in `/api/runs` (under the old heuristic it false-read "interrupted" at 60s).
+- **Exact death:** started a fast→slow workflow, `kill -9` mid-slow-node → the overlay-status-probe read
+  `quick=status-success, slow=status-stopped`; the screenshot shows the amber `slow` node + the "Run
+  stopped — the process exited before finishing." banner (no forever-blue-blink). `/api/runs` for the
+  killed run read `(complete=False, live=False)`.
+
+The interim STALE_RUN_S note above is now superseded — flock is the shipped mechanism; only the hang
+backstop remains (#538, re-scoped).
+
+### Deep-review of the flock diff (3 specialists + an adversarial fork) + fixes
+
+User gated the commit on a review (3 most-relevant agents) + a fork that drives the real system. Outcome: the
+core flock bet was verified SOLID (OFD semantics, non-blocking probe, the open()→flock() startup window
+closed because discovery keys on the `meta` line written AFTER the lock, concurrent runs lock distinct
+files); 1 Critical + 1 Warning confirmed and FIXED; 1 Warning disputed.
+
+- **🔴 Critical (concurrency, reproduced) — false `run-stopped` on a CLEAN finish.** Each poll reads bytes
+  (to_thread) → consumes (sets `self._run` only if `run.complete` was in those bytes) → probes the lock
+  (to_thread). A run that calls `finalize()` (flush `run.complete` → close → release lock) in the read→probe
+  gap is seen as free-lock + `self._run is None` → a false `run-stopped` on a SUCCESSFUL run (+ the frontend
+  never cleared `runStopped` on completion → contradictory state). The reviewer reproduced the exact
+  interleaving; the fork didn't trigger it in a handful of runs (narrow window) — deterministic analysis
+  caught what the dynamic sweep missed. **Fix:** `_check_stopped`, on a free-lock reading, re-confirms via
+  `read_run_status` — `finalize()` flushes the trailer BEFORE releasing the lock, so a free lock guarantees
+  the trailer is on disk if it finished; only a STILL-incomplete tail = a real crash. + frontend
+  `runComplete` clears `runStopped` (defensive). + regression test (`_check_stopped` on an unlocked-COMPLETE
+  trace → no broadcast). Browser-re-verified: a genuinely-killed run STILL flips to `stopped`.
+- **🟡 Warning 1 (silent-failures, confirmed) — late subscriber blue-forever.** `run-stopped` is one-shot
+  (latched); a viewer subscribing AFTER it (reload / 2nd tab reusing the tailer) got a `snapshot()` lacking
+  the stopped state → nodes read `running` forever. **Fix:** `snapshot()` carries `"stopped": self._stopped`;
+  `events.ts` threads it; `GraphView.runSnapshot` flips dangling `running`→`stopped`. + tests.
+- **⚪ Warning 2 (no-flock FS false-stopped) — DISPUTED.** The reviewer traced the producer (lock silently not
+  taken) but not the consumer probe: `is_trace_locked` does `except OSError: return True`, so on an
+  unsupported-`flock` FS the probe ALSO errors → returns True (alive) → safe always-alive degrade (same class
+  as Windows), NOT false-stopped. No code change; the `_check_stopped` docstring now notes a free lock can
+  also mean streaming-disabled-by-I/O-fault (a rare degraded path where the trace stopped growing anyway).
+- **✅ Test-fidelity: clean** — each new test mutation-verified discriminating; notably
+  `test_lists_runs_with_exact_liveness` provably FAILS under the old mtime heuristic (pins the new behavior).
+  **Process incident:** the test-fidelity agent accidentally `git checkout`'d run_tailer.py + workflow_trace.py
+  (the 2nd such agent incident this task) and reconstructed them; I independently verified the on-disk code
+  matches my intended state (the `_check_stopped` extraction, the broad-suppress, `is_trace_locked` OSError→True)
+  + the file set + green gates — faithful, no loss.
+- **✅ Fork (adversarial, real system): all 9 scenarios PASS** — live-stays-running, clean-finish-no-stop,
+  kill→stopped (only running flips), concurrency isolation, pin finished-vs-killed, meta-only crash,
+  switch-after-stopped, broadcast-once. Honest gaps: the hang case (#538) + Windows/NFS (not testable on
+  local Unix).
+
+**Gates after fixes (all green):** `make test` **8145** (+2 Python: clean-finish race guard + snapshot-stopped);
+`make check` clean (mypy 238); vitest **572** (+1); strict `tsc`. Browser-re-verified the killed-run→stopped
+path under the new confirming-read.

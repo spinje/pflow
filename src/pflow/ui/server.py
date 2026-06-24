@@ -64,7 +64,7 @@ from pflow.execution.graph_service import (
 )
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
-from pflow.ui.run_tailer import RunTailer, TraceCandidate, scan_traces
+from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, scan_traces
 from pflow.ui.targets import resolve_target
 
 logger = logging.getLogger(__name__)
@@ -75,10 +75,6 @@ _MAX_DEPTH = 5
 _ACTIVITY_MAX = 200
 _CONNECTION_QUEUE_MAX = 64
 _KEEPALIVE_S = 15.0
-# Task 173 D6 (DR-2): a run with no `run.complete` and a fresh mtime reads `live`; older than this it
-# reads crashed/stale. A HEURISTIC display hint — a single node running longer than this (a slow LLM
-# call) false-reads not-live; observe-don't-host forbids the process tracking that would make it exact.
-_STALE_RUN_S = 60.0
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -623,11 +619,21 @@ async def activity(request: Request) -> Response:
     return _json({"events": events_snapshot, "workflow_key": workflow_key})
 
 
-def _run_entry(candidate: TraceCandidate, now: float) -> dict[str, Any]:
+def _run_is_live(candidate: TraceCandidate) -> bool:
+    """EXACT liveness (Task 173): a run is live iff it hasn't finished AND its trace is still held by the
+    writer's advisory lock (the kernel releases it on any process exit). Finished runs skip the probe.
+    No ``fcntl`` (Windows) → ``is_trace_locked`` returns ``None`` → fall back to "incomplete = live"
+    (best-effort; the hang-aware staleness backstop is GH #538)."""
+    if candidate["complete"]:
+        return False
+    return is_trace_locked(candidate["path"]) is not False
+
+
+def _run_entry(candidate: TraceCandidate) -> dict[str, Any]:
     """Project one raw trace candidate to a run-list entry (Task 173 D6). RAW facts only (DR-2): the UI
-    composes the badge from ``complete``/``final_status``/``live``/``only_node``. ``live`` is the one
-    derived hint (not complete AND mtime within ``_STALE_RUN_S``). No raw ``node_type`` is involved (this
-    is run identity, not node payload)."""
+    composes the badge from ``complete``/``final_status``/``live``/``only_node``. ``live`` is now EXACT (the
+    advisory-lock probe), not an mtime heuristic. No raw ``node_type`` is involved (run identity, not node
+    payload)."""
     meta = candidate["meta"]
     return {
         "run_id": meta.get("execution_id"),
@@ -636,7 +642,7 @@ def _run_entry(candidate: TraceCandidate, now: float) -> dict[str, Any]:
         "start_time": meta.get("start_time"),
         "complete": candidate["complete"],
         "final_status": candidate["final_status"],
-        "live": (not candidate["complete"]) and (now - candidate["mtime"]) < _STALE_RUN_S,
+        "live": _run_is_live(candidate),
         "only_node": meta.get("only_node"),
         "trace_file": candidate["path"].name,
     }
@@ -661,8 +667,7 @@ def runs(request: Request) -> Response:
     workflow_key = _workflow_key(workflow) if workflow else None
     if workflow and workflow_key is None:
         return _workflow_not_found(workflow)
-    now = time.time()
-    return _json([_run_entry(candidate, now) for candidate in scan_traces(workflow_key)])
+    return _json([_run_entry(candidate) for candidate in scan_traces(workflow_key)])
 
 
 class _BundleFiles(StaticFiles):

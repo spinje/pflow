@@ -99,6 +99,33 @@ def _has_run_complete(path: Path) -> bool:
     return read_run_status(path)[0]
 
 
+def is_trace_locked(path: Path) -> bool | None:
+    """Is this trace file held by a LIVE writer? (Task 173 — exact liveness.)
+
+    The producer holds an advisory ``flock`` on its trace handle for the run's lifetime; the kernel releases
+    it on ANY process exit. So a HELD lock = the run's process is alive; a FREE lock + no ``run.complete`` =
+    it crashed/was killed. We probe with a SEPARATE fd and ``LOCK_NB`` so we never block, releasing
+    immediately if we acquire. Returns ``True`` (alive) / ``False`` (not held) / ``None`` when liveness can't
+    be determined — no ``fcntl`` (Windows) or the file can't be opened — so the caller falls back.
+
+    NOTE: detects DEATH, not HANG — a hung-but-alive process still holds the lock (reads ``True``). The
+    staleness backstop for that case is deferred to GH #538."""
+    try:
+        import fcntl
+    except ImportError:
+        return None  # Windows: no advisory-lock probe → caller falls back to a heuristic
+    try:
+        with open(path, encoding="utf-8") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return True  # the writer holds it → the run is alive
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # we acquired it → no writer; release + report free
+            return False
+    except OSError:
+        return None  # can't open (gone/unreadable) → unknown; let the caller decide
+
+
 class TraceCandidate(TypedDict):
     """One raw trace-dir candidate from ``scan_traces`` — the typed contract shared by ``discover_live_trace``
     (live overlay) and ``/api/runs`` (history). ``meta`` is the head line; ``complete``/``final_status`` the
@@ -189,12 +216,24 @@ class RunTailer:
         self._blob_map: dict[str, str] = {}  # a multibyte char split across a poll read and never recover it
         self._state: dict[Any, dict[str, Any]] = {}  # id -> latest run-event (last-wins)
         self._run: dict[str, Any] | None = None  # the run-complete message, once seen
+        self._stopped = False  # Task 173: broadcast run-stopped once when an incomplete run's lock goes free
 
     def snapshot(self) -> dict[str, Any]:
-        """The current run state for a newly-subscribed viewer: all known node states + the run banner.
-        Read on the event loop; ``_state``/``_run`` are mutated only on the loop (in ``_consume``/``_switch``)
-        — never in the to_thread file-read — so there is no concurrent-mutation race here (deep-review R3)."""
-        return {"type": "run-snapshot", "nodes": list(self._state.values()), "run": self._run}
+        """The current run state for a newly-subscribed viewer: all known node states + the run banner + the
+        ``stopped`` flag. Read on the event loop; ``_state``/``_run``/``_stopped`` are mutated only on the
+        loop (in ``_consume``/``_switch``/``_check_stopped``) — never in the to_thread file-read — so there is
+        no concurrent-mutation race here (deep-review R3).
+
+        ``stopped`` is load-bearing: ``run-stopped`` is broadcast ONCE (latched), so a viewer that subscribes
+        AFTER it fires (a reload / 2nd tab reusing this tailer) would otherwise see only node states still
+        reading ``running`` and never learn the run died — a silent blue-blink-forever (silent-failures
+        review). Carrying the latched flag here lets a late subscriber render ``stopped`` immediately."""
+        return {
+            "type": "run-snapshot",
+            "nodes": list(self._state.values()),
+            "run": self._run,
+            "stopped": self._stopped,
+        }
 
     async def run(self) -> None:
         """Poll loop. Blocking filesystem I/O (discover, read) runs via ``asyncio.to_thread`` so it never
@@ -231,9 +270,35 @@ class RunTailer:
                     data = await asyncio.to_thread(self._read_bytes, current)  # off-loop I/O
                     for message in self._consume(data):  # loop: parse + mutate state
                         self._broadcast(self._key, message)
+                    await self._check_stopped(current)
             except Exception:
                 logger.debug("run tailer poll failed for %s", self._key, exc_info=True)
             await asyncio.sleep(_POLL_S)
+
+    async def _check_stopped(self, current: Path) -> None:
+        """Task 173 exact death-detection: after consuming all available bytes, if the run is STILL
+        incomplete (no ``run.complete``) probe the producer's advisory lock. A FREE lock means the writer's
+        process exited without finishing → crashed/killed → broadcast ``run-stopped`` ONCE so the canvas
+        flips its dangling ``running`` nodes to ``stopped`` instead of pulsing blue forever. (``is_trace_locked``
+        None = no fcntl → don't claim stopped; True = alive. A free lock can ALSO mean streaming was disabled
+        by a mid-run I/O fault — a rare degraded path where the trace stopped growing, so "stopped" is
+        honest enough.)
+
+        CONFIRM-BEFORE-CLAIM (concurrency review): a CLEAN finish also frees the lock — ``finalize()`` flushes
+        ``run.complete`` BEFORE releasing it. This poll's byte-read (which sets ``self._run``) happened a
+        couple thread-hops earlier than this probe, and the producer is a SEPARATE process, so a run that
+        completes in that read→probe gap would otherwise be seen as free-lock + ``self._run is None`` → a
+        FALSE ``run-stopped`` on a successful run. So on a free lock, re-read the tail once: the flush-before-
+        release ordering guarantees the trailer is on disk by now, so a still-incomplete tail = a real crash."""
+        if self._run is not None or self._stopped:
+            return
+        if (await asyncio.to_thread(is_trace_locked, current)) is not False:
+            return  # held (alive) or None (no fcntl) — never claim stopped
+        complete, _ = await asyncio.to_thread(read_run_status, current)
+        if complete:
+            return  # finished cleanly in the read→probe gap; the next poll's read fires run-complete
+        self._stopped = True
+        self._broadcast(self._key, {"type": "run-stopped"})
 
     def _resolve_pinned(self) -> Path | None:
         """Resolve the pinned ``run_id`` to its trace file ONCE (deep-review DR-1) — BLOCKING I/O, run via
@@ -253,6 +318,7 @@ class RunTailer:
         self._blob_map.clear()
         self._state.clear()
         self._run = None
+        self._stopped = False
 
     def _read_bytes(self, path: Path) -> bytes:
         """Read newly-appended bytes from the current offset — BLOCKING I/O, run via ``asyncio.to_thread``.

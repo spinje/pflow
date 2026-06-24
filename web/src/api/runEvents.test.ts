@@ -45,6 +45,7 @@ const runHandlers = () => ({
   runComplete: vi.fn(),
   runReset: vi.fn(),
   runNotFound: vi.fn(),
+  runStopped: vi.fn(),
 });
 
 beforeEach(() => {
@@ -86,7 +87,15 @@ describe("subscribe — run-* dispatch arms", () => {
     source.emit({ type: "run-snapshot", nodes: [runEvent, { ref, status: "nope" }], run });
 
     expect(handlers.runSnapshot).toHaveBeenCalledOnce();
-    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], run);
+    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], run, false); // not a stopped run
+  });
+
+  it("run-snapshot carries stopped=true for a late subscriber to a dead run (Warning-1 fix)", () => {
+    const handlers = runHandlers();
+    subscribe("wf", handlers);
+    FakeEventSource.instances[0]!.emit({ type: "run-snapshot", nodes: [runEvent], run: null, stopped: true });
+
+    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null, true);
   });
 
   it("run-snapshot with no run field passes run=null (mid-run catch-up, no trailer yet)", () => {
@@ -94,7 +103,7 @@ describe("subscribe — run-* dispatch arms", () => {
     subscribe("wf", handlers);
     FakeEventSource.instances[0]!.emit({ type: "run-snapshot", nodes: [runEvent] });
 
-    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null);
+    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null, false);
   });
 
   it("run-complete: dispatches the message itself as the RunComplete trailer", () => {
@@ -124,6 +133,15 @@ describe("subscribe — run-* dispatch arms", () => {
 
     expect(handlers.runNotFound).toHaveBeenCalledOnce();
     expect(handlers.runNotFound).toHaveBeenCalledWith();
+  });
+
+  it("run-stopped: invokes runStopped (flock death-detection)", () => {
+    const handlers = runHandlers();
+    subscribe("wf", handlers);
+    FakeEventSource.instances[0]!.emit({ type: "run-stopped" });
+
+    expect(handlers.runStopped).toHaveBeenCalledOnce();
+    expect(handlers.runStopped).toHaveBeenCalledWith();
   });
 
   it("a runId pins the subscription via the &run= query param (DR-1)", () => {

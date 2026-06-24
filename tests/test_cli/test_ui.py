@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 from starlette.testclient import TestClient
 
@@ -888,9 +889,13 @@ class TestRunsEndpoint:
             lines.append({"kind": "run.complete", "final_status": final_status, "nodes_executed": 1})
         (debug / name).write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
-    def test_lists_runs_with_raw_facts(self, tmp_path, monkeypatch) -> None:
-        """Bare ``/api/runs`` → every run with the DR-2 raw facts. A no-``run.complete`` fresh trace reads
-        ``live`` with ``final_status=null``; a finished one reads ``complete`` + its status + ``live=False``."""
+    @pytest.mark.skipif(sys.platform == "win32", reason="exact liveness needs fcntl (Unix)")
+    def test_lists_runs_with_exact_liveness(self, tmp_path, monkeypatch) -> None:
+        """`live` is EXACT (the advisory-lock probe), not an mtime guess: a finished run → live False; an
+        incomplete trace with NO live writer (leftover/crashed) → live False; an incomplete trace whose
+        writer holds the lock → live True. Also checks the raw-fact fields."""
+        import fcntl
+
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         debug = tmp_path / ".pflow" / "debug"
         debug.mkdir(parents=True)
@@ -899,15 +904,22 @@ class TestRunsEndpoint:
             debug, "workflow-trace-aaa-wf-20260101-000000-000001.json", wf, complete=True, execution_id="done"
         )
         self._write_trace(
-            debug, "workflow-trace-aaa-wf-20260101-000000-000002.json", wf, complete=False, execution_id="live"
+            debug, "workflow-trace-aaa-wf-20260101-000000-000002.json", wf, complete=False, execution_id="crashed"
         )
-        body = TestClient(create_app()).get("/api/runs").json()
+        self._write_trace(
+            debug, "workflow-trace-aaa-wf-20260101-000000-000003.json", wf, complete=False, execution_id="live"
+        )
+        live_path = debug / "workflow-trace-aaa-wf-20260101-000000-000003.json"
+
+        with open(live_path, encoding="utf-8") as writer:
+            fcntl.flock(writer.fileno(), fcntl.LOCK_EX)  # simulate the producer holding its trace open
+            body = TestClient(create_app()).get("/api/runs").json()
         by_id = {r["run_id"]: r for r in body}
-        assert set(by_id) == {"done", "live"}
+        assert set(by_id) == {"done", "crashed", "live"}
         assert by_id["done"]["complete"] is True and by_id["done"]["final_status"] == "success"
-        assert by_id["done"]["live"] is False  # a finished run is never "live", regardless of mtime
-        assert by_id["live"]["complete"] is False and by_id["live"]["final_status"] is None
-        assert by_id["live"]["live"] is True  # no run.complete + fresh mtime ⇒ live
+        assert by_id["done"]["live"] is False  # a finished run is never "live"
+        assert by_id["crashed"]["live"] is False, "incomplete with NO live writer = not live (exact)"
+        assert by_id["live"]["live"] is True and by_id["live"]["final_status"] is None, "incomplete + held lock = live"
         assert by_id["live"]["workflow_name"] == "WF" and by_id["live"]["trace_file"].endswith(".json")
 
     def test_filter_by_workflow_labels_only_runs_not_excludes(self, tmp_path, monkeypatch) -> None:

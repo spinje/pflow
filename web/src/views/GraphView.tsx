@@ -92,6 +92,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     () => new URLSearchParams(window.location.search).get("run") || null,
   );
   const [runMissing, setRunMissing] = useState(false);
+  // Task 173 (flock death-detection): the run's process exited before finishing (crash/kill). Flip dangling
+  // `running` nodes to `stopped` + show a banner, rather than leave them pulsing blue forever.
+  const [runStopped, setRunStopped] = useState(false);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -219,6 +222,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       setRunStatus(new Map());
       setRunBanner(null);
       setRunMissing(false);
+      setRunStopped(false);
     },
     [syncUrl],
   );
@@ -610,15 +614,21 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setRunStatus(new Map());
     setRunBanner(null);
     setRunMissing(false);
+    setRunStopped(false);
     return subscribe(workflow, {
       focus: (target) => pointHandlers.current?.focus(target),
       frame: (target) => pointHandlers.current?.frame(target),
       clear: () => pointHandlers.current?.clear(),
       // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
       // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
-      runSnapshot: (events, run) => {
+      runSnapshot: (events, run, stopped) => {
         setRunMissing(false);
-        setRunStatus(new Map(events.map((e) => [refKey(e.ref), e.status])));
+        setRunStopped(stopped);
+        // A late subscriber to an already-stopped run gets the dangling nodes still reading `running` —
+        // flip them to `stopped` here so it doesn't blue-blink forever (silent-failures review).
+        setRunStatus(
+          new Map(events.map((e) => [refKey(e.ref), stopped && e.status === "running" ? "stopped" : e.status])),
+        );
         setRunBanner(run);
       },
       runEvents: (events) =>
@@ -627,9 +637,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           for (const e of events) next.set(refKey(e.ref), e.status);
           return next;
         }),
-      runComplete: (run) => setRunBanner(run),
+      // A completed run is not stopped — clear any stale stopped state (defensive against the clean-finish
+      // race the tailer now also guards; concurrency review).
+      runComplete: (run) => {
+        setRunStopped(false);
+        setRunBanner(run);
+      },
       runReset: () => {
         setRunMissing(false);
+        setRunStopped(false);
         setRunStatus(new Map());
         setRunBanner(null);
       },
@@ -637,6 +653,18 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         setRunStatus(new Map());
         setRunBanner(null);
         setRunMissing(true);
+      },
+      // Task 173 flock death-detection: the run's process exited mid-flight. Flip the nodes still showing
+      // `running` to `stopped` (they'll never complete) and surface the banner.
+      runStopped: () => {
+        setRunStopped(true);
+        setRunStatus((prev) => {
+          const next = new Map(prev);
+          for (const [key, status] of next) {
+            if (status === "running") next.set(key, "stopped");
+          }
+          return next;
+        });
       },
     }, runId);
   }, [graphReady, workflow, runId]);
@@ -742,6 +770,13 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               Run <code>{runId}</code> not found — its trace may have been cleared from{" "}
               <code>~/.pflow/debug</code>, or the run id is incorrect. Remove <code>?run=</code> to follow
               the newest run.
+            </div>
+          )}
+          {runStopped && (
+            // Task 173 flock death-detection: the run's process exited before finishing. Say so (amber)
+            // instead of leaving nodes pulsing `running`; the ones that were running now read `stopped`.
+            <div className="run-banner run-stopped" role="status">
+              Run stopped — the process exited before finishing.
             </div>
           )}
           {runBanner && (
