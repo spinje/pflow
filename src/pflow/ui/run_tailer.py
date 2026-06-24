@@ -177,9 +177,12 @@ class RunTailer:
     (and bounds the per-connection queue — replaying N lines of a long run could overflow it).
     """
 
-    def __init__(self, workflow_key: str, broadcast: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(
+        self, workflow_key: str, broadcast: Callable[[str, dict[str, Any]], Any], run_id: str | None = None
+    ) -> None:
         self._key = workflow_key
         self._broadcast = broadcast
+        self._run_id = run_id  # None = unpinned (follow newest live); set = pinned to one run (DR-1)
         self._current: Path | None = None
         self._offset = 0
         self._buf = b""  # RAW byte buffer (deep-review R4): decoding before the line boundary would lose
@@ -197,20 +200,50 @@ class RunTailer:
         """Poll loop. Blocking filesystem I/O (discover, read) runs via ``asyncio.to_thread`` so it never
         stalls the event loop (the hub's SSE sends / keepalives / disconnect-cleanup share it — same rule
         ``command()`` follows; deep-review R3). PARSING + state mutation + broadcast stay ON the loop, so
-        ``snapshot()`` never races a concurrent mutation. Robust: one bad poll logs and the loop continues."""
+        ``snapshot()`` never races a concurrent mutation. Robust: one bad poll logs and the loop continues.
+
+        PINNED (``run_id`` set — deep-review DR-1): resolve ``run_id -> Path`` ONCE, then tail that fixed
+        file forever — never re-discover, so a newer live run of the same workflow can't yank a pinned
+        replay (the whole point of the pin). A stale/unknown ``run_id`` broadcasts ``run-not-found`` and
+        stops. UNPINNED (``run_id is None``): follow the newest live trace, re-discovering each poll so a
+        run started after the viewer opened is picked up; switching files resets state + emits ``run-reset``.
+        """
+        if self._run_id is not None:
+            pinned = await asyncio.to_thread(self._resolve_pinned)
+            if pinned is None:
+                self._broadcast(self._key, {"type": "run-not-found", "run_id": self._run_id})
+                return
+            self._switch(pinned)  # fix the file; snapshot() catches up each subscriber — no run-reset needed
         while True:
             try:
-                path = await asyncio.to_thread(discover_live_trace, self._key)
-                if path is not None:
-                    if path != self._current:
-                        self._switch(path)  # loop: reset state
+                if self._run_id is None:
+                    found = await asyncio.to_thread(discover_live_trace, self._key)
+                    if found is None:
+                        await asyncio.sleep(_POLL_S)
+                        continue
+                    if found != self._current:
+                        self._switch(found)  # loop: reset state
                         self._broadcast(self._key, {"type": "run-reset"})  # loop: tell viewers to clear
-                    data = await asyncio.to_thread(self._read_bytes, path)  # off-loop I/O
+                    current: Path | None = found
+                else:
+                    current = self._current  # pinned: the fixed file resolved above
+                if current is not None:
+                    data = await asyncio.to_thread(self._read_bytes, current)  # off-loop I/O
                     for message in self._consume(data):  # loop: parse + mutate state
                         self._broadcast(self._key, message)
             except Exception:
                 logger.debug("run tailer poll failed for %s", self._key, exc_info=True)
             await asyncio.sleep(_POLL_S)
+
+    def _resolve_pinned(self) -> Path | None:
+        """Resolve the pinned ``run_id`` to its trace file ONCE (deep-review DR-1) — BLOCKING I/O, run via
+        ``asyncio.to_thread``. Matches ``meta.execution_id`` over the shared scanner; does NOT apply the
+        ``--only`` exclude — a user pinning a labelled ``--only`` run from history made an explicit choice
+        (the exclude is the live overlay's policy, not the pin's; deep-review DR-3)."""
+        for candidate in scan_traces(self._key):
+            if candidate["meta"].get("execution_id") == self._run_id:
+                return candidate["path"]
+        return None
 
     def _switch(self, path: Path) -> None:
         """Follow a newer run: reset all per-file state (on the loop). The caller emits ``run-reset``."""

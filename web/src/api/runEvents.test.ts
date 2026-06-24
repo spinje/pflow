@@ -44,6 +44,7 @@ const runHandlers = () => ({
   runEvents: vi.fn(),
   runComplete: vi.fn(),
   runReset: vi.fn(),
+  runNotFound: vi.fn(),
 });
 
 beforeEach(() => {
@@ -114,6 +115,27 @@ describe("subscribe — run-* dispatch arms", () => {
 
     expect(handlers.runReset).toHaveBeenCalledOnce();
     expect(handlers.runReset).toHaveBeenCalledWith();
+  });
+
+  it("run-not-found: invokes runNotFound (DR-1 — a pinned id matched no trace)", () => {
+    const handlers = runHandlers();
+    subscribe("wf", handlers, "run-xyz");
+    FakeEventSource.instances[0]!.emit({ type: "run-not-found", run_id: "run-xyz" });
+
+    expect(handlers.runNotFound).toHaveBeenCalledOnce();
+    expect(handlers.runNotFound).toHaveBeenCalledWith();
+  });
+
+  it("a runId pins the subscription via the &run= query param (DR-1)", () => {
+    subscribe("wf", runHandlers(), "run-xyz");
+    const url = new URL(FakeEventSource.instances[0]!.url, "http://x");
+    expect(url.searchParams.get("run")).toBe("run-xyz");
+  });
+
+  it("no runId omits &run= (the unpinned live overlay)", () => {
+    subscribe("wf", runHandlers());
+    const url = new URL(FakeEventSource.instances[0]!.url, "http://x");
+    expect(url.searchParams.has("run")).toBe(false);
   });
 
   it("an UNKNOWN type does not throw and calls no handler", () => {

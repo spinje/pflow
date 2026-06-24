@@ -64,7 +64,7 @@ from pflow.execution.graph_service import (
 )
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
-from pflow.ui.run_tailer import RunTailer
+from pflow.ui.run_tailer import RunTailer, TraceCandidate, scan_traces
 from pflow.ui.targets import resolve_target
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,10 @@ _MAX_DEPTH = 5
 _ACTIVITY_MAX = 200
 _CONNECTION_QUEUE_MAX = 64
 _KEEPALIVE_S = 15.0
+# Task 173 D6 (DR-2): a run with no `run.complete` and a fresh mtime reads `live`; older than this it
+# reads crashed/stale. A HEURISTIC display hint — a single node running longer than this (a slow LLM
+# call) false-reads not-live; observe-don't-host forbids the process tracking that would make it exact.
+_STALE_RUN_S = 60.0
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -85,6 +89,11 @@ class _Conn:
     workflow_key: str
     queue: asyncio.Queue[dict[str, object]]
     visibility: str
+    # Task 173 (DR-1): which run this Viewer watches — None = the unpinned live overlay (follow newest),
+    # a run_id = a pinned replay/live-watch. Run-events are delivered run-scoped (broadcast_run) so a
+    # pinned replay and the unpinned overlay of the SAME workflow never cross-feed; Point commands stay
+    # workflow-scoped (broadcast) — they apply to every Viewer of the workflow regardless of run.
+    run_id: str | None = None
     active: bool = True
 
 
@@ -101,17 +110,20 @@ class _Hub:
         self._conns: dict[str, _Conn] = {}
         self._activity: deque[dict[str, object]] = deque(maxlen=_ACTIVITY_MAX)
         self._counter = itertools.count(1)
-        # Task 173: one live-run tailer per watched workflow_key, started on first viewer subscribe and
-        # stopped when its last viewer leaves (ref-counted via windows_for). Lock-free / loop-owned like
-        # the rest of the hub — ensure_tailer creates an asyncio task and so MUST run on the event loop.
-        self._tailers: dict[str, tuple[RunTailer, asyncio.Task[None]]] = {}
+        # Task 173: one live-run tailer per (workflow_key, run_id) — started on first viewer subscribe and
+        # stopped when its last viewer leaves (ref-counted via windows_for_run). DR-1: keying on the run_id
+        # too (None = the unpinned live overlay) means a pinned replay and the unpinned overlay of the same
+        # workflow get SEPARATE tailers and never fight over one file. Lock-free / loop-owned like the rest
+        # of the hub — ensure_tailer creates an asyncio task and so MUST run on the event loop.
+        self._tailers: dict[tuple[str, str | None], tuple[RunTailer, asyncio.Task[None]]] = {}
 
-    def register(self, workflow_key: str, visibility: str) -> _Conn:
+    def register(self, workflow_key: str, visibility: str, run_id: str | None = None) -> _Conn:
         conn = _Conn(
             conn_id=f"viewer-{next(self._counter)}",
             workflow_key=workflow_key,
             queue=asyncio.Queue(maxsize=_CONNECTION_QUEUE_MAX),
             visibility=visibility,
+            run_id=run_id,
         )
         self._conns[conn.conn_id] = conn
         return conn
@@ -127,39 +139,63 @@ class _Hub:
     def windows_for(self, workflow_key: str) -> list[_Conn]:
         return [conn for conn in self._conns.values() if conn.workflow_key == workflow_key]
 
-    def broadcast(self, workflow_key: str, message: dict[str, object]) -> list[_Conn]:
-        conns = self.windows_for(workflow_key)
-        sent: list[_Conn] = []
-        for conn in conns:
-            try:
-                conn.queue.put_nowait(message)
-            except asyncio.QueueFull:
-                # A socket that cannot consume 64 human-paced UI commands is
-                # no longer a truthful delivery target. Evict it rather than
-                # leak memory or report another command as sent.
-                conn.active = False
-                self.unregister(conn.conn_id)
-            else:
-                sent.append(conn)
-        return sent
+    def windows_for_run(self, workflow_key: str, run_id: str | None) -> list[_Conn]:
+        """Viewers watching one specific run (Task 173) — ref-counts a run-scoped tailer and scopes its
+        run-events. A subset of ``windows_for`` (which spans every run of the workflow, for Point)."""
+        return [c for c in self._conns.values() if c.workflow_key == workflow_key and c.run_id == run_id]
 
-    def ensure_tailer(self, workflow_key: str) -> RunTailer:
-        """Start (or reuse) the live-run tailer for this workflow_key — one per key, shared across its
-        Viewers. MUST be called from an async (event-loop) handler: it creates an asyncio task."""
-        entry = self._tailers.get(workflow_key)
-        if entry is not None:
+    def _send_or_evict(self, conn: _Conn, message: dict[str, object]) -> bool:
+        """Enqueue one message to one connection; EVICT it if its bounded queue is full. A socket that
+        cannot consume 64 messages is no longer a truthful delivery target — drop it rather than leak
+        memory or report another message as sent. Returns True iff delivered. Shared by ``broadcast``
+        (workflow-scoped, Point) and ``broadcast_run`` (run-scoped, Task 173) so the eviction policy lives
+        in ONE place. Callers iterate a fresh ``windows_for*`` list, so the ``unregister`` here can't
+        corrupt the caller's iteration."""
+        try:
+            conn.queue.put_nowait(message)
+        except asyncio.QueueFull:
+            conn.active = False
+            self.unregister(conn.conn_id)
+            return False
+        return True
+
+    def broadcast(self, workflow_key: str, message: dict[str, object]) -> list[_Conn]:
+        return [conn for conn in self.windows_for(workflow_key) if self._send_or_evict(conn, message)]
+
+    def broadcast_run(self, workflow_key: str, run_id: str | None, message: dict[str, object]) -> None:
+        """Deliver a tailer's run-event to ONLY the Viewers watching that exact run (Task 173, DR-1) —
+        unlike ``broadcast`` (workflow-scoped, for Point)."""
+        for conn in self.windows_for_run(workflow_key, run_id):
+            self._send_or_evict(conn, message)
+
+    def ensure_tailer(self, workflow_key: str, run_id: str | None = None) -> RunTailer:
+        """Start (or reuse) the live-run tailer for this ``(workflow_key, run_id)`` — one per pair, shared
+        across its Viewers (DR-1: the unpinned overlay is ``run_id=None``; a pinned replay/live-watch gets
+        its own). MUST be called from an async (event-loop) handler: it creates an asyncio task. The tailer
+        broadcasts run-scoped (``broadcast_run`` bound to this ``run_id``) so pinned and unpinned Viewers of
+        one workflow never cross-feed.
+
+        A TERMINATED task is treated as absent and replaced. A pinned tailer that resolves to no trace
+        broadcasts ``run-not-found`` and RETURNS (task done) — but its entry lingers in ``_tailers`` until
+        the last viewer disconnects. Reusing that done tailer would hand a second/reconnecting viewer only
+        an empty ``snapshot()`` and NO further broadcast — the silent all-pending canvas ``run-not-found``
+        exists to prevent. Starting fresh re-resolves and re-broadcasts (also self-heals a tailer that died
+        for any other reason). The done task needs no cancel; overwriting the entry drops it."""
+        key = (workflow_key, run_id)
+        entry = self._tailers.get(key)
+        if entry is not None and not entry[1].done():
             return entry[0]
-        tailer = RunTailer(workflow_key, self.broadcast)
+        tailer = RunTailer(workflow_key, lambda k, msg: self.broadcast_run(k, run_id, msg), run_id=run_id)
         task = asyncio.create_task(tailer.run())
-        self._tailers[workflow_key] = (tailer, task)
+        self._tailers[key] = (tailer, task)
         return tailer
 
-    def release_tailer(self, workflow_key: str) -> None:
-        """Stop the tailer once its LAST Viewer has disconnected. Call AFTER ``unregister`` so
-        ``windows_for`` reflects the departed connection."""
-        if self.windows_for(workflow_key):
+    def release_tailer(self, workflow_key: str, run_id: str | None = None) -> None:
+        """Stop the ``(workflow_key, run_id)`` tailer once its LAST Viewer has disconnected. Call AFTER
+        ``unregister`` so ``windows_for_run`` reflects the departed connection."""
+        if self.windows_for_run(workflow_key, run_id):
             return
-        entry = self._tailers.pop(workflow_key, None)
+        entry = self._tailers.pop((workflow_key, run_id), None)
         if entry is not None:
             entry[1].cancel()
 
@@ -407,17 +443,21 @@ async def events(request: Request) -> Response:
     visibility = request.query_params.get("visibility", "visible")
     if visibility not in {"visible", "hidden"}:
         return _json({"error": "Visibility must be 'visible' or 'hidden'."}, status_code=400)
+    # Task 173 (DR-1): `&run=<run_id>` pins this Viewer to one run (replay, or watch one of N concurrent
+    # runs); absent = the unpinned live overlay (follow the newest live run). An empty value is treated as
+    # absent. The pin is a run_id (meta.execution_id), validated by the tailer's resolve (run-not-found).
+    run_id = request.query_params.get("run") or None
 
     hub: _Hub = request.app.state.hub
 
     async def stream() -> AsyncIterator[str]:
-        conn = hub.register(workflow_key, visibility)
+        conn = hub.register(workflow_key, visibility, run_id)
         try:
             yield f"data: {json.dumps({'type': 'connected', 'conn_id': conn.conn_id})}\n\n"
-            # Task 173: attach this Viewer to the live-run tailer and hand it the current run state so a
-            # viewer that opened mid-run catches up without replaying the file (and the per-conn queue
-            # can't overflow on replay). Future deltas arrive as broadcast `run-events`.
-            tailer = hub.ensure_tailer(workflow_key)
+            # Task 173: attach this Viewer to the (workflow_key, run_id) tailer and hand it the current run
+            # state so a viewer that opened mid-run catches up without replaying the file (and the per-conn
+            # queue can't overflow on replay). Future deltas arrive as run-scoped `run-events`.
+            tailer = hub.ensure_tailer(workflow_key, run_id)
             # A queue already full at subscribe (reconnect storm) — skip the catch-up snapshot rather than
             # abort the stream; streamed deltas re-sync state, and broadcast's own QueueFull eviction
             # governs from here. Mirrors broadcast's graceful degrade (deep-review R7).
@@ -433,7 +473,7 @@ async def events(request: Request) -> Response:
                     yield ": keepalive\n\n"
         finally:
             hub.unregister(conn.conn_id)
-            hub.release_tailer(workflow_key)
+            hub.release_tailer(workflow_key, run_id)
 
     return StreamingResponse(
         stream(),
@@ -583,6 +623,48 @@ async def activity(request: Request) -> Response:
     return _json({"events": events_snapshot, "workflow_key": workflow_key})
 
 
+def _run_entry(candidate: TraceCandidate, now: float) -> dict[str, Any]:
+    """Project one raw trace candidate to a run-list entry (Task 173 D6). RAW facts only (DR-2): the UI
+    composes the badge from ``complete``/``final_status``/``live``/``only_node``. ``live`` is the one
+    derived hint (not complete AND mtime within ``_STALE_RUN_S``). No raw ``node_type`` is involved (this
+    is run identity, not node payload)."""
+    meta = candidate["meta"]
+    return {
+        "run_id": meta.get("execution_id"),
+        "workflow_name": meta.get("workflow_name"),
+        "workflow_path": meta.get("workflow_path"),
+        "start_time": meta.get("start_time"),
+        "complete": candidate["complete"],
+        "final_status": candidate["final_status"],
+        "live": (not candidate["complete"]) and (now - candidate["mtime"]) < _STALE_RUN_S,
+        "only_node": meta.get("only_node"),
+        "trace_file": candidate["path"].name,
+    }
+
+
+def runs(request: Request) -> Response:
+    """List runs from the trace dir, newest first (Task 173 D6 — the shared data layer for the catalog
+    running-indicator, per-workflow history, and the runs dashboard).
+
+    Bare ``GET /api/runs`` → every run; ``?workflow=X`` → that workflow's history (matched on the recorded
+    ``meta.workflow_path`` via the shared ``scan_traces``). ``--only`` runs are LABELLED (``only_node``),
+    NOT excluded — that exclusion is the live overlay's policy, not history's (DR-3). Inline / stdin / MCP
+    runs (no file path) appear only in the bare listing; ``?workflow=<file>`` can't match them (DR-5).
+
+    Sync handler → Starlette runs it in the threadpool, so the blocking trace-dir scan never stalls the
+    event loop (it touches no hub state, so the async-handler invariant doesn't apply). ``scan_traces`` is
+    defensive: a missing/empty dir and a single unreadable trace both degrade to a shorter list, never a
+    throw — so this returns ``200 + []`` for "no runs". (DR-6's "non-200 on a hard scan error" is softened
+    here: the scanner is shared with the live tailer and must stay non-throwing; the dominant case — one
+    bad trace among many — is handled by per-file skip.)"""
+    workflow = request.query_params.get("workflow")
+    workflow_key = _workflow_key(workflow) if workflow else None
+    if workflow and workflow_key is None:
+        return _workflow_not_found(workflow)
+    now = time.time()
+    return _json([_run_entry(candidate, now) for candidate in scan_traces(workflow_key)])
+
+
 class _BundleFiles(StaticFiles):
     """StaticFiles that makes ``index.html`` revalidate on every load.
 
@@ -629,6 +711,7 @@ def create_app() -> Starlette:
         Route("/api/source", source),
         Route("/api/version", version),
         Route("/api/events", events),
+        Route("/api/runs", runs),
         Route("/api/health", health),
         Route("/api/command", command, methods=["POST"]),
         Route("/api/interaction", interaction, methods=["POST"]),

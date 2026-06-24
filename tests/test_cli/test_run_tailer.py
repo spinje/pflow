@@ -5,6 +5,7 @@ and run.complete becomes the banner (deltas flushed first)."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -13,9 +14,24 @@ from pflow.ui.run_tailer import RunTailer, discover_live_trace, read_run_status,
 
 
 def _write_trace(
-    path: Path, workflow_path: str, *, complete: bool, only_node: str | None = None, final_status: str = "success"
+    path: Path,
+    workflow_path: str,
+    *,
+    complete: bool,
+    only_node: str | None = None,
+    final_status: str = "success",
+    execution_id: str = "x",
 ) -> None:
-    meta: dict = {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": workflow_path, "execution_id": "x"}
+    # Synthetic, but the CONSUMED keys mirror the producer (meta ← workflow_trace.py `_meta_fields`,
+    # run.complete.final_status ← `_aggregates`, node.start/event join keys ← `_emit_node_start`). The join
+    # keys are pinned against a real collector in tests/test_runtime/test_emit_time_trace.py — if the
+    # producer shape drifts there, this stays green while the tailer breaks (tests/CLAUDE.md pitfall #19).
+    meta: dict = {
+        "kind": "meta",
+        "pflow_trace": "jsonl/1",
+        "workflow_path": workflow_path,
+        "execution_id": execution_id,
+    }
     if only_node is not None:
         meta["only_node"] = only_node
     lines: list[dict] = [
@@ -163,6 +179,34 @@ def test_run_complete_flushes_pending_deltas_then_banner():
     # Pending node states flush BEFORE the banner so the canvas is final before "Run success".
     assert [m["type"] for m in messages] == ["run-events", "run-complete"]
     assert t.snapshot()["run"]["final_status"] == "success"
+
+
+def test_pinned_resolve_matches_execution_id(tmp_path, monkeypatch):
+    """DR-1: a pinned tailer resolves its ``run_id`` to a trace by ``meta.execution_id`` (NOT mtime/--only
+    policy). Includes an ``--only`` candidate to prove the pin can resolve one (pinning a labelled --only
+    run from history is an explicit choice — the exclude is the live overlay's policy, not the pin's)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    debug = tmp_path / ".pflow" / "debug"
+    debug.mkdir(parents=True)
+    wf = str(tmp_path / "wf.pflow.md")
+    full = debug / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    only = debug / "workflow-trace-aaa-wf-20260101-000000-000002.json"
+    _write_trace(full, wf, complete=True, execution_id="run-full")
+    _write_trace(only, wf, complete=True, only_node="b", execution_id="run-only")
+    assert RunTailer(wf, lambda _k, _m: None, run_id="run-full")._resolve_pinned() == full
+    assert RunTailer(wf, lambda _k, _m: None, run_id="run-only")._resolve_pinned() == only  # --only resolvable
+    assert RunTailer(wf, lambda _k, _m: None, run_id="ghost")._resolve_pinned() is None
+
+
+def test_pinned_run_not_found_broadcasts_and_stops(tmp_path, monkeypatch):
+    """DR-1: a pinned tailer whose ``run_id`` matches no trace broadcasts an explicit ``run-not-found`` and
+    RETURNS (the run() loop terminates — no silent all-pending canvas, no endless re-discovery)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".pflow" / "debug").mkdir(parents=True)
+    messages: list[dict] = []
+    tailer = RunTailer("wf", lambda _k, message: messages.append(message), run_id="ghost")
+    asyncio.run(tailer.run())  # terminates on the run-not-found path (does not loop)
+    assert messages == [{"type": "run-not-found", "run_id": "ghost"}]
 
 
 def test_byte_split_multibyte_char_is_not_lost():

@@ -83,6 +83,12 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // banner. Driven by the SSE run-* messages; an empty map = no run = no overlay styling.
   const [runStatus, setRunStatus] = useState<ReadonlyMap<string, NodeStatus>>(() => new Map());
   const [runBanner, setRunBanner] = useState<RunComplete | null>(null);
+  // Task 173 DR-1: an optional `?run=<run_id>` pins this Viewer to one specific run (replay a finished
+  // run, or watch one of N concurrent runs) instead of the unpinned "follow newest live" overlay. Read
+  // once at mount (changing it reloads the page in v1); `runMissing` shows when the pinned id resolves
+  // to no trace (stale bookmark / rotated file).
+  const runId = useMemo(() => new URLSearchParams(window.location.search).get("run") || null, []);
+  const [runMissing, setRunMissing] = useState(false);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -584,6 +590,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
       // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
       runSnapshot: (events, run) => {
+        setRunMissing(false);
         setRunStatus(new Map(events.map((e) => [refKey(e.ref), e.status])));
         setRunBanner(run);
       },
@@ -595,11 +602,17 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         }),
       runComplete: (run) => setRunBanner(run),
       runReset: () => {
+        setRunMissing(false);
         setRunStatus(new Map());
         setRunBanner(null);
       },
-    });
-  }, [graphReady, workflow]);
+      runNotFound: () => {
+        setRunStatus(new Map());
+        setRunBanner(null);
+        setRunMissing(true);
+      },
+    }, runId);
+  }, [graphReady, workflow, runId]);
 
   // Dev-only join-miss detector (Task 173, deep-review R1). A run-event whose structural ref matches no
   // graph node lights nothing and raises nothing — the overlay's signature silent failure (producer
@@ -692,6 +705,17 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           )}
           <div className="canvas">
           {rail(true)}
+          {runMissing && (
+            // Task 173 DR-1: a pinned `?run=` id resolved to no trace. TWO causes collapse here — the
+            // trace was cleared/rotated, OR the run id is wrong (typo / hand-built / from another machine).
+            // Name both + echo the id + the recovery, rather than assert one cause or leave an all-pending
+            // canvas implying the run never started (the silent failure this banner exists to prevent).
+            <div className="run-banner run-failed" role="status">
+              Run <code>{runId}</code> not found — its trace may have been cleared from{" "}
+              <code>~/.pflow/debug</code>, or the run id is incorrect. Remove <code>?run=</code> to follow
+              the newest run.
+            </div>
+          )}
           {runBanner && (
             // Task 173: the run outcome banner (final_status: success | degraded | failed). The live
             // per-node state shows on the nodes themselves; this is the run-level summary.

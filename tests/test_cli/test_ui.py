@@ -11,6 +11,7 @@ Implementation: src/pflow/ui/server.py, src/pflow/cli/commands/ui.py
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import socket
@@ -841,6 +842,173 @@ class TestFocusOpen:
         assert result.exit_code == 1
         assert "didn't connect" in result.output
         assert mock_point.call_count == 2  # initial + one final delivery even on timeout
+
+
+class TestRunsEndpoint:
+    """``GET /api/runs`` — the Task 173 D6 run-list data layer (over the shared ``scan_traces``)."""
+
+    @staticmethod
+    def _write_trace(
+        debug: Path,
+        name: str,
+        wf_path: str,
+        *,
+        complete: bool,
+        final_status: str = "success",
+        only_node: str | None = None,
+        execution_id: str = "x",
+    ) -> None:
+        # Synthetic, but the CONSUMED keys mirror the producer: meta ← workflow_trace.py `_meta_fields`,
+        # run.complete.final_status ← `_aggregates`. If the producer renames those, this stays green while
+        # /api/runs breaks — the node.start/event join keys are pinned against a real collector in
+        # tests/test_runtime/test_emit_time_trace.py (tests/CLAUDE.md pitfall #19).
+        meta: dict = {
+            "kind": "meta",
+            "pflow_trace": "jsonl/1",
+            "workflow_path": wf_path,
+            "workflow_name": "WF",
+            "start_time": "2026-01-01T00:00:00",
+            "execution_id": execution_id,
+        }
+        if only_node is not None:
+            meta["only_node"] = only_node
+        lines: list[dict] = [
+            meta,
+            {"kind": "node.start", "node_id": "a", "id": 0, "ancestor_path": [], "port": None, "status": "running"},
+        ]
+        if complete:
+            lines.append({
+                "kind": "event",
+                "node_id": "a",
+                "id": 0,
+                "ancestor_path": [],
+                "port": None,
+                "status": "success",
+            })
+            lines.append({"kind": "run.complete", "final_status": final_status, "nodes_executed": 1})
+        (debug / name).write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+
+    def test_lists_runs_with_raw_facts(self, tmp_path, monkeypatch) -> None:
+        """Bare ``/api/runs`` → every run with the DR-2 raw facts. A no-``run.complete`` fresh trace reads
+        ``live`` with ``final_status=null``; a finished one reads ``complete`` + its status + ``live=False``."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        debug = tmp_path / ".pflow" / "debug"
+        debug.mkdir(parents=True)
+        wf = str(tmp_path / "wf.pflow.md")
+        self._write_trace(
+            debug, "workflow-trace-aaa-wf-20260101-000000-000001.json", wf, complete=True, execution_id="done"
+        )
+        self._write_trace(
+            debug, "workflow-trace-aaa-wf-20260101-000000-000002.json", wf, complete=False, execution_id="live"
+        )
+        body = TestClient(create_app()).get("/api/runs").json()
+        by_id = {r["run_id"]: r for r in body}
+        assert set(by_id) == {"done", "live"}
+        assert by_id["done"]["complete"] is True and by_id["done"]["final_status"] == "success"
+        assert by_id["done"]["live"] is False  # a finished run is never "live", regardless of mtime
+        assert by_id["live"]["complete"] is False and by_id["live"]["final_status"] is None
+        assert by_id["live"]["live"] is True  # no run.complete + fresh mtime ⇒ live
+        assert by_id["live"]["workflow_name"] == "WF" and by_id["live"]["trace_file"].endswith(".json")
+
+    def test_filter_by_workflow_labels_only_runs_not_excludes(self, tmp_path, monkeypatch) -> None:
+        """``?workflow=X`` filters history to X (matched on recorded ``meta.workflow_path``) and LABELS its
+        ``--only`` runs (``only_node`` set) rather than excluding them — the exclude is the live overlay's
+        policy, not history's (DR-3). A different workflow's run is absent."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        debug = tmp_path / ".pflow" / "debug"
+        debug.mkdir(parents=True)
+        wf_x = tmp_path / "x.pflow.md"
+        wf_x.write_text("# X", encoding="utf-8")
+        wf_y = tmp_path / "y.pflow.md"
+        wf_y.write_text("# Y", encoding="utf-8")
+        self._write_trace(
+            debug, "workflow-trace-aaa-x-20260101-000000-000001.json", str(wf_x), complete=True, execution_id="x-full"
+        )
+        self._write_trace(
+            debug,
+            "workflow-trace-aaa-x-20260101-000000-000002.json",
+            str(wf_x),
+            complete=True,
+            only_node="b",
+            execution_id="x-only",
+        )
+        self._write_trace(
+            debug, "workflow-trace-bbb-y-20260101-000000-000001.json", str(wf_y), complete=True, execution_id="y-run"
+        )
+        body = TestClient(create_app()).get("/api/runs", params={"workflow": str(wf_x)}).json()
+        by_id = {r["run_id"]: r for r in body}
+        assert set(by_id) == {"x-full", "x-only"}, "filtered to X; --only labelled, not excluded; Y absent"
+        assert by_id["x-only"]["only_node"] == "b"
+        assert by_id["x-full"]["only_node"] is None
+
+    def test_empty_dir_returns_empty_list(self, tmp_path, monkeypatch) -> None:
+        """No trace dir (fresh install) → ``200 + []`` (genuinely zero runs), never an error."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        resp = TestClient(create_app()).get("/api/runs")
+        assert resp.status_code == 200 and resp.json() == []
+
+    def test_unknown_workflow_name_404(self, tmp_path, monkeypatch) -> None:
+        """``?workflow=<unresolvable>`` → 404 (mirrors ``/api/events`` — a named filter must resolve)."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        resp = TestClient(create_app()).get("/api/runs", params={"workflow": "no-such-workflow-xyz"})
+        assert resp.status_code == 404
+
+
+class TestRunScopedBroadcast:
+    """DR-1: run-events are delivered run-scoped (``broadcast_run``) so a pinned replay and the unpinned
+    live overlay of one workflow never cross-feed; Point's ``broadcast`` stays workflow-scoped."""
+
+    def test_broadcast_run_targets_only_matching_run_id(self) -> None:
+        from pflow.ui.server import _Conn, _Hub
+
+        def drain(conn: _Conn) -> list[str]:
+            out: list[str] = []
+            while not conn.queue.empty():
+                out.append(str(conn.queue.get_nowait()["type"]))
+            return out
+
+        async def scenario() -> tuple[list[str], list[str]]:
+            hub = _Hub()
+            unpinned = hub.register("wfkey", "visible", None)  # the live overlay
+            pinned = hub.register("wfkey", "visible", "runA")  # a pinned replay/watch
+            hub.broadcast_run("wfkey", "runA", {"type": "run-events", "events": []})  # → pinned only
+            hub.broadcast_run("wfkey", None, {"type": "run-reset"})  # → unpinned only
+            hub.broadcast("wfkey", {"type": "clear"})  # Point: workflow-scoped → BOTH
+            return (drain(pinned), drain(unpinned))
+
+        pinned_msgs, unpinned_msgs = asyncio.run(scenario())
+        # Assert message TYPES per connection, not just counts: a transposed-run_id bug (runA's events to
+        # the unpinned conn, the reset to runA's) keeps both SIZES at 2 while cross-feeding — only checking
+        # contents-per-conn catches it. This is what "never cross-feed" actually means.
+        assert pinned_msgs == ["run-events", "clear"], "pinned got its run's events + the Point clear, NOT run-reset"
+        assert unpinned_msgs == ["run-reset", "clear"], (
+            "unpinned got its own reset + the Point clear, NOT runA's events"
+        )
+
+    def test_ensure_tailer_replaces_a_terminated_tailer(self, tmp_path, monkeypatch) -> None:
+        """DR-1 fix (deep-review Critical): a pinned tailer that resolves to no trace broadcasts
+        ``run-not-found`` and RETURNS — but its entry lingers in ``_tailers`` until the last viewer leaves.
+        A second/reconnecting viewer of the same stale ``?run=`` must get a FRESH tailer (which re-resolves
+        + re-broadcasts ``run-not-found``), never the terminated one (whose empty snapshot + silence = the
+        all-pending blank canvas the message exists to prevent)."""
+        from pflow.ui.server import _Hub
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".pflow" / "debug").mkdir(parents=True)  # empty → "ghost" resolves to nothing
+
+        async def scenario() -> tuple[bool, bool, bool]:
+            hub = _Hub()
+            first = hub.ensure_tailer("wf", "ghost")
+            task1 = hub._tailers[("wf", "ghost")][1]
+            await task1  # the run-not-found path returns → task done, entry lingers
+            second = hub.ensure_tailer("wf", "ghost")  # MUST start fresh, not reuse the dead one
+            task2 = hub._tailers[("wf", "ghost")][1]
+            task2.cancel()
+            return (task1.done(), second is first, task2 is task1)
+
+        terminated, same_tailer, same_task = asyncio.run(scenario())
+        assert terminated, "the pinned run-not-found tailer terminates (does not loop forever)"
+        assert not same_tailer and not same_task, "a terminated tailer is replaced on the next subscribe (DR-1 fix)"
 
 
 class TestLazyImportBoundary:

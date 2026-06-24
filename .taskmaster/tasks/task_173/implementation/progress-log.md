@@ -420,3 +420,119 @@ Gates: 9 tailer tests pass (7 + 2 new); ruff + mypy clean. **UNCOMMITTED** (`run
 **Next:** `GET /api/runs` on `scan_traces` (label `--only`, non-200 on scan error, `200+[]` for zero runs
 per DR-5/DR-6) → the `&run=` pin (DR-1: tailer keyed on `(workflow_key, run_id)`) → the 3 surfaces + the
 ChipRail chip → the `/api/run-node` detail panel (DR-4 projection).
+
+## 2026-06-24 — D6 Phase 1 + Phase 2: `/api/runs` data layer + the `&run=` pin (built, browser-verified)
+
+> Baseline re-captured at HEAD `01721ca3` (fresh context, trust-nothing): `make test` **8132**,
+> `make check` clean (mypy 238), vitest **561**. The diff target for this chunk.
+
+Built Phase 1 (`/api/runs`) and Phase 2 (the `&run=` pin) **together** (user decision — they're coupled:
+the pin is the concurrent-run fix and the biggest structural change, and the dashboard will invite clicking
+into concurrent runs). User also chose "the pin IS the concurrency fix — no interim flicker hack."
+
+**Phase 1 — `GET /api/runs` (server):**
+- `runs()` handler (sync → threadpool; touches no hub state, so the async-handler invariant doesn't apply
+  and the blocking trace-dir scan never stalls the loop). Bare → all runs; `?workflow=X` → that workflow's
+  history (resolved via `_workflow_key`, matched on `meta.workflow_path` through the committed `scan_traces`).
+- `_run_entry` projects each `TraceCandidate` → `{run_id, workflow_name, workflow_path, start_time, complete,
+  final_status, live, only_node, trace_file}`. RAW facts per DR-2; `live` is the one derived hint
+  (`not complete and now-mtime < _STALE_RUN_S=60`). `--only` runs LABELLED not excluded (DR-3 — that's the
+  live overlay's policy, in `discover_live_trace`, NOT history's).
+- **DR-6 softening (flagged honestly):** `scan_traces` is shared with the live tailer and stays
+  non-throwing, so `/api/runs` returns `200+[]` for a hard total-scan failure too (not non-200). The
+  dominant DR-6 case — one unreadable trace among many — IS handled (per-file skip). Documented in the
+  handler docstring. (The user accepted this trade when I surfaced it.)
+
+**Phase 2 — the `&run=` pin (server + tailer, DR-1):**
+- Tailers re-keyed `dict[str, …]` → `dict[tuple[str, str|None], …]`. `_Conn` gains `run_id`. Added
+  `windows_for_run` (ref-count a run-scoped tailer) and **`broadcast_run`** (deliver run-events ONLY to
+  Viewers of that exact `(workflow_key, run_id)`). The collision DR-1 fixes: a pinned replay and the
+  unpinned live overlay of ONE workflow now get SEPARATE tailers AND separate delivery — they never
+  cross-feed. Point's `broadcast` stays workflow-scoped (applies to every Viewer regardless of run).
+- `ensure_tailer`/`release_tailer` keyed on `(workflow_key, run_id)`; the tailer's broadcast callback is
+  bound to its `run_id` (`lambda k, msg: self.broadcast_run(k, run_id, msg)`).
+- `RunTailer` gains `run_id`. `run()` branches ONCE: **pinned** → `_resolve_pinned` (match
+  `meta.execution_id` over `scan_traces`, NO `--only` exclude — pinning a labelled `--only` run is an
+  explicit choice) resolves the file ONCE, then tails it forever (never re-discovers → a new live run can't
+  yank it); a stale id → broadcast `run-not-found` and RETURN. **Unpinned** → today's follow-newest.
+- `events()` reads `&run=`; threads `run_id` through register/ensure/release.
+
+**Frontend (minimal Phase-2 wiring; the run-SELECTION UI is Phase 3):**
+- `events.ts`: `subscribe(workflow, handlers, runId?)` appends `&run=` when set; new `runNotFound` handler +
+  `run-not-found` dispatch arm.
+- `GraphView`: reads `?run=` at mount, passes to `subscribe`; `runMissing` state → a "Run not found" banner;
+  cleared on snapshot/reset.
+
+**Tests (committed):** +2 tailer (`_resolve_pinned` matches execution_id incl. an `--only` candidate;
+`run-not-found` broadcasts + the run() loop terminates), +4 `/api/runs` endpoint (raw facts incl. live;
+`?workflow=` filters + LABELS `--only`; empty-dir→`200 []`; unknown name→404), +1 hub `broadcast_run`
+scoping (pinned vs unpinned never cross-feed; Point reaches both), +3 frontend (`run-not-found` arm, `&run=`
+passthrough, no-runId omits it).
+
+**Gates (all green):** `make test` **8139** (8132 + 7 Python, 0 regressions); `make check` clean (mypy 238,
+ruff-format reformatted my long test lines once); vitest **564** (561 + 3); strict `tsc` clean.
+
+**Browser/real-server verification (the mandatory step — driven against a freshly rebuilt bundle + a
+restarted :8765 server):**
+- `/api/runs` over REAL engine runs: two finished `runs-probe` runs list newest-first with correct facts;
+  `?workflow=` filters to them; a mid-flight `slow-runs-probe` run reads `complete=False, final_status=null,
+  live=True`; an `--only second` run is PRESENT + LABELLED (`only_node="second"`).
+- The pin at the SSE wire: `&run=<good>` → `connected → run-snapshot{} → run-events{first,second,third:
+  success} → run-complete:success`; `&run=<bogus>` → `connected → run-snapshot{} → run-not-found`.
+- **DOM (overlay-status-probe):** pinning a finished run lit `first/second/third` all `status-success` in a
+  real browser — the `&run=` pin replays the RIGHT run end-to-end.
+- **Screenshot:** `&run=ghost` → the "Run not found — it may have been cleared from ~/.pflow/debug" banner,
+  nodes NOT falsely lit (empty status map). (`/tmp/pflow-shots/runs-probe-ghost-run-id-*.png`.)
+
+**Known minor (v1-acceptable, documented):** a pinned FINISHED run's FIRST snapshot is empty (the tailer
+task hasn't read the file at the subscribe instant) → nodes light via `run-events` deltas ~`_POLL_S` (0.25s)
+later — a sub-second flash of unstyled→success on open. Same catch-up the unpinned first-viewer already uses;
+not worth coupling subscribe to the poll cadence to remove.
+
+**Deviation from `d6-plan.md` (minor):** none structural. DR-6's "non-200 on a hard scan error" softened to
+`200+[]` (above) to keep the shared scanner non-throwing for the tailer.
+
+**Next (Phase 3+):** the 3 frontend surfaces (catalog running-badge → per-workflow history dropdown →
+`?view=runs` global dashboard, each its own browser-verify + own fetch catch per DR-6) → Phase 4 ChipRail
+status chip → Phase 5 `/api/run-node` detail panel (DR-4 allowlist projection) → pin D1 → tool-elevation
+verdict + `task-review.md`.
+
+### Deep-review of the Phase 1+2 diff (6 agents) + fixes — all applied, re-verified
+
+User gated the commit on a `/deep-review` first. Ran 6 specialists (concurrency, silent-failures, impact,
+agent-UX, test-fidelity, simplicity) over the uncommitted diff. **1 Critical + 2 Warnings + 3 Suggestions,
+all confirmed against the code; node_type-leak check PASSED (both projections are literal allowlists);
+impact found ZERO missed consumers.** Fixed all six (user chose "all"):
+
+- **🔴 Critical (concurrency + silent-failures, independently) — dead pinned tailer reused → silent blank
+  canvas.** `ensure_tailer` reused a `_tailers` entry by presence; a pinned `run-not-found` tailer returns
+  (task done) but its entry lingers until the last viewer leaves. A SECOND viewer — or a single tab
+  RECONNECTING within the ~15s keepalive-linger window (the dropped conn lingers in `_conns` until its next
+  failed write, so `release_tailer` hasn't fired) — reused the dead tailer → empty snapshot, never
+  `run-not-found` → the exact all-pending blank canvas the message prevents. **Fix:** `ensure_tailer` treats
+  a DONE task as absent (`entry is not None and not entry[1].done()`) and starts fresh — re-resolves +
+  re-broadcasts; self-heals any dead-task path. + regression test `test_ensure_tailer_replaces_a_terminated_tailer`.
+- **🟡 Warning (agent-UX) — `run-not-found` banner misattributed cause.** It named only "cleared from
+  ~/.pflow/debug"; the same path fires for a wrong/typo'd `run_id`. **Fix:** banner now echoes the `runId`
+  (already in scope), names BOTH causes, and the recovery ("Remove `?run=` to follow the newest run").
+  Browser-screenshot-verified.
+- **🟡 Warning (test-fidelity) — the `broadcast_run` test asserted queue SIZES, not contents** → a
+  transposed-`run_id` cross-feed would pass. **Fix:** drains each queue, asserts message TYPES per conn
+  (pinned = `[run-events, clear]`, unpinned = `[run-reset, clear]`).
+- **🟢 Simplicity — `broadcast_run` duplicated `broadcast`'s eviction loop + re-inlined `windows_for_run`.**
+  **Fix:** extracted `_Hub._send_or_evict` (the one eviction-policy home); `broadcast`/`broadcast_run` now
+  both reuse it over their respective `windows_for*`.
+- **🟢 Impact — `/api/runs` absent from the `ui/CLAUDE.md` HTTP-contract list.** **Fix:** added the entry.
+- **🟢 Test-fidelity — fixture drift.** **Fix:** both `_write_trace` helpers now comment that their consumed
+  keys mirror the producer + the join keys are pinned by `test_emit_time_trace.py` (pitfall #19).
+
+**Verified clean (no findings), per the agents:** node_type leakage (allowlists), `/api/runs` field
+nullability, the live/finished snapshot→delta catch-up, `broadcast_run` eviction-during-iteration (fresh
+list), closure capture, the thread/loop split, `release_tailer` ref-counting, the sync `runs()` handler, the
+DR-6 `200+[]` softening (sound + documented), frontend `runId` stability.
+
+**Gates after fixes (all green):** `make test` **8140** (8132 + 8 Python: +2 tailer pin, +5 runs/broadcast,
++1 dead-tailer regression); `make check` clean (mypy 238); vitest **564** (561 + 3); strict `tsc`. **Browser
+re-verified** (rebuilt bundle + restarted server): pinned GOOD run still lights `first/second/third`
+`status-success` (the `ensure_tailer` fix didn't regress the happy path); the new run-not-found banner
+renders with the id + both causes + recovery (`/tmp/pflow-shots/runs-probe-typo-xyz-123-*.png`).

@@ -17,6 +17,7 @@ export interface RunHandlers {
   runEvents: (events: RunEvent[]) => void; // a batched poll's node deltas
   runComplete: (run: RunComplete) => void; // the run banner
   runReset: () => void; // a newer run started (or the tailer switched files) — clear prior statuses
+  runNotFound: () => void; // a pinned `&run=` id matched no trace (stale bookmark / rotated file) — DR-1
 }
 
 const visibility = (): "visible" | "hidden" => (document.visibilityState === "visible" ? "visible" : "hidden");
@@ -71,7 +72,11 @@ const RETRY_MS = 1000; // localhost single-user: a fixed beat beats exponential 
  * trigger-agnostic: recovers from server restart, sleep/wake, network blip, and
  * tab freeze uniformly, without ever reading `readyState` or `visibilityState`.
  */
-export function subscribe(workflow: string, handlers: PointHandlers & Partial<RunHandlers>): () => void {
+export function subscribe(
+  workflow: string,
+  handlers: PointHandlers & Partial<RunHandlers>,
+  runId?: string | null,
+): () => void {
   let source: EventSource | null = null;
   let connId: string | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
@@ -90,6 +95,7 @@ export function subscribe(workflow: string, handlers: PointHandlers & Partial<Ru
   const connect = (): void => {
     if (stopped) return; // defensive: a fired-but-not-yet-cleared timer must not resurrect a connection
     const params = new URLSearchParams({ workflow, visibility: visibility() });
+    if (runId) params.set("run", runId); // Task 173 DR-1: pin this Viewer to one run (replay / one of N)
     source = new EventSource(`/api/events?${params.toString()}`);
 
     source.onmessage = (event: MessageEvent<string>): void => {
@@ -119,6 +125,8 @@ export function subscribe(workflow: string, handlers: PointHandlers & Partial<Ru
         if (run) handlers.runComplete?.(run);
       } else if (message.type === "run-reset") {
         handlers.runReset?.();
+      } else if (message.type === "run-not-found") {
+        handlers.runNotFound?.();
       }
     };
 

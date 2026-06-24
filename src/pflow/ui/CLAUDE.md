@@ -97,6 +97,20 @@ on the next valid save. **Known limit:** a workflow mid-edit-invalid in a *sub-w
 file tracks only the entry file's mtime until it parses again (recovery still fires on the
 fixing save).
 
+### `GET /api/runs[?workflow=<name|path>]`
+→ `200` `[{run_id, workflow_name, workflow_path, start_time, complete, final_status, live,
+only_node, trace_file}]` — runs scanned from `~/.pflow/debug`, newest-first (Task 173 D6 run
+navigation). Bare = every run; `?workflow=X` = that workflow's history (matched on the recorded
+`meta.workflow_path`). RAW facts (the UI composes the badge): `complete` = has a `run.complete`
+trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`) or `null` while
+not complete; `live` = not complete AND mtime within `_STALE_RUN_S` (60s — a heuristic, not
+authoritative: a node running longer false-reads not-live); `only_node` LABELS `--only` runs
+(they are kept here, unlike the live overlay which excludes them). Inline/stdin/MCP runs (no file
+path) appear only in the bare listing. `404` on an unresolvable `?workflow=`; `200 []` for zero
+runs (a hard scan failure also degrades to `[]` — the scanner is shared non-throwing with the live
+tailer). The shared scanner is `run_tailer.scan_traces` (cheap head+tail read, never a full parse).
+Pin a Viewer to one run for replay/concurrent-watch via `GET /api/events?workflow=X&run=<run_id>`.
+
 ### Live interaction channel
 
 - `GET /api/events?workflow=<name|path>&visibility=<visible|hidden>` subscribes a
