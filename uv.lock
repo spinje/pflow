@@ -1524,7 +1524,7 @@ dev = [
     { name = "mypy", specifier = ">=0.991" },
     { name = "pre-commit", specifier = ">=2.20.0" },
     { name = "pytest", specifier = ">=7.2.0" },
-    { name = "pytest-xdist", specifier = ">=3.0.0" },
+    { name = "pytest-xdist", specifier = ">=3.2.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.11.5" },
     { name = "starlette", specifier = ">=0.40" },
