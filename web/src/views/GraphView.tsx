@@ -18,7 +18,7 @@ import "@xyflow/react/dist/style.css";
 import { reportInteraction, subscribe, type PointHandlers } from "../api/events";
 import { collapsibleGroupIds, initialCollapsed, revealNodes } from "../graph/collapse";
 import { autoDirection } from "../graph/direction";
-import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { consumedReadPaths, ioOwners, refKey, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import {
   edgeIdForTarget,
   edgeTargetForId,
@@ -39,7 +39,7 @@ import {
   readViewParams,
   writeViewParams,
 } from "../utils/viewParams";
-import type { InteractionTarget, PointTarget, RFEdge, RFGraph, RFNode, SourceFiles } from "../types";
+import type { InteractionTarget, NodeStatus, PointTarget, RFEdge, RFGraph, RFNode, RunComplete, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -79,6 +79,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Live execution overlay (Task 173): node status keyed by stable structural ref-key, plus the run
+  // banner. Driven by the SSE run-* messages; an empty map = no run = no overlay styling.
+  const [runStatus, setRunStatus] = useState<ReadonlyMap<string, NodeStatus>>(() => new Map());
+  const [runBanner, setRunBanner] = useState<RunComplete | null>(null);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -111,6 +115,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       focus,
       selected: selectedId,
       workflowName,
+      runStatus,
     },
     reload,
   );
@@ -576,8 +581,44 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       focus: (target) => pointHandlers.current?.focus(target),
       frame: (target) => pointHandlers.current?.frame(target),
       clear: () => pointHandlers.current?.clear(),
+      // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
+      // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
+      runSnapshot: (events, run) => {
+        setRunStatus(new Map(events.map((e) => [refKey(e.ref), e.status])));
+        setRunBanner(run);
+      },
+      runEvents: (events) =>
+        setRunStatus((prev) => {
+          const next = new Map(prev);
+          for (const e of events) next.set(refKey(e.ref), e.status);
+          return next;
+        }),
+      runComplete: (run) => setRunBanner(run),
+      runReset: () => {
+        setRunStatus(new Map());
+        setRunBanner(null);
+      },
     });
   }, [graphReady, workflow]);
+
+  // Dev-only join-miss detector (Task 173, deep-review R1). A run-event whose structural ref matches no
+  // graph node lights nothing and raises nothing — the overlay's signature silent failure (producer
+  // emit-time ancestor_path drifting from the renderer's RFRef). Surface it loudly in dev so it's caught
+  // during the mandatory browser verification, especially at the sub-workflow / batch checkpoints where
+  // non-empty ancestor_path joins first get exercised. Keyed on the FULL graph (not rendered nodes), so a
+  // collapsed-group child is not a false positive.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !graph || runStatus.size === 0) return;
+    const joinable = new Set(graph.nodes.map((n) => refKey(n.ref)));
+    const unjoined = [...runStatus.keys()].filter((key) => !joinable.has(key));
+    if (unjoined.length > 0) {
+      console.warn(
+        `pflow overlay: ${unjoined.length} run-event(s) join to no graph node ` +
+          `(producer ancestor_path vs renderer RFRef drift?):`,
+        unjoined,
+      );
+    }
+  }, [runStatus, graph]);
 
   const toolbar = (): JSX.Element => (
     <Toolbar
@@ -651,6 +692,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           )}
           <div className="canvas">
           {rail(true)}
+          {runBanner && (
+            // Task 173: the run outcome banner (final_status: success | degraded | failed). The live
+            // per-node state shows on the nodes themselves; this is the run-level summary.
+            <div className={`run-banner run-${runBanner.final_status ?? "running"}`} role="status">
+              Run {runBanner.final_status ?? "running"}
+              {typeof runBanner.nodes_executed === "number" ? ` · ${runBanner.nodes_executed} nodes` : ""}
+              {runBanner.nodes_failed ? ` · ${runBanner.nodes_failed} failed` : ""}
+            </div>
+          )}
           {status === "loading" && <div className="canvas-overlay">Laying out…</div>}
           {status === "empty" && <div className="canvas-overlay">This workflow has no visible structure.</div>}
           {reloadError && (

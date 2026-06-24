@@ -264,6 +264,109 @@ def test_report_command_stdout_remains_just_the_path(tmp_path: Path, monkeypatch
     assert result.stdout == f"{report_dir}\n"
 
 
+def _write_jsonl_trace(path: Path, lines: list[dict[str, Any]]) -> Path:
+    """Write hand-built JSONL trace lines verbatim.
+
+    Unlike `write_trace_jsonl` (which always appends a `run.complete` line), this lets a fixture
+    OMIT `run.complete` to produce the genuine `final_status="incomplete"` shape that eager-`meta`
+    (Task 173) leaves on disk for an in-flight / crash-before-first-completion run.
+    """
+    import json
+
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    return path
+
+
+# meta + event + run.complete → loads as final_status="success"
+_COMPLETE_TRACE_LINES: list[dict[str, Any]] = [
+    {
+        "kind": "meta",
+        "pflow_trace": "jsonl/1",
+        "workflow_path": "wf.pflow.md",
+        "execution_id": "complete-run",
+        "format_version": "2.x",
+    },
+    {
+        "kind": "event",
+        "node_id": "a",
+        "id": 0,
+        "seq": 0,
+        "parent_id": None,
+        "ancestor_path": [],
+        "port": None,
+        "status": "success",
+    },
+    {"kind": "run.complete", "final_status": "success", "nodes_executed": 1, "failed_node_ids": []},
+]
+
+# meta + node.start, NO run.complete → loads as final_status="incomplete" (eager-`meta` in-flight run)
+_INCOMPLETE_TRACE_LINES: list[dict[str, Any]] = [
+    {
+        "kind": "meta",
+        "pflow_trace": "jsonl/1",
+        "workflow_path": "wf.pflow.md",
+        "execution_id": "in-flight-run",
+        "format_version": "2.x",
+    },
+    {"kind": "node.start", "node_id": "a", "id": 0, "seq": 0, "parent_id": None},
+]
+
+
+def test_report_autoselect_prefers_newest_complete_over_newer_incomplete(tmp_path: Path, monkeypatch):
+    """No-arg `pflow report` skips a NEWER in-flight/incomplete trace for the newest COMPLETE one.
+
+    Task 173 eager-`meta` leaves a `meta`-only `incomplete` file from t=0; the old "newest by mtime"
+    auto-select would let it shadow the user's last good run with a hollow 0-node report.
+    """
+    import os
+
+    from pflow.core.trace_io import load_trace_file
+
+    debug_dir = tmp_path / ".pflow" / "debug"
+    debug_dir.mkdir(parents=True)
+
+    complete = _write_jsonl_trace(debug_dir / "workflow-trace-complete.json", _COMPLETE_TRACE_LINES)
+    incomplete = _write_jsonl_trace(debug_dir / "workflow-trace-incomplete.json", _INCOMPLETE_TRACE_LINES)
+
+    # Make the INCOMPLETE file strictly newer so a naive mtime sort would pick it.
+    os.utime(complete, (1_000_000, 1_000_000))
+    os.utime(incomplete, (2_000_000, 2_000_000))
+
+    # Guard against fixture theater: confirm the files actually load as the statuses the test relies on.
+    assert load_trace_file(complete).get("final_status") == "success"
+    assert load_trace_file(incomplete).get("final_status") == "incomplete"
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = click.testing.CliRunner(mix_stderr=False)
+    result = runner.invoke(main, ["report"])
+
+    assert result.exit_code == 0, f"Report failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    # The "Using latest trace:" stderr line names the chosen trace — it must be the COMPLETE one.
+    assert "Using latest trace:" in result.stderr
+    assert str(complete) in result.stderr
+    assert str(incomplete) not in result.stderr
+
+
+def test_report_autoselect_only_incomplete_errors_clearly(tmp_path: Path, monkeypatch):
+    """With only in-flight/incomplete traces, no-arg `pflow report` errors and exits 1 — not a hollow report."""
+    from pflow.core.trace_io import load_trace_file
+
+    debug_dir = tmp_path / ".pflow" / "debug"
+    debug_dir.mkdir(parents=True)
+
+    incomplete = _write_jsonl_trace(debug_dir / "workflow-trace-incomplete.json", _INCOMPLETE_TRACE_LINES)
+    assert load_trace_file(incomplete).get("final_status") == "incomplete"
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = click.testing.CliRunner(mix_stderr=False)
+    result = runner.invoke(main, ["report"])
+
+    assert result.exit_code == 1, f"Expected exit 1; stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "No completed trace" in result.stderr
+    # It must NOT fall through to generating a report from the incomplete trace.
+    assert "Using latest trace:" not in result.stderr
+
+
 @pytest.mark.trace_files
 def test_run_report_flag_echoes_summary_to_stderr(tmp_path: Path, monkeypatch):
     """`pflow <workflow> --report` mirrors the inline stderr echo."""

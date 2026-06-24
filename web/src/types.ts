@@ -19,6 +19,32 @@ export interface RFRef {
   port: "in" | "out" | null;
 }
 
+// --- Live execution overlay (Task 173) ---------------------------------------------------------
+// A node's display state. `pending` (not started) is the ABSENCE of a status — only these four
+// arrive on the wire (the producer's per-node status enum + the live `node.start` → `running`).
+export type NodeStatus = "running" | "success" | "cached" | "failed";
+
+// One run-event the overlay joins onto a graph node by its structural `ref` (node_id + ancestor_path
+// + port=null), via sameRef/refKey. Carries only the join key + status (+ cheap cost/duration) — never
+// node_output (may be large/blob) and never the raw node_type (a Python class name).
+export interface RunEvent {
+  id: number | null;
+  ref: RFRef;
+  status: NodeStatus;
+  duration_ms?: number | null;
+  cost_usd?: number | null;
+}
+
+// The run.complete trailer, surfaced as the run banner. `final_status` is the run outcome
+// (`success` | `degraded` | `failed`) — distinct from any single node's status.
+export interface RunComplete {
+  final_status?: string;
+  duration_ms?: number;
+  nodes_executed?: number;
+  nodes_failed?: number;
+  failed_node_ids?: string[];
+}
+
 export interface RFParam {
   name: string;
   // JSON-able authored value: string (incl. full prompt/code), number, bool,

@@ -1198,18 +1198,125 @@ def test_runtime_event_refs_join_onto_the_static_graph(tmp_path, monkeypatch):
     )
     graph_refs = {_ref_tuple(n.ref.node_id, n.ref.ancestor_path, n.ref.port) for n in render_react_flow(graph).nodes}
 
-    # Runtime refs read off the RAW wire — exactly what Task 173's tailer feeds into sameRef.
+    # Runtime refs read off the RAW wire — exactly what Task 173's tailer feeds into sameRef. BOTH the
+    # completion ``event`` AND the live ``node.start`` lines must join: node.start lights the *running*
+    # state and carries its OWN independently-derived ancestor_path/port, so a node.start-only drift would
+    # silently never light the most-visible part of the overlay (deep-review R1 — the pin was event-only).
+    raw_lines = _read_lines(result.trace.finalize())
     runtime_refs = [
         _ref_tuple(ln["node_id"], ln["ancestor_path"], ln["port"])
-        for ln in _read_lines(result.trace.finalize())
-        if ln["kind"] == "event"
+        for ln in raw_lines
+        if ln["kind"] in ("event", "node.start")
     ]
+    start_refs = [
+        _ref_tuple(ln["node_id"], ln["ancestor_path"], ln["port"]) for ln in raw_lines if ln["kind"] == "node.start"
+    ]
+    assert start_refs, "the run must emit node.start lines (the running-state signal the overlay joins on)"
 
     unjoined = [r for r in runtime_refs if r not in graph_refs]
     assert not unjoined, (
-        f"runtime events that DON'T join onto any static-graph node (overlay never lights them): {unjoined}"
+        f"runtime refs (event OR node.start) that DON'T join onto any static-graph node (overlay never "
+        f"lights them): {unjoined}"
     )
-    # Not a vacuous all-top-level pass: the sub-workflow child must join via a NON-EMPTY ancestor_path on BOTH sides.
+    # Not a vacuous all-top-level pass: the sub-workflow child must join via a NON-EMPTY ancestor_path on
+    # BOTH sides — and its node.start must carry the SAME descent path as its completion event.
     child_ref = ("child-step", (("call-child", None),), None)
     assert child_ref in runtime_refs, "the producer must emit the nested child's descent path"
+    assert child_ref in start_refs, "the nested child's node.start must carry the same descent path (running join)"
     assert child_ref in graph_refs, "the renderer must expose the same descent path (the join target)"
+
+
+# --- Task 173: node.start producer contract + the routing-based no-lock safety net -------------------
+
+
+@pytest.mark.trace_files
+def test_begin_node_emits_disk_only_running_marker_and_reuses_seq(tmp_path, monkeypatch):
+    """``begin_node`` (Task 173) flushes a DISK-ONLY ``node.start`` marker — NOT appended to
+    ``self.events`` — reserves the node's ``seq``, and the completion ``event`` reuses it. So the reader
+    DROPS ``node.start`` (it's a live-only signal), on-disk ``event`` seqs stay contiguous/byte-identical
+    to a no-node.start run, and ``tree() == reconstruct(disk)`` holds. The marker carries the overlay join
+    keys (``status="running"``, ``ancestor_path``, ``port=None``)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("wf", workflow_path="wf.pflow.md", is_run_scoped=True, stream_to_disk=True)
+    c.start_streaming()  # A1: eager meta exists before any node
+    f1 = c.begin_node("a", "ShellNode")
+    c.record_node_execution("a", "ShellNode", 1.0, True, node_output={"v": 1}, frame=f1)
+    f2 = c.begin_node("b", "LLMNode")
+    c.record_node_execution("b", "LLMNode", 2.0, True, node_output={"v": 2}, frame=f2)
+    path = c.finalize()
+
+    raw = _read_lines(path)
+    starts = [ln for ln in raw if ln["kind"] == "node.start"]
+    events = [ln for ln in raw if ln["kind"] == "event"]
+    assert [s["node_id"] for s in starts] == ["a", "b"]
+    assert all(s["status"] == "running" and s["port"] is None and s["ancestor_path"] == [] for s in starts)
+    # DISK-ONLY: in-memory holds ONLY the terminal events (node.start is never appended to self.events).
+    assert [e["node_id"] for e in c.events] == ["a", "b"]
+    # seq reuse: each node.start shares its completion event's id, and event seqs stay contiguous 0,1.
+    assert starts[0]["id"] == events[0]["id"] == 0
+    assert starts[1]["id"] == events[1]["id"] == 1
+    # The reader drops node.start; tree()==reconstruct; terminal statuses win.
+    disk = load_trace_file(path)
+    assert [n["node_id"] for n in disk["nodes"]] == ["a", "b"]
+    assert all(n["status"] == "success" for n in disk["nodes"])
+    assert c.tree() == disk["nodes"]
+    assert disk["final_status"] == "success"
+
+
+@pytest.mark.trace_files
+def test_parallel_batch_of_subworkflows_streams_without_owner_thread_error(tmp_path, mock_llm_client, monkeypatch):
+    """deep-review R8 / concurrency W2: ``node.start``'s thread-safety is ROUTING-based, not guard-based.
+    Parallel-batch workers run via ``_execute_single_node`` (no ``begin_node``) and their sub-workflows use
+    a BUFFER collector (``is_run_scoped=False``), so ``begin_node``/``_next_seq`` never touch the run-scoped
+    collector OFF the owner thread. Drive a REAL parallel batch of sub-workflows under a STREAMING
+    run-scoped collector: a worker tripping ``_assert_owner_thread`` would raise ``RuntimeError`` and fail
+    the run, so ``result.success`` IS the assertion. Also pin seq stays gap-free on the run collector and
+    the streamed trace reads back clean — a future refactor routing a worker through ``_execute_node``
+    would break this loudly."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    mock_llm_client.set_response(MODEL, None, {"response": "ok"}, cost_usd=0.01)
+
+    child = tmp_path / "bchild.pflow.md"
+    child.write_text(
+        "# BChild\n\nBatched child.\n\n## Inputs\n\n### topic\n\nThe topic.\n\n- type: string\n\n## Steps\n\n"
+        "### bchild-llm\n\nRespond.\n\n- type: llm\n- model: " + MODEL + "\n- prompt: respond about ${topic}\n",
+        encoding="utf-8",
+    )
+    parent = tmp_path / "bparent.pflow.md"
+    parent.write_text(
+        f"""\
+# BParent
+
+Parallel batch of sub-workflows under a streaming run-scoped collector.
+
+## Steps
+
+### fanout
+
+Run the child per item.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    topic: ${{item}}
+
+```yaml batch
+items:
+  - a
+  - b
+as: item
+parallel: true
+```
+""",
+        encoding="utf-8",
+    )
+
+    result = _run(parent, cache_enabled=False)
+    assert result.success, "a worker tripping the no-lock owner-thread assert would fail the run"
+    collector = result.trace
+    # seq stays gap-free on the run collector (the batch host is a WorkflowExecutor → no node.start; its
+    # items are inline on the buffer path, contributing no run-collector seq).
+    seqs = sorted(e["seq"] for e in collector.events)
+    assert seqs == list(range(len(seqs))), f"run-collector seq must stay gap-free: {seqs}"
+    disk = load_trace_file(collector.finalize())
+    assert disk["final_status"] == "success" and [n["node_id"] for n in disk["nodes"]] == ["fanout"]

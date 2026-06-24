@@ -132,6 +132,12 @@ def _partition_trace_lines(
             meta = line
         elif kind == "event":
             event_lines.append(line)
+        elif kind == "node.start":
+            # Task 173: a LIVE-ONLY in-flight marker the overlay tailer consumes (a node has BEGUN but
+            # not completed). It carries no completion data and is deliberately DROPPED from the
+            # reconstructed trace — the matching `event` line (which reuses its seq) is the source of
+            # truth. Known-but-ignored here, NOT unknown-kind corruption: skip without bucketing.
+            continue
         elif kind == "run.complete":
             run_complete = line
         elif kind == "blob":

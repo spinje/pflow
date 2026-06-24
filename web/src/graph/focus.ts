@@ -7,7 +7,30 @@
 
 import { ioOwners } from "./io";
 import type { FlowEdge, FlowNode } from "./flow";
-import type { RFGraph } from "../types";
+import type { NodeStatus, RFGraph, RFRef } from "../types";
+
+// --- Live execution overlay restyle (Task 173) -------------------------------------------------
+
+/** A stable string key for a structural ref — the overlay's status-map key. Invariant across the
+ *  POSITIONAL flat-id renumbering (a live-reload mid-run keeps each node's status), unlike the flat id;
+ *  mirrors the identity sameRef compares (node_id + port + ancestor_path of node_id:batch_index steps). */
+export function refKey(ref: RFRef): string {
+  const path = ref.ancestor_path.map((step) => `${step.node_id}:${step.batch_index}`).join(">");
+  return `${ref.node_id}|${ref.port}|${path}`;
+}
+
+/** Thread each leaf's live run status onto its `data` — a cheap pure restyle, the overlay sibling of
+ *  applyFocus: NO re-layout, and it returns the SAME node object when a node's status is unchanged so
+ *  memo'd nodes skip re-render (only changed nodes get new identity). Keyed on the stable structural
+ *  ref so it survives a live-reload renumber. Leaf nodes only in v1 (group/io host status is deferred). */
+export function applyStatus(nodes: FlowNode[], status: ReadonlyMap<string, NodeStatus>): FlowNode[] {
+  return nodes.map((node) => {
+    if (node.type !== "node") return node;
+    const next = status.get(refKey(node.data.node.ref));
+    if (node.data.status === next) return node;
+    return { ...node, data: { ...node.data, status: next } };
+  });
+}
 
 // The shared empty expansion set — expandTargets deliberately returns this ONE
 // module-level constant for every no-expansion result: the hook's build memo

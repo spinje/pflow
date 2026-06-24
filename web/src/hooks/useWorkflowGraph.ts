@@ -16,10 +16,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type OnEdgesChange, type OnNodesChange, useEdgesState, useNodesState, useReactFlow } from "@xyflow/react";
 
 import { ApiError, fetchGraph } from "../api/client";
-import { applyFocus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode, ioOwners } from "../graph/flow";
+import { applyFocus, applyStatus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode, ioOwners } from "../graph/flow";
 import { layoutGraph } from "../graph/layout";
 import { assignBackRails, assignDataRails, assignLoopRails } from "../graph/portSides";
-import type { ApiErrorEntry, RFGraph } from "../types";
+import type { ApiErrorEntry, NodeStatus, RFGraph } from "../types";
 
 export type GraphStatus = "loading" | "ready" | "empty" | "error";
 
@@ -29,6 +29,9 @@ export interface WorkflowGraphView extends Omit<BuildOptions, "expanded"> {
   // (expandTargets `pinned`): chip navigation moves focus away while the panel
   // stays, and the subject the user is reading must not contract mid-read.
   selected: string | null;
+  // Live execution overlay (Task 173): node status keyed by stable structural ref-key (graph/focus
+  // refKey). Applied as a cheap restyle AFTER focus (no re-layout); absent/empty = no run = no styling.
+  runStatus?: ReadonlyMap<string, NodeStatus>;
 }
 
 export interface WorkflowGraphResult {
@@ -66,6 +69,10 @@ export interface WorkflowGraphResult {
 // re-run build + ELK on every advanced-mode click.
 const EMPTY_EXPANSION: ReadonlySet<string> = new Set();
 
+// Stable empty status map for the no-run / runStatus-absent case — a fresh Map() per render would
+// give the decoration effect a new dep identity every render and re-decorate needlessly.
+const EMPTY_STATUS: ReadonlyMap<string, NodeStatus> = new Map();
+
 // Animated expansion transitions: positions glide over ANIMATE_MS instead of
 // snapping — but ONLY on graphs small enough that the per-frame store updates (and
 // the edge-path recomputes they trigger) are cheap. Above the cap, snap as before.
@@ -96,6 +103,7 @@ function absolutePosition(nodes: FlowNode[], id: string): { x: number; y: number
 
 export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, reload = 0): WorkflowGraphResult {
   const { density, direction, collapsed, focus, selected, workflowName } = view;
+  const runStatus = view.runStatus ?? EMPTY_STATUS;
 
   const [graph, setGraph] = useState<RFGraph | null>(null);
   const [errors, setErrors] = useState<ApiErrorEntry[] | null>(null);
@@ -317,6 +325,9 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
       animRef.current = null;
     }
     const decorated = applyFocus(laid.nodes, laid.edges, focus);
+    // Task 173: overlay live run status AFTER focus — a pure restyle (no re-layout). A status-only
+    // change keeps the same `laid`, so isNewLayout stays false and this snaps instantly (no animation).
+    decorated.nodes = applyStatus(decorated.nodes, runStatus);
     const isNewLayout = paintedRef.current !== laid;
     paintedRef.current = laid;
     const from = isNewLayout ? pendingFromRef.current : null;
@@ -390,7 +401,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
         if (pan) setViewport({ zoom: vp0.zoom, x: vp0.x - pan.dx * vp0.zoom, y: vp0.y - pan.dy * vp0.zoom });
       }
     };
-  }, [laid, layoutKey, focus, setNodes, setEdges, getViewport, setViewport]);
+  }, [laid, layoutKey, focus, runStatus, setNodes, setEdges, getViewport, setViewport]);
 
   const status: GraphStatus = errors
     ? "error"

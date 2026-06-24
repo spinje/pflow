@@ -186,6 +186,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     expanded,
     dimmed,
     focused,
+    status,
   } = data;
   const detailed = density === "detailed";
   // Focus-expansion (beautiful only): the card renders its full advanced body in place.
@@ -254,6 +255,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   if (node.is_terminal) classes.push("terminal");
   if (node.unexpanded) classes.push("unexpanded");
   if (node.batch) classes.push("batched"); // batch deck (stacked-copies look, index.css)
+  if (status) classes.push(`status-${status}`); // Task 173 overlay: running/success/cached/failed ring
   const kindStyle = { "--kind": nodeColor(node) } as CSSProperties;
   const hasBody = showBody && rows.length > 0;
   const paramRow = (param: RFParam, handle: string): JSX.Element => (

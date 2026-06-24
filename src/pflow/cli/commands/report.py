@@ -5,6 +5,22 @@ from pathlib import Path
 import click
 
 
+def _trace_is_complete(path: Path) -> bool:
+    """True if the trace loads as a FINISHED run — not an eager-``meta`` / crash-tail ``incomplete`` file.
+
+    The no-arg ``pflow report`` auto-select uses this to skip in-flight / interrupted traces, which
+    eager-``meta`` (Task 173) now leaves on disk from t=0 (before this, a crash left no file). Unreadable
+    or legacy single-object traces also report False (they can't be reported anyway)."""
+    import json
+
+    from pflow.core.trace_io import load_trace_file
+
+    try:
+        return load_trace_file(path).get("final_status") != "incomplete"
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
 @click.command("report")
 @click.argument("trace_path", required=False, default=None)
 @click.option("--output", "-o", "output_path", default=None, help="Output directory")
@@ -38,11 +54,23 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
         if not debug_dir.exists():
             click.echo("No trace files found in ~/.pflow/debug/", err=True)
             ctx.exit(1)
-        traces = sorted(debug_dir.glob("workflow-trace-*.json"), key=lambda p: p.stat().st_mtime)
+        traces = sorted(debug_dir.glob("workflow-trace-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not traces:
             click.echo("No trace files found in ~/.pflow/debug/", err=True)
             ctx.exit(1)
-        trace_path = str(traces[-1])
+        # Prefer the newest COMPLETE trace. Eager-`meta` (Task 173) means an in-flight or
+        # crash-before-first-completion run now leaves a `meta`-only / `incomplete` file from t=0; picking
+        # it would shadow the user's last good run with a hollow "incomplete, 0 nodes" report. Skip
+        # incomplete (and unreadable/legacy) candidates, newest-first.
+        chosen = next((candidate for candidate in traces if _trace_is_complete(candidate)), None)
+        if chosen is None:
+            click.echo(
+                "No completed trace found in ~/.pflow/debug/ (only in-flight or interrupted runs). "
+                "Run the workflow to completion, or pass a specific trace path.",
+                err=True,
+            )
+            ctx.exit(1)
+        trace_path = str(chosen)
         click.echo(f"Using latest trace: {trace_path}", err=True)
 
     trace_file = Path(trace_path)

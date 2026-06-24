@@ -38,6 +38,7 @@ Failure regimes for ``/api/graph`` (kept distinct — do not collapse):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import itertools
 import json
@@ -63,6 +64,7 @@ from pflow.execution.graph_service import (
 )
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
+from pflow.ui.run_tailer import RunTailer
 from pflow.ui.targets import resolve_target
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,10 @@ class _Hub:
         self._conns: dict[str, _Conn] = {}
         self._activity: deque[dict[str, object]] = deque(maxlen=_ACTIVITY_MAX)
         self._counter = itertools.count(1)
+        # Task 173: one live-run tailer per watched workflow_key, started on first viewer subscribe and
+        # stopped when its last viewer leaves (ref-counted via windows_for). Lock-free / loop-owned like
+        # the rest of the hub — ensure_tailer creates an asyncio task and so MUST run on the event loop.
+        self._tailers: dict[str, tuple[RunTailer, asyncio.Task[None]]] = {}
 
     def register(self, workflow_key: str, visibility: str) -> _Conn:
         conn = _Conn(
@@ -136,6 +142,26 @@ class _Hub:
             else:
                 sent.append(conn)
         return sent
+
+    def ensure_tailer(self, workflow_key: str) -> RunTailer:
+        """Start (or reuse) the live-run tailer for this workflow_key — one per key, shared across its
+        Viewers. MUST be called from an async (event-loop) handler: it creates an asyncio task."""
+        entry = self._tailers.get(workflow_key)
+        if entry is not None:
+            return entry[0]
+        tailer = RunTailer(workflow_key, self.broadcast)
+        task = asyncio.create_task(tailer.run())
+        self._tailers[workflow_key] = (tailer, task)
+        return tailer
+
+    def release_tailer(self, workflow_key: str) -> None:
+        """Stop the tailer once its LAST Viewer has disconnected. Call AFTER ``unregister`` so
+        ``windows_for`` reflects the departed connection."""
+        if self.windows_for(workflow_key):
+            return
+        entry = self._tailers.pop(workflow_key, None)
+        if entry is not None:
+            entry[1].cancel()
 
     def record(self, event: dict[str, object]) -> None:
         self._activity.append(event)
@@ -388,6 +414,15 @@ async def events(request: Request) -> Response:
         conn = hub.register(workflow_key, visibility)
         try:
             yield f"data: {json.dumps({'type': 'connected', 'conn_id': conn.conn_id})}\n\n"
+            # Task 173: attach this Viewer to the live-run tailer and hand it the current run state so a
+            # viewer that opened mid-run catches up without replaying the file (and the per-conn queue
+            # can't overflow on replay). Future deltas arrive as broadcast `run-events`.
+            tailer = hub.ensure_tailer(workflow_key)
+            # A queue already full at subscribe (reconnect storm) — skip the catch-up snapshot rather than
+            # abort the stream; streamed deltas re-sync state, and broadcast's own QueueFull eviction
+            # governs from here. Mirrors broadcast's graceful degrade (deep-review R7).
+            with contextlib.suppress(asyncio.QueueFull):
+                conn.queue.put_nowait(tailer.snapshot())
             while conn.active:
                 try:
                     message = await asyncio.wait_for(conn.queue.get(), timeout=_KEEPALIVE_S)
@@ -398,6 +433,7 @@ async def events(request: Request) -> Response:
                     yield ": keepalive\n\n"
         finally:
             hub.unregister(conn.conn_id)
+            hub.release_tailer(workflow_key)
 
     return StreamingResponse(
         stream(),
