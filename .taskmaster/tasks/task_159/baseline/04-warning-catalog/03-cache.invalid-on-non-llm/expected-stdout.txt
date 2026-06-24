@@ -73,7 +73,7 @@
     "lower_bound_cache_ready_row_count": 0,
     "lower_bound_cache_opportunity_row_count": 0,
     "models_in_use": [],
-    "ir_default_model": null,
+    "ir_default_model": "gemini/gemini-2.5-flash",
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
     "unavailable_models": [],

@@ -40,4 +40,4 @@
 
 ## Notes
 
-  · Auto-loaded trace `workflow-trace-b3b96a76-smoke-with-cache-<TIMESTAMP>.json` (success) did not cover all root LLM nodes (some root LLM nodes have no matching events — workflow may have been edited since the trace was recorded). Ignored for workflow-wide cache analysis. Pass `--from-trace <path>` to inspect a specific trace anyway.
+  · Auto-loaded trace `workflow-trace-<HASH>-smoke-with-cache-<TIMESTAMP>.json` (success) did not cover all root LLM nodes (some root LLM nodes have no matching events — workflow may have been edited since the trace was recorded). Ignored for workflow-wide cache analysis. Pass `--from-trace <path>` to inspect a specific trace anyway.

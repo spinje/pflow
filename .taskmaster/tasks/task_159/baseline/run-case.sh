@@ -28,14 +28,45 @@ export BASELINE_REPO_ROOT="$REPO_ROOT"
 rm -rf "$BASELINE_HOME"
 mkdir -p "$BASELINE_HOME/.pflow/debug" "$BASELINE_HOME/.pflow/cache" "$BASELINE_HOME/.pflow/workflows"
 
+# Pin the workflow default model deterministically (issue #532). The lyrics-generator /
+# song-creator family (surfaces 10/12) is the ONLY baseline workflow set whose LLM nodes
+# declare no `- model:` — they rely on the workflow default, and their committed trace
+# fixtures are gemini. The ANTHROPIC_API_KEY below (needed for the preflight, see env -i)
+# would otherwise make auto-detect resolve that default to anthropic (auto-detect is
+# anthropic-priority), so those gemini workflows would report a spurious "trace recorded
+# gemini, now anthropic — models differ". Every anthropic-intent workflow pins its model
+# explicitly on the node, so a gemini default is cosmetic for them — it never overrides an
+# explicit model. settings.default_model wins over auto-detect (core/llm_config.py::
+# get_default_workflow_model), making default resolution independent of which keys exist.
+printf '%s\n' '{"version": "1.0.0", "llm": {"default_model": "gemini/gemini-2.5-flash"}}' \
+  > "$BASELINE_HOME/.pflow/settings.json"
+
 if [[ ! -f "$CASE_DIR/command.sh" ]]; then
   echo "ERROR: $CASE_DIR/command.sh not found" >&2
   exit 2
 fi
 
+# Each case runs in a clean-room env (`env -i`) for determinism. Three whitelist
+# additions are load-bearing (issue #532):
+#   * PYTHONPATH=$REPO_ROOT — lets case heredocs import the canonical JSONL trace
+#     helpers (`pflow.core.trace_io.load_trace_file` to read, `tests.shared.trace_jsonl.
+#     write_trace_jsonl` to write) regardless of CWD or script-file location, so they
+#     read/write the Task-172 JSONL trace format — the ONLY on-disk format since #531.
+#   * ANTHROPIC_API_KEY / GEMINI_API_KEY — fixed NON-REAL placeholders (the only two
+#     providers the fixtures use; ollama is keyless). Since #439 the validator preflights
+#     API-key *presence* at validate-time, and `analyze-cache` runs that validator, so a
+#     keyless run gains spurious `## Blocking errors → Missing API key` noise that buries
+#     the real signal. They gate ONLY the preflight — default-model resolution is pinned by
+#     the seeded settings.json above, so it does not depend on which keys are present. These
+#     satisfy the presence check WITHOUT enabling any live call:
+#     no baseline case reaches the LLM call seam (all are static analyze-cache / --dry-run
+#     / parse-validate errors / shell-only execution). If a case ever DID attempt a real
+#     call, a placeholder fails loud with an auth error instead of silently making a
+#     billed, non-deterministic call — keeping the oracle honest.
 env -i \
   HOME="$BASELINE_HOME" \
   PATH="$PATH" \
+  PYTHONPATH="$REPO_ROOT" \
   BASELINE_DIR="$BASELINE_DIR" \
   BASELINE_CASE_DIR="$CASE_DIR" \
   BASELINE_HOME="$BASELINE_HOME" \
@@ -47,6 +78,8 @@ env -i \
   LANG=C.UTF-8 \
   LC_ALL=C.UTF-8 \
   TERM=dumb \
+  ANTHROPIC_API_KEY="not-a-real-key-baseline-preflight-only" \
+  GEMINI_API_KEY="not-a-real-key-baseline-preflight-only" \
   bash "$CASE_DIR/command.sh" \
   > "$CASE_DIR/.raw-stdout" 2> "$CASE_DIR/.raw-stderr"
 RC=$?

@@ -4,6 +4,7 @@
   Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
   Evidence: complete trace (2 LLM nodes executed)
   Trace: sample-2.1.0-trace.json (success, recorded 2026-05-01 14:46)
+  IR/settings declares: gemini/gemini-2.5-flash (overridden by trace evidence)
 
 ## Summary
 

@@ -14,8 +14,8 @@ FIRST_ONLY_VALUE
 
 ## Pipeline
 
-| # | Node | Type | Time | Cost | Status |
-|---|------|------|------|------|--------|
-| 1 | first | ShellNode | <DURATION> | — | ok |
+| # | Node | Type | Status | Time | Tokens | Cost |
+|---|------|------|--------|------|--------|------|
+| 1 | first | shell | success | <DURATION> | — | — |
 
 *Full trace: <BASELINE_CASE_DIR>/.run-home/.pflow/debug/workflow-trace-<HASH>-<TIMESTAMP>.json*

@@ -4,11 +4,11 @@ cd "$BASELINE_REPO_ROOT"
 TRACE="$BASELINE_HOME/discrepancy-trace.json"
 
 uv run python - <<'PY'
-import json
 import os
 from pathlib import Path
 
 from pflow.runtime.cache import MemoizationCache
+from tests.shared.trace_jsonl import write_trace_jsonl
 
 # The analyzer only predicts memo keys when a memo database exists. The
 # database does not need entries; plan_node still computes the miss key.
@@ -64,7 +64,7 @@ trace = {
         }
     ],
 }
-Path(os.environ["BASELINE_HOME"], "discrepancy-trace.json").write_text(json.dumps(trace, indent=2))
+write_trace_jsonl(Path(os.environ["BASELINE_HOME"], "discrepancy-trace.json"), trace)
 PY
 
 uv run pflow analyze-cache "$BASELINE_CASE_DIR/workflow.pflow.md" --from-trace "$TRACE"

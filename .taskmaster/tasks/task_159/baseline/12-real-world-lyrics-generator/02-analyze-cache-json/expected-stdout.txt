@@ -6,8 +6,8 @@
   "estimate_confidence_coverage": {
     "trace": 0,
     "memo": 0,
-    "estimator": 0,
-    "heuristic": 25,
+    "estimator": 3,
+    "heuristic": 1,
     "total": 25
   },
   "trace_path": null,
@@ -56,13 +56,13 @@
     "trace_llm_nodes_executed": 0,
     "trace_unexecuted_llm_rows": [],
     "blocking_errors": 0,
-    "actionable_opportunities": 23,
-    "warnings_count": 4,
+    "actionable_opportunities": 22,
+    "warnings_count": 3,
     "info_count": 19,
     "total_llm_nodes_estimated": 25,
     "total_llm_invocations_estimated": null,
     "dynamic_batch_node_count": 3,
-    "total_input_tokens_estimated": 38442,
+    "total_input_tokens_estimated": 33326,
     "total_cache_active_tokens_estimated": 0,
     "total_cache_ready_tokens_estimated": 0,
     "total_cache_opportunity_tokens_estimated": 0,
@@ -72,91 +72,15 @@
     "unknown_cache_opportunity_row_count": 0,
     "lower_bound_cache_ready_row_count": 0,
     "lower_bound_cache_opportunity_row_count": 0,
-    "models_in_use": [],
-    "ir_default_model": null,
+    "models_in_use": [
+      "gemini/gemini-2.5-flash"
+    ],
+    "ir_default_model": "gemini/gemini-2.5-flash",
     "observed_models_in_trace": [],
     "partial_cost_usd": false,
     "unavailable_models": [],
     "unavailable_models_by_workflow": {},
     "projection_exclusions": [
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
-        "node_path": "curate-briefs",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
-        "node_path": "evaluate-songs",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md",
-        "node_path": "analyze",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
-        "node_path": "generate-concepts",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
-        "node_path": "select-concepts",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md",
-        "node_path": "assign-diversity",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "node_path": "creative-direction",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "node_path": "song-architecture",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "node_path": "easter-eggs",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "node_path": "write-lyrics",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "node_path": "rewrite-emotional",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "node_path": "rewrite-craft",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
-      {
-        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "node_path": "generate-suno-prompt",
-        "reason": "unresolved_model",
-        "actual_cost_usd": null
-      },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "node_path": "generate-chorus-options",
@@ -164,69 +88,147 @@
         "actual_cost_usd": null
       },
       {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+        "node_path": "curate-briefs",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
+        "node_path": "evaluate-songs",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md",
+        "node_path": "analyze",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+        "node_path": "generate-concepts",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
+        "node_path": "select-concepts",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md",
+        "node_path": "assign-diversity",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "creative-direction",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "song-architecture",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "easter-eggs",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "write-lyrics",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "rewrite-emotional",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "rewrite-craft",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
+        "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
+        "node_path": "generate-suno-prompt",
+        "reason": "missing_output_tokens",
+        "actual_cost_usd": null
+      },
+      {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "node_path": "score-choruses",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
         "node_path": "select-chorus",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       },
       {
         "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
         "node_path": "review",
-        "reason": "unresolved_model",
+        "reason": "missing_output_tokens",
         "actual_cost_usd": null
       }
     ],
@@ -412,12 +414,12 @@
     {
       "rank": 1,
       "warning_id": "cache.dynamic-before-static",
-      "node_id": "write-lyrics",
-      "estimated_savings_usd": null,
+      "node_id": "rewrite-craft",
+      "estimated_savings_usd": 0.00051408,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "message": "write-lyrics: dynamic `${choose-chorus.chorus_guide}` reference at line 68 appears before ~1002 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "message": "rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~1904 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
       "suggestions": [
-        "Move the cacheable content (everything stable across calls) to BEFORE `${choose-chorus.chorus_guide}` in the prompt template.",
+        "Move the cacheable content (everything stable across calls) to BEFORE `${extract-emotional-lyrics.result.lyrics}` in the prompt template.",
         "Projected cache ratio after fix: ?%."
       ]
     },
@@ -425,9 +427,9 @@
       "rank": 2,
       "warning_id": "cache.dynamic-before-static",
       "node_id": "rewrite-emotional",
-      "estimated_savings_usd": null,
+      "estimated_savings_usd": 0.00048168,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "message": "rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~2028 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "message": "rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~1784 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
       "suggestions": [
         "Move the cacheable content (everything stable across calls) to BEFORE `${write-lyrics.response}` in the prompt template.",
         "Projected cache ratio after fix: ?%."
@@ -436,40 +438,28 @@
     {
       "rank": 3,
       "warning_id": "cache.dynamic-before-static",
-      "node_id": "rewrite-craft",
-      "estimated_savings_usd": null,
-      "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "message": "rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~2170 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
-      "suggestions": [
-        "Move the cacheable content (everything stable across calls) to BEFORE `${extract-emotional-lyrics.result.lyrics}` in the prompt template.",
-        "Projected cache ratio after fix: ?%."
-      ]
-    },
-    {
-      "rank": 4,
-      "warning_id": "cache.dynamic-before-static",
       "node_id": "generate-suno-prompt",
-      "estimated_savings_usd": null,
+      "estimated_savings_usd": 0.00028188,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "message": "generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1223 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "message": "generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1044 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
       "suggestions": [
         "Move the cacheable content (everything stable across calls) to BEFORE `${extract-lyrics.result.lyrics}` in the prompt template.",
         "Projected cache ratio after fix: 92%."
       ]
     },
     {
-      "rank": 5,
+      "rank": 4,
       "warning_id": "cache.sub-workflow-cache-undeclared",
       "node_id": null,
       "estimated_savings_usd": null,
       "scope_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-      "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+      "message": "Four values ~0 tokens per call, below the smallest provider cache minimum (1,024 \u2014 Anthropic Sonnet 4.5).\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.\n\u2192 Verify: confirm ~0 tokens is the realistic per-call size.",
       "suggestions": [
         "Edit: <REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md"
       ]
     },
     {
-      "rank": 6,
+      "rank": 5,
       "warning_id": "cache.opaque-prompt",
       "node_id": "generate-chorus-options",
       "estimated_savings_usd": null,
@@ -486,12 +476,12 @@
     {
       "node_path": "curate-briefs",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": true,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 3869,
+      "input_tokens_estimated": 3235,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 3869,
+      "body_tokens_estimated": 3235,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -553,7 +543,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -566,12 +556,12 @@
     {
       "node_path": "evaluate-songs",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/lyrics-generator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 782,
+      "input_tokens_estimated": 713,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 782,
+      "body_tokens_estimated": 713,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -633,7 +623,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -646,12 +636,12 @@
     {
       "node_path": "analyze",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/analyze-source/analyze-source.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": true,
       "batch_size_estimated": 6,
-      "input_tokens_estimated": 3,
+      "input_tokens_estimated": 4,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 3,
+      "body_tokens_estimated": 4,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -713,7 +703,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -726,12 +716,12 @@
     {
       "node_path": "generate-concepts",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": true,
       "batch_size_estimated": 4,
-      "input_tokens_estimated": 3,
+      "input_tokens_estimated": 4,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 3,
+      "body_tokens_estimated": 4,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -793,7 +783,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -806,12 +796,12 @@
     {
       "node_path": "select-concepts",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/concept-chooser/concept-chooser.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 826,
+      "input_tokens_estimated": 812,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 826,
+      "body_tokens_estimated": 812,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -873,7 +863,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -886,12 +876,12 @@
     {
       "node_path": "assign-diversity",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/enforce-diversity/enforce-diversity.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1348,
+      "input_tokens_estimated": 1130,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1348,
+      "body_tokens_estimated": 1130,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -953,7 +943,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -966,12 +956,12 @@
     {
       "node_path": "creative-direction",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1248,
+      "input_tokens_estimated": 1084,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1248,
+      "body_tokens_estimated": 1084,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -985,7 +975,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -998,7 +988,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1027,7 +1017,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1040,7 +1030,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1061,7 +1051,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
@@ -1077,12 +1067,12 @@
     {
       "node_path": "song-architecture",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 2886,
+      "input_tokens_estimated": 2568,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 2886,
+      "body_tokens_estimated": 2568,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1096,7 +1086,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1109,7 +1099,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1138,7 +1128,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1151,7 +1141,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1172,7 +1162,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
@@ -1189,12 +1179,12 @@
     {
       "node_path": "easter-eggs",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1066,
+      "input_tokens_estimated": 898,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1066,
+      "body_tokens_estimated": 898,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1208,7 +1198,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1221,7 +1211,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1250,7 +1240,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1263,7 +1253,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1284,7 +1274,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
@@ -1302,12 +1292,12 @@
     {
       "node_path": "write-lyrics",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 3684,
+      "input_tokens_estimated": 3247,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 3684,
+      "body_tokens_estimated": 3247,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1321,7 +1311,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1334,7 +1324,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1363,7 +1353,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1376,7 +1366,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1397,7 +1387,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
@@ -1416,12 +1406,12 @@
     {
       "node_path": "rewrite-emotional",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 2575,
+      "input_tokens_estimated": 2239,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 2575,
+      "body_tokens_estimated": 2239,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1435,7 +1425,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1448,7 +1438,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1477,7 +1467,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1490,7 +1480,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1511,7 +1501,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
@@ -1530,12 +1520,12 @@
     {
       "node_path": "rewrite-craft",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 2454,
+      "input_tokens_estimated": 2141,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 2454,
+      "body_tokens_estimated": 2141,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1549,7 +1539,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1562,7 +1552,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1591,7 +1581,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1604,7 +1594,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1625,7 +1615,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "concept",
@@ -1643,12 +1633,12 @@
     {
       "node_path": "generate-suno-prompt",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1340,
+      "input_tokens_estimated": 1137,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1340,
+      "body_tokens_estimated": 1137,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1662,7 +1652,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1675,7 +1665,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1704,7 +1694,7 @@
         "actionability": "configured_blocked",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [],
@@ -1717,7 +1707,7 @@
             "actionability": "configured_blocked",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": []
@@ -1738,7 +1728,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": [
         "creative-direction.response"
@@ -1833,12 +1823,12 @@
     {
       "node_path": "score-choruses",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": true,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1076,
+      "input_tokens_estimated": 1032,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1076,
+      "body_tokens_estimated": 1032,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1880,7 +1870,7 @@
         "actionability": "direct_edit",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [
@@ -1895,7 +1885,7 @@
             "actionability": "direct_edit",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": [
@@ -1912,7 +1902,7 @@
         "actionability": "direct_edit",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [
@@ -1927,7 +1917,7 @@
             "actionability": "direct_edit",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": [
@@ -1936,7 +1926,7 @@
           }
         ]
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -1949,12 +1939,12 @@
     {
       "node_path": "select-chorus",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1209,
+      "input_tokens_estimated": 1043,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1209,
+      "body_tokens_estimated": 1043,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -1996,7 +1986,7 @@
         "actionability": "direct_edit",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [
@@ -2011,7 +2001,7 @@
             "actionability": "direct_edit",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": [
@@ -2028,7 +2018,7 @@
         "actionability": "direct_edit",
         "confidence": "unknown",
         "meets_provider_min": null,
-        "provider_min_tokens": null,
+        "provider_min_tokens": 1024,
         "blocked_reason": "",
         "affects_cost_projection": false,
         "diagnostic_ids": [
@@ -2043,7 +2033,7 @@
             "actionability": "direct_edit",
             "confidence": "unknown",
             "meets_provider_min": null,
-            "provider_min_tokens": null,
+            "provider_min_tokens": 1024,
             "blocked_reason": "",
             "affects_cost_projection": false,
             "diagnostic_ids": [
@@ -2052,7 +2042,7 @@
           }
         ]
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2065,12 +2055,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-emotional-architecture.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 2020,
+      "input_tokens_estimated": 1652,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 2020,
+      "body_tokens_estimated": 1652,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2132,7 +2122,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2145,12 +2135,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-narrative.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 838,
+      "input_tokens_estimated": 693,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 838,
+      "body_tokens_estimated": 693,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2212,7 +2202,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2225,12 +2215,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-imagery.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 2129,
+      "input_tokens_estimated": 1796,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 2129,
+      "body_tokens_estimated": 1796,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2292,7 +2282,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2305,12 +2295,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-stranger-summary.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1376,
+      "input_tokens_estimated": 1228,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1376,
+      "body_tokens_estimated": 1228,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2372,7 +2362,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2385,12 +2375,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-ai-tells.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1389,
+      "input_tokens_estimated": 1283,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1389,
+      "body_tokens_estimated": 1283,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2452,7 +2442,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2465,12 +2455,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-cliche.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1312,
+      "input_tokens_estimated": 1158,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1312,
+      "body_tokens_estimated": 1158,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2532,7 +2522,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2545,12 +2535,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-genre.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1240,
+      "input_tokens_estimated": 1035,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1240,
+      "body_tokens_estimated": 1035,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2612,7 +2602,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2625,12 +2615,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-accuracy.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 2606,
+      "input_tokens_estimated": 2098,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 2606,
+      "body_tokens_estimated": 2098,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2692,7 +2682,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -2705,12 +2695,12 @@
     {
       "node_path": "review",
       "workflow_path": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/reviews/review-rhyme.pflow.md",
-      "model": "",
+      "model": "gemini/gemini-2.5-flash",
       "is_batch": false,
       "batch_size_estimated": null,
-      "input_tokens_estimated": 1136,
+      "input_tokens_estimated": 1061,
       "chunk_tokens_estimated": 0,
-      "body_tokens_estimated": 1136,
+      "body_tokens_estimated": 1061,
       "output_tokens_estimated": null,
       "output_data_source": "unavailable",
       "cache_creation_input_tokens": null,
@@ -2772,7 +2762,7 @@
         "diagnostic_ids": [],
         "components": []
       },
-      "data_source": "heuristic",
+      "data_source": "estimator-partial",
       "cross_workflow_inputs": [],
       "declared_prompt_cache": null,
       "model_is_heterogeneous": false,
@@ -3182,7 +3172,7 @@
     "value_flow_opportunities": [
       {
         "severity": "info",
-        "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+        "message": "Four values ~0 tokens per call, below the smallest provider cache minimum (1,024 \u2014 Anthropic Sonnet 4.5).\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.\n\u2192 Verify: confirm ~0 tokens is the realistic per-call size.",
         "source": "cache_analyzer",
         "id": "cache.sub-workflow-cache-undeclared",
         "title": "Cache Advisory",
@@ -3292,8 +3282,8 @@
               }
             }
           ],
-          "body_block": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
-          "case": "unmeasurable",
+          "body_block": "Four values ~0 tokens per call, below the smallest provider cache minimum (1,024 \u2014 Anthropic Sonnet 4.5).\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.\n\u2192 Verify: confirm ~0 tokens is the realistic per-call size.",
+          "case": "refactor",
           "savings_usd": null,
           "category": "cache_advisory",
           "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md]"
@@ -3307,39 +3297,7 @@
   "warnings": [
     {
       "severity": "warning",
-      "message": "write-lyrics: dynamic `${choose-chorus.chorus_guide}` reference at line 68 appears before ~1002 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
-      "source": "cache_analyzer",
-      "id": "cache.dynamic-before-static",
-      "title": "Cache Warning",
-      "suggestions": [
-        "Move the cacheable content (everything stable across calls) to BEFORE `${choose-chorus.chorus_guide}` in the prompt template.",
-        "Projected cache ratio after fix: ?%."
-      ],
-      "node_id": "write-lyrics",
-      "context": {
-        "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
-        "dynamic_ref": "choose-chorus.chorus_guide",
-        "dynamic_line": 68,
-        "cacheable_tokens": 1002,
-        "affected_calls": 1,
-        "savings_usd": null,
-        "projected_ratio_pct": null,
-        "detection_mode": "declared_cache",
-        "min_cache_tokens": 4096,
-        "model": "",
-        "tokens_before_dynamic": null,
-        "template_refs_after_dynamic": 0,
-        "static_tail_excerpt": "## How to Use the Material Palette's Key Sections When you draw from the material palette: - **Kill Moments** \u2014 The son...",
-        "category": "cache_warning",
-        "path": "nodes[id=write-lyrics].prompt"
-      },
-      "see_also": [
-        "prompt-caching"
-      ]
-    },
-    {
-      "severity": "warning",
-      "message": "rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~2028 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "message": "rewrite-emotional: dynamic `${write-lyrics.response}` reference at line 18 appears before ~1784 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
       "source": "cache_analyzer",
       "id": "cache.dynamic-before-static",
       "title": "Cache Warning",
@@ -3352,13 +3310,13 @@
         "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
         "dynamic_ref": "write-lyrics.response",
         "dynamic_line": 18,
-        "cacheable_tokens": 2028,
+        "cacheable_tokens": 1784,
         "affected_calls": 1,
-        "savings_usd": null,
+        "savings_usd": 0.00048168,
         "projected_ratio_pct": null,
         "detection_mode": "declared_cache",
-        "min_cache_tokens": 4096,
-        "model": "",
+        "min_cache_tokens": 1024,
+        "model": "gemini/gemini-2.5-flash",
         "tokens_before_dynamic": null,
         "template_refs_after_dynamic": 0,
         "static_tail_excerpt": "## What You Can Change You have permission to make structural moves that a line-level rewriter cannot: - **Rewrite enti...",
@@ -3371,7 +3329,7 @@
     },
     {
       "severity": "warning",
-      "message": "rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~2170 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "message": "rewrite-craft: dynamic `${extract-emotional-lyrics.result.lyrics}` reference at line 15 appears before ~1904 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
       "source": "cache_analyzer",
       "id": "cache.dynamic-before-static",
       "title": "Cache Warning",
@@ -3384,13 +3342,13 @@
         "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
         "dynamic_ref": "extract-emotional-lyrics.result.lyrics",
         "dynamic_line": 15,
-        "cacheable_tokens": 2170,
+        "cacheable_tokens": 1904,
         "affected_calls": 1,
-        "savings_usd": null,
+        "savings_usd": 0.00051408,
         "projected_ratio_pct": null,
         "detection_mode": "declared_cache",
-        "min_cache_tokens": 4096,
-        "model": "",
+        "min_cache_tokens": 1024,
+        "model": "gemini/gemini-2.5-flash",
         "tokens_before_dynamic": null,
         "template_refs_after_dynamic": 0,
         "static_tail_excerpt": "## Rules - **Do NOT restructure sections or move emotional peaks.** The emotional architecture is locked. If a verse bu...",
@@ -3403,7 +3361,7 @@
     },
     {
       "severity": "warning",
-      "message": "generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1223 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
+      "message": "generate-suno-prompt: dynamic `${extract-lyrics.result.lyrics}` reference at line 5 appears before ~1044 stable tokens; move stable instructions before dynamic content so prefix caching can fire for 1 calls per run",
       "source": "cache_analyzer",
       "id": "cache.dynamic-before-static",
       "title": "Cache Warning",
@@ -3416,14 +3374,14 @@
         "affected_workflow": "<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/song-creator.pflow.md",
         "dynamic_ref": "extract-lyrics.result.lyrics",
         "dynamic_line": 5,
-        "cacheable_tokens": 1223,
+        "cacheable_tokens": 1044,
         "affected_calls": 1,
-        "savings_usd": null,
+        "savings_usd": 0.00028188,
         "projected_ratio_pct": 92,
         "detection_mode": "declared_cache",
-        "min_cache_tokens": 4096,
-        "model": "",
-        "tokens_before_dynamic": 109,
+        "min_cache_tokens": 1024,
+        "model": "gemini/gemini-2.5-flash",
+        "tokens_before_dynamic": 85,
         "template_refs_after_dynamic": 0,
         "static_tail_excerpt": "## Output Format \u2014 Three Layers Write THREE things in this exact format, each separated by a single blank line. Order i...",
         "category": "cache_warning",
@@ -3864,7 +3822,7 @@
     },
     {
       "severity": "info",
-      "message": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
+      "message": "Four values ~0 tokens per call, below the smallest provider cache minimum (1,024 \u2014 Anthropic Sonnet 4.5).\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.\n\u2192 Verify: confirm ~0 tokens is the realistic per-call size.",
       "source": "cache_analyzer",
       "id": "cache.sub-workflow-cache-undeclared",
       "title": "Cache Advisory",
@@ -3974,8 +3932,8 @@
             }
           }
         ],
-        "body_block": "Four values flow in but no consumer node has a resolved model \u2014 cannot compute the cache threshold.\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Set `settings.default_model` or add `- model:` to each consumer node in chorus-chooser.pflow.md, then re-run analyze-cache.",
-        "case": "unmeasurable",
+        "body_block": "Four values ~0 tokens per call, below the smallest provider cache minimum (1,024 \u2014 Anthropic Sonnet 4.5).\nOnly these listed values are used by prompts. Do not cache full objects like `architecture`, `concept`, `creative_brief` unless you intentionally want every field in that object sent to the model.\nEdit child workflow:\n  Add or extend ## Cache:\n    ```cache\n    The song architecture \u2014 section layout,...\n    \n    ${architecture}\n    \n    ${concept.core_idea}\n    \n    ${concept.title}\n    \n    The concept brief \u2014 material palette ta...\n    \n    ${creative_brief}\n    ```\n  Add prompt_cache entries:\n    score-choruses: prompt_cache: [concept.core_idea]\n    select-chorus: prompt_cache: [architecture, concept.core_idea, concept.title, creative_brief]\nPrompt-body templates to remove:\n  \u2022 `architecture` unmeasurable \u2014 node(s) `select-chorus` use `${architecture}`\n      flows in from parent as `${song-architecture.response}`\n  \u2022 `concept.core_idea` unmeasurable \u2014 node(s) `score-choruses`, `select-chorus` use `${concept.core_idea}`\n  \u2022 `concept.title` unmeasurable \u2014 node(s) `select-chorus` use `${concept.title}`\n  \u2022 `creative_brief` unmeasurable \u2014 node(s) `select-chorus` use `${creative_brief}`\n      flows in from parent as `${concept_brief}`\n\u2192 Monitor: re-run analyze-cache when per-call content grows past 1,024 tokens.\n\u2192 Verify: confirm ~0 tokens is the realistic per-call size.",
+        "case": "refactor",
         "savings_usd": null,
         "category": "cache_advisory",
         "path": "workflows[path=<REPO_ROOT>/.taskmaster/tasks/task_159/baseline/_shared/workflows/lyrics-generator/song-creator/chorus-chooser/chorus-chooser.pflow.md]"

@@ -1,3 +1,7 @@
+> **10 guide sections below, split by `---`. Read each to the END before building** — they're condensed, so skimming means wrong format rules.
+> Output is long: if you see only a **preview**, the full text is preserved elsewhere (a file your tool names, or pagination) — open and read it there. Don't build from the preview, and don't re-run this command.
+> Done only when you reach the last line `⟨END OF GUIDE — 10 sections⟩` — if you're not there, you haven't read it all.
+
 # Batch Processing
 
 **Use when**: Same operation on multiple items — "each", "for every", "in parallel", "N at a time". Add `batch` to any node:
@@ -37,6 +41,25 @@ Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Resul
 | `parallel` | `false` | Concurrent execution |
 | `max_concurrent` | `10` | 1-100; use 30-50 for LLM APIs (rate limits) |
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
+| `max_retries` | `1` | Batch item total attempts after an exception escapes the node (`1` = no batch retry) |
+| `retry_wait` | `0` | Seconds between batch item attempts |
+
+**`parallel: false` is the default** — items run sequentially, in order. Use sequential when items must run in a specific order, when each item depends on side effects from the previous one (e.g. reading filesystem state a prior item wrote), or when you're using batch for bounded iteration. Sequential iteration over a sub-workflow is the cleanest loop-with-disk-state pattern — see `pflow guide sub-workflows` → Bounded iteration.
+
+````markdown
+### iterate
+
+Run the child once per index, in order — each iteration sees the previous one's
+filesystem changes.
+
+- type: workflow
+- workflow: ./process-one.pflow.md
+- inputs:
+    iteration: ${item}
+- batch:
+    items: [1, 2, 3, 4, 5]
+    parallel: false
+````
 
 **Text lines → JSON array:**
 ```shell
@@ -44,7 +67,9 @@ your-command | jq -R -s 'split("\n") | map(select(. != ""))'
 ```
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
-Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`.
+Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`. `.errors` is always an array — `[]` when there are no failures, never `null` — so a downstream node can safely annotate it as a `list`/`array`.
+
+**Batching over results nests one layer per stage.** When a later node batches over `${first.results}`, each `${item}` IS one of those entries — so `${item.response}` is the first node's output for that row and `${item.item}` is its original input. A third stage batched over the second's results adds another layer: `${item.item.response}` reaches two stages back. To avoid deep `item.item.item` chains, correlate earlier stages directly — see **Correlating parallel arrays** below.
 
 **Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`. Note: index-based access (`results[N]`) requires `fail_fast` mode (the default). With `error_handling: continue`, use iteration (`items: ${node.results}`) instead.
 
@@ -116,11 +141,40 @@ parallel: true
 ````
 Any `${item.field}` template works in any param — not just prompt/command.
 
-**Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate (requires `fail_fast` — not supported with `error_handling: continue`):
+**Correlating parallel arrays (zip)**: when two batches ran over aligned inputs and you need each row of one alongside the matching row of the other, there are two ways — pick by how much you trust the alignment:
+
+- **Explicit zip node** — *preferred for anything non-trivial or likely to change.* A `code` node that pairs the arrays into clean records, ideally matching on a shared key (an id both rows carry) rather than on position. It is robust to reordering and `continue` mode, inspectable on its own (`--only`, `pflow report`), and survives later edits to the pipeline.
+- **Inline `${__index__}`** — *concise, for simple, fixed, fail-fast cases.* Skip the node and reach the same-position element of the other array directly: fewer nodes, but it leans on a positional alignment invariant (see caveat below).
+
+Inline form — iterate one array, reach the other by position:
+
+````markdown
+### combine
+
+Revise each draft using its own review — iterate the reviews, reach the
+same-position draft by index.
+
+- type: llm
+- batch:
+    items: ${reviews.results}
+    parallel: true
+
+```prompt
+Original draft:
+${drafts.results[${__index__}].response}
+
+Review:
+${item.response}
+
+Revise the draft, applying the review.
 ```
-${previous.results[${__index__}]}     # Access by position (fail_fast only)
-${previous.results[${item.idx}]}      # Access by item field (fail_fast only)
-```
+````
+
+`${__index__}` also indexes by an item field: `${drafts.results[${item.idx}]}`.
+
+**Alignment caveat**: zipping by position assumes both arrays are in the same order with no gaps — true only under `fail_fast` (the default). `error_handling: continue` drops failed items, which misaligns the arrays, and index access is not supported there anyway. When alignment isn't guaranteed, use the explicit zip node and match on a key.
+
+**Indexing works on a node's `.results`, not on declared inputs.** `${my_input[${__index__}]}` does not resolve — pull the per-row value from an upstream node's `.results` instead.
 
 **Using results**:
 ```markdown
@@ -136,13 +190,36 @@ the normal output shape.
 
 **Common mistake: missing explicit prompt wiring on batch LLM.** Batch items may have `prompt:` fields in the data, but the LLM node ignores them unless you wire it explicitly: `- prompt: ${item.prompt}`. Batch provides data; the node still needs explicit parameter references.
 
+**Retry interaction:** `batch.max_retries` and node-level `retry:` are separate loops. Node-level retry handles transient failures inside the node attempt:
+
+````markdown
+### fetch-each
+
+Fetch each URL with node-level exponential backoff.
+
+- type: http
+- url: ${url}
+- retry:
+    max: 3
+    wait: 0.5
+    backoff: exponential
+- batch:
+    items: ${urls}
+    as: url
+    parallel: true
+````
+
+For `llm`, `shell`, `mcp`, `code`, and file nodes, an exhausted node `retry:` budget ends the item as a handled failure, and `batch.max_retries` does not start another attempt for it. For `http` and `claude-code` nodes, an exhausted `retry:` budget surfaces as a failure that `batch.max_retries` re-attempts, so the upper bound is `batch.max_retries * retry.max` attempts per item.
+
+Parallel batch workers inherit the configured node retry budget. A `fail_fast` batch cannot interrupt a worker that is already sleeping in backoff; exponential node backoff is clamped to 60 seconds per wait.
+
 ---
 
 # Conditional Branching
 
-**Use when**: Different paths based on data or errors — "if X then Y", "handle failures", "retry on error". Default flow is top-to-bottom; branching overrides it.
+**Use when**: Choose between paths based on data — "if X then Y", classify and route, pick a path based on a value. Default flow is top-to-bottom; branching overrides it. (For failures and retry, see `pflow guide error-handling`. For repeat-until, see `pflow guide loop`.)
 
-**Error routing** — any node can route failures to a handler:
+**Error routing** — any node can route failures to a handler (resilience patterns: `pflow guide error-handling`):
 ````markdown
 ### call-api
 
@@ -270,6 +347,7 @@ echo "B: ${route.result}"
 - `next: str = "end"` — terminate from code (code nodes only, e.g., skip optional steps)
 - `"end"` is a reserved keyword — do not use it as a node ID
 - No `next` set in code → continues to next node in document order
+- `- next:` (or dynamic `next`) to an **earlier** node forms a **backward edge** — that node re-runs, creating a loop. This is the low-level loop mechanism; for condition-terminated iteration with carried state, prefer `loop:` (see `pflow guide loop`)
 
 **Required: Branch targets MUST have explicit `- next:`**
 - Every node reached via `- on-error:` or named routing action MUST declare `- next: end` or `- next: <node-id>`
@@ -277,9 +355,11 @@ echo "B: ${route.result}"
 - If code uses dynamic routing (`next = variable`), the code node MUST declare `- next: target-a, target-b` listing all possible targets
 - Literal routing (`next: str = "target"`) does NOT need `- next:` on the code node — pflow detects targets automatically
 
-**When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
+**When to use**: Error handling, classification/routing, skip-ahead, and **backward-edge loops** (route to an earlier node — the low-level loop form; prefer `loop:` for condition-terminated iteration, see `pflow guide loop`). NOT for parallel execution — use batch for that.
 
-**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand whose node executed wins. Works in any node type — no merge node needed.
+**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand that resolves wins. Works in any node type — no merge node needed. Operands can also be JSON literals as a final default: `${optional_step.value ?? 0}`, `${a ?? "none"}`.
+
+`??` falls through whenever the left side **isn't there** — whether the **node didn't run** (branch not taken, or node failed) OR the **field is absent** on a node that did run. So `${ran_node.optional_field ?? "default"}` yields `"default"` when `optional_field` isn't present. A **bare** `${node.field}` with no `??` fallback still errors on a missing field, so genuine typos are caught loudly — add a fallback only where absence is expected.
 
 ---
 
@@ -292,6 +372,7 @@ echo "B: ${route.result}"
 - Receives native objects from upstream nodes (no serialization needed)
 - Supports multiple inputs from different nodes
 - Type-annotated Python code for clarity and validation
+- **Caching**: code nodes don't cache by default — safe inside iteration loops where they read state mutated between runs. Add `cache: true` only for a pure, expensive transform fully determined by its declared inputs.
 
 ### Node Creation Patterns
 
@@ -344,6 +425,7 @@ result: dict = {
 **Code node rules:**
 - Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
+- Bare vs valued annotations: a top-level **bare** `name: type` (no value) is read as an input declaration and needs a matching `inputs:` entry. An annotated assignment `name: type = value` is a local — so type your intermediates freely (`total: int = sum(...)`). `result`/`next` are the declared output/routing.
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
 - Use `Any` as the type when you don't want type validation (see syntax table below — auto-injected, no import needed)
 - Single output via `result` variable — use dict for structured output
@@ -351,17 +433,27 @@ result: dict = {
 
 ## Validate-Time Type Checking
 
-Three code-node input errors are now caught at validate time (`pflow
+Three code-node input errors are caught at validate time (`pflow
 --validate-only`) instead of runtime:
 
 1. **Input bound, annotation missing** — `inputs: {x: ${ref}}` with no `x:
    <type>` in code. The suggestion uses the upstream's declared type when
    known (`Add an annotation (in params.code): x: str  (inferred from ...)`).
-2. **Annotation declared, no input bound** — opinionated one-fix-per-case:
-   `Remove the annotation 'y: list' — it is never read in the code` for dead
-   annotations, `Add 'y' to the inputs dict` when the name is read in the
-   body, `Rename the annotation to 'items'` when a fuzzy-matched input key
-   exists (typo case).
+2. **Bare annotation declared, no input bound** — a top-level `name: type` with
+   no value and no matching `inputs:` entry. (An annotated assignment `name: type
+   = value` is a local and is never flagged — issue #331.) The fix depends on
+   whether the name is also bound in the body:
+   - **bound elsewhere** (a later `helper = ...` or `def helper(): ...`) → the
+     bare annotation is redundant, so removing it is safe. Offers both, local
+     first: `Remove the annotation 'helper: Any' — 'helper' is assigned in the
+     code, so it's a local variable` *or* `add 'helper' to the inputs dict` (if
+     it was meant as an input). To keep a type on a local, use the value form
+     (`helper: Any = ...`).
+   - **read but not bound** (`y: list` + `len(y)`) → removing would leave
+     `y` unbound, so the only fix is `Add 'y' to the inputs dict` (or `Rename
+     the annotation to 'items'` for a fuzzy-matched typo).
+   - **neither read nor bound** → dead annotation: `Remove the annotation
+     'y: list' — it is never read in the code`.
 3. **Type mismatch** — `x: dict` bound to `${upstream.result}` that declares
    `list`:
 
@@ -422,9 +514,139 @@ Only the outer type is enforced at prep time (e.g. `list[dict]` checks `isinstan
 
 ---
 
+# Error Handling
+
+**Use when**: A step can fail and you want to recover rather than abort — "retry on failure", "fall back if X fails", "handle the error", "undo on failure".
+
+Choose the tool by the kind of failure you expect:
+
+| Failure | Tool |
+|---|---|
+| Transient — the call didn't complete (dropped connection, timeout, model provider rate-limited/overloaded) | `retry:` — automatic re-attempts |
+| Expected, with an alternative path | `on-error:` — route to a handler |
+| A precondition that must hold | no handler — let it fail and stop the run |
+
+## `retry:` — automatic re-attempts for transient failures
+
+Add `retry:` to a node that does work directly (http, shell, llm, code, file). `max` is the total number of attempts (`max: 1` = no retry); when an attempt fails, pflow waits, then tries again until the attempts run out.
+
+```markdown
+### fetch
+- type: http
+- url: ${api}/data
+- retry:
+    max: 5
+    wait: 1                # base seconds between attempts
+    backoff: exponential   # 1s, 2s, 4s, ... (capped at 60s); or `fixed`
+```
+
+A node that **succeeds on a retry is a clean success** — recovering from a flaky call does not mark the run as degraded. Reach for `retry:` when a re-attempt can fix the failure: a dropped connection, a timeout, or an `llm` provider that's rate-limited or overloaded. A call that *completes* with a failure response is different — an HTTP error status (e.g. 429, 503) or a shell command that exits non-zero comes back as a result, not a retry-able error — so route those with `on-error:` (or a `loop:` that reads the status). A failure a re-run can't fix — a 404, an invalid input — should fail fast or go to `on-error:`.
+
+For a sub-workflow, put `retry:` on the failing step *inside* the child, not on the `workflow` node that calls it.
+
+## `on-error:` — fall back to a handler
+
+Any node can route its failure to a handler instead of stopping the run:
+
+```markdown
+### primary
+- type: http
+- url: ${primary_api}/data
+- on-error: use-backup
+
+### use-backup
+Fetch from the backup source when the primary fails.
+- type: http
+- url: ${backup_api}/data
+- next: combine
+```
+
+A node reached via `on-error:` must declare an explicit `- next:` (see `pflow guide branching`). The handler runs and the workflow finishes — reported as **completed with a warning** that names the fallback, so the failure stays visible rather than hidden. (Unlike `retry:`, where the same node succeeding on a re-attempt is a clean success, `on-error:` routes *around* a node that stayed failed.)
+
+**Reading the recovery path:** a failed node's own outputs aren't readable downstream — `${primary.…}` won't resolve once `primary` has failed; the failure surfaces in the run's reported result instead. A handler reads from nodes that *succeeded*, and `??` lets a later node take whichever path produced a value, skipping the failed one: `${primary.response ?? use-backup.response}`.
+
+A self-contained version you can run — `fetch` fails, `recover` supplies a backup, and the run finishes (reported with a warning that the fallback fired):
+
+````markdown
+# Fall Back On Failure
+
+Try the primary source; if it fails, recover with a backup so the run finishes.
+
+## Steps
+
+### fetch
+
+Try the primary source. On failure, hand off to the recovery handler.
+
+- type: shell
+- on-error: recover
+
+```shell command
+echo "primary unavailable" >&2
+exit 1
+```
+
+### recover
+
+Serve a backup value so the workflow finishes.
+
+- type: shell
+- next: end
+
+```shell command
+echo "served from backup"
+```
+````
+
+## Pattern: retry, then fall back
+
+Combine them — retry the transient case automatically, and fall back only if the retries are exhausted:
+
+```markdown
+### fetch
+- type: http
+- url: ${api}/data
+- retry: { max: 3, backoff: exponential }
+- on-error: use-cache        # reached only after all retries fail
+```
+
+## Pattern: compensating rollback (saga)
+
+When a sequence must undo earlier work if a later step fails, point each step's failure at a handler that reverses what was already done:
+
+```markdown
+### reserve-stock
+- type: http
+- url: ${api}/reserve
+# no handler — if reserving fails, nothing was done; the run stops here
+
+### charge-card
+- type: http
+- url: ${api}/charge
+- on-error: release-stock        # charge failed → undo the reservation
+
+### release-stock
+Undo the reservation because the charge failed.
+- type: http
+- url: ${api}/release
+- inputs:
+    id: ${reserve-stock.response.id}
+- next: end
+```
+
+Each step names the compensator for the work that came before it; the handler reverses it and the run finishes — reported as completed with a warning that the rollback fired.
+
+## Let hard failures stop the run
+
+When a failure means the workflow can't sensibly continue — a missing required input, a precondition that isn't met — leave the node without a handler. A node that fails with no `on-error:` stops the run with a non-zero exit, which is the right outcome for a precondition that must hold.
+
+---
+
 # File Node
 
 **Use for**: Reading and writing files. Known interface — no probing needed.
+
+**Caching**: file nodes don't cache by default — a `read-file` sees the current file each run (safe when a prior step or iteration rewrote it) and a `write-file` always performs its side effect. Add `cache: true` only for an expensive read of a file you know won't change during the run.
 
 ### Node Creation Patterns
 
@@ -445,6 +667,15 @@ Write the final report to disk.
 - type: write-file
 - file_path: ${output_path}
 - content: ${format-for-delivery.response}
+```
+
+**`delete-file` safety flag:** it won't act on `file_path` alone — it requires a `confirm_delete: true` flag that deliberately **cannot** be a node param (so a deletion can't be triggered by node config alone). Provide it as a workflow input and wire it in with `- inputs:` (that reference is also what lets the workflow validate):
+
+```markdown
+- type: delete-file
+- file_path: ${target}
+- inputs:
+    confirm_delete: ${confirm_delete}
 ```
 
 ---
@@ -476,21 +707,58 @@ Write content to a file with automatic directory creation.
 - `written: bool` - True if write succeeded
 - `error: str` - Error message if operation failed
 
+### copy-file
+Copy a file to a new location with automatic directory creation.
+
+**Parameters**:
+- `source_path: str` - Source file path
+- `dest_path: str` - Destination file path
+- `overwrite: bool` - Whether to overwrite existing files (optional)
+
+**Outputs**:
+- `copied: bool` - True if copy succeeded
+- `error: str` - Error message if operation failed
+
+### move-file
+Move a file to a new location with automatic directory creation.
+
+**Parameters**:
+- `source_path: str` - Source file path
+- `dest_path: str` - Destination file path
+- `overwrite: bool` - Whether to overwrite existing files (optional)
+
+**Outputs**:
+- `moved: bool` - True if move succeeded
+- `error: str` - Error message if operation failed
+- `warning: str` - Warning message on partial success (copy ok but delete failed)
+
+### delete-file
+Delete a file from the filesystem with safety confirmation.
+
+**Parameters**:
+- `file_path: str` - Path to delete
+
+**Outputs**:
+- `deleted: bool` - True if delete succeeded
+- `error: str` - Error message if operation failed
+
 ---
 
 # LLM Node
 
 **Use for**: Tasks requiring judgment — summarizing, interpreting, deciding what matters. Costs tokens per workflow execution.
 
-**Don't use LLM for**: Extracting fields from structured data (`${node.result.data.field}` does this for free), transforming/filtering data (use `code` node), or formatting with a fixed structure (use `code` node).
+**Reach for `code` or templates instead when the task is deterministic**: extracting fields (`${node.result.data.field}` does this for free), transforming or filtering data, or formatting with a fixed structure.
 
 **The test**: Can you write a deterministic algorithm for it? YES → `code` node. NO → LLM.
 
 Use `output_schema` for structured responses (guarantees valid JSON via constrained decoding).
 
+**Prompt format**: Put multi-line prompts in a ` ```prompt ` block — real line breaks, no `\n` escapes and no quote/colon escaping hazards. Reserve inline `- prompt: "..."` for genuinely single-line prompts.
+
 **Debugging prompts**: Run with `--report` to see every LLM node's rendered prompt (templates resolved) alongside the actual response, token count, and cost. Ask the user if they want reports in the project (`--report-dir ./report/`) — useful for reviewing LLM responses together or tracking them in git.
 
-**Iterating cheaply**: Use `--only <node>` to re-run a single LLM node (upstream cached, downstream skipped). Saves time and tokens when tuning prompts in multi-node workflows.
+**Iterating cheaply**: Use `--only <node>` to re-run a single LLM node against a frozen **snapshot** of the most recent full run — every other node's output is restored, not re-executed, so side-effecting upstream (shell/http/mcp) never re-fires and you only pay for the one node you're tuning. Requires a prior full run (errors otherwise).
 
 **Prompt caching**: When several LLM nodes or batch items reuse the same long
 context, rubric, instructions, source text, or parent value, run
@@ -557,12 +825,12 @@ Optional cache fields for LLM nodes:
 - `system: str` - System prompt (optional)
 - `images: list[str]` - Image URLs or file paths (optional)
 - `output_schema: dict` - JSON Schema for structured output (optional)
-- `reasoning_effort: str` - Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
-- `reasoning_max_tokens: int` - Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
+- `reasoning_effort: str` - Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params). Sets reasoning depth; max_tokens only caps the budget, never raises it.
+- `reasoning_max_tokens: int` - Direct reasoning token budget, mutually exclusive with reasoning_effort (optional). Still capped to stay under max_tokens when both are set.
 - `model_options: dict` - Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
 - `model: str` - Model to use (optional - always use smart default unless user requests specific model)
 - `temperature: float` - Sampling temperature (default: 1.0)
-- `max_tokens: int` - Max response tokens (optional)
+- `max_tokens: int` - Response-length ceiling (optional). On reasoning models this is the combined thinking+answer budget and only caps thinking depth — it never increases it. Set it explicitly when you need a long visible answer from a reasoning model (otherwise the provider may cap visible output low).
 - `timeout: int` - Execution timeout in seconds for LLM API call (default: 120)
 
 ### Outputs
@@ -580,6 +848,8 @@ Optional cache fields for LLM nodes:
 
 Node naming: `mcp-{server}-{TOOL}` (e.g., `mcp-slack-SEND_MESSAGE`, `mcp-postgres-QUERY`).
 
+**Caching**: MCP nodes don't cache by default — calls hit the live service each run, so reads see current state and writes always perform their side effect. Add `cache: true` only for an expensive, side-effect-free call whose result is stable for the run.
+
 ### Supported Service Categories
 
 MCP servers span these categories (each has unique output structure):
@@ -587,11 +857,16 @@ MCP servers span these categories (each has unique output structure):
 
 Examples: Databases (PostgreSQL, MySQL), Chat (Slack, Discord), Cloud (S3, GCS), Version Control (GitHub, GitLab), Docs (Notion, Sheets), REST/GraphQL
 
-**Always test - never assume similarity.**
-
 See `pflow mcp describe <tool> --help` for how to interpret tool details.
 
 ## ⚠️ MCP Output Has NO Standard Structure
+
+MCP nodes expose one canonical output namespace: `result`.
+
+Use `${node.result}` for the full tool payload and `${node.result.field}` for
+nested fields. Do not use `${node.field}` for MCP tool fields; validation only
+knows the declared `result` output because MCP servers do not publish stable
+output schemas.
 
 **Every MCP server is completely different. Even the SAME operation:**
 
@@ -609,6 +884,36 @@ Server C:  result.Items[]                   # DynamoDB style
 
 **There are NO patterns. Test every MCP tool:**
 `pflow probe mcp-service-TOOL param=value`
+
+### MCP Tools Can Report Failure Inside `result`
+
+Some MCP tools return a successful MCP response while the service payload says
+the operation failed. Example: a tool can return:
+
+```json
+{
+  "status": "error",
+  "reason": "expired",
+  "error": "Cannot create audio: NotebookLM auth is not valid",
+  "hint": "nlm login"
+}
+```
+
+That payload is available as `${create-audio.result.status}`,
+`${create-audio.result.error}`, and so on in traces/reports. pflow promotes
+common explicit failure flags (`status: "error"`, `ok: false`, `success:
+false`, etc.) to API-warning failures, so use `on-error:` when a workflow
+should recover from those. For tool-specific failure shapes pflow does not
+classify, guard follow-up polling/download/mutation steps by checking the
+tool's own success field before continuing.
+
+MCP failure paths:
+
+| Outcome | What it is | pflow behavior |
+|---|---|---|
+| Protocol/transport failure | MCP client/server call failed before a tool result | Writes `${node.error}` and `${node.error_details}` |
+| `isError: true` | Tool set the MCP tool-error flag | Returns `error`, so `on-error` can route it |
+| `result.status: "error"`, `result.ok: false`, etc. | Service failure inside a successful MCP payload | Stored under `${node.result}`; pflow surfaces explicit failure flags as API warnings |
 
 ### Node Creation Pattern
 
@@ -680,8 +985,6 @@ Email the analysis report to the recipient.
 **Note**: `analyze-and-format` combines analysis and formatting in one LLM call - don't use separate LLM nodes when one can do both. If you just need to concatenate data with a fixed structure, use code node or templates instead.
 
 ### MCP/HTTP Reality vs Documentation
-
-**Documentation lies. Testing reveals truth.**
 
 | What Docs Say | What You Get | How to Handle |
 |---------------|--------------|---------------|
@@ -1194,6 +1497,7 @@ paste-ready recommendations over manually guessing chunk names or order.
 - Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
 - **Warning sign**: Long chains of `sed`, `awk`, `jq`, `tr`, `grep` piped together → use `code` node instead (more readable, portable, debuggable)
 - **Don't use shell for data pass-through**: `jq '.'` before an LLM is unnecessary — pass `${node.response}` directly. Templates handle JSON natively.
+- **Caching**: shell nodes don't cache by default (their output depends on external state) — safe to use inside iteration loops. Add `cache: true` only for a pure, expensive command whose output is fully determined by its declared inputs.
 
 ### Node Creation Pattern
 
@@ -1318,7 +1622,7 @@ Uppercase via `tr`.
 ````markdown
 ## Steps
 
-### process_title
+### process-title
 
 Convert the title to uppercase using the shared sub-workflow.
 
@@ -1327,7 +1631,7 @@ Convert the title to uppercase using the shared sub-workflow.
 - inputs:
     text: ${title}
 
-### process_body
+### process-body
 
 Convert the body to uppercase using the shared sub-workflow.
 
@@ -1341,7 +1645,7 @@ Convert the body to uppercase using the shared sub-workflow.
 Combine the processed title and body into a single output.
 
 - type: shell
-- command: printf "Title: %s\nBody: %s" "${process_title.result}" "${process_body.result}"
+- command: printf "Title: %s\nBody: %s" "${process-title.result}" "${process-body.result}"
 ````
 
 ### Dynamic Child Selection (Template References)
@@ -1414,3 +1718,90 @@ Each child declares only the inputs it uses; nothing is "extra" from any
 child's perspective. Reading one item tells you exactly what that child
 receives. Typos in any item's `inputs:` fail at parse time with a fuzzy
 suggestion — there's no silent drop.
+
+### Pattern: Bounded iteration via batch
+
+To run the same sub-workflow N times *in order*, batch it with a static index
+list and `parallel: false`. Each iteration runs to completion before the next
+starts — so an iteration can read filesystem (or other external) state that the
+previous one mutated. This is the cleanest way to run a **known number** of
+iterations in order. It always runs all N — it cannot stop early when the work
+runs out.
+
+**Child workflow** (`process-one.pflow.md`) — reads a queue file, takes the first
+item, writes the rest back:
+````markdown
+# Process One
+
+## Inputs
+
+### iteration
+
+The current iteration index.
+
+- type: integer
+
+## Steps
+
+### read-queue
+
+Read the current queue from disk.
+
+- type: shell
+
+```shell command
+cat queue.txt
+```
+
+### take-and-write
+
+Take the first item, log it, write the remainder back.
+
+- type: shell
+- inputs:
+    raw: ${read-queue.stdout}
+    iteration: ${iteration}
+
+```shell command
+printf '%s\n' "${raw}" | head -n 1 >> log.txt
+printf '%s\n' "${raw}" | tail -n +2 > queue.txt
+```
+````
+
+**Parent** — drive it five times, sequentially:
+````markdown
+### iterate
+
+- type: workflow
+- workflow: ./process-one.pflow.md
+- inputs:
+    iteration: ${item}
+- batch:
+    items: [1, 2, 3, 4, 5]
+    parallel: false
+````
+
+Notes:
+- `${item}` supplies the per-item value to any param of the sub-workflow invocation (here, the iteration index).
+- The sub-workflow's working directory is shared with the parent by default. There is no per-item filesystem isolation — do NOT pass `cwd: ${item.workdir}`; `cwd` is not an accepted `workflow`-node param and will be rejected as an unknown field.
+- **Cache correctness:** this works without any `cache: false` annotations because non-`llm` nodes don't cache by default — `read-queue` re-runs each iteration and sees the current file. See `pflow guide core` → cache for what gets cached and why this works without annotations.
+
+This pattern is for a fixed iteration count. To loop a sub-workflow **until a condition is met** (stopping as soon as the work drains), add a `loop:` block to the `workflow`-type node instead — the child re-runs while one of its declared `## Outputs` stays truthy, capped by `max_iterations`:
+
+````markdown
+### iterate
+
+- type: workflow
+- workflow: ./process-one.pflow.md
+- inputs:
+    iteration: ${__iteration__}
+- loop:
+    while: ${iterate.remaining}   # a declared `## Output` of the child (typed list/number/bool)
+    max_iterations: 20
+````
+
+The child must declare the `while:` source as a typed `## Output` (e.g. `- type: integer`) so it isn't treated as a raw string. See `pflow guide loop` — the canonical guide to choosing between `batch:` (fixed count), `loop:` (stop-on-condition, with `carry:`/`while:`/`until:`), and the manual backward-edge form.
+
+---
+
+⟨END OF GUIDE — 10 sections⟩

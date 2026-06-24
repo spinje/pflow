@@ -1,11 +1,11 @@
 Dry-run for workflow.pflow.md: 3 nodes
 
   ─── nothing cached — full run ───
-  ▸ summarize  [LLM]   ≈ $? (no history)
-  ▸ translate  [LLM]   ≈ $? (no history)
-  ▸ tag  [LLM]   ≈ $? (no history)
+  ▸ summarize  [llm]   ≈ $? (no history)
+  ▸ translate  [llm]   ≈ $? (no history)
+  ▸ tag  [llm]   ≈ $? (no history)
 
-Summary: 0 cached · 3 would execute (3 LLM)
+Summary: 0 cached · 3 would execute (3 llm)
   (3 LLM nodes without cost history)
   (3 nodes without duration history)
 

@@ -53,7 +53,10 @@ def apply_rules(text: str) -> str:
     # write target. Suppression is correct here.
     text = re.sub(r"/tmp/[^\s\"']+", "<TMP>", text)  # noqa: S108
 
-    text = re.sub(r"\d{8}-\d{6}", "<TIMESTAMP>", text)
+    # Trace filenames use ``%Y%m%d-%H%M%S-%f`` — the trailing ``-%f`` microsecond group
+    # (issue #443, disambiguates a same-second full-run + --only pair) is non-deterministic,
+    # so absorb it into <TIMESTAMP> too or surfaces 15/03/05 drift on every run.
+    text = re.sub(r"\d{8}-\d{6}(?:-\d{6})?", "<TIMESTAMP>", text)
     text = re.sub(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?",
         "<TIMESTAMP>",
@@ -61,11 +64,13 @@ def apply_rules(text: str) -> str:
     )
     text = re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", "<TIMESTAMP>", text)
 
-    text = re.sub(
-        r"(workflow-trace-[A-Za-z0-9_.-]+?-)[a-f0-9]{8,16}(\.json)",
-        r"\1<HASH>\2",
-        text,
-    )
+    # Mask the wf_hash — md5(absolute workflow path)[:8], the FIRST segment after
+    # "workflow-trace-" — so the baseline is path-independent across checkouts/CI. The
+    # autoload disclosure (surfaces 03/07-09) prints the trace filename verbatim, unlike
+    # the "trace saved" message which pflow already redacts to <HASH>. (This previously
+    # targeted a TRAILING hash the real format — workflow-trace-<hash>-<name>-<ts>.json —
+    # never has, so the leading wf_hash leaked and verify.sh drifted per checkout path.)
+    text = re.sub(r"(workflow-trace-)[a-f0-9]{8,16}-", r"\1<HASH>-", text)
     text = re.sub(r"\bir-hash:[a-f0-9]{32}", "ir-hash:<HASH:32>", text)
     text = re.sub(r"\b[a-f0-9]{32}\b", "<HASH:32>", text)
     text = re.sub(r"\b[a-f0-9]{16}\b", "<HASH:16>", text)
