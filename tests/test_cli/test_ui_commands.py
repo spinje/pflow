@@ -270,12 +270,21 @@ class TestPointCommands:
         with (
             patch("httpx.request", side_effect=[_response(200, zero), _response(200, connected)]) as request,
             patch("webbrowser.open") as open_browser,
+            # The open-loop polls the cheap /api/health window count (via _probe_health),
+            # NOT the command endpoint. Simulate the Viewer registering its SSE
+            # connection on the second poll so the loop exercises its real
+            # break-on-connect path. Without this the probe (unmocked httpx.get to a
+            # dead port) returns None every iteration and the loop spins the full
+            # _OPEN_TIMEOUT_S (15s) — patching time.sleep does NOT help, the deadline
+            # is a real-wall-clock time.monotonic() bound.
+            patch.object(ui_module, "_probe_health", side_effect=[{"windows": 0}, {"windows": 1}]) as probe,
             patch("time.sleep"),
         ):
             result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--open"])
 
         assert result.exit_code == 0, result.output
         assert request.call_count == 2
+        assert probe.call_count == 2  # polled until the window registered
         open_browser.assert_called_once_with("http://127.0.0.1:8765/?workflow=demo&focus=greet")
         assert "sent to 1 window" in result.output
 
@@ -286,6 +295,9 @@ class TestPointCommands:
         with (
             patch("httpx.request", side_effect=[_response(200, zero), _response(200, connected)]) as request,
             patch("webbrowser.open") as open_browser,
+            # See sibling test: mock the health poll so the loop breaks on connect
+            # instead of spinning to the real 15s _OPEN_TIMEOUT_S deadline.
+            patch.object(ui_module, "_probe_health", side_effect=[{"windows": 0}, {"windows": 1}]) as probe,
             patch("time.sleep"),
         ):
             result = runner.invoke(
@@ -295,6 +307,7 @@ class TestPointCommands:
 
         assert result.exit_code == 0, result.output
         assert request.call_count == 2
+        assert probe.call_count == 2  # polled until the window registered
         open_browser.assert_called_once_with("http://127.0.0.1:8765/?workflow=demo")
         assert "sent to 1 window" in result.output
 

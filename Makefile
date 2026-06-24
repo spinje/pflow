@@ -18,7 +18,7 @@ check: ## Run code quality tools.
 .PHONY: test
 test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)
 	@echo "🚀 Testing code: Running non-e2e pytest in parallel with 4 workers (excluding LLM tests)"
-	@uv run python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e"
+	@uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e"
 
 .PHONY: test-e2e
 test-e2e: ## Run real subprocess / shell / pipe boundary tests in parallel

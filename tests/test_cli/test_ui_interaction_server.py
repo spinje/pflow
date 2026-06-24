@@ -9,10 +9,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.ui.server import _ACTIVITY_MAX, _Hub, _workflow_key, create_app
+from pflow.ui.server import _ACTIVITY_MAX, _Hub, _workflow_key, create_app, events
 from tests.shared.markdown_utils import write_workflow_file
 
 _VALID_IR = {
@@ -356,55 +357,54 @@ def test_sse_disconnect_unregisters_connection_via_raw_asgi(tmp_path: Path) -> N
 
 
 def test_idle_connection_emits_keepalive_frames(tmp_path: Path) -> None:
-    """An idle SSE connection periodically emits a `:` comment frame.
+    """An idle SSE connection emits a `:` keepalive comment frame, then cleans up.
 
-    This keepalive is load-bearing: on ASGI spec >=2.4 ``StreamingResponse`` has
-    no disconnect listener, so a silently-dropped socket only surfaces when the
-    next ``send`` fails — and the keepalive is the only ``send`` an idle stream
-    makes. Here we drive the real generator (spec 2.3 so the listener tears it
-    down cleanly once a keepalive is seen) and assert the keepalive actually
-    fires and cleanup still runs."""
+    The keepalive is load-bearing: on ASGI spec >=2.4 ``StreamingResponse`` has no
+    disconnect listener, so a silently-dropped socket only surfaces when the next
+    ``send`` fails — and the keepalive is the only ``send`` an idle stream makes.
+
+    Two robustness fixes here, both learned from this one test roughly tripling
+    ``make test`` wall time:
+
+    1. Drive the response body generator directly, not the whole ASGI app. Driving
+       the app made teardown hinge on Starlette's disconnect listener winning a
+       scheduler race against the keepalive loop — not the behavior under test.
+    2. Patch ``_KEEPALIVE_S`` on ``events.__globals__`` (the dict the running
+       generator actually reads), NOT by the dotted path ``"pflow.ui.server"``. In
+       the full suite that module is sometimes a *different* object than the one
+       this file imported ``events`` from — a duplicated/reloaded module (see
+       tests/CLAUDE.md pitfall #2). A dotted-path patch then lands on the wrong
+       object, the generator keeps the real 15s interval, and the test passes but
+       sleeps 15s. Patching the closure's own globals is immune to that skew.
+
+    The 2s ``wait_for`` caps turn any future interval-patch regression into a fast
+    failure instead of a 15s hang."""
     workflow = _workflow(tmp_path)
     app = create_app()
-    frames: list[dict[str, object]] = []
-    request_sent = False
-    keepalive_seen = asyncio.Event()
-
-    def _is_comment(message: dict[str, object]) -> bool:
-        body = message.get("body")
-        return isinstance(body, bytes) and body.strip().startswith(b":")
-
-    async def receive() -> dict[str, object]:
-        nonlocal request_sent
-        if not request_sent:
-            request_sent = True
-            return {"type": "http.request", "body": b"", "more_body": False}
-        await keepalive_seen.wait()  # end the stream once the keepalive has fired
-        return {"type": "http.disconnect"}
-
-    async def send(message: dict[str, object]) -> None:
-        frames.append(message)
-        if _is_comment(message):
-            keepalive_seen.set()
-
     scope = {
         "type": "http",
-        "asgi": {"version": "3.0", "spec_version": "2.3"},
-        "http_version": "1.1",
         "method": "GET",
-        "scheme": "http",
         "path": "/api/events",
-        "raw_path": b"/api/events",
         "query_string": urlencode({"workflow": str(workflow), "visibility": "visible"}).encode(),
         "headers": [],
-        "client": ("127.0.0.1", 12345),
-        "server": ("127.0.0.1", 8765),
-        "root_path": "",
+        "app": app,
     }
 
-    with patch("pflow.ui.server._KEEPALIVE_S", 0.01):
-        asyncio.run(app(scope, receive, send))
+    async def _drive() -> tuple[str, str]:
+        response = await events(Request(scope))
+        body = response.body_iterator
+        # Each pull resumes stream() to its next yield: the first returns the
+        # connected handshake, the second blocks on the keepalive timeout (0.01s)
+        # and returns the comment frame. aclose() then raises GeneratorExit at the
+        # yield, so stream()'s finally unregisters the connection.
+        connected = await asyncio.wait_for(body.__anext__(), timeout=2.0)
+        keepalive = await asyncio.wait_for(body.__anext__(), timeout=2.0)
+        await body.aclose()
+        return connected, keepalive
 
-    assert keepalive_seen.is_set()
-    assert any(_is_comment(frame) for frame in frames)
+    with patch.dict(events.__globals__, {"_KEEPALIVE_S": 0.01}):
+        connected, keepalive = asyncio.run(_drive())
+
+    assert '"type": "connected"' in connected
+    assert keepalive.strip().startswith(":")  # the idle keepalive comment frame
     assert app.state.hub.windows_for(str(workflow.resolve())) == []

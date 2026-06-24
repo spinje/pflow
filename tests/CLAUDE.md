@@ -380,3 +380,8 @@ Unit tests that mock the boundary you're testing will pass while the real pipeli
 - Single layer's tests pass; the integration breaks because each layer is "right by itself"
 
 Pattern: build the IR dict, run through `WorkflowRunner`, assert on `result.shared_after["__failures__"]` and the structured `result.diagnostics[i].context` rather than mocking `_extract_runtime_warnings` or `build_execution_steps` in isolation.
+
+### 21. A Mock That Misses the Code Path Makes a Timeout Test Pass — Slowly
+A timeout-gated test that passes but runs ≈ the *production* timeout (e.g. 15s) means the mock never reached the running code — it slept the real wait (green, testing nothing). Two ways to miss, both seen in `test_ui_*`:
+- **Wrong seam:** patch the function the code *actually calls*. A `time.monotonic()` deadline ignores `patch("time.sleep")`; a poll via `httpx.get` ignores `patch("httpx.request")`.
+- **Right name, wrong object:** `patch("pkg.mod.CONST")` targets `sys.modules["pkg.mod"]`, but the running closure may read a *different* module object via `fn.__globals__` (duplicated/reloaded module — pitfall #2), so the patch silently no-ops. Use `patch.dict(fn.__globals__, {...})` instead, and cap real awaits with a small `wait_for` so a future miss fails fast.
