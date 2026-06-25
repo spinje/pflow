@@ -578,27 +578,31 @@ class TestUiCommand:
         assert "pflow-cli[ui]" in result.output
 
     def test_serves_without_opening_browser(self, tmp_path: Path) -> None:
-        """``--no-open`` starts the server without a browser; uvicorn.run is invoked.
+        """``--no-open`` starts the server without a browser; the uvicorn server is run.
 
-        ``uvicorn.run`` blocks forever, so it is stubbed — the test asserts the
-        command wires the app + host/port through to it and never schedules a
-        browser open.
+        ``Server.run`` blocks forever, so it is stubbed — the test asserts the command wires host/port
+        through to the uvicorn ``Config`` and never schedules a browser open. (Host/port moved from
+        ``uvicorn.run(host=, port=)`` to ``uvicorn.Config(host=, port=)`` when the command switched to a
+        Server instance to install the graceful-shutdown hook — Task 173.)
         """
+        import uvicorn
+
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
         runner = CliRunner()
         with (
             patch("pflow.cli.commands.ui._port_available", return_value=True),
-            patch("uvicorn.run") as mock_run,
+            patch("uvicorn.Server.run") as mock_run,
+            patch("uvicorn.Config", wraps=uvicorn.Config) as mock_config,
             patch("webbrowser.open") as mock_open,
         ):
             result = runner.invoke(ui_cmd, [str(workflow_path), "--no-open", "--port", "9123"])
 
         assert result.exit_code == 0, result.output
         mock_run.assert_called_once()
-        assert mock_run.call_args.kwargs["port"] == 9123
-        assert mock_run.call_args.kwargs["host"] == "127.0.0.1"
+        assert mock_config.call_args.kwargs["port"] == 9123
+        assert mock_config.call_args.kwargs["host"] == "127.0.0.1"
         mock_open.assert_not_called()
 
     def test_default_path_wires_the_readiness_thread(self, tmp_path: Path) -> None:
@@ -625,7 +629,7 @@ class TestUiCommand:
         runner = CliRunner()
         with (
             patch("pflow.cli.commands.ui._port_available", return_value=True),
-            patch("uvicorn.run"),
+            patch("uvicorn.Server.run"),
             patch("threading.Thread", _FakeThread),
         ):
             result = runner.invoke(ui_cmd, [str(workflow_path), "--port", "9124"])
@@ -655,7 +659,7 @@ class TestUiCommand:
             runner = CliRunner()
             with (
                 patch("pflow.cli.commands.ui._probe_health", return_value=None),
-                patch("uvicorn.run") as mock_run,
+                patch("uvicorn.Server.run") as mock_run,
             ):
                 result = runner.invoke(ui_cmd, ["--no-open", "--port", str(port)])
         finally:
@@ -680,7 +684,7 @@ class TestUiCommand:
         with (
             patch("pflow.cli.commands.ui._port_available", return_value=False),
             patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
-            patch("uvicorn.run") as mock_run,
+            patch("uvicorn.Server.run") as mock_run,
             patch("webbrowser.open") as mock_open,
         ):
             result = runner.invoke(ui_cmd, [str(workflow_path), "--port", "9131"])
@@ -700,7 +704,7 @@ class TestUiCommand:
         with (
             patch("pflow.cli.commands.ui._port_available", return_value=False),
             patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
-            patch("uvicorn.run") as mock_run,
+            patch("uvicorn.Server.run") as mock_run,
             patch("webbrowser.open") as mock_open,
         ):
             result = runner.invoke(ui_cmd, [str(workflow_path), "--no-open", "--port", "9132"])
@@ -724,7 +728,7 @@ class TestUiCommand:
             with (
                 patch("pflow.cli.commands.ui._port_available", return_value=False),
                 patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
-                patch("uvicorn.run"),
+                patch("uvicorn.Server.run"),
                 patch("webbrowser.open") as mock_open,
             ):
                 result = runner.invoke(ui_cmd, ["wf.pflow.md", "--port", "9135"])
@@ -844,6 +848,25 @@ class TestFocusOpen:
         assert result.exit_code == 1
         assert "didn't connect" in result.output
         assert mock_point.call_count == 2  # initial + one final delivery even on timeout
+
+
+def test_hub_shutdown_ends_streams_with_a_sentinel():
+    """Clean `pflow ui` Ctrl+C (Task 173): on shutdown the hub marks every Viewer inactive and wakes its
+    blocked queue with the shutdown sentinel, so each SSE generator RETURNS instead of being force-cancelled
+    by uvicorn (which logs a CancelledError per stream). Verifies the mechanism the wrapped handle_exit drives."""
+
+    async def scenario() -> None:
+        from pflow.ui.server import _SHUTDOWN_SENTINEL, _Hub
+
+        hub = _Hub()
+        a = hub.register("wfA", "visible")
+        b = hub.register("wfB", "visible", run_id="r1")
+        hub.shutdown()
+        assert a.active is False and b.active is False, "every Viewer is marked inactive"
+        assert a.queue.get_nowait() is _SHUTDOWN_SENTINEL, "each stream is woken with the sentinel"
+        assert b.queue.get_nowait() is _SHUTDOWN_SENTINEL
+
+    asyncio.run(scenario())
 
 
 class TestRunsEndpoint:

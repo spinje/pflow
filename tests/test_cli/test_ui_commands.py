@@ -53,7 +53,7 @@ class TestUiRouting:
         runner = CliRunner()
         with (
             patch.object(ui_module, "_port_available", return_value=True),
-            patch("uvicorn.run") as run,
+            patch("uvicorn.Server.run") as run,
         ):
             result = runner.invoke(ui_module.ui_cmd, ["./focus.pflow.md", "--no-open"])
 
@@ -65,7 +65,7 @@ class TestUiRouting:
         runner = CliRunner()
         with (
             patch.object(ui_module, "_port_available", return_value=True),
-            patch("uvicorn.run"),
+            patch("uvicorn.Server.run"),
         ):
             result = runner.invoke(ui_module.ui_cmd, ["demo", "--no-open", "--no-auto-update"])
 

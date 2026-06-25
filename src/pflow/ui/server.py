@@ -75,6 +75,9 @@ _MAX_DEPTH = 5
 _ACTIVITY_MAX = 200
 _CONNECTION_QUEUE_MAX = 64
 _KEEPALIVE_S = 15.0
+# Put on a Viewer's queue to end its SSE stream cleanly on server shutdown (see _Hub.shutdown): the
+# generator returns instead of being force-cancelled by uvicorn, which would log a CancelledError per stream.
+_SHUTDOWN_SENTINEL: dict[str, object] = {"__shutdown__": True}
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -126,6 +129,17 @@ class _Hub:
 
     def unregister(self, conn_id: str) -> None:
         self._conns.pop(conn_id, None)
+
+    def shutdown(self) -> None:
+        """End every live Viewer stream cleanly on server shutdown: mark each inactive and wake its blocked
+        ``queue.get`` with a sentinel so the SSE generator RETURNS (its StreamingResponse completes) instead
+        of being force-cancelled by uvicorn — which logs a CancelledError per stream. The generators' own
+        ``finally`` then unregisters them and releases their tailers. Loop-owned like the rest of the hub
+        (called from uvicorn's signal callback, which runs on the event loop)."""
+        for conn in list(self._conns.values()):
+            conn.active = False
+            with contextlib.suppress(asyncio.QueueFull):
+                conn.queue.put_nowait(_SHUTDOWN_SENTINEL)
 
     def set_visibility(self, conn_id: str, visibility: str) -> None:
         conn = self._conns.get(conn_id)
@@ -462,11 +476,14 @@ async def events(request: Request) -> Response:
             while conn.active:
                 try:
                     message = await asyncio.wait_for(conn.queue.get(), timeout=_KEEPALIVE_S)
-                    yield f"data: {json.dumps(message)}\n\n"
                 except asyncio.TimeoutError:
                     # Load-bearing: a periodic send surfaces silently-dead sockets
                     # under ASGI spec >=2.4 and also defeats idle proxy timeouts.
                     yield ": keepalive\n\n"
+                    continue
+                if message is _SHUTDOWN_SENTINEL:
+                    break  # server shutting down — end the stream cleanly (no uvicorn force-cancel)
+                yield f"data: {json.dumps(message)}\n\n"
         finally:
             hub.unregister(conn.conn_id)
             hub.release_tailer(workflow_key, run_id)

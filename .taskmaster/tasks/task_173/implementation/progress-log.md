@@ -738,7 +738,7 @@ clean. Python untouched.
 (3c global dashboard → Phase 5 detail panel → pin D1) are unchanged; Phase 4 (ChipRail status chip) is
 now **dropped** (absorbed by the corner badge).
 
-## 2026-06-24 — Tailer scan performance: hash-scoped discovery + (mtime,size) cache (UNCOMMITTED)
+## 2026-06-24 — Tailer scan performance: hash-scoped discovery + (mtime,size) cache (committed `1160b808`)
 
 Surfaced by the user spotting two stale `pflow ui` servers at ~8% CPU each. Root cause: the unpinned overlay
 tailer calls `discover_live_trace` every 0.25 s, and `scan_traces` globbed + opened + JSON-parsed EVERY
@@ -818,3 +818,44 @@ the user first re-tested against a STALE bundle (I'd changed source but not run 
 `pflow ui`) → "it didn't work"; the fix was correct, it just wasn't deployed. Rebuilt + restarted (also
 force-killed two stuck `pflow ui` processes pegging CPU since earlier) → user confirmed working in the browser.
 Lesson re-learned: a `web/` source change is invisible until rebuild + server restart.
+
+## 2026-06-24 — `pflow ui` Ctrl+C: server ignored SIGINT, then exited noisily (user-found, fixed)
+
+The user reported the `pflow ui` server **didn't stop on Ctrl+C** (screenshot: repeated `^C` ignored). NOT
+the perf change (it's pure `scan_traces` logic, no threads/signals/lifecycle). Root cause is the live overlay
+introducing **long-lived SSE connections** (`/api/events`) to a previously GET-only server. Three layered
+issues, each surfaced + fixed in order by driving the REAL server (I CAN'T reach localhost HTTP from my tools,
+but I CAN start the server, `kill -INT` it, and read its stdout — that's how I verified the no-client case;
+the user verified the with-a-tab case):
+
+1. **Hang forever.** `uvicorn.run(...)` had no `timeout_graceful_shutdown`, so on Ctrl+C it waited
+   indefinitely for the open SSE streams (held by the browser tab) to drain — they never do. Fix:
+   `timeout_graceful_shutdown=2`. User confirmed: server now EXITS (was: hung).
+2. **`SystemExit: 130` traceback wall.** uvicorn captures signals while serving and RE-RAISES SIGINT into
+   whatever handler was installed before it — pflow's global `main._handle_sigint` (`sys.exit(130)`, meant for
+   `pflow run`). So `sys.exit` fired inside the event loop mid-teardown → a SystemExit tangled with the
+   tasks uvicorn was force-cancelling (the "During handling of the above exception" cascade). Fix in `ui.py`:
+   restore `signal.default_int_handler` before serving so uvicorn owns the whole shutdown, and
+   `contextlib.suppress(KeyboardInterrupt)` around it. Verified: no-client shutdown is now a clean exit (only
+   `Serving…` then the prompt returns — no traceback). This was MOST of what the user saw.
+3. **`Cancel N running task(s)` + a CancelledError per stream.** With (2) gone, the residual noise was uvicorn
+   force-cancelling the SSE streams after the 2 s grace (they never close on their own). Fix: close them
+   cleanly on shutdown. Switched `ui.py` from `uvicorn.run(...)` to a `uvicorn.Server(uvicorn.Config(...))`
+   instance and wrapped its `handle_exit` to call a new `_Hub.shutdown()` FIRST — which marks every `_Conn`
+   inactive and wakes its blocked `queue.get` with a `_SHUTDOWN_SENTINEL`, so each SSE generator RETURNS (its
+   `finally` unregisters + releases the tailer) instead of being force-cancelled. `events()`'s loop breaks on
+   the sentinel. **User confirmed clean shutdown in the real browser.**
+
+Test ripple: the `uvicorn.run` switch to a `Server` instance broke 4 tests that `patch("uvicorn.run")` —
+repointed all 8 patch sites to `patch("uvicorn.Server.run")`, and the host/port-wiring assertion now reads
+`uvicorn.Config` kwargs (host/port moved from `run(...)` to `Config(...)`). +1 unit test
+(`test_hub_shutdown_ends_streams_with_a_sentinel`) pins the mechanism in-process (the part not needing a live
+socket). Gates: `make test` **8151** (+2 since the perf commit: hub-shutdown + the earlier scan test),
+`make check` clean (mypy 238). Files: `src/pflow/ui/server.py` (`_SHUTDOWN_SENTINEL`, `_Hub.shutdown`,
+`events()` sentinel break), `src/pflow/cli/commands/ui.py` (Server + handle_exit wrap + signal restore),
+`tests/test_cli/test_ui.py` + `test_ui_commands.py`.
+
+**Honest boundary:** the with-a-tab clean shutdown was verified by the USER (real browser); I verified the
+no-client clean exit + the `_Hub.shutdown` mechanism myself. An OS-level edge (a tab mid-`run-events` flush at
+the exact shutdown instant) is not separately exercised — low risk, the sentinel + `conn.active=False` make
+the generator return regardless.
