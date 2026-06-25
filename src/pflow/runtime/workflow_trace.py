@@ -536,6 +536,7 @@ class WorkflowTraceCollector:
         workflow_path: str | None = None,
         is_run_scoped: bool = False,
         stream_to_disk: bool = False,
+        content_hash: str | None = None,
     ):
         """Initialize the trace collector.
 
@@ -570,9 +571,17 @@ class WorkflowTraceCollector:
                 never stream). Default ``False`` so bare-constructed collectors don't
                 write files. A second, test-only gate lives in ``tests/conftest.py``
                 (``_open_stream`` is no-op'd unless the test is marked ``trace_files``).
+            content_hash: Task 173 replay version fingerprint — the
+                ``canonical_ir_digest`` of the PRISTINE resolved IR, stamped
+                into the ``meta`` line. At replay the server compares it to the
+                current file's digest to flag a stale (different-version) run.
+                Defaults to ``None`` so the per-sub-workflow buffer collector and
+                all test fixtures construct unchanged; an old trace (or a run
+                that didn't supply it) simply has no fingerprint → "can't verify".
         """
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
+        self.content_hash = content_hash
         self.is_run_scoped = is_run_scoped
         self.execution_id = str(uuid.uuid4())
         self.start_time = datetime.now()
@@ -942,6 +951,7 @@ class WorkflowTraceCollector:
             "workflow_path": self.workflow_path,
             "start_time": self.start_time.isoformat(),
             "only_node": self.only_node,
+            "content_hash": self.content_hash,
         }
 
     def _aggregates(self) -> dict[str, Any]:

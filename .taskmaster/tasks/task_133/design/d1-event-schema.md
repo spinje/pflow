@@ -48,20 +48,28 @@ backward-only, so a forward tailer / crash-truncated prefix stays self-consisten
 
 | `kind` | Role | Notes |
 |---|---|---|
-| `meta` | run identity, first line | written **lazily on first node completion** in v1 — see caveat |
+| `meta` | run identity, first line | written **eagerly at run start** (`start_streaming`) so an in-flight run is discoverable from t=0 |
+| `node.start` | a node BEGAN (live-only marker) | SHIPPED Task 173: a disk-only line flushed when a (main-thread) node starts, sharing the node's `id`/`seq` so the terminal `event` supersedes it (last-wins). The post-hoc reader (`_partition_trace_lines`) **drops** it, so on-disk `event` seqs stay byte-identical to a no-node.start run. Carries the same join keys as `event` (overlay reads `running` off it). |
 | `event` | one node execution | the bulk; see below |
 | `blob` | one interned payload | **inline**, `{kind, md5, value}`, written **before** the first event that references it (backward-only); replaces the A–C `blobs` trailer |
 | `run.complete` | run aggregates | trailer; **absence = crash-tail** (the resume discriminator) |
 
-> **⚠ meta is written LAZILY (v1).** The producer opens the file on the **first node completion**
-> (`_open_stream` ← `_flush_event`), not at run start — so a still-running first node (e.g. a 30 s LLM call)
-> is **undiscoverable until it finishes**, and a crash mid-first-node leaves no file. The eager-`meta`-at-run-start
-> fix is a small Task 172 follow-up scoped to Task 173 (it ripples to `report.py` newest-by-mtime + analyze-cache
-> disclosure, which must then guard against `meta`-only files) — see `task-173.md` Requirements.
+> **meta is written EAGERLY (SHIPPED).** The producer opens the file at run start via `start_streaming()`
+> (after `only_node` is stamped), NOT lazily on first completion — so a still-running first node is
+> discoverable from t=0 and a crash mid-first-node still leaves a readable `meta`-only file. The newest-by-mtime
+> consumers that could now meet a contentless trace (`report.py` auto-detect; analyze-cache's "found other
+> traces" disclosure) were guarded to prefer a COMPLETE trace — see the Task 173 slice-hardening progress-log
+> entry. (Historical: the original v1 plan wrote `meta` lazily on first node completion.)
 
 **`meta`** (verbatim `_META_KEYS`, `trace_io.py`): `format_version`, `execution_id` (**= `run_id`**),
-`workflow_name`, `workflow_path`, `start_time`, `only_node`. (`only_node` rides *here*, so a head-only reader
-can reject `--only` traces early.)
+`workflow_name`, `workflow_path`, `start_time`, `only_node`, `content_hash`. (`only_node` rides *here*, so a
+head-only reader can reject `--only` traces early.) **`content_hash`** (Task 173) is the workflow-version
+fingerprint — `workflow_content_hash` of the *resolved* IR: its `canonical_ir_digest` with source-LOCATION
+provenance (`_source_line`/`_source_lines`/`_source_files`) stripped, so the fingerprint tracks the LOGICAL
+workflow, not its byte layout (a comment/whitespace edit that only shifts line numbers is NOT a "different
+version"). The replay tailer compares it to the current file's `workflow_content_hash` to flag a stale run.
+For a dict-inline run (no provenance) it equals the digest inside the `ir-hash:` `workflow_path`. `null` on a
+run that didn't supply it (an old trace) → "can't verify version".
 
 **`run.complete`** (folded at finalize, `workflow_trace.py:913-948`): always `end_time`, `duration_ms`,
 `final_status` (**this is where `degraded` lives** — a *run* outcome), `nodes_executed`, `nodes_failed`,

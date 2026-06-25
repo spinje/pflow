@@ -303,6 +303,12 @@ class RunTailer:
         self._state: dict[Any, dict[str, Any]] = {}  # id -> latest run-event (last-wins)
         self._run: dict[str, Any] | None = None  # the run-complete message, once seen
         self._stopped = False  # Task 173: broadcast run-stopped once when an incomplete run's lock goes free
+        # Task 173 replay version-detection: latched ONCE in `_resolve_pinned` (the pinned path's only file
+        # resolve) and never flips after — unpinned tailers never compute it; pinned ones never re-discover.
+        # So it is delivered BOTH ways (mirroring `_stopped`): a `run-stale` broadcast reaches the subscriber
+        # present at resolve time, and `snapshot()` carries it for any late subscriber. Deliberately NOT reset
+        # in `_switch` (the pinned path calls `_switch` immediately AFTER this latch — resetting would wipe it).
+        self._stale_version = False
 
     def snapshot(self) -> dict[str, Any]:
         """The current run state for a newly-subscribed viewer: all known node states + the run banner + the
@@ -313,12 +319,16 @@ class RunTailer:
         ``stopped`` is load-bearing: ``run-stopped`` is broadcast ONCE (latched), so a viewer that subscribes
         AFTER it fires (a reload / 2nd tab reusing this tailer) would otherwise see only node states still
         reading ``running`` and never learn the run died — a silent blue-blink-forever (silent-failures
-        review). Carrying the latched flag here lets a late subscriber render ``stopped`` immediately."""
+        review). Carrying the latched flag here lets a late subscriber render ``stopped`` immediately.
+        ``stale_version`` rides the same way (Task 173 replay version-detection) — the ``run-stale`` broadcast
+        only reaches the subscriber present when ``_resolve_pinned`` latched it, so a late subscriber learns
+        the version mismatch from this snapshot."""
         return {
             "type": "run-snapshot",
             "nodes": list(self._state.values()),
             "run": self._run,
             "stopped": self._stopped,
+            "stale_version": self._stale_version,
         }
 
     async def run(self) -> None:
@@ -333,12 +343,8 @@ class RunTailer:
         stops. UNPINNED (``run_id is None``): follow the newest live trace, re-discovering each poll so a
         run started after the viewer opened is picked up; switching files resets state + emits ``run-reset``.
         """
-        if self._run_id is not None:
-            pinned = await asyncio.to_thread(self._resolve_pinned)
-            if pinned is None:
-                self._broadcast(self._key, {"type": "run-not-found", "run_id": self._run_id})
-                return
-            self._switch(pinned)  # fix the file; snapshot() catches up each subscriber — no run-reset needed
+        if self._run_id is not None and not await self._start_pinned():
+            return  # pinned run_id matched no trace (run-not-found broadcast) — don't loop
         while True:
             try:
                 if self._run_id is None:
@@ -360,6 +366,22 @@ class RunTailer:
             except Exception:
                 logger.debug("run tailer poll failed for %s", self._key, exc_info=True)
             await asyncio.sleep(_POLL_S)
+
+    async def _start_pinned(self) -> bool:
+        """Pinned setup (deep-review DR-1): resolve ``run_id -> Path`` ONCE and fix the file. Returns False
+        (stop the run() loop) when the id matched no trace — broadcasting ``run-not-found`` so the canvas
+        isn't left silently all-pending; True once the file is fixed. ``_resolve_pinned`` also latches
+        ``self._stale_version`` (Task 173); if stale, broadcast ``run-stale`` HERE — the present subscriber's
+        snapshot was already taken (before this task ran) with stale=False, so snapshot-only would miss it.
+        Late subscribers get it from ``snapshot()`` instead. Mirrors run-stopped's dual delivery."""
+        pinned = await asyncio.to_thread(self._resolve_pinned)  # also latches self._stale_version
+        if pinned is None:
+            self._broadcast(self._key, {"type": "run-not-found", "run_id": self._run_id})
+            return False
+        self._switch(pinned)  # fix the file; snapshot() catches up each subscriber — no run-reset needed
+        if self._stale_version:
+            self._broadcast(self._key, {"type": "run-stale"})
+        return True
 
     async def _check_stopped(self, current: Path) -> None:
         """Task 173 exact death-detection: after consuming all available bytes, if the run is STILL
@@ -390,14 +412,54 @@ class RunTailer:
         """Resolve the pinned ``run_id`` to its trace file ONCE (deep-review DR-1) — BLOCKING I/O, run via
         ``asyncio.to_thread``. Matches ``meta.execution_id`` over the shared scanner; does NOT apply the
         ``--only`` exclude — a user pinning a labelled ``--only`` run from history made an explicit choice
-        (the exclude is the live overlay's policy, not the pin's; deep-review DR-3)."""
+        (the exclude is the live overlay's policy, not the pin's; deep-review DR-3).
+
+        Side effect (Task 173): on a match, latches ``self._stale_version`` from the run's recorded
+        ``content_hash`` vs the current file's digest. Safe to write here from the worker thread — it's read
+        only after this ``to_thread`` call joins (the loop resumes), never concurrently."""
         for candidate in scan_traces(self._key):
             if candidate["meta"].get("execution_id") == self._run_id:
+                self._stale_version = self._is_stale(candidate["meta"].get("content_hash"))
                 return candidate["path"]
         return None
 
+    def _is_stale(self, run_hash: str | None) -> bool:
+        """Was this run recorded against a DIFFERENT version of the workflow than the file on disk now?
+        (Task 173 — version DETECTION, not faithful old-graph rendering.) Compares the run's stamped
+        ``content_hash`` to the current file's ``workflow_content_hash``; both hash the RESOLVED IR (logical
+        only — source-line provenance stripped) via the same ``resolve_workflow`` path the runner used, so an
+        unedited file round-trips to an identical digest and a comment/whitespace edit does NOT read as stale.
+
+        Returns ``False`` (cannot verify → no banner, replay as-is) in three cases:
+        - ``run_hash`` is ``None`` — an old trace pre-dating the fingerprint.
+        - ``self._key`` is an ``ir-hash:`` inline identity — its id already encodes content, so an inline
+          replay is never "a different version". DEFENSE-IN-DEPTH ONLY: an ``ir-hash:`` key never reaches a
+          tailer (``server._workflow_key`` 404s it before any tailer is built), so this never fires via the UI.
+        - resolving the current file RAISES — a deleted entry file or a deleted *referenced* file makes the
+          workflow unrenderable, so ``/api/graph`` already owns that case with its 422 "could not be rendered"
+          banner; there is no misleading overlay to warn about. Fail-closed-to-not-stale is correct here. The
+          blanket ``except Exception`` is intentional (the missing-entry-file failure is a ``raise`` from
+          ``resolve_workflow``, not just a digest error) — pinned by the deleted-referenced-file test."""
+        if run_hash is None or self._key.startswith("ir-hash:"):
+            return False
+        # Lazy import: keeps run_tailer's module import light at server startup, and resolve_workflow pulls
+        # in the markdown/resolver stack the tailer otherwise never needs.
+        from pflow.core.workflow_id import workflow_content_hash
+        from pflow.execution.workflow_resolver import resolve_workflow
+
+        try:
+            current_digest = workflow_content_hash(resolve_workflow(self._key).ir)
+        except Exception:
+            return False
+        return current_digest != run_hash
+
     def _switch(self, path: Path) -> None:
-        """Follow a newer run: reset all per-file state (on the loop). The caller emits ``run-reset``."""
+        """Follow a newer run: reset all per-file state (on the loop). The caller emits ``run-reset``.
+
+        Resets PER-FILE state only. ``_stale_version`` is deliberately NOT reset here — it is per-RUN, latched
+        once in ``_resolve_pinned`` which runs IMMEDIATELY before the pinned path's single ``_switch`` call, so
+        resetting it would wipe the just-latched value. (Unpinned tailers never set it, so omitting it is
+        safe there too.)"""
         self._current = path
         self._offset = 0
         self._buf = b""

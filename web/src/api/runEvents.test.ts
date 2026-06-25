@@ -46,6 +46,7 @@ const runHandlers = () => ({
   runReset: vi.fn(),
   runNotFound: vi.fn(),
   runStopped: vi.fn(),
+  runStale: vi.fn(),
 });
 
 beforeEach(() => {
@@ -87,7 +88,7 @@ describe("subscribe — run-* dispatch arms", () => {
     source.emit({ type: "run-snapshot", nodes: [runEvent, { ref, status: "nope" }], run });
 
     expect(handlers.runSnapshot).toHaveBeenCalledOnce();
-    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], run, false); // not a stopped run
+    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], run, false, false); // not stopped, not stale
   });
 
   it("run-snapshot carries stopped=true for a late subscriber to a dead run (Warning-1 fix)", () => {
@@ -95,7 +96,15 @@ describe("subscribe — run-* dispatch arms", () => {
     subscribe("wf", handlers);
     FakeEventSource.instances[0]!.emit({ type: "run-snapshot", nodes: [runEvent], run: null, stopped: true });
 
-    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null, true);
+    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null, true, false);
+  });
+
+  it("run-snapshot carries stale_version=true for a late subscriber to a version-mismatched replay (Task 173)", () => {
+    const handlers = runHandlers();
+    subscribe("wf", handlers);
+    FakeEventSource.instances[0]!.emit({ type: "run-snapshot", nodes: [runEvent], run: null, stale_version: true });
+
+    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null, false, true);
   });
 
   it("run-snapshot with no run field passes run=null (mid-run catch-up, no trailer yet)", () => {
@@ -103,7 +112,7 @@ describe("subscribe — run-* dispatch arms", () => {
     subscribe("wf", handlers);
     FakeEventSource.instances[0]!.emit({ type: "run-snapshot", nodes: [runEvent] });
 
-    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null, false);
+    expect(handlers.runSnapshot).toHaveBeenCalledWith([runEvent], null, false, false);
   });
 
   it("run-complete: dispatches the message itself as the RunComplete trailer", () => {
@@ -142,6 +151,15 @@ describe("subscribe — run-* dispatch arms", () => {
 
     expect(handlers.runStopped).toHaveBeenCalledOnce();
     expect(handlers.runStopped).toHaveBeenCalledWith();
+  });
+
+  it("run-stale: invokes runStale (replay version-detection — reaches the present subscriber)", () => {
+    const handlers = runHandlers();
+    subscribe("wf", handlers, "run-xyz");
+    FakeEventSource.instances[0]!.emit({ type: "run-stale" });
+
+    expect(handlers.runStale).toHaveBeenCalledOnce();
+    expect(handlers.runStale).toHaveBeenCalledWith();
   });
 
   it("a runId pins the subscription via the &run= query param (DR-1)", () => {

@@ -23,8 +23,10 @@ from pflow.core.markdown_parser import parse_markdown
 from pflow.core.trace_io import BLOB_SENTINEL, load_trace_file, substitute_refs
 from pflow.core.workflow.graph import build_graph, render_react_flow
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
+from pflow.core.workflow_id import workflow_content_hash
 from pflow.execution import WorkflowRunner
 from pflow.execution.result import RunnerConfig
+from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
 
@@ -1266,6 +1268,44 @@ def test_begin_node_emits_disk_only_running_marker_and_reuses_seq(tmp_path, monk
     assert all(n["status"] == "success" for n in disk["nodes"])
     assert c.tree() == disk["nodes"]
     assert disk["final_status"] == "success"
+
+
+@pytest.mark.trace_files
+def test_producer_stamps_content_hash_equal_to_the_resolved_ir_digest(tmp_path, monkeypatch):
+    """Task 173: a REAL file run stamps ``meta.content_hash`` = the ``workflow_content_hash`` of the resolved
+    IR — the replay version fingerprint. Drives the real producer (not the resolver shortcut), then re-derives
+    the digest via the SAME ``resolve_workflow`` path the replay tailer uses → they must agree."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nA one-node shell workflow.\n\n## Steps\n\n"
+        "### greet\n\nEcho a greeting.\n\n- type: shell\n- command: echo hi\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig())
+    assert result.success
+    meta = _read_lines(result.trace._stream_path)[0]
+    assert meta["kind"] == "meta"
+    assert meta["content_hash"] == workflow_content_hash(resolve_workflow(str(wf)).ir)
+
+
+@pytest.mark.trace_files
+def test_inline_run_content_hash_equals_the_digest_inside_its_ir_hash_path(tmp_path, monkeypatch):
+    """An inline (dict-IR) run has ``workflow_path = "ir-hash:<digest>"``; its ``content_hash`` is that SAME
+    digest — one fingerprint, two surfaces (both computed from ``resolved.ir`` at the one stamp site, so the
+    equality is structural). The tailer's inline short-circuit relies on the identity already encoding content,
+    so an inline replay is never flagged stale. (We assert the two-surface equality, not equality to the raw
+    input dict: ``_prepare_workflow`` adds inferred ``edges`` to a bare dict, so the stamp hashes the resolved
+    IR — for a FILE run the parser already produces ``edges``, which is why the file round-trip matches.)"""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [{"id": "greet", "type": "shell", "params": {"command": "echo hi"}, "purpose": "say hello world"}],
+    }
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+    assert result.success
+    meta = _read_lines(result.trace._stream_path)[0]
+    assert meta["content_hash"] and meta["workflow_path"] == f"ir-hash:{meta['content_hash']}"
 
 
 @pytest.mark.trace_files

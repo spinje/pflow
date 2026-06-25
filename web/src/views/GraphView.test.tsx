@@ -235,6 +235,37 @@ describe("GraphView mount", () => {
     }
   });
 
+  it("a stale (different-version) pinned replay shows the version banner, and run-reset clears it (Task 173)", async () => {
+    // The run-stale broadcast reaches the present subscriber (its snapshot predates the server-side latch),
+    // and the snapshot's stale flag covers a late subscriber — both flip the same banner. It is non-blocking
+    // (the run still renders); a run-reset (a newer run took over) clears it.
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+      const run = live.handlers as unknown as RunHandlers;
+
+      // Path 1 — the broadcast arm (present subscriber). Nodes still light: the run renders normally.
+      act(() => run.runStale());
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
+      await waitFor(() => expect(screen.getByText(/different version of this workflow/)).toBeTruthy());
+      expect(screen.getByLabelText("run status: success")).toBeTruthy();
+
+      // A newer run takes over → the version banner clears (reset path).
+      act(() => run.runReset());
+      expect(screen.queryByText(/different version of this workflow/)).toBeNull();
+
+      // Path 2 — a late subscriber learns it from the snapshot's stale flag (no broadcast).
+      act(() => run.runSnapshot([], null, false, true));
+      await waitFor(() => expect(screen.getByText(/different version of this workflow/)).toBeTruthy());
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
   it("source toggle mounts the source pane, and node selection marks that node's authored line", async () => {
     vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
     window.history.replaceState({}, "", "/");

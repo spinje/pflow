@@ -14,6 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from pflow.core.workflow_id import workflow_content_hash
+from pflow.execution import WorkflowRunner
+from pflow.execution.result import RunnerConfig
+from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.runtime.workflow_trace import format_trace_filename
 from pflow.ui.run_tailer import RunTailer, discover_live_trace, is_trace_locked, read_run_status, scan_traces
 
@@ -30,6 +34,7 @@ def _write_trace(
     only_node: str | None = None,
     final_status: str = "success",
     execution_id: str = "x",
+    content_hash: str | None = None,
 ) -> None:
     # Synthetic, but the CONSUMED keys mirror the producer (meta ← workflow_trace.py `_meta_fields`,
     # run.complete.final_status ← `_aggregates`, node.start/event join keys ← `_emit_node_start`). The join
@@ -43,6 +48,8 @@ def _write_trace(
     }
     if only_node is not None:
         meta["only_node"] = only_node
+    if content_hash is not None:
+        meta["content_hash"] = content_hash
     lines: list[dict] = [
         meta,
         {
@@ -465,3 +472,167 @@ def test_byte_split_multibyte_char_is_not_lost():
     assert t._consume(line[:split]) == []  # incomplete line → nothing emitted; partial bytes buffered
     messages = t._consume(line[split:])  # completes the line
     assert messages[0]["events"][0]["ref"]["node_id"] == "café"  # reconstructed intact, not lost/corrupted
+
+
+# --- Task 173 replay version-detection: content_hash compare + the run-stale broadcast/snapshot delivery ---
+
+
+def _write_wf(path: Path, node_id: str = "greet", *, command: str = "echo hi") -> Path:
+    """A one-node shell workflow (real, resolvable) for `_is_stale` to hash via `resolve_workflow`."""
+    path.write_text(
+        f"# WF\n\nA one-node shell workflow for version detection.\n\n## Steps\n\n"
+        f"### {node_id}\n\nEcho a greeting.\n\n- type: shell\n- command: {command}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_declared_defaults_wf(path: Path, node_id: str = "greet") -> Path:
+    """A workflow whose declared input gets a DEFAULT filled — the exact case where a future
+    `_fill_declared_defaults` regression could pollute the stamped IR. The round-trip test runs this through
+    the REAL runner to guard the pristine-IR stamp."""
+    path.write_text(
+        "# Round Trip\n\nGuards the pristine-IR stamp via a defaulted input.\n\n"
+        "## Inputs\n\n### name\n\nThe name to greet.\n\n- type: string\n- default: world\n\n"
+        "## Steps\n\n"
+        f"### {node_id}\n\nEcho a greeting using the defaulted input.\n\n- type: shell\n- command: echo hi ${{name}}\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_is_stale_compares_run_hash_to_the_current_file_digest(tmp_path):
+    """`_is_stale` is True iff the run's stamped `content_hash` differs from the current file's resolved
+    digest. Cannot-verify cases (None hash = old trace; an `ir-hash:` inline key) return False — no banner."""
+    wf = _write_wf(tmp_path / "wf.pflow.md")
+    digest = workflow_content_hash(resolve_workflow(str(wf)).ir)
+    file_tailer = RunTailer(str(wf), lambda _k, _m: None)
+    assert file_tailer._is_stale(digest) is False  # same version → not stale
+    assert file_tailer._is_stale("deadbeefdeadbeefdeadbeefdeadbeef") is True  # different version → stale
+    assert file_tailer._is_stale(None) is False  # old trace, no fingerprint → can't verify
+    # An `ir-hash:` inline key short-circuits WITHOUT touching the filesystem (defense-in-depth — never
+    # reached via the UI, which 404s ir-hash: before any tailer).
+    assert RunTailer("ir-hash:abc123", lambda _k, _m: None)._is_stale("any") is False
+
+
+def test_is_stale_false_when_the_entry_file_is_deleted(tmp_path):
+    """A deleted entry file makes the workflow unrenderable → `/api/graph` owns the 422; `_is_stale` swallows
+    the resolve raise and returns False (no misleading overlay to warn about). Pins the blanket-catch."""
+    wf = _write_wf(tmp_path / "wf.pflow.md")
+    run_hash = workflow_content_hash(resolve_workflow(str(wf)).ir)
+    wf.unlink()
+    assert RunTailer(str(wf), lambda _k, _m: None)._is_stale(run_hash) is False
+
+
+def test_is_stale_false_when_a_referenced_file_is_deleted(tmp_path):
+    """A deleted *referenced* file (prompt/code) raises `CompilationError` at resolution → caught → not stale
+    (same degraded path as a deleted entry file). The graph itself is unrenderable, so `/api/graph` owns it."""
+    (tmp_path / "prompt.txt").write_text("Generate a greeting.", encoding="utf-8")
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# Ref\n\nReferences an external prompt file.\n\n## Steps\n\n"
+        "### gen\n\nGenerate from an external prompt.\n\n- type: llm\n- model: anthropic/claude-sonnet-4-5\n"
+        "- prompt: ./prompt.txt\n",
+        encoding="utf-8",
+    )
+    run_hash = workflow_content_hash(resolve_workflow(str(wf)).ir)  # resolves the ref while the file exists
+    (tmp_path / "prompt.txt").unlink()
+    with pytest.raises(Exception):  # noqa: B017 — confirm the catch is actually exercised (documented behavior)
+        resolve_workflow(str(wf))
+    assert RunTailer(str(wf), lambda _k, _m: None)._is_stale(run_hash) is False
+
+
+def test_resolve_pinned_latches_stale_version(tmp_path, monkeypatch):
+    """`_resolve_pinned` latches `_stale_version` as a side effect: True when the matched run's `content_hash`
+    differs from the current file, False when equal, False when the run has no `content_hash`."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    debug = tmp_path / ".pflow" / "debug"
+    debug.mkdir(parents=True)
+    wf = _write_wf(tmp_path / "wf.pflow.md")
+    digest = workflow_content_hash(resolve_workflow(str(wf)).ir)
+    _write_trace(
+        _tp(debug, str(wf), "20260101-000000-000001"), str(wf), complete=True, execution_id="match", content_hash=digest
+    )
+    _write_trace(
+        _tp(debug, str(wf), "20260101-000000-000002"),
+        str(wf),
+        complete=True,
+        execution_id="stale",
+        content_hash="deadbeef",
+    )
+    _write_trace(
+        _tp(debug, str(wf), "20260101-000000-000003"), str(wf), complete=True, execution_id="old"
+    )  # no content_hash
+
+    def _latched(run_id: str) -> bool:
+        t = RunTailer(str(wf), lambda _k, _m: None, run_id=run_id)
+        t._resolve_pinned()
+        return t._stale_version
+
+    assert _latched("match") is False
+    assert _latched("stale") is True
+    assert _latched("old") is False  # old trace (no fingerprint) → can't verify → not stale
+
+
+def test_snapshot_carries_stale_version_for_a_late_subscriber():
+    """`run-stale` is a one-shot broadcast (reaches the present subscriber), so `snapshot()` must carry the
+    latched flag for a late subscriber (reload / 2nd tab) — mirrors the `stopped` snapshot field."""
+    tailer = RunTailer("k", lambda _k, _m: None)
+    assert tailer.snapshot()["stale_version"] is False
+    tailer._stale_version = True
+    assert tailer.snapshot()["stale_version"] is True
+
+
+def test_start_pinned_broadcasts_run_stale_only_when_the_version_differs(tmp_path, monkeypatch):
+    """The present subscriber's snapshot was taken BEFORE the tailer task ran (stale=False), so a stale run
+    must BROADCAST `run-stale` to reach it (snapshot-only would miss it). A matching version broadcasts none."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    debug = tmp_path / ".pflow" / "debug"
+    debug.mkdir(parents=True)
+    wf = _write_wf(tmp_path / "wf.pflow.md")
+    digest = workflow_content_hash(resolve_workflow(str(wf)).ir)
+    _write_trace(
+        _tp(debug, str(wf), "20260101-000000-000001"),
+        str(wf),
+        complete=True,
+        execution_id="stale",
+        content_hash="deadbeef",
+    )
+    _write_trace(
+        _tp(debug, str(wf), "20260101-000000-000002"), str(wf), complete=True, execution_id="fresh", content_hash=digest
+    )
+
+    def _messages(run_id: str) -> list[dict]:
+        out: list[dict] = []
+        tailer = RunTailer(str(wf), lambda _k, message: out.append(message), run_id=run_id)
+        assert asyncio.run(tailer._start_pinned()) is True  # file resolved (not run-not-found)
+        return out
+
+    assert {"type": "run-stale"} in _messages("stale")
+    assert all(m.get("type") != "run-stale" for m in _messages("fresh"))
+
+
+@pytest.mark.trace_files
+def test_round_trip_real_runner_unedited_not_stale_edited_stale(tmp_path, monkeypatch):
+    """The KEY consistency pin (drive the REAL runner, not a resolver shortcut): the producer stamp and the
+    replay-compare hash the SAME resolved IR, so an UNEDITED file round-trips to an identical digest → not
+    stale. Uses a declared-defaults workflow (where `_fill_declared_defaults` could one day pollute the stamp
+    — this is what guards the pristine-IR invariant). Editing the file (rename the node) → digests differ →
+    stale."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = _write_declared_defaults_wf(tmp_path / "wf.pflow.md", "greet")
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig())
+    assert result.success
+    run_id = result.trace.execution_id
+
+    candidate = next(c for c in scan_traces(str(wf)) if c["meta"].get("execution_id") == run_id)
+    assert candidate["meta"]["content_hash"] == workflow_content_hash(resolve_workflow(str(wf)).ir)
+
+    fresh = RunTailer(str(wf), lambda _k, _m: None, run_id=run_id)
+    assert fresh._resolve_pinned() == candidate["path"]
+    assert fresh._stale_version is False  # unedited → producer stamp == replay digest
+
+    _write_declared_defaults_wf(wf, "greet2")  # rename the node — same trace file, different current digest
+    edited = RunTailer(str(wf), lambda _k, _m: None, run_id=run_id)
+    assert edited._resolve_pinned() == candidate["path"]  # the trace is still found (filename hash = path)
+    assert edited._stale_version is True

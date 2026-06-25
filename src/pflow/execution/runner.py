@@ -25,7 +25,7 @@ from pflow.core.exceptions import (
 )
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
-from pflow.core.workflow_id import synthesize_inline_workflow_id
+from pflow.core.workflow_id import synthesize_inline_workflow_id, workflow_content_hash
 
 from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
@@ -138,6 +138,12 @@ class WorkflowRunner:
             # synthesize a stable ``ir-hash:<md5>`` (symmetric with
             # ``MemoizationCache.workflow_path`` scoping for inline rows).
             trace_workflow_path = _workflow_path_id(resolved)
+            # Task 173 replay version fingerprint: hash the PRISTINE resolved IR (logical only — source-line
+            # provenance stripped, see workflow_content_hash) so a replay can detect the file was edited since
+            # this run (a node renamed/removed/re-nested), but NOT false-flag a comment/whitespace edit. Must
+            # be computed BEFORE any IR-touching compile step — `_fill_declared_defaults` (above, in
+            # _prepare_workflow) writes only to `params`, never to `resolved.ir`, so this site stays pristine.
+            content_hash = workflow_content_hash(resolved.ir)
             trace_collector = WorkflowTraceCollector(
                 workflow_name=workflow_name or resolved.file_path or "unnamed",
                 workflow_path=trace_workflow_path,
@@ -148,6 +154,9 @@ class WorkflowRunner:
                 # it) — gated by trace_enabled: the CLI persists (True); MCP reads cost from the in-memory
                 # collector and passes trace_enabled=False; --no-trace is False.
                 stream_to_disk=config.trace_enabled,
+                # Stamped into the trace `meta` line; the replay tailer compares it to the current file's
+                # digest to flag a stale (different-version) run (Task 173).
+                content_hash=content_hash,
             )
 
             mcp_pool = MCPConnectionPool()

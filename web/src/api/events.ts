@@ -13,12 +13,13 @@ export interface PointHandlers {
 // envelope. A viewer that doesn't care about runs simply omits these; an old server that never
 // sends run-* messages leaves them silent. The server tails the trace file; the viewer only renders.
 export interface RunHandlers {
-  runSnapshot: (nodes: RunEvent[], run: RunComplete | null, stopped: boolean) => void; // catch-up; `stopped` = the run already died (late subscribe)
+  runSnapshot: (nodes: RunEvent[], run: RunComplete | null, stopped: boolean, stale: boolean) => void; // catch-up; `stopped` = the run already died, `stale` = recorded against a different workflow version (both for late subscribe)
   runEvents: (events: RunEvent[]) => void; // a batched poll's node deltas
   runComplete: (run: RunComplete) => void; // the run banner
   runReset: () => void; // a newer run started (or the tailer switched files) — clear prior statuses
   runNotFound: () => void; // a pinned `&run=` id matched no trace (stale bookmark / rotated file) — DR-1
   runStopped: () => void; // an incomplete run's writer-lock went free (crash/kill) — flock death-detection
+  runStale: () => void; // the pinned run was recorded against a different workflow version (Task 173 replay) — reaches the present subscriber, whose snapshot predates the latch
 }
 
 const visibility = (): "visible" | "hidden" => (document.visibilityState === "visible" ? "visible" : "hidden");
@@ -120,7 +121,14 @@ export function subscribe(
       } else if (message.type === "run-events" && Array.isArray(message.events)) {
         handlers.runEvents?.(message.events.filter(isRunEvent));
       } else if (message.type === "run-snapshot" && Array.isArray(message.nodes)) {
-        handlers.runSnapshot?.(message.nodes.filter(isRunEvent), asRunComplete(message.run), message.stopped === true);
+        // `=== true` at this seam: an old server / unpinned snapshot that omits `stopped`/`stale_version`
+        // yields `false`, not `undefined`, keeping the handler's boolean params strict (tsc).
+        handlers.runSnapshot?.(
+          message.nodes.filter(isRunEvent),
+          asRunComplete(message.run),
+          message.stopped === true,
+          message.stale_version === true,
+        );
       } else if (message.type === "run-complete") {
         const run = asRunComplete(message);
         if (run) handlers.runComplete?.(run);
@@ -130,6 +138,8 @@ export function subscribe(
         handlers.runNotFound?.();
       } else if (message.type === "run-stopped") {
         handlers.runStopped?.();
+      } else if (message.type === "run-stale") {
+        handlers.runStale?.();
       }
     };
 

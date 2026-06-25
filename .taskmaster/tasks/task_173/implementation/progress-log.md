@@ -859,3 +859,139 @@ socket). Gates: `make test` **8151** (+2 since the perf commit: hub-shutdown + t
 no-client clean exit + the `_Hub.shutdown` mechanism myself. An OS-level edge (a tab mid-`run-events` flush at
 the exact shutdown instant) is not separately exercised — low risk, the sentinel + `conn.active=False` make
 the generator return regardless.
+
+## 2026-06-25 — Phase 1 (version-aware replay): pre-implementation findings + two plan corrections
+
+New plan: `~/.claude/plans/yes-lets-write-the-fancy-simon.md` (version-DETECTION for replay + catalog
+extension). Read it, `task-173.md`, the 2026-06-24 braindump, and this whole log. Then traced every Phase-1
+site against `638ac7d0` (clean tree = the plan's stated baseline: `make test` 8151, `make check` mypy 238,
+vitest ~580). Confirmed the load-bearing pristine-IR invariant directly: `_prepare_workflow` calls
+`_fill_declared_defaults(resolved.ir, params)` which reads `resolved.ir["inputs"]` but writes ONLY to
+`params` — so the stamp site (`runner.py:140`, before `compile_workflow`) hashes pristine resolved IR, and
+`resolve_workflow(path).ir` on the replay side is the identical resolution. Good.
+
+**Two corrections to the plan's 1B, both code-grounded (NOT deferrals) — see the implementation entry for the
+fixes:**
+
+1. **FI-W1 "snapshot-only, no broadcast" is WRONG for the FIRST subscriber → I add a `run-stale` BROADCAST
+   (full `run-stopped` mirror).** The plan claims `stale_version` is "latched at `_resolve_pinned` (top of
+   `run()`), before any subscriber's `snapshot()`". Traced `events()` (server.py:463-475): `ensure_tailer`
+   does `asyncio.create_task(tailer.run())` then `events()` calls `put_nowait(tailer.snapshot())` with **NO
+   `await` between** — so the created task CANNOT have run yet (it only runs at the next loop suspension), and
+   the first subscriber's snapshot is taken with `_stale_version` still `False`. `_resolve_pinned` latches the
+   real value only later, and snapshot-only delivery never re-reaches that already-connected subscriber (no
+   delta carries it). Since opening `?run=<id>` makes YOU the first subscriber every time (fresh tailer per
+   page load), snapshot-only misses essentially every real replay. Fix = mirror `run-stopped` FULLY: a
+   `run-stale` broadcast (reaches the present subscriber, after the resolve, on the loop) PLUS the snapshot
+   field (catches late subscribers). This is MORE faithful to "mirror `runStopped`" than the plan's partial
+   version — `run-stopped` itself uses exactly this dual delivery. (This is the same first-subscriber timing
+   the log's earlier "Warning-1 / snapshot-stopped" fix already discovered for `stopped`.)
+
+2. **The plan's `_switch()` reset of `_stale_version` would CLOBBER the just-latched value → I omit it.** Plan
+   says add `self._stale_version = False` to `_switch` "(defensive; pinned never switches)". But pinned
+   switches EXACTLY ONCE: `run()` does `pinned = _resolve_pinned()` (latches stale) → `self._switch(pinned)`
+   immediately after. Resetting in `_switch` wipes the latch before any broadcast/snapshot reads it. `_switch`
+   resets PER-FILE state; `_stale_version` is per-RUN, latched once, never flips — so it must NOT be in
+   `_switch`. Unpinned never sets it (stays `False`), so omitting the reset is safe there too.
+
+**Banner-stacking refinement (1C):** replaying a STALE FINISHED run shows BOTH the new "different version"
+banner AND the existing run-outcome banner — and all `.run-banner`s are `position:absolute; top:12px;
+right:12px`, so a literal "mirror run-stopped" would fully overlap them (only one visible). Wrapping the run
+banners in a `.run-banners` flex-column (anchored top-right; each banner becomes a static child) makes
+stacking robust for every combination. Minimal + the right structure; documented as a refinement, not a new
+feature.
+
+**types.ts note:** the plan's "add `stale_version?` to the run-snapshot message type" is vacuous — there is
+no `RunSnapshot` interface; `stopped` is read inline as `message.stopped === true` in events.ts. I thread
+`stale_version` the same inline way (no types.ts change for the message). The real signature change is
+`RunHandlers.runSnapshot` gaining a `stale: boolean` param.
+
+## 2026-06-25 — Phase 1 SHIPPED (version-aware replay) — built, gated, awaiting browser verify + review
+
+All four sub-parts done. Gates: `make test` **8163** (8151 baseline + 12 new, 0 regressions); `make check`
+clean (mypy 238, ruff/ruff-format/deptry); vitest **583** (580 + 3); strict `tsc` clean. NOT yet browser-
+verified (the mandatory headline check — stale replay banner + unchanged-id nodes still light) — that's the
+next step before commit.
+
+**1A producer** — `workflow_id.py`: factored `canonical_ir_digest(ir)` out of `synthesize_inline_workflow_id`
+(now wraps it); fixed the stale "RAW parsed IR" docstring → "RESOLVED IR" (every caller passes `resolved.ir`).
+`runner.py`: stamp `content_hash = canonical_ir_digest(resolved.ir)` at the one resolved-IR site (before
+compile) + pristine-invariant comment. `workflow_trace.py`: `content_hash` keyword-only ctor arg → `_meta_fields`.
+`trace_io.py`: `content_hash` appended to `META_KEYS`.
+
+**1B server** — `run_tailer.py`: `_is_stale(run_hash)` (resolve current file → compare digest; False on None
+hash / `ir-hash:` key / resolve-raises); `_resolve_pinned` latches `self._stale_version` as a side effect;
+`snapshot()` carries it; new `_start_pinned()` helper (extracted to keep `run()` under C901) broadcasts
+`run-stale` after the resolve. **1C frontend** — `events.ts` `runStale` handler + `run-stale` arm + `stale`
+threaded through `runSnapshot`; `GraphView` `runStale` state + handler + resets + the banner; `index.css`
+`.run-banners` flex stack + `.run-banner.run-stale`. **1D** — `d1-event-schema.md`: `node.start` kind row,
+`content_hash` in the meta list, eager-meta caveat de-staled.
+
+**Deviations (all in the pre-impl entry above, code-grounded):** (1) added a `run-stale` BROADCAST — the
+plan's snapshot-only FI-W1 misses the first subscriber (its snapshot is taken before the tailer task latches
+stale; traced `events()` has no await between `create_task` and `put_nowait(snapshot())`). Full `run-stopped`
+mirror. (2) did NOT add `_stale_version` reset to `_switch` — the pinned path calls `_switch` right after the
+latch, so resetting would clobber it. (3) wrapped the run banners in a `.run-banners` flex column — a stale
+finished replay shows the version banner AND the outcome banner; literal "mirror run-stopped" (both
+`absolute; top:12px`) would overlap.
+
+**Key learnings:**
+- **The stamp is pristine, but a bare inline dict gets `edges` added by `_validate` before the stamp.** The
+  inline producer test first asserted `content_hash == canonical_ir_digest(raw_dict)` and FAILED — probing
+  showed `_prepare_workflow` adds inferred top-level `edges` to a bare dict IR in place (a file's parser
+  already produces `edges`, so the FILE round-trip matches — and the file producer test passed). Settled the
+  inline assertion on the plan's actual wording (`workflow_path == ir-hash:content_hash`, structural). The
+  file-backed path — the ONLY one the banner runs in — round-trips cleanly (real-runner round-trip test green).
+- **Tests drive the REAL runner for the round-trip** (declared-defaults workflow → run → stamped hash ==
+  `resolve_workflow(path).ir` digest → not stale; rename node → stale) and the REAL resolver for the deleted-
+  referenced-file catch (`CompilationError` confirmed raised, then swallowed → not stale).
+
+**Honest boundary:** browser verification (stale-replay banner DOM + unchanged-id nodes lighting via the
+overlay-status-probe; an unedited replay shows NO banner) is NOT yet done — it's the next step. Phase 2
+(catalog extension) not started.
+
+### Browser verification DONE (real headless Chrome, rebuilt bundle + restarted server)
+
+Drove the headline end-to-end (`scratchpads/.../verify/stale-banner-probe.pflow.md` — reads `.run-banner`
+class/text + every node's `status-*` class from the settled DOM). Real CLI run of a 2-node shell workflow
+stamped `content_hash` into its trace meta (`7bc3c0b3…`, confirmed on disk — producer validated through the
+real CLI, not just the harness). Then:
+- **UNEDITED pinned replay** → banners `[run-success]` only (NO `run-stale`); both `alpha` + `beta`
+  `status-success`. ✓
+- **EDITED (renamed `beta`→`gamma`) pinned replay of the OLD run** → banners `[run-stale, run-success]`
+  (BOTH render, stacked, no overlap — the `.run-banners` flex deviation validated); `alpha` (unchanged id)
+  `status-success`, `gamma` `[]` (the old-`beta` events join no graph node — the "plausible but wrong"
+  picture the banner exists to flag). ✓ Screenshot: `/private/tmp/pflow-shots/stale-wf-…-edshot1-…png`.
+
+**This specifically validates deviation #1 (the `run-stale` BROADCAST).** The probe's page is the FIRST
+subscriber to a fresh `(wf, run)` tailer, so its snapshot was taken before the latch (stale=False) — only the
+broadcast could have delivered the banner. The plan's snapshot-only approach would have shown NOTHING here.
+The integration unit tests can't reach (create_task→snapshot→broadcast ordering against a real EventSource)
+is now confirmed working.
+
+### Loose end found in review → fixed: the fingerprint was hashing source-LINE provenance (user decision)
+
+Probing the digest surfaced a real discrepancy with the plan's edge-case list: `resolved.ir` carries
+source-LOCATION metadata (`_source_line`/`_source_lines`/`_source_files`), so a comment/whitespace edit that
+shifts a node's line number flipped the digest → flagged stale, even though the graph is byte-identical. The
+plan explicitly claimed "comment/whitespace-only edit → not stale" — so the impl over-warned vs. the plan's
+own intent. (Empirically confirmed: a blank line shifted a node `_source_line` 7→8 → different digest.)
+
+Surfaced as a decision (AskUserQuestion); **user chose "hash the logical IR (strip provenance)".** Added
+`workflow_content_hash(ir) = canonical_ir_digest(_strip_source_provenance(ir))` to `workflow_id.py` (strips
+exactly `{_source_line, _source_lines, _source_files}` recursively — verified that set is the complete
+source-location key set, and that `_routes_to_end` is SEMANTIC and correctly preserved). Producer stamp
+(`runner.py`) + replay compare (`run_tailer._is_stale`) BOTH switched from `canonical_ir_digest` to it.
+`canonical_ir_digest` stays raw for the inline `ir-hash:` id (a dict IR has no provenance → strip is a no-op
+→ the inline `content_hash == ir-hash:` digest symmetry still holds). Pure (rebuilds containers, never
+mutates `resolved.ir`) — pinned by a no-mutation test.
+
+**Re-verified in the browser** (server restarted for the Python change): a line-shifting whitespace edit →
+NO `run-stale` banner (both nodes light); a node rename → still `run-stale` + alpha lights / gamma pending.
+Gates: `make test` **8166** (+3 `workflow_content_hash` tests); `make check` clean; vitest 583 / tsc unchanged
+(no web/ touch). D1 doc updated to describe `content_hash` as `workflow_content_hash` (logical, provenance
+stripped).
+
+**Phase 1 is now complete AND browser-verified.** Phase 2 (catalog extension) not started. A fresh `pflow ui`
+on :8765 (my rebuilt bundle + restarted Python) is left running; verify artifacts (`stale-banner-probe`,
+`stale-wf`/`ws-wf` scratch workflows) are gitignored throwaways (elevate-or-discard at task end).

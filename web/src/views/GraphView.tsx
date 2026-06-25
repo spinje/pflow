@@ -95,6 +95,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // Task 173 (flock death-detection): the run's process exited before finishing (crash/kill). Flip dangling
   // `running` nodes to `stopped` + show a banner, rather than leave them pulsing blue forever.
   const [runStopped, setRunStopped] = useState(false);
+  // Task 173 (replay version-detection): the pinned run was recorded against a DIFFERENT version of this
+  // workflow than the file on disk now (a node renamed/removed/re-nested). Nodes whose id is unchanged still
+  // light correctly; show an honest banner that the rest may not match. Latched server-side; pinned-only.
+  const [runStale, setRunStale] = useState(false);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -228,6 +232,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       setRunBanner(null);
       setRunMissing(false);
       setRunStopped(false);
+      setRunStale(false);
     },
     [runId, syncUrl],
   );
@@ -620,15 +625,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setRunBanner(null);
     setRunMissing(false);
     setRunStopped(false);
+    setRunStale(false);
     return subscribe(workflow, {
       focus: (target) => pointHandlers.current?.focus(target),
       frame: (target) => pointHandlers.current?.frame(target),
       clear: () => pointHandlers.current?.clear(),
       // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
       // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
-      runSnapshot: (events, run, stopped) => {
+      runSnapshot: (events, run, stopped, stale) => {
         setRunMissing(false);
         setRunStopped(stopped);
+        // `stale` carries on the snapshot for a LATE subscriber (the present subscriber learns it via the
+        // run-stale broadcast below, whose snapshot predates the server-side latch).
+        setRunStale(stale);
         // A late subscriber to an already-stopped run gets the dangling nodes still reading `running` —
         // flip them to `stopped` here so it doesn't blue-blink forever (silent-failures review).
         setRunStatus(
@@ -651,12 +660,14 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       runReset: () => {
         setRunMissing(false);
         setRunStopped(false);
+        setRunStale(false);
         setRunStatus(new Map());
         setRunBanner(null);
       },
       runNotFound: () => {
         setRunStatus(new Map());
         setRunBanner(null);
+        setRunStale(false);
         setRunMissing(true);
       },
       // Task 173 flock death-detection: the run's process exited mid-flight. Flip the nodes still showing
@@ -671,6 +682,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           return next;
         });
       },
+      // Task 173 replay version-detection: the pinned run was recorded against a different workflow version.
+      // Reaches the subscriber present when the server latched it (its snapshot predates the latch); late
+      // subscribers get it via the snapshot's stale flag instead. Non-blocking — nodes still light.
+      runStale: () => setRunStale(true),
     }, runId);
   }, [graphReady, workflow, runId]);
 
@@ -766,6 +781,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           )}
           <div className="canvas">
           {rail(true)}
+          {/* Run banners stack top-right (a stale REPLAY shows the version banner AND the outcome banner; a
+              crashed run the stopped banner too) — a flex column so they never overlap. */}
+          <div className="run-banners">
           {runMissing && (
             // Task 173 DR-1: a pinned `?run=` id resolved to no trace. TWO causes collapse here — the
             // trace was cleared/rotated, OR the run id is wrong (typo / hand-built / from another machine).
@@ -775,6 +793,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               Run <code>{runId}</code> not found — its trace may have been cleared from{" "}
               <code>~/.pflow/debug</code>, or the run id is incorrect. Remove <code>?run=</code> to follow
               the newest run.
+            </div>
+          )}
+          {runStale && (
+            // Task 173 replay version-detection: this run was recorded against a different version of the
+            // workflow than the file on disk now. Factual + non-blocking — unchanged-id nodes still light;
+            // the "● Live — follow newest" un-pin in the RunSelector is the way out.
+            <div className="run-banner run-stale" role="status">
+              This run was recorded against a different version of this workflow — node states may not match
+              the current graph.
             </div>
           )}
           {runStopped && (
@@ -793,6 +820,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               {runBanner.nodes_failed ? ` · ${runBanner.nodes_failed} failed` : ""}
             </div>
           )}
+          </div>
           {status === "loading" && <div className="canvas-overlay">Laying out…</div>}
           {status === "empty" && <div className="canvas-overlay">This workflow has no visible structure.</div>}
           {reloadError && (

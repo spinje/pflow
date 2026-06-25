@@ -24,8 +24,17 @@ TRACE_JSONL_MARKER = "jsonl/1"
 # `run.complete` trailer generically, so a conditional key is never silently dropped on round-trip.
 # `only_node` is here because it is stamped at run start AND is a snapshot-source filter key
 # (`_iter_workflow_traces`), so a future head-only reader can reject `--only` traces without reading
-# to the trailer. `final_status` is NOT here — it is an end-of-run aggregate.
-META_KEYS = ("format_version", "execution_id", "workflow_name", "workflow_path", "start_time", "only_node")
+# to the trailer. `final_status` is NOT here — it is an end-of-run aggregate. `content_hash` is the
+# Task 173 replay version fingerprint (canonical_ir_digest of the resolved IR), knowable at run start.
+META_KEYS = (
+    "format_version",
+    "execution_id",
+    "workflow_name",
+    "workflow_path",
+    "start_time",
+    "only_node",
+    "content_hash",
+)
 # Correlation/line keys the writer derives onto each event line; the reader strips them to restore the
 # exact nested event. A producer must never emit these at an event's top level — the writer asserts this
 # so a future collision (e.g. an OTel `kind` field, or a Phase D span id) fails loud at the producing
