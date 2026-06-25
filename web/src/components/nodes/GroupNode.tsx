@@ -101,6 +101,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
     dimmed,
     focused,
     status,
+    runDetail,
   } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
@@ -188,7 +189,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   return (
     <div className={classes.join(" ")} style={kindStyle}>
       {/* Live run-status — the corner badge (Task 173); lights the host group on collapsed card + expanded region. */}
-      <StatusBadge status={status} />
+      <StatusBadge status={status} detail={runDetail} />
       <Handle id={NODE_IN} type="target" position={targetPos} className="handle node-handle" style={topHandleStyle} />
       <Handle id={NODE_OUT} type="source" position={sourcePos} className="handle node-handle" style={bottomHandleStyle} />
       {direction === "LR" && hasOutgoing && <span className="exit-dot" aria-hidden="true" />}

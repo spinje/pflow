@@ -14,8 +14,9 @@ interface RunSelectorProps {
 }
 
 // One run's status mark — composed from the RAW facts (DR-2), mirroring the node status palette
-// (running blue · success green · failed red · degraded amber · cached/interrupted grey).
-function runMark(run: RunInfo): { glyph: string; cls: string; label: string } {
+// (running blue · success green · failed red · degraded amber · cached/interrupted grey). Exported so the
+// catalog's ran-but-unsaved rows (CatalogView) compose the same palette — one definition of run→mark.
+export function runMark(run: RunInfo): { glyph: string; cls: string; label: string } {
   if (run.live) return { glyph: "●", cls: "run-live", label: "running" };
   if (!run.complete) return { glyph: "⊗", cls: "run-stopped", label: "stopped" }; // exact (flock): not live + unfinished
   if (run.only_node) return { glyph: "⊘", cls: "run-degraded", label: `only: ${run.only_node}` };

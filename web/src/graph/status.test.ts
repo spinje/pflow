@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { applyStatus, refKey } from "./focus";
 import type { FlowNode, GroupData, LeafData } from "./flow";
-import type { NodeStatus, RFNode, RFRef } from "../types";
+import type { NodeRunState, NodeStatus, RFNode, RFRef } from "../types";
 
 // A minimal type-correct RFNode (the contract node every leaf/end FlowNode wraps).
 function rfNode(id: string, ref: RFRef): RFNode {
@@ -55,6 +55,11 @@ function leaf(id: string, ref: RFRef, status?: NodeStatus): FlowNode {
 }
 
 const ref = (over: Partial<RFRef> = {}): RFRef => ({ node_id: "a", ancestor_path: [], port: null, ...over });
+
+// The overlay status map is keyed ref → NodeRunState (status + optional metrics). These tests exercise the
+// status side, so build it from bare [refKey, status] pairs with the metrics left absent.
+const statusMap = (entries: [string, NodeStatus][]): Map<string, NodeRunState> =>
+  new Map(entries.map(([key, status]) => [key, { status }]));
 
 // FlowNode is a discriminated union; narrow on `node.type` (not `node.data.type`)
 // so TS knows `data` is LeafData before reading `status`.
@@ -119,15 +124,25 @@ describe("refKey — stable key from a structural ref", () => {
 describe("applyStatus — the run-status restyle pass", () => {
   it("a status keyed by a matching ref lands on that node's data.status", () => {
     const node = leaf("a", ref({ node_id: "a" }));
-    const map = new Map<string, NodeStatus>([[refKey(ref({ node_id: "a" })), "running"]]);
+    const map = statusMap([[refKey(ref({ node_id: "a" })), "running"]]);
     const out = applyStatus([node], map)[0]!;
     expect(statusOf(out)).toBe("running");
+  });
+
+  it("threads the run metrics (duration/cost) onto data.runDetail alongside the status (for the badge hover)", () => {
+    const node = leaf("a", ref({ node_id: "a" }));
+    const map = new Map<string, NodeRunState>([
+      [refKey(ref({ node_id: "a" })), { status: "success", durationMs: 1234, costUsd: 0.003 }],
+    ]);
+    const out = applyStatus([node], map)[0]!;
+    expect(statusOf(out)).toBe("success");
+    expect(out.type === "node" ? out.data.runDetail : null).toEqual({ durationMs: 1234, costUsd: 0.003 });
   });
 
   it("an UNCHANGED status preserves object identity (React memo skips it)", () => {
     const node = leaf("a", ref({ node_id: "a" }), "success");
     // Same status the node already carries — the join hits but nothing changes.
-    const map = new Map<string, NodeStatus>([[refKey(ref({ node_id: "a" })), "success"]]);
+    const map = statusMap([[refKey(ref({ node_id: "a" })), "success"]]);
     const out = applyStatus([node], map)[0]!;
     expect(out).toBe(node); // same reference — no needless re-render
   });
@@ -140,7 +155,7 @@ describe("applyStatus — the run-status restyle pass", () => {
 
   it("a CHANGED status returns a NEW object with new data but the same other fields", () => {
     const node = leaf("a", ref({ node_id: "a" }));
-    const map = new Map<string, NodeStatus>([[refKey(ref({ node_id: "a" })), "failed"]]);
+    const map = statusMap([[refKey(ref({ node_id: "a" })), "failed"]]);
     const out = applyStatus([node], map)[0]!;
     expect(out).not.toBe(node); // new identity → React re-renders
     expect(out.data).not.toBe(node.data); // fresh data object
@@ -186,7 +201,7 @@ describe("applyStatus — the run-status restyle pass", () => {
       data: { node: rfNode("e0", ref({ node_id: "e0" })), direction: "LR", dimmed: false, focused: false },
     };
     // Even with map entries under their ids' keys, non-node types must pass through untouched.
-    const map = new Map<string, NodeStatus>([
+    const map = statusMap([
       [refKey(ref({ node_id: "g0" })), "running"],
       [refKey(ref({ node_id: "e0" })), "success"],
     ]);
@@ -198,7 +213,7 @@ describe("applyStatus — the run-status restyle pass", () => {
   it("restyles per node: a matched node changes, an already-correct one keeps identity", () => {
     const a = leaf("a", ref({ node_id: "a" }));
     const b = leaf("b", ref({ node_id: "b" }), "cached");
-    const map = new Map<string, NodeStatus>([
+    const map = statusMap([
       [refKey(ref({ node_id: "a" })), "running"],
       [refKey(ref({ node_id: "b" })), "cached"], // b is already "cached" — must not churn identity
     ]);
@@ -213,7 +228,7 @@ describe("applyStatus — sub-workflow HOST groups (Task 173 P2)", () => {
   it("lights the host's PRIMARY group by the host's ref (the suppressed host leaf renders AS the group)", () => {
     const hostRef = ref({ node_id: "call-child", ancestor_path: [], port: null });
     const g = hostGroup("g0", hostRef, { showTitle: true });
-    const map = new Map<string, NodeStatus>([[refKey(hostRef), "running"]]);
+    const map = statusMap([[refKey(hostRef), "running"]]);
     const out = applyStatus([g], map)[0]!;
     expect(out).not.toBe(g);
     expect(groupStatusOf(out)).toBe("running");
@@ -222,14 +237,14 @@ describe("applyStatus — sub-workflow HOST groups (Task 173 P2)", () => {
   it("does NOT light a NON-primary group for the same host (showTitle=false → a host backing >1 group lights once)", () => {
     const hostRef = ref({ node_id: "call-child" });
     const secondary = hostGroup("g1", hostRef, { showTitle: false });
-    const map = new Map<string, NodeStatus>([[refKey(hostRef), "running"]]);
+    const map = statusMap([[refKey(hostRef), "running"]]);
     expect(applyStatus([secondary], map)[0]).toBe(secondary); // untouched
   });
 
   it("an unchanged host-group status preserves identity (memo skip)", () => {
     const hostRef = ref({ node_id: "call-child" });
     const g = hostGroup("g0", hostRef, { showTitle: true, status: "success" });
-    const map = new Map<string, NodeStatus>([[refKey(hostRef), "success"]]);
+    const map = statusMap([[refKey(hostRef), "success"]]);
     expect(applyStatus([g], map)[0]).toBe(g);
   });
 
@@ -237,7 +252,34 @@ describe("applyStatus — sub-workflow HOST groups (Task 173 P2)", () => {
     // The status map is keyed by the host's structural ref; the group's own flat id is irrelevant.
     const hostRef = ref({ node_id: "call-child", ancestor_path: [{ node_id: "outer", batch_index: null }] });
     const g = hostGroup("g7", hostRef, { showTitle: true });
-    const map = new Map<string, NodeStatus>([[refKey(hostRef), "failed"]]);
+    const map = statusMap([[refKey(hostRef), "failed"]]);
     expect(groupStatusOf(applyStatus([g], map)[0]!)).toBe("failed");
+  });
+});
+
+describe("applyStatus — markUnmatched (Task 173 stale-replay 'no recorded state')", () => {
+  it("a joinable node with NO recorded state becomes 'unrecorded' (the dashed badge), not blank", () => {
+    const a = leaf("a", ref({ node_id: "a" }));
+    const out = applyStatus([a], new Map(), true)[0]!;
+    expect(statusOf(out)).toBe("unrecorded");
+  });
+
+  it("a node WITH a recorded state keeps it — markUnmatched only fills the gaps", () => {
+    const a = leaf("a", ref({ node_id: "a" }));
+    const map = statusMap([[refKey(ref({ node_id: "a" })), "success"]]);
+    expect(statusOf(applyStatus([a], map, true)[0]!)).toBe("success");
+  });
+
+  it("WITHOUT markUnmatched, an unmatched node stays blank (a normal run never marks pending nodes)", () => {
+    const a = leaf("a", ref({ node_id: "a" }));
+    expect(statusOf(applyStatus([a], new Map(), false)[0]!)).toBeUndefined();
+  });
+
+  it("marks an unmatched PRIMARY host group too, but leaves hostless groups / end nodes untouched", () => {
+    const primary = hostGroup("g0", ref({ node_id: "call-child" }), { showTitle: true });
+    const secondary = hostGroup("g1", ref({ node_id: "call-child" }), { showTitle: false });
+    const [outPrimary, outSecondary] = applyStatus([primary, secondary], new Map(), true) as [FlowNode, FlowNode];
+    expect(groupStatusOf(outPrimary)).toBe("unrecorded"); // a joinable host with no state → marked
+    expect(outSecondary).toBe(secondary); // non-primary group is not a join target → never marked
   });
 });

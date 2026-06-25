@@ -1001,6 +1001,54 @@ class TestRunsEndpoint:
         resp = TestClient(create_app()).get("/api/runs", params={"workflow": "no-such-workflow-xyz"})
         assert resp.status_code == 404
 
+    def test_run_entry_buckets_runs_by_git_root(self, tmp_path, monkeypatch) -> None:
+        """`git_root` lets the catalog bucket ad-hoc runs by repo (Task 173 D6): a run under a `.git`-bearing
+        dir reports that root; one under no repo reports None; an inline `ir-hash:` run reports None (no file)."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        debug = tmp_path / ".pflow" / "debug"
+        debug.mkdir(parents=True)
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)  # a normal clone — `.git` is a DIR
+        repo_wf = repo / "flows" / "deploy.pflow.md"
+        repo_wf.parent.mkdir(parents=True)
+        loose_wf = tmp_path / "loose" / "scratch.pflow.md"
+        loose_wf.parent.mkdir(parents=True)
+        self._write_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            str(repo_wf),
+            complete=True,
+            execution_id="in-repo",
+        )
+        self._write_trace(
+            debug,
+            "workflow-trace-bbb-wf-20260101-000000-000002.json",
+            str(loose_wf),
+            complete=True,
+            execution_id="loose",
+        )
+        self._write_trace(
+            debug,
+            "workflow-trace-ccc-wf-20260101-000000-000003.json",
+            "ir-hash:deadbeef",
+            complete=True,
+            execution_id="inline",
+        )
+        by_id = {r["run_id"]: r for r in TestClient(create_app()).get("/api/runs").json()}
+        assert by_id["in-repo"]["git_root"] == str(repo.resolve())
+        assert by_id["loose"]["git_root"] is None  # under no repo → the catalog's "Other" bucket
+        assert by_id["inline"]["git_root"] is None  # inline (ir-hash:) has no file
+
+    def test_walk_to_git_root_detects_a_dot_git_FILE_worktree(self, tmp_path) -> None:
+        """A git WORKTREE (and submodule) has `.git` as a FILE, not a dir — `_walk_to_git_root` must detect it
+        via `.exists()` (NOT `.is_dir()`). Pins the worktree case (this very checkout is a worktree)."""
+        from pflow.ui.server import _walk_to_git_root
+
+        worktree = tmp_path / "worktree"
+        (worktree / "nested").mkdir(parents=True)
+        (worktree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")  # the pointer FILE
+        assert _walk_to_git_root(worktree / "nested") == str(worktree)
+
 
 class TestRunScopedBroadcast:
     """DR-1: run-events are delivered run-scoped (``broadcast_run``) so a pinned replay and the unpinned

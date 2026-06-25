@@ -178,6 +178,55 @@ button.active {
   color: var(--text-muted);
   padding: 24px 0;
 }
+/* A non-openable row (an inline `ir-hash:` run has no file) — no pointer, no hover accent. */
+.catalog-item-static {
+  cursor: default;
+}
+.catalog-item-static:hover {
+  border-color: var(--border);
+}
+/* The latest-run status mark on a ran-but-unsaved row (color via the shared .run-mark.run-* palette). */
+.catalog-item-status {
+  margin-left: 8px;
+  font-size: 13px;
+}
+/* Collapsible catalog sections (Saved · per-repo · Other), Task 173 D6. The whole header is the toggle. */
+.catalog-section {
+  margin-top: 22px;
+}
+.catalog-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 2px;
+  margin-bottom: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  text-align: left;
+}
+.catalog-section-head:hover {
+  color: var(--text);
+}
+.catalog-section-chevron {
+  font-size: 11px;
+  transition: transform 0.12s ease;
+}
+.catalog-section-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+.catalog-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.catalog-section-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ---------- graph view ---------- */
 .graph-view {
@@ -223,22 +272,25 @@ button.active {
   border-radius: 10px;
   color: var(--text-muted);
 }
-/* Hover tooltip: a dark rounded chip to the RIGHT of the icon (the capsule hugs
-   the canvas's left edge, like the search popover). Replaces the native title so
-   the sub-workflow toggle can carry a muted second "N/M open" state line.
-   position:absolute + pointer-events:none keeps it out of the button's grid
-   centering and never blocks the click. */
-.rail-tip {
+/* The chrome hover chip — a dark rounded tooltip. The LOOK is shared by the rail buttons and the
+   run-status corner badge (`.status-badge-tip`, Task 173); each owner positions it relative to its anchor
+   below. Replaces the native title so it's styled in the chrome palette (and the sub-workflow toggle can
+   carry a muted second "N/M open" line). position:absolute + pointer-events:none keeps it out of layout
+   and never blocks a click. */
+.rail-tip,
+.status-badge-tip {
   position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: 6px 10px;
-  background: var(--bg-field);
-  border: 1px solid var(--border);
+  /* LITERAL chip palette (NOT var(--bg-field)/var(--border)): those chrome tokens are undefined on the
+     React Flow canvas layer where the status badge lives, so the shared chip MUST use literals to render
+     identically on the rail (chrome) and the badge (canvas) — same reason the badge halo is a #0d0d0d
+     literal (see the .status-badge box-shadow note + web/CLAUDE.md chrome-palette note). The values equal
+     the chrome `--bg-field`/`--border`, so the rail chip is visually unchanged. */
+  background: #1c1c1c;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   white-space: nowrap;
@@ -246,6 +298,12 @@ button.active {
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.12s ease;
+}
+/* Rail tip: to the RIGHT of the icon (the capsule hugs the canvas's left edge, like the search popover). */
+.rail-tip {
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 8;
 }
 .rail-button:hover .rail-tip,
@@ -530,7 +588,11 @@ button.active {
   align-items: center;
   justify-content: center;
   color: #fff;
-  pointer-events: none;
+  /* `auto` (not `none`): the badge must receive hover so its native `title` tooltip (the run-status +
+     duration/cost hover detail, Task 173) actually fires — `pointer-events:none` silently defeats it.
+     A click on the 22px corner badge bubbles to the node (it has no own handler), so selection is
+     unaffected; the badge only overhangs the corner, so the pan dead-zone is negligible. */
+  pointer-events: auto;
   /* Halo in the canvas void: a #0d0d0d LITERAL (not `var(--bg)` — that token is chrome-scoped to
      #0d0d0d but resolves to the :root #0f1117 on the canvas layer; see web/CLAUDE.md chrome note). */
   box-shadow:
@@ -557,8 +619,33 @@ button.active {
 .status-badge.status-stopped {
   background: #d29922;
 }
+/* `unrecorded` (Task 173 replay): the pinned run has no state for this node (different version). A muted,
+   hollow badge with a grey dashed glyph — deliberately reads as "no data", never as a real run status. */
+.status-badge.status-unrecorded {
+  background: #161b22;
+  color: #768390;
+  box-shadow:
+    inset 0 0 0 1px #30363d,
+    0 0 0 2.5px #0d0d0d,
+    0 1px 4px rgb(0 0 0 / 50%);
+}
 .status-badge.status-running svg {
   animation: pflow-badge-spin 1s linear infinite;
+}
+/* The badge's hover chip — to the RIGHT of the corner badge, mirroring the rail tip (shares the chrome-chip
+   look above). One line: the friendly status verb + duration/cost (runStatusLabel). */
+.status-badge-tip {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text);
+  z-index: 11; /* above the badge's own z-index:10 */
+}
+.status-badge:hover .status-badge-tip {
+  opacity: 1;
+  visibility: visible;
 }
 @keyframes pflow-badge-spin {
   to {

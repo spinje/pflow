@@ -39,7 +39,7 @@ import {
   readViewParams,
   writeViewParams,
 } from "../utils/viewParams";
-import type { InteractionTarget, NodeStatus, PointTarget, RFEdge, RFGraph, RFNode, RunComplete, SourceFiles } from "../types";
+import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RunComplete, RunEvent, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -56,6 +56,10 @@ interface GraphViewProps {
   workflow: string;
   onBack: () => void;
 }
+
+// A run-event → the overlay's per-node state: status + the cheap hover metrics (already on the wire). Status
+// drives the badge; duration/cost ride its hover detail.
+const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationMs: e.duration_ms, costUsd: e.cost_usd });
 
 export function GraphView(props: GraphViewProps): JSX.Element {
   return (
@@ -82,7 +86,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Live execution overlay (Task 173): node status keyed by stable structural ref-key, plus the run
   // banner. Driven by the SSE run-* messages; an empty map = no run = no overlay styling.
-  const [runStatus, setRunStatus] = useState<ReadonlyMap<string, NodeStatus>>(() => new Map());
+  const [runStatus, setRunStatus] = useState<ReadonlyMap<string, NodeRunState>>(() => new Map());
   const [runBanner, setRunBanner] = useState<RunComplete | null>(null);
   // Task 173 DR-1: an optional `?run=<run_id>` pins this Viewer to one specific run (replay a finished
   // run, or watch one of N concurrent runs) instead of the unpinned "follow newest live" overlay. Read
@@ -132,6 +136,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       selected: selectedId,
       workflowName,
       runStatus,
+      // Task 173 replay: a STALE (different-version) + COMPLETED (runBanner present → no more events) replay
+      // → mark current nodes the run has no state for as "unrecorded" instead of leaving them blank. Gated on
+      // completed so a still-running pinned-stale run never mis-marks a node that's merely pending.
+      markUnmatched: runStale && runBanner !== null,
     },
     reload,
   );
@@ -641,14 +649,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         // A late subscriber to an already-stopped run gets the dangling nodes still reading `running` —
         // flip them to `stopped` here so it doesn't blue-blink forever (silent-failures review).
         setRunStatus(
-          new Map(events.map((e) => [refKey(e.ref), stopped && e.status === "running" ? "stopped" : e.status])),
+          new Map(
+            events.map((e) => [
+              refKey(e.ref),
+              stopped && e.status === "running" ? { status: "stopped" } : eventState(e),
+            ]),
+          ),
         );
         setRunBanner(run);
       },
       runEvents: (events) =>
         setRunStatus((prev) => {
           const next = new Map(prev);
-          for (const e of events) next.set(refKey(e.ref), e.status);
+          for (const e of events) next.set(refKey(e.ref), eventState(e));
           return next;
         }),
       // A completed run is not stopped — clear any stale stopped state (defensive against the clean-finish
@@ -676,8 +689,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         setRunStopped(true);
         setRunStatus((prev) => {
           const next = new Map(prev);
-          for (const [key, status] of next) {
-            if (status === "running") next.set(key, "stopped");
+          for (const [key, st] of next) {
+            if (st.status === "running") next.set(key, { ...st, status: "stopped" });
           }
           return next;
         });

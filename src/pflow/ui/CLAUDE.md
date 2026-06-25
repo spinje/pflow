@@ -103,10 +103,12 @@ only_node, trace_file}]` — runs scanned from `~/.pflow/debug`, newest-first (T
 navigation). Bare = every run; `?workflow=X` = that workflow's history (matched on the recorded
 `meta.workflow_path`). RAW facts (the UI composes the badge): `complete` = has a `run.complete`
 trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`) or `null` while
-not complete; `live` = not complete AND mtime within `_STALE_RUN_S` (60s — a heuristic, not
-authoritative: a node running longer false-reads not-live); `only_node` LABELS `--only` runs
-(they are kept here, unlike the live overlay which excludes them). Inline/stdin/MCP runs (no file
-path) appear only in the bare listing. `404` on an unresolvable `?workflow=`; `200 []` for zero
+not complete; `live` = not complete AND the writer still holds the trace's advisory lock (EXACT
+`flock` liveness via `is_trace_locked` — the old `_STALE_RUN_S` mtime heuristic is deleted; a
+no-`fcntl` FS falls back to "incomplete = live"); `only_node` LABELS `--only` runs (they are kept
+here, unlike the live overlay which excludes them). Inline/stdin/MCP runs carry `workflow_path =
+"ir-hash:<md5>"` (a content fingerprint, not a file): they appear in the bare listing and a
+`?workflow=<file>` query can't match them. `404` on an unresolvable `?workflow=`; `200 []` for zero
 runs (a hard scan failure also degrades to `[]` — the scanner is shared non-throwing with the live
 tailer). The shared scanner is `run_tailer.scan_traces` (cheap head+tail read, never a full parse).
 Pin a Viewer to one run for replay/concurrent-watch via `GET /api/events?workflow=X&run=<run_id>`.

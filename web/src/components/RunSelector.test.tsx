@@ -24,6 +24,7 @@ function run(partial: Partial<RunInfo> & { run_id: string }): RunInfo {
     live: false,
     only_node: null,
     trace_file: "t.json",
+    git_root: null,
     ...partial,
   };
 }

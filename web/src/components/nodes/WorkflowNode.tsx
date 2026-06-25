@@ -188,6 +188,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     dimmed,
     focused,
     status,
+    runDetail,
   } = data;
   const detailed = density === "detailed";
   // Focus-expansion (beautiful only): the card renders its full advanced body in place.
@@ -289,7 +290,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
           `shifted` when a status badge is present so the chips clear the corner badge. */}
       <ChipRail node={node} shifted={!!status} />
       {/* Live run-status — the corner badge (Task 173), the one per-node status surface. */}
-      <StatusBadge status={status} />
+      <StatusBadge status={status} detail={runDetail} />
 
       <div className="node-header">
         <div className="node-tile">

@@ -7,7 +7,7 @@
 
 import { ioOwners } from "./io";
 import type { FlowEdge, FlowNode } from "./flow";
-import type { NodeStatus, RFGraph, RFRef } from "../types";
+import type { NodeRunState, NodeStatus, RFGraph, RFRef, RunDetail } from "../types";
 
 // --- Live execution overlay restyle (Task 173) -------------------------------------------------
 
@@ -24,18 +24,38 @@ export function refKey(ref: RFRef): string {
  *  memo'd nodes skip re-render (only changed nodes get new identity). Keyed on the stable structural
  *  ref so it survives a live-reload renumber. Lights leaf nodes by their own ref and sub-workflow HOST
  *  groups by the host's ref (primary group only — a host's leaf box is suppressed, so it renders AS the
- *  group); io/wrapper groups and end nodes carry no status. */
-export function applyStatus(nodes: FlowNode[], status: ReadonlyMap<string, NodeStatus>): FlowNode[] {
+ *  group); io/wrapper groups and end nodes carry no status.
+ *
+ *  `markUnmatched` (Task 173 replay): when set — a STALE, completed replay — a joinable node the run has NO
+ *  state for gets `"unrecorded"` (a dashed "no data for this version" badge) instead of staying blank, so a
+ *  version mismatch is LOCATED on the canvas, not just announced in the banner. Honestly "no recorded state"
+ *  (also covers untaken branches in that version), not "this node changed" — we don't store the old graph. */
+export function applyStatus(
+  nodes: FlowNode[],
+  status: ReadonlyMap<string, NodeRunState>,
+  markUnmatched = false,
+): FlowNode[] {
+  // The resolved state for a node's ref: its run-event state, else (markUnmatched, a stale replay) the
+  // synthetic "unrecorded" with no metrics, else undefined (pending → no badge).
+  const resolve = (key: string): NodeRunState | undefined =>
+    status.get(key) ?? (markUnmatched ? { status: "unrecorded" } : undefined);
+  // The status + metrics patch for a node, or null when its status is UNCHANGED (gate identity on status —
+  // its metrics arrive in the same terminal event, so they never move without it; keeps memo'd nodes stable).
+  const patchFor = (currentStatus: NodeStatus | undefined, ref: RFRef): { status?: NodeStatus; runDetail?: RunDetail } | null => {
+    const next = resolve(refKey(ref));
+    if (currentStatus === next?.status) return null;
+    return { status: next?.status, runDetail: next && { durationMs: next.durationMs ?? null, costUsd: next.costUsd ?? null } };
+  };
   return nodes.map((node) => {
     if (node.type === "node") {
-      const next = status.get(refKey(node.data.node.ref));
-      return node.data.status === next ? node : { ...node, data: { ...node.data, status: next } };
+      const patch = patchFor(node.data.status, node.data.node.ref);
+      return patch === null ? node : { ...node, data: { ...node.data, ...patch } };
     }
     // A sub-workflow HOST renders as a group (its leaf box suppressed), so light the GROUP by joining on
     // the host's ref — but only its PRIMARY group (showTitle), so a host backing >1 group lights once.
     if (node.type === "group" && node.data.hostNode && node.data.showTitle) {
-      const next = status.get(refKey(node.data.hostNode.ref));
-      return node.data.status === next ? node : { ...node, data: { ...node.data, status: next } };
+      const patch = patchFor(node.data.status, node.data.hostNode.ref);
+      return patch === null ? node : { ...node, data: { ...node.data, ...patch } };
     }
     return node;
   });

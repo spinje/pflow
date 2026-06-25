@@ -24,7 +24,24 @@ export interface RFRef {
 // arrive on the wire (the producer's per-node status enum + the live `node.start` → `running`).
 // "stopped" is consumer-derived (Task 173 flock): a node still `running` when the run's process exited
 // without finishing (crash/kill) — the server's `run-stopped` flips it (the producer never emits it).
-export type NodeStatus = "running" | "success" | "cached" | "failed" | "stopped";
+// "unrecorded" is also consumer-derived (Task 173 replay): in a STALE, completed replay, a current-graph
+// node the pinned run has NO state for (renamed/new since, or an untaken branch in that version) — "no
+// recorded state for this version", distinct from pending. Neither rides the wire.
+export type NodeStatus = "running" | "success" | "cached" | "failed" | "stopped" | "unrecorded";
+
+// The cheap run metrics carried alongside a node's status (already on the wire — RunEvent below) for the
+// badge's hover detail. `null`/absent when not applicable (a running node has no duration yet; a non-LLM
+// node has no cost). Kept separate from `status` so the badge glyph/color stay status-only.
+export interface RunDetail {
+  durationMs?: number | null;
+  costUsd?: number | null;
+}
+
+// A node's overlay run state: the status (drives the badge) + its hover metrics. The overlay's status map is
+// keyed by structural ref-key → this; `applyStatus` splits it onto `data.status` + `data.runDetail`.
+export interface NodeRunState extends RunDetail {
+  status: NodeStatus;
+}
 
 // One run-event the overlay joins onto a graph node by its structural `ref` (node_id + ancestor_path
 // + port=null), via sameRef/refKey. Carries only the join key + status (+ cheap cost/duration) — never
@@ -49,8 +66,10 @@ export interface RunComplete {
 
 // One run from GET /api/runs (Task 173 D6) — the catalog running-indicator + the run selector read this.
 // RAW facts (the UI composes the badge): `complete` has a run.complete trailer; `final_status` is that
-// trailer's outcome or null while not complete; `live` = not complete AND fresh mtime; `only_node` labels
-// an --only run. `workflow_path` is null for inline/stdin/MCP runs (no file).
+// trailer's outcome or null while not complete; `live` = not complete AND the writer still holds the trace's
+// advisory lock (EXACT flock liveness, not the old mtime heuristic); `only_node` labels an --only run.
+// `workflow_path` is `ir-hash:<md5>` for inline/stdin/MCP runs (a content fingerprint, NOT a file) — `null`
+// only for a malformed/legacy trace lacking the field.
 export interface RunInfo {
   run_id: string;
   workflow_name: string;
@@ -61,6 +80,9 @@ export interface RunInfo {
   live: boolean;
   only_node: string | null;
   trace_file: string;
+  // The git-repo root this run's file lives under (server-side detection, cached) — the catalog buckets
+  // ad-hoc runs by repo. `null` for an inline (`ir-hash:`) / pathless run or a file under no repo ("Other").
+  git_root: string | null;
 }
 
 export interface RFParam {

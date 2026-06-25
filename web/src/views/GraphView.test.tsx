@@ -211,6 +211,7 @@ describe("GraphView mount", () => {
         live: false,
         only_node: null,
         trace_file: "/t/r1.json",
+        git_root: null,
       },
     ]);
     window.history.replaceState({}, "", "/?workflow=demo&run=r1"); // runId reads ?run= once at mount
@@ -261,6 +262,33 @@ describe("GraphView mount", () => {
       // Path 2 — a late subscriber learns it from the snapshot's stale flag (no broadcast).
       act(() => run.runSnapshot([], null, false, true));
       await waitFor(() => expect(screen.getByText(/different version of this workflow/)).toBeTruthy());
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("a stale + COMPLETED replay marks a node with no recorded state 'unrecorded'; a still-live one does not", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH); // greet + done
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+      const run = live.handlers as unknown as RunHandlers;
+      const greetSuccess = { id: 0, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" as const };
+
+      // STALE but still LIVE (run=null → no run-complete trailer → not completed): `done` must NOT be marked
+      // yet — it could still run. Only the version banner shows.
+      act(() => run.runSnapshot([greetSuccess], null, false, true));
+      await waitFor(() => expect(screen.getByLabelText("run status: success")).toBeTruthy());
+      expect(screen.queryByLabelText("run status: unrecorded")).toBeNull();
+
+      // Now the run COMPLETES (run-complete trailer arrives) → markUnmatched gates on → `done`, with no
+      // recorded state, gets the dashed "unrecorded" badge; `greet` keeps its real success.
+      act(() => run.runComplete({ final_status: "success", nodes_executed: 1 }));
+      await waitFor(() => expect(screen.getByLabelText("run status: unrecorded")).toBeTruthy());
+      expect(screen.getByLabelText("run status: success")).toBeTruthy();
     } finally {
       window.history.replaceState({}, "", "/");
     }

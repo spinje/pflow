@@ -43,6 +43,7 @@ import hashlib
 import itertools
 import json
 import logging
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -646,11 +647,51 @@ def _run_is_live(candidate: TraceCandidate) -> bool:
     return is_trace_locked(candidate["path"]) is not False
 
 
+# Git-root detection for the catalog's per-repo run buckets (Task 173 D6). A workflow's git repo is a property
+# of its DIRECTORY (it never moves during a server's lifetime) and runs cluster by directory — so we cache by
+# parent dir and the upward `.git` walk runs ~once per distinct folder, NOT per run or per request. A pure
+# stat walk (no `git` subprocess). A `git init` mid-session needs a server restart to reflect (the standing
+# "restart to refresh" semantics). The cache is unbounded but keyed on distinct dirs (a handful).
+_GIT_ROOT_CACHE: dict[str, str | None] = {}
+_GIT_ROOT_LOCK = threading.Lock()
+
+
+def _walk_to_git_root(start: Path) -> str | None:
+    """Nearest ancestor of ``start`` (inclusive) containing a ``.git`` entry, else None. ``.git`` is a FILE in
+    a worktree/submodule and a DIR in a normal clone, so test ``.exists()`` (not ``.is_dir()``)."""
+    cur = start
+    while True:
+        if (cur / ".git").exists():
+            return str(cur)
+        if cur == cur.parent:  # filesystem root — no repo above
+            return None
+        cur = cur.parent
+
+
+def _git_root(workflow_path: str | None) -> str | None:
+    """The git-repo root a file-backed run lives under, or None for an inline (``ir-hash:``) / pathless run or
+    a file under no repo. Cached by parent directory; the I/O walk runs outside the lock (idempotent — a race
+    just recomputes the same value)."""
+    if not workflow_path or workflow_path.startswith("ir-hash:"):
+        return None
+    try:
+        parent = str(Path(workflow_path).resolve().parent)
+    except OSError:
+        return None
+    with _GIT_ROOT_LOCK:
+        if parent in _GIT_ROOT_CACHE:
+            return _GIT_ROOT_CACHE[parent]
+    root = _walk_to_git_root(Path(parent))
+    with _GIT_ROOT_LOCK:
+        _GIT_ROOT_CACHE[parent] = root
+    return root
+
+
 def _run_entry(candidate: TraceCandidate) -> dict[str, Any]:
     """Project one raw trace candidate to a run-list entry (Task 173 D6). RAW facts only (DR-2): the UI
     composes the badge from ``complete``/``final_status``/``live``/``only_node``. ``live`` is now EXACT (the
-    advisory-lock probe), not an mtime heuristic. No raw ``node_type`` is involved (run identity, not node
-    payload)."""
+    advisory-lock probe), not an mtime heuristic. ``git_root`` buckets ad-hoc runs by repo in the catalog
+    (cached — see ``_git_root``). No raw ``node_type`` is involved (run identity, not node payload)."""
     meta = candidate["meta"]
     return {
         "run_id": meta.get("execution_id"),
@@ -662,6 +703,7 @@ def _run_entry(candidate: TraceCandidate) -> dict[str, Any]:
         "live": _run_is_live(candidate),
         "only_node": meta.get("only_node"),
         "trace_file": candidate["path"].name,
+        "git_root": _git_root(meta.get("workflow_path")),
     }
 
 

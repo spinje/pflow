@@ -995,3 +995,254 @@ stripped).
 **Phase 1 is now complete AND browser-verified.** Phase 2 (catalog extension) not started. A fresh `pflow ui`
 on :8765 (my rebuilt bundle + restarted Python) is left running; verify artifacts (`stale-banner-probe`,
 `stale-wf`/`ws-wf` scratch workflows) are gitignored throwaways (elevate-or-discard at task end).
+
+Phase 1 COMMITTED `e2db36b2` (clean tree before Phase 2).
+
+## 2026-06-25 — Phase 2: catalog extension (workflows that have run, saved ∪ local) — built + browser-verified
+
+Frontend-only client-side grouping over the already-shipped `/api/runs` (no server/producer change). The
+catalog now lists saved workflows PLUS a "Ran but not saved" section for ad-hoc/CLI/agent runs (ADR-0008 —
+those aren't in the saved catalog).
+
+- **2A** `CatalogView.tsx`: a pure `groupRuns(runs) → Map<workflow_path, {name, inline, anyLive, latest}>`
+  (newest-first → first-seen is latest; `anyLive` ORs liveness). Saved rows keep the running badge (now from
+  the group). Ran-but-unsaved = groups whose path isn't a saved path (raw string equality — the shipped
+  contract), gated on `items` LOADED so a saved workflow is never briefly mis-listed while the catalog fetch
+  is in flight. File-backed rows open by PATH (`onOpen(group.path)`); the per-row indicator is the running
+  badge while live, else the latest run's status mark — reusing `runMark` (exported from `RunSelector`, one
+  status palette).
+- **2B** inline/stdin/MCP runs (`ir-hash:` path) render by `workflow_name`, NON-openable (a static `<div>`,
+  "inline run · no file to open"). Deleted/moved file rows ship as-is (clicking → the existing `/api/graph`
+  422 banner).
+- **2C** de-staled the liveness docs: `types.ts` `RunInfo` ("mtime" → exact `flock`; "null for inline" →
+  `ir-hash:`) and the `/api/runs` section of `src/pflow/ui/CLAUDE.md` (`_STALE_RUN_S` deleted → `flock`).
+- CSS: `.catalog-subhead`, `.catalog-item-static` (no pointer/hover), `.catalog-item-status` (mark color via
+  the shared `.run-mark.run-*` palette).
+
+**Case-fold edge (SF-W3): accepted for v1 + pinned.** Raw `workflow_path` equality now governs row presence;
+`Path.resolve()` doesn't case-fold, so a same-file/different-case launch on a case-insensitive FS shows a
+duplicate ran-but-unsaved row. A test names that outcome so the seam can't silently graduate; server-side
+normalized dedup is the documented escalation.
+
+**Tests (vitest, +6):** `groupRuns` (fold/latest/anyLive/inline); saved∪ran merge (unsaved file row appears,
+saved not duplicated); open-by-name vs open-by-path; inline non-openable; running-badge-vs-status-mark; the
+case-fold duplicate pin. The 2 existing badge/DR-6 tests still pass (DR-6 extended: a runs-fetch failure also
+shows no "Ran but not saved" section). vitest **589** (583 + 6); `tsc` clean; `make check` clean (Python
+untouched → `make test` 8166 holds).
+
+**Browser-verified** (rebuilt bundle, catalog DOM read via `catalog-probe.pflow.md`): the "Ran but not saved"
+section renders; an inline `ir-hash:` run (`inline-demo`) is a NON-openable `<div>` ("inline run · no file to
+open") with a ✓ mark; the scratch ad-hoc file workflow (`stale-wf`) is an OPENABLE button with a ✓ mark; 42
+ad-hoc file rows openable. "Click → opens" is covered by composition (the open-by-path unit test + App.tsx's
+unchanged `onOpen → ?workflow=` routing). Saved-catalog screenshot confirms no regression to existing rows.
+
+**Honest boundary:** the bare `/api/runs` scans the whole `~/.pflow/debug` (the all-runs dashboard) — many
+ad-hoc rows accumulate (42 here); trace retention/pruning is the deferred bound (noted in the perf entry,
+unchanged by this work). "Click → opens" for an ad-hoc row not separately browser-driven (composition above).
+
+### Self-review pass → 1 defensive bug fixed (DR-6)
+
+Re-scrutinizing Phase 2: the ran-but-unsaved SORT dereferenced `start_time` unguarded
+(`b.latest.start_time.localeCompare(...)`). `RunInfo.start_time` is typed `string`, but a malformed/legacy
+trace whose meta lacks it yields `null` at runtime → `.localeCompare` on null throws → the sort throw
+propagates to the ErrorBoundary and BLANKS the whole catalog (violating DR-6). Fixed with `?? ""` on both
+sides; pinned by a mutation-verified test (TWO unsaved runs so the comparator actually fires, one with a null
+start_time — reverting the guard reproduces `TypeError: ...null (reading 'localeCompare')` and fails the test).
++1 empty-state test (zero saved + a run → the "Ran but not saved" section shows, the "No saved workflows yet"
+message is suppressed). vitest **591** (+2 since the Phase-2 entry); `tsc` clean.
+
+**Flagged for the user (not defects):** the ran-but-unsaved list is unbounded (one row per distinct ad-hoc
+workflow ever run) until trace retention lands — a UX-scope decision (accept per-plan vs cap to recent-N vs
+recency filter). Minor/accepted-per-plan: saved rows show only the running badge (no last-run status mark,
+unlike unsaved rows); `runMark` is exported from `RunSelector` (its primary home) rather than extracted to a
+neutral util for its 2nd consumer.
+
+## 2026-06-25 — Catalog git-bucketing (user-chosen evolution of the flat Phase-2 list)
+
+The user rejected an arbitrary cap/recency-window for the unbounded ad-hoc list and chose a principled
+organization: **bucket ran-but-unsaved runs by their git repo**, with a separate "Other" bucket — the way a
+developer thinks (by project), and the `/tmp`/inline throwaways fall into "Other" by meaning, not truncation.
+This DEVIATES from the plan's flat saved∪ran list (the user evolving the design — their call).
+
+- **Server (`server.py`):** a cached `_git_root(workflow_path)` — pure-Python upward `.exists()` walk for
+  `.git` (a FILE in a worktree/submodule, a DIR in a clone — so `.exists()`, not `.is_dir()`), cached by
+  PARENT DIRECTORY behind a lock. **Performance (the user's concern):** git is a property of the directory and
+  runs cluster by directory, so the walk runs ~once per distinct folder per process lifetime, then it's all
+  dict hits — NOT per run, NOT per poll. No `git` subprocess. Rides the existing `/api/runs` scan (no new
+  endpoint). `_run_entry` adds a `git_root` field. Restart reflects a new `git init` (standing server
+  semantics). Tests: repo-backed → root, no-repo → None, inline → None, and a `.git`-FILE worktree case.
+- **Frontend (`CatalogView.tsx`):** `RunInfo.git_root`; pure `bucketUnsaved()` (group by gitRoot, repos
+  sorted by recency, "Other" last, basename labels); a collapsible `Section` (Saved · per-repo · Other). All
+  sections collapsible; default-collapsed = ONLY "Other" (Saved + repos open). `runMark` reused for the
+  per-row status. CSS: `.catalog-section*` + chevron rotate; the dead `.catalog-subhead` removed.
+- **Tests rewritten** for the bucketed shape: `groupRuns` (threads gitRoot), `bucketUnsaved` (recency order,
+  Other-last, basename), Saved-collapsible, repo-bucket open-by-default, Other-collapsed→expand→inline
+  non-openable, open-by-name vs open-by-path, running-badge vs status-mark, the null-start_time guard, the
+  case-fold dup. +3 RunInfo fixtures gained `git_root` (RunSelector/GraphView tests).
+
+**Gates:** `make test` **8168** (+2 server git_root); `make check` clean (mypy 238, ruff-format wrapped my
+long test lines once); vitest **593**; `tsc` clean.
+
+**Browser-verified on REAL data** (rebuilt bundle + restarted server; `catalog-probe.pflow.md` DOM read +
+screenshot): `/api/runs` git_root distribution = 106 runs under the worktree repo (`.git`-FILE case detected
+end-to-end), 14 under `~/.pflow`, 12 Other. Catalog rendered: **Saved (9, open) · feat-live-execution-overlay
+(29 distinct, open) · .pflow (1, open) · Other (4, COLLAPSED by default)**; expanding Other revealed the
+inline `inline-demo` row as a non-openable `<div>`; saved workflows are NOT double-listed in repo buckets
+(counts are distinct-workflows, not runs). Screenshot confirms the collapsible "SAVED" header (chevron +
+count). A fresh `pflow ui` on :8765 (my rebuilt bundle + git_root server) is left running.
+
+## 2026-06-25 — Per-node "no recorded state" badge in a stale replay (user-requested)
+
+Reviewing Tab 3, the user asked: in a stale replay, the renamed/new node (`summarize`) sits blank (reads as
+pending) — show a DISTINCT badge so the mismatch is located on the canvas. Built it, frontend-only.
+
+**Honest semantics (agreed with the user):** the badge means "the pinned run recorded NO state for this
+node" — NOT "this node is the one that changed." We deliberately don't store the old graph (detection, not
+old-graph rendering), so we can't single out the renamed node; "no recorded state" is the truthful claim, and
+it ALSO covers untaken conditional branches in that version. The user accepted that. Glyph: a dashed `—`
+(their pick), muted/hollow grey badge so it never reads as a real status.
+
+**Gate (the user interrogated this precisely): `runStale && runBanner !== null`** — both already in GraphView
+state, no new server signal. `runStale` is only ever set in the pinned path (implies replay); `runBanner`
+(the `run.complete` trailer) ⟺ "finished, no more events coming". So a still-LIVE pinned-stale run does NOT
+mark (a blank node might still run); a crashed/stopped stale run does NOT mark (no trailer → ambiguous). Only
+a cleanly-finished stale replay marks.
+
+**Mechanism:** a new consumer-derived `NodeStatus = "unrecorded"`. `applyStatus(nodes, status, markUnmatched)`
+— when `markUnmatched`, a joinable node (leaf, or a primary host group) absent from the status map resolves to
+`"unrecorded"` instead of blank. The flag threads `GraphView (runStale && runBanner) → useWorkflowGraph view →
+applyStatus`; placing the policy IN `applyStatus` (the one place that extracts every node's refKey) sidesteps
+the circular dep with `graph`. `StatusBadge` gains the dashed glyph (the `Record<NodeStatus>` forces it);
+muted-hollow CSS.
+
+**Tests (+6):** `applyStatus` markUnmatched (gap→unrecorded, real status preserved, off→blank, primary-host
+marked / non-primary + hostless untouched); `StatusBadge` renders `unrecorded`; a GraphView integration test
+pinning the gate — stale+LIVE → NOT marked, then `run-complete` → the unmatched node flips to `unrecorded`,
+the matched one keeps success. vitest **599** (593 + 6); `tsc` clean. Frontend-only (Python 8168 / make check
+hold).
+
+**Browser-verified** (rebuilt bundle, `stale-banner-probe` DOM + screenshot on the real `stale-review` replay
+— `report` renamed → `summarize`): `fetch`/`transform` `status-success`, **`summarize` `status-unrecorded`**
+(the dashed badge), both banners stacked. The user's existing Tab 3 needs a REFRESH to pick up the rebuilt
+bundle.
+
+**Deferred (the "precise half", not built — only the badge was approved):** the complementary signal —
+recorded nodes that VANISHED from the current graph (`report`) — is a definite mismatch we can name exactly
+but can't badge (no node on canvas); it could be surfaced as a count in the stale banner. Today it's only the
+dev-console join-miss warn. Offer to the user.
+
+## 2026-06-25 — Badge hover detail (friendly status + duration/cost), user-requested
+
+The user wanted every status badge to show its state info on hover. Key find: the tailer ALREADY emits
+`duration_ms` + `cost_usd` per node event (`_run_event`), but the frontend dropped them (the overlay map kept
+only the status word). So this was frontend-only: retain the metrics, render a friendly hover label.
+
+- **Data model:** promoted the overlay map `Map<refKey, NodeStatus>` → `Map<refKey, NodeRunState>` (status +
+  optional `durationMs`/`costUsd`). `applyStatus` now splits it onto `data.status` (badge glyph/color,
+  unchanged) + `data.runDetail` (hover metrics); identity still gated on STATUS (metrics arrive in the same
+  terminal event, so they never move without it). One map, one concept — chosen over a parallel detail map
+  (simplicity of the final code). GraphView's 3 handlers (snapshot/events/stopped) build NodeRunState.
+- **Copy** (`runStatusLabel` in StatusBadge, the badge's `title`; the `aria-label` stays the stable
+  "run status: <status>" for a11y + tests): running → "Running…"; success/failed → "Succeeded/Failed · 1.2s"
+  (+ " · $0.0034" when cost > 0; sub-second → "Nms"); cached → "Cached — reused a prior result"; stopped →
+  "…process exited before this node finished"; unrecorded → "No recorded state — recorded against a different
+  version of the workflow". Error TEXT for a failed node is NOT shown (off the overlay wire by design — noted).
+- **Presentation: native `title`** (per my recommendation, the user's "go ahead") — ships now, accessible,
+  works on the 22px badge; ~1s browser delay is the only downside. A custom styled tooltip is the easy upgrade
+  if it feels clunky.
+- **Tests (+3):** `applyStatus` threads metrics onto `runDetail`; `runStatusLabel` copy + duration/cost
+  formatting + the special-state strings. The `status.test.ts` maps moved to a `statusMap()` helper (bare
+  status → NodeRunState). vitest **602** (599 + 3); `tsc` clean. Frontend-only (Python 8168 holds).
+
+**Browser-verified** (rebuilt bundle, badge `title` read off the DOM on the real runs): overlay-review →
+`fetch`/`transform`/`report` titles `"Succeeded · 5ms"`/`"Succeeded · 3ms"` (duration; no cost — shell);
+stale-review → `summarize` title `"No recorded state — recorded against a different version of the workflow"`.
+The user's open Tab 3 needs a REFRESH to pick up the rebuilt bundle.
+
+## 2026-06-25 — SSE multi-tab connection limit → GH #539 (deferred follow-up)
+
+User hit new graph tabs stalling on "loading" with several open at once. Diagnosed (server healthy, 1.9% CPU,
+all endpoints <200ms): the live overlay holds ONE persistent SSE (`EventSource` → `/api/events`) per GRAPH
+tab, the server is HTTP/1.1, and browsers cap 6 connections/origin — so ~6 open graph tabs exhaust the pool
+and new tabs queue behind the held-open streams. Classic SSE-over-HTTP/1.1 limit; catalog tabs don't count
+(short-lived fetches). Filed **GH #539** (preferred fix: close-SSE-on-hidden / reopen-on-focus) with a
+prominent "do NOT regress" section — the `onerror`-driven trigger-agnostic reconnect + single-flight invariant
+(`events.ts`), the "SSE recovery must NOT key on visibilitychange" rule (`hooks/CLAUDE.md`), and the
+server tailer ref-counting / dead-pinned-tailer-reuse / keepalive-linger (`server.py`). Not a blocker for the
+single-tab common case; no code change this session.
+
+## 2026-06-25 — Verify → 4-agent review → the hover-tooltip bug (user-found) + fix
+
+Fresh-context pass over the staged followups (Phase 2 catalog extension + git-bucketing + the `unrecorded`
+badge + badge hover detail). User flow: **verify gates → review with the 4 MOST relevant agents → commit.**
+
+**Gates re-run (this session, all green, = the log's claims):** `make test` **8168**, `make check` clean
+(mypy 238, ruff, ruff-format, deptry), vitest **602**, strict `tsc` clean.
+
+**4-agent review of the staged diff (user capped it at the 4 most relevant — NOT the full panel):**
+simplicity, silent-failures, impact-completeness, feature-interactions. **Three came back CLEAN**
+(no Critical/Warning): simplicity positively confirmed the cross-segment consolidation held (`runMark`
+exported not re-derived, `eventState` hoisted, `applyStatus`'s two branches share one `patchFor`);
+impact-completeness traced the `NodeStatus → NodeRunState` map value-type flip to its ONE writer
+(`applyStatus`) + a fully-enumerated reader set (the 4 SSE handlers + tests), all converted, with `tsc`
+mechanically guarding the additive `git_root`/`unrecorded`; silent-failures confirmed both "potential silent
+drop" paths are correct (top-level trace `workflow_path` is contractually always a path or `ir-hash:`) and
+both `localeCompare` DR-6 guards present.
+
+**The one Critical — `markUnmatched` × batch-of-sub-workflows host — was investigated and DISPROVEN
+empirically.** feature-interactions claimed such a host is "absent from the status map in ANY replay" → would
+be falsely badged `unrecorded` in a stale completed replay. The premise was wrong: the "never descends the
+run collector" v1 boundary denies the host only its `node.start` (RUNNING marker), NOT its terminal
+completion `event` (the main thread writes that at step 16 with `frame=None` → fresh seq → a normal event
+line). Verified THREE ways: (1) a real LLM-free batch-of-sub-workflows run (`scratchpad/bos/parent.pflow.md`,
+a dynamic parallel batch over a doubling child) → the `fanout` host trace line is `kind=event status=success
+ancestor_path=[]` (terminal event present; no `node.start`, matching "pending-while-running"); (2) a
+`pflow-codebase-searcher` code-trace (engine `_execute_node` step-16 always records the host on the main
+thread); (3) the progress log's own wording "pending-until-**done**". So the host's ref IS in a completed
+run's status map → `applyStatus.resolve()` hits `status.get(key)` first → never synthesizes `unrecorded`. Not
+a defect. (The related batch-BODY-inner-nodes case in an expanded stale replay falls under the
+already-user-accepted "no recorded state" semantics — same bucket as untaken branches.) Remaining review
+items are pre-existing accepted v1 edges (case-fold row dup; saved-row shows no last-run mark) + a cosmetic
+stopped-flip shape nit — none blocking.
+
+**Hover-detail bug (user-found): the badge `title` tooltip never appears → ROOT CAUSE `pointer-events:none`.**
+The feature is fully wired (the `title` carries the friendly label WITH duration — DOM-confirmed
+`"Succeeded · 16ms"` on a real pinned run), but `.status-badge { pointer-events: none }` (`index.css:582`)
+means the badge never RECEIVES hover, so the native `title` tooltip can never fire. The earlier "browser-
+verified" only read the `title` ATTRIBUTE off the DOM (present regardless) — it never tested that hovering
+SHOWS it. Classic verification-over-a-wrong-assumption (the hover detail was added AFTER the badge CSS; the
+pre-existing `pointer-events:none` silently defeated it).
+- **Fix (user chose the one-liner over a custom tooltip):** `.status-badge` → `pointer-events: auto` + a
+  comment pinning WHY (the tooltip needs hover; a click on the 22px corner badge has no own handler so it
+  bubbles to the node → selection unaffected; the corner overhang makes the pan dead-zone negligible).
+- **Verified (real browser, rebuilt bundle):** the badge probe now reads `pointerEvents: "auto"` with the
+  correct `title`; a node click still opens its panel (`click.pflow.md` → `panel: "gather", ok: true`) → no
+  selection regression. The OS-rendered native tooltip itself is NOT headless-screenshot-capturable — that's
+  the inherent native-`title` limit the user accepted (a custom styled tooltip is the upgrade if it feels
+  clunky). Gates after the CSS change: vitest **602**, `tsc` clean (Python untouched → 8168 / `make check`
+  hold).
+- **Tool note:** a one-off `badge-hover` DOM probe (reads each `.status-badge`'s `title` + computed
+  `pointer-events`) was the decisive check — a stronger elevate candidate alongside the overlay-status-probe
+  (record at task end); used and discarded this session.
+
+### Follow-up: replaced the native `title` with a CUSTOM hover chip (user-requested, matches the rail tip)
+
+The user then asked for a CUSTOM tooltip "in the same style as the floating bar" (the rail's `.rail-tip`
+"Show source" chip) instead of the bare native `title` — the upgrade the prior note flagged. Built it:
+- **`StatusBadge.tsx`:** dropped `title={…}`; render a `<span className="status-badge-tip" aria-hidden>` child
+  carrying `runStatusLabel(status, detail)` (status verb + duration/cost). `aria-label` stays the a11y fact.
+- **`index.css`:** folded the chrome-chip LOOK into ONE shared selector `.rail-tip, .status-badge-tip` (the
+  maintainable home for "the dark hover chip"); each owner positions it (rail = right of icon; badge = right
+  of the corner badge). The rail chip is visually unchanged.
+- **THE TRAP (caught by a computed-style probe, NOT by eyeballing):** `var(--bg-field)`/`var(--border)` are
+  CHROME-SCOPED tokens — UNDEFINED on the React Flow canvas layer where the badge lives. My first version read
+  `background: rgba(0,0,0,0)` (TRANSPARENT) on the badge chip vs `rgb(28,28,28)` on the rail. Fix: the shared
+  chip uses LITERAL `#1c1c1c` / `rgba(255,255,255,0.08)` (same reason the badge halo is a `#0d0d0d` literal —
+  web/CLAUDE.md chrome-palette note); values equal the chrome tokens so the rail is unchanged. (`var(--text)`
+  DOES resolve on the canvas → kept for the chip text.)
+- **Verified (real browser, rebuilt bundle):** computed-style parity — badge chip `background:
+  rgb(28,28,28)`, `border: 1px solid rgba(255,255,255,0.08)` == the `.rail-tip` chip; text `Succeeded · 16ms`;
+  default `opacity:0`. A framed screenshot with the chips force-shown (CSS `:hover` isn't scriptable) shows
+  the dark rounded chip beside the badge, matching the "Show source" floating-bar look. +1 vitest
+  (`StatusBadge.test.tsx`: the chip carries the label, no native `title`, `aria-hidden`). Gates: vitest
+  **603**, `tsc` clean (Python untouched → 8168 / `make check` hold).
