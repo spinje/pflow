@@ -25,6 +25,7 @@ from starlette.testclient import TestClient
 
 from pflow.cli.commands.ui import ui_cmd
 from pflow.core.workflow.manager import WorkflowManager
+from pflow.runtime.workflow_trace import format_trace_filename
 from pflow.ui.server import _json, create_app
 from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
@@ -933,19 +934,31 @@ class TestRunsEndpoint:
         wf_x.write_text("# X", encoding="utf-8")
         wf_y = tmp_path / "y.pflow.md"
         wf_y.write_text("# Y", encoding="utf-8")
+        # The server resolves ?workflow= to the resolved path AND scan_traces hash-scopes by it, so the
+        # trace filenames must embed md5(resolved path) — build them via the real format_trace_filename.
+        wf_x_path = str(wf_x.resolve())
+        wf_y_path = str(wf_y.resolve())
         self._write_trace(
-            debug, "workflow-trace-aaa-x-20260101-000000-000001.json", str(wf_x), complete=True, execution_id="x-full"
+            debug,
+            format_trace_filename(wf_x_path, "x", "20260101-000000-000001"),
+            wf_x_path,
+            complete=True,
+            execution_id="x-full",
         )
         self._write_trace(
             debug,
-            "workflow-trace-aaa-x-20260101-000000-000002.json",
-            str(wf_x),
+            format_trace_filename(wf_x_path, "x", "20260101-000000-000002"),
+            wf_x_path,
             complete=True,
             only_node="b",
             execution_id="x-only",
         )
         self._write_trace(
-            debug, "workflow-trace-bbb-y-20260101-000000-000001.json", str(wf_y), complete=True, execution_id="y-run"
+            debug,
+            format_trace_filename(wf_y_path, "y", "20260101-000000-000001"),
+            wf_y_path,
+            complete=True,
+            execution_id="y-run",
         )
         body = TestClient(create_app()).get("/api/runs", params={"workflow": str(wf_x)}).json()
         by_id = {r["run_id"]: r for r in body}

@@ -90,11 +90,15 @@ NOT to break + the traps for the phases still ahead:
   assumption; `is_trace_locked`'s `except OSError: return True` degrades an unsupported FS to always-alive,
   NOT false-stopped. **`flock` detects DEATH, not HANG** — the alive-but-stuck backstop is the ONLY deferred
   liveness piece → **GH #538** (re-scoped).
-- **The hash-glob optimization is deferred.** `scan_traces` uses an unscoped `glob("workflow-trace-*.json")`
-  + `meta.workflow_path` filter (correct, O(N)). DR-3 mentions a `workflow-trace-{md5(path)[:8]}-*` prefilter
-  for `?workflow=X`; if you add it, reuse the producer's EXACT hash (`format_trace_filename` in
-  `workflow_trace.py`) or you'll silently miss this workflow's traces. It's a perf refinement, not
-  correctness — I deliberately left it.
+- **The hash-glob optimization is now DONE (2026-06-24, uncommitted at time of writing).** `scan_traces`
+  hash-scopes the glob to `workflow-trace-{md5(workflow_key)[:8]}-*.json` when `workflow_key` is set (live
+  overlay + per-workflow history); bare scan (dashboard) still lists all. Plus a `(mtime,size)` read-through
+  cache (`_SCAN_CACHE`, incl. negative verdicts). The overlay no longer reads other workflows' files or old
+  history (scoped scan 0.68 ms / handful vs the old all-1251 cost). Verified producer↔consumer hash agreement
+  on REAL traces (`key == meta.workflow_path`); all discovery/runs test fixtures now build names via the real
+  `format_trace_filename`, so drift fails loudly. **Still deferred:** trace **retention/pruning** of
+  `~/.pflow/debug` (the ~1137 dead pre-172 files + the dashboard's all-scan bound). See the progress-log's
+  "Tailer scan performance" entry.
 
 ## Tacit traps (still 100% live)
 

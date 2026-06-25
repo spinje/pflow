@@ -21,8 +21,10 @@ the viewer opened is picked up; a switch to a newer file resets state and emits 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
@@ -138,6 +140,78 @@ class TraceCandidate(TypedDict):
     mtime: float
 
 
+# Read-through cache of immutable per-file trace facts, shared across polls AND callers (the live tailer's
+# `discover_live_trace` and `/api/runs`). A trace's `meta` head is written once and a FINISHED trace's tail
+# never changes, so keying on (mtime, size) lets a scan skip the open+parse for every UNCHANGED file —
+# turning a poll over a large ~/.pflow/debug from O(N opens) into O(N stats) + a read of only the one growing
+# live file. The verdict is cached even when a file has NO valid meta head (None) — a pre-Task-172
+# single-object trace or junk — so the bulk of a long-lived debug dir (old-format files) is probed ONCE, not
+# re-opened every poll. Without it an idle viewer re-opens+parses every trace 4x/s (Task 173 perf finding).
+# (mtime, size) not mtime alone so an append is never missed on a coarse-mtime filesystem. Lock-guarded:
+# scan_traces runs in the Starlette threadpool (/api/runs) AND via asyncio.to_thread (the tailer).
+# Callers MUST treat a returned candidate's `meta` dict as READ-ONLY — it is shared by reference across
+# cache hits, so mutating it would corrupt other callers' results (today none mutate; keep it that way).
+_SCAN_CACHE: dict[Path, tuple[float, int, dict[str, Any] | None, bool, str | None]] = {}
+_SCAN_CACHE_LOCK = threading.Lock()
+
+# The DIRECTORY LISTING cache (distinct from the per-file content cache above): which trace files EXIST
+# changes only when one is created/deleted/renamed, which bumps the directory's mtime. So a scan stats the
+# dir ONCE and reuses the prior glob result while that mtime is unchanged — turning a 4 Hz tailer poll from
+# a full os.scandir of ~N entries (the profiled hotspot — Task 173) into a single stat. A finished run only
+# changes a file's CONTENT (caught by _SCAN_CACHE on (mtime,size)), never the listing, so freshness holds.
+_DIR_LIST_CACHE: dict[tuple[Path, str], tuple[float, list[Path]]] = {}
+
+
+def _list_trace_files(directory: Path, pattern: str) -> list[Path]:
+    """The directory scandir, isolated so the (directory, pattern, mtime) gate below can skip it."""
+    return list(directory.glob(pattern))
+
+
+def _stat_sorted_listing(directory: Path, pattern: str) -> list[tuple[Path, float, int]] | None:
+    """The matching trace files with their (mtime, size), newest-first — reusing the cached scandir while the
+    directory mtime is unchanged (skips the os.scandir on a static dir). None if the dir is unreadable."""
+    try:
+        dir_mtime = directory.stat().st_mtime
+    except OSError:
+        return None
+    list_key = (directory, pattern)
+    with _SCAN_CACHE_LOCK:
+        listed = _DIR_LIST_CACHE.get(list_key)
+    if listed is not None and listed[0] == dir_mtime:
+        entries = listed[1]
+    else:
+        try:
+            entries = _list_trace_files(directory, pattern)
+        except OSError:
+            return None
+        with _SCAN_CACHE_LOCK:
+            _DIR_LIST_CACHE[list_key] = (dir_mtime, entries)
+    stated: list[tuple[Path, float, int]] = []
+    for path in entries:
+        try:
+            st = path.stat()
+        except OSError:
+            continue  # vanished between listing and stat — skip
+        stated.append((path, st.st_mtime, st.st_size))
+    stated.sort(key=lambda t: t[1], reverse=True)  # newest-first by mtime
+    return stated
+
+
+def _file_facts(path: Path, mtime: float, size: int) -> tuple[dict[str, Any] | None, bool, str | None]:
+    """The (meta, complete, final_status) for one trace, served from _SCAN_CACHE on an unchanged
+    (mtime, size) or read fresh — caching a None-meta NEGATIVE verdict too so an old-format file isn't
+    re-opened every poll. Callers must treat the returned `meta` as read-only (it's the cached object)."""
+    with _SCAN_CACHE_LOCK:
+        hit = _SCAN_CACHE.get(path)
+    if hit is not None and hit[0] == mtime and hit[1] == size:
+        return hit[2], hit[3], hit[4]
+    meta = _read_meta(path)  # I/O OUTSIDE the lock
+    complete, final_status = read_run_status(path) if meta is not None else (False, None)
+    with _SCAN_CACHE_LOCK:
+        _SCAN_CACHE[path] = (mtime, size, meta, complete, final_status)
+    return meta, complete, final_status
+
+
 def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) -> list[TraceCandidate]:
     """The ONE trace-dir scanner (deep-review DR-3): a RAW candidate per trace, newest-first by mtime, with
     NO ``--only`` / ``final_status`` / coherence policy — each CALLER filters its own (mirroring
@@ -149,25 +223,37 @@ def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) 
     traces whose ``meta.workflow_path`` matches it (``_same_path`` — robust to path normalization). Cheap:
     one head-read + one tail-read per file, never a full parse — so the all-runs dashboard stays light.
     ``discover_live_trace`` applies the ``--only``-exclude + prefer-live; ``/api/runs`` labels ``--only`` —
-    neither policy lives here. An unreadable trace is skipped (``meta is None``), never fatal (DR-6)."""
+    neither policy lives here. An unreadable trace is skipped (``meta is None``), never fatal (DR-6).
+    Per-file results are cached on ``(mtime, size)`` (``_SCAN_CACHE``) so repeated polls re-open only files
+    that grew — a finished trace is read once."""
     directory = debug_dir or _debug_dir()
-    try:
-        paths = sorted(directory.glob("workflow-trace-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError:
+    # Scope the glob to THIS workflow's hash prefix when we know it (the live overlay + per-workflow
+    # history) — the producer encodes md5(workflow_path)[:8] into every filename (format_trace_filename),
+    # so we never list/stat/open OTHER workflows' traces or unrelated history. A bare scan (the dashboard,
+    # workflow_key=None) lists all runs, as it must. The 8-char prefix can collide → the _same_path
+    # contents guard below is the discriminator (mirrors _iter_workflow_traces). The hash MUST match
+    # format_trace_filename's; the discovery tests name their fixtures via it, so a drift fails loudly.
+    if workflow_key is None:
+        pattern = "workflow-trace-*.json"
+    else:
+        wf_hash = hashlib.md5(workflow_key.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+        pattern = f"workflow-trace-{wf_hash}-*.json"
+    stated = _stat_sorted_listing(directory, pattern)
+    if stated is None:
         return []
     out: list[TraceCandidate] = []
-    for path in paths:
-        meta = _read_meta(path)
-        if meta is None:
+    seen: set[Path] = set()
+    for path, mtime, size in stated:
+        seen.add(path)
+        meta, complete, final_status = _file_facts(path, mtime, size)
+        # meta is None for an unreadable / pre-172 single-object trace (its negative verdict is cached too).
+        if meta is None or (workflow_key is not None and not _same_path(meta.get("workflow_path"), workflow_key)):
             continue
-        if workflow_key is not None and not _same_path(meta.get("workflow_path"), workflow_key):
-            continue
-        complete, final_status = read_run_status(path)
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            mtime = 0.0
         out.append({"path": path, "meta": meta, "complete": complete, "final_status": final_status, "mtime": mtime})
+    # Bound memory: forget per-file cache entries for files removed from THIS directory (leave others' alone).
+    with _SCAN_CACHE_LOCK:
+        for stale in [p for p in _SCAN_CACHE if p.parent == directory and p not in seen]:
+            _SCAN_CACHE.pop(stale, None)
     return out
 
 

@@ -738,6 +738,62 @@ clean. Python untouched.
 (3c global dashboard → Phase 5 detail panel → pin D1) are unchanged; Phase 4 (ChipRail status chip) is
 now **dropped** (absorbed by the corner badge).
 
+## 2026-06-24 — Tailer scan performance: hash-scoped discovery + (mtime,size) cache (UNCOMMITTED)
+
+Surfaced by the user spotting two stale `pflow ui` servers at ~8% CPU each. Root cause: the unpinned overlay
+tailer calls `discover_live_trace` every 0.25 s, and `scan_traces` globbed + opened + JSON-parsed EVERY
+`workflow-trace-*.json` in `~/.pflow/debug` (1251 files / 309 MB locally) to match on the in-file
+`meta.workflow_path` — so an idle viewer re-read the whole dir 4×/s. The user pushed past my first instinct
+("cache the big scan") to the real question — *why read other workflows' files at all?* — the correct
+framing: the producer already encodes `md5(workflow_path)[:8]` in every filename, so discovery never needs to
+open unrelated files.
+
+Two fixes, both in `src/pflow/ui/run_tailer.py::scan_traces`:
+- **Hash-scoped glob (the real fix).** When `workflow_key` is set (live overlay + per-workflow history),
+  glob `workflow-trace-{md5(workflow_key)[:8]}-*.json` not `workflow-trace-*.json`. The overlay now touches
+  only THIS workflow's handful, independent of total history. `_same_path` stays as the 8-char-collision
+  guard (mirrors `_iter_workflow_traces`). Bare scan (`workflow_key=None`, the dashboard) still lists all —
+  its job. **No producer change needed:** `WorkflowManager.get_path` already `.resolve()`s and the file
+  branch resolves, so a name- or file-launched run's stored `workflow_path` == the UI's `_workflow_key`
+  (both resolved) → hashes match. Verified on REAL data: 8/8 producer-written traces discovered via the exact
+  UI path, `key == meta.workflow_path` every time (so no silent-miss for file-backed workflows). Behaviorally
+  identical to the old `_same_path` match (both sides are resolved strings ⟹ same-path ⟺ same hash).
+- **(mtime,size) read-through cache** (`_SCAN_CACHE`, lock-guarded — scan runs in the Starlette threadpool
+  for `/api/runs` AND via `to_thread` for the tailer). `meta` head + a finished trace's tail are immutable, so
+  an unchanged file is a cache hit; only the one growing live file is re-read. **Negative verdicts cached
+  too** — the empirical cold/warm timing caught that ~1137 of the 1251 are pre-Task-172 single-object traces
+  `_read_meta` returns None for; without caching the None they were re-opened every poll (the gap the
+  valid-trace fixtures missed — pitfall #19). This keeps the *dashboard's* legitimately-all scan cheap on
+  repeat polls.
+
+Empirical (real `~/.pflow/debug`): scoped overlay scan **0.68 ms (16 files)** — no longer scales with dir
+size; bare dashboard scan 5.9 ms warm vs ~25 ms cold.
+
+Tests (committed with the change): `test_scan_traces_is_hash_scoped_to_a_workflow` (another workflow's trace
+is never opened), `_caches_unchanged_files` / `_rereads_a_grown_file` / `_caches_unreadable_files`. ALL
+discovery/runs fixtures now build filenames via the REAL `format_trace_filename` (helper `_tp` in
+`test_run_tailer.py`; `test_ui.py` `?workflow=` test too), so a producer↔consumer hash drift fails loudly.
+Gates: `make test` **8149** (8145 + 4), `make check` clean (mypy 238), vitest 579 unchanged (no web/ touch).
+
+**Follow-up — the os.scandir hotspot (found by the user observing the fresh server STILL at ~7% CPU).** The
+hash-scope narrowed which files are OPENED, but `Path.glob` still `os.scandir`'d the whole 1251-entry dir on
+EVERY 0.25 s poll — a `sample` of the running server showed `ScandirIterator_iternext` as the hotspot across
+the threadpool (amplified by 4 open tabs' tailers). My isolated timing missed it (a tight-loop scan ran
+cache-hot at 0.68 ms; the live server's per-poll cold scandir over 309 MB is far slower). Fix: a
+**directory-listing cache** (`_DIR_LIST_CACHE`, keyed on `(dir, pattern)` → `(dir_mtime, paths)`) — the file
+LIST changes only on create/delete/rename, which bumps the dir mtime, so a poll over a static dir reuses the
+prior glob and costs ONE stat, not a scandir. A finished run changes only file CONTENT (caught by the
+per-file `(mtime,size)` cache), so freshness holds. `scan_traces` refactored into `_stat_sorted_listing` +
+`_file_facts` helpers (also clears C901). Steady-state scoped poll now **16.6 µs → ~0.007%/core at 4 Hz**
+(was ~7%). +1 test (`test_scan_traces_skips_rescandir_when_dir_unchanged`); `make test` **8150**, `make check`
+clean. **A running server must be RESTARTED to pick up the new code** (it imports run_tailer.py at startup) —
+the user's server 87192 still shows the old ~7% until restarted.
+
+Still owed (separate, deferred): trace **retention/pruning** of `~/.pflow/debug` (the durable bound on the
+dashboard's all-scan + the ~1137 dead old-format files); orphaned-`pflow ui`-process cleanup is lifecycle (the
+`pkill`/`rm` was sandbox-denied to the agent → user runs it). An OS file-watcher (true zero-idle) is
+unnecessary now the overlay scans only a handful.
+
 ## 2026-06-24 — UI-polish item: RunSelector re-pick wiped the overlay (user-found, fixed)
 
 The user, walking the live overlay, found: pick a run from the RunSelector, then pick the SAME run again →
