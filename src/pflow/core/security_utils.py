@@ -4,6 +4,7 @@ This module provides shared constants and functions for identifying and masking
 sensitive parameters across CLI and MCP server contexts.
 """
 
+import re
 from typing import Any
 
 # Sensitive parameter names to mask/redact
@@ -32,27 +33,43 @@ SENSITIVE_KEYS = {
 }
 
 
+# Split a parameter name into words on snake_case / kebab-case / dotted / camelCase boundaries.
+_WORD_BOUNDARY = re.compile(r"[_\-.\s]+|(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _word_signature(key: str) -> str:
+    """Normalize a parameter name to a sentinel-bounded ``_word_word_`` form (lowercased words), so a plain
+    substring test matches WHOLE words only: ``api_key`` / ``X-API-Key`` / ``apiKey`` all become
+    ``_api_key_``, while ``author`` becomes ``_author_`` and so never matches the sensitive word ``auth``."""
+    return "_" + "_".join(word.lower() for word in _WORD_BOUNDARY.split(key) if word) + "_"
+
+
+_SENSITIVE_SIGNATURES = tuple(_word_signature(name) for name in SENSITIVE_KEYS)
+
+
 def is_sensitive_parameter(key: str) -> bool:
-    """Check if a parameter name indicates sensitive data.
+    """Check whether a parameter NAME denotes sensitive data (credentials, tokens, ...).
 
-    Performs case-insensitive matching against known sensitive parameter names.
-
-    Args:
-        key: Parameter name to check
-
-    Returns:
-        True if the parameter name contains sensitive keywords
+    Word-aware and case-insensitive: a sensitive name must appear as WHOLE words in ``key`` (across
+    snake_case / kebab-case / dotted / camelCase), so ``api_key`` / ``X-API-Key`` / ``apiKey`` match while
+    ``author`` / ``secretary`` / ``tokens`` do NOT — the earlier raw-substring check redacted those by
+    mistake. A name with no word delimiter (e.g. ``myapikey``) is one word and won't match an embedded
+    ``apikey``; that trade buys the false-positive fix and is the accepted boundary (real secret params are
+    delimited). The single source of truth — ``sanitize_parameters`` / ``mask_sensitive_value`` / the rerun
+    display / the run-detail panel all defer here.
 
     Examples:
-        >>> is_sensitive_parameter("password")
+        >>> is_sensitive_parameter("api_key")
         True
         >>> is_sensitive_parameter("API_KEY")
         True
+        >>> is_sensitive_parameter("author")
+        False
         >>> is_sensitive_parameter("username")
         False
     """
-    key_lower = key.lower()
-    return any(sensitive in key_lower for sensitive in SENSITIVE_KEYS)
+    signature = _word_signature(key)
+    return any(sig in signature for sig in _SENSITIVE_SIGNATURES)
 
 
 def mask_sensitive_value(key: str, value: str, mask_text: str = "<REDACTED>") -> str:
@@ -109,10 +126,8 @@ def sanitize_parameters(params: dict[str, Any], always_redact_keys: set[str] | N
         if key.startswith("__"):
             continue
 
-        key_lower = key.lower()
-
-        # Check if key should always be redacted (e.g., from env)
-        if key in always_redact_keys or any(sensitive in key_lower for sensitive in SENSITIVE_KEYS):
+        # Redact env-derived keys (always_redact_keys) and sensitive-NAMED keys (the shared word-aware rule)
+        if key in always_redact_keys or is_sensitive_parameter(key):
             sanitized[key] = "<REDACTED>"
         elif isinstance(value, dict):
             sanitized[key] = sanitize_parameters(value, always_redact_keys=None)

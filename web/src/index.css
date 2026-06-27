@@ -24,6 +24,14 @@
   --decision: #ffa657;
   --warn: #f0a07a;
   --danger: #ff6b6b;
+  /* Run-status palette (Task 173): single-sourced so the corner StatusBadge background AND the detail
+     panel's "This run" tile border share ONE set of colors and can't drift. Defined at :root (NOT the
+     chrome scope) so it's identical on the canvas badge and the panel tile — `--accent` can't be reused
+     for `running` because the chrome scope overrides it. `failed` reuses --danger. */
+  --status-running: #6ea8fe;
+  --status-success: #3fb950;
+  --status-cached: #8b949e;
+  --status-stopped: #d29922;
   --data-edge: #6fbfa8;
   /* The SELECTED data line: the bright member of the same green-teal family (hue
      carries identity, brightness carries state). Provisional — shoot-lab tunes it
@@ -604,20 +612,20 @@ button.active {
   height: 14px;
 }
 .status-badge.status-running {
-  background: #6ea8fe;
+  background: var(--status-running);
 }
 .status-badge.status-success {
-  background: #3fb950;
+  background: var(--status-success);
 }
 .status-badge.status-cached {
-  background: #8b949e;
+  background: var(--status-cached);
 }
 .status-badge.status-failed {
   background: var(--danger);
 }
 /* `stopped` (Task 173 flock): the run's process died while this node was still running — amber. */
 .status-badge.status-stopped {
-  background: #d29922;
+  background: var(--status-stopped);
 }
 /* `unrecorded` (Task 173 replay): the pinned run has no state for this node (different version). A muted,
    hollow badge with a grey dashed glyph — deliberately reads as "no data", never as a real run status. */
@@ -2038,6 +2046,85 @@ button.active {
   margin-top: 20px;
   margin-bottom: 12px;
   padding-top: 16px;
+}
+
+/* The "This run" detail card (Task 173) — the panel's MOST distinct section: a bordered, elevated card
+   whose header mirrors the panel's top (PanelHeader) — the run-status badge in the tile, "status" over the
+   status value, the duration (+ cost) where the description sits. It replaced a near-invisible <details>
+   that read as just another quiet disclosure. */
+.this-run {
+  margin: 16px 0 6px;
+  padding: 12px 12px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-field);
+}
+.this-run-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+.this-run-tile {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  /* a status-colored ring (matching the badge it frames) — same shared palette, mirroring how the node
+     tile at the top borders in its KIND color (2px, to match that tile). The status modifiers below set
+     the color. */
+  border: 2px solid var(--border);
+}
+.this-run-tile.status-success {
+  border-color: var(--status-success);
+}
+.this-run-tile.status-cached {
+  border-color: var(--status-cached);
+}
+.this-run-tile.status-failed {
+  border-color: var(--danger);
+}
+.this-run-headtext {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.this-run-status {
+  font-size: 17px;
+  color: var(--text);
+  line-height: 1.1;
+}
+.this-run-sub,
+.this-run-tokens {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.this-run-tokens {
+  margin: 10px 0 0;
+}
+/* the global h3 rule adds a big top divider; tighten the FIRST block's gap from the header inside the card */
+.this-run .read-panel-params:first-of-type h3 {
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+/* the run-status badge rendered STATIC inside the "This run" tile (not the canvas corner overlay): no
+   absolute offset, no #0d0d0d halo, no hover chip; a larger glyph to fill the 40px tile. */
+.status-badge.status-badge-inline {
+  position: static;
+  width: 26px;
+  height: 26px;
+  box-shadow: none;
+  pointer-events: none;
+}
+.status-badge.status-badge-inline svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Collapsible panel section (ReadPanel Description) — a native <details> styled as

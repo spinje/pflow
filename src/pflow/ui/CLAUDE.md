@@ -113,6 +113,22 @@ runs (a hard scan failure also degrades to `[]` — the scanner is shared non-th
 tailer). The shared scanner is `run_tailer.scan_traces` (cheap head+tail read, never a full parse).
 Pin a Viewer to one run for replay/concurrent-watch via `GET /api/events?workflow=X&run=<run_id>`.
 
+### `GET /api/run-node?workflow=<name|path>&ref=<json>[&run=<run_id>]`
+→ `200` `RunNodeDetail` `{node_type, status, duration_ms, cost_usd, tokens, error, input, output}` — ONE
+node's runtime record for the detail panel's "This run" section (Task 173 D6 Phase 5). `ref` is the
+structural `RFRef` (`{node_id, ancestor_path, port}`) JSON-encoded — the SAME identity the overlay joins on
+(`sameRef`); no positional flat id. `&run=` reads the pinned run (matched by `meta.execution_id`); omitted
+→ the newest live trace (what the unpinned overlay follows). The interactive single-node counterpart of
+`pflow report`: realized `input` (post-`${...}` resolution — `node_params` is recorded RESOLVED + the
+canonical `llm_prompt`/`llm_system`), resolved `output` (`node_output`/`llm_response`), `cost_usd` (the
+shared `event_cost`, so it agrees with the chip + report), `tokens`, and `error`. Read off RAW JSONL lines
+(never `load_trace_file`, which strips the `ancestor_path`/`port` join keys), blobs resolved via
+`trace_io.substitute_refs`, `node_type` mapped through `node_type_tag` (NEVER the raw Python class name),
+secrets recursively redacted by key name. `400` on a missing/malformed `ref`; `404` on an unresolvable
+`workflow` or no matching run/event (incl. a `node.start`-only crashed node — no completion `event` to
+project). A read-only GET of trace content, same exposure class as `/api/graph` (the CORS tripwire below
+applies). The reader is `run_node.run_node_detail`.
+
 ### Live interaction channel
 
 - `GET /api/events?workflow=<name|path>&visibility=<visible|hidden>` subscribes a

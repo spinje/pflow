@@ -2,6 +2,8 @@
 
 import re
 
+import pytest
+
 from pflow.runtime.engine.batch_item_summary import summarize_batch_item
 
 
@@ -84,3 +86,30 @@ def test_sensitive_short_value_is_redacted_but_hash_is_stable() -> None:
     assert "api_key=<redacted" in first["summary"]
     assert "sk-live-123" not in first["summary"]
     assert first["sha256"] == second["sha256"]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("pwd", "hunter2"),
+        ("private_key", "-----BEGIN-key"),
+        ("ssh_key", "ssh-rsa AAAA"),
+        ("credentials", "user:pass"),
+        ("access_token", "tok-abc"),
+    ],
+)
+def test_shared_rule_covers_names_the_old_fragment_list_missed(key: str, value: str) -> None:
+    """The batch summary now defers to ``core.security_utils.is_sensitive_parameter`` (the single redaction
+    rule), so a short-valued field named ``pwd`` / ``private_key`` / ``ssh_key`` / ``credentials`` —
+    previously rendered VERBATIM because the local fragment list omitted them — is redacted."""
+    summary = summarize_batch_item({"label": "row-1", key: value})["summary"]
+    assert f"{key}=<redacted" in summary
+    assert value not in summary
+
+
+def test_shared_rule_does_not_over_redact_innocent_lookalike_keys() -> None:
+    """The word-aware rule no longer redacts keys that merely CONTAIN a sensitive substring (``author`` →
+    ``auth``, ``tokens`` → ``token``) — the over-match the old raw-substring fragment list had."""
+    summary = summarize_batch_item({"author": "ada", "tokens": "42"})["summary"]
+    assert "author='ada'" in summary
+    assert "<redacted" not in summary

@@ -17,7 +17,7 @@ import type { RFGraph } from "../types";
 // error contract (not a fabricated shape) is what the banner test exercises.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn() };
+  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn(), fetchRunNode: vi.fn() };
 });
 const live = vi.hoisted(() => ({
   handlers: null as import("../api/events").PointHandlers | null,
@@ -64,7 +64,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
-import { ApiError, fetchGraph, fetchRuns, fetchSource } from "../api/client";
+import { ApiError, fetchGraph, fetchRunNode, fetchRuns, fetchSource } from "../api/client";
 import type { RunHandlers } from "../api/events";
 import { layoutGraph } from "../graph/layout";
 import { highlight } from "../utils/highlight";
@@ -156,6 +156,7 @@ beforeEach(() => {
   });
   vi.mocked(fetchGraph).mockReset();
   vi.mocked(fetchRuns).mockReset();
+  vi.mocked(fetchRunNode).mockReset();
   vi.mocked(fetchSource).mockReset();
   vi.mocked(fetchSource).mockResolvedValue({
     root: "/wf.pflow.md",
@@ -289,6 +290,43 @@ describe("GraphView mount", () => {
       act(() => run.runComplete({ final_status: "success", nodes_executed: 1 }));
       await waitFor(() => expect(screen.getByLabelText("run status: unrecorded")).toBeTruthy());
       expect(screen.getByLabelText("run status: success")).toBeTruthy();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("the 'This run' detail section opens ONLY for a node with a recorded COMPLETION (Task 173)", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    vi.mocked(fetchRunNode).mockResolvedValue({
+      node_type: "shell",
+      status: "success",
+      duration_ms: 5,
+      cost_usd: null,
+      tokens: null,
+      error: null,
+      input: { command: "echo hi" },
+      output: { stdout: "hi" },
+    });
+    window.history.replaceState({}, "", "/");
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+      const run = live.handlers as unknown as RunHandlers;
+      const selectGreet = () =>
+        fireEvent.click(screen.getAllByText("say hi").find((el) => el.className.includes("node-name"))!);
+
+      // RUNNING → selecting the node opens its panel (Params), but NO run-detail section (the badge covers it).
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "running" }]));
+      selectGreet();
+      await waitFor(() => expect(screen.getByText("Params")).toBeTruthy());
+      expect(screen.queryByText("Output")).toBeNull(); // the section's Output heading is unique to it
+
+      // Now it COMPLETES → the gate opens live, the section mounts + fetches → its "status" header + Output appear.
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
+      await waitFor(() => expect(screen.getByText("status")).toBeTruthy());
+      expect(await screen.findByText("Output")).toBeTruthy();
     } finally {
       window.history.replaceState({}, "", "/");
     }

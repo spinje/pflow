@@ -8,7 +8,7 @@ from typing import Any
 import click
 
 from pflow.cli.param_parsing import format_param_value
-from pflow.core.security_utils import SENSITIVE_KEYS
+from pflow.core.security_utils import is_sensitive_parameter
 
 
 def filter_user_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -53,8 +53,9 @@ def format_rerun_command(workflow_name: str, params: dict[str, Any] | None) -> s
             if key.startswith("__"):
                 continue
 
-            # Check if this is a sensitive parameter
-            if key.lower() in SENSITIVE_KEYS:
+            # Check if this is a sensitive parameter (the shared word-aware rule — also catches
+            # delimited variants like ``my_api_key`` that the old exact-match missed)
+            if is_sensitive_parameter(key):
                 # Mask the value
                 param_str = f"{key}=<REDACTED>"
             else:

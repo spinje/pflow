@@ -85,6 +85,23 @@ export interface RunInfo {
   git_root: string | null;
 }
 
+// The detail panel's "This run" section reads this from GET /api/run-node (Task 173 D6) — ONE node's
+// runtime record off its trace, the interactive single-node counterpart of `pflow report`. WIRE field
+// names (snake_case), matching RunEvent above — NOT NodeRunState's camelCase (a derived in-app type).
+// `node_type` is the tagged kind (NEVER the raw Python class); `input`/`output` are the realized
+// (post-`${...}`) payloads with secrets redacted; `cost_usd` is the node's OWN paid cost (the shared
+// event_cost — a cached node → 0). `tokens` / `cost_usd` / `error` are null when not applicable.
+export interface RunNodeDetail {
+  node_type: string;
+  status: string;
+  duration_ms: number;
+  cost_usd: number | null;
+  tokens: { input: number; output: number; cache_read: number } | null;
+  error: string | null;
+  input: Record<string, unknown>;
+  output: Record<string, unknown> | string | null;
+}
+
 export interface RFParam {
   name: string;
   // JSON-able authored value: string (incl. full prompt/code), number, bool,

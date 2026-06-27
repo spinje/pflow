@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, fetchGraph, fetchSource, fetchVersion } from "./client";
+import { ApiError, fetchGraph, fetchRunNode, fetchSource, fetchVersion } from "./client";
+import type { RunNodeDetail } from "../types";
 
 function mockFetch(status: number, body: unknown): void {
   globalThis.fetch = vi.fn(async () => ({
@@ -11,6 +12,59 @@ function mockFetch(status: number, body: unknown): void {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+const RUN_DETAIL: RunNodeDetail = {
+  node_type: "shell",
+  status: "success",
+  duration_ms: 5,
+  cost_usd: null,
+  tokens: null,
+  error: null,
+  input: {},
+  output: null,
+};
+
+describe("fetchRunNode", () => {
+  function captureFetch(body: unknown, status = 200): string[] {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string) => {
+      urls.push(String(url));
+      return { ok: status < 400, status, json: async () => body };
+    }) as unknown as typeof fetch;
+    return urls;
+  }
+
+  it("encodes the structural ref as JSON in the query and adds &run= when pinned", async () => {
+    const urls = captureFetch(RUN_DETAIL);
+    const ref = { node_id: "child", ancestor_path: [{ node_id: "host", batch_index: null }], port: null };
+    await fetchRunNode("/wf.pflow.md", "run-1", ref);
+    const url = new URL(urls[0]!, "http://x");
+    expect(url.pathname).toBe("/api/run-node");
+    expect(url.searchParams.get("workflow")).toBe("/wf.pflow.md");
+    expect(JSON.parse(url.searchParams.get("ref")!)).toEqual(ref); // the ONE wire encoding — not a flat id
+    expect(url.searchParams.get("run")).toBe("run-1");
+  });
+
+  it("omits &run= when unpinned (runId null)", async () => {
+    const urls = captureFetch(RUN_DETAIL);
+    await fetchRunNode("/wf.pflow.md", null, { node_id: "a", ancestor_path: [], port: null });
+    expect(new URL(urls[0]!, "http://x").searchParams.has("run")).toBe(false);
+  });
+
+  it("throws ApiError on a malformed 200 shape rather than handing the panel a lie", async () => {
+    mockFetch(200, { node_type: "shell" }); // missing status/input/output
+    await expect(fetchRunNode("/wf", null, { node_id: "a", ancestor_path: [], port: null })).rejects.toBeInstanceOf(
+      ApiError,
+    );
+  });
+
+  it("surfaces a 404 (no recorded detail) as ApiError for the section's own catch", async () => {
+    mockFetch(404, { error: "No recorded detail for this node in the selected run." });
+    await expect(fetchRunNode("/wf", null, { node_id: "a", ancestor_path: [], port: null })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+});
 
 describe("fetchGraph", () => {
   it("returns the contract on a well-formed 200", async () => {

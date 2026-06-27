@@ -8,22 +8,14 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from pflow.core.security_utils import is_sensitive_parameter
+
 MAX_SUMMARY_CHARS = 240
 MAX_SHORT_STRING_CHARS = 80
 MAX_LABEL_CHARS = 80
 MAX_DICT_FIELDS = 4
 HASH_HEX_CHARS = 12
 LABEL_KEYS = ("label", "name", "id", "title", "path", "file", "filename", "workflow")
-SENSITIVE_KEY_FRAGMENTS = (
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "authorization",
-    "auth",
-)
 
 _HEX_RE = re.compile(r"^[0-9a-f]{12}$")
 
@@ -162,7 +154,7 @@ def _extract_label(value: Mapping[Any, Any]) -> str | None:
 
 def _summarize_field(key: Any, value: Any) -> tuple[str, bool]:
     key_text = _bound_key(key)
-    if _is_sensitive_key(key_text):
+    if is_sensitive_parameter(key_text):
         return f"{key_text}=<redacted sha256={_hash_value(value)}>", True
 
     if isinstance(value, str):
@@ -205,11 +197,6 @@ def _bound_text(text: str, max_chars: int) -> str:
     if max_chars <= 3:
         return text[:max_chars]
     return text[: max_chars - 3] + "..."
-
-
-def _is_sensitive_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_")
-    return any(fragment in normalized for fragment in SENSITIVE_KEY_FRAGMENTS)
 
 
 def _is_scalar(value: Any) -> bool:

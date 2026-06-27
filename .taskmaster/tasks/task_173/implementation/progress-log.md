@@ -1246,3 +1246,314 @@ The user then asked for a CUSTOM tooltip "in the same style as the floating bar"
   the dark rounded chip beside the badge, matching the "Show source" floating-bar look. +1 vitest
   (`StatusBadge.test.tsx`: the chip carries the label, no native `title`, `aria-hidden`). Gates: vitest
   **603**, `tsc` clean (Python untouched → 8168 / `make check` hold).
+
+## 2026-06-26 — Detail panel Phase 1: promote the shared numeric helpers (built, gated; live-wire browser re-check pending)
+
+New plan: `~/.claude/plans/yes-lets-write-the-fancy-simon.md` — the **detail panel** ("This run" node
+inspector). Phase 1 only this session (user: build Phase 1, then stop for review). Goal: kill the
+report-internals import — make the UI a PEER of `trace_tree`/`llm_usage`, never a consumer of
+`trace_report`'s privates — and single-source the cost/token numbers so the report, the live chip, and the
+(Phase-2) panel can't drift. Baseline re-captured at HEAD `494b0385` (clean tree): `make test` **8168**,
+`make check` clean (mypy 238), vitest 603, `tsc` clean.
+
+**Shipped (4 prod edits + 3 test modules):**
+- **`trace_tree.py`** — added module-level `event_cost(event, *, include_cached=False)` + `batch_item_cost(item)`:
+  thin wrappers over the existing public `cost_for_event`/`cost_for_batch_item` that encode the
+  `source in {trace_partial, unavailable} → None` policy in ONE place (was duplicated in report's two
+  privates). `batch_item_cost` keeps the empty `events=()` form (the method walks the passed `item`, not
+  `self.events`). Both added to `__all__`; the canonical cost-policy docstring now lives here.
+- **`llm_usage.py`** — added public `input_token_total(llm_call) -> (int, int)` (the read-side counterpart of
+  `normalize_litellm_usage_tokens`); body = the old `_input_token_total`. Canonical docstring lives here.
+- **`trace_report.py`** — the three privates (`_compute_event_cost`, `_compute_batch_item_cost`,
+  `_input_token_total`) are now one-line delegations to the promoted functions; **all three names kept**
+  (`test_trace_report.py` imports them at lines 22/23/30 — dropping any ImportErrors the whole module). Both
+  lazy `from … import TraceTree` inside-function imports deleted → the promoted functions imported at top.
+  `metrics.py:189` correctly left alone (run-total sum, different semantics).
+- **`run_tailer._run_event`** — hover-chip cost converged onto `event_cost(line)` (was the raw
+  `(line.get("llm_call") or {}).get("cost_usd")`). Behavioral change: a CACHED node now reports `0.0` (it
+  paid nothing this run) instead of the retained SOURCE-call cost — so the chip agrees with `pflow report` +
+  the (Phase-2) panel. node.start/non-LLM → None (unchanged); non-cached priced → its own cost (unchanged).
+  `trace_tree` imported at top (stdlib-only → no cycle, cheap; the file's existing lazy imports are for the
+  HEAVY resolver, not this).
+
+**Deviations from plan:** none structural. Two micro-decisions, both noted:
+1. The delegation docstrings are trimmed to "delegates to X" pointers so the policy has ONE home (the
+   promoted function); the canonical multi-line explanation moved to `trace_tree.event_cost` /
+   `llm_usage.input_token_total`. Avoids the truth living in two places — a duplication smell the plan
+   implied ("one place") but didn't spell out for the docstrings.
+2. `batch_item_cost` takes no `include_cached` (the plan's snippet only put it on `event_cost`; no batch
+   caller needs the diagnostic mode) — matches the plan's explicit signature line.
+
+**Tests (+13):** `test_trace_tree.py` +6 (event_cost: priced leaf, no-llm→None, unpriced→None, cached→0.0;
+batch_item_cost: sums children, none-when-empty); NEW `test_llm_usage.py` +4 (inclusive input,
+prompt_tokens fallback, explicit-None→0 coercion, empty); `test_run_tailer.py` +3 (the convergence pin —
+cached `_run_event` cost == `event_cost` == 0.0 NOT 0.42; priced == its own cost; node.start == None). The
+existing report delegation tests (`_input_token_total` @1077, `_compute_event_cost`/`_compute_batch_item_cost`
+@1610–1720) still pass → parity preserved (they now exercise the promoted functions transitively).
+
+**Gates (all green):** `make test` **8181** (8168 + 13, 0 regressions); `make check` clean (mypy 238;
+ruff-format collapsed one wrapped call-line once). Frontend untouched → vitest 603 / `tsc` hold.
+
+**Honest boundary:** the live-wire convergence (`_run_event` cost) is unit-proven but NOT yet
+browser-re-checked (the plan flags it because it touches the shipped SSE wire). The VISIBLE chip is
+unchanged — a cached node's chip label is "Cached — reused a prior result" (never showed a cost), and
+non-cached costs are byte-identical — so the risk is minimal, but rebuild + restart + drive-a-cached-run is
+the one outstanding Phase-1 verification. Stopping for review per the user's instruction; will drive the
+browser check on the go-ahead (or fold it into the Phase-3 end-to-end). Phases 2 (`run_node.py` +
+`/api/run-node`) and 3 (the `ThisRunSection` frontend) not started.
+
+## 2026-06-26 — Detail panel Phase 2: `run_node.py` + the `/api/run-node` handler (built, gated, real-HTTP-verified)
+
+The backend for the "This run" section: one read-only GET that resolves ONE node's runtime record off its
+trace — the interactive single-node counterpart of `pflow report`. Baseline (post-Phase-1, clean tree):
+`make test` 8181, `make check` clean (mypy 238).
+
+**Pre-impl verification (the load-bearing assumption — checked, NOT trusted):** the panel's value-prop is
+"realized input, post-`${...}` resolution, not the template". The recording layer's docstring
+(`workflow_trace.py:649`) says `node_params` is recorded "BEFORE template resolution" — which would BREAK
+the value-prop. Traced it: `engine.py:1116` sets `node.params = resolved_params` BEFORE `record_trace`
+(`:1204`), so the recorded `node_params` is POST-resolution; the docstring is stale. Confirmed EMPIRICALLY
+with a real CLI run of a templated shell node → `node_params == {"command": "echo \"hello World\""}` (the
+`${name}` resolved). The plan's deep-review claim holds. Also confirmed the producer writes ancestor_path
+elements as `{node_id, batch_index}` (`workflow_trace.py:777`) — exactly the frontend `AncestorStepRef`, so
+the structural ref match replicates `sameRef` (the already-shipped+browser-verified overlay join).
+
+**Shipped:**
+- **`src/pflow/ui/run_node.py` (NEW)** — `run_node_detail(workflow_key, run_id, ref) -> dict | None`.
+  (1) RESOLVE: pinned → match `meta.execution_id` over `scan_traces` (same as `_resolve_pinned`); unpinned →
+  `discover_live_trace` — REUSING run_tailer's discovery, never `RunTailer` internals. (2) READ: RAW
+  forward-scan (NEVER `load_trace_file` — it strips the `ancestor_path`/`port` join keys), accumulate the
+  blob map, keep the LAST matching `kind=="event"` (NOT `node.start` — terminal-after-start, last-wins =
+  loop's latest / dead-end re-flush), tolerate a truncated FINAL line / raise on a malformed earlier one,
+  `substitute_refs` at EOF; a surviving `$pflow_blob` sentinel (missing/corrupt blob) → `None`, never
+  rendered. Ref match = structural `sameRef` replica (node_id + port + ancestor_path element-wise). (3)
+  PROJECT to the `RunNodeDetail` allowlist: `node_type_tag` (NEVER the raw class), `event_cost` (the shared
+  Phase-1 policy — cached → 0.0, converged with the chip), `input_token_total` + separate output token,
+  `input = node_params(resolved) + llm_prompt/llm_system`, `output = llm_response else node_output`.
+- **Secret masking (review-C1 Critical):** a genuinely RECURSIVE key-redactor on BOTH `input` AND `output`,
+  descending every nested dict/list (catches `headers.Authorization` + a list-of-dicts `api_key` + an
+  `access_token` in node_output), reusing `is_sensitive_parameter`, DROPPING `sanitize_parameters`'s 100-char
+  truncation (the panel shows the full realized command/prompt). Residual = a secret inside a STRING leaf
+  (Option 1, same as report + on-disk trace).
+- **`server.py`** — sync `run_node(request)` handler (threadpool, like `runs()` — touches no hub state) + the
+  `Route("/api/run-node", run_node)` before the static catch-all. 400 missing/malformed `ref`, 404
+  unresolvable workflow / no matching run+event, 200 `_json(detail)`. Docstring notes the read-exposure/CORS
+  tripwire (read-only GET, same class as `/api/graph`). + `ui/CLAUDE.md` HTTP-contract entry.
+
+**Deviations from plan (2, both reasoned):**
+1. **`output` mirrors the REPORT's Response-vs-output rule** (`llm_response` headline ELSE `node_output`,
+   a single value) rather than the plan's literal "node_output and/or llm_response" combined dict. The plan's
+   type is `object | string | null` (a single value) and the report is the established, sensible precedent
+   (an LLM node's text is the headline; its `node_output.response` is stripped redundant anyway). Combining
+   both would double-show. Simpler + consistent with the shipped renderer; one-line change if product wants
+   both.
+2. **Added a brief `/api/run-node` entry to `ui/CLAUDE.md`** (not in the plan's Phase-2 file map). It's the
+   HTTP-contract index and the Phase-1+2 impact reviewer flagged missing CLAUDE.md entries — closing the doc
+   debt at the source rather than accruing it.
+
+**Tests (+19, `tests/test_cli/test_run_node.py`):** 13 `run_node_detail` (pinned resolve + project; unpinned
+discover; NESTED-ancestor_path child vs top-level same-name; blob resolve; missing-blob→None; last-wins
+re-flush; missing ref/run; start-only stopped→None; the **C1 masking** — nested + list-of-dicts redacted in
+BOTH input AND output, long command FULL/untruncated; node_type tagged; LLM tokens/cost/response; cached→0.0)
++ 6 handler (400 missing-workflow / missing-ref / malformed-ref, 404 unknown-workflow / no-event, 200
+happy-path). Filenames built via the REAL `format_trace_filename` so the hash-scoped glob actually matches.
+
+**Verification (real, not just green tests):** (a) EMPIRICAL in-process smoke of `run_node_detail` against a
+REAL on-disk trace (pinned + unpinned + missing-ref + bogus-run); (b) REAL HTTP `curl` against a running
+`pflow ui` on :8799 → `/api/run-node` 200 with the full tagged/resolved `RunNodeDetail`, 400 (missing ref),
+404 (unknown workflow), 404 (absent node) — the full uvicorn→Starlette→handler→reader→trace stack. (The
+`TestClient` handler tests already exercise the real ASGI app + routes; the curl closes the network layer.)
+
+**Gates (all green):** `make test` **8200** (8181 + 19, 0 regressions); `make check` clean (mypy 239 —
+`run_node.py` added); frontend untouched → vitest 603 / `tsc` hold.
+
+**Honest boundary:** Phase 2 is BACKEND-ONLY — there's no UI consuming `/api/run-node` yet (the
+`ThisRunSection` is Phase 3), so there's no panel to screenshot. The endpoint is proven by the in-process
+smoke + the real-HTTP curl + 19 tests. Phase 3 (the `ThisRunSection` component, `fetchRunNode`,
+`RunNodeDetail` wire type, ReadPanel/GraphView wiring + the terminal-only gate, and the click-a-node DOM
+browser check) NOT started.
+
+### Self-review pass (adversarial, "any loose ends?") → 1 real bug found + fixed
+
+Re-scrutinized Phases 1+2, distrusting the green tests (most Phase-2 cases rested on SYNTHETIC fixtures —
+pitfall #19). Drove the two riskiest cases against REAL traces and read the frontend to confirm a claim:
+- **🔴 Real bug — the panel LEAKED `_`-prefixed reserved internal keys.** `run_node_detail`'s `output`/`input`
+  returned `node_output`/`node_params` verbatim, so a sub-workflow host's `_pflow_child_workflow_paths` (and
+  a code node's `_source_line`/`_source_lines`) reached the agent — violating the display-site convention
+  every OTHER agent-facing surface follows (`trace_report` / `node_output_formatter` filter `_`-prefixed
+  keys). Confirmed on a REAL sub-workflow trace: `call-child` host output = `['_pflow_child_workflow_paths',
+  'child-greet']`. **Fix:** `_public_top_level()` drops top-level `_`-prefixed keys from input + output
+  (top-level only, matching the report — a nested user `_id` survives). Re-verified on the real trace: host
+  output now `['child-greet']` (the real exposed child output kept, the internal key gone). +1 test.
+- **✅ C1 (sub-workflow child) — cleared on REAL data, not just the fixture.** A real `child-greet`
+  (`ancestor_path=[{call-child, null}]`) resolves via `run_node_detail`; the real trace's ancestor_path shape
+  matches the structural match exactly.
+- **✅ C2 (interned blob) — cleared on REAL data.** A real >1 KB shell stdout (interned as a `$pflow_blob`
+  line) resolves back to the full 2000-char string.
+- **✅ Phase-1 cached-chip "invisible change" claim — CONFIRMED by reading the frontend** (`runStatusLabel`):
+  cost shows ONLY for `success`/`failed` with `costUsd > 0`; `cached` → "Cached — reused a prior result" (no
+  cost). So the cached→0.0 wire change is genuinely invisible. Not a loose end.
+- **`_output` (the plan deviation) re-examined → report-PARITY, not a regression.** `_strip_redundant_llm_trace_fields`
+  strips only `prompt`/`system` from `node_output` (NOT `response`), and `llm_response` is set only when
+  `node_output["response"]` is a STRING. My `llm_response`-else-`node_output` rule is byte-for-byte the
+  report's `_format_node_output` precedence — so a structured node (dict response → no `llm_response`) shows
+  its `node_output`, exactly like the report. Parity, by construction.
+
+Gates after the fix: `make test` **8201** (+1), `make check` clean (mypy 239).
+
+### Follow-up round (user reviewed the loose-end list) → 3 addressed
+
+- **Secret-redaction false positive — FIXED + the THREE divergent impls consolidated into one.** The raw
+  substring check (`any(sensitive in key_lower)`) redacted innocent names that merely CONTAINED a sensitive
+  word (`author`→`auth`, `secretary`→`secret`, `tokens`→`token`). There were also THREE divergent
+  sensitivity checks: `is_sensitive_parameter` (substring), `sanitize_parameters`'s OWN inline substring,
+  and `rerun_display`'s exact-match. Replaced with ONE word-aware rule in `is_sensitive_parameter`
+  (`security_utils.py`): normalize a key to a sentinel-bounded `_word_word_` signature (split on
+  snake/kebab/dotted/camelCase) and substring-match the sensitive names' signatures — so `api_key` /
+  `X-API-Key` / `apiKey` / `my_api_key` match as WHOLE words while `author`/`secretary`/`tokens` don't.
+  `sanitize_parameters` (MCP/error/runner-metadata redaction) + `rerun_display` (was exact-match — now also
+  catches delimited variants it missed) + `mask_sensitive_value` (probe cache) + the panel all defer to the
+  one rule. Accepted boundary: a delimiter-less `myapikey` is one word (won't match embedded `apikey`) —
+  realistic secret params are delimited. Verified every redaction-asserting test in the suite pins only REAL
+  secrets (none relied on a substring false positive). NEW `tests/test_core/test_security_utils.py` (+8) pins
+  the word-boundary behavior incl. the `author` fix; `core/CLAUDE.md` updated.
+- **Empty `&run=` → 404 → fixed.** `?run=` (empty string) hit the pinned path (match execution_id `""` → no
+  match → 404) instead of "unpinned / follow newest". Coalesced `request.query_params.get("run") or None` in
+  the handler. +1 test. (The real frontend omits the param when unpinned, but the defensive case now reads
+  right.)
+- **Whole-file read in `_read_matching_event` — kept, made the intent explicit.** Reasoned it through (the
+  "top 10% simplest" lens): it's a ONE-SHOT read of one node, finding the LAST match needs a full scan
+  anyway, traces are modest, and it matches `load_trace_file`/`generate_report` (every other trace reader
+  reads whole-file). A streaming/two-pass reader would ADD complexity for no real benefit at this scale —
+  over-engineering. Left as-is + a docstring note so a future agent doesn't "optimize" it into the tailer's
+  incremental machinery.
+- **Phase-1 live-wire browser re-check — folded into the Phase-3 end-to-end** (per the user) — a real click
+  on a cached node will exercise the converged chip + the panel together.
+
+Gates after this round: `make test` **8210** (+9, 0 regressions across ALL the redaction consumers —
+diagnostic_render / error_formatter / runner-metadata / rerun_display / settings / execution_cache);
+`make check` clean (mypy 239); `security_utils` doctests pass. Remaining noted-not-blocking: an UNPINNED
+panel-vs-overlay run-switch has a sub-second inconsistency window (the pinned/common replay path is
+race-free); a secret embedded in a free-text string VALUE is uncaught by key-name redaction (Option 1, same
+as `pflow report` + the on-disk trace).
+
+## 2026-06-26 — Detail panel Phase 3: the "This run" frontend section (built, gated, BROWSER-verified)
+
+The frontend that consumes `/api/run-node` — the detail panel's "This run" section. Frontend-only (no
+Python touched → 8210 / `make check` hold). Baseline: vitest 603, `tsc` clean.
+
+**Shipped (4 prod files + 2 NEW):**
+- **`web/src/types.ts`** — `RunNodeDetail` (snake_case WIRE shape: `node_type`/`status`/`duration_ms`/
+  `cost_usd`/`tokens{input,output,cache_read}`/`error`/`input`/`output`), beside `RunInfo`/`RunEvent` — NOT
+  `NodeRunState`'s camelCase (a derived in-app type).
+- **`web/src/api/client.ts`** — `fetchRunNode(workflow, runId, ref)`: encodes the structural `RFRef` as JSON
+  in the query (the ONE wire encoding — `sameRef` identity, never a positional flat id), `&run=` only when
+  pinned; `isRunNodeDetail` shape-validates the 200 (like `isRFGraph`) so a server bug surfaces in the
+  section's catch, not deep in render.
+- **`web/src/components/nodes/StatusBadge.tsx`** — EXPORTED `fmtDuration`/`fmtCost` (were module-private) so
+  the panel single-sources the SAME formatting as the hover chip (there is no separate `formatDuration`).
+- **`web/src/components/ThisRunSection.tsx` (NEW)** — own fetch + `useEffect` keyed `[workflow, runId,
+  refKey(nodeRef)]` (the stable structural key, not the nodeRef object) + OWN catch (DR-6 — a failed fetch
+  shows a small "Couldn't load run detail", never throws/blanks the panel) + a loading state. Renders the
+  `<details className="panel-section" open><summary>This run</summary>` idiom: a `.facts` table (Type/Status/
+  Time/Cost/Tokens — cost only when >0, tokens only for an LLM) + Error/Input/Output sections. Generic
+  rendering (no per-node-type curation): each value via the panel's existing `CodeBlock` (`text` for strings,
+  `json` for objects — both scroll-capped via `.read-param-value`, no truncation). REUSES `.panel-section`/
+  `.facts`/`.read-panel-params`/`.read-param` — adds NO CSS (the plan's "≈ no new CSS").
+- **`web/src/components/ReadPanel.tsx`** — optional `workflow`/`runId`/`showRunDetail` props; renders
+  `<ThisRunSection>` after `ConnectionSections`. Optional → ReadPanel stays standalone-renderable (no run →
+  no section).
+- **`web/src/views/GraphView.tsx`** — the terminal-only gate: `showRunDetail =
+  TERMINAL_RUN_STATUSES.has(runStatus.get(refKey(selectedNode.ref))?.status ?? "")` where TERMINAL =
+  {success, cached, failed}; `running`/`stopped`/`unrecorded`/pending excluded. A status-driven CONDITIONAL
+  render (not CSS-hide) → a live node flipping running→completion remounts the section; threads
+  `workflow`/`runId`.
+
+**Tests (+10, vitest 613):** `client.test.ts` +4 (fetchRunNode: ref-JSON query + `&run=` when pinned /
+omitted when null; ApiError on malformed-200 / 404). NEW `ThisRunSection.test.tsx` +5 (facts+input+output;
+cost+tokens+string-output; cost OMITTED when cached→0; error block + null-output omitted; DR-6 degrade —
+"Couldn't load" without blanking). `GraphView.test.tsx` +1 (the gate: a RUNNING node → panel open but NO
+"This run"; flip to success → the section mounts + fetches its Output live).
+
+**Browser-verified (the headline — real click → real /api/run-node → real DOM, via `panel-probe.pflow.md`
+reading the section off the settled canvas):** a 3-node run (`greet` shell-templated success, `config` code
+with a sensitive input, `boom` shell exit-3 failure), PINNED replay:
+- **greet** → facts type=`shell` (tagged, not the raw class) / status=success / time=4ms; Input shows the
+  RESOLVED `echo "hello World"` (not `${name}`); Output shows stdout `hello World`.
+- **config** → Input renders `inputs { "api_key": "<REDACTED>", "note": "visible-value" }` — REDACTION in the
+  real DOM (nested key redacted, normal value full).
+- **boom** → an **Error** block "Command failed with exit code 3".
+- **UNPINNED** (`discover_live_trace`, no `&run=`) → identical for all three (the live-overlay's own path).
+- **CACHED** (2nd run, `config` cache:true) → status=`cached`, **NO cost fact** (event_cost cached → 0 →
+  omitted) — the Phase-1 chip↔panel convergence confirmed on the panel side (the chip side is unit-tested +
+  code-read: `runStatusLabel` shows no cost for cached).
+
+**Honest finding (NOT a bug — noted; now tracked in GH #540):** a cached node's trace event records only the
+static `code` param, NOT the resolved `inputs` (the producer's cache-hit branch passes `node.params` — the
+pre-resolution original — to `handle_cached_execution`, and never captures `template_resolutions`; the
+`node.params = resolved_params` assignment is miss-path only, `engine.py:~1116`). So the cached config panel
+shows `code` only and "no redaction needed" (no `api_key` recorded). The panel faithfully renders the trace
+and is CONSISTENT with `pflow report` (same node_params). Pre-existing PRODUCER behavior (Task 172), not
+introduced here; the fresh node's redaction was browser-confirmed. Filed **GH #540** (record resolved
+inputs + template_resolutions on cache-hit events) — the resolved inputs ARE computed for the cache key, so
+the data is available to thread through.
+
+**Not browser-driven (the standing task boundary):** an LLM node's cost/tokens facts — no API key (covered
+by the `ThisRunSection` vitest with a fixture). Gates: vitest **613** (603 + 10); `tsc` clean; Python
+untouched (8210 / `make check` hold). **Phase 3 COMPLETE — the detail panel feature is end-to-end.**
+
+### Phase 3 follow-up — "This run" redesign (user-requested, browser-verified)
+
+The user found the original `<details>`/`.facts` section near-invisible ("should be the MOST distinct section…
+not even a border"). Redesigned its HEADER to mirror the panel's top (`PanelHeader`) and made it a distinct
+card (their spec, confirmed point-by-point):
+- **`StatusBadge`** gained an `inline` variant (static, no corner offset / halo / hover chip) so the run-status
+  badge renders INSIDE a 40×40 tile — replacing the node icon.
+- **`ThisRunSection`** header: the badge-tile + `status` (grey eyebrow) over the status VALUE (white, 17px, the
+  header "name") + the duration `· cost` where the description sat. `type` DROPPED (redundant with the panel's
+  top header). Tokens (LLM only) on a small muted line. The whole section is now a bordered, elevated CARD
+  (`.this-run`: `1px var(--border)` + `var(--bg-field)` #1c1c1c + radius + padding) — no longer a collapsible
+  `<details>`; reuses the panel's existing classes, adds ~30 lines of scoped CSS.
+- Status word stays white (the badge + glyph carry the color); the gated statuses map to the green ✓ / red `!`
+  / grey ✓ badges.
+
+**Browser-verified (rebuilt bundle, `panel-shot.pflow.md`):** `greet` → green ✓ tile, `status` / **success** /
+4ms; `boom` → red `!` tile, **failed** / 3ms + Error block; `config` (cached) → grey ✓ tile, **cached** / 0ms.
+The card now clearly stands out as the most distinct section, its header parallel to the node header at the
+top of the panel. Tests updated (the facts table → the status header): `ThisRunSection.test.tsx` asserts the
+`status` eyebrow + value + folded `duration · cost` subtitle + tokens line; the GraphView gate test keys on the
+section's `Output`/`status` instead of the removed "This run" summary. Gates: vitest **613** (unchanged count),
+`tsc` clean; Python untouched.
+
+**Tile refinements (user-driven):** the run-status badge sits in a 40×40 tile with a **2px status-COLORED
+border** (matching the badge it frames + the node tile at the panel top). Single-sourced a **status palette**
+(`--status-running/success/cached/stopped` at `:root`; `failed` = `--danger`) used by BOTH the corner badge
+background AND the tile border so they can't drift. Browser-verified green/red/grey tiles.
+
+**A11y fix (self-review):** dropping the "This run" `<summary>` left the section unnamed → added
+`aria-label="This run"` on the `<section>`; the inline tile badge's `aria-label` was redundant with the
+visible "status / value" text → the inline variant is now `aria-hidden` (the corner badge keeps its label).
+
+### ⚠️ `make check` — env ruff-version DRIFT (read before trusting a red gate)
+
+A fresh-context "are you happy" pass found `make check` **red** — and surfaced that the environment's **ruff
+has drifted to a stricter/newer version** since the earlier (genuinely-green-then) runs. Two classes:
+
+- **MINE — FIXED:** (1) **C901** `run_node._read_matching_event` was 11 > 10 → extracted `_iter_trace_lines`
+  (the JSONL parse + truncation-tolerance), dropping it under 10 (also cleaner: parse vs dispatch). (2)
+  **S105** an `access_token` redaction assertion in `test_run_node.py` read as a hardcoded secret → `# noqa:
+  S105` (the codebase's existing pattern, e.g. `test_error_formatter.py`). My changed files now pass
+  `ruff check` cleanly; `mypy` clean (239); `make test` **8210**.
+- **PRE-EXISTING (NOT this task) — left as-is:** the newer ruff also flags files UNMODIFIED by me, present at
+  HEAD `494b0385`: `tests/test_core/test_trace_io.py:435` (RUF043 — `match="after run.complete"` has an
+  unescaped `.`) and `tests/test_nodes/test_claude/test_schema_coercion.py` (RUF059 ×8 — unused unpacked
+  vars). The baseline itself fails `make check` under this ruff. The ruff `--fix` also auto-touched an
+  unrelated `task_18` example .py (reverted). **So a red `make check` here is the ruff drift on pre-existing
+  files, NOT a regression in Task 173** — fix at the repo level (pin ruff, or `match=r"after run\.complete"` +
+  `_`-prefix the unused vars). Trivial but out of this task's scope.
+
+Honest residual loose ends (none blocking): running/stopped BADGE colors not re-driven post palette-refactor
+(identical-by-construction — `var(--status-*)`; success/cached/failed verified); the cost/tokens subtitle
+unit-tested but not browser-driven (no API key); cached-node reduced-input → GH #540. The full Task-173
+detail-panel diff is UNCOMMITTED; most of it is STAGED (not by me) but the latest a11y + lint fixes are
+UNSTAGED → `git add -A` before any commit.

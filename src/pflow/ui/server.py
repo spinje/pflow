@@ -65,6 +65,7 @@ from pflow.execution.graph_service import (
 )
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
+from pflow.ui.run_node import run_node_detail
 from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, scan_traces
 from pflow.ui.targets import resolve_target
 
@@ -729,6 +730,41 @@ def runs(request: Request) -> Response:
     return _json([_run_entry(candidate) for candidate in scan_traces(workflow_key)])
 
 
+def run_node(request: Request) -> Response:
+    """One node's runtime record for the detail panel (Task 173 — the "This run" section).
+
+    ``GET /api/run-node?workflow=X&ref=<json>[&run=<run_id>]`` → the ``RunNodeDetail`` for the node the
+    ``ref`` (a structural ``RFRef``) identifies, read off the pinned run (``&run=``) or — unpinned — the
+    newest live trace. The realized input (post-``${...}`` resolution), resolved output, cost, tokens, and
+    error, with blobs resolved and secrets redacted (``run_node.run_node_detail``).
+
+    A read-only GET of trace content — the SAME exposure class as ``/api/graph`` (the CORS / file-content
+    tripwire in ``create_app`` applies; any future LIVE-RUN or mutating endpoint must revisit it). Sync
+    handler → Starlette runs it in the threadpool, so the blocking trace scan never stalls the loop (it
+    touches no hub state, so the async-handler invariant doesn't apply). ``404`` on an unresolvable
+    ``workflow`` or no matching run/event; ``400`` on a missing/malformed ``ref``."""
+    workflow = request.query_params.get("workflow")
+    if not workflow:
+        return _json({"error": "A 'workflow' query param is required."}, status_code=400)
+    workflow_key = _workflow_key(workflow)
+    if workflow_key is None:
+        return _workflow_not_found(workflow)
+    ref_raw = request.query_params.get("ref")
+    if not ref_raw:
+        return _json({"error": "A 'ref' query param is required."}, status_code=400)
+    try:
+        ref = json.loads(ref_raw)
+    except ValueError:
+        return _json({"error": "The 'ref' query param must be valid JSON."}, status_code=400)
+    if not isinstance(ref, dict):
+        return _json({"error": "The 'ref' query param must be a JSON object."}, status_code=400)
+    # An empty ``&run=`` means "not pinned" (follow the newest run), not "match the run with id '' " → 404.
+    detail = run_node_detail(workflow_key, request.query_params.get("run") or None, ref)
+    if detail is None:
+        return _json({"error": "No recorded detail for this node in the selected run."}, status_code=404)
+    return _json(detail)
+
+
 class _BundleFiles(StaticFiles):
     """StaticFiles that makes ``index.html`` revalidate on every load.
 
@@ -776,6 +812,7 @@ def create_app() -> Starlette:
         Route("/api/version", version),
         Route("/api/events", events),
         Route("/api/runs", runs),
+        Route("/api/run-node", run_node),
         Route("/api/health", health),
         Route("/api/command", command, methods=["POST"]),
         Route("/api/interaction", interaction, methods=["POST"]),

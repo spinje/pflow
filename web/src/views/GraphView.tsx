@@ -61,6 +61,12 @@ interface GraphViewProps {
 // drives the badge; duration/cost ride its hover detail.
 const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationMs: e.duration_ms, costUsd: e.cost_usd });
 
+// The detail panel's "This run" section opens ONLY for a node with a recorded COMPLETION in the current run.
+// `running` (the badge/chip cover it), `stopped` (only a node.start on disk — nothing to project), and
+// `unrecorded` (absent from a stale-version replay) are excluded; `pending` is the absence of any status. A
+// status-driven CONDITIONAL render (not CSS-hide), so a loop's next iteration remounts → refetches the latest.
+const TERMINAL_RUN_STATUSES = new Set<string>(["success", "cached", "failed"]);
+
 export function GraphView(props: GraphViewProps): JSX.Element {
   return (
     <ReactFlowProvider>
@@ -918,6 +924,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               onNavigate={onNavigate}
               onOpenSource={openSourceAt}
               onClose={() => setSelectedId(null)}
+              workflow={workflow}
+              runId={runId}
+              showRunDetail={TERMINAL_RUN_STATUSES.has(runStatus.get(refKey(selectedNode.ref))?.status ?? "")}
             />
           )}
         </div>

@@ -15,6 +15,7 @@ import { ConnectionSections } from "./Chip";
 import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
 import { PanelHeader } from "./PanelHeader";
+import { ThisRunSection } from "./ThisRunSection";
 import type { BatchSpec, RFEdge, RFGraph, RFNode, SourceRef } from "../types";
 
 export function sourceLabel(source: SourceRef | null): string | null {
@@ -166,6 +167,9 @@ export function ReadPanel({
   onNavigate,
   onOpenSource,
   onClose,
+  workflow,
+  runId,
+  showRunDetail,
 }: {
   node: RFNode;
   // The node's outgoing branch edges (GraphView filters the contract) — the
@@ -186,6 +190,12 @@ export function ReadPanel({
   // Absent → the source line renders as plain text (standalone render).
   onOpenSource?: () => void;
   onClose: () => void;
+  // Task 173 detail panel: when the selected node has a recorded COMPLETION in the current run, GraphView
+  // sets `showRunDetail` and passes the run context — the "This run" section then fetches that node's record
+  // from /api/run-node. Optional → ReadPanel stays standalone-renderable (no run in context → no section).
+  workflow?: string;
+  runId?: string | null;
+  showRunDetail?: boolean;
 }): JSX.Element {
   const src = sourceLabel(node.source);
   // The avatar name navigates to this node on the canvas (re-centers the camera),
@@ -263,6 +273,8 @@ export function ReadPanel({
       {graph && renderedIds && onNavigate && (
         <ConnectionSections node={node} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
       )}
+
+      {showRunDetail && workflow && <ThisRunSection workflow={workflow} runId={runId ?? null} nodeRef={node.ref} />}
     </aside>
   );
 }

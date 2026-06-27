@@ -28,6 +28,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, TypedDict
 
+from pflow.core.trace_tree import event_cost
+
 logger = logging.getLogger(__name__)
 
 _POLL_S = 0.25  # poll cadence; node-paced events make this comfortably fast for a local viewer
@@ -541,6 +543,10 @@ def _run_event(line: dict[str, Any]) -> dict[str, Any]:
     Carries only the structural join key + status (+ cheap cost/duration) — NOT ``node_output`` (which
     may carry large/blob payloads) and NOT the raw ``node_type`` (a Python class name the frontend must
     not surface to agents; the canvas already knows each node's kind from the static graph it joins onto).
+
+    ``cost_usd`` is this run's PAID cost via :func:`event_cost` (the one shared cost policy), NOT the raw
+    ``llm_call.cost_usd``: a cached node paid nothing this run, so it reports ``0`` and the hover chip
+    agrees with ``pflow report`` + the detail panel instead of showing the historical source-call cost.
     """
     return {
         "type": "run-event",
@@ -552,5 +558,5 @@ def _run_event(line: dict[str, Any]) -> dict[str, Any]:
         },
         "status": line.get("status"),
         "duration_ms": line.get("duration_ms"),
-        "cost_usd": (line.get("llm_call") or {}).get("cost_usd"),
+        "cost_usd": event_cost(line),
     }

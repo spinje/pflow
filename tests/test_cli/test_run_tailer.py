@@ -14,12 +14,20 @@ from pathlib import Path
 
 import pytest
 
+from pflow.core.trace_tree import event_cost
 from pflow.core.workflow_id import workflow_content_hash
 from pflow.execution import WorkflowRunner
 from pflow.execution.result import RunnerConfig
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.runtime.workflow_trace import format_trace_filename
-from pflow.ui.run_tailer import RunTailer, discover_live_trace, is_trace_locked, read_run_status, scan_traces
+from pflow.ui.run_tailer import (
+    RunTailer,
+    _run_event,
+    discover_live_trace,
+    is_trace_locked,
+    read_run_status,
+    scan_traces,
+)
 
 # Exact-liveness (flock) tests are Unix-only — `fcntl` doesn't exist on Windows (the producer + probe
 # degrade to a heuristic there; that path isn't what these pin).
@@ -340,6 +348,57 @@ def test_run_complete_flushes_pending_deltas_then_banner():
     # Pending node states flush BEFORE the banner so the canvas is final before "Run success".
     assert [m["type"] for m in messages] == ["run-events", "run-complete"]
     assert t.snapshot()["run"]["final_status"] == "success"
+
+
+def test_run_event_cost_converges_on_event_cost_for_a_cached_node():
+    """The hover chip's cost goes through ``event_cost`` (the one shared cost policy), so it
+    agrees with ``pflow report`` + the detail panel. A CACHED node retains the SOURCE call's
+    cost on its ``llm_call``, but it paid nothing this run → ``event_cost`` reports the
+    cache-honest 0.0, NOT the raw ``llm_call.cost_usd`` (0.42) the chip used to ship."""
+    cached = {
+        "kind": "event",
+        "node_id": "summarize",
+        "id": 3,
+        "ancestor_path": [],
+        "port": None,
+        "status": "cached",
+        "duration_ms": 5,
+        "llm_call": {"model": "claude-sonnet-4-5", "cost_usd": 0.42},  # the SOURCE call's cost
+    }
+    delta = _run_event(cached)
+    assert delta["cost_usd"] == 0.0  # cache-honest, NOT 0.42
+    assert delta["cost_usd"] == event_cost(cached)  # chip == panel, single source
+
+
+def test_run_event_cost_is_the_paid_cost_for_a_priced_node():
+    """A non-cached priced LLM event reports its own paid cost (unchanged from the old raw read)."""
+    priced = {
+        "kind": "event",
+        "node_id": "draft",
+        "id": 1,
+        "ancestor_path": [],
+        "port": None,
+        "status": "success",
+        "duration_ms": 12,
+        "llm_call": {"cost_usd": 0.05},
+    }
+    delta = _run_event(priced)
+    assert delta["cost_usd"] == pytest.approx(0.05)
+    assert delta["cost_usd"] == event_cost(priced)
+
+
+def test_run_event_cost_is_none_for_a_non_llm_node_start():
+    """A ``node.start`` (or any non-LLM line) carries no cost — ``event_cost`` returns None,
+    matching the old ``(llm_call or {}).get('cost_usd')`` which was also None for these."""
+    start = {
+        "kind": "node.start",
+        "node_id": "shell",
+        "id": 0,
+        "ancestor_path": [],
+        "port": None,
+        "status": "running",
+    }
+    assert _run_event(start)["cost_usd"] is None
 
 
 def test_pinned_resolve_matches_execution_id(tmp_path, monkeypatch):

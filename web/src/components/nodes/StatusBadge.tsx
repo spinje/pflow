@@ -9,13 +9,15 @@
 // The `aria-label` stays the stable "run status: <status>" (the essential a11y fact; the chip is aria-hidden).
 import type { NodeStatus, RunDetail } from "../../types";
 
-function fmtDuration(ms: number): string {
+// Exported so the detail panel's "This run" section single-sources the SAME formatting as the hover chip
+// (Task 173 — there is no separate `formatDuration` in web/).
+export function fmtDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   const s = ms / 1000;
   return `${s < 10 ? s.toFixed(1) : Math.round(s)}s`;
 }
 
-function fmtCost(usd: number): string {
+export function fmtCost(usd: number): string {
   return usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 }
 
@@ -81,16 +83,35 @@ const GLYPH: Record<NodeStatus, JSX.Element> = {
   ),
 };
 
-export function StatusBadge({ status, detail }: { status?: NodeStatus; detail?: RunDetail }): JSX.Element | null {
+export function StatusBadge({
+  status,
+  detail,
+  inline = false,
+}: {
+  status?: NodeStatus;
+  detail?: RunDetail;
+  // `inline` (the detail panel's "This run" tile): a STATIC badge — no corner positioning, no halo, no hover
+  // chip (the panel already shows the metrics). Default false = the canvas corner overlay.
+  inline?: boolean;
+}): JSX.Element | null {
   if (!status) return null; // pending = absent = no badge
   return (
-    <span className={`status-badge status-${status}`} role="img" aria-label={`run status: ${status}`}>
+    <span
+      className={`status-badge status-${status}${inline ? " status-badge-inline" : ""}`}
+      // Corner badge: the ONLY status indicator on the node → labeled. Inline (the panel's "This run" tile):
+      // the adjacent "status / <value>" text carries it, so the badge is decorative (aria-hidden).
+      role={inline ? undefined : "img"}
+      aria-label={inline ? undefined : `run status: ${status}`}
+      aria-hidden={inline || undefined}
+    >
       {GLYPH[status]}
       {/* Custom hover chip (mirrors the rail's `.rail-tip`) — the run-status + duration/cost detail in the
           canvas chrome style, not the bare OS `title` tooltip. aria-hidden: the status is on aria-label. */}
-      <span className="status-badge-tip" aria-hidden="true">
-        {runStatusLabel(status, detail)}
-      </span>
+      {!inline && (
+        <span className="status-badge-tip" aria-hidden="true">
+          {runStatusLabel(status, detail)}
+        </span>
+      )}
     </span>
   );
 }
