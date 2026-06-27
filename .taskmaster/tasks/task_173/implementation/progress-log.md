@@ -1534,26 +1534,123 @@ background AND the tile border so they can't drift. Browser-verified green/red/g
 `aria-label="This run"` on the `<section>`; the inline tile badge's `aria-label` was redundant with the
 visible "status / value" text → the inline variant is now `aria-hidden` (the corner badge keeps its label).
 
-### ⚠️ `make check` — env ruff-version DRIFT (read before trusting a red gate)
+### ruff version split: `make check` is GREEN — only a direct `.venv` ruff run is red (corrected 2026-06-27)
 
-A fresh-context "are you happy" pass found `make check` **red** — and surfaced that the environment's **ruff
-has drifted to a stricter/newer version** since the earlier (genuinely-green-then) runs. Two classes:
+An earlier fresh-context pass reported `make check` **red** and blamed "env ruff drift." **That was a
+misdiagnosis — corrected + verified 2026-06-27.** `make check` runs `pre-commit run -a`, whose ruff hook is
+**hard-pinned to v0.11.5** (`.pre-commit-config.yaml`) in its OWN isolated env → it **passes** (confirmed:
+`pre-commit run ruff` on both flagged files → Passed). The red came from running `uv run ruff check`
+*directly*, which uses the **`.venv`'s 0.15.0** (resolved from the `ruff>=0.11.5` *floor* in `pyproject.toml`);
+0.15.0 enables newer rules (RUF043/RUF059) that 0.11.5 doesn't. So `make check`/CI were green the whole time —
+the two ruff installs just diverge. The version-sync cleanup (bump the pin + fix the 9 pre-existing findings)
+is filed as **GH #541** — out of scope for this PR.
 
-- **MINE — FIXED:** (1) **C901** `run_node._read_matching_event` was 11 > 10 → extracted `_iter_trace_lines`
-  (the JSONL parse + truncation-tolerance), dropping it under 10 (also cleaner: parse vs dispatch). (2)
-  **S105** an `access_token` redaction assertion in `test_run_node.py` read as a hardcoded secret → `# noqa:
-  S105` (the codebase's existing pattern, e.g. `test_error_formatter.py`). My changed files now pass
-  `ruff check` cleanly; `mypy` clean (239); `make test` **8210**.
-- **PRE-EXISTING (NOT this task) — left as-is:** the newer ruff also flags files UNMODIFIED by me, present at
-  HEAD `494b0385`: `tests/test_core/test_trace_io.py:435` (RUF043 — `match="after run.complete"` has an
-  unescaped `.`) and `tests/test_nodes/test_claude/test_schema_coercion.py` (RUF059 ×8 — unused unpacked
-  vars). The baseline itself fails `make check` under this ruff. The ruff `--fix` also auto-touched an
-  unrelated `task_18` example .py (reverted). **So a red `make check` here is the ruff drift on pre-existing
-  files, NOT a regression in Task 173** — fix at the repo level (pin ruff, or `match=r"after run\.complete"` +
-  `_`-prefix the unused vars). Trivial but out of this task's scope.
+- **MINE — done (version-agnostic; pass under BOTH ruffs):** (1) **C901** `run_node._read_matching_event` was
+  11 > 10 → extracted `_iter_trace_lines` (the JSONL parse + truncation-tolerance), dropping it under 10 (also
+  cleaner: parse vs dispatch). (2) **S105** an `access_token` redaction assertion in `test_run_node.py` read
+  as a hardcoded secret → `# noqa: S105` (the codebase's existing pattern, e.g. `test_error_formatter.py`).
+  Both are genuine improvements regardless of ruff version; my changed files pass cleanly. `mypy` clean (239);
+  `make test` **8210**.
+- **PRE-EXISTING (NOT this task, NOT a failing gate) → GH #541:** ruff 0.15.0 (a *direct* `.venv` run only —
+  **NOT** `make check`) flags files UNMODIFIED by me at HEAD `494b0385`: `tests/test_core/test_trace_io.py:435`
+  (RUF043 — `match="after run.complete"` unescaped `.`) and `tests/test_nodes/test_claude/test_schema_coercion.py`
+  (RUF059 ×8 — unused unpacked vars). These do **not** fail `make check`/CI (pinned 0.11.5). Fix = bump the
+  pre-commit pin + `match=r"after run\.complete"` + `_`-prefix the unused vars. Tracked in #541.
 
 Honest residual loose ends (none blocking): running/stopped BADGE colors not re-driven post palette-refactor
 (identical-by-construction — `var(--status-*)`; success/cached/failed verified); the cost/tokens subtitle
 unit-tested but not browser-driven (no API key); cached-node reduced-input → GH #540. The full Task-173
 detail-panel diff is UNCOMMITTED; most of it is STAGED (not by me) but the latest a11y + lint fixes are
 UNSTAGED → `git add -A` before any commit.
+
+## 2026-06-27 — Isolated deep review of the staged detail-panel diff (2 agents) + verified fixes
+
+User gated next steps on a focused review of the STAGED diff. Ran **2 read-only specialists** (scoped to the
+two highest-regret areas rather than the full battery — the diff already had a plan-stage 3-agent review + a
+self-review + a follow-up round):
+- **`review-impact-completeness`** over the `security_utils.is_sensitive_parameter` consolidation (a SHARED
+  rule modified → check ALL consumers).
+- **`review-silent-failures`** over `run_node.py` + the `/api/run-node` handler.
+
+**Verdict: no Critical, no in-scope code bugs.** Impact verified the consolidation COMPLETE + non-regressive
+(the `SENSITIVE_KEYS` list byte-for-byte intact across HEAD→staged; every one of the 8 consumers traced; the
+bidirectional behaviour shift fully accounted for — every narrowing is an intended false-positive fix or the
+documented delimiter-less boundary, every `rerun_display` broadening is a real delimited secret). Silent-failures
+verified the reader correct across all 7 dimensions (recursive redactor + `$pflow_blob` guard both genuinely
+DEEP-recursive; partial `llm_call` never KeyErrors; handler maps a bad ref → 400 and real corruption → a loud
+500). Three findings folded (each independently re-confirmed against the code before acting):
+
+- **W1 (Warning) — the truncation-tolerance guard was correct but UNPINNED.** `_iter_trace_lines` tolerates a
+  truncated FINAL line (mid-flush tail) and RAISES on a malformed EARLIER line ("corrupt must be visible"), but
+  no test exercised either direction — a future refactor could silently flip it (swallow corruption → wrong
+  panel data, or 500 on every live mid-flush poll) with all tests green. **Fix:** +2 fixtures
+  (`test_truncated_final_line_is_tolerated`, `test_malformed_earlier_line_raises_not_silently_swallowed`).
+- **S1 (Suggestion) — an `OSError` mid-scan silently 404'd as "node didn't run."** **Fix:** a `logger.debug`
+  breadcrumb at the `read_text` seam (keeps the 404 — a transient read shouldn't 500) + a test
+  (`test_os_error_mid_scan_returns_none`; discovery uses `open()`, so patching `Path.read_text` isolates the
+  fault to the reader). Verified in `run_tailer` that discovery is robust to a corrupt middle line
+  (`read_run_status` catches per-line `ValueError`; `_read_meta` reads the head only).
+- **Out-of-scope leak the impact agent surfaced + user chose to fold in (Option A) — the 4th, un-consolidated
+  redaction path.** `runtime/engine/batch_item_summary.py` carried its OWN `SENSITIVE_KEY_FRAGMENTS` tuple with
+  a raw-substring match — MISSING `pwd`/`private_key`/`ssh_key`/`credential(s)`, so a short-valued failed-batch
+  field named e.g. `pwd` rendered VERBATIM in the summary (pre-existing, Task-172-era; long values already
+  hash). **Fix:** deleted `_is_sensitive_key` + the local tuple → `_summarize_field` now defers to the shared
+  `is_sensitive_parameter` (no import cycle — `security_utils` is stdlib-only core; verified). Net: the leak
+  closes AND the last raw-substring copy is gone, so "every redaction site defers to one rule" (`core/CLAUDE.md`)
+  is now literally true (updated to list `batch_item_summary`). Behaviour delta: gains
+  `pwd`/`private_key`/`ssh_key`/`credentials`/`access_token`; drops the over-match on `author`/`tokens`/`secretary`
+  (never real secrets). +6 tests (5 parametrized newly-redacted names + 1 over-redaction guard).
+
+**Gates (all green):** `make test` **8219** (8210 baseline + 9: +3 run_node, +6 batch-summary; **0 regressions**);
+`make check` clean (mypy 239; ruff auto-dropped one now-unused `# noqa: S106`). The W1/S1 + batch-summary fixes
+are UNSTAGED (the rest of the detail-panel diff is staged) → `git add -A` before any commit.
+
+**Still owed to close the task** (unchanged): pin D1 · `task-review.md` + tool-elevation verdict · commit.
+
+## 2026-06-27 — Catalog redesign: last-run times + name-only rows (user-requested, browser-verified)
+
+The user found the catalog inconsistent: saved rows were name/catalog-ordered and showed NOTHING about past
+runs (only a live badge), while the git-bucketed ran-but-unsaved rows were recency-sorted with a status mark —
+and every row carried a noisy absolute path (+ a description on saved rows). Four asks, all frontend-only:
+
+- **Last-run time** — a new `utils/format.ts::timeAgo(iso, nowMs?)` (relative "3m ago" / "yesterday" / a date
+  past a week; `""` for a null/unparseable stamp; injectable `now` for deterministic tests). The producer
+  writes a tz-less local `datetime.isoformat()` → `new Date` reads it as LOCAL (correct for the loopback).
+- **Name-only rows** — unified BOTH row types to `name (left) · RunMeta (right)`; dropped the visible
+  description + path → they ride the row's hover `title` (description run through the existing `stripMarkdown`).
+  The `Markdown` inline render is gone from the catalog.
+- **Recency sort everywhere** — the Saved section now sorts by most-recent run (was catalog order); a never-run
+  workflow sinks to the bottom (alpha among peers). Repo buckets were already recency-sorted.
+- **Dashboard button** — held off (it would link to a screen that doesn't exist; the catalog now covers the
+  per-workflow run surface). Coupled to the deferred global-dashboard decision.
+
+`RunMeta` is the one right-side summary: a pulsing `● running` while live, else the `runMark` status glyph
+(✓/✗/⊗/⊘) + the `timeAgo` label, or a muted `never run`. CSS: `.catalog-item` became a single flex row
+(name ellipsizes so it never shoves the meta off); added `.catalog-item-meta/-time/-never`; removed the now-dead
+`.catalog-item-desc/-path/-status`.
+
+**Self-review found + fixed one real bug.** `RunMeta` claimed `never run` whenever there was no run group — but
+`runGroups` is ALSO empty while `/api/runs` is in flight AND on a DR-6 failure, so a scan failure made every
+saved row FALSELY assert "never run" (and the happy path flashed it before data arrived). Gated `never run` on a
+new `runsLoaded` flag (set only on a successful runs fetch); pending/failure now render no run-meta. Pinned by
+the DR-6 test (`queryByText("never run")` is null on failure).
+
+**Tests (+9, vitest 621):** `format.test.ts` +5 (`timeAgo`: null/invalid → ""; just-now/minutes/hours;
+yesterday/Nd; absolute-date past a week; future-skew → just now). `CatalogView.test.tsx` +3 (last-run time +
+never-run; description/path moved to the hover title, markdown-stripped, absent from the body; Saved recency
+sort) + the existing path/inline assertions moved from body text to `getByTitle`, + the DR-6 no-false-never-run
+assertion. `tsc` strict clean; Python untouched (8219 / `make check` hold).
+
+**Browser-verified** (rebuilt bundle, `catalog-redesign-probe.pflow.md` — settle until the runs data renders,
+DOM read + full-page screenshot, over 171 real runs): Saved shows `shoot ✓ 3m ago` / `git-worktree-task-creator
+✓ 3d ago` above the `never run` rows (recency confirmed); the worktree repo bucket shows the live
+`catalog-redesign-probe ● running` plus color-coded ✓/✗/⊗/⊘ marks + relative times; `noAbsPathInBody: true`
+(path lives only in the hover title). Screenshot confirms the clean single-line rows.
+
+**Documented limitations (not bugs — disclosed, not fixed):** (1) the catalog is a ONE-SHOT `/api/runs` fetch at
+mount — relative times don't tick and the running badge can go stale if a run finishes while it's open (tied to
+the deferred dashboard-polling decision, not bolted on here); (2) path-equality matching can read `never run` for
+a workflow that ran under a different path spelling (the same v1 case-fold boundary, now more visible as a
+positive claim); (3) native `title` hover (delay / no touch / unstyled — the agreed "maybe hover" choice); (4) a
+truncated long name has no tooltip recovery (names are short in practice). `views/CLAUDE.md` still calls
+CatalogView "Trivial" — stale doc debt, predates the bucketing.

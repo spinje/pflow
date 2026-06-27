@@ -158,11 +158,12 @@ button.active {
 }
 .catalog-item {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
   text-align: left;
-  padding: 14px 16px;
+  padding: 12px 16px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -173,14 +174,10 @@ button.active {
 .catalog-item-name {
   font-weight: 600;
   font-size: 15px;
-}
-.catalog-item-desc {
-  color: var(--text-muted);
-}
-.catalog-item-path {
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 11px;
+  min-width: 0; /* let a long name ellipsize instead of shoving the run-meta off the row */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .catalog-empty {
   color: var(--text-muted);
@@ -193,10 +190,24 @@ button.active {
 .catalog-item-static:hover {
   border-color: var(--border);
 }
-/* The latest-run status mark on a ran-but-unsaved row (color via the shared .run-mark.run-* palette). */
-.catalog-item-status {
-  margin-left: 8px;
+/* The right-side run summary on every row: the latest-run status mark (color via the shared .run-mark.run-*
+   palette) + a relative "last run" label, or a muted "never run". */
+.catalog-item-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 13px;
+}
+.catalog-item-time {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.catalog-item-never {
+  color: var(--text-faint);
+  font-size: 12px;
 }
 /* Collapsible catalog sections (Saved · per-repo · Other), Task 173 D6. The whole header is the toggle. */
 .catalog-section {

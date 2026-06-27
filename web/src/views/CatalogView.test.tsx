@@ -106,6 +106,7 @@ describe("CatalogView — saved section", () => {
     await waitFor(() => expect(screen.getByText("alpha")).toBeTruthy()); // catalog still renders
     expect(screen.queryByText("running")).toBeNull();
     expect(screen.queryByText(/Other/)).toBeNull(); // no buckets either
+    expect(screen.queryByText("never run")).toBeNull(); // …and no FALSE "never run" — the runs data never loaded
   });
 
   it("shows the empty message only when there are no saved workflows AND no runs", async () => {
@@ -127,7 +128,7 @@ describe("CatalogView — git-bucketed ran-but-unsaved (Phase 2)", () => {
 
     await waitFor(() => expect(screen.getByText("proj")).toBeTruthy()); // the repo bucket header (open)
     expect(screen.getByText("adhoc")).toBeTruthy(); // visible without expanding (repo buckets open by default)
-    expect(screen.getByText("/proj/adhoc.pflow.md")).toBeTruthy();
+    expect(screen.getByTitle("/proj/adhoc.pflow.md")).toBeTruthy(); // path rides the hover title now, not the row
     expect(screen.getAllByText("alpha")).toHaveLength(1); // saved appears once, never duplicated into a bucket
   });
 
@@ -156,7 +157,7 @@ describe("CatalogView — git-bucketed ran-but-unsaved (Phase 2)", () => {
     fireEvent.click(screen.getByText(/Other/));
 
     expect(screen.getByText("piped-thing")).toBeTruthy();
-    expect(screen.getByText("inline run · no file to open")).toBeTruthy();
+    expect(screen.getByTitle("inline run · no file to open")).toBeTruthy(); // the explanation rides the hover title
     // Non-openable: a static div, not a button; clicking never calls onOpen.
     expect(screen.getByText("piped-thing").closest(".catalog-item")?.tagName).toBe("DIV");
     fireEvent.click(screen.getByText("piped-thing"));
@@ -201,6 +202,52 @@ describe("CatalogView — git-bucketed ran-but-unsaved (Phase 2)", () => {
 
     await waitFor(() => expect(screen.getByText("MyWf")).toBeTruthy());
     expect(screen.getByText("wf")).toBeTruthy(); // the different-case run shows as a separate bucket row…
-    expect(screen.getByText("/wf/mywf.pflow.md")).toBeTruthy(); // …not merged into the saved row
+    expect(screen.getByTitle("/wf/mywf.pflow.md")).toBeTruthy(); // …not merged into the saved row (path in title)
+  });
+});
+
+describe("CatalogView — last-run label, hover details, recency sort", () => {
+  it("shows a relative last-run time for a workflow that has run, and 'never run' for one that hasn't", async () => {
+    mockCatalog.mockResolvedValue([
+      { name: "ran-recently", description: "", path: "/ran.pflow.md" },
+      { name: "untouched", description: "", path: "/untouched.pflow.md" },
+    ]);
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    mockRuns.mockResolvedValue([run({ workflow_path: "/ran.pflow.md", start_time: threeHoursAgo })]);
+    render(<CatalogView onOpen={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("ran-recently")).toBeTruthy());
+    expect(screen.getByText("3h ago")).toBeTruthy();
+    expect(screen.getByText("never run")).toBeTruthy(); // untouched has no recorded run
+  });
+
+  it("moves the description and path off the row into the hover title (only the name shows)", async () => {
+    mockCatalog.mockResolvedValue([{ name: "alpha", description: "Triages **issues**", path: "/alpha.pflow.md" }]);
+    mockRuns.mockResolvedValue([]);
+    render(<CatalogView onOpen={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("alpha")).toBeTruthy());
+    expect(screen.queryByText("/alpha.pflow.md")).toBeNull(); // path is not a visible row element
+    expect(screen.queryByText(/Triages/)).toBeNull(); // description is not a visible row element
+    const row = screen.getByText("alpha").closest(".catalog-item") as HTMLElement;
+    expect(row.title).toContain("/alpha.pflow.md"); // both live in the hover title…
+    expect(row.title).toContain("Triages issues"); // …with markdown markers stripped (no `**`)
+  });
+
+  it("sorts the Saved section by most-recent run (recency desc), never-run last", async () => {
+    mockCatalog.mockResolvedValue([
+      { name: "older", description: "", path: "/older.pflow.md" },
+      { name: "newer", description: "", path: "/newer.pflow.md" },
+      { name: "never", description: "", path: "/never.pflow.md" },
+    ]);
+    mockRuns.mockResolvedValue([
+      run({ workflow_path: "/older.pflow.md", start_time: "2026-03-01T00:00:00" }),
+      run({ workflow_path: "/newer.pflow.md", start_time: "2026-03-05T00:00:00" }),
+    ]);
+    const { container } = render(<CatalogView onOpen={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText("newer")).toBeTruthy());
+    const names = [...container.querySelectorAll(".catalog-item-name")].map((el) => el.textContent);
+    expect(names).toEqual(["newer", "older", "never"]); // recency desc; the never-run row sinks to the bottom
   });
 });
