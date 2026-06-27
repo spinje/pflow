@@ -1654,3 +1654,27 @@ a workflow that ran under a different path spelling (the same v1 case-fold bound
 positive claim); (3) native `title` hover (delay / no touch / unstyled — the agreed "maybe hover" choice); (4) a
 truncated long name has no tooltip recovery (names are short in practice). `views/CLAUDE.md` still calls
 CatalogView "Trivial" — stale doc debt, predates the bucketing.
+
+## 2026-06-27 — Closed analyze-cache R6 (the deferred eager-meta label mislabel)
+
+R6 was the last open eager-`meta` ripple from the slice's deep review (deferred as cosmetic; selection was
+always correct). With eager-`meta`, an interrupted / still-in-flight run leaves a `meta`-only trace with no
+`run.complete` trailer → `final_status="incomplete"`. `analyze-cache` autoload correctly buckets `incomplete`
+*with* genuine failures (non-reusable, never shadows a good run — `_collect_candidate_traces`), but
+`_autoload_selection_with_disclosure` (`trace_loading.py`) **hardcoded "(failed run)"** in both disclosure
+notes → an interrupted run was reported to the agent as a *failed* run, misattributing the cause.
+
+- **Fix:** added `_non_reusable_outcome_label(data)` — reads `final_status` and returns `"incomplete run"`
+  vs `"failed run"`; both disclosure branches now defer to it (the no-success branch destructures
+  `failed[0]` so it has the trace `data`, not just the path). Pure wording change — **selection,
+  bucketing, and all cost/token math are untouched** (the label feeds no computation). Mirrors the D6
+  raw-facts principle (DR-2: don't synthesize a wrong status word). The sibling `_format_rejection_note`
+  already read the real `final_status`, so it needed no change.
+- **Tests (+2, both directions pinned):** `test_autoload_skip_note_labels_incomplete_run_not_failed`
+  (newer incomplete shadowed by older success → note says "incomplete run", NOT "failed run"; selection
+  still the success) + `test_autoload_no_success_note_labels_incomplete_run_not_failed` (only-incomplete →
+  no-success note says "incomplete run"). Also strengthened the two existing `final_status="failed"` tests
+  to assert the note still says "failed run" (not "incomplete run") — so the helper can't regress to a
+  single label.
+- **Gates (all green):** `make test` **8221** (8219 baseline + 2, 0 regressions); `make check` clean
+  (mypy 239 files, ruff/ruff-format pinned, deptry). UNCOMMITTED (not committed per the no-auto-commit rule).
