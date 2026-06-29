@@ -1678,3 +1678,45 @@ notes → an interrupted run was reported to the agent as a *failed* run, misatt
   single label.
 - **Gates (all green):** `make test` **8221** (8219 baseline + 2, 0 regressions); `make check` clean
   (mypy 239 files, ruff/ruff-format pinned, deptry). UNCOMMITTED (not committed per the no-auto-commit rule).
+
+## 2026-06-29 — Remaining-items review + D4 (launch) spun out into Task 175
+
+A review session (no overlay code changed) to answer "what's left in the original plan + d6?", then a long
+design discussion of the deferred **D4 launch button** that grew into its own feature and was spun out.
+
+**Remaining-items audit (original `implementation-plan.md` + `d6-plan.md` vs shipped):**
+- **Built / done:** slice, sub-workflow + batch checkpoint, `/api/runs` + `&run=` pin + replay, catalog
+  running-badge + RunSelector, detail panel, flock liveness. R6 closed (entry above).
+- **The ONE plan feature not built: the global runs dashboard** (`?view=runs`, d6 Phase 3c / build-order
+  step 4 / DR-7). Confirmed absent (no `App.tsx` route, no view file) — **deliberately held off** (the
+  catalog covers per-workflow run history; the dashboard would link to a screen that doesn't exist). Not
+  a dropped item; a conscious deferral.
+- **ChipRail status chip (d6 Phase 4) was RETIRED by design**, not skipped — `ChipRail.tsx:11` documents
+  the slot was dropped in favor of the StatusBadge corner-badge + hover-chip overlay (commit `494b0385`).
+  The run-status-visibility need is met, differently.
+- **D4 launch POST** stayed deferred (the CORS/exposure tripwire trigger) — now revived as Task 175.
+- **analyze-cache R6:** closed (entry above). **Still owed to CLOSE Task 173 (unchanged):** pin D1 +
+  `task-review.md` (incl. the tool-elevation verdict for the overlay-status probe). These are
+  independent of Task 175.
+
+**D4 → Task 175 ("Run workflows from the UI"):** the launch-button discussion expanded into launch +
+auto-generated inputs form + run inspection + re-run, and was given its own task (`task_175/task-175.md`
++ a design-discussion braindump in `task_175/starting-context/`; added to root `CLAUDE.md` "Next?").
+Findings that touch Task 173's own record:
+- **Security re-evaluation (the tripwire the plan reserved):** a launch POST is ADR-0008-clean if it
+  **spawns `pflow run` as a detached subprocess** (the run writes its trace; the existing tailer +
+  overlay observe it — no new server code; server stays a pure observer). The only real web threat is a
+  malicious page driving the loopback server; loopback + no-CORS + strict `application/json`
+  (`_json_body`) already block cross-origin form/JSON POSTs — the lone gap is **DNS rebinding**, closed
+  by a `Host`-header guard. No auth/CSRF tokens (overengineering for single-user loopback). So D4 is
+  *not* the landmine the "tripwire" framing implied — it's a thin spawn + a Host check.
+- **Inputs are recorded NOWHERE today** (trace `meta` omits them; inputs seed the shared store, no event)
+  → Task 175's keystone is recording `meta.inputs` in the eager meta. Relevant here because it's a small
+  producer change to the SAME meta line this task made eager.
+- **The frontmatter execution store (`last_execution_params` et al.) is deprecatable** once `meta.inputs`
+  exists (3 CLI display consumers only; lossy/saved-only) — but carries an MCP-history cost (MCP/
+  `--no-trace` runs write frontmatter, no trace), so deprecation is a **follow-on**, not part of 175.
+- **Trace durability finding (affects this task too):** `~/.pflow/debug` has **no cleanup/rotation/TTL/
+  cap** and no clear command — traces grow unbounded. The overlay already generates traces; the run
+  button will generate many more. A retention policy is a reasonable fast-follow (not blocking, not
+  filed yet).
