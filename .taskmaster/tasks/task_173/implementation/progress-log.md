@@ -1747,4 +1747,4 @@ likely-dead `_has_run_complete`; `_read_matching_event`'s OSError docstring) —
   `run_tailer.py` (zero callers verified — `discover_live_trace` reads `cand["complete"]`; one test rationale
   docstring scrubbed too → no dangling reference); `run_node._read_matching_event` docstring gains its
   `OSError`→`None` degrade path. `make check` green (mypy 239); the affected tests pass (109).
-Trace-retention is the only remaining noted item (unfiled fast-follow).
+Trace-retention is filed as **#542** (the last remaining noted item — a fast-follow).
