@@ -10,7 +10,11 @@ static graph (Task 168) by joining via `NodeId = (node_id, ancestor_path)`.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-06-29
 
 ## Priority
 

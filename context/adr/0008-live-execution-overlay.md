@@ -12,7 +12,23 @@ file; the only contracts between them are the **D1 event schema** and the **Node
 
 ## Status
 
-proposed
+accepted — shipped in Task 173. See "Update — as shipped" below for the one v1-scope refinement.
+
+## Update — as shipped (Task 173, 2026-06-29)
+
+The architecture landed as decided (trace = streamable event source; the UI tails and never hosts;
+NodeId join). One v1-scope refinement during implementation: **`node.start` was built, not deferred.**
+The engine flushes a disk-only `node.start` marker for every **main-thread** node (leaf nodes,
+sub-workflow hosts, and batch-of-leaf hosts), so the overlay shows live "running" for them —
+superseding the "running/pending stay overlay-inferred (no node.start in v1)" and "node.start (L2)
+is the deferred fix" notes in Consequences below. Still genuinely deferred (the true v1 boundary):
+per-ITEM "running" inside a parallel/sequential batch and the batch-OF-sub-workflow host (both run off
+the owner thread, where the no-lock rule forbids emitting to the run-scoped collector) → pending-until-done.
+The per-node `status` enum (`success`/`cached`/`failed`), left as a "low-stakes open decision" below,
+also shipped (Task 172). The consumer-derivation contract (status read directly; `node.start`→running;
+`run.complete.final_status`→degraded banner; `sameRef` join on `(node_id, ancestor_path, port=null)`,
+last-wins by `id`) is overlay-validated end-to-end.
+**Canonical as-built schema:** `.taskmaster/tasks/task_133/design/d1-event-schema.md`.
 
 ## Considered options
 

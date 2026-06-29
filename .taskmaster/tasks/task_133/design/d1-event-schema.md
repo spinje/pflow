@@ -1,10 +1,10 @@
 # D1 — Run-Event Schema
 
-> **Status: producer SHIPPED (Task 172, PR #530); consumer-derivation pending the live overlay (Task 173).**
+> **Status: SHIPPED + validated end-to-end (producer Task 172, PR #530; consumer-derivation Task 173).**
 > The producer/disk facts below are **as-built and pinned by tests** (`tests/test_runtime/test_emit_time_trace.py`,
 > `tests/test_core/test_trace_io.py`, `-m trace_files`). The *consumer-derivation* contract (how the overlay
-> maps events → display state + the `sameRef` join) is still validated skeleton-first against the real overlay
-> before final pinning — see ADR-0008.
+> maps events → display state + the `sameRef` join) is now **validated by the shipped, browser-verified
+> overlay** and pinned — see ADR-0008 (accepted).
 >
 > **The on-disk JSONL shape DID change from Task 133 A–C** (bounded, no-back-compat — there are no external
 > readers): per-node `status` **enum** replaces `success: bool`+`cached`; blobs are **inline first-occurrence
@@ -28,9 +28,10 @@ renderers."
   (events carry `id`/`seq`/`parent_id`) with a derived `tree()` view**; v1 streams at **node granularity**
   (batch items inline); per-node `status` is an explicit **enum** (`success`/`cached`/`failed`) — the
   one-time `~15-site` reader migration is done.
-- **Pending the live overlay (Task 173):** the consumer-derivation contract (display-state mapping + the
-  `sameRef` join) — pinned producer-side by `test_runtime_event_refs_join_onto_the_static_graph`, but the
-  end-to-end overlay rendering is the final validator.
+- **Validated (Task 173):** the consumer-derivation contract (display-state mapping + the `sameRef` join) —
+  pinned producer-side by `test_runtime_event_refs_join_onto_the_static_graph` and confirmed end-to-end by
+  the shipped, browser-verified overlay (running/success/failed/cached; the non-empty-`ancestor_path`
+  sub-workflow join; host-group lighting; loop flipbook; crash→stopped).
 - **Deferred** (pin against the shipped overlay): the span taxonomy + the OTel exporter (see end).
 
 ## The model in one sentence

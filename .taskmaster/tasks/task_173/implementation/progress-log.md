@@ -1720,3 +1720,20 @@ Findings that touch Task 173's own record:
   cap** and no clear command — traces grow unbounded. The overlay already generates traces; the run
   button will generate many more. A retention policy is a reasonable fast-follow (not blocking, not
   filed yet).
+
+## 2026-06-29 — Task 173 CLOSED: D1 pinned + task-review written (doc-only)
+
+The two owed close-out items, both doc-only (no code touched):
+- **Pin D1.** `context/adr/0008-live-execution-overlay.md` `Status: proposed`→`accepted` + a dated "Update —
+  as shipped" note (architecture landed as decided; the one v1-scope refinement: `node.start` was BUILT, not
+  deferred, for every main-thread node — the true remaining boundary is batch ITEMS + the batch-of-sub-workflow
+  HOST). `task_133/design/d1-event-schema.md`: the two "consumer-derivation pending the live overlay / before
+  final pinning" hedges flipped to **validated + pinned** (the overlay shipped + browser-verified the contract).
+- **`task-review.md`** written — the distilled, seam-first forward-reference (must-not-break invariants, seams &
+  contracts, gotchas, the Task-175 handoff, regression-catching tests, and the owed tool-elevation verdict:
+  elevate the overlay-status-probe + the drive-live-run loop). `task-173.md` `## Status`→`done`, `## Completed`
+  2026-06-29.
+
+Remaining (non-blocking, deferred): the **S-d docs/guide** pass (the overlay isn't yet documented for users);
+a trace-retention issue (unfiled); 3 doc-debt one-liners (`ui/CLAUDE.md` `/api/runs` missing `git_root`; the
+likely-dead `_has_run_complete`; `_read_matching_event`'s OSError docstring) — all noted in the review's Deferred section.
