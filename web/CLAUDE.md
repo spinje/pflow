@@ -120,7 +120,7 @@ Tests sit beside their subject.
   legible — an icon would lose it). Toggle glyphs speak the CANVAS language and light on enable
   (`markdown.svg`/`subworkflow.svg`, grey → identity-color via a CSS `grayscale` filter lifted on
   `.active`; `.rail` is in the scoped-chrome token list but NOT a parent of RF nodes, so it's
-  safe). Top slot reserved for the future run/status control.
+  safe). Top slot holds the `RunSelector` (run-discovery / pin-replay control, Task 173).
 - **Search (`RailSearch.tsx`) is REVEAL-then-node-click.** Ranks node_id prefix > substring >
   purpose; selecting → `GraphView.onSelectNode` expands the target's collapsed ancestor chain (so
   a buried node is reachable) then `onNavigate(repId, repId)` — the SELECTION arm (not a bare

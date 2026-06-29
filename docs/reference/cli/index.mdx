@@ -486,6 +486,8 @@ pflow ui user-activity my-saved-workflow
 
 The canvas updates in place — no page reload — as the workflow's `.pflow.md` is edited on disk, so you can watch it take shape (while keeping the current zoom and selection) as you, or an AI agent, build it. An edit that doesn't validate is held: the last valid version stays on screen with an error banner until the source parses again. The server blocks until `Ctrl+C`, so run it in the background while you edit.
 
+The canvas also shows runs in progress. Run a workflow in another terminal — or have your agent run it — and the open canvas lights each node as it starts and finishes: running, succeeded, cached, failed, or stopped, with a hover chip showing that node's duration and cost. It works the same for a finished run: open the run selector to replay any past run on the graph, or click a node to see what that run produced — its resolved inputs, output, cost, and tokens. With no workflow argument, the catalog marks which workflows are running now and when each last ran.
+
 Runs on a standard install. If `pflow ui` reports a missing dependency, add the server extra: `uv tool install 'pflow-cli[ui]'`.
 
 | Option | Description |

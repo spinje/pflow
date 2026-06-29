@@ -139,7 +139,7 @@ def test_discover_excludes_only_node_traces(tmp_path):
 
 def test_read_run_status_extracts_final_status(tmp_path):
     """DR-2: read_run_status returns (complete, final_status) from the cheap tail — the signal /api/runs
-    needs and the bool-only _has_run_complete could not give. A live (no run.complete) trace → (False, None)."""
+    needs and a bool-only complete-check could not give. A live (no run.complete) trace → (False, None)."""
     wf = str(tmp_path / "wf.pflow.md")
     finished = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
     failed = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000002.json"

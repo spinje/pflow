@@ -72,9 +72,8 @@ def read_run_status(path: Path) -> tuple[bool, str | None]:
     ``final_status`` is that trailer's ``final_status`` (``success``/``degraded``/``failed`` — the
     producer's vocabulary), or ``None`` when the run is not complete (still live, or crashed). Reads only a
     bounded 64 KB tail so a multi-MB trace isn't loaded to answer "is this run live?". A truncated/partial
-    final line (a run mid-flush) doesn't parse → ``(False, None)`` (live), the safe direction. Supersedes
-    the bool-only ``_has_run_complete`` so ``/api/runs`` reports a finished run's status WITHOUT a full
-    ``load_trace_file`` parse."""
+    final line (a run mid-flush) doesn't parse → ``(False, None)`` (live), the safe direction. Lets
+    ``/api/runs`` report a finished run's status WITHOUT a full ``load_trace_file`` parse."""
     try:
         with open(path, "rb") as handle:
             handle.seek(0, 2)
@@ -95,12 +94,6 @@ def read_run_status(path: Path) -> tuple[bool, str | None]:
             return (True, status if isinstance(status, str) else None)
         return (False, None)  # a complete-but-non-trailer last line → not finished
     return (False, None)
-
-
-def _has_run_complete(path: Path) -> bool:
-    """True iff the run FINISHED — the bool half of ``read_run_status``, kept for ``discover_live_trace``'s
-    readable prefer-live loop."""
-    return read_run_status(path)[0]
 
 
 def is_trace_locked(path: Path) -> bool | None:

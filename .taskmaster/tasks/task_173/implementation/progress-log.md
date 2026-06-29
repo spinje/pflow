@@ -1737,3 +1737,14 @@ The two owed close-out items, both doc-only (no code touched):
 Remaining (non-blocking, deferred): the **S-d docs/guide** pass (the overlay isn't yet documented for users);
 a trace-retention issue (unfiled); 3 doc-debt one-liners (`ui/CLAUDE.md` `/api/runs` missing `git_root`; the
 likely-dead `_has_run_complete`; `_read_matching_event`'s OSError docstring) — all noted in the review's Deferred section.
+
+**Follow-up (same day) — S-d + the 3 doc-debt one-liners DONE (doc/docstring-only):**
+- **S-d docs/guide:** user docs (`docs/reference/cli/index.mdx`) gain a no-internals overlay paragraph
+  (watch a run · replay · click-a-node detail · catalog run-state); `pflow guide` (`features/ui.md`) gains an
+  overlay bullet with the CLI-vs-MCP watchability caveat (only CLI runs stream — agent-actionable);
+  `web/CLAUDE.md`'s stale "Top slot reserved for the future run/status control" → `RunSelector`.
+- **Doc-debt:** `ui/CLAUDE.md` `/api/runs` shape gains `git_root`; the dead `_has_run_complete` REMOVED from
+  `run_tailer.py` (zero callers verified — `discover_live_trace` reads `cand["complete"]`; one test rationale
+  docstring scrubbed too → no dangling reference); `run_node._read_matching_event` docstring gains its
+  `OSError`→`None` degrade path. `make check` green (mypy 239); the affected tests pass (109).
+Trace-retention is the only remaining noted item (unfiled fast-follow).

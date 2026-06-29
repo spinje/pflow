@@ -24,6 +24,11 @@ shape as you work.
 - The canvas LIVE-UPDATES in place (no page reload) as you edit the `.pflow.md` — the
   user sees each change land while keeping their zoom and focus. An edit that doesn't
   validate is held (the last valid version stays up, with an error banner) until you fix it.
+- The canvas also shows runs **as they run**: when you run the workflow (via the CLI —
+  e.g. your bash tool) while the user has it open, each node lights up as it starts and
+  finishes. The user can also pick a past run to replay, or click a node to see that run's
+  real inputs, output, and cost. A run you make through the pflow **MCP server tool is NOT
+  shown live** — only CLI runs stream to the canvas, so if the user is watching, run via the CLI.
 - With no workflow argument, it opens the catalog of saved workflows.
 - Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-auto-update`
   (freeze — stop live-updating).

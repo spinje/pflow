@@ -73,7 +73,8 @@ def _read_matching_event(path: Path, ref: dict[str, Any]) -> dict[str, Any] | No
     mid-flush tail (skip, like ``load_trace_file``); a malformed EARLIER line is real corruption (raise —
     "corrupt" must be visible, never silent-wrong). At EOF resolve blobs once (backward-only refs → one
     forward pass is always correct); if a ``$pflow_blob`` sentinel survives (a missing/corrupt blob line)
-    the payload is unresolvable → ``None``, never the raw sentinel.
+    the payload is unresolvable → ``None``, never the raw sentinel. A read error (deleted/permission/
+    transient IO on the file discovery resolved) also degrades to ``None`` (debug-logged).
 
     Reads the whole file (like ``load_trace_file`` / ``generate_report``) rather than streaming: this is a
     one-shot, on-demand read of ONE node — finding the LAST match needs a full scan anyway, and a trace is
