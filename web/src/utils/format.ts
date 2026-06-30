@@ -48,6 +48,31 @@ export function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/** A compact relative-time label for a run's start: "just now" / "5m ago" / "3h ago" /
+ *  "yesterday" / "4d ago", then an absolute "Jun 24" (or "Jun 24, 2025" past this year)
+ *  once it's a week old. Returns "" for a missing/unparseable timestamp (a malformed or
+ *  legacy trace can yield null despite the `string` type) so the caller renders nothing
+ *  rather than "Invalid Date". `nowMs` is injectable so tests stay deterministic.
+ *  The producer writes a timezone-less local ISO string (`datetime.isoformat()`), which
+ *  `new Date` reads as LOCAL — correct for this single-user loopback server. */
+export function timeAgo(iso: string | null | undefined, nowMs: number = Date.now()): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const sec = Math.floor((nowMs - then) / 1000);
+  if (sec < 60) return "just now"; // also covers a small future skew (sec < 0)
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day === 1) return "yesterday";
+  if (day < 7) return `${day}d ago`;
+  const date = new Date(then);
+  const sameYear = date.getFullYear() === new Date(nowMs).getFullYear();
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
+}
+
 // stripMarkdown is a display DE-NOISER for surfaces that cannot render formatting
 // (the 2-line canvas description, title= tooltips) — NOT a markdown parser. It
 // hides marker symbols while keeping every character of content; when in doubt it

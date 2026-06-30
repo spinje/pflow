@@ -236,6 +236,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 
 **Next?** (in build order)
 - Task 173: Live execution overlay
+- Task 175: Run workflows from the UI
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 164: Resume Workflow From a Failed Node
 - Task 171: Durable Resume Tokens & Non-TTY Gates

@@ -24,8 +24,18 @@ TRACE_JSONL_MARKER = "jsonl/1"
 # `run.complete` trailer generically, so a conditional key is never silently dropped on round-trip.
 # `only_node` is here because it is stamped at run start AND is a snapshot-source filter key
 # (`_iter_workflow_traces`), so a future head-only reader can reject `--only` traces without reading
-# to the trailer. `final_status` is NOT here — it is an end-of-run aggregate.
-META_KEYS = ("format_version", "execution_id", "workflow_name", "workflow_path", "start_time", "only_node")
+# to the trailer. `final_status` is NOT here — it is an end-of-run aggregate. `content_hash` is the
+# Task 173 replay version fingerprint (`workflow_content_hash` of the resolved IR — `canonical_ir_digest`
+# with source provenance stripped), knowable at run start.
+META_KEYS = (
+    "format_version",
+    "execution_id",
+    "workflow_name",
+    "workflow_path",
+    "start_time",
+    "only_node",
+    "content_hash",
+)
 # Correlation/line keys the writer derives onto each event line; the reader strips them to restore the
 # exact nested event. A producer must never emit these at an event's top level — the writer asserts this
 # so a future collision (e.g. an OTel `kind` field, or a Phase D span id) fails loud at the producing
@@ -132,6 +142,12 @@ def _partition_trace_lines(
             meta = line
         elif kind == "event":
             event_lines.append(line)
+        elif kind == "node.start":
+            # Task 173: a LIVE-ONLY in-flight marker the overlay tailer consumes (a node has BEGUN but
+            # not completed). It carries no completion data and is deliberately DROPPED from the
+            # reconstructed trace — the matching `event` line (which reuses its seq) is the source of
+            # truth. Known-but-ignored here, NOT unknown-kind corruption: skip without bucketing.
+            continue
         elif kind == "run.complete":
             run_complete = line
         elif kind == "blob":
@@ -223,7 +239,8 @@ def load_trace_file(path: Path) -> dict[str, Any]:
     Detects the JSONL transport positively: the first line must be a JSON object carrying the
     ``pflow_trace`` marker. Anything else — including a well-formed pre-Task-172 single-object trace —
     raises ``json.JSONDecodeError`` (the legacy single-object/`blobs`-trailer reader was removed in #531
-    under the no-backward-compat-with-old-traces decision). The 3 trace-content readers
+    under the no-backward-compat-with-old-traces decision); a corrupt / non-UTF-8 file likewise raises
+    ``json.JSONDecodeError`` (not the raw ``UnicodeDecodeError``), so the same catch covers it. The 3 trace-content readers
     (``_iter_workflow_traces``, ``prompt_cache_analysis.trace_loading._load_trace_explicit``,
     ``trace_report.generate_report``) all catch ``(JSONDecodeError, OSError)``, so an old/unreadable trace
     skips gracefully rather than crashing.
@@ -235,7 +252,14 @@ def load_trace_file(path: Path) -> dict[str, Any]:
     line anywhere EARLIER is real corruption and still raises ``json.JSONDecodeError`` — never a
     silently-dropped middle event.
     """
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # A corrupt / non-UTF-8 file that matched the trace glob is not a valid pflow trace. Raise the same
+        # json.JSONDecodeError every caller already catches (PR #543 review), so the documented
+        # "(JSONDecodeError, OSError) suffices" contract actually holds — without this, the raw
+        # UnicodeDecodeError (⊄ OSError) escapes and crashes report / analyze-cache / generate_report.
+        raise json.JSONDecodeError(f"Trace file is not valid UTF-8: {exc}", str(path), 0) from exc
     stripped = text.lstrip()
     if stripped.startswith("{"):
         first_line = stripped.split("\n", 1)[0]

@@ -464,7 +464,32 @@ def serve_cmd(
         ).start()
 
     click.echo(f"Serving pflow UI at {url} (Ctrl+C to stop)", err=True)
-    uvicorn.run(app, host=_HOST, port=port, log_level="warning")
+    # Hand Ctrl+C to uvicorn cleanly. pflow's global SIGINT handler (main._handle_sigint → sys.exit(130)) is
+    # for `pflow run`, not a long-lived server: uvicorn captures signals while serving and RE-RAISES SIGINT
+    # into that handler on shutdown, so sys.exit(130) fires inside the event loop mid-teardown → a SystemExit
+    # tangled with the connections it is force-cancelling (a traceback wall). Restore Python's default handler
+    # so uvicorn owns the whole shutdown, and swallow the resulting KeyboardInterrupt for a clean exit.
+    # timeout_graceful_shutdown bounds the wait on the overlay's long-lived SSE connections (they never close
+    # on their own), so the first Ctrl+C exits instead of hanging forever.
+    import contextlib
+    import signal
+    from types import FrameType
+
+    # Close the overlay's long-lived SSE streams the moment Ctrl+C arrives — BEFORE uvicorn's graceful-wait
+    # times out and FORCE-cancels them (which logs a CancelledError per stream). Wrapping uvicorn's own
+    # handle_exit runs hub.shutdown() on the event loop, so each stream returns cleanly first.
+    config = uvicorn.Config(app, host=_HOST, port=port, log_level="warning", timeout_graceful_shutdown=2)
+    server = uvicorn.Server(config)
+    _uvicorn_handle_exit = server.handle_exit
+
+    def _handle_exit(sig: int, frame: FrameType | None) -> None:
+        app.state.hub.shutdown()
+        _uvicorn_handle_exit(sig, frame)
+
+    server.handle_exit = _handle_exit  # type: ignore[method-assign]
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    with contextlib.suppress(KeyboardInterrupt):
+        server.run()
 
 
 @ui_cmd.command(name="focus")

@@ -69,12 +69,21 @@ export function readViewParams(search: string): ViewParams {
 
 /** A new query string with direction/density set to their user-facing words, every
  *  OTHER param (workflow, node, …) preserved. Used for replaceState write-back on a
- *  toolbar toggle. `node` is read-only, so it is never written here. */
-export function writeViewParams(search: string, patch: { direction?: Direction; density?: Density; source?: boolean }): string {
+ *  toolbar toggle. `node` is read-only, so it is never written here. `run` (Task 173 D6)
+ *  PINS the live overlay to one run: a run_id sets it, `null` clears it (back to following
+ *  newest) — written on a run-selector pick so the view is shareable + survives a reload. */
+export function writeViewParams(
+  search: string,
+  patch: { direction?: Direction; density?: Density; source?: boolean; run?: string | null },
+): string {
   const p = new URLSearchParams(search);
   if (patch.direction) p.set("direction", patch.direction);
   if (patch.density) p.set("density", DENSITY_TO_PARAM[patch.density]);
   if (patch.source !== undefined) p.set("source", patch.source ? "1" : "0");
+  if (patch.run !== undefined) {
+    if (patch.run) p.set("run", patch.run);
+    else p.delete("run");
+  }
   return p.toString();
 }
 

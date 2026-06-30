@@ -390,21 +390,25 @@ def test_idle_connection_emits_keepalive_frames(tmp_path: Path) -> None:
         "app": app,
     }
 
-    async def _drive() -> tuple[str, str]:
+    async def _drive() -> tuple[str, str, str]:
         response = await events(Request(scope))
         body = response.body_iterator
         # Each pull resumes stream() to its next yield: the first returns the
-        # connected handshake, the second blocks on the keepalive timeout (0.01s)
-        # and returns the comment frame. aclose() then raises GeneratorExit at the
-        # yield, so stream()'s finally unregisters the connection.
+        # connected handshake; the second returns the Task-173 catch-up run-snapshot
+        # the stream enqueues for every new viewer (empty here — no run in progress);
+        # the third blocks on the keepalive timeout (0.01s) and returns the comment
+        # frame. aclose() then raises GeneratorExit at the yield, so stream()'s
+        # finally unregisters the connection.
         connected = await asyncio.wait_for(body.__anext__(), timeout=2.0)
+        snapshot = await asyncio.wait_for(body.__anext__(), timeout=2.0)
         keepalive = await asyncio.wait_for(body.__anext__(), timeout=2.0)
         await body.aclose()
-        return connected, keepalive
+        return connected, snapshot, keepalive
 
     with patch.dict(events.__globals__, {"_KEEPALIVE_S": 0.01}):
-        connected, keepalive = asyncio.run(_drive())
+        connected, snapshot, keepalive = asyncio.run(_drive())
 
     assert '"type": "connected"' in connected
+    assert '"type": "run-snapshot"' in snapshot  # Task-173 catch-up frame for new viewers
     assert keepalive.strip().startswith(":")  # the idle keepalive comment frame
     assert app.state.hub.windows_for(str(workflow.resolve())) == []

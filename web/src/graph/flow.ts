@@ -43,7 +43,7 @@ import {
 } from "./rows";
 import { NO_EXPANSION } from "./focus";
 import { IO_COLOR, bindingLabel, kindColor, nodeColor } from "../utils/format";
-import type { EdgeKind, LoopSpec, RFEdge, RFGraph, RFGroup, RFNode } from "../types";
+import type { EdgeKind, LoopSpec, NodeStatus, RFEdge, RFGraph, RFGroup, RFNode, RunDetail } from "../types";
 
 export * from "./scan";
 export * from "./io";
@@ -103,6 +103,12 @@ export type LeafData = {
   expanded: boolean;
   dimmed: boolean;
   focused: boolean;
+  // Live execution overlay (Task 173): this node's current run status, set by applyStatus from the
+  // live run-event stream (joined on the node's structural ref). `undefined` = pending / no run —
+  // the overlay adds NO styling, so an idle canvas looks exactly as before.
+  status?: NodeStatus;
+  // The status badge's hover metrics (duration/cost) for THIS run, set alongside `status` by applyStatus.
+  runDetail?: RunDetail;
   // Transient, set by applyFocus (LR only): outcome → condition for a branch whose
   // TARGET is the focus — the reveal lands on THIS (source) node's BranchPorts row,
   // the condition's LR home (an edge pill at the target entry overlapped the
@@ -164,6 +170,12 @@ export type GroupData = {
   focusedPortId: string | null;
   dimmed: boolean;
   focused: boolean;
+  // Live execution overlay (Task 173): the HOST's run status. A sub-workflow host's leaf box is
+  // suppressed (it renders AS this group), so the host's `running`/terminal ring shows here. Set by
+  // applyStatus on the host's PRIMARY group only (showTitle); `undefined` = pending / no run.
+  status?: NodeStatus;
+  // The host badge's hover metrics (duration/cost), set alongside `status` by applyStatus.
+  runDetail?: RunDetail;
 };
 
 export type EndData = {

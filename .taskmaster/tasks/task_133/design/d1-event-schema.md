@@ -1,16 +1,16 @@
 # D1 — Run-Event Schema
 
-> **Status: producer SHIPPED (Task 172, PR #530); consumer-derivation pending the live overlay (Task 173).**
+> **Status: SHIPPED + validated end-to-end (producer Task 172, PR #530; consumer-derivation Task 173).**
 > The producer/disk facts below are **as-built and pinned by tests** (`tests/test_runtime/test_emit_time_trace.py`,
 > `tests/test_core/test_trace_io.py`, `-m trace_files`). The *consumer-derivation* contract (how the overlay
-> maps events → display state + the `sameRef` join) is still validated skeleton-first against the real overlay
-> before final pinning — see ADR-0008.
+> maps events → display state + the `sameRef` join) is now **validated by the shipped, browser-verified
+> overlay** and pinned — see ADR-0008 (accepted).
 >
 > **The on-disk JSONL shape DID change from Task 133 A–C** (bounded, no-back-compat — there are no external
 > readers): per-node `status` **enum** replaces `success: bool`+`cached`; blobs are **inline first-occurrence
 > `blob` lines** (no `blobs` trailer); `ancestor_path`/`port` are emit-stamped (stripped on read); correlation
 > is assigned at *emit* time and the file **streams** one line per node as the run executes. The span
-> *taxonomy* (separate `llm`/`gate` events, `node.start`, batch-item promotion) is deferred until the shipped
+> *taxonomy* (separate `llm`/`gate` events, batch-ITEM `node.start`, batch-item promotion) is deferred until the shipped
 > overlay validates it.
 
 ## Why this exists
@@ -28,9 +28,10 @@ renderers."
   (events carry `id`/`seq`/`parent_id`) with a derived `tree()` view**; v1 streams at **node granularity**
   (batch items inline); per-node `status` is an explicit **enum** (`success`/`cached`/`failed`) — the
   one-time `~15-site` reader migration is done.
-- **Pending the live overlay (Task 173):** the consumer-derivation contract (display-state mapping + the
-  `sameRef` join) — pinned producer-side by `test_runtime_event_refs_join_onto_the_static_graph`, but the
-  end-to-end overlay rendering is the final validator.
+- **Validated (Task 173):** the consumer-derivation contract (display-state mapping + the `sameRef` join) —
+  pinned producer-side by `test_runtime_event_refs_join_onto_the_static_graph` and confirmed end-to-end by
+  the shipped, browser-verified overlay (running/success/failed/cached; the non-empty-`ancestor_path`
+  sub-workflow join; host-group lighting; loop flipbook; crash→stopped).
 - **Deferred** (pin against the shipped overlay): the span taxonomy + the OTel exporter (see end).
 
 ## The model in one sentence
@@ -48,20 +49,28 @@ backward-only, so a forward tailer / crash-truncated prefix stays self-consisten
 
 | `kind` | Role | Notes |
 |---|---|---|
-| `meta` | run identity, first line | written **lazily on first node completion** in v1 — see caveat |
+| `meta` | run identity, first line | written **eagerly at run start** (`start_streaming`) so an in-flight run is discoverable from t=0 |
+| `node.start` | a node BEGAN (live-only marker) | SHIPPED Task 173: a disk-only line flushed when a (main-thread) node starts, sharing the node's `id`/`seq` so the terminal `event` supersedes it (last-wins). The post-hoc reader (`_partition_trace_lines`) **drops** it, so on-disk `event` seqs stay byte-identical to a no-node.start run. Carries the same join keys as `event` (overlay reads `running` off it). |
 | `event` | one node execution | the bulk; see below |
 | `blob` | one interned payload | **inline**, `{kind, md5, value}`, written **before** the first event that references it (backward-only); replaces the A–C `blobs` trailer |
 | `run.complete` | run aggregates | trailer; **absence = crash-tail** (the resume discriminator) |
 
-> **⚠ meta is written LAZILY (v1).** The producer opens the file on the **first node completion**
-> (`_open_stream` ← `_flush_event`), not at run start — so a still-running first node (e.g. a 30 s LLM call)
-> is **undiscoverable until it finishes**, and a crash mid-first-node leaves no file. The eager-`meta`-at-run-start
-> fix is a small Task 172 follow-up scoped to Task 173 (it ripples to `report.py` newest-by-mtime + analyze-cache
-> disclosure, which must then guard against `meta`-only files) — see `task-173.md` Requirements.
+> **meta is written EAGERLY (SHIPPED).** The producer opens the file at run start via `start_streaming()`
+> (after `only_node` is stamped), NOT lazily on first completion — so a still-running first node is
+> discoverable from t=0 and a crash mid-first-node still leaves a readable `meta`-only file. The newest-by-mtime
+> consumers that could now meet a contentless trace (`report.py` auto-detect; analyze-cache's "found other
+> traces" disclosure) were guarded to prefer a COMPLETE trace — see the Task 173 slice-hardening progress-log
+> entry. (Historical: the original v1 plan wrote `meta` lazily on first node completion.)
 
 **`meta`** (verbatim `_META_KEYS`, `trace_io.py`): `format_version`, `execution_id` (**= `run_id`**),
-`workflow_name`, `workflow_path`, `start_time`, `only_node`. (`only_node` rides *here*, so a head-only reader
-can reject `--only` traces early.)
+`workflow_name`, `workflow_path`, `start_time`, `only_node`, `content_hash`. (`only_node` rides *here*, so a
+head-only reader can reject `--only` traces early.) **`content_hash`** (Task 173) is the workflow-version
+fingerprint — `workflow_content_hash` of the *resolved* IR: its `canonical_ir_digest` with source-LOCATION
+provenance (`_source_line`/`_source_lines`/`_source_files`) stripped, so the fingerprint tracks the LOGICAL
+workflow, not its byte layout (a comment/whitespace edit that only shifts line numbers is NOT a "different
+version"). The replay tailer compares it to the current file's `workflow_content_hash` to flag a stale run.
+For a dict-inline run (no provenance) it equals the digest inside the `ir-hash:` `workflow_path`. `null` on a
+run that didn't supply it (an old trace) → "can't verify version".
 
 **`run.complete`** (folded at finalize, `workflow_trace.py:913-948`): always `end_time`, `duration_ms`,
 `final_status` (**this is where `degraded` lives** — a *run* outcome), `nodes_executed`, `nodes_failed`,
@@ -155,17 +164,22 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
 ## Consumer-derivation contract (the overlay)
 
 - **Status:** the overlay reads the `event.status` **enum** directly (`"success" | "cached" | "failed"`) —
-  no derivation. **`degraded` is a run banner**, read from `run.complete.final_status`, not per-node.
-  `running` / `pending` are **inferred** from the static graph (an `event` exists only on completion; there
-  is no `node.start` in v1).
+  no derivation. `running` comes from a **`node.start` line** (SHIPPED, Task 173): a disk-only marker the
+  producer flushes when a node BEGINS, sharing the node's `id`/`seq` so the terminal `event` supersedes it
+  (last-wins); the post-hoc reader (`_partition_trace_lines`) drops it, leaving on-disk `event` seqs
+  byte-identical. `pending` = no line yet for that node. **`degraded` is a run banner**, read from
+  `run.complete.final_status`, not per-node.
 - **Join:** match `event` → graph node by `(node_id, ancestor_path)`, `port = null`, via `sameRef`. **Read
   these off the RAW stream — NOT through `load_trace_file`/`reconstruct`, which STRIPS `ancestor_path`/`port`
   (`_RESERVED_LINE_KEYS`).** A re-flushed correction (routing dead-end) repeats an `id` → key on `id`,
   last-wins. See the consumer-handoff braindump in `task_173/starting-context/` for the full tailer trap list.
-- **Liveness level:** L1 (per-completion) + the static graph. **Known v1 limitation:** for parallel/batch,
-  the overlay can't show *which* of N is running until items complete — a per-completion flipbook there
-  (the `node.start`/L2 fix is deferred). Rich detail (resolved IO, cost, tokens) comes from the event
-  payload (`node_output`, `llm_call`).
+- **Liveness level:** L1.5 — per-completion `event` + emit-at-start `node.start` for every **main-thread**
+  node (leaf nodes via `begin_node` at engine step 8.5; sub-workflow and batch-of-LEAF hosts via
+  `descend`, sharing the host frame's seq). **Known v1 limitation:** a parallel/sequential
+  batch-OF-SUB-WORKFLOWS host and the individual batch ITEMS get NO `node.start` — they run off the owner
+  thread, and the no-lock rule forbids emitting to the run-scoped collector there → they show
+  pending-until-done; batch-item granularity stays deferred. Rich detail (resolved IO, cost, tokens) comes
+  from the event payload (`node_output`, `llm_call`).
 
 ---
 
@@ -202,8 +216,12 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
 
 ## Deferred — pin against the shipped overlay, NOT in v1
 
-- **`node.start` (L2):** light a node the instant it begins; the fix for real-time parallel/batch
-  "running". New emit points.
+- **`node.start` for batch ITEMS + the batch-of-sub-workflow HOST (L2):** the emit-at-start marker
+  SHIPPED for every main-thread node (Task 173 — see the Consumer-derivation section), so flat nodes plus
+  sub-workflow and batch-of-leaf hosts light `running` live. Still deferred: per-ITEM "running" inside a
+  parallel/sequential batch, and the batch-OF-sub-workflow host — both execute off the owner thread (the
+  no-lock rule forbids emitting there), so they stay pending-until-done. Couples to batch-item promotion
+  below.
 - **`llm` as its own child-span `kind`** (today nested as `llm_call`); **batch-item promotion** to
   first-class events (today inline) — which also requires teaching `_rebuild_event_tree`/`tree()` to
   re-nest `batch_items` (today only `sub_workflow_events`), so batch-promotion and the `tree()` view are

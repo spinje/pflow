@@ -231,6 +231,20 @@ def _collect_candidate_traces(
     return successful, failed
 
 
+def _non_reusable_outcome_label(data: dict[str, Any]) -> str:
+    """Human label for why a non-reusable trace was bucketed as such.
+
+    The non-reusable bucket (see ``_collect_candidate_traces``) holds BOTH
+    genuinely failed runs (``final_status == "failed"``) AND incomplete ones —
+    a crash-tail / interrupted / still-in-flight trace with no ``run.complete``
+    trailer (``final_status == "incomplete"``, common since eager-``meta``,
+    Task 133/173). Naming them apart keeps the disclosure note honest: an
+    interrupted run is not a failed run, and the agent's next step differs
+    (re-run vs. wait for the in-flight run / investigate the failure).
+    """
+    return "incomplete run" if str(data.get("final_status") or "") == "incomplete" else "failed run"
+
+
 def _autoload_selection_with_disclosure(
     successful: list[tuple[Path, dict[str, Any]]],
     failed: list[tuple[Path, dict[str, Any]]],
@@ -240,16 +254,17 @@ def _autoload_selection_with_disclosure(
         chosen = successful[0][0]
         if failed and failed[0][0].name > chosen.name:
             return chosen, (
-                f"Skipped newer trace `{failed[0][0].name}` (failed run) in "
+                f"Skipped newer trace `{failed[0][0].name}` "
+                f"({_non_reusable_outcome_label(failed[0][1])}) in "
                 f"favor of `{chosen.name}` (success). Pass "
                 f"`--from-trace <path>` to override."
             )
         return chosen, None
     if failed:
-        chosen = failed[0][0]
-        return chosen, (
-            f"Auto-loaded `{chosen.name}` (failed run); no successful "
-            f"trace exists for this workflow. Trace-dependent recommendations "
+        chosen_path, chosen_data = failed[0]
+        return chosen_path, (
+            f"Auto-loaded `{chosen_path.name}` ({_non_reusable_outcome_label(chosen_data)}); "
+            f"no successful trace exists for this workflow. Trace-dependent recommendations "
             f"may be suppressed. Re-run the workflow to record a successful "
             f"trace, or pass `--from-trace <path>` to use a specific trace."
         )

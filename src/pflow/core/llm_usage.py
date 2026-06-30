@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 InputTokenAccounting = Literal["total_includes_cache", "split_cache_fields"]
 
@@ -67,6 +68,23 @@ def normalize_litellm_usage_tokens(
         input_token_accounting=accounting,
         has_cache_telemetry=has_cache_telemetry,
     )
+
+
+def input_token_total(llm_call: Mapping[str, Any]) -> tuple[int, int]:
+    """Return ``(input_tokens, cache_read_tokens)`` for one recorded LLM call.
+
+    The read-side counterpart of :func:`normalize_litellm_usage_tokens`: that
+    normalizes a provider's raw usage at WRITE time, this reads pflow's
+    cache-INCLUSIVE ``input_tokens`` total back off a trace ``llm_call`` record
+    (falling back to ``prompt_tokens`` for older traces). Every producer
+    (LLMNode, ClaudeCodeNode) writes ``input_tokens`` cache-inclusive, so no
+    reader does render-time cache arithmetic. ``cache_read`` is returned
+    alongside only for the cache-hit-% display. The trailing ``or 0`` guards a
+    legacy entry that stored an explicit ``None`` instead of omitting the field.
+    """
+    total_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0)) or 0
+    cache_read = llm_call.get("cache_read_input_tokens", 0) or 0
+    return total_in, cache_read
 
 
 def _non_negative_int(value: int | None) -> int:

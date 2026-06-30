@@ -18,7 +18,7 @@ import "@xyflow/react/dist/style.css";
 import { reportInteraction, subscribe, type PointHandlers } from "../api/events";
 import { collapsibleGroupIds, initialCollapsed, revealNodes } from "../graph/collapse";
 import { autoDirection } from "../graph/direction";
-import { consumedReadPaths, ioOwners, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { consumedReadPaths, ioOwners, refKey, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import {
   edgeIdForTarget,
   edgeTargetForId,
@@ -39,7 +39,7 @@ import {
   readViewParams,
   writeViewParams,
 } from "../utils/viewParams";
-import type { InteractionTarget, PointTarget, RFEdge, RFGraph, RFNode, SourceFiles } from "../types";
+import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RunComplete, RunEvent, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -48,6 +48,7 @@ import { nodeTypes } from "../components/nodes";
 import { PanelResizer } from "../components/PanelResizer";
 import { Rail } from "../components/Rail";
 import { ReadPanel } from "../components/ReadPanel";
+import { RunSelector } from "../components/RunSelector";
 import { SourcePane } from "../components/SourcePane";
 import { Toolbar } from "../components/Toolbar";
 
@@ -55,6 +56,16 @@ interface GraphViewProps {
   workflow: string;
   onBack: () => void;
 }
+
+// A run-event → the overlay's per-node state: status + the cheap hover metrics (already on the wire). Status
+// drives the badge; duration/cost ride its hover detail.
+const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationMs: e.duration_ms, costUsd: e.cost_usd, id: e.id });
+
+// The detail panel's "This run" section opens ONLY for a node with a recorded COMPLETION in the current run.
+// `running` (the badge/chip cover it), `stopped` (only a node.start on disk — nothing to project), and
+// `unrecorded` (absent from a stale-version replay) are excluded; `pending` is the absence of any status. A
+// status-driven CONDITIONAL render (not CSS-hide), so a loop's next iteration remounts → refetches the latest.
+const TERMINAL_RUN_STATUSES = new Set<string>(["success", "cached", "failed"]);
 
 export function GraphView(props: GraphViewProps): JSX.Element {
   return (
@@ -79,6 +90,25 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [focus, setFocus] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Live execution overlay (Task 173): node status keyed by stable structural ref-key, plus the run
+  // banner. Driven by the SSE run-* messages; an empty map = no run = no overlay styling.
+  const [runStatus, setRunStatus] = useState<ReadonlyMap<string, NodeRunState>>(() => new Map());
+  const [runBanner, setRunBanner] = useState<RunComplete | null>(null);
+  // Task 173 DR-1: an optional `?run=<run_id>` pins this Viewer to one specific run (replay a finished
+  // run, or watch one of N concurrent runs) instead of the unpinned "follow newest live" overlay. Read
+  // once at mount (changing it reloads the page in v1); `runMissing` shows when the pinned id resolves
+  // to no trace (stale bookmark / rotated file).
+  const [runId, setRunId] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get("run") || null,
+  );
+  const [runMissing, setRunMissing] = useState(false);
+  // Task 173 (flock death-detection): the run's process exited before finishing (crash/kill). Flip dangling
+  // `running` nodes to `stopped` + show a banner, rather than leave them pulsing blue forever.
+  const [runStopped, setRunStopped] = useState(false);
+  // Task 173 (replay version-detection): the pinned run was recorded against a DIFFERENT version of this
+  // workflow than the file on disk now (a node renamed/removed/re-nested). Nodes whose id is unchanged still
+  // light correctly; show an honest banner that the rest may not match. Latched server-side; pinned-only.
+  const [runStale, setRunStale] = useState(false);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -111,6 +141,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       focus,
       selected: selectedId,
       workflowName,
+      runStatus,
+      // Task 173 replay: a STALE (different-version) + COMPLETED (runBanner present → no more events) replay
+      // → mark current nodes the run has no state for as "unrecorded" instead of leaving them blank. Gated on
+      // completed so a still-running pinned-stale run never mis-marks a node that's merely pending.
+      markUnmatched: runStale && runBanner !== null,
     },
     reload,
   );
@@ -185,11 +220,36 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
 
   // Mirror a density/direction toggle into the URL (replaceState so flips don't spam
   // the back button), preserving every other param (workflow, node).
-  const syncUrl = useCallback((patch: { direction?: Direction; density?: Density; source?: boolean }) => {
-    const url = new URL(window.location.href);
-    url.search = writeViewParams(window.location.search, patch);
-    window.history.replaceState({}, "", url);
-  }, []);
+  const syncUrl = useCallback(
+    (patch: { direction?: Direction; density?: Density; source?: boolean; run?: string | null }) => {
+      const url = new URL(window.location.href);
+      url.search = writeViewParams(window.location.search, patch);
+      window.history.replaceState({}, "", url);
+    },
+    [],
+  );
+  // Task 173 D6: pick a run to view — a run_id PINS it (replay, or watch one of N live runs via &run=);
+  // null = follow the newest live run (unpinned). In-place: only the overlay status swaps — the graph,
+  // camera, focus, and collapse all stay (no ELK re-layout). `?run=` is written to the URL (shareable +
+  // survives reload). Clear prior run-state synchronously so the switch never flashes the old run's status;
+  // the re-subscribe (the SSE effect depends on runId) repopulates from the new run's snapshot/deltas.
+  const selectRun = useCallback(
+    (next: string | null) => {
+      // Re-picking the CURRENT selection is a no-op. Clearing run-state here relies on the SSE effect
+      // (deps include runId) to repopulate from the new run's snapshot — but an UNCHANGED runId never
+      // re-fires it, so we'd wipe the overlay markers with nothing to refill them. Only a genuine switch
+      // tears down + rebuilds. (The menu still closes: RunSelector.pick owns that, independent of onSelect.)
+      if (next === runId) return;
+      setRunId(next);
+      syncUrl({ run: next });
+      setRunStatus(new Map());
+      setRunBanner(null);
+      setRunMissing(false);
+      setRunStopped(false);
+      setRunStale(false);
+    },
+    [runId, syncUrl],
+  );
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   // The read panel's source-link click: open the pane (if closed) and bump a
   // counter so SourcePane re-scrolls to the selected node's line even when it's
@@ -401,6 +461,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     return host ? (graph.nodes.find((n) => n.id === host) ?? null) : null;
   }, [graph, selectedId]);
 
+  // The selected node's live run state — looked up ONCE: `status` drives `showRunDetail`, and the event
+  // `id` is the "This run" panel's refetch discriminator (a loop re-completing the same node → new id →
+  // refetch, even though the ref/status are unchanged; PR #543).
+  const selectedRunState = selectedNode ? runStatus.get(refKey(selectedNode.ref)) : undefined;
+
   // A selected ROOT IO CARD (its id IS its wrapper group's) reads as the
   // workflow's interface. Third resolution arm, disjoint from the other two by
   // id namespace: wrapper groups never match a node or a contract edge.
@@ -572,12 +637,100 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   const graphReady = graph !== null;
   useEffect(() => {
     if (!graphReady) return;
+    // A (re)subscribe starts clean: clear any prior run's status so switching WORKFLOW (or run) never
+    // briefly paints the previous run's state onto this graph before the new snapshot arrives. The new
+    // subscription repopulates via its snapshot/deltas. (selectRun also clears synchronously for no flash.)
+    setRunStatus(new Map());
+    setRunBanner(null);
+    setRunMissing(false);
+    setRunStopped(false);
+    setRunStale(false);
     return subscribe(workflow, {
       focus: (target) => pointHandlers.current?.focus(target),
       frame: (target) => pointHandlers.current?.frame(target),
       clear: () => pointHandlers.current?.clear(),
-    });
-  }, [graphReady, workflow]);
+      // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
+      // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
+      runSnapshot: (events, run, stopped, stale) => {
+        setRunMissing(false);
+        setRunStopped(stopped);
+        // `stale` carries on the snapshot for a LATE subscriber (the present subscriber learns it via the
+        // run-stale broadcast below, whose snapshot predates the server-side latch).
+        setRunStale(stale);
+        // A late subscriber to an already-stopped run gets the dangling nodes still reading `running` —
+        // flip them to `stopped` here so it doesn't blue-blink forever (silent-failures review).
+        setRunStatus(
+          new Map(
+            events.map((e) => [
+              refKey(e.ref),
+              stopped && e.status === "running" ? { status: "stopped" } : eventState(e),
+            ]),
+          ),
+        );
+        setRunBanner(run);
+      },
+      runEvents: (events) =>
+        setRunStatus((prev) => {
+          const next = new Map(prev);
+          for (const e of events) next.set(refKey(e.ref), eventState(e));
+          return next;
+        }),
+      // A completed run is not stopped — clear any stale stopped state (defensive against the clean-finish
+      // race the tailer now also guards; concurrency review).
+      runComplete: (run) => {
+        setRunStopped(false);
+        setRunBanner(run);
+      },
+      runReset: () => {
+        setRunMissing(false);
+        setRunStopped(false);
+        setRunStale(false);
+        setRunStatus(new Map());
+        setRunBanner(null);
+      },
+      runNotFound: () => {
+        setRunStatus(new Map());
+        setRunBanner(null);
+        setRunStale(false);
+        setRunMissing(true);
+      },
+      // Task 173 flock death-detection: the run's process exited mid-flight. Flip the nodes still showing
+      // `running` to `stopped` (they'll never complete) and surface the banner.
+      runStopped: () => {
+        setRunStopped(true);
+        setRunStatus((prev) => {
+          const next = new Map(prev);
+          for (const [key, st] of next) {
+            if (st.status === "running") next.set(key, { ...st, status: "stopped" });
+          }
+          return next;
+        });
+      },
+      // Task 173 replay version-detection: the pinned run was recorded against a different workflow version.
+      // Reaches the subscriber present when the server latched it (its snapshot predates the latch); late
+      // subscribers get it via the snapshot's stale flag instead. Non-blocking — nodes still light.
+      runStale: () => setRunStale(true),
+    }, runId);
+  }, [graphReady, workflow, runId]);
+
+  // Dev-only join-miss detector (Task 173, deep-review R1). A run-event whose structural ref matches no
+  // graph node lights nothing and raises nothing — the overlay's signature silent failure (producer
+  // emit-time ancestor_path drifting from the renderer's RFRef). Surface it loudly in dev so it's caught
+  // during the mandatory browser verification, especially at the sub-workflow / batch checkpoints where
+  // non-empty ancestor_path joins first get exercised. Keyed on the FULL graph (not rendered nodes), so a
+  // collapsed-group child is not a false positive.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !graph || runStatus.size === 0) return;
+    const joinable = new Set(graph.nodes.map((n) => refKey(n.ref)));
+    const unjoined = [...runStatus.keys()].filter((key) => !joinable.has(key));
+    if (unjoined.length > 0) {
+      console.warn(
+        `pflow overlay: ${unjoined.length} run-event(s) join to no graph node ` +
+          `(producer ancestor_path vs renderer RFRef drift?):`,
+        unjoined,
+      );
+    }
+  }, [runStatus, graph]);
 
   const toolbar = (): JSX.Element => (
     <Toolbar
@@ -597,6 +750,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // it has nothing to show (the back nav lives in the toolbar).
   const rail = (showSourceToggle: boolean): JSX.Element => (
     <Rail
+      runControl={<RunSelector workflow={workflow} runId={runId} onSelect={selectRun} />}
       sourceOpen={sourceOpen}
       showSourceToggle={showSourceToggle}
       groupCount={collapsibleIds.length}
@@ -651,6 +805,46 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           )}
           <div className="canvas">
           {rail(true)}
+          {/* Run banners stack top-right (a stale REPLAY shows the version banner AND the outcome banner; a
+              crashed run the stopped banner too) — a flex column so they never overlap. */}
+          <div className="run-banners">
+          {runMissing && (
+            // Task 173 DR-1: a pinned `?run=` id resolved to no trace. TWO causes collapse here — the
+            // trace was cleared/rotated, OR the run id is wrong (typo / hand-built / from another machine).
+            // Name both + echo the id + the recovery, rather than assert one cause or leave an all-pending
+            // canvas implying the run never started (the silent failure this banner exists to prevent).
+            <div className="run-banner run-failed" role="status">
+              Run <code>{runId}</code> not found — its trace may have been cleared from{" "}
+              <code>~/.pflow/debug</code>, or the run id is incorrect. Remove <code>?run=</code> to follow
+              the newest run.
+            </div>
+          )}
+          {runStale && (
+            // Task 173 replay version-detection: this run was recorded against a different version of the
+            // workflow than the file on disk now. Factual + non-blocking — unchanged-id nodes still light;
+            // the "● Live — follow newest" un-pin in the RunSelector is the way out.
+            <div className="run-banner run-stale" role="status">
+              This run was recorded against a different version of this workflow — node states may not match
+              the current graph.
+            </div>
+          )}
+          {runStopped && (
+            // Task 173 flock death-detection: the run's process exited before finishing. Say so (amber)
+            // instead of leaving nodes pulsing `running`; the ones that were running now read `stopped`.
+            <div className="run-banner run-stopped" role="status">
+              Run stopped — the process exited before finishing.
+            </div>
+          )}
+          {runBanner && (
+            // Task 173: the run outcome banner (final_status: success | degraded | failed). The live
+            // per-node state shows on the nodes themselves; this is the run-level summary.
+            <div className={`run-banner run-${runBanner.final_status ?? "running"}`} role="status">
+              Run {runBanner.final_status ?? "running"}
+              {typeof runBanner.nodes_executed === "number" ? ` · ${runBanner.nodes_executed} nodes` : ""}
+              {runBanner.nodes_failed ? ` · ${runBanner.nodes_failed} failed` : ""}
+            </div>
+          )}
+          </div>
           {status === "loading" && <div className="canvas-overlay">Laying out…</div>}
           {status === "empty" && <div className="canvas-overlay">This workflow has no visible structure.</div>}
           {reloadError && (
@@ -735,6 +929,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               onNavigate={onNavigate}
               onOpenSource={openSourceAt}
               onClose={() => setSelectedId(null)}
+              workflow={workflow}
+              runId={runId}
+              showRunDetail={TERMINAL_RUN_STATUSES.has(selectedRunState?.status ?? "")}
+              runEventId={selectedRunState?.id ?? null}
             />
           )}
         </div>

@@ -354,7 +354,7 @@ Single source of truth for the workflow-IR `type:` vocabulary. `CANONICAL_TYPES`
 
 ### security_utils.py
 
-19 sensitive parameter names detected (password, token, api_key, secret, etc.). Case-insensitive matching. Used by MCP error sanitization and CLI rerun display.
+19 sensitive parameter names (password, token, api_key, secret, ...). `is_sensitive_parameter(key)` is the **single** word-aware, case-insensitive rule — a sensitive name must match as WHOLE words across snake/kebab/dotted/camelCase (`api_key`/`X-API-Key`/`apiKey` match; `author`/`secretary`/`tokens` do NOT — the old raw-substring check redacted those by mistake). Every redaction site defers to it: `sanitize_parameters` (MCP/error/runner-metadata), `mask_sensitive_value` (probe cache), the CLI rerun display, settings display, the failed-batch-item summary (`runtime/engine/batch_item_summary`), and the run-detail panel (`ui/run_node`). Accepted boundary: a delimiter-less concatenation (`myapikey`) is one word and won't match an embedded `apikey`, and a secret inside a string VALUE (no key to match) is not caught.
 
 ## Imports — Not Exported (require direct imports)
 

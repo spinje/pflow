@@ -10,6 +10,7 @@ import {
   parseTemplate,
   previewValue,
   stripMarkdown,
+  timeAgo,
 } from "./format";
 import { HIGHLIGHT_LANGS } from "./highlight";
 
@@ -189,5 +190,44 @@ describe("previewValue", () => {
     expect(previewValue(null)).toBe("null");
     expect(previewValue(42)).toBe("42");
     expect(previewValue("x".repeat(200)).endsWith("…")).toBe(true);
+  });
+});
+
+describe("timeAgo (relative last-run label; injectable now for determinism)", () => {
+  const now = Date.parse("2026-06-27T12:00:00");
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const S = 1000;
+  const M = 60 * S;
+  const H = 60 * M;
+  const D = 24 * H;
+
+  it("returns '' for a missing or unparseable timestamp (degrade, never 'Invalid Date')", () => {
+    expect(timeAgo(null, now)).toBe("");
+    expect(timeAgo(undefined, now)).toBe("");
+    expect(timeAgo("", now)).toBe("");
+    expect(timeAgo("not-a-date", now)).toBe("");
+  });
+
+  it("buckets sub-day spans as just-now / minutes / hours", () => {
+    expect(timeAgo(ago(10 * S), now)).toBe("just now");
+    expect(timeAgo(ago(0), now)).toBe("just now");
+    expect(timeAgo(ago(5 * M), now)).toBe("5m ago");
+    expect(timeAgo(ago(3 * H), now)).toBe("3h ago");
+    expect(timeAgo(ago(23 * H), now)).toBe("23h ago");
+  });
+
+  it("uses 'yesterday' for one day and Nd for the rest of the week", () => {
+    expect(timeAgo(ago(D), now)).toBe("yesterday");
+    expect(timeAgo(ago(4 * D), now)).toBe("4d ago");
+  });
+
+  it("falls back to an absolute date (no 'ago') once a week old", () => {
+    const label = timeAgo(ago(10 * D), now);
+    expect(label).not.toBe("");
+    expect(label).not.toMatch(/ago|yesterday|just now/);
+  });
+
+  it("treats a small future skew as 'just now', never a negative span", () => {
+    expect(timeAgo(new Date(now + 5 * S).toISOString(), now)).toBe("just now");
   });
 });

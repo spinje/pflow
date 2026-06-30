@@ -19,6 +19,95 @@ export interface RFRef {
   port: "in" | "out" | null;
 }
 
+// --- Live execution overlay (Task 173) ---------------------------------------------------------
+// A node's display state. `pending` (not started) is the ABSENCE of a status — only these four
+// arrive on the wire (the producer's per-node status enum + the live `node.start` → `running`).
+// "stopped" is consumer-derived (Task 173 flock): a node still `running` when the run's process exited
+// without finishing (crash/kill) — the server's `run-stopped` flips it (the producer never emits it).
+// "unrecorded" is also consumer-derived (Task 173 replay): in a STALE, completed replay, a current-graph
+// node the pinned run has NO state for (renamed/new since, or an untaken branch in that version) — "no
+// recorded state for this version", distinct from pending. Neither rides the wire.
+export type NodeStatus = "running" | "success" | "cached" | "failed" | "stopped" | "unrecorded";
+
+// The cheap run metrics carried alongside a node's status (already on the wire — RunEvent below) for the
+// badge's hover detail. `null`/absent when not applicable (a running node has no duration yet; a non-LLM
+// node has no cost). Kept separate from `status` so the badge glyph/color stay status-only.
+export interface RunDetail {
+  durationMs?: number | null;
+  costUsd?: number | null;
+}
+
+// A node's overlay run state: the status (drives the badge) + its hover metrics + the source event id. The
+// overlay's status map is keyed by structural ref-key → this; `applyStatus` splits status/metrics onto
+// `data.status` + `data.runDetail`. `id` is the source RunEvent id — a per-completion discriminator the
+// detail panel keys its refetch on, so a loop re-completing the SAME node (same ref + status) still refreshes
+// (PR #543); absent on synthesized states (a snapshot's dangling→stopped) and on idle/test fixtures.
+export interface NodeRunState extends RunDetail {
+  status: NodeStatus;
+  id?: number | null;
+}
+
+// One run-event the overlay joins onto a graph node by its structural `ref` (node_id + ancestor_path
+// + port=null), via sameRef/refKey. Carries only the join key + status (+ cheap cost/duration) — never
+// node_output (may be large/blob) and never the raw node_type (a Python class name).
+export interface RunEvent {
+  id: number | null;
+  ref: RFRef;
+  status: NodeStatus;
+  duration_ms?: number | null;
+  cost_usd?: number | null;
+}
+
+// The run.complete trailer, surfaced as the run banner. `final_status` is the run outcome
+// (`success` | `degraded` | `failed`) — distinct from any single node's status.
+export interface RunComplete {
+  final_status?: string;
+  // The run.complete wire is a 4-field allowlist (run_tailer._RUN_COMPLETE_FIELDS); duration_ms / json_output
+  // / warnings are deliberately NOT carried on the live SSE wire or the snapshot. Add a field here only after
+  // adding it to that allowlist, or it is silently dropped at the projection.
+  nodes_executed?: number;
+  nodes_failed?: number;
+  failed_node_ids?: string[];
+}
+
+// One run from GET /api/runs (Task 173 D6) — the catalog running-indicator + the run selector read this.
+// RAW facts (the UI composes the badge): `complete` has a run.complete trailer; `final_status` is that
+// trailer's outcome or null while not complete; `live` = not complete AND the writer still holds the trace's
+// advisory lock (EXACT flock liveness, not the old mtime heuristic); `only_node` labels an --only run.
+// `workflow_path` is `ir-hash:<md5>` for inline/stdin/MCP runs (a content fingerprint, NOT a file) — `null`
+// only for a malformed/legacy trace lacking the field.
+export interface RunInfo {
+  run_id: string;
+  workflow_name: string;
+  workflow_path: string | null;
+  start_time: string;
+  complete: boolean;
+  final_status: string | null;
+  live: boolean;
+  only_node: string | null;
+  trace_file: string;
+  // The git-repo root this run's file lives under (server-side detection, cached) — the catalog buckets
+  // ad-hoc runs by repo. `null` for an inline (`ir-hash:`) / pathless run or a file under no repo ("Other").
+  git_root: string | null;
+}
+
+// The detail panel's "This run" section reads this from GET /api/run-node (Task 173 D6) — ONE node's
+// runtime record off its trace, the interactive single-node counterpart of `pflow report`. WIRE field
+// names (snake_case), matching RunEvent above — NOT NodeRunState's camelCase (a derived in-app type).
+// `node_type` is the tagged kind (NEVER the raw Python class); `input`/`output` are the realized
+// (post-`${...}`) payloads with secrets redacted; `cost_usd` is the node's OWN paid cost (the shared
+// event_cost — a cached node → 0). `tokens` / `cost_usd` / `error` are null when not applicable.
+export interface RunNodeDetail {
+  node_type: string;
+  status: string;
+  duration_ms: number;
+  cost_usd: number | null;
+  tokens: { input: number; output: number; cache_read: number } | null;
+  error: string | null;
+  input: Record<string, unknown>;
+  output: Record<string, unknown> | string | null;
+}
+
 export interface RFParam {
   name: string;
   // JSON-able authored value: string (incl. full prompt/code), number, bool,

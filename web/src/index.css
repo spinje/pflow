@@ -24,6 +24,14 @@
   --decision: #ffa657;
   --warn: #f0a07a;
   --danger: #ff6b6b;
+  /* Run-status palette (Task 173): single-sourced so the corner StatusBadge background AND the detail
+     panel's "This run" tile border share ONE set of colors and can't drift. Defined at :root (NOT the
+     chrome scope) so it's identical on the canvas badge and the panel tile — `--accent` can't be reused
+     for `running` because the chrome scope overrides it. `failed` reuses --danger. */
+  --status-running: #6ea8fe;
+  --status-success: #3fb950;
+  --status-cached: #8b949e;
+  --status-stopped: #d29922;
   --data-edge: #6fbfa8;
   /* The SELECTED data line: the bright member of the same green-teal family (hue
      carries identity, brightness carries state). Provisional — shoot-lab tunes it
@@ -150,11 +158,12 @@ button.active {
 }
 .catalog-item {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   width: 100%;
   text-align: left;
-  padding: 14px 16px;
+  padding: 12px 16px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -165,18 +174,77 @@ button.active {
 .catalog-item-name {
   font-weight: 600;
   font-size: 15px;
-}
-.catalog-item-desc {
-  color: var(--text-muted);
-}
-.catalog-item-path {
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 11px;
+  min-width: 0; /* let a long name ellipsize instead of shoving the run-meta off the row */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .catalog-empty {
   color: var(--text-muted);
   padding: 24px 0;
+}
+/* A non-openable row (an inline `ir-hash:` run has no file) — no pointer, no hover accent. */
+.catalog-item-static {
+  cursor: default;
+}
+.catalog-item-static:hover {
+  border-color: var(--border);
+}
+/* The right-side run summary on every row: the latest-run status mark (color via the shared .run-mark.run-*
+   palette) + a relative "last run" label, or a muted "never run". */
+.catalog-item-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.catalog-item-time {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.catalog-item-never {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+/* Collapsible catalog sections (Saved · per-repo · Other), Task 173 D6. The whole header is the toggle. */
+.catalog-section {
+  margin-top: 22px;
+}
+.catalog-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 2px;
+  margin-bottom: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  text-align: left;
+}
+.catalog-section-head:hover {
+  color: var(--text);
+}
+.catalog-section-chevron {
+  font-size: 11px;
+  transition: transform 0.12s ease;
+}
+.catalog-section-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+.catalog-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.catalog-section-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- graph view ---------- */
@@ -223,22 +291,25 @@ button.active {
   border-radius: 10px;
   color: var(--text-muted);
 }
-/* Hover tooltip: a dark rounded chip to the RIGHT of the icon (the capsule hugs
-   the canvas's left edge, like the search popover). Replaces the native title so
-   the sub-workflow toggle can carry a muted second "N/M open" state line.
-   position:absolute + pointer-events:none keeps it out of the button's grid
-   centering and never blocks the click. */
-.rail-tip {
+/* The chrome hover chip — a dark rounded tooltip. The LOOK is shared by the rail buttons and the
+   run-status corner badge (`.status-badge-tip`, Task 173); each owner positions it relative to its anchor
+   below. Replaces the native title so it's styled in the chrome palette (and the sub-workflow toggle can
+   carry a muted second "N/M open" line). position:absolute + pointer-events:none keeps it out of layout
+   and never blocks a click. */
+.rail-tip,
+.status-badge-tip {
   position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: 6px 10px;
-  background: var(--bg-field);
-  border: 1px solid var(--border);
+  /* LITERAL chip palette (NOT var(--bg-field)/var(--border)): those chrome tokens are undefined on the
+     React Flow canvas layer where the status badge lives, so the shared chip MUST use literals to render
+     identically on the rail (chrome) and the badge (canvas) — same reason the badge halo is a #0d0d0d
+     literal (see the .status-badge box-shadow note + web/CLAUDE.md chrome-palette note). The values equal
+     the chrome `--bg-field`/`--border`, so the rail chip is visually unchanged. */
+  background: #1c1c1c;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   white-space: nowrap;
@@ -246,6 +317,12 @@ button.active {
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.12s ease;
+}
+/* Rail tip: to the RIGHT of the icon (the capsule hugs the canvas's left edge, like the search popover). */
+.rail-tip {
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 8;
 }
 .rail-button:hover .rail-tip,
@@ -511,6 +588,238 @@ button.active {
 }
 .reload-banner strong {
   color: var(--danger);
+}
+
+/* ---------- live execution overlay (Task 173) ---------- */
+/* The corner run-status BADGE (StatusBadge.tsx) — an n8n-style overlay at the node's top-right.
+   The single per-node status surface: it replaced the status border RING (a green "done" border
+   read as confusing) AND the ChipRail's formerly-reserved status slot. pending = no badge, so an
+   idle canvas is unchanged. It overhangs the corner; the halo punches it off the node border. */
+.status-badge {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 10;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  /* `auto` (not `none`): the badge must receive hover so its native `title` tooltip (the run-status +
+     duration/cost hover detail, Task 173) actually fires — `pointer-events:none` silently defeats it.
+     A click on the 22px corner badge bubbles to the node (it has no own handler), so selection is
+     unaffected; the badge only overhangs the corner, so the pan dead-zone is negligible. */
+  pointer-events: auto;
+  /* Halo in the canvas void: a #0d0d0d LITERAL (not `var(--bg)` — that token is chrome-scoped to
+     #0d0d0d but resolves to the :root #0f1117 on the canvas layer; see web/CLAUDE.md chrome note). */
+  box-shadow:
+    0 0 0 2.5px #0d0d0d,
+    0 1px 4px rgb(0 0 0 / 50%);
+}
+.status-badge svg {
+  width: 14px;
+  height: 14px;
+}
+.status-badge.status-running {
+  background: var(--status-running);
+}
+.status-badge.status-success {
+  background: var(--status-success);
+}
+.status-badge.status-cached {
+  background: var(--status-cached);
+}
+.status-badge.status-failed {
+  background: var(--danger);
+}
+/* `stopped` (Task 173 flock): the run's process died while this node was still running — amber. */
+.status-badge.status-stopped {
+  background: var(--status-stopped);
+}
+/* `unrecorded` (Task 173 replay): the pinned run has no state for this node (different version). A muted,
+   hollow badge with a grey dashed glyph — deliberately reads as "no data", never as a real run status. */
+.status-badge.status-unrecorded {
+  background: #161b22;
+  color: #768390;
+  box-shadow:
+    inset 0 0 0 1px #30363d,
+    0 0 0 2.5px #0d0d0d,
+    0 1px 4px rgb(0 0 0 / 50%);
+}
+.status-badge.status-running svg {
+  animation: pflow-badge-spin 1s linear infinite;
+}
+/* The badge's hover chip — to the RIGHT of the corner badge, mirroring the rail tip (shares the chrome-chip
+   look above). One line: the friendly status verb + duration/cost (runStatusLabel). */
+.status-badge-tip {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text);
+  z-index: 11; /* above the badge's own z-index:10 */
+}
+.status-badge:hover .status-badge-tip {
+  opacity: 1;
+  visibility: visible;
+}
+@keyframes pflow-badge-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Run banners stack top-right (so they never collide with the centered reload-banner). A flex column,
+   so a stale REPLAY showing the version banner AND the run-outcome banner — or a crashed run adding the
+   stopped banner — stacks them instead of overlapping at one absolute corner. */
+.run-banners {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+.run-banner {
+  max-width: 360px;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 45%);
+}
+.run-banner.run-success {
+  border-color: #3fb950;
+}
+.run-banner.run-degraded {
+  border-color: #d29922;
+}
+.run-banner.run-failed {
+  border-color: var(--danger);
+}
+.run-banner.run-stopped {
+  border-color: #d29922;
+}
+/* Replay version-mismatch (Task 173) — info/amber, distinct from a hard failure (red). */
+.run-banner.run-stale {
+  border-color: #d29922;
+}
+
+/* Catalog "● running" badge (Task 173 D6) — a pulsing dot + label on a workflow with a live run. */
+.catalog-item-running {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6ea8fe;
+  white-space: nowrap;
+}
+.catalog-item-running .run-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #6ea8fe;
+  animation: pflow-dot-pulse 1.1s ease-in-out infinite;
+}
+@keyframes pflow-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Run selector (Task 173 D6) — the rail's top-slot run control + its dropdown of this workflow's runs. */
+.run-selector {
+  position: relative;
+}
+.run-selector .rail-button.active {
+  color: #6ea8fe; /* a pinned run (viewing a specific run, not following live) */
+}
+.run-menu {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 0;
+  z-index: 9;
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+.run-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+.run-menu-item:hover,
+.run-menu-item.selected {
+  background: var(--bg-raised);
+}
+.run-menu-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.run-menu-time {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.run-menu-check {
+  color: var(--accent);
+}
+.run-menu-empty {
+  padding: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.run-mark {
+  width: 14px;
+  text-align: center;
+  flex: none;
+}
+.run-mark.run-live {
+  color: #6ea8fe;
+}
+.run-mark.run-success {
+  color: #3fb950;
+}
+.run-mark.run-failed {
+  color: var(--danger);
+}
+.run-mark.run-degraded {
+  color: #d29922;
+}
+.run-mark.run-stale {
+  color: #8b949e;
+}
+.run-mark.run-stopped {
+  color: #d29922;
 }
 
 /* ---------- react flow surface ---------- */
@@ -1091,9 +1400,10 @@ button.active {
    Behavior modifiers (loop amber / batch purple) + the group's merged count-expander,
    straddling the TOP border, right-aligned — in BOTH container states (header-parity:
    nothing moves across the fold). Grammar: ROUND/capsule tinted chip = info; the one
-   SQUARE element (.group-toggle) = button. Reserved as the future overlay's status-
-   chip home (status joins leftmost). The rail extends 11px above the box; ELK doesn't
-   know — same straddle the old group-pill had, no layout impact. */
+   SQUARE element (.group-toggle) = button. (Live run-status is NOT here — it shipped as
+   the corner `.status-badge` overlay, Task 173; this rail's old "status-chip slot" was
+   retired.) The rail extends 11px above the box; ELK doesn't know — same straddle the old
+   group-pill had, no layout impact. */
 .chip-rail {
   position: absolute;
   top: -11px;
@@ -1102,6 +1412,12 @@ button.active {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+/* When a corner StatusBadge overhangs the top-right (Task 173), shift the rail left so its
+   rightmost chip / count-expander clears the badge (~9px gap). Applied only when the node
+   carries a run-status badge — a badge-less node keeps the chips at the corner. */
+.chip-rail.shifted {
+  right: 22px;
 }
 .chip {
   display: inline-flex;
@@ -1741,6 +2057,85 @@ button.active {
   margin-top: 20px;
   margin-bottom: 12px;
   padding-top: 16px;
+}
+
+/* The "This run" detail card (Task 173) — the panel's MOST distinct section: a bordered, elevated card
+   whose header mirrors the panel's top (PanelHeader) — the run-status badge in the tile, "status" over the
+   status value, the duration (+ cost) where the description sits. It replaced a near-invisible <details>
+   that read as just another quiet disclosure. */
+.this-run {
+  margin: 16px 0 6px;
+  padding: 12px 12px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-field);
+}
+.this-run-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+.this-run-tile {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-node);
+  /* a status-colored ring (matching the badge it frames) — same shared palette, mirroring how the node
+     tile at the top borders in its KIND color (2px, to match that tile). The status modifiers below set
+     the color. */
+  border: 2px solid var(--border);
+}
+.this-run-tile.status-success {
+  border-color: var(--status-success);
+}
+.this-run-tile.status-cached {
+  border-color: var(--status-cached);
+}
+.this-run-tile.status-failed {
+  border-color: var(--danger);
+}
+.this-run-headtext {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.this-run-status {
+  font-size: 17px;
+  color: var(--text);
+  line-height: 1.1;
+}
+.this-run-sub,
+.this-run-tokens {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.this-run-tokens {
+  margin: 10px 0 0;
+}
+/* the global h3 rule adds a big top divider; tighten the FIRST block's gap from the header inside the card */
+.this-run .read-panel-params:first-of-type h3 {
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+/* the run-status badge rendered STATIC inside the "This run" tile (not the canvas corner overlay): no
+   absolute offset, no #0d0d0d halo, no hover chip; a larger glyph to fill the 40px tile. */
+.status-badge.status-badge-inline {
+  position: static;
+  width: 26px;
+  height: 26px;
+  box-shadow: none;
+  pointer-events: none;
+}
+.status-badge.status-badge-inline svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Collapsible panel section (ReadPanel Description) — a native <details> styled as

@@ -97,6 +97,39 @@ on the next valid save. **Known limit:** a workflow mid-edit-invalid in a *sub-w
 file tracks only the entry file's mtime until it parses again (recovery still fires on the
 fixing save).
 
+### `GET /api/runs[?workflow=<name|path>]`
+→ `200` `[{run_id, workflow_name, workflow_path, start_time, complete, final_status, live,
+only_node, trace_file, git_root}]` — runs scanned from `~/.pflow/debug`, newest-first (Task 173 D6 run
+navigation). Bare = every run; `?workflow=X` = that workflow's history (matched on the recorded
+`meta.workflow_path`). RAW facts (the UI composes the badge): `complete` = has a `run.complete`
+trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`) or `null` while
+not complete; `live` = not complete AND the writer still holds the trace's advisory lock (EXACT
+`flock` liveness via `is_trace_locked` — the old `_STALE_RUN_S` mtime heuristic is deleted; a
+no-`fcntl` FS falls back to "incomplete = live"); `only_node` LABELS `--only` runs (they are kept
+here, unlike the live overlay which excludes them); `git_root` = the run's enclosing git repo (cached;
+buckets ad-hoc runs by project in the catalog) or `null`. Inline/stdin/MCP runs carry `workflow_path =
+"ir-hash:<md5>"` (a content fingerprint, not a file): they appear in the bare listing and a
+`?workflow=<file>` query can't match them. `404` on an unresolvable `?workflow=`; `200 []` for zero
+runs (a hard scan failure also degrades to `[]` — the scanner is shared non-throwing with the live
+tailer). The shared scanner is `run_tailer.scan_traces` (cheap head+tail read, never a full parse).
+Pin a Viewer to one run for replay/concurrent-watch via `GET /api/events?workflow=X&run=<run_id>`.
+
+### `GET /api/run-node?workflow=<name|path>&ref=<json>[&run=<run_id>]`
+→ `200` `RunNodeDetail` `{node_type, status, duration_ms, cost_usd, tokens, error, input, output}` — ONE
+node's runtime record for the detail panel's "This run" section (Task 173 D6 Phase 5). `ref` is the
+structural `RFRef` (`{node_id, ancestor_path, port}`) JSON-encoded — the SAME identity the overlay joins on
+(`sameRef`); no positional flat id. `&run=` reads the pinned run (matched by `meta.execution_id`); omitted
+→ the newest live trace (what the unpinned overlay follows). The interactive single-node counterpart of
+`pflow report`: realized `input` (post-`${...}` resolution — `node_params` is recorded RESOLVED + the
+canonical `llm_prompt`/`llm_system`), resolved `output` (`node_output`/`llm_response`), `cost_usd` (the
+shared `event_cost`, so it agrees with the chip + report), `tokens`, and `error`. Read off RAW JSONL lines
+(never `load_trace_file`, which strips the `ancestor_path`/`port` join keys), blobs resolved via
+`trace_io.substitute_refs`, `node_type` mapped through `node_type_tag` (NEVER the raw Python class name),
+secrets recursively redacted by key name. `400` on a missing/malformed `ref`; `404` on an unresolvable
+`workflow` or no matching run/event (incl. a `node.start`-only crashed node — no completion `event` to
+project). A read-only GET of trace content, same exposure class as `/api/graph` (the CORS tripwire below
+applies). The reader is `run_node.run_node_detail`.
+
 ### Live interaction channel
 
 - `GET /api/events?workflow=<name|path>&visibility=<visible|hidden>` subscribes a

@@ -7,7 +7,69 @@
 
 import { ioOwners } from "./io";
 import type { FlowEdge, FlowNode } from "./flow";
-import type { RFGraph } from "../types";
+import type { NodeRunState, NodeStatus, RFGraph, RFRef, RunDetail } from "../types";
+
+// --- Live execution overlay restyle (Task 173) -------------------------------------------------
+
+/** A stable string key for a structural ref — the overlay's status-map key. Invariant across the
+ *  POSITIONAL flat-id renumbering (a live-reload mid-run keeps each node's status), unlike the flat id;
+ *  mirrors the identity sameRef compares (node_id + port + ancestor_path of node_id:batch_index steps). */
+export function refKey(ref: RFRef): string {
+  const path = ref.ancestor_path.map((step) => `${step.node_id}:${step.batch_index}`).join(">");
+  return `${ref.node_id}|${ref.port}|${path}`;
+}
+
+/** Thread each node's live run status onto its `data` — a cheap pure restyle, the overlay sibling of
+ *  applyFocus: NO re-layout, and it returns the SAME node object when a node's status is unchanged so
+ *  memo'd nodes skip re-render (only changed nodes get new identity). Keyed on the stable structural
+ *  ref so it survives a live-reload renumber. Lights leaf nodes by their own ref and sub-workflow HOST
+ *  groups by the host's ref (primary group only — a host's leaf box is suppressed, so it renders AS the
+ *  group); io/wrapper groups and end nodes carry no status.
+ *
+ *  `markUnmatched` (Task 173 replay): when set — a STALE, completed replay — a joinable node the run has NO
+ *  state for gets `"unrecorded"` (a dashed "no data for this version" badge) instead of staying blank, so a
+ *  version mismatch is LOCATED on the canvas, not just announced in the banner. Honestly "no recorded state"
+ *  (also covers untaken branches in that version), not "this node changed" — we don't store the old graph. */
+export function applyStatus(
+  nodes: FlowNode[],
+  status: ReadonlyMap<string, NodeRunState>,
+  markUnmatched = false,
+): FlowNode[] {
+  // The resolved state for a node's ref: its run-event state, else (markUnmatched, a stale replay) the
+  // synthetic "unrecorded" with no metrics, else undefined (pending → no badge).
+  const resolve = (key: string): NodeRunState | undefined =>
+    status.get(key) ?? (markUnmatched ? { status: "unrecorded" } : undefined);
+  // The status + metrics patch for a node, or null when BOTH its status AND its metrics are unchanged (so
+  // memo'd nodes skip re-render). Gating on status ALONE went stale on a loop re-completing the SAME node
+  // with the same terminal status but new duration/cost (PR #543) — the hover chip kept the first iteration's
+  // numbers. `?? null` so an absent metric on either side compares equal (an idle node stays identity-stable).
+  const patchFor = (
+    currentStatus: NodeStatus | undefined,
+    currentDetail: RunDetail | undefined,
+    ref: RFRef,
+  ): { status?: NodeStatus; runDetail?: RunDetail } | null => {
+    const next = resolve(refKey(ref));
+    const sameStatus = currentStatus === next?.status;
+    const sameDetail =
+      (currentDetail?.durationMs ?? null) === (next?.durationMs ?? null) &&
+      (currentDetail?.costUsd ?? null) === (next?.costUsd ?? null);
+    if (sameStatus && sameDetail) return null;
+    return { status: next?.status, runDetail: next && { durationMs: next.durationMs ?? null, costUsd: next.costUsd ?? null } };
+  };
+  return nodes.map((node) => {
+    if (node.type === "node") {
+      const patch = patchFor(node.data.status, node.data.runDetail, node.data.node.ref);
+      return patch === null ? node : { ...node, data: { ...node.data, ...patch } };
+    }
+    // A sub-workflow HOST renders as a group (its leaf box suppressed), so light the GROUP by joining on
+    // the host's ref — but only its PRIMARY group (showTitle), so a host backing >1 group lights once.
+    if (node.type === "group" && node.data.hostNode && node.data.showTitle) {
+      const patch = patchFor(node.data.status, node.data.runDetail, node.data.hostNode.ref);
+      return patch === null ? node : { ...node, data: { ...node.data, ...patch } };
+    }
+    return node;
+  });
+}
 
 // The shared empty expansion set — expandTargets deliberately returns this ONE
 // module-level constant for every no-expansion result: the hook's build memo

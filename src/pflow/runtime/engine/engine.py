@@ -648,6 +648,11 @@ class WorkflowEngine:
             # would masquerade as a full-run snapshot source (issue #443).
             if shared.get("_pflow_depth", 0) == 0:
                 self.trace.only_node = self.only_node
+                # Task 173 (A1): open the streamed trace eagerly so the file + meta line exist from t=0
+                # — a live overlay can discover this run before its first node completes. AFTER the
+                # only_node stamp so meta records the right target; idempotent + gated (no-op for
+                # MCP/--no-trace and under the pytest trace_files gate).
+                self.trace.start_streaming()
         shared["__pflow_prompt_cache__"] = new_prompt_cache
         try:
             return self._run_inner(workflow, shared)
@@ -1020,6 +1025,7 @@ class WorkflowEngine:
         batch_trace_items: Optional[list] = None
         child_trace_events: Optional[list] = None
         host_frame: Any = None  # Task 172: a sub-workflow host's reserved correlation (run-scoped)
+        start_frame: Any = None  # Task 173: a leaf's node.start correlation (reserved seq, reused at completion)
 
         try:
             plan = plan_node(node, config, shared)
@@ -1086,6 +1092,15 @@ class WorkflowEngine:
             # 8. Progress callback (node_start)
             call_start_callback(config.node_id, shared)
 
+            # 8.5 Task 173 (node.start): flush a live in-flight marker the overlay tailer renders as
+            # `running`, reserving this node's seq for its completion event to reuse. Skipped for
+            # sub-workflow hosts (WorkflowExecutor reserves via descend(); host node.start is deferred
+            # L2) and a no-op unless the collector is run-scoped + streaming. The returned frame MUST
+            # reach every completion record below (step 16 / api-warning / except) so the seq is reused,
+            # never re-taken — keeping on-disk event seqs identical to a run without node.start.
+            if self.trace is not None and config.node_type_name != "WorkflowExecutor":
+                start_frame = self.trace.begin_node(config.node_id, config.node_type_name)
+
             # 9. Execute: batch or single
             if config.batch_config:
                 action = execute_batch(node, config, shared, self._execute_single_node)
@@ -1143,7 +1158,7 @@ class WorkflowEngine:
                     config.node_type_name,
                     node.params,
                     recovered=node.successors.get("error") is not None,
-                    frame=host_frame,
+                    frame=host_frame or start_frame,
                 )
 
             # 11. Cache result (in-process only — not gated by cache_enabled)
@@ -1199,7 +1214,7 @@ class WorkflowEngine:
                 self.trace,
                 success=not is_error_action,
                 error=trace_error,
-                frame=host_frame,
+                frame=host_frame or start_frame,
             )
 
             # 17. Completion callback
@@ -1280,7 +1295,7 @@ class WorkflowEngine:
                 node.params,
                 self.trace,
                 error=e,
-                frame=host_frame,
+                frame=host_frame or start_frame,
             )
 
             call_completion_callback(config.node_id, shared, "error", duration_ms, error=e)

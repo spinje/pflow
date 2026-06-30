@@ -17,7 +17,7 @@ import type { RFGraph } from "../types";
 // error contract (not a fabricated shape) is what the banner test exercises.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn() };
+  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn(), fetchRunNode: vi.fn() };
 });
 const live = vi.hoisted(() => ({
   handlers: null as import("../api/events").PointHandlers | null,
@@ -64,7 +64,8 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
-import { ApiError, fetchGraph, fetchSource } from "../api/client";
+import { ApiError, fetchGraph, fetchRunNode, fetchRuns, fetchSource } from "../api/client";
+import type { RunHandlers } from "../api/events";
 import { layoutGraph } from "../graph/layout";
 import { highlight } from "../utils/highlight";
 import { GraphView } from "./GraphView";
@@ -154,6 +155,8 @@ beforeEach(() => {
     }),
   });
   vi.mocked(fetchGraph).mockReset();
+  vi.mocked(fetchRuns).mockReset();
+  vi.mocked(fetchRunNode).mockReset();
   vi.mocked(fetchSource).mockReset();
   vi.mocked(fetchSource).mockResolvedValue({
     root: "/wf.pflow.md",
@@ -189,6 +192,144 @@ describe("GraphView mount", () => {
     // Advanced adds the body: the dynamic param's ${ref} connection chip.
     fireEvent.click(screen.getByText("advanced"));
     await waitFor(() => expect(screen.getByText("greet.stdout")).toBeTruthy());
+  });
+
+  it("re-picking the already-pinned run is a no-op — it must NOT wipe the overlay markers", async () => {
+    // Regression (Task 173, RunSelector bug): selectRun cleared runStatus and relied on the SSE effect
+    // (deps include runId) to repopulate from the new run's snapshot. But re-picking the SAME run leaves
+    // runId UNCHANGED, so the effect never re-fires — the markers were wiped with nothing to refill them.
+    // The guard makes re-selecting the current run a no-op. Faithful repro: start pinned to r1, light a
+    // node, re-pick r1 from the menu, assert the marker survives.
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([
+      {
+        run_id: "r1",
+        workflow_name: "demo",
+        workflow_path: "/wf.pflow.md",
+        start_time: "2026-06-24T20:00:00Z",
+        complete: true,
+        final_status: "success",
+        live: false,
+        only_node: null,
+        trace_file: "/t/r1.json",
+        git_root: null,
+      },
+    ]);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1"); // runId reads ?run= once at mount
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+
+      // The pinned run's snapshot lights `greet` success — the overlay marker we must not lose.
+      const run = live.handlers as unknown as RunHandlers;
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
+      await waitFor(() => expect(screen.getByLabelText("run status: success")).toBeTruthy());
+
+      // Re-pick r1 (already the pinned run): open the Runs menu and click it again.
+      fireEvent.click(screen.getByLabelText("Runs"));
+      fireEvent.click(await screen.findByTitle("r1"));
+
+      // The marker SURVIVES the re-select (the bug wiped it; with no re-subscribe nothing refilled it).
+      expect(screen.getByLabelText("run status: success")).toBeTruthy();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("a stale (different-version) pinned replay shows the version banner, and run-reset clears it (Task 173)", async () => {
+    // The run-stale broadcast reaches the present subscriber (its snapshot predates the server-side latch),
+    // and the snapshot's stale flag covers a late subscriber — both flip the same banner. It is non-blocking
+    // (the run still renders); a run-reset (a newer run took over) clears it.
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+      const run = live.handlers as unknown as RunHandlers;
+
+      // Path 1 — the broadcast arm (present subscriber). Nodes still light: the run renders normally.
+      act(() => run.runStale());
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
+      await waitFor(() => expect(screen.getByText(/different version of this workflow/)).toBeTruthy());
+      expect(screen.getByLabelText("run status: success")).toBeTruthy();
+
+      // A newer run takes over → the version banner clears (reset path).
+      act(() => run.runReset());
+      expect(screen.queryByText(/different version of this workflow/)).toBeNull();
+
+      // Path 2 — a late subscriber learns it from the snapshot's stale flag (no broadcast).
+      act(() => run.runSnapshot([], null, false, true));
+      await waitFor(() => expect(screen.getByText(/different version of this workflow/)).toBeTruthy());
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("a stale + COMPLETED replay marks a node with no recorded state 'unrecorded'; a still-live one does not", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH); // greet + done
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+      const run = live.handlers as unknown as RunHandlers;
+      const greetSuccess = { id: 0, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" as const };
+
+      // STALE but still LIVE (run=null → no run-complete trailer → not completed): `done` must NOT be marked
+      // yet — it could still run. Only the version banner shows.
+      act(() => run.runSnapshot([greetSuccess], null, false, true));
+      await waitFor(() => expect(screen.getByLabelText("run status: success")).toBeTruthy());
+      expect(screen.queryByLabelText("run status: unrecorded")).toBeNull();
+
+      // Now the run COMPLETES (run-complete trailer arrives) → markUnmatched gates on → `done`, with no
+      // recorded state, gets the dashed "unrecorded" badge; `greet` keeps its real success.
+      act(() => run.runComplete({ final_status: "success", nodes_executed: 1 }));
+      await waitFor(() => expect(screen.getByLabelText("run status: unrecorded")).toBeTruthy());
+      expect(screen.getByLabelText("run status: success")).toBeTruthy();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("the 'This run' detail section opens ONLY for a node with a recorded COMPLETION (Task 173)", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    vi.mocked(fetchRunNode).mockResolvedValue({
+      node_type: "shell",
+      status: "success",
+      duration_ms: 5,
+      cost_usd: null,
+      tokens: null,
+      error: null,
+      input: { command: "echo hi" },
+      output: { stdout: "hi" },
+    });
+    window.history.replaceState({}, "", "/");
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+      await waitFor(() => expect(live.handlers).not.toBeNull());
+      const run = live.handlers as unknown as RunHandlers;
+      const selectGreet = () =>
+        fireEvent.click(screen.getAllByText("say hi").find((el) => el.className.includes("node-name"))!);
+
+      // RUNNING → selecting the node opens its panel (Params), but NO run-detail section (the badge covers it).
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "running" }]));
+      selectGreet();
+      await waitFor(() => expect(screen.getByText("Params")).toBeTruthy());
+      expect(screen.queryByText("Output")).toBeNull(); // the section's Output heading is unique to it
+
+      // Now it COMPLETES → the gate opens live, the section mounts + fetches → its "status" header + Output appear.
+      act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
+      await waitFor(() => expect(screen.getByText("status")).toBeTruthy());
+      expect(await screen.findByText("Output")).toBeTruthy();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
   });
 
   it("source toggle mounts the source pane, and node selection marks that node's authored line", async () => {

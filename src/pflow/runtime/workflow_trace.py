@@ -71,6 +71,25 @@ def format_trace_filename(workflow_path: str | None, workflow_name: str, timesta
     return f"workflow-trace-{wf_hash}-{timestamp}.json"
 
 
+def _lock_trace_handle(handle: TextIO) -> None:
+    """Task 173: take a best-effort advisory lock on the open trace handle, held for the run's lifetime.
+
+    The live-overlay server probes this lock to tell a RUNNING run from a CRASHED one EXACTLY — the kernel
+    releases it on ANY process exit (clean finish, crash, ``kill -9``), so "lock held" == "the run's process
+    is alive". The lock rides the already-open streaming handle (acquired here, released when the handle
+    closes in ``_close_stream`` or the process dies). Unix-only (``fcntl``); a no-op on Windows or any
+    failure (e.g. a filesystem without ``flock``) — liveness then degrades to the consumer's fallback, and
+    the run is NEVER affected (trace persistence is a side-channel)."""
+    try:
+        import fcntl
+    except ImportError:
+        return  # no fcntl (Windows) — degrade to the consumer's heuristic
+    # Suppress ANY failure (lock unavailable on this FS, or a wrapped/non-fd handle e.g. the I/O-fault
+    # test's stub) — same best-effort posture as _close_stream; never let it touch the run.
+    with contextlib.suppress(Exception):
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 def _trace_recency_key(path: Path) -> tuple[str, str]:
     """Sort key ranking trace files newest-first (under ``reverse=True``).
 
@@ -517,6 +536,7 @@ class WorkflowTraceCollector:
         workflow_path: str | None = None,
         is_run_scoped: bool = False,
         stream_to_disk: bool = False,
+        content_hash: str | None = None,
     ):
         """Initialize the trace collector.
 
@@ -551,9 +571,19 @@ class WorkflowTraceCollector:
                 never stream). Default ``False`` so bare-constructed collectors don't
                 write files. A second, test-only gate lives in ``tests/conftest.py``
                 (``_open_stream`` is no-op'd unless the test is marked ``trace_files``).
+            content_hash: Task 173 replay version fingerprint — the
+                ``workflow_content_hash`` of the resolved IR (``canonical_ir_digest``
+                with source-line provenance stripped, so a comment/whitespace-only
+                edit isn't flagged stale), stamped into the ``meta`` line. At replay
+                the server compares it to the current file's digest to flag a stale
+                (different-version) run.
+                Defaults to ``None`` so the per-sub-workflow buffer collector and
+                all test fixtures construct unchanged; an old trace (or a run
+                that didn't supply it) simply has no fingerprint → "can't verify".
         """
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
+        self.content_hash = content_hash
         self.is_run_scoped = is_run_scoped
         self.execution_id = str(uuid.uuid4())
         self.start_time = datetime.now()
@@ -749,11 +779,16 @@ class WorkflowTraceCollector:
         return [{"node_id": f.node_id, "batch_index": f.batch_index} for f in self._host_stack]
 
     def descend(self, node_id: str) -> _HostFrame:
-        """Enter a sub-workflow host: reserve its ``seq`` and push its frame (run-scoped only).
+        """Enter a sub-workflow host: reserve its ``seq``, push its frame, and (when streaming) emit a
+        disk-only ``node.start`` so the overlay lights the host ``running`` as its body executes.
 
         Captures the host's OWN ``parent_id``/``ancestor_path`` BEFORE pushing, so the host nests under
         its enclosing host (if any) while its children nest under it. The reserved ``seq`` is reused by
-        the host's completion event (engine step 16), giving DFS pre-order. Balance with ``ascend``.
+        the host's completion event (engine step 16), giving DFS pre-order — and the ``node.start`` shares
+        that ``seq``, so the reader's last-wins dedup collapses start→completion (the marker is itself
+        dropped by ``_partition_trace_lines``, leaving on-disk ``event`` seqs byte-identical). ``begin_node``
+        does the same for leaf nodes; hosts reserve HERE (pre-order) rather than at engine step 8.5.
+        Balance with ``ascend``.
         """
         self._assert_owner_thread()
         parent_id = self._host_stack[-1].seq if self._host_stack else None
@@ -761,12 +796,67 @@ class WorkflowTraceCollector:
         seq = self._next_seq()
         frame = _HostFrame(seq=seq, node_id=node_id, parent_id=parent_id, ancestor_path=ancestor_path)
         self._host_stack.append(frame)
+        if self._stream_to_disk:  # host node.start: disk-only, reuses the frame's seq (Task 173)
+            self._emit_node_start(node_id, "WorkflowExecutor", seq, parent_id, ancestor_path)
         return frame
 
     def ascend(self) -> None:
         """Leave a sub-workflow host (pop its frame). Balanced with ``descend`` via try/finally."""
         self._assert_owner_thread()
         self._host_stack.pop()
+
+    def _emit_node_start(
+        self, node_id: str, node_type: str, seq: int, parent_id: int | None, ancestor_path: list[dict[str, Any]]
+    ) -> None:
+        """Flush a disk-only ``node.start`` running marker — the overlay's in-flight signal (Task 173).
+
+        The SINGLE writer of the ``node.start`` wire shape, shared by ``begin_node`` (leaf nodes, which
+        reserve their ``seq`` here) and ``descend`` (sub-workflow hosts, which reuse the host frame's
+        ``seq``). DISK-ONLY — never appended to ``self.events``; the reader (``_partition_trace_lines``)
+        drops the line, so the node's terminal ``event`` (reusing this ``seq``) is what lands in the
+        reconstructed trace and on-disk ``event`` seqs stay byte-identical to a no-``node.start`` run.
+        ``intern=False``: a running marker carries no large leaves, so it never needs a ``blob`` line."""
+        self._open_stream()
+        self._flush_line(
+            {
+                "kind": "node.start",
+                "node_id": node_id,
+                "node_type": node_type,
+                "status": "running",
+                "timestamp": datetime.now().isoformat(),
+                "id": seq,
+                "seq": seq,
+                "parent_id": parent_id,
+                "run_id": self.execution_id,
+                "ancestor_path": ancestor_path,
+                "port": None,
+            },
+            intern=False,
+        )
+
+    def begin_node(self, node_id: str, node_type: str) -> _HostFrame | None:
+        """Task 173 (``node.start``): flush a live in-flight marker as a LEAF node BEGINS, and reserve its
+        ``seq`` so the node's completion event reuses it.
+
+        The marker is a DISK-ONLY line (``kind: "node.start"``, via ``_emit_node_start``) — NOT appended
+        to ``self.events`` and DELIBERATELY IGNORED by the post-hoc reader (``_partition_trace_lines``
+        skips it). It exists solely so a live overlay tailing the file can light the in-flight node
+        ``running`` before any completion line lands. The terminal ``event`` reuses this frame's ``seq``
+        (the caller threads the returned frame into ``record_node_execution``), so on-disk ``event`` seqs
+        stay byte-identical to a run without ``node.start`` and the ``tree()``/``reconstruct`` equivalence
+        is untouched.
+
+        Run-scoped + ``stream_to_disk`` only (returns ``None`` otherwise). Owner-thread only (``_next_seq``
+        asserts). The caller MUST pass the returned frame into the node's completion record on EVERY path
+        (success / api-warning / exception) so the reserved ``seq`` is reused, never re-taken. NOT called
+        for sub-workflow hosts — they reserve (and emit their own ``node.start``) via ``descend``."""
+        if not (self.is_run_scoped and self._stream_to_disk):
+            return None
+        seq = self._next_seq()  # asserts owner thread
+        parent_id = self._host_stack[-1].seq if self._host_stack else None
+        ancestor_path = self._current_ancestor_path()
+        self._emit_node_start(node_id, node_type, seq, parent_id, ancestor_path)
+        return _HostFrame(seq=seq, node_id=node_id, parent_id=parent_id, ancestor_path=ancestor_path)
 
     # --- Task 172 step 3: per-event streaming to disk -----------------------------------------------
 
@@ -791,6 +881,7 @@ class WorkflowTraceCollector:
             timestamp = self.start_time.strftime("%Y%m%d-%H%M%S-%f")
             self._stream_path = trace_dir / format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
             self._stream = open(self._stream_path, "w", encoding="utf-8")  # noqa: SIM115 — closed in finalize()
+            _lock_trace_handle(self._stream)  # Task 173: hold the lock for the run's lifetime (overlay liveness)
         except OSError as exc:
             self._disable_streaming(exc)
             return
@@ -798,6 +889,17 @@ class WorkflowTraceCollector:
         # interning could emit a ``blob`` line ahead of it (if a meta field ever exceeds the threshold),
         # hiding the marker and making the trace fall back to whole-file parse → unreadable (Codex #530).
         self._flush_line(self._meta_line(), intern=False)
+
+    def start_streaming(self) -> None:
+        """Task 173 (A1 — eager ``meta``): open the streamed trace at run start so the file + its ``meta``
+        line exist from t=0. A live overlay can then discover an in-flight run BEFORE the first node
+        completes (today the file opens lazily on the first completion, hiding a still-running first node
+        — e.g. a 30s LLM call); a crash mid-first-node also leaves a findable (meta-only) file instead of
+        nothing. Idempotent and fully gated — a no-op when not run-scoped/streaming, already open,
+        finalized, disabled after an I/O fault, or under the pytest ``trace_files`` gate (which patches
+        ``_open_stream``). MUST be called AFTER ``only_node`` is stamped so ``meta`` records the correct
+        ``--only`` target (issue #443)."""
+        self._open_stream()
 
     def _flush_line(self, line: dict[str, Any], *, intern: bool = True) -> None:
         """Intern the line's large leaves (emitting each first-seen ``blob`` line FIRST, so refs are
@@ -851,6 +953,7 @@ class WorkflowTraceCollector:
             "workflow_path": self.workflow_path,
             "start_time": self.start_time.isoformat(),
             "only_node": self.only_node,
+            "content_hash": self.content_hash,
         }
 
     def _aggregates(self) -> dict[str, Any]:

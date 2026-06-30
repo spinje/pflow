@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from pflow.core.trace_tree import TraceTree, WalkEvent
+from pflow.core.trace_tree import TraceTree, WalkEvent, batch_item_cost, event_cost
 
 
 def test_from_dict_handles_empty_nodes() -> None:
@@ -581,6 +581,55 @@ def test_cost_for_batch_item_cached_no_llm_call_returns_zero_trace() -> None:
     cached_item = {"index": 0, "status": "cached"}
 
     assert tree.cost_for_batch_item(cached_item) == (0.0, "trace")
+
+
+# ---------------------------------------------------------------------------
+# event_cost / batch_item_cost — the policy-applying module wrappers that
+# collapse (cost, source) → float | None in ONE place, so the report, the live
+# overlay chip, and the detail panel can't drift on what "no cost" means.
+# ---------------------------------------------------------------------------
+
+
+def test_event_cost_returns_priced_leaf_cost() -> None:
+    assert event_cost({"node_id": "draft", "llm_call": {"cost_usd": 0.05}}) == pytest.approx(0.05)
+
+
+def test_event_cost_returns_none_when_no_llm_cost_anywhere() -> None:
+    """A non-LLM event has no cost evidence → ``unavailable`` → the wrapper
+    yields None so every reader renders "—" (never a misleading 0.0)."""
+    assert event_cost({"node_id": "shell", "node_output": {"stdout": "hi"}}) is None
+
+
+def test_event_cost_returns_none_for_an_unpriced_model() -> None:
+    """An unpriced leaf (Ollama / custom endpoint, ``cost_usd: None``) makes the
+    source ``trace_partial``; the wrapper maps that to None — the absolute number
+    is incomplete, so it must not render as a real total."""
+    assert event_cost({"node_id": "draft", "llm_call": {"model": "ollama/llama3", "cost_usd": None}}) is None
+
+
+def test_event_cost_returns_zero_for_a_cached_node() -> None:
+    """A cached node paid nothing THIS run; its retained ``llm_call.cost_usd`` is
+    the SOURCE call's cost, not this run's. ``event_cost`` reports the
+    cache-honest 0.0 — the number the live chip and the detail panel converge on
+    (vs the raw source cost the chip used to ship)."""
+    assert event_cost({"node_id": "summarize", "status": "cached", "llm_call": {"cost_usd": 0.42}}) == 0.0
+
+
+def test_batch_item_cost_sums_priced_item_children() -> None:
+    """Batch items store children under ``events`` (not ``sub_workflow_events``);
+    the wrapper routes through ``cost_for_batch_item`` and applies the same policy."""
+    item = {
+        "index": 0,
+        "events": [
+            {"node_id": "inner-1", "llm_call": {"cost_usd": 0.07}},
+            {"node_id": "inner-2", "llm_call": {"cost_usd": 0.03}},
+        ],
+    }
+    assert batch_item_cost(item) == pytest.approx(0.10)
+
+
+def test_batch_item_cost_returns_none_when_no_priced_cost() -> None:
+    assert batch_item_cost({"index": 0}) is None
 
 
 # ---------------------------------------------------------------------------

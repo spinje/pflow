@@ -16,8 +16,10 @@ from uuid import uuid4
 
 from pflow.core.duration_format import format_duration
 from pflow.core.exceptions import ReportGenerationError
+from pflow.core.llm_usage import input_token_total
 from pflow.core.node_type_display import node_type_tag
 from pflow.core.trace_io import load_trace_file
+from pflow.core.trace_tree import batch_item_cost, event_cost
 from pflow.runtime.workflow_trace import final_events_by_node
 
 logger = logging.getLogger(__name__)
@@ -302,42 +304,18 @@ def _compute_outlier_threshold(values: list[float]) -> float | None:
 
 
 def _compute_event_cost(event: dict[str, Any]) -> float | None:
-    """Total cost for a real trace event (top-level or sub-workflow descendant).
+    """Total cost for a real trace event — delegates to :func:`pflow.core.trace_tree.event_cost`.
 
-    Returns None when no cost data exists anywhere in the subtree OR when any
-    leaf has ``cost_usd: None`` (unpriced model — Ollama, custom endpoints).
-    The unpriced case propagates as None so the report renders "—" rather
-    than silently dropping the unpriced contribution.
-
-    Returns 0.0 only when every leaf is explicitly priced at zero.
-
-    For batch items (which lack ``node_id`` and store children under
-    ``events`` rather than ``sub_workflow_events``), use
-    :func:`_compute_batch_item_cost` instead.
+    Kept as a module-private alias so the report's call sites (and the test
+    module that imports it) keep one name; the cost policy now lives in
+    ``trace_tree`` so the live overlay and the detail panel share it.
     """
-    from pflow.core.trace_tree import TraceTree
-
-    tree = TraceTree(events=(event,), format_version="2.1")
-    cost, source = tree.cost_for_event(event)
-    if source in {"trace_partial", "unavailable"}:
-        return None
-    return cost
+    return event_cost(event)
 
 
 def _compute_batch_item_cost(item: dict[str, Any]) -> float | None:
-    """Total cost for one batch item dict.
-
-    Batch items have a different shape from real events (no top-level
-    ``node_id``; sub-events under ``events`` not ``sub_workflow_events``).
-    See :meth:`TraceTree.cost_for_batch_item`.
-    """
-    from pflow.core.trace_tree import TraceTree
-
-    tree = TraceTree(events=(), format_version="2.1")
-    cost, source = tree.cost_for_batch_item(item)
-    if source in {"trace_partial", "unavailable"}:
-        return None
-    return cost
+    """Total cost for one batch item — delegates to :func:`pflow.core.trace_tree.batch_item_cost`."""
+    return batch_item_cost(item)
 
 
 def _format_cost(cost: float | None) -> str:
@@ -348,16 +326,9 @@ def _format_cost(cost: float | None) -> str:
 
 
 def _input_token_total(llm_call: dict[str, Any]) -> tuple[int, int]:
-    """Return ``(input_tokens, cache_read_tokens)`` for one LLM call.
-
-    ``input_tokens`` is pflow's cache-INCLUSIVE input total (see
-    ``core/llm_usage.py``) \u2014 every producer (LLMNode and ClaudeCodeNode) emits it
-    that way, so the report headlines it directly with no render-time cache
-    arithmetic. ``cache_read`` is returned only for the cache-hit % display.
-    """
-    total_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0)) or 0
-    cache_read = llm_call.get("cache_read_input_tokens", 0) or 0
-    return total_in, cache_read
+    """Return ``(input_tokens, cache_read_tokens)`` \u2014 delegates to
+    :func:`pflow.core.llm_usage.input_token_total`."""
+    return input_token_total(llm_call)
 
 
 def _format_tokens(total_in: int, tokens_out: int, cache_read: int, *, with_cache_pct: bool) -> str:

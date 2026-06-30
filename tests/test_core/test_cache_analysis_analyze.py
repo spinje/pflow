@@ -3378,6 +3378,9 @@ def test_autoload_prefers_success_over_newer_failed(tmp_path: Path, monkeypatch:
     assert len(skip_notes) == 1, f"expected one skip note, got: {result.notes}"
     assert failed_path.name in skip_notes[0]
     assert success_path.name in skip_notes[0]
+    # R6: a genuinely-failed trace is labeled "failed run" (not "incomplete run").
+    assert "failed run" in skip_notes[0]
+    assert "incomplete run" not in skip_notes[0]
 
 
 def test_autoload_uses_newest_when_all_successful(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3439,6 +3442,74 @@ def test_autoload_uses_newest_failed_when_no_success_exists(tmp_path: Path, monk
     no_success_notes = [n for n in result.notes if "no successful trace exists" in n]
     assert len(no_success_notes) == 1
     assert newer_failed.name in no_success_notes[0]
+    # R6: a genuinely-failed trace is labeled "failed run" (not "incomplete run").
+    assert "failed run" in no_success_notes[0]
+    assert "incomplete run" not in no_success_notes[0]
+
+
+def test_autoload_skip_note_labels_incomplete_run_not_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R6: an incomplete (interrupted / in-flight) trace shadowed by an older
+    success is disclosed as an *incomplete* run, not a "failed run".
+
+    Eager-``meta`` (Task 173) makes ``final_status="incomplete"`` traces common
+    (a crash-tail / still-running file with no ``run.complete`` trailer). They
+    bucket non-reusable alongside genuine failures, but labeling them "failed
+    run" misattributes the cause. Selection is unaffected — the older success
+    still wins; only the disclosure wording is pinned here.
+    """
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    success_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-153228",
+        final_status="success",
+    )
+    incomplete_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-163027",
+        final_status="incomplete",
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    # Selection unchanged: the older success still wins over the newer incomplete.
+    assert result.trace_path == str(success_path)
+    skip_notes = [n for n in result.notes if "Skipped newer trace" in n]
+    assert len(skip_notes) == 1, f"expected one skip note, got: {result.notes}"
+    assert incomplete_path.name in skip_notes[0]
+    assert "incomplete run" in skip_notes[0]
+    assert "failed run" not in skip_notes[0]
+
+
+def test_autoload_no_success_note_labels_incomplete_run_not_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R6: when only an incomplete trace exists, the no-success disclosure
+    names it an *incomplete* run, not a "failed run"."""
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    incomplete_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.2.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-163027",
+        final_status="incomplete",
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    assert result.trace_path == str(incomplete_path)
+    no_success_notes = [n for n in result.notes if "no successful trace exists" in n]
+    assert len(no_success_notes) == 1
+    assert "incomplete run" in no_success_notes[0]
+    assert "failed run" not in no_success_notes[0]
 
 
 def test_autoload_treats_degraded_as_preferable_over_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

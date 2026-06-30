@@ -24,6 +24,13 @@ shape as you work.
 - The canvas LIVE-UPDATES in place (no page reload) as you edit the `.pflow.md` — the
   user sees each change land while keeping their zoom and focus. An edit that doesn't
   validate is held (the last valid version stays up, with an error banner) until you fix it.
+- The canvas also shows runs **as they run**: run the workflow via the CLI (your bash tool)
+  while the user has it open, and each node lights up live with its state — **running**,
+  **success** (green ✓), **cached**, **failed** (red), or **stopped** (the run died) — plus an
+  overall **Run success / failed / degraded** banner. So you and the user share one live
+  picture: if a run fails, the user is already seeing the red node + banner — reference it
+  directly rather than re-narrating. The user can also pick a **past run** to replay, or click
+  a node to read that run's real resolved inputs, output, and cost.
 - With no workflow argument, it opens the catalog of saved workflows.
 - Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-auto-update`
   (freeze — stop live-updating).
@@ -60,6 +67,13 @@ successful read.
 Deep-link a specific view (to point the user at a node, or for a screenshot): append
 `?workflow=<name-or-path>&focus=<node-id>` — `focus=` highlights the node and reveals its
 connections; add `&node=<node-id>` to also center the camera, or `&direction=TD` for top-down.
+
+To replay a **past run** on the canvas, append `&run=<run_id>`. The `run_id` is the
+`execution_id` on the first line of the run's trace in `~/.pflow/debug` — you already have the
+path for any run you launched (the `Workflow trace saved: …` line `pflow run` prints), and older
+or user-launched runs sit there too, named by workflow + timestamp. So
+`?workflow=<path>&run=<execution_id>` re-opens that exact run for the user; omit `&run=` to
+follow the newest.
 
 ## `pflow mermaid` — Mermaid diagram text (niche)
 

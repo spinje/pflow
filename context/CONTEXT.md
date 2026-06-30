@@ -118,6 +118,12 @@ _Avoid_: monitor, track, observe; auto-update (a different "watch", below).
 changes on disk, preserving view state. On by default; frozen with `pflow ui --no-auto-update`.
 _Avoid_: watch, live-reload, hot-reload.
 
+**Overlay** — live execution state drawn onto a Viewer's static canvas: each node shows
+`pending` → `running` → terminal (`success`/`cached`/`failed`), plus a run-level banner. The
+server *observes* by tailing a Run's trace file and joining each event onto a graph node by
+`NodeId = (node_id, ancestor_path)`; it never hosts the Run. One render path shows a *live* Run
+or replays a *finished* one. _Avoid_: watch, monitor, live-view, animation.
+
 ## Ambiguity
 
 **Batch vs Loop** — both repeat a step. Discriminator: can you write the list of runs
@@ -149,10 +155,11 @@ engine *executes* (run-oriented, the source of truth for behavior); the Graph mo
 renderer *draws* (structure-oriented, derived from the IR, never executed). They also identify
 nodes differently — see ADR-0003.
 
-**Watch vs Auto-update** — both involve "watching". Discriminator: Auto-update is the *Viewer*
-watching the *source file* to live-rebuild the canvas (the `--no-auto-update` flag freezes it);
-Watch is the *agent* watching the *user's* interactions (the `user-activity` command reads them).
-Different watcher, different watched.
+**Watch vs Auto-update vs Overlay** — three things "watch". Discriminator is *who watches what*:
+Auto-update is the *Viewer* watching the *source `.pflow.md`* to live-rebuild the canvas (frozen
+with `--no-auto-update`); Watch is the *agent* watching the *user's* interactions (read via
+`user-activity`); Overlay is the *Viewer* watching a *Run's trace* to draw live execution state.
+Different watcher, different watched, every time.
 
 **Workflow vs Run** — both name "the thing that ran." Discriminator: the Workflow is the reusable
 `.pflow.md` *definition* (authored once); a Run is one *execution* of it (one per `pflow run`). One

@@ -2,7 +2,7 @@
 // future live-run overlay (Task 168 deferred increment) adds an events
 // subscription HERE — the components never learn where data comes from.
 
-import type { ApiErrorBody, CatalogItem, RFGraph, SourceFiles } from "../types";
+import type { ApiErrorBody, CatalogItem, RFGraph, RFRef, RunInfo, RunNodeDetail, SourceFiles } from "../types";
 
 /** A structured /api failure (400 missing param / 422 validation). Carries the
  *  server's diagnostics so the UI can render them instead of a blank canvas. */
@@ -93,6 +93,46 @@ export async function fetchSource(workflow: string): Promise<SourceFiles> {
   const body = (await response.json()) as unknown;
   if (!isSourceFiles(body)) {
     throw new ApiError(response.status, [{ message: "The server returned an unexpected source shape." }]);
+  }
+  return body;
+}
+
+/** Runs from the trace dir (Task 173 D6). No arg → every run; `workflow` → that workflow's history.
+ *  Each consumer (catalog badge, run selector, dashboard) owns its own catch (DR-6) so a runs-fetch
+ *  failure degrades that one surface, never blanks the page. */
+export async function fetchRuns(workflow?: string): Promise<RunInfo[]> {
+  const url = workflow ? `/api/runs?workflow=${encodeURIComponent(workflow)}` : "/api/runs";
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+  const body = (await response.json()) as unknown;
+  if (!Array.isArray(body)) {
+    throw new ApiError(response.status, [{ message: "The server returned an unexpected runs shape." }]);
+  }
+  return body as RunInfo[];
+}
+
+function isRunNodeDetail(value: unknown): value is RunNodeDetail {
+  if (!value || typeof value !== "object") return false;
+  const d = value as Record<string, unknown>;
+  return typeof d.node_type === "string" && typeof d.status === "string" && "input" in d && "output" in d;
+}
+
+/** ONE node's runtime record for the detail panel's "This run" section (Task 173). `ref` is the structural
+ *  RFRef — the SAME identity the overlay joins on (sameRef) — JSON-encoded in the query, never a positional
+ *  flat id (which renumbers). `runId` set → the pinned run; null → the newest live trace. The caller
+ *  (ThisRunSection) owns its own catch (DR-6) so a failure degrades that one section, never the panel. */
+export async function fetchRunNode(workflow: string, runId: string | null, ref: RFRef): Promise<RunNodeDetail> {
+  const params = new URLSearchParams({ workflow, ref: JSON.stringify(ref) });
+  if (runId) params.set("run", runId);
+  const response = await fetch(`/api/run-node?${params.toString()}`);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+  const body = (await response.json()) as unknown;
+  if (!isRunNodeDetail(body)) {
+    throw new ApiError(response.status, [{ message: "The server returned an unexpected run-node shape." }]);
   }
   return body;
 }

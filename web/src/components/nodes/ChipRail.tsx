@@ -6,9 +6,9 @@
 // behavior is additive chrome on the border.
 //
 // Visual grammar: ROUND/capsule tinted chips = info; the SQUARE element a GroupNode
-// appends (the merged count-expander, `.group-toggle`) is the one button. The rail is
-// also the reserved home for future live-overlay STATUS chips (status joins leftmost,
-// outranks modifiers).
+// appends (the merged count-expander, `.group-toggle`) is the one button. (Live RUN-status
+// is NOT here — it shipped as the corner StatusBadge (StatusBadge.tsx); the rail's earlier
+// "reserved status-chip slot" was retired in favor of that overlay, Task 173.)
 //
 // A dynamic batch shows `×N` (the count is unknowable statically — a future run
 // overlay fills the real number); the iterated source rides the tooltip + read panel.
@@ -30,13 +30,23 @@ function batchTitle(batch: NonNullable<RFNode["batch"]>): string {
 
 /** The border rail. Children render AFTER the modifier chips (rightmost slot —
  *  GroupNode appends its merged count-expander there). Renders nothing when empty
- *  so a plain leaf adds zero DOM. */
-export function ChipRail({ node, children }: { node: RFNode | null; children?: ReactNode }): JSX.Element | null {
+ *  so a plain leaf adds zero DOM. `shifted` nudges the rail left so its rightmost
+ *  chip / count-expander clears an overhanging corner StatusBadge (Task 173) — passed
+ *  only when the node carries a run-status badge, so a badge-less node is unchanged. */
+export function ChipRail({
+  node,
+  children,
+  shifted = false,
+}: {
+  node: RFNode | null;
+  children?: ReactNode;
+  shifted?: boolean;
+}): JSX.Element | null {
   const loop = node?.loop ?? null;
   const batch = node?.batch ?? null;
   if (!loop && !batch && !children) return null;
   return (
-    <span className="chip-rail">
+    <span className={shifted ? "chip-rail shifted" : "chip-rail"}>
       {loop && (
         <span className="chip chip-loop chip-round" title={loopTitle(loop)}>
           <svg viewBox="0 0 32 32" aria-hidden="true">

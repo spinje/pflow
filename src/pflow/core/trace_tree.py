@@ -521,6 +521,42 @@ class TraceTree:
         return total, "trace"
 
 
+def event_cost(event: Mapping[str, Any], *, include_cached: bool = False) -> float | None:
+    """Recorded cost for one event subtree, or ``None`` when there's no priced cost.
+
+    The policy-applying wrapper over :meth:`TraceTree.cost_for_event`: it
+    collapses that method's ``(cost, source)`` pair to a single ``float | None``
+    so every reader (the report, the live-overlay hover chip, the detail panel)
+    renders "no cost" identically and can't drift on what it means. ``None`` is
+    returned both when no cost data exists anywhere in the subtree
+    (``unavailable``) AND when any leaf is unpriced — ``cost_usd: None`` for an
+    Ollama/custom-endpoint model (``trace_partial``); the unpriced case
+    propagates as ``None`` rather than silently dropping its contribution.
+    Returns ``0.0`` only when every leaf is explicitly priced at zero — e.g. a
+    cached node, which paid nothing this run (its retained ``llm_call`` cost is
+    the SOURCE call's, not this run's).
+
+    For batch items (no top-level ``node_id``; children under ``events``), use
+    :func:`batch_item_cost`.
+    """
+    cost, source = TraceTree(events=(event,), format_version="2.1").cost_for_event(event, include_cached=include_cached)
+    return None if source in {"trace_partial", "unavailable"} else cost
+
+
+def batch_item_cost(item: Mapping[str, Any]) -> float | None:
+    """Recorded cost for one batch-item dict, or ``None`` when there's no priced cost.
+
+    The batch-item counterpart of :func:`event_cost` (same ``None`` policy).
+    Batch items differ in shape from real events — no top-level ``node_id``,
+    sub-workflow children under ``events`` not ``sub_workflow_events`` — so this
+    routes through :meth:`TraceTree.cost_for_batch_item`. The empty
+    ``events=()`` is deliberate: ``cost_for_batch_item`` walks the ``item``
+    passed to it, not ``self.events``.
+    """
+    cost, source = TraceTree(events=(), format_version="2.1").cost_for_batch_item(item)
+    return None if source in {"trace_partial", "unavailable"} else cost
+
+
 def _mapping_events(value: Any) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, list):
         return ()
@@ -665,4 +701,4 @@ def _resolve_relative_child_workflow_path(resolved: str, *, parent_workflow_path
     return str((parent_path.parent / path).resolve())
 
 
-__all__ = ["LlmEventLeaf", "TraceTree", "WalkEvent"]
+__all__ = ["LlmEventLeaf", "TraceTree", "WalkEvent", "batch_item_cost", "event_cost"]

@@ -1,12 +1,25 @@
 // Live interaction seam: SSE carries Point commands down to the Viewer while
 // deliberate user interactions travel back as fire-and-forget JSON POSTs.
 
-import type { InteractionReport, PointTarget, RFRef } from "../types";
+import type { InteractionReport, NodeStatus, PointTarget, RFRef, RunComplete, RunEvent } from "../types";
 
 export interface PointHandlers {
   focus: (target: PointTarget) => void;
   frame: (target: PointTarget) => void;
   clear: () => void;
+}
+
+// Live execution overlay (Task 173) — optional run-event arms on the same vocabulary-agnostic
+// envelope. A viewer that doesn't care about runs simply omits these; an old server that never
+// sends run-* messages leaves them silent. The server tails the trace file; the viewer only renders.
+export interface RunHandlers {
+  runSnapshot: (nodes: RunEvent[], run: RunComplete | null, stopped: boolean, stale: boolean) => void; // catch-up; `stopped` = the run already died, `stale` = recorded against a different workflow version (both for late subscribe)
+  runEvents: (events: RunEvent[]) => void; // a batched poll's node deltas
+  runComplete: (run: RunComplete) => void; // the run banner
+  runReset: () => void; // a newer run started (or the tailer switched files) — clear prior statuses
+  runNotFound: () => void; // a pinned `&run=` id matched no trace (stale bookmark / rotated file) — DR-1
+  runStopped: () => void; // an incomplete run's writer-lock went free (crash/kill) — flock death-detection
+  runStale: () => void; // the pinned run was recorded against a different workflow version (Task 173 replay) — reaches the present subscriber, whose snapshot predates the latch
 }
 
 const visibility = (): "visible" | "hidden" => (document.visibilityState === "visible" ? "visible" : "hidden");
@@ -40,6 +53,17 @@ function isTarget(value: unknown): value is PointTarget {
   );
 }
 
+const RUN_STATUSES: ReadonlySet<string> = new Set<NodeStatus>(["running", "success", "cached", "failed"]);
+
+function isRunEvent(value: unknown): value is RunEvent {
+  return isRecord(value) && isRef(value.ref) && typeof value.status === "string" && RUN_STATUSES.has(value.status);
+}
+
+function asRunComplete(value: unknown): RunComplete | null {
+  // Our own server's run.complete payload — accept any record (fields are all optional on RunComplete).
+  return isRecord(value) ? (value as RunComplete) : null;
+}
+
 const RETRY_MS = 1000; // localhost single-user: a fixed beat beats exponential backoff's moving parts
 
 /**
@@ -50,7 +74,11 @@ const RETRY_MS = 1000; // localhost single-user: a fixed beat beats exponential 
  * trigger-agnostic: recovers from server restart, sleep/wake, network blip, and
  * tab freeze uniformly, without ever reading `readyState` or `visibilityState`.
  */
-export function subscribe(workflow: string, handlers: PointHandlers): () => void {
+export function subscribe(
+  workflow: string,
+  handlers: PointHandlers & Partial<RunHandlers>,
+  runId?: string | null,
+): () => void {
   let source: EventSource | null = null;
   let connId: string | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
@@ -69,6 +97,7 @@ export function subscribe(workflow: string, handlers: PointHandlers): () => void
   const connect = (): void => {
     if (stopped) return; // defensive: a fired-but-not-yet-cleared timer must not resurrect a connection
     const params = new URLSearchParams({ workflow, visibility: visibility() });
+    if (runId) params.set("run", runId); // Task 173 DR-1: pin this Viewer to one run (replay / one of N)
     source = new EventSource(`/api/events?${params.toString()}`);
 
     source.onmessage = (event: MessageEvent<string>): void => {
@@ -89,6 +118,28 @@ export function subscribe(workflow: string, handlers: PointHandlers): () => void
         handlers.clear();
       } else if ((message.type === "focus" || message.type === "frame") && isTarget(message.target)) {
         handlers[message.type](message.target);
+      } else if (message.type === "run-events" && Array.isArray(message.events)) {
+        handlers.runEvents?.(message.events.filter(isRunEvent));
+      } else if (message.type === "run-snapshot" && Array.isArray(message.nodes)) {
+        // `=== true` at this seam: an old server / unpinned snapshot that omits `stopped`/`stale_version`
+        // yields `false`, not `undefined`, keeping the handler's boolean params strict (tsc).
+        handlers.runSnapshot?.(
+          message.nodes.filter(isRunEvent),
+          asRunComplete(message.run),
+          message.stopped === true,
+          message.stale_version === true,
+        );
+      } else if (message.type === "run-complete") {
+        const run = asRunComplete(message);
+        if (run) handlers.runComplete?.(run);
+      } else if (message.type === "run-reset") {
+        handlers.runReset?.();
+      } else if (message.type === "run-not-found") {
+        handlers.runNotFound?.();
+      } else if (message.type === "run-stopped") {
+        handlers.runStopped?.();
+      } else if (message.type === "run-stale") {
+        handlers.runStale?.();
       }
     };
 

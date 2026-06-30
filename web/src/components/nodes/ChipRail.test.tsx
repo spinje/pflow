@@ -48,6 +48,14 @@ describe("ChipRail", () => {
     expect(container.querySelector(".chip-rail")).toBeNull();
   });
 
+  it("shifts left ONLY when a status badge is present (so chips clear the corner badge)", () => {
+    const node = makeNode({ batch: batch({ count: 3, items: [1, 2, 3] }) });
+    const plain = render(<ChipRail node={node} />);
+    expect(plain.container.querySelector(".chip-rail")?.classList.contains("shifted")).toBe(false);
+    const badged = render(<ChipRail node={node} shifted />);
+    expect(badged.container.querySelector(".chip-rail")?.classList.contains("shifted")).toBe(true);
+  });
+
   it("literal batch chip shows the real count; tooltip says literal", () => {
     const node = makeNode({ batch: batch({ count: 3, items: [1, 2, 3] }) });
     const { container } = render(<ChipRail node={node} />);

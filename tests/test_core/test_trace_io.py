@@ -316,6 +316,16 @@ def test_load_trace_file_raises_jsondecodeerror_on_corrupt_jsonl(tmp_path: Path)
         load_trace_file(path)
 
 
+def test_load_trace_file_raises_jsondecodeerror_on_non_utf8(tmp_path: Path) -> None:
+    # PR #543: a corrupt / non-UTF-8 file matching the trace glob must raise json.JSONDecodeError (the type
+    # every reader catches to skip), NOT the raw UnicodeDecodeError (a ValueError ⊄ OSError) — which would
+    # otherwise crash report / analyze-cache / generate_report instead of degrading gracefully.
+    path = tmp_path / "workflow-trace-badutf8.json"
+    path.write_bytes(b"\xff\xfe\x80\x81 not utf-8\n")
+    with pytest.raises(json.JSONDecodeError):
+        load_trace_file(path)
+
+
 def test_reconstruct_unknown_kind_raises() -> None:
     with pytest.raises(json.JSONDecodeError, match="unknown trace line kind"):
         reconstruct_trace_from_lines([{"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER}, {"kind": "bogus"}])
