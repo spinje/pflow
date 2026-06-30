@@ -290,7 +290,7 @@ Filters live across `metrics.py`, `workflow_trace.py::_LLMSummaryAccumulator`, `
 
 **Memo cache** (`check_memo_cache`, `write_memo_cache`): Cross-run SQLite cache. Key = `hash(config + resolved_params)`. Batch key uses `resolve_batch_items() + semantic_config`. **Skipped for**: revisited nodes (`visit_count > 1`), `WorkflowExecutor` (sub-workflow files may change), error results.
 
-**`handle_cached_execution`** — shared by BOTH cache levels. Records trace with `cached=True`, populates `__cache_hits__`, calls progress callbacks (`node_start` + `node_cached`).
+**`handle_cached_execution`** — shared by BOTH cache levels. Records trace with `cached=True`, populates `__cache_hits__`, calls progress callbacks (`node_start` + `node_cached`). **GH #540**: the caller (engine cache-hit branch) threads the RESOLVED params (`plan.resolved_params`, falling back to `node.params` for batch / no-template nodes) as `node_params` and the resolutions (`plan.last_resolutions`) via the keyword-only `template_resolutions=`, so a cached event records the same Input detail as a fresh one (the `pflow ui` panel reads `node_params`; `pflow report` reads `template_resolutions`). The fallback mirrors the miss path exactly — there `node.params` is reassigned to `resolved_params` only when templates exist. Symmetric with the fresh path: same `_strip_redundant_llm_trace_fields` stripping applies, so a cached LLM event keeps `inputs` but drops the redundant `prompt`/`system` (the `llm_prompt`/`llm_system` capture on a hit is a separate, pre-existing concern — out of scope for #540).
 
 ### `compute_node_config` → `compute_config_hash`
 

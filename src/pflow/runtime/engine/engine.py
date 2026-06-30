@@ -1065,6 +1065,12 @@ class WorkflowEngine:
                     cached_source: Optional[str] = None
                 else:
                     cached_source = "in_process"
+                # GH #540: record the RESOLVED params + template resolutions the cache
+                # key was computed from, so a cached event carries the same Input detail
+                # as a fresh one (the `pflow ui` panel reads node_params; `pflow report`
+                # reads template_resolutions). plan.resolved_params is None for batch /
+                # no-template nodes — fall back to node.params, exactly mirroring the miss
+                # path (where node.params is only reassigned to resolved_params when present).
                 return str(
                     handle_cached_execution(
                         config.node_id,
@@ -1072,9 +1078,10 @@ class WorkflowEngine:
                         plan.cached_action,
                         shared_keys_before,
                         config.node_type_name,
-                        node.params,
+                        plan.resolved_params if plan.resolved_params is not None else node.params,
                         self.trace,
                         cache_source=cached_source,
+                        template_resolutions=plan.last_resolutions,
                     )
                 )
 

@@ -681,6 +681,7 @@ def handle_cached_execution(
     trace_collector: Any,
     *,
     cache_source: Optional[str] = None,
+    template_resolutions: Optional[dict] = None,
 ) -> Any:
     """Handle cached node execution: record trace, call callbacks.
 
@@ -702,6 +703,14 @@ def handle_cached_execution(
     distinguishes memo from in-process; that distinction is load-bearing for
     ``analyze-cache --from-trace``). Keyword-only so positional drift can't
     accidentally re-introduce the overwrite.
+
+    GH #540 ``template_resolutions`` keyword-only parameter: the resolved
+    ``${...}`` map (``plan.last_resolutions``) the cache key was computed from.
+    Recorded so a cached event carries the same template resolutions as a fresh
+    one (``pflow report`` reads them for its ``## Inputs`` section). ``None`` for
+    batch / no-template nodes → recorded as ``{}`` (omitted), matching a fresh
+    no-template event. The matching RESOLVED ``node_params`` are threaded by the
+    caller via the existing positional arg.
     """
     if "__cache_hits__" not in shared:
         shared["__cache_hits__"] = []
@@ -729,7 +738,7 @@ def handle_cached_execution(
         shared,
         time.perf_counter(),
         shared_keys_before,
-        {},
+        template_resolutions or {},
         None,
         None,
         node_params,
