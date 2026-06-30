@@ -17,6 +17,9 @@ Endpoints:
 - ``POST /api/command`` — validate and broadcast an agent Point command.
 - ``POST /api/interaction`` — record one deliberate Viewer interaction.
 - ``POST /api/visibility`` — update a Viewer's visible/backgrounded state.
+- ``POST /api/run`` — spawn a detached ``pflow run`` for a resolved workflow +
+  inputs (Task 175). The server stays a pure observer; the spawned run writes its
+  own streaming trace that the tailer/overlay pick up. No in-process execution.
 - ``GET /api/activity`` — read a newest-first snapshot of recent interactions.
 - ``/`` (+ assets) — the built frontend bundle, when present. Absent in a
   source checkout (the bundle is gitignored, built by ``make ui-build``); the
@@ -43,6 +46,8 @@ import hashlib
 import itertools
 import json
 import logging
+import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -57,6 +62,8 @@ from starlette.responses import PlainTextResponse, Response, StreamingResponse
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
+from pflow.core.diagnostic import exception_to_diagnostics
+from pflow.core.exceptions import PflowError
 from pflow.core.workflow.graph import render_react_flow
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.graph_service import (
@@ -415,7 +422,39 @@ def _workflow_not_found(value: str) -> Response:
     )
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _require_local_origin(request: Request) -> Response | None:
+    """Reject any mutating request whose ``Host`` header isn't loopback (the DNS-rebinding guard).
+
+    The server binds ``127.0.0.1`` and sends no CORS headers, which blocks a cross-origin page from
+    READING responses — but a DNS-rebinding attack points an attacker domain at ``127.0.0.1`` so the
+    browser sends same-origin requests the server would otherwise honor. Pinning ``Host`` to loopback
+    closes that last gap. Returns a ``403`` Response when the host isn't loopback, else ``None``.
+
+    A real browser/CLI talking to the loopback server always sends ``127.0.0.1``/``localhost``/``::1``
+    (optionally ``:port``, or an IPv6 literal in brackets). Parse the host part off the header, strip the
+    port, unwrap an ``[::1]`` IPv6 bracket, and membership-check the loopback set."""
+    host = request.headers.get("host", "")
+    if host.startswith("["):  # IPv6 literal, e.g. "[::1]:8765" → "::1"
+        hostname = host[1:].partition("]")[0]
+    else:  # strip a trailing :port only when there's exactly one colon (bare IPv6 like "::1" has more)
+        hostname = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    if hostname not in _LOOPBACK_HOSTS:
+        return _json(
+            {"error": f"Refused: this endpoint accepts loopback requests only (Host {host!r} is not local)."},
+            status_code=403,
+        )
+    return None
+
+
 async def _json_body(request: Request) -> dict[str, object] | Response:
+    # The shared choke point for every mutating POST: enforce a loopback Host FIRST (before content-type
+    # / body parsing), so a DNS-rebinding request is refused before any work. See _require_local_origin.
+    forbidden = _require_local_origin(request)
+    if forbidden is not None:
+        return forbidden
     content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
     if content_type != "application/json":
         return _json(
@@ -623,6 +662,88 @@ async def visibility(request: Request) -> Response:
     return Response(status_code=204)
 
 
+def _preflight(workflow_key: str, tokens: tuple[str, ...]) -> None:
+    """Compile EXACTLY what the spawn will run — off the event loop (run via ``asyncio.to_thread``).
+
+    The whole point: convert the silent *pre-trace-failure class* (a run that dies before it writes its
+    ``meta`` line shows nothing on the overlay) into a clean ``400`` at the endpoint. ``compile_workflow``
+    runs ``prepare_inputs`` internally (the same 5-tier input resolution + missing-required check the real
+    run does) AND instantiates every node, so a missing required input, an unknown node type, or a bad
+    param all surface here. We don't reuse the displayed tab's graph — an auto-update may have edited the
+    file, or an agent may POST directly — so we re-resolve from disk. A fresh ``Registry`` per compile is
+    the project rule (``runner`` does the same). Raises ``PflowError`` on any pre-trace failure; the
+    handler maps it to ``400`` with diagnostics."""
+    from pflow.cli.param_parsing import parse_workflow_params
+    from pflow.runtime import compile_workflow
+
+    resolved = resolve_workflow(workflow_key)
+    typed_params = parse_workflow_params(tokens)  # infer_type per token — channel A (form == CLI)
+    compile_workflow(resolved.ir, Registry(), initial_params=typed_params)
+
+
+async def run(request: Request) -> Response:
+    """Spawn a DETACHED ``pflow run`` for a resolved workflow + inputs (Task 175).
+
+    The server stays a pure observer (ADR-0008): it spawns the normal CLI as a detached subprocess that
+    writes its own streaming trace; the existing tailer discovers it and the overlay lights it up live.
+    No in-process execution, no per-run process state. The only new mutation is this one spawn."""
+    body = await _json_body(request)  # Host guard + content-type/JSON-object enforcement
+    if isinstance(body, Response):
+        return body
+
+    workflow = _string_field(body, "workflow")
+    if workflow is None:
+        return _json(
+            {"error": "Field 'workflow' (a saved name or .pflow.md path) is required."},
+            status_code=400,
+        )
+
+    inputs = body.get("inputs", {})
+    if not isinstance(inputs, dict) or not all(
+        isinstance(name, str) and isinstance(value, str) for name, value in inputs.items()
+    ):
+        return _json(
+            {"error": "Field 'inputs' must be an object mapping input names to string values."},
+            status_code=400,
+        )
+
+    # Resolve by name/path only — NEVER accept inline workflow content (a POSTed graph would bypass the
+    # save/validate path the rest of the server trusts).
+    key = _workflow_key(workflow)
+    if key is None:
+        return _workflow_not_found(workflow)
+
+    # One argv element per input — no shell, so a value with spaces/`;`/`&` is a single unparsed token
+    # (injection-safe). This is channel A: the form's token strings ARE the CLI's `name=value` args.
+    tokens = [f"{name}={value}" for name, value in inputs.items()]
+
+    # Pre-flight the FULL compile off the event loop (invariant: CPU/disk work never blocks the hub loop).
+    try:
+        await asyncio.to_thread(_preflight, key, tuple(tokens))
+    except PflowError as exc:
+        return _json({"errors": [d.to_dict() for d in exception_to_diagnostics(exc)]}, status_code=400)
+
+    # Spawn DETACHED via subprocess.Popen — NOT asyncio.create_subprocess_exec (load-bearing): asyncio's
+    # subprocess transport finalizer calls _proc.kill() on a still-running child, so closing `pflow ui`
+    # would SIGKILL an in-flight run — the exact coupling ADR-0008 forbids. Popen returns immediately
+    # after fork/exec and we retain NO handle: the child reparents to init, finished prior children are
+    # reaped by subprocess._cleanup() on the next spawn. `--output-format json` makes the run record its
+    # `json_output` result (for Phase 4 output inspection); stdout is DEVNULL'd (nobody reads it). The
+    # child inherits the server's CWD + re-injects settings.env at startup, so it resolves exactly like a
+    # hand-typed `pflow run` from the shell that launched `pflow ui`. We invoke `-m pflow.cli` (NOT
+    # `-m pflow`): `pflow` is a package with no `__main__.py`, so `python -m pflow` errors; `pflow.cli` is
+    # the package's documented module entry (`cli/__main__.py` → `cli_main`, same target as the `pflow`
+    # console script) and runs against the server's own interpreter.
+    subprocess.Popen(  # noqa: S603 — argv list, no shell; tokens are injection-safe (one element each)
+        [sys.executable, "-m", "pflow.cli", "run", key, "--output-format", "json", *tokens],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return _json({"status": "spawned"})
+
+
 async def activity(request: Request) -> Response:
     """Return a newest-first snapshot of recent deliberate interactions."""
     workflow = request.query_params.get("workflow")
@@ -817,6 +938,7 @@ def create_app() -> Starlette:
         Route("/api/command", command, methods=["POST"]),
         Route("/api/interaction", interaction, methods=["POST"]),
         Route("/api/visibility", visibility, methods=["POST"]),
+        Route("/api/run", run, methods=["POST"]),
         Route("/api/activity", activity),
     ]
     if (_STATIC_DIR / "index.html").exists():
@@ -832,9 +954,15 @@ def create_app() -> Starlette:
     # workflow/file contents via the local user's browser. Mutating POSTs require
     # `Content-Type: application/json`, forcing a cross-origin preflight that
     # fails without CORS; EventSource likewise cannot read commands cross-origin.
-    # The worst write is benign UI state (focus/frame/clear in the user's own
-    # Viewer), never a file/system mutation. Any future mutating or live-run
-    # endpoint must revisit this exposure.
+    # The one residual gap — DNS rebinding (an attacker domain re-pointed at
+    # 127.0.0.1, so the browser sends same-origin requests) — is now CLOSED by the
+    # `_require_local_origin` Host check at the top of `_json_body`, covering EVERY
+    # mutating POST. `/api/run` (Task 175) spawns a detached `pflow run` — a real
+    # side effect, the exact "future mutating or live-run endpoint" this block
+    # flagged — so it rides the same loopback + no-CORS + Host posture: it accepts a
+    # resolvable name/path only (never inline content) and spawns the normal CLI, no
+    # in-process execution. Any NEW mutating endpoint MUST flow through `_json_body`
+    # so the Host guard holds.
     app = Starlette(routes=routes)
     app.state.hub = _Hub()
     return app

@@ -130,6 +130,26 @@ secrets recursively redacted by key name. `400` on a missing/malformed `ref`; `4
 project). A read-only GET of trace content, same exposure class as `/api/graph` (the CORS tripwire below
 applies). The reader is `run_node.run_node_detail`.
 
+### `POST /api/run`
+→ `200` `{"status": "spawned"}` — spawns a **detached** `pflow run` for a resolved workflow + inputs
+(Task 175). Body: `{"workflow": "<name|path>", "inputs": {"<name>": "<token-string>"}}` — `inputs` values
+are **strings** (channel A: they become the CLI's `name=value` argv tokens verbatim; the spawned run's
+`infer_type` + declared-type coercion re-type them). The server stays a **pure observer** (ADR-0008): it
+does the FULL compile the spawn will do **off the event loop** (`asyncio.to_thread` → `_preflight`:
+`resolve_workflow` + `parse_workflow_params` + `compile_workflow`), then spawns
+`subprocess.Popen([sys.executable, "-m", "pflow.cli", "run", <key>, "--output-format", "json", *tokens],
+stdin/stdout/stderr=DEVNULL, start_new_session=True)` — **no in-process execution, no retained handle**.
+The spawned run writes its own streaming trace; the tailer/overlay light it up (no run id returned — the
+overlay follows-newest). **`Popen`, NOT `asyncio.create_subprocess_exec`** (load-bearing): asyncio's
+transport finalizer SIGKILLs a live child when the loop closes, which would kill an in-flight run when the
+user closes `pflow ui` — the coupling ADR-0008 forbids. **`-m pflow.cli`, NOT `-m pflow`** (`pflow` has no
+`__main__.py`). Status arms: `200` on spawn; `404` unresolvable workflow (fuzzy suggestions; **never** inline
+content); `400` malformed body OR a **pre-flight failure** (missing required input / unknown node type /
+bad param) — body `{"errors": [<Diagnostic.to_dict()> ...]}`, so an agent gets actionable diagnostics
+instead of a silently-dead run. Runtime node failures surface via the overlay, not this response. The
+handler is `server.run`; the pre-flight converts the silent *pre-trace-failure class* (a run that dies
+before writing its `meta` line) into a clean `400`.
+
 ### Live interaction channel
 
 - `GET /api/events?workflow=<name|path>&visibility=<visible|hidden>` subscribes a
@@ -170,9 +190,15 @@ clears connections and activity.
 > do not replace it with a second `request.is_disconnected()` receive consumer.
 
 The server binds loopback and sends no CORS headers. JSON POSTs force a cross-origin
-preflight, and EventSource responses are unreadable cross-origin. The worst live
-command changes focus in the user's Viewer; it has no file/system side effect. Any
-future mutating or live-run endpoint must re-evaluate this boundary.
+preflight, and EventSource responses are unreadable cross-origin. The one residual
+gap — **DNS rebinding** (an attacker domain re-pointed at `127.0.0.1`, so the browser
+sends same-origin requests) — is closed by **`_require_local_origin`**, a `Host`-header
+loopback check enforced at the **top of `_json_body`**, so it covers EVERY mutating POST
+(`command`/`interaction`/`visibility` AND `/api/run`). A non-loopback `Host` → `403`. `/api/run`
+spawns a real `pflow run` (Task 175 — the "future mutating or live-run endpoint" this note
+flagged) and rides the same loopback + no-CORS + Host posture: resolvable name/path only, the
+normal CLI spawned detached, no in-process execution. **Any new mutating endpoint MUST flow
+through `_json_body`** so the Host guard holds.
 
 ### Static bundle (`/` + assets)
 The SPA builds into `src/pflow/ui/static/` (Vite `build.outDir`, `base = "./"`

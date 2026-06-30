@@ -623,6 +623,13 @@ class WorkflowTraceCollector:
         # which excludes the trace as a snapshot source (it records only the
         # target, not a coherent full-run upstream).
         self.only_node: str | None = None
+        # Task 175: the run's resolved top-level input values, known at run start
+        # (the values seeded into the shared store before any node executes). The
+        # Runner stamps this on the ROOT collector BEFORE ``engine.run()`` so the
+        # eager ``meta`` line carries it. Stored RAW on disk (same exposure class
+        # as ``node_params``); redaction happens on read. ``None`` until stamped,
+        # ``{}`` for a no-input workflow.
+        self.inputs: dict[str, Any] | None = None
 
     def record_node_execution(
         self,
@@ -954,6 +961,7 @@ class WorkflowTraceCollector:
             "start_time": self.start_time.isoformat(),
             "only_node": self.only_node,
             "content_hash": self.content_hash,
+            "inputs": self.inputs,
         }
 
     def _aggregates(self) -> dict[str, Any]:
