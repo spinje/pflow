@@ -91,9 +91,13 @@ def _tp(debug: Path, workflow_path: str, ts: str, *, name: str = "wf") -> Path:
     return debug / format_trace_filename(workflow_path, name, ts)
 
 
+@_unix_only
 def test_discover_prefers_live_over_finished(tmp_path):
-    """R2: a just-finished run (newer mtime) must NOT shadow a still-streaming one. Eager-meta makes both
-    discoverable, so newest-by-mtime alone is wrong — prefer the file with no run.complete."""
+    """R2 + PR #543: a just-finished run (newer mtime) must NOT shadow a still-STREAMING one. "Live" is now
+    EXACT — incomplete AND the writer holds the flock — so the live fixture holds a real advisory lock for the
+    duration of the call (an unlocked incomplete file is a CRASHED run, covered by the next test)."""
+    import fcntl
+
     wf = str(tmp_path / "wf.pflow.md")
     debug = tmp_path / "debug"
     debug.mkdir()
@@ -103,7 +107,45 @@ def test_discover_prefers_live_over_finished(tmp_path):
     _write_trace(live, wf, complete=False)
     os.utime(live, (1000, 1000))  # live is OLDER by mtime…
     os.utime(finished, (2000, 2000))  # …finished is newer — newest-by-mtime would wrongly pick it
-    assert discover_live_trace(wf, debug_dir=debug) == live
+    with open(live) as streaming:  # the producer holds the flock for the run's life; simulate that here
+        fcntl.flock(streaming.fileno(), fcntl.LOCK_EX)
+        assert discover_live_trace(wf, debug_dir=debug) == live
+
+
+@_unix_only
+def test_discover_skips_a_crashed_unlocked_incomplete_for_a_newer_finished_run(tmp_path):
+    """PR #543 (C1): a CRASHED run is incomplete but its flock is FREE. Discovery must NOT prefer it over a
+    newer SUCCESSFUL rerun — else the unpinned overlay pins the dead run (showing run-stopped) until the
+    crashed trace is deleted. Before the fix the prefer-live loop returned the (older) crashed file because it
+    was merely incomplete; now the free-lock crashed run is skipped and the newest finished rerun wins."""
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    crashed = _tp(debug, wf, "20260101-000000-000001")
+    finished = _tp(debug, wf, "20260101-000000-000002")
+    _write_trace(crashed, wf, complete=False)  # incomplete + nobody holds the lock = crashed/killed
+    _write_trace(finished, wf, complete=True)
+    os.utime(crashed, (1000, 1000))
+    os.utime(finished, (2000, 2000))
+    assert discover_live_trace(wf, debug_dir=debug) == finished
+
+
+def test_discover_prefers_incomplete_when_lock_state_is_unknown(tmp_path, monkeypatch):
+    """No-fcntl (Windows) fallback: when `is_trace_locked` can't determine liveness (returns None), discovery
+    keeps preferring an incomplete run — today's "incomplete = live" heuristic (mirrors `_run_is_live`)."""
+    from pflow.ui import run_tailer
+
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    finished = _tp(debug, wf, "20260101-000000-000001")
+    incomplete = _tp(debug, wf, "20260101-000000-000002")
+    _write_trace(finished, wf, complete=True)
+    _write_trace(incomplete, wf, complete=False)
+    os.utime(incomplete, (1000, 1000))
+    os.utime(finished, (2000, 2000))
+    monkeypatch.setattr(run_tailer, "is_trace_locked", lambda _p: None)  # simulate a no-fcntl filesystem
+    assert discover_live_trace(wf, debug_dir=debug) == incomplete
 
 
 def test_discover_falls_back_to_newest_finished_when_none_live(tmp_path):
@@ -348,6 +390,96 @@ def test_run_complete_flushes_pending_deltas_then_banner():
     # Pending node states flush BEFORE the banner so the canvas is final before "Run success".
     assert [m["type"] for m in messages] == ["run-events", "run-complete"]
     assert t.snapshot()["run"]["final_status"] == "success"
+
+
+def test_run_complete_banner_drops_the_full_payload_fields():
+    """PR #543 (C3): the producer's `_aggregates()` may put a full `json_output` + `warnings` on the
+    run.complete line, but the live banner is an ALLOWLIST — only the small summary fields cross the SSE wire
+    and into `snapshot()`. The bulky outputs stay off the wire (they live in the on-disk trace)."""
+    t = RunTailer("k", lambda _key, _msg: None)
+    messages = t._consume(
+        _bytes(
+            {
+                "kind": "run.complete",
+                "final_status": "success",
+                "nodes_executed": 2,
+                "nodes_failed": 0,
+                "failed_node_ids": [],
+                "json_output": {"big": "x" * 1000},
+                "warnings": [{"kind": "deprecation", "text": "noisy"}],
+            },
+        )
+    )
+    banner = next(m for m in messages if m["type"] == "run-complete")
+    assert banner == {
+        "type": "run-complete",
+        "final_status": "success",
+        "nodes_executed": 2,
+        "nodes_failed": 0,
+        "failed_node_ids": [],
+    }
+    assert "json_output" not in banner and "warnings" not in banner
+    snap_run = t.snapshot()["run"]
+    assert "json_output" not in snap_run and "warnings" not in snap_run
+
+
+def test_scan_traces_skips_a_non_utf8_trace(tmp_path):
+    """PR #543 (C5): a corrupt / non-UTF-8 file matching the trace glob must be SKIPPED, never crash the
+    scan — `_read_meta`'s text read raises UnicodeDecodeError (⊄ OSError), which would otherwise propagate
+    out of scan_traces and 500 `/api/runs` / spin the tailer."""
+    import pflow.ui.run_tailer as rt
+
+    rt._SCAN_CACHE.clear()
+    rt._DIR_LIST_CACHE.clear()
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    good = _tp(debug, wf, "20260101-000000-000001")
+    junk = _tp(debug, wf, "20260101-000000-000002", name="junk")
+    _write_trace(good, wf, complete=True)
+    junk.write_bytes(b"\xff\xfe not valid utf-8 \x80\x81\n")  # invalid UTF-8 in the first line
+    cands = rt.scan_traces(debug_dir=debug)  # bare scan sees both files; must not raise
+    paths = {c["path"] for c in cands}
+    assert good in paths and junk not in paths
+
+
+def test_read_run_status_handles_a_trailer_larger_than_the_tail_window(tmp_path):
+    """PR #543: a run.complete trailer of many small fields can exceed the 64 KB cheap-tail window. When the
+    window holds no newline (it starts mid-trailer), read_run_status must re-read the whole file rather than
+    misreport a FINISHED run as live."""
+    path = tmp_path / "trace.json"
+    lines = [
+        {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": "/w.pflow.md", "execution_id": "x"},
+        {"kind": "run.complete", "final_status": "degraded", "nodes_executed": 1, "big": list(range(20000))},
+    ]
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    assert path.stat().st_size > 65536  # the trailer line alone exceeds the tail window
+    assert read_run_status(path) == (True, "degraded")
+
+
+def test_scoped_scan_prunes_only_its_own_vanished_cache(tmp_path):
+    """PR #543 (W1): a workflow-SCOPED scan (the 4 Hz live tailer) globs only its own hash-prefixed files, so
+    it must prune ONLY this workflow's vanished `_SCAN_CACHE` entries — never another workflow's (a dir-wide
+    prune on every scoped poll wiped the dashboard's cache). It STILL reclaims its OWN removed traces."""
+    import pflow.ui.run_tailer as rt
+
+    rt._SCAN_CACHE.clear()
+    rt._DIR_LIST_CACHE.clear()
+    wf_a = str(tmp_path / "a.pflow.md")
+    wf_b = str(tmp_path / "b.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    ta = _tp(debug, wf_a, "20260101-000000-000001")
+    tb = _tp(debug, wf_b, "20260101-000000-000002")
+    _write_trace(ta, wf_a, complete=True)
+    _write_trace(tb, wf_b, complete=True)
+    rt.scan_traces(debug_dir=debug)  # bare scan populates the cache for BOTH workflows
+    assert ta in rt._SCAN_CACHE and tb in rt._SCAN_CACHE
+    ta.unlink()  # wf_a's trace is deleted from disk
+    rt._DIR_LIST_CACHE.clear()  # force a re-glob (a coarse dir mtime might otherwise reuse the listing)
+    rt.scan_traces(wf_a, debug_dir=debug)  # a SCOPED poll for workflow A
+    assert tb in rt._SCAN_CACHE, "a scoped scan must NOT evict another workflow's cached facts (W1)"
+    assert ta not in rt._SCAN_CACHE, "a scoped scan SHOULD reclaim its OWN vanished trace"
 
 
 def test_run_event_cost_converges_on_event_cost_for_a_cached_node():

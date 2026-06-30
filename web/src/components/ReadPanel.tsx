@@ -170,6 +170,7 @@ export function ReadPanel({
   workflow,
   runId,
   showRunDetail,
+  runEventId,
 }: {
   node: RFNode;
   // The node's outgoing branch edges (GraphView filters the contract) — the
@@ -196,6 +197,9 @@ export function ReadPanel({
   workflow?: string;
   runId?: string | null;
   showRunDetail?: boolean;
+  // The selected node's latest run-event id — threaded into the "This run" refetch so a loop re-executing the
+  // same node (same ref/status) still refreshes the panel (PR #543). Absent → no extra refetch trigger.
+  runEventId?: number | null;
 }): JSX.Element {
   const src = sourceLabel(node.source);
   // The avatar name navigates to this node on the canvas (re-centers the camera),
@@ -274,7 +278,9 @@ export function ReadPanel({
         <ConnectionSections node={node} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
       )}
 
-      {showRunDetail && workflow && <ThisRunSection workflow={workflow} runId={runId ?? null} nodeRef={node.ref} />}
+      {showRunDetail && workflow && (
+        <ThisRunSection workflow={workflow} runId={runId ?? null} nodeRef={node.ref} epoch={runEventId ?? null} />
+      )}
     </aside>
   );
 }

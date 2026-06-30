@@ -56,13 +56,32 @@ def _read_meta(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as handle:
             first = handle.readline()
-    except OSError:
-        return None
+    except (OSError, UnicodeDecodeError):
+        return None  # unreadable, or corrupt / non-UTF-8 bytes (UnicodeDecodeError ⊄ OSError — PR #543) → skip
     try:
         line = json.loads(first)
     except ValueError:
         return None
     return line if isinstance(line, dict) and line.get("kind") == "meta" else None
+
+
+def _scan_tail_for_terminal(tail: bytes) -> tuple[bool, str | None] | None:
+    """Inspect the LAST non-empty line of a byte tail: ``(True, status)`` if it is a ``run.complete``
+    trailer, ``(False, None)`` if it parsed but is NOT the trailer (run not finished), or ``None`` if it
+    FAILED to parse — leaving the caller to disambiguate a genuine mid-flush from a window that cut a
+    fully-flushed but oversized trailer."""
+    for raw in reversed(tail.split(b"\n")):
+        if not raw.strip():
+            continue
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            return None  # the last line didn't parse — caller disambiguates mid-flush vs window-truncation
+        if isinstance(line, dict) and line.get("kind") == "run.complete":
+            status = line.get("final_status")
+            return (True, status if isinstance(status, str) else None)
+        return (False, None)  # a complete-but-non-trailer last line → not finished
+    return (False, None)  # empty tail
 
 
 def read_run_status(path: Path) -> tuple[bool, str | None]:
@@ -73,27 +92,26 @@ def read_run_status(path: Path) -> tuple[bool, str | None]:
     producer's vocabulary), or ``None`` when the run is not complete (still live, or crashed). Reads only a
     bounded 64 KB tail so a multi-MB trace isn't loaded to answer "is this run live?". A truncated/partial
     final line (a run mid-flush) doesn't parse → ``(False, None)`` (live), the safe direction. Lets
-    ``/api/runs`` report a finished run's status WITHOUT a full ``load_trace_file`` parse."""
+    ``/api/runs`` report a finished run's status WITHOUT a full ``load_trace_file`` parse.
+
+    A ``run.complete`` trailer LARGER than the window (a rare many-small-fields trailer — interning keeps the
+    normal one tiny) gets cut mid-line by the tail and would misread as live. So when the last line fails to
+    parse BUT the file ends with a newline (its last line IS fully flushed) and we truncated the read, re-read
+    the whole file ONCE to read the oversized trailer intact. A genuine mid-flush has no trailing newline, so
+    it stays "live" with no full re-read on the 4 Hz poll (PR #543 review)."""
     try:
         with open(path, "rb") as handle:
             handle.seek(0, 2)
             size = handle.tell()
             handle.seek(max(0, size - 65536))
             tail = handle.read()
+            result = _scan_tail_for_terminal(tail)
+            if result is None and size > 65536 and tail.endswith(b"\n"):
+                handle.seek(0)
+                result = _scan_tail_for_terminal(handle.read())
     except OSError:
         return (False, None)
-    for raw in reversed(tail.split(b"\n")):
-        if not raw.strip():
-            continue
-        try:
-            line = json.loads(raw)
-        except ValueError:
-            return (False, None)  # last line is a partial flush → run is still live
-        if isinstance(line, dict) and line.get("kind") == "run.complete":
-            status = line.get("final_status")
-            return (True, status if isinstance(status, str) else None)
-        return (False, None)  # a complete-but-non-trailer last line → not finished
-    return (False, None)
+    return result if result is not None else (False, None)
 
 
 def is_trace_locked(path: Path) -> bool | None:
@@ -245,9 +263,14 @@ def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) 
         if meta is None or (workflow_key is not None and not _same_path(meta.get("workflow_path"), workflow_key)):
             continue
         out.append({"path": path, "meta": meta, "complete": complete, "final_status": final_status, "mtime": mtime})
-    # Bound memory: forget per-file cache entries for files removed from THIS directory (leave others' alone).
+    # Reclaim cache entries for files that vanished from disk — but ONLY among the files THIS scan actually
+    # globbed (`pattern`). A bare (dashboard) scan globs the whole dir so it prunes dir-wide; a workflow-SCOPED
+    # scan globs only this workflow's hash-prefixed files, so it prunes only THIS workflow's vanished traces
+    # and never another workflow's cache (PR #543: a dir-wide prune on the 4 Hz scoped poll wiped the
+    # dashboard's cache for every other workflow each tick). Same `pattern` both ways → one code path.
+    prefix = pattern[: -len("*.json")]  # "workflow-trace-" (bare) or "workflow-trace-<hash>-" (scoped)
     with _SCAN_CACHE_LOCK:
-        for stale in [p for p in _SCAN_CACHE if p.parent == directory and p not in seen]:
+        for stale in [p for p in _SCAN_CACHE if p.parent == directory and p.name.startswith(prefix) and p not in seen]:
             _SCAN_CACHE.pop(stale, None)
     return out
 
@@ -256,23 +279,32 @@ def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Pat
     """The trace this workflow's overlay should follow, or ``None`` if no run exists.
 
     Matches on the recorded ``meta.workflow_path`` (robust to filename-hash details / path
-    normalization). PREFERS a LIVE run (has ``meta``, NO ``run.complete``) over a finished one, falling
-    back to the newest finished trace (for replay) only when none is live. Newest-by-mtime alone is
-    WRONG: eager-``meta`` (Task 173 A1) makes every run discoverable from t=0, so a just-finished run can
-    have a newer mtime than a still-streaming concurrent run and would shadow it (deep-review R2).
+    normalization). PREFERS a LIVE run — incomplete (NO ``run.complete``) AND its writer still holds the
+    advisory ``flock`` (``is_trace_locked``) — over a finished one, falling back to the newest finished trace
+    (for replay) only when none is live. The lock check is load-bearing: a CRASHED run is ALSO incomplete but
+    its lock is FREE, so without it a dead run would shadow a newer SUCCESSFUL rerun forever (PR #543, C1). On
+    a no-``fcntl`` FS (``is_trace_locked`` → ``None``) it falls back to "incomplete = live" (``is not False``,
+    mirroring ``_run_is_live``/``_check_stopped``). Newest-by-mtime alone is WRONG: eager-``meta`` (Task 173
+    A1) makes every run discoverable from t=0, so a just-finished run can have a newer mtime than a
+    still-streaming concurrent run and would shadow it (deep-review R2).
 
     EXCLUDES ``--only`` traces (``meta.only_node`` set): an ``--only`` run records ONLY its target node,
     so it is not a coherent full-run overlay — following it would leave every other node falsely
     ``pending`` and shadow the user's last full run. Mirrors ``_iter_workflow_traces`` (report /
     analyze-cache), which excludes ``--only`` traces for exactly this reason."""
     # Caller policy over the shared scanner (DR-3): drop --only traces (a partial run, not a coherent
-    # overlay), then prefer a live run (no run.complete) newest-first so a just-finished run never shadows
-    # a still-streaming one; else the newest finished run (replay-a-finished-run).
+    # overlay), then prefer a live run (incomplete AND lock-held, newest-first) so a just-finished run never
+    # shadows a still-streaming one — and a CRASHED incomplete run never shadows a newer finished rerun (the
+    # lock gate below, PR #543); else the newest finished run (replay-a-finished-run).
     candidates = [c for c in scan_traces(workflow_key, debug_dir) if c["meta"].get("only_node") is None]
     if not candidates:
         return None
     for cand in candidates:
-        if not cand["complete"]:
+        # Prefer a GENUINELY-live run: incomplete AND its writer still holds the flock. A crashed/killed run
+        # is ALSO incomplete but its lock is FREE (is_trace_locked is False) — preferring it would shadow a
+        # newer SUCCESSFUL rerun and pin the dead run forever (PR #543 review). `is not False` keeps the
+        # no-fcntl (Windows) path as today's "incomplete = live" fallback (mirrors _run_is_live/_check_stopped).
+        if not cand["complete"] and is_trace_locked(cand["path"]) is not False:
             return cand["path"]
     return candidates[0]["path"]
 
@@ -525,9 +557,20 @@ class RunTailer:
             self._state[line.get("id")] = delta  # last-wins by id (start→done, dead-end re-flush)
             return ("delta", delta)
         if kind == "run.complete":
-            self._run = {"type": "run-complete", **{k: v for k, v in line.items() if k != "kind"}}
+            # Project to a small allowlist — NOT a wholesale spread. The producer's `_aggregates()` also puts
+            # the full `json_output` + `warnings` on this line; spreading them would push bulky (and otherwise
+            # node-wire-stripped) payloads onto the live SSE wire AND every late subscriber's `snapshot()` (the
+            # node-event wire is allowlisted in `_run_event` for exactly this reason — PR #543 review). The
+            # banner needs only these summary fields; the full outputs live in the on-disk trace / `pflow report`.
+            self._run = {"type": "run-complete", **{k: line[k] for k in _RUN_COMPLETE_FIELDS if k in line}}
             return ("complete", self._run)
         return None
+
+
+# The run-complete banner's allowlist — the small summary fields the frontend banner reads (PR #543 review).
+# Deliberately EXCLUDES `json_output` / `warnings` (the full payloads `_aggregates()` puts on the trailer)
+# from the live wire + snapshot, mirroring `_run_event`'s node-wire allowlist.
+_RUN_COMPLETE_FIELDS = ("final_status", "nodes_executed", "nodes_failed", "failed_node_ids")
 
 
 def _run_event(line: dict[str, Any]) -> dict[str, Any]:

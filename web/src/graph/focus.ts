@@ -39,22 +39,32 @@ export function applyStatus(
   // synthetic "unrecorded" with no metrics, else undefined (pending → no badge).
   const resolve = (key: string): NodeRunState | undefined =>
     status.get(key) ?? (markUnmatched ? { status: "unrecorded" } : undefined);
-  // The status + metrics patch for a node, or null when its status is UNCHANGED (gate identity on status —
-  // its metrics arrive in the same terminal event, so they never move without it; keeps memo'd nodes stable).
-  const patchFor = (currentStatus: NodeStatus | undefined, ref: RFRef): { status?: NodeStatus; runDetail?: RunDetail } | null => {
+  // The status + metrics patch for a node, or null when BOTH its status AND its metrics are unchanged (so
+  // memo'd nodes skip re-render). Gating on status ALONE went stale on a loop re-completing the SAME node
+  // with the same terminal status but new duration/cost (PR #543) — the hover chip kept the first iteration's
+  // numbers. `?? null` so an absent metric on either side compares equal (an idle node stays identity-stable).
+  const patchFor = (
+    currentStatus: NodeStatus | undefined,
+    currentDetail: RunDetail | undefined,
+    ref: RFRef,
+  ): { status?: NodeStatus; runDetail?: RunDetail } | null => {
     const next = resolve(refKey(ref));
-    if (currentStatus === next?.status) return null;
+    const sameStatus = currentStatus === next?.status;
+    const sameDetail =
+      (currentDetail?.durationMs ?? null) === (next?.durationMs ?? null) &&
+      (currentDetail?.costUsd ?? null) === (next?.costUsd ?? null);
+    if (sameStatus && sameDetail) return null;
     return { status: next?.status, runDetail: next && { durationMs: next.durationMs ?? null, costUsd: next.costUsd ?? null } };
   };
   return nodes.map((node) => {
     if (node.type === "node") {
-      const patch = patchFor(node.data.status, node.data.node.ref);
+      const patch = patchFor(node.data.status, node.data.runDetail, node.data.node.ref);
       return patch === null ? node : { ...node, data: { ...node.data, ...patch } };
     }
     // A sub-workflow HOST renders as a group (its leaf box suppressed), so light the GROUP by joining on
     // the host's ref — but only its PRIMARY group (showTitle), so a host backing >1 group lights once.
     if (node.type === "group" && node.data.hostNode && node.data.showTitle) {
-      const patch = patchFor(node.data.status, node.data.hostNode.ref);
+      const patch = patchFor(node.data.status, node.data.runDetail, node.data.hostNode.ref);
       return patch === null ? node : { ...node, data: { ...node.data, ...patch } };
     }
     return node;

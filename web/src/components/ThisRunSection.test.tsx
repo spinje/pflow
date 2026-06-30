@@ -87,6 +87,15 @@ describe("ThisRunSection", () => {
     expect(screen.queryByText("Output")).toBeNull();
   });
 
+  it("refetches when the event epoch changes — a loop re-executing the same node (PR #543)", async () => {
+    mockFetch.mockResolvedValue(detail());
+    const { rerender } = render(<ThisRunSection workflow="/wf" runId="r1" nodeRef={REF} epoch={1} />);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+    // same workflow/run/ref, NEW epoch (the node completed a second iteration) → the panel refetches the latest
+    rerender(<ThisRunSection workflow="/wf" runId="r1" nodeRef={REF} epoch={2} />);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+  });
+
   it("degrades to a 'couldn't load' message on a fetch failure, never blanking the panel (DR-6)", async () => {
     mockFetch.mockRejectedValue(new Error("network"));
     render(<ThisRunSection workflow="/wf" runId={null} nodeRef={REF} />);

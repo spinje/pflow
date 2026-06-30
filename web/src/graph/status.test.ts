@@ -139,6 +139,18 @@ describe("applyStatus — the run-status restyle pass", () => {
     expect(out.type === "node" ? out.data.runDetail : null).toEqual({ durationMs: 1234, costUsd: 0.003 });
   });
 
+  it("re-applies when the status is unchanged but the metrics changed (a loop's next iteration — PR #543)", () => {
+    const r = ref({ node_id: "a" });
+    const withDuration = (durationMs: number): Map<string, NodeRunState> =>
+      new Map<string, NodeRunState>([[refKey(r), { status: "success", durationMs, costUsd: 0 }]]);
+    const first = applyStatus([leaf("a", r)], withDuration(5))[0]!;
+    expect(first.type === "node" ? first.data.runDetail : null).toEqual({ durationMs: 5, costUsd: 0 });
+    // SAME terminal status, NEW metrics (the node completed again in a loop) → must re-apply, not skip.
+    const second = applyStatus([first], withDuration(8))[0]!;
+    expect(second).not.toBe(first); // new identity → the badge's hover metrics refresh
+    expect(second.type === "node" ? second.data.runDetail : null).toEqual({ durationMs: 8, costUsd: 0 });
+  });
+
   it("an UNCHANGED status preserves object identity (React memo skips it)", () => {
     const node = leaf("a", ref({ node_id: "a" }), "success");
     // Same status the node already carries — the join hits but nothing changes.

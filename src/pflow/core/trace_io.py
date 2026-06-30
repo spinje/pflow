@@ -238,7 +238,8 @@ def load_trace_file(path: Path) -> dict[str, Any]:
     Detects the JSONL transport positively: the first line must be a JSON object carrying the
     ``pflow_trace`` marker. Anything else — including a well-formed pre-Task-172 single-object trace —
     raises ``json.JSONDecodeError`` (the legacy single-object/`blobs`-trailer reader was removed in #531
-    under the no-backward-compat-with-old-traces decision). The 3 trace-content readers
+    under the no-backward-compat-with-old-traces decision); a corrupt / non-UTF-8 file likewise raises
+    ``json.JSONDecodeError`` (not the raw ``UnicodeDecodeError``), so the same catch covers it. The 3 trace-content readers
     (``_iter_workflow_traces``, ``prompt_cache_analysis.trace_loading._load_trace_explicit``,
     ``trace_report.generate_report``) all catch ``(JSONDecodeError, OSError)``, so an old/unreadable trace
     skips gracefully rather than crashing.
@@ -250,7 +251,14 @@ def load_trace_file(path: Path) -> dict[str, Any]:
     line anywhere EARLIER is real corruption and still raises ``json.JSONDecodeError`` — never a
     silently-dropped middle event.
     """
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # A corrupt / non-UTF-8 file that matched the trace glob is not a valid pflow trace. Raise the same
+        # json.JSONDecodeError every caller already catches (PR #543 review), so the documented
+        # "(JSONDecodeError, OSError) suffices" contract actually holds — without this, the raw
+        # UnicodeDecodeError (⊄ OSError) escapes and crashes report / analyze-cache / generate_report.
+        raise json.JSONDecodeError(f"Trace file is not valid UTF-8: {exc}", str(path), 0) from exc
     stripped = text.lstrip()
     if stripped.startswith("{"):
         first_line = stripped.split("\n", 1)[0]

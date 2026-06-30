@@ -59,7 +59,7 @@ interface GraphViewProps {
 
 // A run-event → the overlay's per-node state: status + the cheap hover metrics (already on the wire). Status
 // drives the badge; duration/cost ride its hover detail.
-const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationMs: e.duration_ms, costUsd: e.cost_usd });
+const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationMs: e.duration_ms, costUsd: e.cost_usd, id: e.id });
 
 // The detail panel's "This run" section opens ONLY for a node with a recorded COMPLETION in the current run.
 // `running` (the badge/chip cover it), `stopped` (only a node.start on disk — nothing to project), and
@@ -460,6 +460,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     const host = graph.groups.find((g) => g.id === selectedId)?.host;
     return host ? (graph.nodes.find((n) => n.id === host) ?? null) : null;
   }, [graph, selectedId]);
+
+  // The selected node's live run state — looked up ONCE: `status` drives `showRunDetail`, and the event
+  // `id` is the "This run" panel's refetch discriminator (a loop re-completing the same node → new id →
+  // refetch, even though the ref/status are unchanged; PR #543).
+  const selectedRunState = selectedNode ? runStatus.get(refKey(selectedNode.ref)) : undefined;
 
   // A selected ROOT IO CARD (its id IS its wrapper group's) reads as the
   // workflow's interface. Third resolution arm, disjoint from the other two by
@@ -926,7 +931,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               onClose={() => setSelectedId(null)}
               workflow={workflow}
               runId={runId}
-              showRunDetail={TERMINAL_RUN_STATUSES.has(runStatus.get(refKey(selectedNode.ref))?.status ?? "")}
+              showRunDetail={TERMINAL_RUN_STATUSES.has(selectedRunState?.status ?? "")}
+              runEventId={selectedRunState?.id ?? null}
             />
           )}
         </div>

@@ -1748,3 +1748,89 @@ likely-dead `_has_run_complete`; `_read_matching_event`'s OSError docstring) —
   docstring scrubbed too → no dangling reference); `run_node._read_matching_event` docstring gains its
   `OSError`→`None` degrade path. `make check` green (mypy 239); the affected tests pass (109).
 Trace-retention is filed as **#542** (the last remaining noted item — a fast-follow).
+
+## 2026-06-30 — PR #543 review fixes: 4 bot reviews triaged + verified, 8 issues fixed, live-verified
+
+PR #543 (the whole Task-173 branch) drew **four automated reviews** — Claude ×2, Codex, Gemini (the user
+flagged 3; Gemini was the 4th, unlinked). All four verdict "strong PR / no blocking issues," but they
+DIVERGED on findings and the union was a real worklist. I triaged each against the code (trust-nothing)
+rather than relay the bot claims — and the highest-severity item was a REAL bug only 1 of the 4 caught.
+
+### Triage — what I VERIFIED against code (not just relayed)
+- **C1 (Codex — the headline, verified real):** `discover_live_trace`'s prefer-live loop selected on
+  `cand["complete"]` ALONE — never the `flock` lock. A CRASHED run (incomplete, lock freed on death) was
+  preferred over a newer SUCCESSFUL rerun → the default unpinned overlay stuck on the dead trace (showing
+  `run-stopped`) until the file was deleted. The exact cross-segment drift I'd predicted: flock liveness was
+  wired into `_check_stopped` + `/api/runs` in a later session, but the earlier prefer-live discovery path was
+  never updated. **3 of 4 reviewers missed it** — the signal the deeper pass was worth running.
+- **C-NUL (Codex, verified):** `CatalogView.tsx` shipped a literal NUL-byte `OTHER_BUCKET` sentinel → git/rg
+  classify the file BINARY (`git diff --numstat` → `- -`).
+- **C3 (Codex, verified):** the tailer's `run.complete` broadcast spread EVERY field (incl. the producer's
+  full `json_output` + `warnings`) onto the live SSE wire + every late subscriber's `snapshot()` — the
+  opposite of the careful `_run_event` node-wire allowlist 3 lines up.
+- **C4 (Codex, verified):** `eventState` dropped the event `id`; `applyStatus` gated identity on STATUS only →
+  a loop re-completing the same node (same ref+status, new metrics) left the hover chip + detail panel on the
+  FIRST iteration.
+- **C5/G1 (Codex + Gemini, verified — bigger than scoped):** a corrupt / non-UTF-8 file matching the trace
+  glob raises `UnicodeDecodeError` (a `ValueError` ⊄ `OSError`) → crashes `scan_traces` / `pflow report`. A
+  searcher impact-sweep found **7 vulnerable sites** (not 2) incl. `run_node._read_matching_event`. Gemini's
+  stated mechanism (AttributeError on `.get()`) was WRONG (the `pflow_trace`-marker check raises
+  JSONDecodeError first) — same symptom, different cause.
+- **64KB (Claude#1 + Codex, convergent):** a `run.complete` trailer > the 64 KB cheap-tail window → a FINISHED
+  run misreads as live / false `run-stopped`.
+- **W1 (Claude#1):** `scan_traces` eviction wiped OTHER workflows' cache on every scoped 4 Hz poll.
+
+### 4 parallel `pflow-codebase-searcher` agents grounded the complex fixes
+Two corrected my plan materially: **C1 polarity** — I'd planned `is_trace_locked is True`; the searcher caught
+the codebase convention is `is not False` (treats `None`/no-fcntl-Windows as live — `is True` would diverge on
+Windows). **C5/G1 root** — translate `UnicodeDecodeError → json.JSONDecodeError` at the ROOT
+(`load_trace_file`), honoring its own documented "(JSONDecodeError, OSError) suffices" contract and covering
+report / analyze-cache / generate_report transitively (+ the 2 UI raw-line readers that bypass it). C3:
+confirmed the safe 4-field allowlist. C4: gate the chip on (status+metrics) [`runDetail` already on node.data
+→ no new field] + thread the event `id` for the panel `epoch` [`flow.ts` untouched].
+
+### The 8 fixes (every test mutation-verified — confirmed each fails without its fix)
+| # | Fix | Files (+tests) |
+|---|---|---|
+| C1 | prefer-live gated on `is_trace_locked is not False` | run_tailer.py (+3; 1 holds a real flock) |
+| C3 | `run-complete` projected to a 4-field allowlist | run_tailer.py (+1) |
+| C4 | chip gated on (status+metrics); event `id` → panel refetch `epoch` | types/focus/GraphView/ReadPanel/ThisRunSection (+2) |
+| C5/G1 | UTF-8 fixed at the root + 2 UI readers | trace_io.py, run_tailer.py, run_node.py (+3) |
+| 64KB | re-read whole file when the last line fails to parse but the file ends in `\n` (oversized trailer); a mid-flush (no trailing `\n`) stays cheap | run_tailer.py (+1) |
+| W1 | prune only THIS scan's own glob-prefix entries | run_tailer.py (+1) |
+| C-NUL | NUL sentinel → printable `"other-bucket"` | CatalogView.tsx |
+G1 needed NO `report.py` edit — the root `load_trace_file` fix covers it transitively.
+
+### Self-review (user: "are you FULLY happy / loose ends?") → 1 real defect + polish
+- **Real defect (fixed):** the `discover_live_trace` docstring/comment still stated the OLD buggy "live = no
+  run.complete" definition — a future agent would've reverted the lock check. Corrected.
+- **Polish applied:** W1 tightened to prune-by-own-prefix (one code path, per-workflow bounding — strictly
+  better than "skip on scoped"; test strengthened to pin both directions); the double `runStatus.get` in
+  GraphView → one `selectedRunState`.
+- **Polish left BY DESIGN:** C4's two discriminators (chip on metrics, panel on id) are each CORRECT for their
+  surface (a new event id can mean new output, not just timing) — unifying would make a gate wrong.
+
+### Live verification (mandatory — overlay failures are unit-invisible)
+Rebuilt bundle + fresh server :8790 (stale :8788 had old code; later killed). Drove the two scenarios that
+rested on reasoning, via the `screenshot-pflow-web-ui` skill:
+- **C1 (crash→rerun):** killed run-1 mid-`slow` (`kill -9` → lock freed; `/api/runs` read
+  `complete=false, live=false` — EXACT flock liveness), reran to success → the unpinned overlay shows
+  **ALL-GREEN** = it followed the rerun, NOT the dead trace (old code would've shown `slow` stopped).
+- **C4 (leaf loop):** a 3-iteration code-node loop emitted **DISTINCT event ids (0,1,2) + durations
+  (0.26→0.22→0.20ms) per iteration** in the trace — the load-bearing panel-refetch assumption, confirmed
+  LIVE; clicking the looped node → the "This run" panel shows the **LAST** iteration (`n:2 → {n:3,
+  more:false}`), so `/api/run-node` last-wins + the panel render are both correct.
+- Smoke (3-node shell): overlay lights success + "Run success · 3 nodes" banner (C3) + the panel renders
+  resolved input/output. C-NUL needs no shot (sentinel value has zero render effect; file is text, units pass).
+
+### Gates (final, all green)
+`make test` **8229** (+8 net; one W1 test replaced by a stronger 2-direction version), `make check` clean
+(mypy 239, ruff/ruff-format/deptry), strict `tsc` clean, vitest **623** (+2). Diff: 14 files, +302/−46.
+**UNCOMMITTED** (no-auto-commit rule) — ready for a commit on the user's word.
+
+### Honest residuals (negligible, by choice)
+- No integration test that analyze-cache/report survive a bad-UTF8 file in the dir (covered transitively by
+  the root test + the consumers' unchanged catch clauses).
+- running/stopped overlay states not re-screenshotted (only success); `applyStatus` is status-uniform + those
+  were verified pre-PR.
+- Throwaway artifacts (gitignored scratchpad `smoke`/`c1`/`c4`.pflow.md + their traces + `/tmp/pflow-shots`).

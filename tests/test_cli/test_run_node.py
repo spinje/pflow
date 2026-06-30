@@ -86,6 +86,18 @@ def test_pinned_resolves_run_id_and_projects(tmp_path, monkeypatch) -> None:
     assert detail["cost_usd"] is None and detail["tokens"] is None
 
 
+def test_returns_none_for_a_trace_corrupt_after_its_meta_line(tmp_path, monkeypatch) -> None:
+    # PR #543: a trace with a valid (discoverable) meta line but invalid UTF-8 bytes later must degrade to
+    # None (→ 404), not crash the handler — `_read_matching_event`'s whole-file `read_text` would otherwise
+    # raise UnicodeDecodeError (⊄ OSError). (A fully-non-UTF-8 file is skipped earlier, at discovery.)
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    meta = {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": wf, "execution_id": "run-1"}
+    path = debug / format_trace_filename(wf, "wf", "20260101-000000-000001")
+    path.write_bytes((json.dumps(meta) + "\n").encode("utf-8") + b"\xff\xfe garbage \x80\n")
+    assert run_node_detail(wf, "run-1", {"node_id": "a", "ancestor_path": [], "port": None}) is None
+
+
 def test_unpinned_uses_discover_live_trace(tmp_path, monkeypatch) -> None:
     """``run_id=None`` → ``discover_live_trace`` (the newest live, else newest finished) — the same trace the
     unpinned overlay follows."""

@@ -18,16 +18,19 @@ export function ThisRunSection({
   workflow,
   runId,
   nodeRef,
+  epoch = null,
 }: {
   workflow: string;
   runId: string | null;
   nodeRef: RFRef;
+  epoch?: number | null;
 }): JSX.Element {
   const [detail, setDetail] = useState<RunNodeDetail | null>(null);
   const [phase, setPhase] = useState<"loading" | "loaded" | "error">("loading");
 
-  // Keyed on the STRUCTURAL ref-key (not the nodeRef object — its identity varies per render): a different
-  // node, a run switch, or a loop's next iteration remounts/refetches the latest record.
+  // Keyed on the STRUCTURAL ref-key (not the nodeRef object — its identity varies per render) plus `epoch`
+  // (the node's latest event id): a different node, a run switch, a BATCH item (distinct ref), or a plain
+  // loop re-executing the same node (same ref, new epoch) all refetch the latest record.
   useEffect(() => {
     let cancelled = false;
     setPhase("loading");
@@ -45,7 +48,7 @@ export function ThisRunSection({
     return () => {
       cancelled = true;
     };
-  }, [workflow, runId, refKey(nodeRef)]);
+  }, [workflow, runId, refKey(nodeRef), epoch]);
 
   // The panel's MOST distinct section: a bordered, elevated card (not the near-invisible <details> it
   // replaced). `aria-label` names the section (the visible "This run" summary is gone). The loading/error

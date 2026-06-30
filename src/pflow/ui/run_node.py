@@ -81,9 +81,10 @@ def _read_matching_event(path: Path, ref: dict[str, Any]) -> dict[str, Any] | No
     modest. Don't reach for the tailer's incremental machinery here; the simplicity is the point."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         # The file resolved via discovery but couldn't be read back (permission / deleted mid-read /
-        # transient IO). Degrade to "no detail" (→ 404), but leave a breadcrumb so this isn't silently
+        # transient IO), or it's corrupt / non-UTF-8 bytes (UnicodeDecodeError ⊄ OSError — PR #543 review).
+        # Degrade to "no detail" (→ 404), but leave a breadcrumb so this isn't silently
         # indistinguishable from "this node didn't run" if a user reports a missing panel.
         logger.debug("run_node_detail: could not read trace %s (%s) — treating as no detail", path, exc)
         return None

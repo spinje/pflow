@@ -37,10 +37,14 @@ export interface RunDetail {
   costUsd?: number | null;
 }
 
-// A node's overlay run state: the status (drives the badge) + its hover metrics. The overlay's status map is
-// keyed by structural ref-key → this; `applyStatus` splits it onto `data.status` + `data.runDetail`.
+// A node's overlay run state: the status (drives the badge) + its hover metrics + the source event id. The
+// overlay's status map is keyed by structural ref-key → this; `applyStatus` splits status/metrics onto
+// `data.status` + `data.runDetail`. `id` is the source RunEvent id — a per-completion discriminator the
+// detail panel keys its refetch on, so a loop re-completing the SAME node (same ref + status) still refreshes
+// (PR #543); absent on synthesized states (a snapshot's dangling→stopped) and on idle/test fixtures.
 export interface NodeRunState extends RunDetail {
   status: NodeStatus;
+  id?: number | null;
 }
 
 // One run-event the overlay joins onto a graph node by its structural `ref` (node_id + ancestor_path
