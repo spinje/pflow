@@ -756,6 +756,130 @@ def test_engine_memo_hit_writes_cache_source_memo_not_in_process(
     )
 
 
+# --- GH #540: cache-HIT events carry resolved inputs + template_resolutions ---
+# A fresh (miss) execution records fully-resolved params + the template
+# resolutions; a cache HIT historically recorded only the static params and a
+# null ``template_resolutions`` (handle_cached_execution hardcoded ``{}`` and the
+# engine handed it pre-resolution ``node.params``). The two trace readers — the
+# ``pflow ui`` panel (reads ``node_params``) and ``pflow report`` (reads
+# ``template_resolutions``) — then showed a cached node less Input detail than a
+# fresh one. The fix threads ``plan.resolved_params`` + ``plan.last_resolutions``
+# through, so a cached event matches a fresh one modulo ``status``. A non-LLM
+# (shell) node is used deliberately: it exercises the plain ``inputs`` path
+# without the LLM prompt/system stripping that ``_strip_redundant_llm_trace_fields``
+# applies, so the assertion is a direct equality on the resolved inputs.
+
+
+def test_engine_cache_hit_records_resolved_inputs_and_resolutions(tmp_path: Any) -> None:
+    """Engine-driven memo HIT on a non-LLM node: the cached trace event MUST
+    carry the same resolved ``inputs`` (in ``node_params``) and
+    ``template_resolutions`` as the fresh run — not the pre-resolution static
+    params with a null ``template_resolutions`` (GH #540).
+    """
+    from pflow.registry import Registry
+    from pflow.runtime import WorkflowEngine, compile_workflow
+    from pflow.runtime.cache import MemoizationCache
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "inputs": {"name": {"type": "string"}},
+        "nodes": [
+            {
+                "id": "config",
+                "type": "shell",
+                "cache": True,  # shell defaults to cache_enabled=False — opt in
+                "params": {
+                    "command": "printf '%s' 'ok'",
+                    "inputs": {"api_key": "${name}-secret", "note": "visible-value"},
+                },
+            }
+        ],
+        "edges": [],
+    }
+    registry = Registry()
+    compiled = compile_workflow(ir, registry=registry, initial_params={"name": "World"})
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    expected_inputs = {"api_key": "World-secret", "note": "visible-value"}
+
+    def _run() -> dict[str, Any]:
+        shared: dict[str, Any] = {"name": "World", "__memoization_cache__": cache}
+        shared.update(compiled.resolved_defaults)
+        trace = WorkflowTraceCollector(workflow_name="test", workflow_path=str(tmp_path / "wf"))
+        WorkflowEngine(trace_collector=trace).run(compiled, shared)
+        events = [e for e in trace.events if e.get("node_id") == "config"]
+        assert events, "no config event in trace"
+        return events[-1]
+
+    # --- Run 1: fresh (miss) — populates the memo cache --------------------
+    fresh = _run()
+    assert fresh.get("status") != "cached", "run-1 must not be a cache hit"
+
+    # --- Run 2: same memo cache → memo HIT --------------------------------
+    cached = _run()
+    assert cached.get("status") == "cached", "run-2 must be a cache hit"
+
+    # Resolved inputs land in node_params (the `pflow ui` panel's source) ...
+    assert cached.get("node_params", {}).get("inputs") == expected_inputs
+    # ... and in template_resolutions (the `pflow report` ## Inputs source).
+    assert cached.get("template_resolutions", {}).get("inputs", {}).get("resolved") == expected_inputs
+
+    # Acceptance bar: a cached event matches a fresh one modulo `status`.
+    assert cached["node_params"] == fresh["node_params"]
+    assert cached["template_resolutions"] == fresh["template_resolutions"]
+
+
+def test_engine_cache_hit_no_template_node_falls_back_to_node_params(tmp_path: Any) -> None:
+    """Covers the `else node.params` arm of the cache-hit fix (GH #540).
+
+    A node with no templates (like a batch node) has ``plan.resolved_params is
+    None`` — verified: a no-template node compiles with a falsy ``template_config``,
+    so ``_resolve_for_plan`` returns ``None``. The engine must then fall back to the
+    original ``node.params`` on the cached event, exactly as the miss path does (it
+    never reassigns ``node.params`` either). The sibling test above covers the
+    ``resolved_params is not None`` arm; together they pin both branches of the
+    ternary so a future refactor can't silently drop the fallback.
+    """
+    from pflow.registry import Registry
+    from pflow.runtime import WorkflowEngine, compile_workflow
+    from pflow.runtime.cache import MemoizationCache
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            # No `${...}` anywhere → template_config is falsy → resolved_params is None.
+            {"id": "config", "type": "shell", "cache": True, "params": {"command": "printf '%s' 'ok'"}}
+        ],
+        "edges": [],
+    }
+    registry = Registry()
+    compiled = compile_workflow(ir, registry=registry)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    def _run() -> dict[str, Any]:
+        shared: dict[str, Any] = {"__memoization_cache__": cache}
+        shared.update(compiled.resolved_defaults)
+        trace = WorkflowTraceCollector(workflow_name="test", workflow_path=str(tmp_path / "wf"))
+        WorkflowEngine(trace_collector=trace).run(compiled, shared)
+        events = [e for e in trace.events if e.get("node_id") == "config"]
+        assert events, "no config event in trace"
+        return events[-1]
+
+    fresh = _run()
+    assert fresh.get("status") != "cached", "run-1 must not be a cache hit"
+    cached = _run()
+    assert cached.get("status") == "cached", "run-2 must be a cache hit"
+
+    # Fallback records the original node.params (no resolution happened), so the
+    # cached event still matches the fresh one.
+    assert cached.get("node_params") == {"command": "printf '%s' 'ok'"}
+    assert cached["node_params"] == fresh["node_params"]
+    # No templates → no resolutions recorded on either event (empty dict omitted).
+    assert "template_resolutions" not in cached
+    assert "template_resolutions" not in fresh
+
+
 # --- Trace consumer integration: cache fields flow via llm_usage ----------
 
 
