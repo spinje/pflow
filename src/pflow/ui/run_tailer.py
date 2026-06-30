@@ -119,8 +119,10 @@ def is_trace_locked(path: Path) -> bool | None:
 
     The producer holds an advisory ``flock`` on its trace handle for the run's lifetime; the kernel releases
     it on ANY process exit. So a HELD lock = the run's process is alive; a FREE lock + no ``run.complete`` =
-    it crashed/was killed. We probe with a SEPARATE fd and ``LOCK_NB`` so we never block, releasing
-    immediately if we acquire. Returns ``True`` (alive) / ``False`` (not held) / ``None`` when liveness can't
+    it crashed/was killed. We probe with a SEPARATE fd, a SHARED lock, and ``LOCK_NB`` so we never block,
+    releasing immediately if we acquire — SHARED so two consumers probing the same free file (e.g. ``/api/runs``
+    in the Starlette pool overlapping the tailer's discover in ``asyncio.to_thread``) don't contend; only the
+    producer's EXCLUSIVE lock blocks us. Returns ``True`` (alive) / ``False`` (not held) / ``None`` when liveness can't
     be determined — no ``fcntl`` (Windows) or the file can't be opened — so the caller falls back.
 
     NOTE: detects DEATH, not HANG — a hung-but-alive process still holds the lock (reads ``True``). The
@@ -132,9 +134,13 @@ def is_trace_locked(path: Path) -> bool | None:
     try:
         with open(path, encoding="utf-8") as handle:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                # SHARED, not EXCLUSIVE: the producer's LOCK_EX still conflicts (→ True when alive), but a
+                # SHARED probe is compatible with another consumer's concurrent SHARED probe, so two consumers
+                # probing the same FREE file don't EWOULDBLOCK each other and mis-read a crashed run as live —
+                # which would transiently re-open the C1 crashed-run shadowing. PR #543 review.
+                fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
             except OSError:
-                return True  # the writer holds it → the run is alive
+                return True  # an exclusive writer (the live producer) holds it → the run is alive
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # we acquired it → no writer; release + report free
             return False
     except OSError:

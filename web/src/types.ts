@@ -62,7 +62,9 @@ export interface RunEvent {
 // (`success` | `degraded` | `failed`) — distinct from any single node's status.
 export interface RunComplete {
   final_status?: string;
-  duration_ms?: number;
+  // The run.complete wire is a 4-field allowlist (run_tailer._RUN_COMPLETE_FIELDS); duration_ms / json_output
+  // / warnings are deliberately NOT carried on the live SSE wire or the snapshot. Add a field here only after
+  // adding it to that allowlist, or it is silently dropped at the projection.
   nodes_executed?: number;
   nodes_failed?: number;
   failed_node_ids?: string[];

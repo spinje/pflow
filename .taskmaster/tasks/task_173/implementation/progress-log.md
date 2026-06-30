@@ -1834,3 +1834,66 @@ rested on reasoning, via the `screenshot-pflow-web-ui` skill:
 - running/stopped overlay states not re-screenshotted (only success); `applyStatus` is status-uniform + those
   were verified pre-PR.
 - Throwaway artifacts (gitignored scratchpad `smoke`/`c1`/`c4`.pflow.md + their traces + `/tmp/pflow-shots`).
+
+## 2026-06-30 — Final `/deep-review` (5 focused-deep agents) + live pass → 1 Warning + 2 nits fixed
+
+The closing review of the WHOLE branch (`main...HEAD`, 81 files / ~2.8k prod lines), AFTER the PR #543 bot
+fixes (`32eb0ad4`). Decided with the user: a **focused-deep 5-agent** battery (concurrency-safety,
+silent-failures, impact-completeness, feature-interactions, simplicity — validation-consistency skipped, no
+validator change) targeting **cross-segment / post-piecewise-review drift**, NOT re-running the ~6 prior
+in-build reviews + 4 bot reviews. Priority focus: the `[skip review]`-tagged `32eb0ad4` (bot-skipped,
+self-review only → the least-reviewed code in the branch). Paired with a live browser pass (the
+silent-non-lighting class is unit-invisible).
+
+**Outcome: 0 Critical, 1 Warning, 4 Suggestions — exceptionally clean for the size.** The one new
+substantive finding is exactly the cross-segment class the integrated pass exists for (a consumer↔consumer
+interaction no single-slice review would surface).
+
+- **🟡 Warning (concurrency, verified + FIXED) — `is_trace_locked` probed with `LOCK_EX`.** Two consumers
+  probing the same FREE (crashed) trace contend with each other: `/api/runs` (Starlette anyio pool)
+  overlapping the tailer's `discover_live_trace` (`asyncio.to_thread` pool) — one grabs `LOCK_EX`, the other
+  `EWOULDBLOCK`s → `except OSError: return True` → a crashed run reads "alive" for one 250ms poll →
+  `discover_live_trace` prefers it → **transiently re-opens the exact C1 crashed-run shadowing `32eb0ad4`
+  just closed** (canvas flips to the dead run, then self-corrects). Self-correcting + non-destructive →
+  Warning. **Fix:** the probe (`run_tailer.py:135`) now takes `LOCK_SH | LOCK_NB` — shared still conflicts
+  with the producer's cross-process `LOCK_EX` (→ True when alive) but is mutually compatible among consumers
+  (→ no false-alive); producer stays `LOCK_EX`. **+1 mutation-verified test**
+  (`test_is_trace_locked_does_not_false_positive_under_a_concurrent_consumer_probe` — a held `LOCK_SH` on
+  another fd models a concurrent probe; asserts the file still reads FREE; confirmed FAILS under `LOCK_EX`,
+  passes under `LOCK_SH`).
+- **🟢 Suggestion (silent-failures, FIXED) — `RunComplete.duration_ms` advertised on the type but dropped by
+  the C3 allowlist** (`_RUN_COMPLETE_FIELDS`). No consumer reads it today (latent), but a future
+  `runBanner.duration_ms` would be silently `undefined`. **Fix:** dropped `duration_ms` from the `RunComplete`
+  type + a comment pinning the wire as a 4-field allowlist (add here only after adding there).
+- **🟢 Suggestion (impact-completeness, FIXED) — `content_hash` docstrings named `canonical_ir_digest`** but
+  the producer stamps `workflow_content_hash` (provenance-stripped). Doc-only; a future second staleness check
+  off the docstring would over-warn on whitespace edits. **Fix:** corrected both docstrings
+  (`workflow_trace.py`, `trace_io.py`).
+- **🟢 Suggestions LEFT (no-action, by judgment):** the three pure-forwarding cost/token wrappers in
+  `trace_report.py` (deletion-test "drop", but `_input_token_total` is deliberately kept for a test import +
+  a mild locality defense — known/documented); `refKey` vs `sameRef` (two TS encodings of one identity — the
+  simplicity agent's own verdict is "keep"; mandated by the Python↔TS boundary, backstopped by the dev
+  join-miss detector).
+
+**Areas the agents verified clean (high-value confirmations):** the C5/G1 UTF-8 sweep is genuinely complete
+(every trace reader enumerated, no raw-decode bypass, binary paths immune by construction); the C4
+loop-staleness fix is provably non-contradictory across leaf/host/nested-in-batch loop shapes (panel `id`-epoch
+strictly finer than the chip metric gate); the 64KB re-read / W1 cache-prune / first-subscriber dual-delivery /
+owner-thread+seq-reuse / redaction + cost-helper consolidations — no missed consumer, no constructable race.
+
+**Live pass (chrome-devtools MCP, rebuilt bundle on :8790, authoritative DOM `status-*` read + screenshot):**
+- **success + sub-workflow join** — a parent (fast → call-child[sub-wf] → slow) finished run replays ALL green:
+  `fast`/`slow` leaves, the `call-child` HOST GROUP, AND `child-a`/`child-b` (joined via non-empty
+  `ancestor_path`) all `status-success`; "Run success · 3 nodes" banner; corner ✓ badges (screenshot).
+- **running** — mid-flight probe: `slow` = `status-running` ("Running…") while `fast`/`call-child`/children are
+  `success`.
+- **stopped** — a `kill -9` mid-`hang` run: `/api/runs` reads `complete=False, live=False` (EXACT flock death
+  detection) and the canvas flips `hang` → `status-stopped` (`quick` stays success) — the `LOCK_SH` fix
+  preserves exact liveness, no forever-blue.
+
+**Gates (all green):** `make test` **8230** (8229 + 1 concurrent-probe test, 0 regressions); `make check` clean
+(ruff/ruff-format/mypy 239/deptry); vitest **623** + strict `tsc` (the `duration_ms` drop broke no consumer).
+Diff: 5 files (`run_tailer.py`, `workflow_trace.py`, `trace_io.py`, `types.ts`, `test_run_tailer.py`).
+**UNCOMMITTED** — ready for a commit on the user's word. Live-pass scratch (`live-pass/*.pflow.md`,
+`status-probe.pflow.md`) are gitignored throwaways (discard; the overlay-status-probe stays the elevate
+candidate the task-review already named).

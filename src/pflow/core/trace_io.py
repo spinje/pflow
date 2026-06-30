@@ -25,7 +25,8 @@ TRACE_JSONL_MARKER = "jsonl/1"
 # `only_node` is here because it is stamped at run start AND is a snapshot-source filter key
 # (`_iter_workflow_traces`), so a future head-only reader can reject `--only` traces without reading
 # to the trailer. `final_status` is NOT here — it is an end-of-run aggregate. `content_hash` is the
-# Task 173 replay version fingerprint (canonical_ir_digest of the resolved IR), knowable at run start.
+# Task 173 replay version fingerprint (`workflow_content_hash` of the resolved IR — `canonical_ir_digest`
+# with source provenance stripped), knowable at run start.
 META_KEYS = (
     "format_version",
     "execution_id",

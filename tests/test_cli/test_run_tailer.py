@@ -578,6 +578,22 @@ def test_is_trace_locked_reflects_a_held_advisory_lock(tmp_path):
 
 
 @_unix_only
+def test_is_trace_locked_does_not_false_positive_under_a_concurrent_consumer_probe(tmp_path):
+    """Consumer-vs-consumer (PR #543 review): the probe must take a SHARED lock so two consumers probing the
+    same FREE file don't contend. A held LOCK_SH on another fd models a concurrent probe (e.g. /api/runs in
+    the Starlette pool while the tailer's discover runs in asyncio.to_thread); `is_trace_locked` must still
+    report the crashed file FREE. Fails under a LOCK_EX probe — exclusive conflicts with the held shared lock
+    → false 'alive' → transiently re-opens the C1 crashed-run shadowing."""
+    import fcntl
+
+    path = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    path.write_text("{}\n", encoding="utf-8")
+    with open(path, encoding="utf-8") as concurrent_consumer:
+        fcntl.flock(concurrent_consumer.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)  # another in-flight probe
+        assert is_trace_locked(path) is False  # still FREE — shared probes don't block each other
+
+
+@_unix_only
 @pytest.mark.trace_files
 def test_collector_holds_advisory_lock_while_streaming(tmp_path, monkeypatch):
     """The producer holds the flock for the run's lifetime: the trace reads LOCKED while the stream is open

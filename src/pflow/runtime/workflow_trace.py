@@ -572,9 +572,11 @@ class WorkflowTraceCollector:
                 write files. A second, test-only gate lives in ``tests/conftest.py``
                 (``_open_stream`` is no-op'd unless the test is marked ``trace_files``).
             content_hash: Task 173 replay version fingerprint — the
-                ``canonical_ir_digest`` of the PRISTINE resolved IR, stamped
-                into the ``meta`` line. At replay the server compares it to the
-                current file's digest to flag a stale (different-version) run.
+                ``workflow_content_hash`` of the resolved IR (``canonical_ir_digest``
+                with source-line provenance stripped, so a comment/whitespace-only
+                edit isn't flagged stale), stamped into the ``meta`` line. At replay
+                the server compares it to the current file's digest to flag a stale
+                (different-version) run.
                 Defaults to ``None`` so the per-sub-workflow buffer collector and
                 all test fixtures construct unchanged; an old trace (or a run
                 that didn't supply it) simply has no fingerprint → "can't verify".
