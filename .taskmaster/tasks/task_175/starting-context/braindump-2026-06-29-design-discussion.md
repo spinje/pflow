@@ -137,6 +137,14 @@ writing" — we have it now.
   MCP intentionally uses the in-memory collector). Plus moving/renaming a `.pflow.md` orphans its traces
   (frontmatter rides the file). These are why we decoupled it. Whoever does the deprecation must decide
   the MCP question explicitly — don't silently regress it.
+- **CONSIDER — a first-class "open a past run" affordance for the agent.** Task 173 ships the URL-level
+  primitive (`?workflow=X&run=<run_id>`, where `run_id` = the `execution_id` on the trace's meta line —
+  replay read at mount); `pflow guide ui` now documents it, so the agent can hand-build that URL from a
+  trace it already has. But there's NO CLI/Point affordance: `_viewer_url` / `pflow ui focus` only thread
+  `&focus=`, and no Point verb switches an already-open Viewer to a run. A `pflow ui <wf> --run <id>`
+  (open) + a "select-run" Point verb would let the agent open/replay a specific run for the user without
+  URL-crafting — a natural fit for 175's run-inspection/re-run scope. (Surfaced in the Task 173 final-review
+  guide-doc discussion, 2026-06-30.)
 
 ## What I'd Tell Myself
 
