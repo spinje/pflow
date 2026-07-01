@@ -13,7 +13,11 @@ It also gives the **agent** a first-class way to open/replay a specific past run
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-01
 
 ## Priority
 
