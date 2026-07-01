@@ -175,13 +175,26 @@ is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state)
   run), plus the Task-173 run/overlay stream (`run-snapshot`/`run-events`/
   `run-complete`/`run-reset`/`run-not-found`/`run-stopped`/`run-stale`). (An earlier
   note here claimed the envelope "defines no run/trace event schema" — Task 173
-  invalidated that; the run-* schema is the overlay's, see `run_tailer`.)
+  invalidated that; the run-* schema is the overlay's, see `run_tailer`.) The `connected`
+  frame also carries a per-process **`boot_id`** (Issue #539 restart-fence for the
+  Point-epoch dedup). Connection **presence** is now visibility-driven: the frontend
+  CLOSES this stream when the tab is hidden (freeing one of the browser's ~6 per-origin
+  HTTP/1.1 connection slots) and reopens on show, so a graph tab holds a slot only while
+  visible. On every (re)subscribe the server replays `snapshot()` + the latched Point
+  (below) to catch the tab up.
 - `POST /api/command` validates a `focus`/`frame` target against a fresh graph, or
   broadcasts `clear` / `select-run` (both pass-through — `clear` before the target is
   read, `select-run` after, carrying the run id in `target` with NO graph resolution;
   a stale run id surfaces the frontend's `run-not-found`, never a server error). It
   reports `sent_to`, per-window visibility, and the canonical `workflow_key` — messages
-  queued to live connections, not browser apply acknowledgments.
+  queued to live connections, not browser apply acknowledgments. **Issue #539:** each
+  `focus`/`frame`/`clear` also carries a monotonic **`epoch`** and is **latched** per
+  `workflow_key` (the latest replaces the prior), which `/api/events` replays after the
+  snapshot so a tab that was hidden when the command fired — or a brand-new tab — catches
+  up to the agent's current highlight; the client dedups by `epoch` (re-baselined on a
+  `boot_id` change) so the replay is idempotent. `select-run` is **not** latched — each
+  tab keeps its own `?run=` pin — so a `select-run` to a hidden tab is dropped (it reaches
+  a visible tab, or `--run` opens one).
 - `POST /api/interaction` records deliberate user actions; `GET /api/activity`
   returns the bounded, newest-first snapshot. `POST /api/visibility` updates one
   connection. All POSTs require `application/json`.
@@ -190,11 +203,19 @@ is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state)
   resolvable `workflow` is supplied (`windows = len(windows_for(key))`, **no graph
   build**). An unresolvable workflow reports identity only (no 404 — a liveness probe
   must answer regardless, unlike `events()`/`command()`). It reads the hub, so it is
-  `async def` per the invariant below. **`windows` can transiently over-count by 1**
-  for up to one `_KEEPALIVE_S` cycle after a Viewer's `onerror` reconnect to *this*
-  server (the dropped connection lingers until its next keepalive write fails); a
-  server *restart* frees the whole hub, so that path is clean. Benign for a local
-  single-user viewer; the count self-corrects.
+  `async def` per the invariant below. **`windows` can transiently over-count**
+  for up to one `_KEEPALIVE_S` cycle after a Viewer reconnects to *this* server (the
+  dropped connection lingers until its next keepalive write fails); a server *restart*
+  frees the whole hub, so that path is clean. Since Issue #539 a hidden tab CLOSES its
+  stream (rather than reporting `visibility:hidden`), so `windows` also **drops** a
+  backgrounded tab after its ≤`_KEEPALIVE_S` linger, `_dispatch_report`'s per-window
+  `visibility` no longer surfaces a `hidden` window (a live conn is always a visible tab),
+  and rapid hide/show can over-count by more than 1 (several lingering-closed conns
+  coexist). All benign for a local single-user viewer; the count self-corrects. **Caveat
+  (`pflow ui X --run Y`):** the reuse guard keys on `windows>0`, which can't tell a
+  live-visible tab from a lingering-closed one — if the sole tab was hidden <`_KEEPALIVE_S`
+  ago it POSTs `select-run` (unlatched) to a dead connection and exits without opening a
+  tab; a re-run after the linger fixes it. (Known ≤15 s limitation.)
 
 Name-opened and path-opened Viewers share one resolved workflow key. Point targets
 cross the wire only as structural refs; never send positional flat ids between

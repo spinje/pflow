@@ -71,12 +71,21 @@ function asRunComplete(value: unknown): RunComplete | null {
 const RETRY_MS = 1000; // localhost single-user: a fixed beat beats exponential backoff's moving parts
 
 /**
- * Subscribe one Viewer to Point commands. Drives its OWN reconnect on drop —
- * native EventSource auto-reconnect is unreliable for backgrounded/slept/frozen
- * tabs (it may stay in CONNECTING and never re-register). On any `onerror` we
- * explicitly close the dead source and reopen a fresh one after a fixed delay,
- * trigger-agnostic: recovers from server restart, sleep/wake, network blip, and
- * tab freeze uniformly, without ever reading `readyState` or `visibilityState`.
+ * Subscribe one Viewer to Point + run-overlay commands. TWO separate concerns share the state below:
+ *
+ * - RECOVERY (unchanged): native EventSource auto-reconnect is unreliable for backgrounded/slept/frozen
+ *   tabs (it may stay in CONNECTING and never re-register). On any `onerror` we explicitly drop the dead
+ *   source and reopen after a fixed delay — trigger-agnostic, recovering from server restart, sleep/wake,
+ *   network blip and tab freeze uniformly, without ever reading `readyState` or `visibilityState`.
+ * - PRESENCE (Issue #539): a graph tab holds a persistent SSE and browsers cap ~6 connections per origin
+ *   over HTTP/1.1, so several open tabs starve new ones. We CLOSE the source when the tab is hidden (freeing
+ *   its slot) and reopen when it's shown. Only `open()`'s gate reads `visibilityState`; recovery stays
+ *   visibility-agnostic. That single `open()` chokepoint (guarded on `source`/`stopped`/hidden) keeps at
+ *   most one live EventSource and one pending reconnect across every hide/show/error interleave.
+ *
+ * A reopened (or brand-new) tab catches up: the server replays the run `snapshot()` and the latched Point,
+ * epoch-deduped against `lastAppliedEpoch` (re-baselined when the server's `boot_id` changes on restart) so
+ * it adopts a newer highlight without clobbering the user's own navigation.
  */
 export function subscribe(
   workflow: string,
@@ -87,6 +96,11 @@ export function subscribe(
   let connId: string | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
+  // Issue #539 Point-latch dedup: the highest Point epoch this Viewer has applied, and the server identity
+  // it counts against. Both survive the internal close/reopen (same closure); a fresh subscribe() resets
+  // them. A replayed latch with epoch <= lastAppliedEpoch is skipped — idempotent catch-up, no clobber.
+  let lastAppliedEpoch = 0;
+  let serverBootId: string | null = null;
 
   const reportVisibility = (): void => {
     if (connId === null) return;
@@ -98,8 +112,38 @@ export function subscribe(
     }).catch(() => undefined);
   };
 
-  const connect = (): void => {
-    if (stopped) return; // defensive: a fired-but-not-yet-cleared timer must not resurrect a connection
+  // True if a Point (focus/frame/clear) should be applied — i.e. it is not a replayed latch this Viewer has
+  // already superseded — bumping the baseline when it is. A missing/non-number epoch (old server, or a
+  // direct test emit) always admits and never bumps. Callers gate this AFTER payload validation, so a
+  // malformed message never bumps the baseline.
+  const admitEpoch = (rawEpoch: unknown): boolean => {
+    const epoch = typeof rawEpoch === "number" ? rawEpoch : null;
+    if (epoch !== null && epoch <= lastAppliedEpoch) return false;
+    if (epoch !== null) lastAppliedEpoch = epoch;
+    return true;
+  };
+
+  const dropSource = (): void => {
+    // Null `source` so open()'s single-flight gate can reconnect; a closed EventSource never fires onerror
+    // again (WHATWG), so no stale handler reaches a later source.
+    source?.close();
+    source = null;
+    connId = null;
+  };
+
+  // Release the slot (hidden) or tear down for good (unsubscribe); also cancel any pending reconnect so a
+  // hidden/torn-down tab can't reconnect behind our back.
+  const close = (): void => {
+    if (retry !== null) clearTimeout(retry);
+    retry = null;
+    dropSource();
+  };
+
+  const open = (): void => {
+    // Single chokepoint: never a second live source, and never connect while hidden — so a queued reconnect
+    // can't resurrect a backgrounded tab and a background-tab mount stays dormant until first shown. This is
+    // the ONLY place connection PRESENCE reads visibility; RECOVERY (onerror below) stays trigger-agnostic.
+    if (stopped || source !== null || visibility() === "hidden") return;
     const params = new URLSearchParams({ workflow, visibility: visibility() });
     if (runId) params.set("run", runId); // Task 173 DR-1: pin this Viewer to one run (replay / one of N)
     source = new EventSource(`/api/events?${params.toString()}`);
@@ -113,15 +157,21 @@ export function subscribe(
       }
       if (!isRecord(message) || typeof message.type !== "string") return;
       if (message.type === "connected" && typeof message.conn_id === "string") {
+        // A restarted server restarts its Point epoch at 1; reset the dedup baseline when its `boot_id`
+        // changes so a reconnecting tab doesn't skip the new process's lower-numbered Points (Issue #539).
+        if (typeof message.boot_id === "string" && message.boot_id !== serverBootId) {
+          serverBootId = message.boot_id;
+          lastAppliedEpoch = 0;
+        }
         connId = message.conn_id;
         // A reconnect reopens with the original URL, whose visibility value may
         // now be stale. Correct every newly registered connection immediately;
         // do not wait for another visibility transition.
         reportVisibility();
       } else if (message.type === "clear") {
-        handlers.clear();
+        if (admitEpoch(message.epoch)) handlers.clear();
       } else if ((message.type === "focus" || message.type === "frame") && isTarget(message.target)) {
-        handlers[message.type](message.target);
+        if (admitEpoch(message.epoch)) handlers[message.type](message.target);
       } else if (message.type === "select-run" && typeof message.run === "string") {
         handlers.selectRun(message.run); // Task 175: switch the open Viewer to the broadcast run id
       } else if (message.type === "run-events" && Array.isArray(message.events)) {
@@ -150,31 +200,33 @@ export function subscribe(
     };
 
     source.onerror = (): void => {
-      // Any drop (restart/sleep/blip/freeze). Tear down the dead source and reopen
-      // against the live server — do NOT trust native retry, do NOT read readyState.
-      // The single-flight guard (retry === null) + close-before-schedule mean at most
-      // one reconnect is ever pending and at most one EventSource is ever live.
-      source?.close();
-      connId = null;
+      // Any drop (restart/sleep/blip/freeze). Tear down the dead source and reopen against the live server —
+      // do NOT trust native retry, do NOT read readyState/visibilityState here. dropSource() nulls `source`
+      // (else open()'s gate would deadlock reconnection); the `retry === null` guard + the wrapper (which
+      // nulls `retry` before reopening) keep at most one reconnect pending, timed from the first drop.
+      dropSource();
       if (!stopped && retry === null) {
         retry = setTimeout(() => {
           retry = null;
-          connect();
+          open();
         }, RETRY_MS);
       }
     };
   };
 
-  connect();
-  // visibilitychange reports visible/hidden ONLY; it never drives reconnection.
-  document.addEventListener("visibilitychange", reportVisibility);
+  open(); // no-ops if the tab starts hidden — onVisibilityChange opens it when first shown
+  // PRESENCE keys on visibility (close-on-hidden frees the 6-per-origin slot, reopen on show); RECOVERY
+  // (onerror) never does.
+  const onVisibilityChange = (): void => {
+    if (visibility() === "hidden") close();
+    else open();
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
 
   return () => {
     stopped = true;
-    if (retry !== null) clearTimeout(retry);
-    document.removeEventListener("visibilitychange", reportVisibility);
-    source?.close();
-    connId = null;
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    close();
   };
 }
 

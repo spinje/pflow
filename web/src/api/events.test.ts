@@ -19,10 +19,15 @@ class FakeEventSource {
   }
 
   emit(message: unknown): void {
+    if (this.closed) return; // WHATWG: a closed source dispatches no further events
     this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(message) }));
   }
 
   fail(): void {
+    // WHATWG: once close() sets readyState=CLOSED, a source never re-fires onerror. The subscribe()
+    // single-flight safety leans on this (a stale handler can't reach a later source), so the double
+    // must honor it — else the hide/show tests would exercise a browser-impossible interleaving.
+    if (this.closed) return;
     this.onerror?.(new Event("error"));
   }
 
@@ -181,6 +186,136 @@ describe("subscribe reconnect", () => {
     first.fail(); // an error after teardown must not resurrect a connection
     vi.advanceTimersByTime(5000);
     expect(FakeEventSource.instances).toHaveLength(1);
+  });
+});
+
+describe("subscribe visibility presence (#539)", () => {
+  // Close the SSE when hidden (freeing one of the browser's 6-per-origin slots) and reopen on visible.
+  const handlers = () => ({ focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() });
+  const setVisibility = (value: "visible" | "hidden"): void => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  const live = (): FakeEventSource[] => FakeEventSource.instances.filter((s) => !s.closed);
+
+  it("stays dormant when the tab starts hidden, and opens on first show", () => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    const unsubscribe = subscribe("wf", handlers());
+    expect(FakeEventSource.instances).toHaveLength(0); // a background-tab mount holds no slot
+
+    setVisibility("visible");
+    expect(live()).toHaveLength(1);
+    unsubscribe();
+  });
+
+  it("closes the source on hidden and reopens a fresh one on visible", () => {
+    const unsubscribe = subscribe("wf", handlers());
+    const first = FakeEventSource.instances[0]!;
+
+    setVisibility("hidden");
+    expect(first.closed).toBe(true); // slot released
+    expect(live()).toHaveLength(0);
+
+    setVisibility("visible");
+    expect(live()).toHaveLength(1); // reopened
+    expect(FakeEventSource.instances).toHaveLength(2);
+    unsubscribe();
+  });
+
+  it("keeps exactly one live source across rapid hide/show (no duplicates)", () => {
+    const unsubscribe = subscribe("wf", handlers());
+    setVisibility("hidden");
+    setVisibility("visible");
+    setVisibility("hidden");
+    setVisibility("visible");
+    expect(live()).toHaveLength(1);
+    unsubscribe();
+  });
+
+  it("cancels a pending onerror-reconnect when hidden, and reopens cleanly on show", () => {
+    vi.useFakeTimers();
+    const unsubscribe = subscribe("wf", handlers());
+    FakeEventSource.instances[0]!.fail(); // schedules a reconnect timer
+    setVisibility("hidden"); // must cancel it — a hidden tab must not reconnect behind our back
+    expect(vi.getTimerCount()).toBe(0); // close() cleared the pending retry (not merely gated by open())
+    vi.advanceTimersByTime(5000);
+    expect(live()).toHaveLength(0);
+
+    setVisibility("visible");
+    expect(live()).toHaveLength(1);
+    unsubscribe();
+    vi.useRealTimers();
+  });
+});
+
+describe("subscribe point epoch dedup (#539)", () => {
+  // The latch replay is idempotent: a point applies only if strictly newer than the last one shown, so a
+  // returning tab catches up to a newer highlight without re-applying (clobbering) what it already has.
+  const handlers = () => ({ focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() });
+  const focus = (epoch?: number) => ({ type: "focus", target: { kind: "node", ref }, ...(epoch !== undefined ? { epoch } : {}) });
+
+  it("applies a point only when its epoch is newer than the last applied", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit(focus(3)); // 3 > 0 → applied
+    source.emit(focus(2)); // stale → skipped
+    source.emit(focus(3)); // already applied → skipped
+    source.emit(focus(4)); // newer → applied
+
+    expect(h.focus).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("does not re-apply an already-shown latch after a reopen, but catches up to a newer one", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const first = FakeEventSource.instances[0]!;
+    first.emit({ type: "connected", conn_id: "v1", boot_id: "boot-A" });
+    first.emit(focus(5));
+    expect(h.focus).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    const reopened = FakeEventSource.instances[1]!;
+    reopened.emit({ type: "connected", conn_id: "v2", boot_id: "boot-A" }); // SAME server → no baseline reset
+
+    reopened.emit(focus(5)); // the replayed latch it already showed → skipped
+    expect(h.focus).toHaveBeenCalledTimes(1);
+    reopened.emit(focus(6)); // a point issued while hidden → applied
+    expect(h.focus).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("resets the epoch baseline when the server boot_id changes (restart-fence)", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+    source.emit({ type: "connected", conn_id: "v1", boot_id: "boot-A" });
+    source.emit(focus(10));
+    expect(h.focus).toHaveBeenCalledTimes(1);
+
+    // Reconnect to a RESTARTED server: new boot_id, and its epoch counter has restarted low.
+    source.emit({ type: "connected", conn_id: "v2", boot_id: "boot-B" });
+    source.emit(focus(1)); // would be stale vs 10, but the boot_id changed → baseline reset → applied
+    expect(h.focus).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("applies a point with no epoch (old server / back-compat) without bumping the baseline", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit(focus(7)); // baseline → 7
+    source.emit(focus()); // no epoch → always applies, does NOT bump the baseline
+    source.emit(focus(7)); // still <= 7 → skipped (the epoch-less emit didn't move the baseline)
+
+    expect(h.focus).toHaveBeenCalledTimes(2);
+    unsubscribe();
   });
 });
 

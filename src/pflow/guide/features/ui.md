@@ -44,6 +44,9 @@ windows and Watch what they deliberately click:
 - `pflow ui clear-focus <workflow>` — clear the current focus.
 - `pflow ui user-activity [workflow]` — read recent clicks and view changes.
 
+`focus`/`frame`/`clear-focus` reach every matching Viewer — including one whose tab is
+currently backgrounded; the highlight is applied when the user returns to it.
+
 **A target is just the name you already read in the `.pflow.md` — there is no
 separate notation to learn:**
 

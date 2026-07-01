@@ -65,9 +65,15 @@ expansion anchor (a port id is never a rendered node — unresolved, the follow 
 its camera fit (rAF-driven) never runs and is not re-issued on return, leaving the node
 off-screen (agent Point at a backgrounded Viewer, user-confirmed 2026-06-23). The hook captures
 a change-while-hidden and re-fits on `visibilitychange → visible` — change-while-hidden ONLY, so
-an ordinary tab return where focus didn't move leaves the viewport alone. This is the ONE place a
-camera concern legitimately keys on `visibilitychange`; SSE *connection* recovery (`api/events.ts`)
-deliberately must NOT (it's `onerror`-driven).
+an ordinary tab return where focus didn't move leaves the viewport alone. Two visibility concerns now
+legitimately key on `visibilitychange`: this camera re-frame, and SSE connection **PRESENCE** (Issue
+#539 — `api/events.ts` CLOSES its `EventSource` when the tab is hidden to free one of the browser's
+6-per-origin connection slots, and reopens on show; a reopened tab catches up via the run `snapshot()` +
+the epoch-deduped Point latch). What still must NOT key on visibility is SSE connection **RECOVERY**:
+the `onerror` reconnect stays trigger-agnostic (recovers from restart / sleep / blip / freeze uniformly,
+never reading `readyState`/`visibilityState`). Only `open()`'s single chokepoint reads `visibilityState`
+— that gate is *presence*, not recovery — and both share ONE single-flight state machine
+(`source`/`retry`/`connId`/`stopped`).
 
 ## `usePanelPair` — the two side panes
 
