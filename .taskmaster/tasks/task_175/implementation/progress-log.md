@@ -335,3 +335,388 @@ green ✓ on success → red ! on failure. `final_status` has no `NodeStatus` fo
 line so the badge shows in both states) + `.run-progress-outcome-label`/badge-size CSS. Tested (badge status
 class by run outcome incl. degraded→stopped); browser-verified both states (spinner + ✓, matching the canvas
 node badge). Frontend **660 vitest** + tsc + `make ui-build` clean.
+
+---
+
+## Phase 3 — Deep-review pass + fixes (post-commit)
+
+A scoped 3-agent `/deep-review` on the Phase-3 commit (`36587a26`): feature-interactions + effect-timing +
+simplicity. **Effect-timing: 0 findings** (traced the `framedRef` one-shot, `setCenter`-vs-`fitView` order,
+`paintedFocusRef` skip-setEdges, `onRunLaunched` batching, and the Python loop-only-mutation + snapshot/
+broadcast parity for the new `execution_id`/`duration_ms` trailer fields — all clean). **Feature-interactions:
+1 confirmed bug** + 2 minor desyncs. **Simplicity: 0 correctness, a few quality nits.**
+
+### Fixed
+1. **BUG (confirmed) — `RunProgress` spun a fake "Running…" forever on a no-banner terminal run.** The callout
+   is a SECOND consumer of run-lifecycle state but was passed only `steps`+`banner`; `runStopped` (process
+   killed mid-flight) and `runNotFound` (stale `?run=` — and the callout DEFAULTS open on a deep-link) never
+   set `runBanner`, so its outcome line showed a spinner + "Running…" while the canvas banner correctly said
+   "stopped"/"not found". Display-only but never self-corrected (most misleading on a stale bookmark: a fake
+   in-progress run). Same class as the earlier panel-crush — a new overlay consumer wired to only some signals.
+   Fix: a `RunOutcome` (`"stopped"|"not-found"|null`) prop, resolved in GraphView
+   (`runMissing ? "not-found" : runStopped ? "stopped" : null`), so the badge + outcome word + class resolve.
+   Pinned by a new `RunProgress.test.tsx` case (stopped/not-found render the right text/badge/class; live
+   still spins). Self-review caught a follow-on: `run-stopped` is a NEW class value on `.run-progress-outcome`
+   (the outcome line previously only got `final_status` classes), which had no CSS rule → added an amber
+   `.run-progress-outcome.run-stopped` (mirrors `.run-degraded`); not-found maps to the already-styled `run-failed`.
+2. **Nit (confirmed) — duplicated "top-level executable step" predicate** in `focus.ts:runSteps` and
+   GraphView's `runAnchorId` fallback → one `topLevelSteps(graph)` helper in `focus.ts`, both consume it.
+3. **Nit — TS↔CSS color dual-source:** `RunProgress`'s `#ff6b6b`/`#d29922` literals → `var(--danger)`/
+   `var(--status-stopped)` (both `:root`, verified — so they resolve inside the canvas portal; single source).
+
+### Deferred (with reason — not handwaving)
+- **`resetRunOverlay()` extraction** (the 5-setter overlay clear, copy-pasted 3× in GraphView; this commit
+   added the 3rd): real cleanup, but a 3-site refactor of `GraphView.tsx` WHILE the Phase-4 agent edits the
+   same file is needless conflict risk for a pure-cosmetic dedup. Do once Phase 4 lands.
+- **Stale-run mini-spine node labels** (callout "pending" vs canvas "unrecorded" for version-drifted nodes):
+   non-blocking cosmetic; the run still renders honestly + the canvas stale banner is up. Fixing needs
+   `runSteps` to take `markUnmatched` (signature widening) for a tile-label nuance — not worth it now. Noted.
+- **✕-closed callout un-reopenable for the *currently-pinned* run** (the `next===runId` re-pick guard returns
+   before `setRunCalloutOpen`): minor UX papercut, no wrong data. Noted.
+- **Browser screenshot of the stopped/not-found outcome:** deferred to avoid a `make ui-build` + `pflow ui`
+   server restart racing the Phase-4 agent's own browser checks on the shared port; the fix is a small,
+   fully-unit-tested rendering change (not an overlay-pipeline change that hides from unit tests). One-line
+   re-check on a stable tree: open `?run=<bogus-id>` → the callout shows "Run not found", not "Running…".
+
+### Gates
+- Frontend: `tsc` clean; `npx vitest run` **665 passed** (49→50 files, incl. the new outcome test + Phase-4's
+   landed tests); `make ui-build` clean. Python untouched this round (the fix is frontend-only).
+
+### Coordination (parallel Phase-4 agent)
+Stayed in the Phase-3 lane (`RunProgress.tsx`/`focus.ts` + 2 surgical `GraphView.tsx` edits: the import and
+the `runAnchorId` fallback + the `RunProgress` `outcome` prop). Confirmed disjoint from Phase-4's IoPanel/
+`hasRunContext` GraphView edits; combined tree `tsc`-clean + 665 green.
+
+---
+
+## Phase 4 — Inspect: click any IO node → "This run" value
+
+**Status:** ✅ complete (code + tests + contract-level e2e) — interactive visual browser check DEFERRED (see below)
+
+### Major deviation from plan (verified plan-vs-reality mismatch)
+
+The plan targeted `ReadPanel`'s `showRunDetail` gate (`isIONode(selectedNode)`), assuming an individual
+input/output node is selectable into `ReadPanel`. **It is not.** Verified chain (against current code):
+clicking a root IO row → `selectPort()` → `setSelectedId(owner)` where `owner` is the **wrapper GROUP id**
+(`GraphView.tsx:478-499`); `selectedNode` resolves from `graph.nodes`/a group `host`, and root IO wrappers
+have **no host** → `selectedNode` is `null` (`:521-527`); so root IO selection opens **`IoPanel`**, never
+`ReadPanel`. `selectedNode.kind === "input"/"output"` cannot occur. The plan's gate would never fire.
+
+→ **The run-value display was moved to `IoPanel`** (per-port "this run" block), which is *also* the user's
+mental model (click the input card). The **server** side is unchanged from the plan (panel-agnostic). User
+confirmed the display treatment (CodeBlock block) via an AskUserQuestion mockup before I built the frontend.
+
+### Server (`ui/run_node.py`) — exactly the plan's design
+
+- `run_node_detail` branches on `ref.port`: `"in"`/`"out"` → `_io_detail`; else → existing event scan.
+- `_io_detail`: **`ancestor_path` collision-guard FIRST** (sub-workflow IO → None, so a sub-workflow `url`
+  can't borrow the top-level `url`); input → `meta.inputs[name]`, output → `json_output["result"][name]`;
+  blob-resolve; synthesize an `isRunNodeDetail`-valid shape (`_io_shape`: `node_type` `"input"`/`"output"`,
+  `status` `"recorded"`, null exec metrics). Absent (sub-wf / missing key / no `json_output`) → None.
+- **Redaction correction (plan was literally wrong):** the plan said `_redact(meta.inputs[name])`, but
+  `_redact` matches by KEY name — `_redact("secret")` of a bare scalar redacts nothing, so a sensitive-NAMED
+  input's value wouldn't be redacted (contradicting the plan's own "secret-named input is redacted" test). I
+  use `_redact({name: value})` so the **port name** is the matched key. Verified by a test.
+- Refactored the file-read into shared `_read_trace_lines` + `_blob_map` + `_line_of_kind` (used by both the
+  event scan and the IO projection) — RAW lines, never `load_trace_file` (strips the join keys).
+
+### Frontend (retargeted to IoPanel)
+
+- `types.ts` — `RunNodeDetail.duration_ms` → `number | null` (IO nodes have no duration).
+- `ThisRunSection.tsx` — guard the `fmtDuration` call (the type relaxation FORCED this; `fmtDuration(null)`
+  would print a bogus `"0ms"` since null coerces to 0). No other `ReadPanel` change — its gate is untouched.
+- `IoPanel.tsx` — threads `workflow`/`runId`/`hasRunContext`; a per-port `PortRunValue` child (owns its
+  fetch + catch, DR-6) calls `/api/run-node` with `portNode.ref`, renders the value via `CodeBlock` (text /
+  JSON, scroll-capped) under a "this run" label, or "no recorded value" on 404/absent. Gated on
+  `hasRunContext` so a cold interface shows no empty blocks.
+- `GraphView.tsx` — `hasRunContext = runId !== null || runStatus.size > 0`, passed to `IoPanel`.
+- `index.css` — `.io-port-run`/`-label`/`-empty` (reuses CodeBlock's `.read-param-value`; no new chrome).
+
+### Tests
+
+- `tests/test_cli/test_run_node.py` (+7): input→meta.inputs in an `isRunNodeDetail`-valid shape; secret-named
+  input redacted (`<REDACTED>`); output→json_output.result; **sub-workflow collision guard returns None, not
+  the top-level value**; missing input → None; output with no json_output → None; one handler (200) test.
+- `web/src/components/IoPanel.test.tsx` (+4): no fetch / no block when no run context; per-input run values
+  under "this run"; output value; "no recorded value" on reject. (Mirrors `ThisRunSection`'s mock of the
+  `fetchRunNode` seam.)
+
+### Verification
+
+- **Server:** `make test` **8254** (8247 + 7), `make check` clean. On-disk shape proofs (earlier):
+  `meta.inputs` + `run.complete.json_output.result` keyed by bare name.
+- **Frontend:** `tsc --noEmit` 0, `vitest` **664** (660 + 4). IoPanel render path proven via mocked fetch.
+- **Contract-level end-to-end (the link vitest mocks past):** a root input node's `ref` in real `/api/graph`
+  payloads is `{node_id: "<name>", ancestor_path: [], port: "in"}` (outputs `"out"`) — matches the server
+  projection's expectations exactly. So `IoPanel.portNode.ref` → `fetchRunNode` → `_io_detail` is proven at
+  every seam without a live browser.
+- **DEFERRED — interactive visual browser check** (the "click IO card → see the this-run block render"
+  visual): deliberately NOT run yet, to avoid `make ui-build` + a live `pflow ui` session racing the parallel
+  agent's in-flight `web/` edits (RunProgress/focus.ts review fixes). Every seam is otherwise verified, and
+  the click→IoPanel selection path is pre-existing/unchanged. To run on a stable tree.
+
+### Coordination note (parallel agent)
+
+A second agent is fixing Phase-3 review bugs in the `RunProgress`/`focus.ts`/`NodeCallout`/overlay-reset
+region. I stayed strictly in the Phase-4 lane and did NOT touch those. Our one shared file is
+`GraphView.tsx`: my edits (`hasRunContext` at `:535`, the three `IoPanel` props at `:1014-1016`) are in a
+region disjoint from their `runSteps`/`topLevelSteps`/reset work — confirmed coexisting + the combined tree
+compiles (`tsc` 0) after their `topLevelSteps`-import edit landed.
+
+---
+
+## Phase 4.5 — Pin the launched run + pulsing-clock live affordance (post-review refinement)
+
+**Why:** with concurrent launches now possible, the unpinned follow-newest overlay REVERTED to an older
+still-live run when a newer (shorter) run finished — follow-newest prefers the newest *live* run, and when
+the short run completes, "newest live" flips back to the long one. (Empirically confirmed: launched
+sleep-30 + sleep-3; after sleep-3 finished, `discover_live_trace` returned the sleep-30.) User chose
+**Option A: pin the launched run** + a **pulsing-blue clock** when any run is live.
+
+### Option A — pin the run the ▶ launched (end-to-end run-id forcing)
+
+The detached child mints its own `execution_id`, so the form couldn't know which run to pin. Fix: the
+server mints the id, FORCES it onto the spawned run, and returns it; the browser pins via the existing
+`?run=`/`selectRun` mechanism. The chain:
+- `ui/server.py` — mint `run_id = uuid4()`, spawn with `env={**os.environ, "PFLOW_EXECUTION_ID": run_id}`,
+  return `{"status": "spawned", "run_id": run_id}`.
+- `cli/commands/run.py` — `os.environ.pop("PFLOW_EXECUTION_ID", None)` → `RunnerConfig.execution_id`. POP
+  (not get) so a node that re-shells `pflow` can't inherit + collide.
+- `execution/result.py` `RunnerConfig.execution_id` → `runner.py` → `WorkflowTraceCollector(execution_id=…)`
+  → `self.execution_id = execution_id or str(uuid.uuid4())`. None on every other path → mint (unchanged).
+- `api/client.ts` `runWorkflow` → returns the `run_id` (throws if a 200 omits it — the pin needs it).
+- `RunPanel` `onLaunched(runId)` → `GraphView.onRunLaunched(runId)` = `selectRun(runId)` (a genuine switch →
+  clears + opens the callout itself; the old follow-newest no-op workaround is gone) + close the form.
+- `run_tailer.py` `_start_pinned` — **grace retry** (`_PINNED_RESOLVE_ATTEMPTS=24`, ~6s): a run pinned right
+  after launch hasn't written its meta line yet (~1-2s subprocess startup); retry before run-not-found. A
+  stale bookmark still surfaces run-not-found, just a few seconds later (rare, invisible).
+- Pinned mode never re-discovers (`run():` pinned branch keeps `self._current`), so it CAN'T revert — the fix.
+
+### Pulsing-clock live affordance
+
+`RunSelector` now POLLS `/api/runs` (`_LIVE_POLL_MS=4000`, cached scan — cheap) instead of fetch-on-open;
+`liveCount = runs.filter(r => r.live).length`. When > 0 the clock gets `.run-live-pulse` (a `pflow-clock-pulse`
+keyframe oscillating the shared `--status-running` blue + a glow) and an "a run is live" aria-label. So a
+live run — INCLUDING a long one still going after you pinned a newer one — is visible at a glance.
+
+### Tests + verification
+
+- Python: `test_ui_interaction_server.py` — response carries `run_id` + `env["PFLOW_EXECUTION_ID"]==run_id`.
+  `make test` **8254**, `make check` green (fixed a RUF003 `×`→`*` in my comment).
+- TS: `client.test.ts` — `runWorkflow` resolves the id + throws on a 200 missing it. `GraphView.test.tsx` —
+  submit PINS (`?run=<id>`), not un-pin; the prior-run clear still holds (via the selectRun switch). Updated
+  the mount mocks (runWorkflow→id, fetchRuns→[] for the new mount poll). `RunSelector.test.tsx` — polls on
+  mount; pulses while live, not when idle. `tsc` 0, `vitest` **667**.
+- Real end-to-end (curl): launch returns id → the run USES that id (trace `execution_id` match) →
+  `/api/run-node?run=<id>` resolves it (the browser can pin). **Browser:** screenshot confirms the clock is
+  BLUE+glow while a run is live (the running node badge confirms the overlay follows the live run) vs GREY
+  when idle — the `run-live-pulse` treatment renders.
+
+### Deviations / notes
+
+- Forced id via **`RunnerConfig` threading** (explicit) rather than a global env read in the collector —
+  no hidden global state, and `pop` prevents env propagation to grandchild `pflow` processes.
+- The Phase-4 interactive VISUAL check (IoPanel "this run" values) is now confirmed too — the user verified
+  it renders after the server restart, and this build/server is fresh.
+
+---
+
+## Phase 5 — Re-run: "load inputs from" picker
+
+**Status:** ✅ complete — code + tests + server e2e + browser-confirmed picker render
+
+### Server
+
+- `ui/run_node.py` — new `read_run_inputs(workflow_key, run_id)`: reuses the Phase-4 shared helpers
+  (`_resolve_trace`, `_read_trace_lines`, `_line_of_kind`), reads `meta.inputs`, **OMITS sensitive-named keys**
+  (`is_sensitive_parameter` — a past run's resolved secret never reaches the browser), renders each remaining
+  value via `format_param_value` (the channel-A inverse of `infer_type`). `None` (→404) when no trace/run;
+  `{}` for a trace predating `meta.inputs`. `meta.inputs` is un-interned → no blob resolution needed.
+- `ui/server.py` — `GET /api/run-inputs?workflow=X&run=<id>` handler (thin, mirrors `run_node`: sync/
+  threadpooled, no hub state; 400 missing workflow, 404 unresolvable/no run) + route + docstring; `ui/CLAUDE.md`
+  documents the endpoint.
+
+### Frontend
+
+- `api/client.ts` — `fetchRunInputs(workflow, runId)` (typed-ApiError GET, DR-6).
+- `components/RunPanel.tsx` — the picker: fetches this workflow's runs once on open (`fetchRuns`, DR-6 catch),
+  a `<select>` of **Defaults + past runs** (labelled `runMark().label · timeAgo()`, reusing the RunSelector's
+  exported palette + the shared time helper). `loadFrom(source)`: Defaults → `defaultValues(inputs)`; a run →
+  `fetchRunInputs` → each field takes the run's token if present, else blank (sensitive server-omitted → blank →
+  re-resolves; a field added since the run → blank → resolves at run time). Picker gated on
+  `inputs.length > 0 && runs.length > 0` (no picker for a no-input workflow or one with no history).
+- `index.css` — `.run-loadfrom`/`-label`/`-select` (reuses the field-input tokens; no new chrome).
+
+### Deviation from plan (with rationale)
+
+- **Picker lives in `RunPanel`, not `RunForm`** (the plan described a `RunForm` `loadFrom` prop). Verified
+  reason: `RunForm` is the pure controlled FIELD surface (`schema→values→submit→errors`); the prefill-SOURCE
+  picker is value-provenance, which `RunPanel` owns (it holds `values`/`setValues` + now the run-list). Placing
+  it in `RunPanel` keeps `RunForm` a pure renderer (no run-list/`fetchRunInputs` dependency, simpler tests) and
+  matches the Phase-3 note that the picker adds "a prefill SOURCE… not new form mechanics." Cleaner FINAL code.
+- **Clock/RunSelector per-row ↻ sugar SKIPPED** — the plan marks it explicitly optional; it adds cross-component
+  wiring (RunSelector → open RunPanel pre-selected) for a case the in-panel picker already covers. Deferrable.
+
+### Tests
+
+- `tests/test_cli/test_run_node.py` (+8): `read_run_inputs` renders typed values→tokens (int→`"3"`, bool→
+  `true`, list/dict→compact JSON), omits sensitive keys, `None` on unknown run, `{}` on a pre-`meta.inputs`
+  trace; `/api/run-inputs` handler (400 missing workflow, 404 unknown workflow/run, 200 tokens-without-secrets).
+- `web/src/api/client.test.ts` (+3): `fetchRunInputs` GET shape/params, 404 throws, non-object 200 throws.
+- `web/src/components/RunPanel.test.tsx` (new, 4): picker shows once runs load (defaults prefilled, sensitive
+  blank); loading a run prefills non-sensitive fields + leaves the sensitive one blank (server omits it);
+  Defaults resets; no picker when a workflow has no past runs.
+
+### Verification
+
+- `make test` **8262** (8254 + 8), `make check` clean; `tsc` 0, `vitest` **674** (667 + 7).
+- **Real-server e2e (curl):** a real run recorded `meta.inputs {"topic":"dogs","count":7,"api_key":"placeholder"}`;
+  `GET /api/run-inputs` returned `{"topic":"dogs","count":"7"}` — `count` typed→token, **`api_key` OMITTED**
+  though it had a value (sensitive); a bogus run → 404. Proves format + sensitive-omission end-to-end.
+- **Real-browser (screenshot):** clicked ▶ on a workflow with 1 past run → the Run panel shows the
+  "load inputs from" dropdown (Defaults) above the Inputs, fields prefilled from defaults, ▶ Run — the picker
+  renders as designed.
+
+### Coordination note
+
+Built on the current tree (Phase 3 review fixes + Phase 4.5 landed). Phase 5 touches `run_node.py`/`server.py`
+(server) + `client.ts`/`RunPanel.tsx`/`index.css` + the new `RunPanel.test.tsx` — no overlap with the other
+agent's `RunProgress`/`focus.ts`/`NodeCallout` region. `tsc` 0 + full gates green on the combined tree.
+
+---
+
+## Deep-review (full branch) — 7-agent battery + fixes
+
+Ran `/deep-review` on the full branch (all uncommitted changes vs main, Task 175 phases 1–5+4.5). Deployed 7
+specialists (silent-failures, impact-completeness, concurrency, feature-interactions, agent-ux, simplicity,
+test-fidelity). **Verdict: 0 Critical, 2 Warnings, ~8 Suggestions — ship after the confirmed fixes below.**
+The load-bearing invariants were all *confirmed clean* by the agents: `Popen`(+`start_new_session`)-not-asyncio
+spawn lifecycle with no retained handle, the async-POST/sync-GET hub split, the Host guard on every mutating
+POST, `execution_id` threading (no positional-shift / no cross-spawn env race), `meta.inputs` additive-safety
+across all trace readers, the batch/nested `ancestor_path` collision guard, and single-rule secret redact/omit.
+
+### Fixed (all verified against code first)
+
+- **W1 — stale "follows-newest" docs** (`ui/CLAUDE.md` `/api/run` section + `RunPanel.tsx:8` header). 3 agents
+  converged. Phase-2 doc invalidated by Phase-4.5 pin-by-id → updated both to describe run_id-return + pinning.
+- **W2 — 6s pinned-resolve grace window** (`run_tailer.py`) could expire on a cold child start (litellm import
+  during compile) → overlay stuck "run not found". Widened to 15s (`_PINNED_RESOLVE_ATTEMPTS 24→60`) with a
+  comment on the worst-case time-to-meta; noted a one-time re-arm as the more-robust future fix. Full design investigation (constraint, candidate fixes, open questions) spun out to GH #546.
+- **S1 — `read_run_inputs` `format_param_value(None)`→`"None"`** prefill lossiness → drop None-valued keys
+  (they re-resolve to default), + test.
+- **S2 — `/api/run-inputs` 404 wording** conflated "no run" vs "no inputs" → names the missing run.
+- **S3 — RunForm discarded the `suggestions` field** of pre-flight diagnostics → render it under the message
+  (+ `ApiErrorEntry.suggestions` type, CSS, test).
+- **S4 — missing `json_output`→`run.complete` ordering pin** (the output-port projection's data source) →
+  added a `trace_files` CLI-json e2e test (real `pflow run --output-format json` → asserts
+  `run.complete.json_output["result"]`), the output-side twin of the `meta.inputs` write-ordering pin.
+- **S6 — text-or-JSON value render duplicated** 3× (IoPanel `PortRunValue` + ThisRunSection RunField/RunOutput)
+  → extracted a shared `components/RunValue.tsx`.
+- **S7 — `run_tailer._read_meta` cached the raw `meta.inputs`** (unused by any cache consumer) → drop it from
+  the identity-probe meta to keep `_SCAN_CACHE` small, + test.
+
+### Deferred (documented, not fixed)
+
+- **S5 — run-outcome summary line** duplicated (GraphView Task-173 banner vs RunProgress callout): a Suggestion
+  (drift risk, both correct today) that touches the pre-existing banner + the other agent's `RunProgress` — not
+  worth a cross-agent edit for a cosmetic dedup. A shared `runSummaryText` helper is the future fold.
+- **S8 — IoPanel "no recorded value"** conflates a transient fetch error with genuine absence: deliberate DR-6
+  (each fetch owns its catch), acceptable over loopback.
+- **S9 — `?run=` parsed twice / subtitle thrice** in `GraphView` (other agent's code): trivial.
+- Pre-existing repo-wide ruff RUF059/RUF043 in `tests/test_nodes/test_claude/test_schema_coercion.py` +
+  `test_trace_io.py:466` (unchanged vs main — a ruff-version artifact, outside `make check`'s changed-files
+  scope): NOT this branch's regression, left alone.
+
+### Gates (post-fix)
+
+- `make test` **8265** (8262 + 3: S1/S4/S7), `make check` green (ruff + ruff-format + mypy + deptry — fixed 2
+  `×`→ASCII in my new comments), `tsc` 0, `vitest` **675** (674 + 1: S3).
+
+**Deep-review complete. No confirmed Critical or unaddressed Warning remains.**
+
+### Post-fix loose-end (caught on a "fully happy?" re-check)
+
+The W2 grace-window bump (24→60 attempts) surfaced a test-time regression: two run-not-found tests
+(`test_run_tailer.py::test_pinned_run_not_found_broadcasts_and_stops`,
+`test_ui.py::…test_ensure_tailer_replaces_a_terminated_tailer`) drive a ghost run_id to full window
+exhaustion and waited the REAL production window — 14.8s each after the bump (already ~6s before). They
+exercise the run-not-found PATH, not the timing, so both now `monkeypatch _PINNED_RESOLVE_ATTEMPTS → 2`
+(~0.26s each). `make test` back to 17.45s (from 32.98s); still 8265, `make check` green. Also swept the whole
+repo for stale "follows-newest"/"no run id returned" refs — none remain (the `RunPanel:51` / `server.py`
+refs that mention follow-newest are correct: they explain *why* pinning exists).
+
+### High-value test pass ("passing the RIGHT thing", not coverage)
+
+Stepped back to hunt for a test that would catch a REAL bug (not padding). Found one genuine gap + one of my
+own tests that was passing without asserting the thing that matters:
+
+- **Re-run FAITHFULNESS round-trip (the feature's core promise).** `test_read_run_inputs_renders_typed_values_
+  to_tokens` pinned only the FORWARD leg (value→token) — it never proved the tokens re-type back. The round-
+  trip WAS pinned, but only in `test_rerun_display.py` (the ORPHANED `rerun_display` module, slated for
+  deletion) and via the `shlex` shell path — NOT the live Phase-5 path (server builds `name=value` argv
+  directly, no shell). Strengthened the test (renamed `…_tokens_round_trip_faithfully_through_the_cli_parser`)
+  to also assert `parse_workflow_params(server-argv-form(tokens)) == original` through the REAL CLI parser.
+  **Mutation-verified non-vacuous:** under a simulated `infer_type` JSON-parse regression the forward assertion
+  still passes but the round-trip FAILS — so it catches an `infer_type` break the forward-only test missed, on
+  the live path, durable against the dead-module deletion. (Deliberately excludes a numeric-looking STRING:
+  `meta.inputs` stores the RESOLVED value and declared-type coercion — not `parse_workflow_params` alone —
+  restores it; that channel-A interplay is a separate pre-existing CLI concern, not this test's subject.)
+- The earlier S4 (json_output→run.complete ordering, real CLI-json e2e) was the other genuine gap — already
+  closed.
+
+Audited the rest of the Task-175 suite for shallowness (mine + the test-fidelity agent's pass): the secret
+non-leakage pins (endpoint returns tokens WITHOUT secrets; IO projection redacts), the exact-spawn-argv +
+injection-safety pins, the ancestor_path collision guard, and the meta.inputs write-ordering pin each
+discriminate a real regression. **Nothing shallow to remove.** `make test` 8265, `make check` green.
+
+---
+
+## Phase 6 — Agent: open/replay a specific run
+
+**Status:** ✅ complete — code + tests + real-browser switch verification. FINAL phase of Task 175.
+
+### Design decision (user-chosen, deviates from plan)
+
+The plan had TWO CLI commands (`--run` opens; a separate `select-run` subcommand switches). The user chose
+**one smart command**: `pflow ui <wf> --run <id>` switches an already-open Viewer if one is live, else opens a
+fresh pinned tab. Rationale: the agent rarely knows if a tab is open, so "show run X" should just work + never
+spawn a duplicate. The `select-run` VERB is still built at the server+frontend layer (it's the switch
+mechanism `--run` drives); there is NO separate `pflow ui select-run` CLI subcommand.
+
+### Changes (verify-first — every seam re-read against post-4.5 code)
+
+- **Server** (`ui/server.py` `command()`): added `select-run` to the verb whitelist; a PASS-THROUGH branch
+  placed AFTER `target` is read (the run id rides in `target`) and BEFORE `resolve_validate_build` — broadcasts
+  `{type:"select-run", run: target}` with no graph resolution (a stale id → the frontend's run-not-found, never
+  a server error).
+- **CLI** (`cli/commands/ui.py`): `_serve_url` gained a `run` param (`?run=<id>`); `serve_cmd` gained `--run`
+  + the smart branch — in the reuse path, if `_probe_health(port, wf).windows > 0` it POSTs `select-run` (switch,
+  no duplicate tab), else opens a pinned tab; the fresh-start path always opens pinned (no live Viewer to
+  switch). An early guard: `--run` without a workflow → actionable error.
+- **Frontend**: `events.ts` — `PointHandlers.selectRun` + a `select-run` dispatch arm (`{type:"select-run",
+  run}`, string-guarded). `GraphView.tsx` — `pointHandlers.current.selectRun` → the existing `selectRun` (its
+  `if (next === runId) return` guard + `?run=` sync), routed through the ref like focus/frame/clear (no new
+  subscribe-effect deps). Fixed 3 existing test-handler objects that construct `PointHandlers` (new required member).
+- **Docs**: `guide/features/ui.md` (the `--run` smart open-or-switch shortcut; no `select-run` subcommand
+  surfaced to the agent), `ui/CLAUDE.md` (the grown verb set + corrected the stale "defines no run/trace event
+  schema" claim Task 173 invalidated), `web/CLAUDE.md` (the overlay-seam verb list + the pointHandlers-ref rule).
+
+### Tests
+
+- `test_ui_interaction_server.py` (+3): `command` broadcasts `select-run` pass-through (`{type,run}`, no target
+  resolution); requires a target; an unknown verb (`teleport`) still 400s (whitelist intact).
+- `test_ui_commands.py` (+5): `_serve_url` pins `?run=`; fresh start opens pinned; **reuse+live Viewer → POSTs
+  select-run (no browser open)**; reuse+no Viewer → opens pinned (no POST); `--run` sans workflow → exit 1.
+- `events.test.ts` (+1): a `select-run` SSE message calls `handlers.selectRun(run)`, ignoring a missing/non-string run.
+
+### Verification
+
+- `make test` **8273** (8265 + 8), `make check` clean, `tsc` 0, `vitest` **676** (675 + 1).
+- **Real-browser switch (the new end-to-end the sub-parts couldn't prove together)**: opened a Viewer pinned to
+  run A, fired a same-origin `select-run` for run B (via the real POST /api/command), and confirmed the open
+  Viewer re-pinned live — `{before: A, posted_sent_to: 1, after: B, switched: true}`, URL navigated to
+  `?run=B`. Proves broadcast → EventSource → events.ts dispatch → selectRun → syncUrl end-to-end. (The `--run`
+  OPEN path is the `?run=` deep-link already browser-proven in Phase 3.5/4.5 + the CLI URL unit test.)
+
+**Task 175 (phases 1–6) is complete: launch ▶, inspect (click any node), re-run picker, and the agent
+open/replay-a-run verb — all implemented, deep-reviewed, hardened, and green.**

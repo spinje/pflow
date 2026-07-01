@@ -7,6 +7,10 @@ export interface PointHandlers {
   focus: (target: PointTarget) => void;
   frame: (target: PointTarget) => void;
   clear: () => void;
+  // Task 175: the agent switches an already-open Viewer to a specific past run (the run id, not a graph
+  // target). Applied by the frontend's existing selectRun (honors its re-pick guard); a stale id surfaces
+  // the run-not-found path.
+  selectRun: (runId: string) => void;
 }
 
 // Live execution overlay (Task 173) — optional run-event arms on the same vocabulary-agnostic
@@ -118,6 +122,8 @@ export function subscribe(
         handlers.clear();
       } else if ((message.type === "focus" || message.type === "frame") && isTarget(message.target)) {
         handlers[message.type](message.target);
+      } else if (message.type === "select-run" && typeof message.run === "string") {
+        handlers.selectRun(message.run); // Task 175: switch the open Viewer to the broadcast run id
       } else if (message.type === "run-events" && Array.isArray(message.events)) {
         handlers.runEvents?.(message.events.filter(isRunEvent));
       } else if (message.type === "run-snapshot" && Array.isArray(message.nodes)) {

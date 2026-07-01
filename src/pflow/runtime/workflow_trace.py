@@ -537,6 +537,7 @@ class WorkflowTraceCollector:
         is_run_scoped: bool = False,
         stream_to_disk: bool = False,
         content_hash: str | None = None,
+        execution_id: str | None = None,
     ):
         """Initialize the trace collector.
 
@@ -580,12 +581,19 @@ class WorkflowTraceCollector:
                 Defaults to ``None`` so the per-sub-workflow buffer collector and
                 all test fixtures construct unchanged; an old trace (or a run
                 that didn't supply it) simply has no fingerprint → "can't verify".
+            execution_id: Force the run's id instead of minting a fresh UUID (Task
+                175). The ``pflow ui`` ▶ launch mints the id server-side and threads
+                it here (via ``RunnerConfig`` ← ``PFLOW_EXECUTION_ID``) so the browser
+                can PIN the overlay to the exact run it just spawned — otherwise the
+                detached child mints its own id and the form can only follow-newest
+                (which reverts to an older still-live run when the new one finishes).
+                Defaults to ``None`` → mint a UUID (every other run path).
         """
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
         self.content_hash = content_hash
         self.is_run_scoped = is_run_scoped
-        self.execution_id = str(uuid.uuid4())
+        self.execution_id = execution_id or str(uuid.uuid4())
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
         # Task 172 step 3: per-event streaming state (run-scoped + stream_to_disk only). The stream opens

@@ -125,4 +125,28 @@ describe("RunProgress", () => {
     rerender(<RunProgress steps={[step("a", { status: "success" })]} banner={{ final_status: "degraded", nodes_executed: 1 }} />);
     expect(badge()?.className).toContain("status-stopped");
   });
+
+  it("resolves a no-banner terminal run via `outcome` instead of spinning a fake 'Running…'", () => {
+    // The callout is a second consumer of run-lifecycle state. stopped (process killed) and not-found
+    // (stale ?run=) never set a banner, so without `outcome` the outcome line spun "Running…" forever
+    // while the canvas banner correctly said otherwise (deep-review finding). Each must resolve.
+    const badge = (): Element | null => document.querySelector(".run-progress-outcome .status-badge");
+
+    // stopped → amber stopped badge + "Run stopped" + the run-stopped class.
+    const { rerender } = render(<RunProgress steps={[step("a", { status: "stopped" })]} banner={null} outcome="stopped" />);
+    expect(screen.getByText("Run stopped")).toBeTruthy();
+    expect(screen.queryByText("Running…")).toBeNull();
+    expect(badge()?.className).toContain("status-stopped");
+    expect(screen.getByText("Run stopped").closest(".run-progress-outcome")?.className).toContain("run-stopped");
+
+    // not-found → failed (!) badge + "Run not found" + the run-failed class.
+    rerender(<RunProgress steps={[step("a")]} banner={null} outcome="not-found" />);
+    expect(screen.getByText("Run not found")).toBeTruthy();
+    expect(badge()?.className).toContain("status-failed");
+    expect(screen.getByText("Run not found").closest(".run-progress-outcome")?.className).toContain("run-failed");
+
+    // A live run (outcome null / omitted) still shows the spinner — unchanged.
+    rerender(<RunProgress steps={[step("a", { status: "running" })]} banner={null} />);
+    expect(screen.getByText("Running…")).toBeTruthy();
+  });
 });

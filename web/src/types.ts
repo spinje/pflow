@@ -104,7 +104,8 @@ export interface RunInfo {
 export interface RunNodeDetail {
   node_type: string;
   status: string;
-  duration_ms: number;
+  // null for an IO node (input/output): it doesn't execute, so it has no duration (Task 175).
+  duration_ms: number | null;
   cost_usd: number | null;
   tokens: { input: number; output: number; cache_read: number } | null;
   error: string | null;
@@ -293,6 +294,9 @@ export interface ApiErrorEntry {
   message?: string;
   title?: string;
   detail?: string;
+  // The HOW-to-fix from a Diagnostic.to_dict() (e.g. a pre-flight "Available inputs: topic"); rendered
+  // under the message so the form shows the fix the JSON already carries (Task 175).
+  suggestions?: string[];
   [key: string]: unknown;
 }
 

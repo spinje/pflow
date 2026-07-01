@@ -106,4 +106,20 @@ describe("RunForm", () => {
     );
     expect(screen.getByRole("alert").textContent).toContain("Workflow requires input 'name'");
   });
+
+  it("renders the pre-flight diagnostic's suggestions (the HOW-to-fix), not just the message", () => {
+    render(
+      <RunForm
+        inputs={[field("topic")]}
+        values={{ topic: "" }}
+        onChange={noop}
+        onSubmit={noop}
+        submitting={false}
+        errors={[{ message: "Unknown input 'nope' — not declared by this workflow.", suggestions: ["Available inputs: topic"] }]}
+      />,
+    );
+    const alert = screen.getByRole("alert").textContent ?? "";
+    expect(alert).toContain("Unknown input 'nope'"); // the WHAT
+    expect(alert).toContain("Available inputs: topic"); // the HOW-to-fix, previously discarded
+  });
 });

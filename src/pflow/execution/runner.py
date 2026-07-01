@@ -157,6 +157,9 @@ class WorkflowRunner:
                 # Stamped into the trace `meta` line; the replay tailer compares it to the current file's
                 # digest to flag a stale (different-version) run (Task 173).
                 content_hash=content_hash,
+                # Task 175: None for every normal run (mint a UUID); a `pflow ui` ▶ launch forces it so
+                # the browser can pin the overlay to the exact run it spawned.
+                execution_id=config.execution_id,
             )
 
             mcp_pool = MCPConnectionPool()

@@ -1090,6 +1090,9 @@ class TestRunScopedBroadcast:
         from pflow.ui.server import _Hub
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        # Shrink the pinned-resolve grace window — this exercises the run-not-found PATH, not the timing;
+        # otherwise the ghost id waits the full production window of real asyncio.sleep before terminating.
+        monkeypatch.setattr("pflow.ui.run_tailer._PINNED_RESOLVE_ATTEMPTS", 2)
         (tmp_path / ".pflow" / "debug").mkdir(parents=True)  # empty → "ghost" resolves to nothing
 
         async def scenario() -> tuple[bool, bool, bool]:

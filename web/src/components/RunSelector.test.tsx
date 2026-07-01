@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 describe("RunSelector", () => {
-  it("opens on click, fetches THIS workflow's runs, and marks each by its raw facts", async () => {
+  it("polls THIS workflow's runs and, on open, marks each by its raw facts", async () => {
     mockFetchRuns.mockResolvedValue([
       run({ run_id: "r-ok" }),
       run({ run_id: "r-live", complete: false, final_status: null, live: true }),
@@ -45,12 +45,12 @@ describe("RunSelector", () => {
     ]);
     render(<RunSelector workflow="wf" runId={null} onSelect={vi.fn()} />);
 
-    expect(screen.queryByRole("menu")).toBeNull(); // closed → no fetch yet
-    expect(mockFetchRuns).not.toHaveBeenCalled();
+    // Polls on mount (Task 175 — the live-clock signal), scoped to THIS workflow; the menu is still closed.
+    await waitFor(() => expect(mockFetchRuns).toHaveBeenCalledWith("wf"));
+    expect(screen.queryByRole("menu")).toBeNull();
 
-    fireEvent.click(screen.getByLabelText("Runs"));
+    fireEvent.click(screen.getByLabelText(/^Runs/)); // "Runs" or "Runs (a run is live)" once the live run lands
     await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
-    expect(mockFetchRuns).toHaveBeenCalledWith("wf"); // scoped to this workflow
 
     // Each run's label is derived from the raw facts (running / success / failed / only:<node>).
     expect(screen.getByText("success")).toBeTruthy();
@@ -58,6 +58,20 @@ describe("RunSelector", () => {
     expect(screen.getByText("stopped")).toBeTruthy(); // exact: not live + unfinished (flock)
     expect(screen.getByText("failed")).toBeTruthy();
     expect(screen.getByText("only: step-b")).toBeTruthy();
+  });
+
+  it("pulses the clock blue while a run is live, and not when none is", async () => {
+    mockFetchRuns.mockResolvedValue([run({ run_id: "r-live", complete: false, final_status: null, live: true })]);
+    render(<RunSelector workflow="wf" runId={null} onSelect={vi.fn()} />);
+    // Once the poll lands a live run, the clock gains the pulse class + an "a run is live" label.
+    await waitFor(() => expect(screen.getByLabelText(/a run is live/).className).toContain("run-live-pulse"));
+
+    cleanup();
+    mockFetchRuns.mockReset();
+    mockFetchRuns.mockResolvedValue([run({ run_id: "r-done" })]); // none live
+    render(<RunSelector workflow="wf" runId={null} onSelect={vi.fn()} />);
+    await waitFor(() => expect(mockFetchRuns).toHaveBeenCalled());
+    expect(screen.getByLabelText("Runs").className).not.toContain("run-live-pulse");
   });
 
   it("picking a run pins it (onSelect with its run_id)", async () => {

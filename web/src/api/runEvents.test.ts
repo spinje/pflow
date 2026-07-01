@@ -40,6 +40,7 @@ const runHandlers = () => ({
   focus: vi.fn(),
   frame: vi.fn(),
   clear: vi.fn(),
+  selectRun: vi.fn(),
   runSnapshot: vi.fn(),
   runEvents: vi.fn(),
   runComplete: vi.fn(),
@@ -213,7 +214,7 @@ describe("subscribe — run-* dispatch arms", () => {
   });
 
   it("back-compat: run-* messages are silently ignored when no run handlers are supplied (Point-only viewer)", () => {
-    const handlers = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn() };
+    const handlers = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() };
     subscribe("wf", handlers);
     const source = FakeEventSource.instances[0]!;
 

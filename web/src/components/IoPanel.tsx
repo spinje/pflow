@@ -9,20 +9,25 @@
 // no "used by" row at all — refs outside params (loop conditions) form no edges,
 // so an affirmative "unused" would be the quiet≠unconsumed trap.
 
-import { useEffect, useRef } from "react";
-import { wrapperPorts } from "../graph/flow";
+import { useEffect, useRef, useState } from "react";
+import { fetchRunNode } from "../api/client";
+import { refKey, wrapperPorts } from "../graph/flow";
 import { fullValue, IO_COLOR } from "../utils/format";
 import { ioCardIcon } from "../utils/icons";
 import { Chip } from "./Chip";
 import { Markdown } from "./Markdown";
+import { RunValue } from "./RunValue";
 import { PanelHeader } from "./PanelHeader";
 import { sourceLabel } from "./ReadPanel";
-import type { RFGraph, RFGroup, RFNode } from "../types";
+import type { RFGraph, RFGroup, RFNode, RFRef } from "../types";
 
 export function IoPanel({
   group,
   graph,
   workflowName,
+  workflow,
+  runId,
+  hasRunContext,
   renderedIds,
   markedPortId,
   onNavigate,
@@ -32,6 +37,12 @@ export function IoPanel({
   group: RFGroup;
   graph: RFGraph;
   workflowName: string;
+  // Task 175 — run context for the per-port "this run" value: `workflow` is the resolvable key
+  // fetchRunNode posts to, `runId` pins a past run (null = newest live), `hasRunContext` gates the
+  // fetch so an interface viewed with no run in scope shows no (empty) run blocks.
+  workflow: string;
+  runId: string | null;
+  hasRunContext: boolean;
   renderedIds: ReadonlySet<string>;
   // A focused row's port id — its entry gets the marked treatment (card click =
   // the whole interface, row click = the same panel scrolled to one port).
@@ -143,10 +154,72 @@ export function IoPanel({
                   </div>
                 );
               })}
+              {/* Task 175 — this port's value for the in-context run. Gated on a run being present
+                  (else every port would show an empty block) and on the port carrying a structural ref
+                  (the same identity /api/run-node joins on). Redaction is server-side. */}
+              {hasRunContext && portNode && (
+                <PortRunValue workflow={workflow} runId={runId} nodeRef={portNode.ref} kind={kind} portName={port.name} />
+              )}
             </div>
           );
         })}
       </section>
     </aside>
+  );
+}
+
+// One port's value for the in-context run, fetched on demand from /api/run-node (the SAME endpoint the
+// node detail panel uses; IO refs project from meta.inputs / json_output.result server-side). Owns its
+// own fetch + catch (DR-6): a miss / absent value shows "no recorded value", never throws or blanks the
+// panel. The value renders via CodeBlock (text for strings, JSON otherwise) — scroll-capped for large
+// outputs, the chosen "this run" block treatment.
+function PortRunValue({
+  workflow,
+  runId,
+  nodeRef,
+  kind,
+  portName,
+}: {
+  workflow: string;
+  runId: string | null;
+  nodeRef: RFRef;
+  kind: "input" | "output";
+  portName: string;
+}): JSX.Element {
+  const [state, setState] = useState<{ phase: "loading" | "value" | "absent"; value?: unknown }>({
+    phase: "loading",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ phase: "loading" });
+    fetchRunNode(workflow, runId, nodeRef)
+      .then((detail) => {
+        if (cancelled) return;
+        // input → the value keyed by the port name; output → the resolved value directly (the synthesized
+        // IO shape, run_node._io_shape). The server only 200s when the value exists, so a 200 means present.
+        setState({ phase: "value", value: kind === "input" ? detail.input[portName] : detail.output });
+      })
+      .catch(() => {
+        // 404 (no recorded value for this port this run — sub-workflow, absent input, text-mode output) or
+        // a transient error: either way show the honest "no recorded value", never blank the panel.
+        if (!cancelled) setState({ phase: "absent" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workflow, runId, refKey(nodeRef), kind, portName]);
+
+  // Loading is brief over loopback — render nothing rather than a placeholder that would flash on N ports.
+  if (state.phase === "loading") return <></>;
+  return (
+    <div className="io-port-run">
+      <span className="io-port-run-label">this run</span>
+      {state.phase === "value" ? (
+        <RunValue value={state.value} />
+      ) : (
+        <span className="io-port-run-empty">no recorded value</span>
+      )}
+    </div>
   );
 }

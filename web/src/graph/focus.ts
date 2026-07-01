@@ -7,7 +7,7 @@
 
 import { ioOwners } from "./io";
 import type { FlowEdge, FlowNode } from "./flow";
-import type { NodeRunState, NodeStatus, RFGraph, RFRef, RunDetail } from "../types";
+import type { NodeRunState, NodeStatus, RFGraph, RFNode, RFRef, RunDetail } from "../types";
 
 // --- Live execution overlay restyle (Task 173) -------------------------------------------------
 
@@ -86,14 +86,22 @@ export type ProgressStep = {
   durationMs: number | null;
 };
 
-/** Top-level executable steps (excludes IO ports + the synthetic end) with their LIVE status, in graph
- *  order — the run-progress callout's model. Fed by the SAME runStatus map the canvas badges use (no new
- *  observation), keyed on the stable structural ref. Nested sub-workflow nodes roll up to their host's row
- *  (a host with no own event reads "pending"); a flat workflow shows one row per step, mirroring the
- *  terminal's `node... ✓ 0.4s` stream. */
+/** The TOP-LEVEL executable nodes, in graph order: real steps only — IO ports (input/output) and the
+ *  synthetic end node are excluded, sub-workflow bodies (non-empty ancestor_path) roll up to their host.
+ *  The single home of "what counts as a run step" — consumed by `runSteps` (the callout's progress model)
+ *  AND GraphView's run-callout anchor fallback, so the two can't drift on a future node-kind change. */
+export function topLevelSteps(graph: RFGraph): RFNode[] {
+  return graph.nodes.filter(
+    (n) => n.ref.ancestor_path.length === 0 && n.kind !== "input" && n.kind !== "output" && n.kind !== "end",
+  );
+}
+
+/** Top-level executable steps with their LIVE status, in graph order — the run-progress callout's model.
+ *  Fed by the SAME runStatus map the canvas badges use (no new observation), keyed on the stable
+ *  structural ref. Nested sub-workflow nodes roll up to their host's row (a host with no own event reads
+ *  "pending"); a flat workflow shows one row per step, mirroring the terminal's `node... ✓ 0.4s` stream. */
 export function runSteps(graph: RFGraph, status: ReadonlyMap<string, NodeRunState>): ProgressStep[] {
-  return graph.nodes
-    .filter((n) => n.ref.ancestor_path.length === 0 && n.kind !== "input" && n.kind !== "output" && n.kind !== "end")
+  return topLevelSteps(graph)
     .map((n) => {
       const state = status.get(refKey(n.ref));
       return {

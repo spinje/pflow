@@ -20,6 +20,9 @@ Endpoints:
 - ``POST /api/run`` — spawn a detached ``pflow run`` for a resolved workflow +
   inputs (Task 175). The server stays a pure observer; the spawned run writes its
   own streaming trace that the tailer/overlay pick up. No in-process execution.
+- ``GET /api/run-inputs?workflow=<name|path>&run=<id>`` — a past run's recorded
+  inputs as form-ready token strings, for the Run panel's re-run prefill (Task 175).
+  ``meta.inputs`` with sensitive-named keys omitted (server-side redaction).
 - ``GET /api/activity`` — read a newest-first snapshot of recent interactions.
 - ``/`` (+ assets) — the built frontend bundle, when present. Absent in a
   source checkout (the bundle is gitignored, built by ``make ui-build``); the
@@ -46,10 +49,12 @@ import hashlib
 import itertools
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
@@ -72,7 +77,7 @@ from pflow.execution.graph_service import (
 )
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
-from pflow.ui.run_node import run_node_detail
+from pflow.ui.run_node import read_run_inputs, run_node_detail
 from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, scan_traces
 from pflow.ui.targets import resolve_target
 
@@ -576,9 +581,9 @@ async def command(request: Request) -> Response:
 
     workflow = _string_field(body, "workflow")
     command_type = _string_field(body, "type")
-    if workflow is None or command_type not in {"focus", "frame", "clear"}:
+    if workflow is None or command_type not in {"focus", "frame", "clear", "select-run"}:
         return _json(
-            {"error": "Fields 'workflow' and type ('focus', 'frame', or 'clear') are required."},
+            {"error": "Fields 'workflow' and type ('focus', 'frame', 'clear', or 'select-run') are required."},
             status_code=400,
         )
     workflow_key = _workflow_key(workflow)
@@ -592,6 +597,16 @@ async def command(request: Request) -> Response:
     target = _string_field(body, "target")
     if target is None:
         return _json({"error": f"Command type {command_type!r} requires a non-empty target."}, status_code=400)
+
+    # select-run (Task 175): the run id rides in `target` and is a PASS-THROUGH — NOT a graph target, so it
+    # skips resolve_target entirely (a run isn't a node/edge). The browser's selectRun applies it (honoring
+    # its own re-pick guard); a stale/unknown id surfaces the frontend's run-not-found path in the open
+    # Viewer, never a server error — so no server-side run validation. Placed AFTER `target` is read (unlike
+    # `clear`, which returns before it) since the id lives in `target`.
+    if command_type == "select-run":
+        conns = hub.broadcast(workflow_key, {"type": "select-run", "run": target})
+        return _json(_dispatch_report(workflow_key, conns))
+
     try:
         # Validation/build can recurse through large nested workflows. Keep it
         # off the hub's event loop so SSE sends, disconnect cleanup, and
@@ -723,6 +738,12 @@ async def run(request: Request) -> Response:
     except PflowError as exc:
         return _json({"errors": [d.to_dict() for d in exception_to_diagnostics(exc)]}, status_code=400)
 
+    # Task 175: mint the run's execution_id HERE and force it onto the spawned run (via PFLOW_EXECUTION_ID),
+    # then return it — so the browser can PIN the overlay to the exact run it just spawned instead of
+    # follow-newest (which reverts to an older still-live run when this one finishes). The child's CLI pops
+    # the env var into RunnerConfig.execution_id (so a node that re-shells `pflow` can't inherit + collide).
+    run_id = str(uuid.uuid4())
+
     # Spawn DETACHED via subprocess.Popen — NOT asyncio.create_subprocess_exec (load-bearing): asyncio's
     # subprocess transport finalizer calls _proc.kill() on a still-running child, so closing `pflow ui`
     # would SIGKILL an in-flight run — the exact coupling ADR-0008 forbids. Popen returns immediately
@@ -740,8 +761,9 @@ async def run(request: Request) -> Response:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
+        env={**os.environ, "PFLOW_EXECUTION_ID": run_id},
     )
-    return _json({"status": "spawned"})
+    return _json({"status": "spawned", "run_id": run_id})
 
 
 async def activity(request: Request) -> Response:
@@ -886,6 +908,29 @@ def run_node(request: Request) -> Response:
     return _json(detail)
 
 
+def run_inputs(request: Request) -> Response:
+    """A past run's inputs as form-ready token strings, for the Run panel's re-run prefill (Task 175).
+
+    ``GET /api/run-inputs?workflow=X&run=<id>`` → ``{ "<name>": "<token-string>" }`` — the run's
+    ``meta.inputs`` with sensitive-named keys OMITTED (server-side redaction: a past run's resolved secret
+    never reaches the browser) and each value rendered back to its CLI token. A read-only GET of trace
+    content, same exposure class as ``/api/run-node`` (a sync handler — threadpooled, touches no hub state).
+    ``400`` on a missing ``workflow``; ``404`` on an unresolvable workflow or no matching run."""
+    workflow = request.query_params.get("workflow")
+    if not workflow:
+        return _json({"error": "A 'workflow' query param is required."}, status_code=400)
+    workflow_key = _workflow_key(workflow)
+    if workflow_key is None:
+        return _workflow_not_found(workflow)
+    run_id = request.query_params.get("run") or None
+    tokens = read_run_inputs(workflow_key, run_id)
+    if tokens is None:
+        # None means the run wasn't found (a run that predates meta.inputs resolves to {} at 200), so name
+        # the missing RUN — not "no inputs" — else a reader debugging a stale ?run= looks for the wrong cause.
+        return _json({"error": f"No run {run_id!r} was found for this workflow."}, status_code=404)
+    return _json(tokens)
+
+
 class _BundleFiles(StaticFiles):
     """StaticFiles that makes ``index.html`` revalidate on every load.
 
@@ -934,6 +979,7 @@ def create_app() -> Starlette:
         Route("/api/events", events),
         Route("/api/runs", runs),
         Route("/api/run-node", run_node),
+        Route("/api/run-inputs", run_inputs),
         Route("/api/health", health),
         Route("/api/command", command, methods=["POST"]),
         Route("/api/interaction", interaction, methods=["POST"]),

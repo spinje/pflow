@@ -43,6 +43,7 @@ def _write_trace(
     final_status: str = "success",
     execution_id: str = "x",
     content_hash: str | None = None,
+    inputs: dict | None = None,
 ) -> None:
     # Synthetic, but the CONSUMED keys mirror the producer (meta ← workflow_trace.py `_meta_fields`,
     # run.complete.final_status ← `_aggregates`, node.start/event join keys ← `_emit_node_start`). The join
@@ -58,6 +59,8 @@ def _write_trace(
         meta["only_node"] = only_node
     if content_hash is not None:
         meta["content_hash"] = content_hash
+    if inputs is not None:
+        meta["inputs"] = inputs
     lines: list[dict] = [
         meta,
         {
@@ -211,6 +214,23 @@ def test_scan_traces_yields_raw_candidates_keeping_only_policy_in_callers(tmp_pa
     assert by_only["b"]["complete"] is True and by_only["b"]["final_status"] == "success"
     # The live-overlay CALLER applies the --only exclude → returns the full run, never the --only one.
     assert discover_live_trace(wf, debug_dir=debug) == full
+
+
+def test_scan_traces_drops_meta_inputs_from_the_cache(tmp_path):
+    """Task 175 (deep-review): meta.inputs can be large (a multi-KB text input, per run, across the debug
+    dir) and NO _SCAN_CACHE consumer reads it — run_node re-reads the file via _read_trace_lines. So _read_meta
+    drops `inputs` to keep the process-lifetime cache small; the identity keys (execution_id) stay."""
+    import pflow.ui.run_tailer as rt
+
+    rt._SCAN_CACHE.clear()
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    path = _tp(debug, wf, "20260101-000000-000001")
+    _write_trace(path, wf, complete=True, inputs={"topic": "a" * 5000})
+    meta = next(c["meta"] for c in scan_traces(wf, debug_dir=debug))
+    assert "inputs" not in meta  # dropped — not retained in the scan cache
+    assert meta["execution_id"] == "x"  # identity keys stay
 
 
 def test_scan_traces_caches_unchanged_files(tmp_path, monkeypatch):
@@ -554,6 +574,10 @@ def test_pinned_run_not_found_broadcasts_and_stops(tmp_path, monkeypatch):
     """DR-1: a pinned tailer whose ``run_id`` matches no trace broadcasts an explicit ``run-not-found`` and
     RETURNS (the run() loop terminates — no silent all-pending canvas, no endless re-discovery)."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # Shrink the pinned-resolve grace window: this test exercises the run-not-found PATH, not the timing —
+    # without this it would wait the full production window (_PINNED_RESOLVE_ATTEMPTS * _POLL_S) of real
+    # asyncio.sleep for a ghost id that never resolves.
+    monkeypatch.setattr("pflow.ui.run_tailer._PINNED_RESOLVE_ATTEMPTS", 2)
     (tmp_path / ".pflow" / "debug").mkdir(parents=True)
     messages: list[dict] = []
     tailer = RunTailer("wf", lambda _k, message: messages.append(message), run_id="ghost")

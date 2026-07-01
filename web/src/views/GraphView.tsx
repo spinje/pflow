@@ -18,7 +18,7 @@ import "@xyflow/react/dist/style.css";
 import { reportInteraction, subscribe, type PointHandlers } from "../api/events";
 import { collapsibleGroupIds, initialCollapsed, revealNodes } from "../graph/collapse";
 import { autoDirection } from "../graph/direction";
-import { consumedReadPaths, ioOwners, refKey, rowTouches, runSteps, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { consumedReadPaths, ioOwners, refKey, rowTouches, runSteps, topLevelSteps, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import {
   edgeIdForTarget,
   edgeTargetForId,
@@ -286,23 +286,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setRunCalloutOpen(false);
     setRunPanelOpen((open) => !open);
   }, []);
-  // A successful spawn: switch the overlay to follow-newest-live (selectRun(null) — the
-  // existing mechanism, a no-op when already unpinned) so the launched run lights up,
-  // close the form, and HAND OFF to the canvas callout streaming live progress.
-  const onRunLaunched = useCallback(() => {
-    selectRun(null);
-    // selectRun(null) is a NO-OP when ALREADY following-newest, so its synchronous run-state clear doesn't
-    // fire — clear it here too, or the callout opens showing the LAST (usually completed) run for a beat,
-    // until the new run's first events arrive (a stale flash, user-caught). The live follow-newest
-    // connection repopulates from the new run's runReset + snapshot/events.
-    setRunStatus(new Map());
-    setRunBanner(null);
-    setRunStopped(false);
-    setRunStale(false);
-    setRunMissing(false);
-    setRunPanelOpen(false);
-    setRunCalloutOpen(true);
-  }, [selectRun]);
+  // A successful spawn: PIN the overlay to the EXACT run just spawned (Task 175 — the server mints +
+  // returns its id). Pinning, not follow-newest, is load-bearing: follow-newest reverts to an older
+  // still-live run when this (often shorter) run finishes. `selectRun(runId)` is always a genuine switch
+  // here (a fresh unique id), so it tears down + clears + opens the callout (setRunCalloutOpen(true)) on
+  // its own — no manual state-clear needed (that was the old follow-newest no-op workaround). The pinned
+  // tailer waits out the run's ~1-2s startup (run_tailer grace) then streams it.
+  const onRunLaunched = useCallback(
+    (runId: string) => {
+      selectRun(runId);
+      setRunPanelOpen(false);
+    },
+    [selectRun],
+  );
   // The node the run-progress callout anchors to: the top-level Inputs card (its RF node id IS the
   // top-level input_wrapper group's flat id), falling back to the first top-level executable node for a
   // no-input workflow. null → nothing to anchor to (no graph) → no callout.
@@ -310,10 +306,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     if (!graph) return null;
     const inputCard = graph.groups.find((g) => g.kind === "input_wrapper" && !g.parent && g.members.length > 0);
     if (inputCard) return inputCard.id;
-    const entry = graph.nodes.find(
-      (n) => n.ref.ancestor_path.length === 0 && n.kind !== "input" && n.kind !== "output" && n.kind !== "end",
-    );
-    return entry?.id ?? null;
+    return topLevelSteps(graph)[0]?.id ?? null; // else the first executable step (same predicate as runSteps)
   }, [graph]);
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   // The read panel's source-link click: open the pane (if closed) and bump a
@@ -531,6 +524,12 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // refetch, even though the ref/status are unchanged; PR #543).
   const selectedRunState = selectedNode ? runStatus.get(refKey(selectedNode.ref)) : undefined;
 
+  // Task 175: is a run in scope for the IoPanel's per-port "this run" values? A run is pinned (runId), or
+  // the overlay has observed one this session (runStatus populated). Gates the IO value fetch so an
+  // interface viewed cold shows no empty run blocks. (IO nodes route to IoPanel, never ReadPanel — root IO
+  // selection sets selectedId to the wrapper GROUP, which has no host, so selectedNode stays null.)
+  const hasRunContext = runId !== null || runStatus.size > 0;
+
   // A selected ROOT IO CARD (its id IS its wrapper group's) reads as the
   // workflow's interface. Third resolution arm, disjoint from the other two by
   // id namespace: wrapper groups never match a node or a contract edge.
@@ -699,6 +698,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       setFocus(null);
       setSelectedId(null);
     },
+    // Task 175: the agent's select-run verb switches this open Viewer to a run — reuses the SAME selectRun
+    // the RunSelector pin / launch use (its `if (next === runId) return` guard makes a re-pick a no-op; a
+    // stale id surfaces the run-not-found path). Routed through the ref like focus/frame/clear.
+    selectRun: (runId) => selectRun(runId),
   };
   const graphReady = graph !== null;
   useEffect(() => {
@@ -715,6 +718,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       focus: (target) => pointHandlers.current?.focus(target),
       frame: (target) => pointHandlers.current?.frame(target),
       clear: () => pointHandlers.current?.clear(),
+      selectRun: (runId) => pointHandlers.current?.selectRun(runId),
       // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
       // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
       runSnapshot: (events, run, stopped, stale) => {
@@ -970,6 +974,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                 <RunProgress
                   steps={runSteps(graph, runStatus)}
                   banner={runBanner}
+                  // A run that ended with NO banner: not-found (stale ?run=) / stopped (killed). Without
+                  // this the callout span "Running…" forever while the canvas banner said otherwise.
+                  outcome={runMissing ? "not-found" : runStopped ? "stopped" : null}
                   onSelectStep={(id) => onNavigate(id, id)}
                 />
               </NodeCallout>
@@ -1008,6 +1015,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               group={selectedIoGroup}
               graph={graph}
               workflowName={workflowName}
+              workflow={workflow}
+              runId={runId}
+              hasRunContext={hasRunContext}
               renderedIds={renderedIds}
               markedPortId={focus != null && selectedIoGroup.members.includes(focus) ? focus : null}
               onNavigate={onNavigate}

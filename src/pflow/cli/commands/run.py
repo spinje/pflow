@@ -282,6 +282,10 @@ def execute_json_workflow(  # noqa: C901
         # The CLI finalizes the trace itself (after set_json_output mutates it post-run), so the runner
         # must not finalize early — see _save_trace_file / _finalize_trace_and_report.
         finalize_trace=False,
+        # Task 175: a `pflow ui` ▶ launch sets PFLOW_EXECUTION_ID in this spawned process's env so the
+        # browser can pin the overlay to the run it just spawned. POP it (not get) so a node that itself
+        # shells out to `pflow` doesn't inherit the id and collide. Absent (every hand-typed run) → mint.
+        execution_id=os.environ.pop("PFLOW_EXECUTION_ID", None),
     )
 
     if not effective_verbose:

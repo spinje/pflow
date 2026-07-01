@@ -156,8 +156,9 @@ beforeEach(() => {
   });
   vi.mocked(fetchGraph).mockReset();
   vi.mocked(runWorkflow).mockReset();
-  vi.mocked(runWorkflow).mockResolvedValue(undefined);
+  vi.mocked(runWorkflow).mockResolvedValue("spawned-run-1"); // Task 175: returns the run id to pin
   vi.mocked(fetchRuns).mockReset();
+  vi.mocked(fetchRuns).mockResolvedValue([]); // RunSelector polls this on mount (the live-clock signal)
   vi.mocked(fetchRunNode).mockReset();
   vi.mocked(fetchSource).mockReset();
   vi.mocked(fetchSource).mockResolvedValue({
@@ -990,11 +991,10 @@ describe("GraphView — Run panel (Task 175)", () => {
     expect(screen.queryByText(/takes no inputs/i)).toBeNull();
   });
 
-  it("submit spawns ONLY the filled+non-sensitive inputs (secrets blank, blanks omitted), then follows-newest + closes", async () => {
+  it("submit spawns ONLY the filled+non-sensitive inputs (secrets blank, blanks omitted), then PINS the spawned run + closes", async () => {
     vi.mocked(fetchGraph).mockResolvedValue(GRAPH_WITH_INPUT);
     vi.mocked(fetchRuns).mockResolvedValue([]);
-    // Start PINNED to a past run so follow-newest is observable (selectRun(null) is a
-    // no-op when already unpinned). syncUrl drops ?run= on un-pin.
+    // Start PINNED to a past run so the pin SWITCH (r1 → the spawned id) is observable (Task 175).
     window.history.replaceState({}, "", "/?workflow=demo&run=r1");
     try {
       render(<GraphView workflow="demo" onBack={() => {}} />);
@@ -1014,8 +1014,9 @@ describe("GraphView — Run panel (Task 175)", () => {
       // `api_key` (sensitive, blank) are OMITTED — NOT sent as empty strings. The pre-flight
       // 400s the missing required `name`; the spawned run re-resolves `api_key` by name.
       await waitFor(() => expect(runWorkflow).toHaveBeenCalledWith("demo", { topic: "cats" }));
-      // Follows-newest (un-pins: ?run= removed) + the panel closes.
-      await waitFor(() => expect(new URLSearchParams(window.location.search).has("run")).toBe(false));
+      // PINS the overlay to the run just spawned (?run=<the returned id>) — NOT follow-newest, so it
+      // won't revert to an older still-live run when this one finishes. The panel closes.
+      await waitFor(() => expect(new URLSearchParams(window.location.search).get("run")).toBe("spawned-run-1"));
       await waitFor(() => expect(screen.queryByRole("button", { name: "▶ Run" })).toBeNull());
     } finally {
       window.history.replaceState({}, "", "/");
@@ -1036,8 +1037,8 @@ describe("GraphView — Run panel (Task 175)", () => {
     await waitFor(() => expect(screen.getByLabelText("run status: success")).toBeTruthy());
     expect(screen.getByText(/Run success/)).toBeTruthy();
 
-    // Launch again. selectRun(null) is a no-op here (already unpinned), so onRunLaunched must clear the stale
-    // run state itself — else the callout would open on the LAST run until the new run's events arrive.
+    // Launch again. Pinning to the spawned id is a genuine selectRun SWITCH (null → the new id), which
+    // tears down + clears the stale run state — so the callout never opens on the LAST run.
     fireEvent.click(screen.getByLabelText("Run workflow"));
     fireEvent.click(await screen.findByRole("button", { name: "▶ Run" }));
     await waitFor(() => expect(runWorkflow).toHaveBeenCalled());

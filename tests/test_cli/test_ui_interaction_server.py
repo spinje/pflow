@@ -189,6 +189,33 @@ class TestInteractionEndpoints:
         assert response.json()["sent_to"] == 1
         assert conn.queue.get_nowait() == {"type": "clear"}
 
+    def test_select_run_broadcasts_the_run_id_as_pass_through(self, tmp_path: Path) -> None:
+        # Task 175: select-run carries a RUN id in `target` and is PASS-THROUGH — broadcast as
+        # {type:"select-run", run:<id>} with NO resolve_target (a run isn't a graph node/edge).
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        response = _client(app).post(
+            "/api/command",
+            json={"workflow": str(workflow), "type": "select-run", "target": "run-abc"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["sent_to"] == 1
+        assert conn.queue.get_nowait() == {"type": "select-run", "run": "run-abc"}
+
+    def test_select_run_requires_a_target(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        response = _client().post("/api/command", json={"workflow": str(workflow), "type": "select-run"})
+        assert response.status_code == 400
+
+    def test_unknown_command_verb_is_rejected(self, tmp_path: Path) -> None:
+        # The verb whitelist still rejects anything outside {focus, frame, clear, select-run}.
+        workflow = _workflow(tmp_path)
+        response = _client().post("/api/command", json={"workflow": str(workflow), "type": "teleport", "target": "x"})
+        assert response.status_code == 400
+
     def test_point_build_runs_off_the_hub_event_loop(self, tmp_path: Path) -> None:
         workflow = _workflow(tmp_path)
 
@@ -347,13 +374,19 @@ class TestRunEndpoint:
             response = _client().post("/api/run", json={"workflow": str(workflow), "inputs": {}})
 
         assert response.status_code == 200
-        assert response.json() == {"status": "spawned"}
+        # The minted run_id is returned (so the browser can PIN the overlay to this exact run) AND forced
+        # onto the spawned run via PFLOW_EXECUTION_ID (Task 175).
+        body = response.json()
+        assert body["status"] == "spawned"
+        run_id = body["run_id"]
+        assert isinstance(run_id, str) and run_id
         popen.assert_called_once()
         argv = popen.call_args.args[0]
         assert argv == [sys.executable, "-m", "pflow.cli", "run", key, "--output-format", "json"]
         kwargs = popen.call_args.kwargs
         assert kwargs["start_new_session"] is True
         assert kwargs["stdin"] == kwargs["stdout"] == kwargs["stderr"] == subprocess.DEVNULL
+        assert kwargs["env"]["PFLOW_EXECUTION_ID"] == run_id  # forced onto the child so the pin resolves
 
     def test_declared_inputs_become_one_argv_token_each_injection_safe(self, tmp_path: Path) -> None:
         # A value with a space and a shell metacharacter must arrive as ONE unparsed argv element.

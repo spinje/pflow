@@ -18,7 +18,7 @@ from starlette.testclient import TestClient
 
 from pflow.core.trace_io import INTERN_MIN_BYTES
 from pflow.runtime.workflow_trace import format_trace_filename
-from pflow.ui.run_node import run_node_detail
+from pflow.ui.run_node import read_run_inputs, run_node_detail
 from pflow.ui.server import create_app
 
 
@@ -407,6 +407,218 @@ def test_cached_node_cost_is_zero_converged_with_chip(tmp_path, monkeypatch) -> 
     assert detail is not None and detail["status"] == "cached" and detail["cost_usd"] == 0.0
 
 
+# --- Task 175: IO-node projection (input → meta.inputs, output → json_output.result) -------
+
+
+def _write_io_trace(
+    debug: Path,
+    wf: str,
+    ts: str,
+    *,
+    inputs: dict | None = None,
+    json_output: dict | None = None,
+    execution_id: str = "run-1",
+) -> Path:
+    """A JSONL trace whose ``meta`` carries ``inputs`` (the Task-175 keystone) and whose ``run.complete``
+    carries ``json_output`` — the two lines the IO projection reads (IO nodes have no event line)."""
+    meta: dict = {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": wf, "execution_id": execution_id}
+    if inputs is not None:
+        meta["inputs"] = inputs
+    trailer: dict = {"kind": "run.complete", "final_status": "success", "nodes_executed": 0}
+    if json_output is not None:
+        trailer["json_output"] = json_output
+    path = debug / format_trace_filename(wf, "wf", ts)
+    path.write_text("\n".join(json.dumps(x) for x in (meta, trailer)) + "\n", encoding="utf-8")
+    return path
+
+
+def test_io_input_projects_meta_inputs_value_in_valid_shape(tmp_path, monkeypatch) -> None:
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000010", inputs={"name": "World", "count": 3})
+    detail = run_node_detail(wf, "run-1", {"node_id": "name", "ancestor_path": [], "port": "in"})
+    assert detail is not None
+    # isRunNodeDetail-valid: string node_type + string status + input/output keys (the frontend guard)
+    assert isinstance(detail["node_type"], str) and isinstance(detail["status"], str)
+    assert "input" in detail and "output" in detail
+    assert detail["node_type"] == "input"
+    assert detail["input"] == {"name": "World"}  # keyed by the input name; value RAW (not stringified)
+    assert detail["output"] is None
+    assert detail["duration_ms"] is None and detail["tokens"] is None  # an IO node has no execution metrics
+
+
+def test_io_input_secret_named_is_redacted(tmp_path, monkeypatch) -> None:
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000010", inputs={"api_key": "sk-secret-123"})
+    detail = run_node_detail(wf, "run-1", {"node_id": "api_key", "ancestor_path": [], "port": "in"})
+    # redaction matches on the PORT NAME (api_key) — the trace stores the raw secret (redacted on read).
+    assert detail is not None and detail["input"] == {"api_key": "<REDACTED>"}
+
+
+def test_io_output_projects_json_output_result(tmp_path, monkeypatch) -> None:
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000010", json_output={"result": {"greeting": "Hello World"}})
+    detail = run_node_detail(wf, "run-1", {"node_id": "greeting", "ancestor_path": [], "port": "out"})
+    assert detail is not None
+    assert detail["node_type"] == "output"
+    assert detail["output"] == "Hello World"
+    assert detail["input"] == {}
+
+
+def test_io_subworkflow_ref_sharing_a_name_returns_none_not_toplevel(tmp_path, monkeypatch) -> None:
+    """The collision guard (load-bearing): meta.inputs / json_output.result are bare-name-keyed TOP-LEVEL
+    values, so a SUB-workflow IO node named like a top-level one (non-empty ancestor_path) must return None,
+    NOT borrow the top-level value."""
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000010", inputs={"name": "World"})
+    ap = [{"node_id": "child", "batch_index": None}]
+    assert run_node_detail(wf, "run-1", {"node_id": "name", "ancestor_path": ap, "port": "in"}) is None
+
+
+def test_io_missing_input_returns_none(tmp_path, monkeypatch) -> None:
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000010", inputs={"other": "x"})
+    assert run_node_detail(wf, "run-1", {"node_id": "name", "ancestor_path": [], "port": "in"}) is None
+
+
+def test_io_output_with_no_json_output_returns_none(tmp_path, monkeypatch) -> None:
+    """A text-mode or failed run records no json_output → an output ref degrades to None (the panel shows
+    "no recorded value"), never a crash."""
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000010", inputs={"name": "World"})  # no json_output
+    assert run_node_detail(wf, "run-1", {"node_id": "greeting", "ancestor_path": [], "port": "out"}) is None
+
+
+# --- Task 175: re-run prefill (read_run_inputs → /api/run-inputs token strings) -------
+
+
+def test_read_run_inputs_tokens_round_trip_faithfully_through_the_cli_parser(tmp_path, monkeypatch) -> None:
+    """Re-run FAITHFULNESS — the feature's core promise (load a past run → submit → reproduce it).
+
+    Two assertions, one dense test:
+    1. FORWARD: read_run_inputs renders each value via format_param_value (str as-is, numbers→str,
+       bool→lowercase, list/dict→COMPACT JSON) — the token shape the form controls consume. Catches a
+       wrong-formatter regression (e.g. str()/repr() → ``['a', 'b']`` that infer_type can't re-parse).
+    2. ROUND-TRIP: those tokens, submitted as the server's ``name=value`` argv (one element per input, no
+       shell — exactly ``server.run``'s construction), re-type to the ORIGINAL typed values through the REAL
+       ``parse_workflow_params`` the spawned run uses. THIS is the faithfulness the whole re-run rides on;
+       it catches an ``infer_type`` regression (which the forward assertion alone misses) on the LIVE path.
+       (The only other round-trip pin is coupled to the orphaned ``rerun_display`` module and goes via
+       ``shlex`` — a different transport that dies with that module.)"""
+    from pflow.cli.param_parsing import parse_workflow_params
+
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    # Representative resolved-value types meta.inputs holds. (A string that LOOKS numeric is deliberately
+    # excluded: meta.inputs stores the RESOLVED value and declared-type coercion — not parse_workflow_params
+    # alone — restores it on re-run; that channel-A interplay is a separate, pre-existing CLI concern.)
+    original = {"name": "World", "count": 3, "flag": True, "tags": ["a", "b"], "cfg": {"k": 1}}
+    _write_io_trace(debug, wf, "20260101-000000-000020", inputs=original)
+
+    tokens = read_run_inputs(wf, "run-1")
+    assert tokens == {"name": "World", "count": "3", "flag": "true", "tags": '["a","b"]', "cfg": '{"k":1}'}
+    reparsed = parse_workflow_params(tuple(f"{name}={value}" for name, value in tokens.items()))
+    assert reparsed == original, "a re-run must reconstruct the exact typed values it loaded"
+
+
+def test_read_run_inputs_omits_sensitive_named_keys(tmp_path, monkeypatch) -> None:
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000020", inputs={"topic": "cats", "api_key": "sk-secret"})
+    # a past run's resolved secret never reaches the browser — OMITTED (not redacted-in-place); it
+    # re-resolves from settings/env by name at run time, or the user types an override.
+    assert read_run_inputs(wf, "run-1") == {"topic": "cats"}
+
+
+def test_read_run_inputs_none_for_unknown_run(tmp_path, monkeypatch) -> None:
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000020", inputs={"topic": "cats"})
+    assert read_run_inputs(wf, "ghost-run") is None
+
+
+def test_read_run_inputs_empty_for_trace_predating_meta_inputs(tmp_path, monkeypatch) -> None:
+    """An older trace with no ``meta.inputs`` → ``{}`` (the run exists; the picker shows it with nothing to
+    prefill), distinct from ``None`` (no such run → 404)."""
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000020")  # no inputs= → meta carries no "inputs" key
+    assert read_run_inputs(wf, "run-1") == {}
+
+
+def test_read_run_inputs_omits_none_valued_keys(tmp_path, monkeypatch) -> None:
+    """A None-valued input (e.g. an authored ``default: null``) is OMITTED, not rendered as the literal
+    token ``"None"`` — which ``infer_type`` would re-type to the STRING ``"None"`` on re-run (a silent
+    null→"None" change). Omitting it lets it re-resolve to its default, like the form's blank-omission."""
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000020", inputs={"topic": "cats", "opt": None})
+    assert read_run_inputs(wf, "run-1") == {"topic": "cats"}
+
+
+@pytest.mark.trace_files
+def test_cli_json_run_records_json_output_result_on_run_complete(tmp_path, monkeypatch) -> None:
+    """The output-port projection (``_io_detail`` port ``"out"``) reads ``run.complete.json_output["result"]
+    [name]``. That trailer is populated only if the CLI's ``set_json_output`` runs BEFORE ``finalize()`` —
+    the ordering the fixture-based IO tests assume. Pin it end-to-end through the REAL CLI json path (the
+    output-side twin of ``test_meta_inputs``'s write-ordering pin): a refactor finalizing before
+    ``set_json_output`` would silently blank every output panel while the fixture tests stay green."""
+    from click.testing import CliRunner
+
+    from pflow.cli.main import main
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "outwf.pflow.md"
+    wf.write_text(
+        "# OutWf\n\nEchoes a greeting.\n\n## Inputs\n\n### name\n\nWho to greet.\n\n- type: string\n- default: World\n\n"
+        '## Steps\n\n### greet\n\nGreets.\n\n- type: shell\n- cache: false\n- command: echo "Hello ${name}"\n\n'
+        "## Outputs\n\n### greeting\n\nThe greeting.\n\n- source: ${greet.stdout}\n",
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(main, [str(wf), "--output-format", "json", "name=Alice"])
+    assert result.exit_code == 0, result.output
+
+    traces = list((tmp_path / ".pflow" / "debug").glob("*.json"))
+    assert len(traces) == 1, traces
+    lines = [json.loads(ln) for ln in traces[0].read_text(encoding="utf-8").splitlines() if ln.strip()]
+    trailer = next(ln for ln in lines if ln.get("kind") == "run.complete")
+    assert trailer["json_output"]["result"]["greeting"].strip() == "Hello Alice"
+
+
+class TestRunInputsEndpoint:
+    def test_missing_workflow_is_400(self) -> None:
+        r = TestClient(create_app()).get("/api/run-inputs", params={"run": "x"})
+        assert r.status_code == 400
+
+    def test_unknown_workflow_is_404(self) -> None:
+        r = TestClient(create_app()).get("/api/run-inputs", params={"workflow": "no-such-workflow-xyz", "run": "x"})
+        assert r.status_code == 404
+
+    def test_happy_path_returns_tokens_without_secrets(self, tmp_path, monkeypatch) -> None:
+        debug = _debug(tmp_path, monkeypatch)
+        wf_file = tmp_path / "wf.pflow.md"
+        wf_file.write_text("# x")
+        resolved = str(wf_file.resolve())
+        _write_io_trace(debug, resolved, "20260101-000000-000020", inputs={"name": "World", "api_key": "sk-secret"})
+        r = TestClient(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "run-1"})
+        assert r.status_code == 200
+        assert r.json() == {"name": "World"}
+
+    def test_unknown_run_is_404(self, tmp_path, monkeypatch) -> None:
+        debug = _debug(tmp_path, monkeypatch)
+        wf_file = tmp_path / "wf.pflow.md"
+        wf_file.write_text("# x")
+        resolved = str(wf_file.resolve())
+        _write_io_trace(debug, resolved, "20260101-000000-000020", inputs={"name": "World"})
+        r = TestClient(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "ghost"})
+        assert r.status_code == 404
+
+
 # --- the /api/run-node handler ---------------------------------------------
 
 
@@ -464,3 +676,15 @@ class TestRunNodeEndpoint:
         ref = json.dumps({"node_id": "absent", "ancestor_path": [], "port": None})
         r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
         assert r.status_code == 404
+
+    def test_io_input_ref_returns_200_with_projected_value(self, tmp_path, monkeypatch) -> None:
+        # End-to-end through the handler: an IO ref (port "in") projects meta.inputs, no event needed.
+        debug = _debug(tmp_path, monkeypatch)
+        wf_file = tmp_path / "wf.pflow.md"
+        wf_file.write_text("# x")
+        resolved = str(wf_file.resolve())
+        _write_io_trace(debug, resolved, "20260101-000000-000010", inputs={"name": "World"})
+        ref = json.dumps({"node_id": "name", "ancestor_path": [], "port": "in"})
+        r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
+        assert r.status_code == 200
+        assert r.json()["node_type"] == "input" and r.json()["input"] == {"name": "World"}

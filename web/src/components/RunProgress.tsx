@@ -9,21 +9,35 @@ import { nodeColor } from "../utils/format";
 import type { ProgressStep } from "../graph/flow";
 import type { NodeStatus, RunComplete } from "../types";
 
+// A non-banner terminal lifecycle: a run that ended WITHOUT a run.complete trailer — the process was
+// killed mid-flight (`stopped`), or a pinned `?run=` resolved to no trace (`not-found`). Threaded from
+// GraphView's run-lifecycle flags so the outcome line + badge RESOLVE instead of spinning a fake
+// "Running…" forever (the canvas banner already handles these; the callout, a second consumer of the
+// same state, must agree). `null` = live / still running.
+export type RunOutcome = "stopped" | "not-found" | null;
+
 // The overall-run status badge (the SAME round node badge used at a node's top-right): a spinner while
-// running, ✓ on success, ! on failure. final_status has no NodeStatus for "degraded" (succeeded-with-
-// warnings) — the closest badge is the amber "stopped"; the outcome TEXT carries the precise word.
-function runBadgeStatus(banner: RunComplete | null): NodeStatus {
-  if (!banner) return "running";
-  if (banner.final_status === "failed") return "failed";
-  if (banner.final_status === "degraded") return "stopped";
-  return "success";
+// running, ✓ on success, ! on failure. A completed run reads its banner; otherwise a terminal `outcome`
+// (stopped/not-found) wins over the live spinner. final_status has no NodeStatus for "degraded"
+// (succeeded-with-warnings) — the closest badge is the amber "stopped"; the outcome TEXT carries the word.
+function runBadgeStatus(banner: RunComplete | null, outcome: RunOutcome): NodeStatus {
+  if (banner) {
+    if (banner.final_status === "failed") return "failed";
+    if (banner.final_status === "degraded") return "stopped";
+    return "success";
+  }
+  if (outcome === "stopped") return "stopped";
+  if (outcome === "not-found") return "failed";
+  return "running";
 }
 
-// Non-kind status colors (literals, for inline gradients): pending grey, failed/stopped overrides. A
-// running/success/cached/unrecorded tile wears its node's identity color (grey → color IS the progress).
+// Non-kind status colors for inline gradients: pending grey (no token), failed/stopped from the :root
+// run-status palette — `var(--danger)`/`var(--status-stopped)` are :root (index.css), so they resolve
+// inside the canvas portal AND can't drift from the CSS (single source). A running/success/cached tile
+// wears its node's identity color (grey → color IS the progress).
 const PENDING_COLOR = "#5b616b";
-const FAILED_COLOR = "#ff6b6b"; // = --danger
-const STOPPED_COLOR = "#d29922"; // = --status-stopped
+const FAILED_COLOR = "var(--danger)";
+const STOPPED_COLOR = "var(--status-stopped)";
 
 function stepColor(step: ProgressStep): string {
   if (step.status === "pending") return PENDING_COLOR;
@@ -56,10 +70,13 @@ function stepMeta(step: ProgressStep): string {
 export function RunProgress({
   steps,
   banner,
+  outcome = null,
   onSelectStep,
 }: {
   steps: ProgressStep[];
   banner: RunComplete | null;
+  // The non-banner terminal lifecycle (stopped / not-found); `null` = live/running. See RunOutcome.
+  outcome?: RunOutcome;
   // Click a step name → scroll to + select that node on the canvas (the chip-navigate gesture). Optional
   // so the component renders plain (e.g. in unit tests) when not wired.
   onSelectStep?: (id: string) => void;
@@ -109,10 +126,14 @@ export function RunProgress({
         })}
       </ol>
       {/* The overall run status: the node-style round badge (✓/!/spinner) at the lower-left, beside the
-          outcome word; the TOTAL run wall-clock on the right. One unified line for the running + done states. */}
-      <div className={`run-progress-outcome run-${banner?.final_status ?? "running"}`}>
+          outcome word; the TOTAL run wall-clock on the right. A completed run reads its banner; a run that
+          ended with NO banner (killed → stopped, or a stale ?run= → not-found) reads `outcome` so it never
+          spins a fake "Running…" while the canvas banner says otherwise. */}
+      <div
+        className={`run-progress-outcome run-${banner?.final_status ?? (outcome === "not-found" ? "failed" : outcome) ?? "running"}`}
+      >
         <span className="run-progress-outcome-label">
-          <StatusBadge status={runBadgeStatus(banner)} inline />
+          <StatusBadge status={runBadgeStatus(banner, outcome)} inline />
           <span>
             {banner ? (
               <>
@@ -120,6 +141,10 @@ export function RunProgress({
                 {typeof banner.nodes_executed === "number" ? ` · ${banner.nodes_executed} nodes` : ""}
                 {banner.nodes_failed ? ` · ${banner.nodes_failed} failed` : ""}
               </>
+            ) : outcome === "stopped" ? (
+              "Run stopped"
+            ) : outcome === "not-found" ? (
+              "Run not found"
             ) : (
               "Running…"
             )}

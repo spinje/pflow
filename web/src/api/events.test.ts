@@ -46,7 +46,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("subscribe", () => {
   it("validates and dispatches connected/focus/frame/clear messages", () => {
-    const handlers = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn() };
+    const handlers = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() };
     const unsubscribe = subscribe("folder/wf.pflow.md", handlers);
     const source = FakeEventSource.instances[0]!;
     expect(source.url).toContain("workflow=folder%2Fwf.pflow.md");
@@ -75,8 +75,22 @@ describe("subscribe", () => {
     expect(source.closed).toBe(true);
   });
 
+  it("dispatches select-run with the run id, ignoring a missing/non-string run (Task 175)", () => {
+    const handlers = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() };
+    const unsubscribe = subscribe("wf", handlers);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit({ type: "select-run", run: "run-abc" });
+    source.emit({ type: "select-run" }); // no run → ignored
+    source.emit({ type: "select-run", run: 42 }); // non-string run → ignored
+
+    expect(handlers.selectRun).toHaveBeenCalledTimes(1);
+    expect(handlers.selectRun).toHaveBeenCalledWith("run-abc");
+    unsubscribe();
+  });
+
   it("reports current visibility for every server-supplied connection id", async () => {
-    const handlers = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn() };
+    const handlers = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() };
     const unsubscribe = subscribe("wf", handlers);
     const source = FakeEventSource.instances[0]!;
 
@@ -111,7 +125,7 @@ describe("subscribe reconnect", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  const handlers = () => ({ focus: vi.fn(), frame: vi.fn(), clear: vi.fn() });
+  const handlers = () => ({ focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() });
 
   it("closes the dead source and reopens a fresh one after the retry delay", () => {
     const unsubscribe = subscribe("wf", handlers());

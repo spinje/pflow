@@ -39,14 +39,54 @@ def run_node_detail(workflow_key: str, run_id: str | None, ref: dict[str, Any]) 
     (the unpinned overlay's own discovery). ``ref`` is the structural ``RFRef`` the canvas joins on
     (``node_id`` + ``ancestor_path`` + ``port``). Returns ``None`` when no trace / run / matching event is
     found, or when a blob can't be resolved (a corrupt/missing blob line) — never a half-rendered payload.
+
+    Task 175: IO nodes (``port`` ``"in"``/``"out"``) DON'T execute, so they have no node ``event`` to scan
+    — their value lives in the run's ``meta.inputs`` (inputs) / ``json_output["result"]`` (outputs). The
+    ``in``/``out`` port marker (``_input_node_id``/``_output_node_id``, ``build.py``) routes those to the IO
+    projection; every other ref (``port`` ``None``) scans for its node event as before.
     """
     trace_path = _resolve_trace(workflow_key, run_id)
     if trace_path is None:
         return None
+    port = ref.get("port")
+    if port in ("in", "out"):
+        return _io_detail(trace_path, ref, port)
     event = _read_matching_event(trace_path, ref)
     if event is None:
         return None
     return _project(event)
+
+
+def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | None:
+    """A past run's recorded inputs as form-ready token strings, for the re-run prefill (Task 175 Phase 5).
+
+    Reads the trace's ``meta.inputs`` (the Phase-1 keystone), OMITS sensitive-named keys
+    (``is_sensitive_parameter``) — a past run's resolved secret never reaches the browser; the form
+    re-resolves it from settings/env by name — and renders each remaining value via ``format_param_value``
+    (the inverse of the CLI's ``infer_type``: bools→``true``/``false``, list/dict→compact JSON, scalars→str),
+    so the tokens drop straight into the form's channel-A controls. ``None`` when no trace/run is found
+    (→ 404); ``{}`` for a run whose trace predates ``meta.inputs`` (graceful — the picker shows it with
+    nothing to prefill). ``meta.inputs`` is written un-interned, so its values carry no blob refs."""
+    from pflow.cli.param_parsing import format_param_value
+
+    trace_path = _resolve_trace(workflow_key, run_id)
+    if trace_path is None:
+        return None
+    lines = _read_trace_lines(trace_path)
+    if lines is None:
+        return None
+    inputs = (_line_of_kind(lines, "meta") or {}).get("inputs")
+    if not isinstance(inputs, dict):
+        return {}
+    return {
+        name: format_param_value(value)
+        for name, value in inputs.items()
+        # Skip sensitive-named keys (server-side secret redaction) AND None values: format_param_value(None)
+        # is the literal token "None", which infer_type would re-type to the STRING "None" on re-run — a
+        # silent value change from the original null. Omitting the key lets it re-resolve to its default,
+        # consistent with the form's blank-omission policy.
+        if isinstance(name, str) and value is not None and not is_sensitive_parameter(name)
+    }
 
 
 def _resolve_trace(workflow_key: str, run_id: str | None) -> Path | None:
@@ -62,48 +102,124 @@ def _resolve_trace(workflow_key: str, run_id: str | None) -> Path | None:
     return discover_live_trace(workflow_key)
 
 
-def _read_matching_event(path: Path, ref: dict[str, Any]) -> dict[str, Any] | None:
-    """Forward-scan the RAW JSONL lines for the LAST ``event`` whose ref matches, with blobs resolved.
+def _read_trace_lines(path: Path) -> list[dict[str, Any]] | None:
+    """The RAW JSONL lines of a trace, parsed, or ``None`` on a read error.
 
-    RAW lines, never ``load_trace_file`` (it strips ``ancestor_path``/``port`` — the join keys). Accumulate
-    the blob map from ``blob`` lines; track the last matching ``kind == "event"`` line — NOT ``node.start``:
-    the terminal ``event`` is emitted after its start (so last-wins picks the completion), and a
-    ``node.start`` carries no output to show. Last-wins also matches the overlay's per-ref semantics (a
-    loop's latest iteration; a dead-end re-flush correction). A single truncated FINAL line is a normal
-    mid-flush tail (skip, like ``load_trace_file``); a malformed EARLIER line is real corruption (raise —
-    "corrupt" must be visible, never silent-wrong). At EOF resolve blobs once (backward-only refs → one
-    forward pass is always correct); if a ``$pflow_blob`` sentinel survives (a missing/corrupt blob line)
-    the payload is unresolvable → ``None``, never the raw sentinel. A read error (deleted/permission/
-    transient IO on the file discovery resolved) also degrades to ``None`` (debug-logged).
+    RAW lines, never ``load_trace_file`` (it strips ``ancestor_path``/``port`` — the join keys the panel
+    needs). A single truncated FINAL line is a normal mid-flush tail (tolerated by ``_iter_trace_lines``);
+    a malformed EARLIER line is real corruption (raises — "corrupt" must be visible, never silent-wrong).
+    A read error (deleted / permission / transient IO after discovery resolved the path, or non-UTF-8
+    bytes — ``UnicodeDecodeError`` ⊄ ``OSError``, PR #543) degrades to ``None`` (→ 404) with a breadcrumb,
+    so a missing panel isn't silently indistinguishable from "this node didn't run".
 
-    Reads the whole file (like ``load_trace_file`` / ``generate_report``) rather than streaming: this is a
-    one-shot, on-demand read of ONE node — finding the LAST match needs a full scan anyway, and a trace is
-    modest. Don't reach for the tailer's incremental machinery here; the simplicity is the point."""
+    Reads the whole file (like ``load_trace_file`` / ``generate_report``) rather than streaming: these are
+    one-shot, on-demand reads, finding the LAST match / the meta+trailer needs a full scan anyway, and a
+    trace is modest. Don't reach for the tailer's incremental machinery here; the simplicity is the point."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        # The file resolved via discovery but couldn't be read back (permission / deleted mid-read /
-        # transient IO), or it's corrupt / non-UTF-8 bytes (UnicodeDecodeError ⊄ OSError — PR #543 review).
-        # Degrade to "no detail" (→ 404), but leave a breadcrumb so this isn't silently
-        # indistinguishable from "this node didn't run" if a user reports a missing panel.
         logger.debug("run_node_detail: could not read trace %s (%s) — treating as no detail", path, exc)
         return None
+    return list(_iter_trace_lines([ln for ln in text.splitlines() if ln.strip()]))
+
+
+def _blob_map(lines: list[dict[str, Any]]) -> dict[str, str]:
+    """The digest→content map from the trace's inline ``blob`` lines (backward-only refs → a single
+    forward accumulation always has a referenced blob in hand by the time a later line cites it)."""
     blob_map: dict[str, str] = {}
-    matched: dict[str, Any] | None = None
-    for line in _iter_trace_lines([ln for ln in text.splitlines() if ln.strip()]):
-        kind = line.get("kind")
-        if kind == "blob":
+    for line in lines:
+        if line.get("kind") == "blob":
             md5, value = line.get("md5"), line.get("value")
             if isinstance(md5, str) and isinstance(value, str):
                 blob_map[md5] = value
-        elif kind == "event" and _ref_matches(line, ref):
+    return blob_map
+
+
+def _line_of_kind(lines: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
+    """The first line of the given ``kind`` (``meta`` is line 1; ``run.complete`` is the trailer)."""
+    return next((line for line in lines if line.get("kind") == kind), None)
+
+
+def _read_matching_event(path: Path, ref: dict[str, Any]) -> dict[str, Any] | None:
+    """The LAST ``event`` line whose ref matches, with blobs resolved — or ``None``.
+
+    Track the last matching ``kind == "event"`` line — NOT ``node.start``: the terminal ``event`` is emitted
+    after its start (so last-wins picks the completion), and a ``node.start`` carries no output to show.
+    Last-wins also matches the overlay's per-ref semantics (a loop's latest iteration; a dead-end re-flush
+    correction). If a ``$pflow_blob`` sentinel survives blob resolution (a missing/corrupt blob line) the
+    payload is unresolvable → ``None``, never the raw sentinel."""
+    lines = _read_trace_lines(path)
+    if lines is None:
+        return None
+    matched: dict[str, Any] | None = None
+    for line in lines:
+        if line.get("kind") == "event" and _ref_matches(line, ref):
             matched = line  # last-wins
     if matched is None:
         return None
-    resolved = substitute_refs(matched, blob_map)
+    resolved = substitute_refs(matched, _blob_map(lines))
     if not isinstance(resolved, dict) or _contains_blob_sentinel(resolved):
         return None
     return resolved
+
+
+def _io_detail(path: Path, ref: dict[str, Any], port: str) -> dict[str, Any] | None:
+    """Project an IO node's run value (Task 175). Input → ``meta.inputs[name]``; output →
+    ``json_output["result"][name]`` — both bare-name-keyed, TOP-LEVEL values.
+
+    Top-level guard FIRST (load-bearing): a sub-workflow IO node carries a non-empty ``ancestor_path`` but
+    shares the bare name keyspace — without the guard, a sub-workflow ``url`` input would render the
+    TOP-LEVEL ``url``'s value. The direct keyed lookup bypasses the ``ancestor_path`` discriminator
+    ``_ref_matches`` gives a regular ref, so restore it explicitly. Redaction wraps the value under its
+    PORT NAME (``_redact({name: value})``) so a sensitive-NAMED port (``api_key``) is redacted — the bare
+    value alone has no key to match. Absent (sub-workflow, an input not in ``meta.inputs``, OR no
+    ``json_output`` — a text-mode or failed run) → ``None`` (the panel shows "no recorded value")."""
+    if ref.get("ancestor_path"):
+        return None
+    name = ref.get("node_id")
+    if not isinstance(name, str):
+        return None
+    lines = _read_trace_lines(path)
+    if lines is None:
+        return None
+    if port == "in":
+        meta = _line_of_kind(lines, "meta") or {}
+        inputs = meta.get("inputs")
+        if not isinstance(inputs, dict) or name not in inputs:
+            return None
+        value = substitute_refs(inputs[name], _blob_map(lines))
+        if _contains_blob_sentinel(value):
+            return None
+        return _io_shape("input", input_payload=_redact({name: value}), output=None)
+    # port == "out"
+    trailer = _line_of_kind(lines, "run.complete") or {}
+    json_output = trailer.get("json_output")
+    result = json_output.get("result") if isinstance(json_output, dict) else None
+    if not isinstance(result, dict) or name not in result:
+        return None
+    value = substitute_refs(result[name], _blob_map(lines))
+    if _contains_blob_sentinel(value):
+        return None
+    return _io_shape("output", input_payload={}, output=_redact({name: value})[name])
+
+
+def _io_shape(node_type: str, *, input_payload: dict[str, Any], output: Any) -> dict[str, Any]:
+    """Synthesize a ``RunNodeDetail``-valid shape for an IO node — it has no event (IO nodes don't
+    execute), so the execution fields are null. ``isRunNodeDetail`` (``client.ts``) requires a string
+    ``node_type`` + string ``status`` + ``input``/``output`` keys. ``node_type`` is the kind label
+    (``"input"``/``"output"`` — NOT a Python class name, so no allowlist concern); ``status`` is the
+    deliberate ``"recorded"`` (the value was recorded — at run start for an input, at completion for an
+    output — though the node itself never ran)."""
+    return {
+        "node_type": node_type,
+        "status": "recorded",
+        "duration_ms": None,
+        "cost_usd": None,
+        "tokens": None,
+        "error": None,
+        "input": input_payload,
+        "output": output,
+    }
 
 
 def _iter_trace_lines(raw_lines: list[str]) -> Iterator[dict[str, Any]]:

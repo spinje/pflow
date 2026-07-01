@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { fetchRunNode } from "../api/client";
 import { refKey } from "../graph/flow";
 import { CodeBlock } from "./CodeBlock";
+import { RunValue } from "./RunValue";
 import { StatusBadge, fmtCost, fmtDuration } from "./nodes/StatusBadge";
 import type { NodeStatus, RFRef, RunNodeDetail } from "../types";
 
@@ -67,7 +68,8 @@ function RunDetailBody({ detail }: { detail: RunNodeDetail }): JSX.Element {
   // "status" over the status value, and the duration (+ cost) where the description sits. `type` is dropped
   // — it's already the panel's top header. The status word stays white; the badge + glyph carry the color.
   const subtitle = [
-    fmtDuration(detail.duration_ms),
+    // duration_ms is null for an IO node (Task 175) — guard, else fmtDuration(null) prints a bogus "0ms".
+    detail.duration_ms != null ? fmtDuration(detail.duration_ms) : null,
     detail.cost_usd != null && detail.cost_usd > 0 ? fmtCost(detail.cost_usd) : null,
   ]
     .filter(Boolean)
@@ -119,25 +121,21 @@ function RunDetailBody({ detail }: { detail: RunNodeDetail }): JSX.Element {
   );
 }
 
-// One named payload value — a string renders as plain text, anything else as JSON; both in the panel's
-// scroll-capped `.read-param-value` <pre> (no truncation — large values scroll).
+// One named payload value — the value rendered by the shared RunValue (text-or-JSON, scroll-capped).
 function RunField({ name, value }: { name: string; value: unknown }): JSX.Element {
-  const isString = typeof value === "string";
   return (
     <div className="read-param">
       <div className="read-param-head">
         <span className="read-param-name">{name}</span>
       </div>
-      <CodeBlock code={isString ? value : JSON.stringify(value, null, 2)} lang={isString ? "text" : "json"} />
+      <RunValue value={value} />
     </div>
   );
 }
 
 function RunOutput({ output }: { output: Record<string, unknown> | string }): JSX.Element {
-  if (typeof output === "string") {
-    return <CodeBlock code={output} lang="text" />;
-  }
-  if (!Array.isArray(output)) {
+  // A top-level dict shows one named field per key; a string or array renders as a single value.
+  if (typeof output !== "string" && !Array.isArray(output)) {
     return (
       <>
         {Object.entries(output).map(([name, value]) => (
@@ -146,5 +144,5 @@ function RunOutput({ output }: { output: Record<string, unknown> | string }): JS
       </>
     );
   }
-  return <CodeBlock code={JSON.stringify(output, null, 2)} lang="json" />;
+  return <RunValue value={output} />;
 }

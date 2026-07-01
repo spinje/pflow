@@ -61,9 +61,16 @@ export function RunForm({
       {errors.length > 0 && (
         <div className="run-form-errors" role="alert">
           {errors.map((entry, i) => (
-            <p className="run-form-error" key={i}>
-              {entry.message ?? entry.title ?? "The run could not be started."}
-            </p>
+            <div className="run-form-error" key={i}>
+              <p className="run-form-error-msg">{entry.message ?? entry.title ?? "The run could not be started."}</p>
+              {/* the HOW-to-fix the pre-flight Diagnostic carries (e.g. "Available inputs: topic") — shown
+                  so the browser doesn't discard the fix hint the JSON already has. */}
+              {entry.suggestions?.map((s, j) => (
+                <p className="run-form-error-fix" key={j}>
+                  {s}
+                </p>
+              ))}
+            </div>
           ))}
         </div>
       )}

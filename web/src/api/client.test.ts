@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, fetchGraph, fetchRunNode, fetchSource, fetchVersion, runWorkflow } from "./client";
+import { ApiError, fetchGraph, fetchRunInputs, fetchRunNode, fetchSource, fetchVersion, runWorkflow } from "./client";
 import type { RunNodeDetail } from "../types";
 
 function mockFetch(status: number, body: unknown): void {
@@ -67,20 +67,30 @@ describe("fetchRunNode", () => {
 });
 
 describe("runWorkflow", () => {
-  it("POSTs {workflow, inputs} as application/json and resolves on a 200 spawn", async () => {
+  it("POSTs {workflow, inputs} as application/json and resolves with the spawned run id", async () => {
     const calls: Array<[string, RequestInit]> = [];
     globalThis.fetch = vi.fn(async (url: string, init: RequestInit) => {
       calls.push([String(url), init]);
-      return { ok: true, status: 200, json: async () => ({ status: "spawned" }) };
+      return { ok: true, status: 200, json: async () => ({ status: "spawned", run_id: "run-abc" }) };
     }) as unknown as typeof fetch;
 
-    await expect(runWorkflow("/wf.pflow.md", { name: "World", count: "3" })).resolves.toBeUndefined();
+    // Returns the run id (Task 175) so the caller can PIN the overlay to the exact run it spawned.
+    await expect(runWorkflow("/wf.pflow.md", { name: "World", count: "3" })).resolves.toBe("run-abc");
     const [url, init] = calls[0]!;
     expect(url).toBe("/api/run");
     expect(init.method).toBe("POST");
     // The application/json header is load-bearing for the server's no-CORS posture.
     expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
     expect(JSON.parse(init.body as string)).toEqual({ workflow: "/wf.pflow.md", inputs: { name: "World", count: "3" } });
+  });
+
+  it("throws ApiError when a 200 omits the run id (the pin needs it — don't silently resolve)", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "spawned" }),
+    })) as unknown as typeof fetch;
+    await expect(runWorkflow("/wf", {})).rejects.toBeInstanceOf(ApiError);
   });
 
   it("throws ApiError with the pre-flight diagnostics on a 400 (so the form shows them inline)", async () => {
@@ -94,6 +104,30 @@ describe("runWorkflow", () => {
   it("throws ApiError on a 404 unknown workflow", async () => {
     mockFetch(404, { errors: [{ message: "Workflow 'nope' not found." }] });
     await expect(runWorkflow("nope", {})).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("fetchRunInputs", () => {
+  it("GETs /api/run-inputs with workflow + run, and resolves the token-string map", async () => {
+    let calledUrl = "";
+    globalThis.fetch = vi.fn(async (url: string) => {
+      calledUrl = url;
+      return { ok: true, status: 200, json: async () => ({ name: "World", count: "3" }) };
+    }) as unknown as typeof fetch;
+    await expect(fetchRunInputs("/wf.pflow.md", "run-1")).resolves.toEqual({ name: "World", count: "3" });
+    expect(calledUrl).toContain("/api/run-inputs?");
+    expect(calledUrl).toContain("workflow=");
+    expect(calledUrl).toContain("run=run-1");
+  });
+
+  it("throws ApiError on a 404 (unknown workflow/run) for the panel's own catch", async () => {
+    mockFetch(404, { error: "No recorded inputs for the selected run." });
+    await expect(fetchRunInputs("/wf", "ghost")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("throws ApiError on a non-object 200 rather than feeding the form a bad shape", async () => {
+    mockFetch(200, ["not", "an", "object"]);
+    await expect(fetchRunInputs("/wf", "run-1")).rejects.toBeInstanceOf(ApiError);
   });
 });
 
