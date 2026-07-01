@@ -28,6 +28,10 @@ interface RailProps {
   focused: boolean;
   // The searchable subjects (steps + container hosts); null/empty hides search.
   searchNodes?: readonly RFNode[];
+  // Task 175: the ▶ launch control at the rail BOTTOM (distinct from the clock/
+  // RunSelector in the top slot). Present → the ▶ shows; toggles the Run panel.
+  onRun?: () => void;
+  runPanelOpen?: boolean;
   onSourceOpen?: (open: boolean) => void;
   onCollapseAll: () => void;
   onExpandAll: () => void;
@@ -72,9 +76,10 @@ export function Rail(props: RailProps): JSX.Element | null {
   const groupsExpanded = props.openCount > 0;
 
   // Nothing to offer (e.g. the error state) → no empty capsule. The back nav
-  // lives in the Toolbar, so the rail is purely the run control + search + contextual toggles + focus.
+  // lives in the Toolbar, so the rail is purely the run control + search + contextual toggles + focus + ▶.
   const showRun = Boolean(props.runControl);
-  if (!showRun && !showSearch && !showSource && !showGroups && !props.focused) return null;
+  const showPlay = Boolean(props.onRun);
+  if (!showRun && !showSearch && !showSource && !showGroups && !props.focused && !showPlay) return null;
 
   return (
     <nav className="rail" aria-label="Workflow controls">
@@ -126,6 +131,19 @@ export function Rail(props: RailProps): JSX.Element | null {
               <circle cx="12" cy="12" r="9" />
               <line x1="9" y1="9" x2="15" y2="15" />
               <line x1="15" y1="9" x2="9" y2="15" />
+            </svg>
+          </RailButton>
+        </>
+      )}
+
+      {showPlay && (
+        // The ▶ launch control, anchored at the rail BOTTOM (Task 175 placement
+        // decision): a separate, deliberate trigger — NOT folded into the clock.
+        <>
+          {(showRun || showSearch || showSource || showGroups || props.focused) && <div className="rail-sep" />}
+          <RailButton label="Run workflow" active={props.runPanelOpen} onClick={props.onRun!}>
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <path d="M8 5v14l11-7z" />
             </svg>
           </RailButton>
         </>

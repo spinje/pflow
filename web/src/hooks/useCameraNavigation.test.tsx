@@ -44,6 +44,7 @@ const makeProps = (over: Partial<Args> = {}): Args => ({
   setFocus: vi.fn(),
   setSelectedId: vi.fn(),
   clearHover: vi.fn(),
+  suppressInitialFit: false,
   ...over,
 });
 
@@ -300,5 +301,38 @@ describe("useCameraNavigation", () => {
 
     rerender({ ...props, direction: "TD" });
     expect(fitViewSpy).toHaveBeenCalledTimes(2);
+  });
+
+  // The ?run= deep-link: the run callout frames the initial camera on its anchor, so the camera hook must
+  // skip its ONE competing whole-graph mount-fit (else the parent's fit wins and the box renders tiny).
+  describe("suppressInitialFit (?run= deep-link)", () => {
+    it("skips the whole-graph mount-fit so the run callout can frame the camera uncontested", () => {
+      rf.renderedIds = ["n1"];
+      renderHook((p: Args) => useCameraNavigation(p), { initialProps: makeProps({ suppressInitialFit: true }) });
+      expect(fitViewSpy).not.toHaveBeenCalled();
+    });
+
+    it("still does the whole-graph fit when NOT a deep-link (default behavior preserved)", () => {
+      rf.renderedIds = ["n1"];
+      renderHook((p: Args) => useCameraNavigation(p), { initialProps: makeProps({ suppressInitialFit: false }) });
+      expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ padding: 0.2 }));
+    });
+
+    it("is ONE-SHOT — a later direction flip re-fits normally", () => {
+      rf.renderedIds = ["n1"];
+      const props = makeProps({ suppressInitialFit: true });
+      const { rerender } = renderHook((p: Args) => useCameraNavigation(p), { initialProps: props });
+      expect(fitViewSpy).not.toHaveBeenCalled(); // initial fit suppressed
+      rerender({ ...props, direction: "TD" }); // new fitKey → the suppress is spent
+      expect(fitViewSpy).toHaveBeenCalledWith(expect.objectContaining({ padding: 0.2 }));
+    });
+
+    it("does NOT suppress when an explicit ?node= is present (node framing was explicitly asked for)", () => {
+      rf.renderedIds = ["n1"];
+      renderHook((p: Args) => useCameraNavigation(p), {
+        initialProps: makeProps({ suppressInitialFit: true, initialView: { ...DEFAULT_VIEW, node: "n1" } }),
+      });
+      expect(fitViewSpy).toHaveBeenCalled(); // the `!nodeParam` guard lets the node-fit through
+    });
   });
 });

@@ -75,6 +75,11 @@ or user-launched runs sit there too, named by workflow + timestamp. So
 `?workflow=<path>&run=<execution_id>` re-opens that exact run for the user; omit `&run=` to
 follow the newest.
 
+You don't have to hand-craft that URL: **`pflow ui <workflow> --run <execution_id>`** opens the run
+for the user — and it's smart about an already-open window. If the user already has that workflow
+open, it *switches that window* to the run (no duplicate tab); if not, it opens a fresh window pinned
+to it. So one command does the right thing whether or not the Viewer is already up.
+
 ## `pflow mermaid` — Mermaid diagram text (niche)
 
 Emits a Mermaid flowchart of the workflow to stdout. Use this ONLY when the user

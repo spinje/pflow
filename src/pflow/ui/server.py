@@ -17,6 +17,12 @@ Endpoints:
 - ``POST /api/command`` — validate and broadcast an agent Point command.
 - ``POST /api/interaction`` — record one deliberate Viewer interaction.
 - ``POST /api/visibility`` — update a Viewer's visible/backgrounded state.
+- ``POST /api/run`` — spawn a detached ``pflow run`` for a resolved workflow +
+  inputs (Task 175). The server stays a pure observer; the spawned run writes its
+  own streaming trace that the tailer/overlay pick up. No in-process execution.
+- ``GET /api/run-inputs?workflow=<name|path>&run=<id>`` — a past run's recorded
+  inputs as form-ready token strings, for the Run panel's re-run prefill (Task 175).
+  ``meta.inputs`` with sensitive-named keys omitted (server-side redaction).
 - ``GET /api/activity`` — read a newest-first snapshot of recent interactions.
 - ``/`` (+ assets) — the built frontend bundle, when present. Absent in a
   source checkout (the bundle is gitignored, built by ``make ui-build``); the
@@ -43,8 +49,12 @@ import hashlib
 import itertools
 import json
 import logging
+import os
+import subprocess
+import sys
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
@@ -52,11 +62,15 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
+from pflow.core.diagnostic import exception_to_diagnostics
+from pflow.core.exceptions import PflowError
 from pflow.core.workflow.graph import render_react_flow
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.graph_service import (
@@ -65,7 +79,7 @@ from pflow.execution.graph_service import (
 )
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
-from pflow.ui.run_node import run_node_detail
+from pflow.ui.run_node import read_run_inputs, run_node_detail
 from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, scan_traces
 from pflow.ui.targets import resolve_target
 
@@ -415,6 +429,51 @@ def _workflow_not_found(value: str) -> Response:
     )
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _host_is_local(host: str) -> bool:
+    """True if the ``Host`` header names loopback. A real browser/CLI talking to the loopback server always
+    sends ``127.0.0.1``/``localhost``/``::1`` (optionally ``:port``, or an IPv6 literal in brackets). Strip
+    the port, unwrap an ``[::1]`` bracket, and membership-check the loopback set; a bare IPv6 like ``::1``
+    (multiple colons, no brackets) is kept whole."""
+    if host.startswith("["):  # IPv6 literal, e.g. "[::1]:8765" → "::1"
+        hostname = host[1:].partition("]")[0]
+    else:  # strip a trailing :port only when there's exactly one colon (bare IPv6 like "::1" has more)
+        hostname = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    return (
+        hostname.lower() in _LOOPBACK_HOSTS
+    )  # host names are case-insensitive (a non-normalizing client may send "LocalHost")
+
+
+class _LoopbackOnly:
+    """Reject any request whose ``Host`` header isn't loopback — the DNS-rebinding guard, on EVERY route.
+
+    The server binds ``127.0.0.1`` and sends no CORS headers, which blocks a cross-origin page from READING
+    responses — but a DNS-rebinding attack points an attacker domain at ``127.0.0.1`` so the browser sends
+    same-origin requests the server would otherwise honor (and can READ, defeating the no-CORS defense).
+    Pinning ``Host`` to loopback closes that gap. Applied as middleware — a property of the SERVER, not of
+    each handler — so it covers reads (``/api/source`` etc.) as well as mutating POSTs, and every future
+    endpoint by default; there is no "route it through ``_json_body``" invariant to remember.
+
+    Pure ASGI, NOT ``BaseHTTPMiddleware`` (load-bearing): it must not wrap the long-lived ``/api/events``
+    SSE stream. It either short-circuits a non-loopback request with ``403`` or delegates untouched, so the
+    stream flows normally."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not _host_is_local(Headers(scope=scope).get("host", "")):
+            response = _json(
+                {"error": "Refused: this server accepts loopback requests only (non-local Host)."},
+                status_code=403,
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 async def _json_body(request: Request) -> dict[str, object] | Response:
     content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
     if content_type != "application/json":
@@ -537,9 +596,9 @@ async def command(request: Request) -> Response:
 
     workflow = _string_field(body, "workflow")
     command_type = _string_field(body, "type")
-    if workflow is None or command_type not in {"focus", "frame", "clear"}:
+    if workflow is None or command_type not in {"focus", "frame", "clear", "select-run"}:
         return _json(
-            {"error": "Fields 'workflow' and type ('focus', 'frame', or 'clear') are required."},
+            {"error": "Fields 'workflow' and type ('focus', 'frame', 'clear', or 'select-run') are required."},
             status_code=400,
         )
     workflow_key = _workflow_key(workflow)
@@ -553,6 +612,16 @@ async def command(request: Request) -> Response:
     target = _string_field(body, "target")
     if target is None:
         return _json({"error": f"Command type {command_type!r} requires a non-empty target."}, status_code=400)
+
+    # select-run (Task 175): the run id rides in `target` and is a PASS-THROUGH — NOT a graph target, so it
+    # skips resolve_target entirely (a run isn't a node/edge). The browser's selectRun applies it (honoring
+    # its own re-pick guard); a stale/unknown id surfaces the frontend's run-not-found path in the open
+    # Viewer, never a server error — so no server-side run validation. Placed AFTER `target` is read (unlike
+    # `clear`, which returns before it) since the id lives in `target`.
+    if command_type == "select-run":
+        conns = hub.broadcast(workflow_key, {"type": "select-run", "run": target})
+        return _json(_dispatch_report(workflow_key, conns))
+
     try:
         # Validation/build can recurse through large nested workflows. Keep it
         # off the hub's event loop so SSE sends, disconnect cleanup, and
@@ -621,6 +690,97 @@ async def visibility(request: Request) -> Response:
     hub: _Hub = request.app.state.hub
     hub.set_visibility(conn_id, state)
     return Response(status_code=204)
+
+
+def _preflight(workflow_key: str, tokens: tuple[str, ...]) -> None:
+    """Compile EXACTLY what the spawn will run — off the event loop (run via ``asyncio.to_thread``).
+
+    The whole point: convert the silent *pre-trace-failure class* (a run that dies before it writes its
+    ``meta`` line shows nothing on the overlay) into a clean ``400`` at the endpoint. ``compile_workflow``
+    runs ``prepare_inputs`` internally (the same 5-tier input resolution + missing-required check the real
+    run does) AND instantiates every node, so a missing required input, an unknown node type, or a bad
+    param all surface here. We don't reuse the displayed tab's graph — an auto-update may have edited the
+    file, or an agent may POST directly — so we re-resolve from disk. A fresh ``Registry`` per compile is
+    the project rule (``runner`` does the same). Raises ``PflowError`` on any pre-trace failure; the
+    handler maps it to ``400`` with diagnostics."""
+    from pflow.cli.param_parsing import parse_workflow_params
+    from pflow.runtime import compile_workflow
+
+    resolved = resolve_workflow(workflow_key)
+    typed_params = parse_workflow_params(tokens)  # infer_type per token — channel A (form == CLI)
+    compile_workflow(resolved.ir, Registry(), initial_params=typed_params)
+
+
+async def run(request: Request) -> Response:
+    """Spawn a DETACHED ``pflow run`` for a resolved workflow + inputs (Task 175).
+
+    The server stays a pure observer (ADR-0008): it spawns the normal CLI as a detached subprocess that
+    writes its own streaming trace; the existing tailer discovers it and the overlay lights it up live.
+    No in-process execution, no per-run process state. The only new mutation is this one spawn."""
+    body = await _json_body(
+        request
+    )  # content-type + JSON-object enforcement (loopback Host is the _LoopbackOnly middleware)
+    if isinstance(body, Response):
+        return body
+
+    workflow = _string_field(body, "workflow")
+    if workflow is None:
+        return _json(
+            {"error": "Field 'workflow' (a saved name or .pflow.md path) is required."},
+            status_code=400,
+        )
+
+    inputs = body.get("inputs", {})
+    if not isinstance(inputs, dict) or not all(
+        isinstance(name, str) and isinstance(value, str) for name, value in inputs.items()
+    ):
+        return _json(
+            {"error": "Field 'inputs' must be an object mapping input names to string values."},
+            status_code=400,
+        )
+
+    # Resolve by name/path only — NEVER accept inline workflow content (a POSTed graph would bypass the
+    # save/validate path the rest of the server trusts).
+    key = _workflow_key(workflow)
+    if key is None:
+        return _workflow_not_found(workflow)
+
+    # One argv element per input — no shell, so a value with spaces/`;`/`&` is a single unparsed token
+    # (injection-safe). This is channel A: the form's token strings ARE the CLI's `name=value` args.
+    tokens = [f"{name}={value}" for name, value in inputs.items()]
+
+    # Pre-flight the FULL compile off the event loop (invariant: CPU/disk work never blocks the hub loop).
+    try:
+        await asyncio.to_thread(_preflight, key, tuple(tokens))
+    except PflowError as exc:
+        return _json({"errors": [d.to_dict() for d in exception_to_diagnostics(exc)]}, status_code=400)
+
+    # Task 175: mint the run's execution_id HERE and force it onto the spawned run (via PFLOW_EXECUTION_ID),
+    # then return it — so the browser can PIN the overlay to the exact run it just spawned instead of
+    # follow-newest (which reverts to an older still-live run when this one finishes). The child's CLI pops
+    # the env var into RunnerConfig.execution_id (so a node that re-shells `pflow` can't inherit + collide).
+    run_id = str(uuid.uuid4())
+
+    # Spawn DETACHED via subprocess.Popen — NOT asyncio.create_subprocess_exec (load-bearing): asyncio's
+    # subprocess transport finalizer calls _proc.kill() on a still-running child, so closing `pflow ui`
+    # would SIGKILL an in-flight run — the exact coupling ADR-0008 forbids. Popen returns immediately
+    # after fork/exec and we retain NO handle: the child reparents to init, finished prior children are
+    # reaped by subprocess._cleanup() on the next spawn. `--output-format json` makes the run record its
+    # `json_output` result (for Phase 4 output inspection); stdout is DEVNULL'd (nobody reads it). The
+    # child inherits the server's CWD + re-injects settings.env at startup, so it resolves exactly like a
+    # hand-typed `pflow run` from the shell that launched `pflow ui`. We invoke `-m pflow.cli` (NOT
+    # `-m pflow`): `pflow` is a package with no `__main__.py`, so `python -m pflow` errors; `pflow.cli` is
+    # the package's documented module entry (`cli/__main__.py` → `cli_main`, same target as the `pflow`
+    # console script) and runs against the server's own interpreter.
+    subprocess.Popen(  # noqa: S603 — argv list, no shell; tokens are injection-safe (one element each)
+        [sys.executable, "-m", "pflow.cli", "run", key, "--output-format", "json", *tokens],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env={**os.environ, "PFLOW_EXECUTION_ID": run_id},
+    )
+    return _json({"status": "spawned", "run_id": run_id})
 
 
 async def activity(request: Request) -> Response:
@@ -765,6 +925,29 @@ def run_node(request: Request) -> Response:
     return _json(detail)
 
 
+def run_inputs(request: Request) -> Response:
+    """A past run's inputs as form-ready token strings, for the Run panel's re-run prefill (Task 175).
+
+    ``GET /api/run-inputs?workflow=X&run=<id>`` → ``{ "<name>": "<token-string>" }`` — the run's
+    ``meta.inputs`` with sensitive-named keys OMITTED (server-side redaction: a past run's resolved secret
+    never reaches the browser) and each value rendered back to its CLI token. A read-only GET of trace
+    content, same exposure class as ``/api/run-node`` (a sync handler — threadpooled, touches no hub state).
+    ``400`` on a missing ``workflow``; ``404`` on an unresolvable workflow or no matching run."""
+    workflow = request.query_params.get("workflow")
+    if not workflow:
+        return _json({"error": "A 'workflow' query param is required."}, status_code=400)
+    workflow_key = _workflow_key(workflow)
+    if workflow_key is None:
+        return _workflow_not_found(workflow)
+    run_id = request.query_params.get("run") or None
+    tokens = read_run_inputs(workflow_key, run_id)
+    if tokens is None:
+        # None means the run wasn't found (a run that predates meta.inputs resolves to {} at 200), so name
+        # the missing RUN — not "no inputs" — else a reader debugging a stale ?run= looks for the wrong cause.
+        return _json({"error": f"No run {run_id!r} was found for this workflow."}, status_code=404)
+    return _json(tokens)
+
+
 class _BundleFiles(StaticFiles):
     """StaticFiles that makes ``index.html`` revalidate on every load.
 
@@ -813,10 +996,12 @@ def create_app() -> Starlette:
         Route("/api/events", events),
         Route("/api/runs", runs),
         Route("/api/run-node", run_node),
+        Route("/api/run-inputs", run_inputs),
         Route("/api/health", health),
         Route("/api/command", command, methods=["POST"]),
         Route("/api/interaction", interaction, methods=["POST"]),
         Route("/api/visibility", visibility, methods=["POST"]),
+        Route("/api/run", run, methods=["POST"]),
         Route("/api/activity", activity),
     ]
     if (_STATIC_DIR / "index.html").exists():
@@ -825,17 +1010,21 @@ def create_app() -> Starlette:
         routes.append(Route("/{path:path}", _frontend_not_built))
     # SECURITY (load-bearing — do NOT add CORSMiddleware without re-evaluating):
     # the server binds 127.0.0.1 (cli/commands/ui.py) and sets NO CORS headers.
-    # `/api/graph?workflow=<path>` reads arbitrary filesystem paths, and a
-    # resolution failure returns a 422 whose diagnostics may echo a source line.
-    # With no `Access-Control-Allow-Origin`, a browser blocks any cross-origin
-    # page from READING that response — so a malicious site can't exfiltrate
-    # workflow/file contents via the local user's browser. Mutating POSTs require
-    # `Content-Type: application/json`, forcing a cross-origin preflight that
-    # fails without CORS; EventSource likewise cannot read commands cross-origin.
-    # The worst write is benign UI state (focus/frame/clear in the user's own
-    # Viewer), never a file/system mutation. Any future mutating or live-run
-    # endpoint must revisit this exposure.
+    # `/api/graph?workflow=<path>` reads arbitrary filesystem paths and `/api/source`
+    # returns raw `.pflow.md` text, so responses can carry workflow/file contents.
+    # With no `Access-Control-Allow-Origin`, a browser blocks a cross-origin page
+    # from READING those responses, and mutating POSTs require `application/json`
+    # (a cross-origin preflight that fails without CORS). The one way past both is
+    # DNS rebinding (an attacker domain re-pointed at 127.0.0.1 → the browser sends
+    # SAME-origin requests it can also read) — CLOSED for reads AND writes by the
+    # `_LoopbackOnly` middleware below: a `Host`-header loopback check on EVERY
+    # route. Because it's middleware (not a per-handler call), a new endpoint is
+    # covered by default — no "must route through `_json_body`" invariant to forget.
+    # `/api/run` (Task 175) spawns a detached `pflow run` behind this same posture:
+    # a resolvable name/path only (never inline content), the normal CLI spawned, no
+    # in-process execution.
     app = Starlette(routes=routes)
+    app.add_middleware(_LoopbackOnly)
     app.state.hub = _Hub()
     return app
 

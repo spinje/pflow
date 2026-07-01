@@ -309,7 +309,9 @@ def test_ref_mirrors_node_id_with_explicit_batch_index_and_port() -> None:
     # Synthetic input node carries its IO role as `port`.
     text_input = _rf_node(rf, "text", (AncestorStep("reviews", 0),))
     assert text_input.ref.port == "in"
-    assert text_input.io == {"data_type": "string", "required": True, "default": None}
+    # Input nodes carry the Task-175 `sensitive` flag (renderer seam, input-only);
+    # `text` is not a sensitive-named input → False.
+    assert text_input.io == {"data_type": "string", "required": True, "default": None, "sensitive": False}
 
 
 def test_dynamic_batch_ref_carries_null_batch_index() -> None:
@@ -334,6 +336,37 @@ def test_dynamic_batch_ref_carries_null_batch_index() -> None:
 
     work = _rf_node(rf, "work", (AncestorStep("proc", None),))
     assert work.ref.ancestor_path == [{"node_id": "proc", "batch_index": None}]
+
+
+def test_input_io_carries_sensitive_flag_outputs_never_do() -> None:
+    # Task 175: the renderer attaches `sensitive` (is_sensitive_parameter, by NAME)
+    # to INPUT nodes' io only — it drives the run form's "from settings/env" hint.
+    # It must NOT leak onto outputs (asdict on the IOPort dataclass would have).
+    graph = build_graph({
+        "inputs": {
+            "api_key": {"type": "string"},  # sensitive name → True
+            "topic": {"type": "string"},  # normal name → False
+        },
+        "nodes": [{"id": "gen", "type": "code", "params": {"code": 'result = "x"'}}],
+        "outputs": {"secret_token": {"source": "${gen.result}"}},  # sensitive NAME, but an output
+    })
+    rf = render_react_flow(graph)
+
+    assert _rf_node(rf, "api_key").io == {
+        "data_type": "string",
+        "required": True,
+        "default": None,
+        "sensitive": True,
+    }
+    assert _rf_node(rf, "topic").io is not None
+    assert _rf_node(rf, "topic").io["sensitive"] is False
+    # An output whose name WOULD be sensitive still ships no `sensitive` key — the
+    # flag is input-only, so the frontend never mistakes an output for a secret field.
+    secret_out = _rf_node(rf, "secret_token")
+    assert secret_out.ref.port == "out"
+    assert secret_out.io is not None
+    assert "sensitive" not in secret_out.io
+    json.dumps(asdict(rf), default=str)  # the whole payload stays JSON-round-trippable
 
 
 # ── Derived predicates baked as facts ─────────────────────────────────────────

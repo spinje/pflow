@@ -537,6 +537,7 @@ class WorkflowTraceCollector:
         is_run_scoped: bool = False,
         stream_to_disk: bool = False,
         content_hash: str | None = None,
+        execution_id: str | None = None,
     ):
         """Initialize the trace collector.
 
@@ -580,12 +581,19 @@ class WorkflowTraceCollector:
                 Defaults to ``None`` so the per-sub-workflow buffer collector and
                 all test fixtures construct unchanged; an old trace (or a run
                 that didn't supply it) simply has no fingerprint → "can't verify".
+            execution_id: Force the run's id instead of minting a fresh UUID (Task
+                175). The ``pflow ui`` ▶ launch mints the id server-side and threads
+                it here (via ``RunnerConfig`` ← ``PFLOW_EXECUTION_ID``) so the browser
+                can PIN the overlay to the exact run it just spawned — otherwise the
+                detached child mints its own id and the form can only follow-newest
+                (which reverts to an older still-live run when the new one finishes).
+                Defaults to ``None`` → mint a UUID (every other run path).
         """
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
         self.content_hash = content_hash
         self.is_run_scoped = is_run_scoped
-        self.execution_id = str(uuid.uuid4())
+        self.execution_id = execution_id or str(uuid.uuid4())
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
         # Task 172 step 3: per-event streaming state (run-scoped + stream_to_disk only). The stream opens
@@ -623,6 +631,13 @@ class WorkflowTraceCollector:
         # which excludes the trace as a snapshot source (it records only the
         # target, not a coherent full-run upstream).
         self.only_node: str | None = None
+        # Task 175: the run's resolved top-level input values, known at run start
+        # (the values seeded into the shared store before any node executes). The
+        # Runner stamps this on the ROOT collector BEFORE ``engine.run()`` so the
+        # eager ``meta`` line carries it. Stored RAW on disk (same exposure class
+        # as ``node_params``); redaction happens on read. ``None`` until stamped,
+        # ``{}`` for a no-input workflow.
+        self.inputs: dict[str, Any] | None = None
 
     def record_node_execution(
         self,
@@ -954,6 +969,7 @@ class WorkflowTraceCollector:
             "start_time": self.start_time.isoformat(),
             "only_node": self.only_node,
             "content_hash": self.content_hash,
+            "inputs": self.inputs,
         }
 
     def _aggregates(self) -> dict[str, Any]:
@@ -968,6 +984,10 @@ class WorkflowTraceCollector:
         agg: dict[str, Any] = {
             "end_time": datetime.now().isoformat(),
             "duration_ms": round(duration_ms, 2),
+            # The run's id on the run.complete trailer too (it's on the meta line as well) — so a live-overlay
+            # consumer tailing only the trailer learns which run finished without re-reading the head (Task 175
+            # run callout shows it). Small string; unlike json_output/warnings it's wire-safe.
+            "execution_id": self.execution_id,
             "final_status": final_status,
             "nodes_executed": len(self._top_level_events()),
             "nodes_failed": len(failed_node_ids),

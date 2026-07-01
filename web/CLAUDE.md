@@ -101,8 +101,11 @@ Tests sit beside their subject.
 - **Overlay seam (Task 173, shipped).** Node `data` keeps static structure separate from the
   live `status` prop (`LeafData/GroupData.status`, set by `applyStatus`); it renders as the
   corner `StatusBadge` (NOT a border ring, NOT a ChipRail chip — both retired). `api/events.ts`
-  owns the vocabulary-agnostic SSE envelope (Point + `run-*` message types). Every React Flow
-  component the registries reference must be `memo()`'d.
+  owns the vocabulary-agnostic SSE envelope (Point verbs `focus`/`frame`/`clear` + `select-run`, plus
+  the `run-*` overlay messages). `select-run` (Task 175) routes through the `pointHandlers.current` ref
+  to `GraphView`'s `selectRun` — the SAME pin path the RunSelector + launch use — so the agent can switch
+  an open Viewer to a run; add new SSE verbs on this ref, never in the subscribe effect's deps. Every React
+  Flow component the registries reference must be `memo()`'d.
 - **Chrome palette is SCOPED, never `:root`.** The dark UI tokens (`--bg/--border/--text/
   --accent/--bg-field`, surface ladder `#0d0d0d` void < `#151515` panel < `#1c1c1c` field) are
   redefined on the chrome containers (`.toolbar/.read-panel/.source-pane/.catalog/.banner/

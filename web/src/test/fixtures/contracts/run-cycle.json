@@ -13,7 +13,8 @@
       "io": {
         "data_type": "string",
         "required": false,
-        "default": "main"
+        "default": "main",
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -41,7 +42,8 @@
       "io": {
         "data_type": "integer",
         "required": false,
-        "default": 5
+        "default": 5,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -454,7 +456,8 @@
       "io": {
         "data_type": "object",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -487,7 +490,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -520,7 +524,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,

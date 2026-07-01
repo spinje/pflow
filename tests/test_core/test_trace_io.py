@@ -235,6 +235,27 @@ def test_flatten_reconstruct_round_trip() -> None:
     assert reconstruct_trace_from_lines(flatten_trace_to_lines(trace)) == trace
 
 
+def test_inputs_routes_to_meta_line_not_trailer() -> None:
+    # Task 175: `inputs` is in META_KEYS, so the fixture builder routes it onto the `meta` line (line 1),
+    # NOT the `run.complete` trailer — matching where the real producer (`_meta_fields`) writes it. This
+    # is the test-fidelity pin: a Phase-4/5 fixture built via write_trace_jsonl({..., "inputs": {...}})
+    # must place `inputs` where the IO-projection readers look (the meta line), or they read the wrong line.
+    trace = {
+        "format_version": "2.5.0",
+        "execution_id": "r",
+        "inputs": {"name": "World", "count": 3},
+        "nodes": [{"node_id": "a", "success": True}],
+    }
+    lines = flatten_trace_to_lines(trace)
+    meta = lines[0]
+    run_complete = next(ln for ln in lines if ln["kind"] == "run.complete")
+    assert meta["kind"] == "meta"
+    assert meta["inputs"] == {"name": "World", "count": 3}
+    assert "inputs" not in run_complete  # NOT in the trailer
+    # additive meta field round-trips back to top level
+    assert reconstruct_trace_from_lines(lines)["inputs"] == {"name": "World", "count": 3}
+
+
 def test_load_trace_file_round_trips_jsonl_from_disk(tmp_path: Path) -> None:
     trace = _nested_trace_with_all_shapes(_large_text())
     path = tmp_path / "workflow-trace-x.json"

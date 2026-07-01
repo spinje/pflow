@@ -113,6 +113,32 @@ export async function fetchRuns(workflow?: string): Promise<RunInfo[]> {
   return body as RunInfo[];
 }
 
+/** Spawn a detached `pflow run` for `workflow` with `inputs` (Task 175). `inputs`
+ *  values are TOKEN STRINGS — they become the CLI's `name=value` argv verbatim
+ *  (channel A: the spawned run's infer_type + declared-type coercion re-type them).
+ *  Resolves with the spawned run's `run_id` (Task 175 — the server mints it so the
+ *  caller can PIN the overlay to the exact run, not follow-newest); throws ApiError on
+ *  a 400 (malformed body OR a pre-flight failure carrying actionable diagnostics in
+ *  `.errors`) / 404 (unknown workflow), so the form surfaces the diagnostics inline
+ *  (DR-6) — never blanks the canvas. Uses this typed-error client (not the
+ *  fire-and-forget events.ts POSTs); the application/json header is load-bearing for
+ *  the server's no-CORS posture. */
+export async function runWorkflow(workflow: string, inputs: Record<string, string>): Promise<string> {
+  const response = await fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workflow, inputs }),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+  const body = (await response.json()) as { run_id?: unknown };
+  if (typeof body.run_id !== "string") {
+    throw new ApiError(response.status, [{ message: "The server did not return a run id for the launch." }]);
+  }
+  return body.run_id;
+}
+
 function isRunNodeDetail(value: unknown): value is RunNodeDetail {
   if (!value || typeof value !== "object") return false;
   const d = value as Record<string, unknown>;
@@ -135,4 +161,21 @@ export async function fetchRunNode(workflow: string, runId: string | null, ref: 
     throw new ApiError(response.status, [{ message: "The server returned an unexpected run-node shape." }]);
   }
   return body;
+}
+
+/** A past run's recorded inputs as form-ready TOKEN STRINGS, for the Run panel's re-run prefill (Task 175).
+ *  `{ "<name>": "<token>" }` — the run's `meta.inputs` with sensitive-named keys OMITTED server-side (a past
+ *  run's resolved secret never reaches the browser) and each value rendered back to its CLI token. The
+ *  caller (RunPanel) owns its catch (DR-6): a failed prefill leaves the current values, never blanks the
+ *  form. `404` (unknown workflow/run) throws ApiError; an older trace with no recorded inputs resolves `{}`. */
+export async function fetchRunInputs(workflow: string, runId: string): Promise<Record<string, string>> {
+  const response = await fetch(`/api/run-inputs?${new URLSearchParams({ workflow, run: runId }).toString()}`);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+  const body = (await response.json()) as unknown;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ApiError(response.status, [{ message: "The server returned an unexpected run-inputs shape." }]);
+  }
+  return body as Record<string, string>;
 }

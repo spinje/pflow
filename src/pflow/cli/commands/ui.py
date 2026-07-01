@@ -76,15 +76,19 @@ def _viewer_url(port: int, workflow: str, *, focus: str | None = None) -> str:
     return f"http://{_HOST}:{port}/?{urlencode(query)}"
 
 
-def _serve_url(port: int, workflow: str | None, no_auto_update: bool) -> str:
+def _serve_url(port: int, workflow: str | None, no_auto_update: bool, run: str | None = None) -> str:
     """The browser URL ``serve`` opens — for both a fresh start and a reuse-existing.
 
     ``no_auto_update`` appends the private ``watch=0`` param that freezes the live
     source poll, so a reused tab honors ``--no-auto-update`` just like a fresh start.
+    ``run`` appends ``?run=<id>`` (Task 175) so the opened tab pins/replays that run —
+    the same contract the frontend reads at mount.
     """
     query: dict[str, str] = {}
     if workflow:
         query["workflow"] = workflow
+    if run:
+        query["run"] = run
     if no_auto_update:
         query["watch"] = "0"
     return f"http://{_HOST}:{port}/" + (f"?{urlencode(query)}" if query else "")
@@ -403,6 +407,7 @@ def ui_cmd(ctx: click.Context) -> None:
     default=False,
     help="Freeze the view: don't live-update when the .pflow.md source changes.",
 )
+@click.option("--run", "run", default=None, help="Open the Viewer pinned to a past run's id (replay it).")
 @click.pass_context
 def serve_cmd(
     ctx: click.Context,
@@ -410,8 +415,18 @@ def serve_cmd(
     port: int,
     no_open: bool,
     no_auto_update: bool,
+    run: str | None,
 ) -> None:
-    """Open a browser canvas and serve it until Ctrl+C."""
+    """Open a browser canvas and serve it until Ctrl+C.
+
+    ``--run <id>`` opens the Viewer pinned to that past run (Task 175). If a Viewer of this workflow is
+    already live, it SWITCHES that window to the run (a select-run broadcast) instead of opening a
+    duplicate tab; otherwise it opens a fresh pinned tab. ``<id>`` is the run's ``execution_id``.
+    """
+    if run and not workflow:
+        click.echo("`--run <id>` needs a workflow: `pflow ui <workflow> --run <id>`.", err=True)
+        ctx.exit(1)
+        return
     try:
         import starlette  # noqa: F401
         import uvicorn
@@ -434,7 +449,17 @@ def serve_cmd(
             # missing workflow. Send an absolute path for a path-like arg; a saved
             # NAME resolves via the registry regardless of cwd, so leave it untouched.
             reuse_workflow = str(Path(workflow).resolve()) if workflow and Path(workflow).exists() else workflow
-            url = _serve_url(port, reuse_workflow, no_auto_update)
+            # Smart --run (Task 175): if a Viewer of THIS workflow is already live, SWITCH it to the run via
+            # a select-run broadcast rather than opening a duplicate tab. windows>0 = an SSE-connected
+            # Viewer exists for reuse_workflow. Otherwise fall through to open a fresh pinned tab below.
+            if run and reuse_workflow:
+                health = _probe_health(port, reuse_workflow)
+                if health is not None and _int_field(health, "windows") > 0:
+                    _point_request(ctx, port, reuse_workflow, "select-run", run, output_json=False)
+                    click.echo(f"pflow UI already showing {reuse_workflow} — switched it to run {run}", err=True)
+                    ctx.exit(0)
+                    return
+            url = _serve_url(port, reuse_workflow, no_auto_update, run=run)
             if not no_open:
                 webbrowser.open(url)
                 click.echo(f"pflow UI already running on port {port} — opened a view at {url}", err=True)
@@ -452,7 +477,8 @@ def serve_cmd(
     app = create_app()
     # `watch=0` (in _serve_url) is the stable private CLI↔frontend URL contract; only
     # the user-facing flag is named --no-auto-update to avoid colliding with Watch.
-    url = _serve_url(port, workflow, no_auto_update)
+    # A fresh start has no live Viewer to switch, so --run always opens a pinned tab.
+    url = _serve_url(port, workflow, no_auto_update, run=run)
 
     if not no_open:
         import threading

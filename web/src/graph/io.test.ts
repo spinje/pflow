@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { applyFocus, expandTargets } from "./focus";
-import { buildFlow } from "./flow";
+import { buildFlow, inputFields } from "./flow";
 import { NODE_IN, NODE_OUT, portHandle, portTargetHandle } from "./handles";
 import { IO_COLOR } from "../utils/format";
 import { COMPACT, DETAILED, edge, group, node } from "./testFixtures";
@@ -334,5 +334,49 @@ describe("buildFlow — root IO cards join the control SKELETON (io-flow edges)"
     };
     expect(out("dec")).toBe(false); // branches leave rows — no icon-row exit
     expect(out("seq")).toBe(true); // the trunk leaves NODE_OUT
+  });
+});
+
+describe("inputFields — the run form's top-level input model (Task 175)", () => {
+  function topInput(name: string, over: Partial<NonNullable<RFNode["io"]>> = {}, purpose = ""): RFNode {
+    return node(`n_${name}`, {
+      kind: "input",
+      purpose,
+      io: { data_type: "string", required: true, default: null, sensitive: false, ...over },
+      ref: { node_id: name, ancestor_path: [], port: "in" },
+    });
+  }
+
+  it("maps each input's name/type/required/default/description/sensitive off its raw io", () => {
+    const graph: RFGraph = {
+      nodes: [
+        topInput("topic", { data_type: "string", default: "cats" }, "the subject"),
+        topInput("api_key", { sensitive: true }),
+        node("step", { kind: "shell" }), // a non-input body node is ignored
+      ],
+      edges: [],
+      groups: [],
+    };
+    expect(inputFields(graph)).toEqual([
+      { name: "topic", dataType: "string", required: true, defaultValue: "cats", description: "the subject", sensitive: false },
+      { name: "api_key", dataType: "string", required: true, defaultValue: null, description: null, sensitive: true },
+    ]);
+  });
+
+  it("excludes sub-workflow input nodes (non-empty ancestor_path) — only top-level args", () => {
+    const nested = topInput("url");
+    nested.ref = { node_id: "url", ancestor_path: [{ node_id: "child", batch_index: null }], port: "in" };
+    const graph: RFGraph = { nodes: [topInput("url"), nested], edges: [], groups: [] };
+    expect(inputFields(graph).map((f) => f.name)).toEqual(["url"]); // the nested `url` is dropped
+  });
+
+  it("treats a missing io.sensitive as false (older payloads / non-renderer fixtures)", () => {
+    // io.sensitive is optional on the wire; absent ⇒ not sensitive (?? false).
+    const n = node("n_x", {
+      kind: "input",
+      io: { data_type: "string", required: false, default: null },
+      ref: { node_id: "x", ancestor_path: [], port: "in" },
+    });
+    expect(inputFields({ nodes: [n], edges: [], groups: [] }).map((f) => f.sensitive)).toEqual([false]);
   });
 });

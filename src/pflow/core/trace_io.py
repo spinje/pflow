@@ -26,7 +26,11 @@ TRACE_JSONL_MARKER = "jsonl/1"
 # (`_iter_workflow_traces`), so a future head-only reader can reject `--only` traces without reading
 # to the trailer. `final_status` is NOT here — it is an end-of-run aggregate. `content_hash` is the
 # Task 173 replay version fingerprint (`workflow_content_hash` of the resolved IR — `canonical_ir_digest`
-# with source provenance stripped), knowable at run start.
+# with source provenance stripped), knowable at run start. `inputs` (Task 175) is the run's resolved
+# top-level input dict, stamped on the collector before run start. Production reconstruct round-trips
+# meta keys generically, but the test-fixture builder (`tests/shared/trace_jsonl.py`) iterates META_KEYS
+# to route a trace-dict's keys onto the meta line vs. the `run.complete` trailer — so `inputs` MUST be
+# here, or fixtures built via `write_trace_jsonl({..., "inputs": {...}})` misplace it in the trailer.
 META_KEYS = (
     "format_version",
     "execution_id",
@@ -35,6 +39,7 @@ META_KEYS = (
     "start_time",
     "only_node",
     "content_hash",
+    "inputs",
 )
 # Correlation/line keys the writer derives onto each event line; the reader strips them to restore the
 # exact nested event. A producer must never emit these at an event's top level — the writer asserts this

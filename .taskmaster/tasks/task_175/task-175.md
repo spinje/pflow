@@ -8,10 +8,16 @@ the input/output nodes — received and produced **this run**, and re-run with p
 deferred Task 173 "launch POST" (D4) and extends it into a full run/inspect/re-run loop. Closes the gap
 where pflow can *observe* runs in the browser but can't *trigger* them, and where a past run's inputs
 were never recorded anywhere durable.
+It also gives the **agent** a first-class way to open/replay a specific past run in the user's Viewer
+(`pflow ui <wf> --run <id>` + a `select-run` Point verb) — the agent-facing twin of the human run picker.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-01
 
 ## Priority
 
@@ -65,6 +71,9 @@ rather than adding a new subsystem:
 - **Security: one shared Host-header guard** on the mutating endpoints — kills DNS-rebinding→RCE, the
   only real bypass of the loopback+no-CORS posture. No CSRF tokens/auth (overengineering for a
   single-user loopback tool).
+- **Agent run-selection reuses the Point channel.** `pflow ui <wf> --run <id>` opens a Viewer pinned to
+  a run (a `?run=` query the frontend already replays); a new `select-run` Point verb switches an
+  already-open Viewer to a run over Task 169's existing `/api/command`→SSE envelope. No new transport.
 
 ## Design Decisions
 
@@ -103,12 +112,27 @@ rather than adding a new subsystem:
 - **Placement: a separate ▶ icon at the BOTTOM of the Rail** opening a Run panel — distinct from the
   clock/RunSelector, which sits in the Rail's top slot and keeps view/replay/re-run. *(DECIDED 2026-06-29:
   a separate ▶ anchored at the BOTTOM of the Rail — NOT folded into the clock panel, NOT the top slot.)*
-- **Secret prefill: server-side reuse.** When prefilling the form from a past run, send
-  non-secret values to the client but never secrets; the client signals "reuse run X's value for
-  `api_key`" and the server fills it from the trace it can already read — the secret never enters the
-  browser. *(DECIDED 2026-06-29. Blank-and-re-enter stays the fallback only if the reuse plumbing slips.)*
+- **Secrets come from settings/env, not the form (supersedes the earlier "server-side reuse" plan).**
+  pflow resolves every input by a 5-tier precedence — CLI arg → `os.environ` → `settings.env` →
+  workflow default → error — matching by **input *name*** (NOT `${VAR}` expansion in a default; that
+  earlier premise was wrong). So a sensitive-named input (per `is_sensitive_parameter`) left blank in
+  the form is simply omitted from argv, and the spawned `pflow run` resolves it from
+  `settings.env`/`os.environ` by name — exactly as a terminal run does. The browser never needs the
+  secret. For re-run, the server **redacts** sensitive-named keys out of the prefill it sends (reusing
+  the existing name-based redactor), so a past run's resolved secret never reaches the client; the user
+  leaves the field blank (it re-resolves) or types a literal override (faithful to CLI tier-1). No
+  "reuse run X's value" sentinel protocol is needed. *(REVISED 2026-06-30 after verifying the secrets
+  model — replaces the 2026-06-29 server-side-reuse decision.)*
 - **Full frontmatter-store deprecation is a noted FOLLOW-ON, not part of this task.** This task only
   makes `meta.inputs` authoritative for inputs. See "Frontmatter deprecation (follow-on)".
+- **Agent "open/replay a specific run" is IN SCOPE — the agent-facing twin of the human RunSelector.**
+  Two pieces, both reusing the `&run=<run_id>` pin contract (Task 173): (1) a `pflow ui <wf> --run <id>`
+  flag that opens a Viewer pinned to that run (threaded via `_serve_url`'s query, which the frontend
+  already reads at `?run=`), and (2) a **`select-run` Point verb** (Task 169 channel) that switches an
+  *already-open* Viewer to a run by broadcasting `{type:"select-run", run:<id>}`, applied by the
+  frontend's existing `selectRun` path (honoring the 173 re-pick guard). pflow is agent-first, so the
+  agent twin of the run picker belongs here — NOT Task 174 (that is voice narration, "Point & Say", and
+  owns no run-selection scope). *(DECIDED 2026-06-30: include both pieces.)*
 
 ## Dependencies
 
@@ -116,6 +140,9 @@ rather than adding a new subsystem:
   trace producer + `meta` line, `run_tailer` discovery/tail, the SSE overlay, flock liveness, the
   RunSelector pin/`&run=`, and the `ThisRunSection` detail panel. (Task 173's own closure — pin D1,
   `task-review.md` — is independent and unaffected.)
+- **Task 169: Agent↔Browser Interaction Channel** — the Point channel the `select-run` verb extends:
+  `pflow ui` subcommands → `POST /api/command` → `_Hub.broadcast` → SSE → `events.ts` dispatch. The new
+  verb is one more arm on this existing envelope, not a new transport.
 
 ## Requirements
 
@@ -142,9 +169,17 @@ rather than adding a new subsystem:
 - `key=value` tokens are built one-per-argv-element (no shell), so values are injection-safe.
 
 ### Frontend — form + launch
-- A ▶ control at the **bottom of the Rail** opens a **Run panel** whose form is generated from
-  `/api/graph`'s `kind=="input"` nodes: one field per input, prefilled with the declared `default`, required fields marked, description
-  as helper text. Types map to sensible controls (text/number/checkbox/textarea; JSON inputs as text).
+- A ▶ control at the **bottom of the Rail** opens a **Run panel** (a side panel reusing the
+  `.read-panel` shell, with its own open/close state outside the `selectedId` model) whose form is
+  generated from `/api/graph`'s `kind=="input"` nodes: one field per input, prefilled with the declared
+  `default`, required fields marked, description as helper text. Types map to sensible controls
+  (text/number/checkbox/textarea; JSON inputs as text).
+- **Sensitive-named inputs** (per `is_sensitive_parameter`, signalled server-side as a per-input flag —
+  one source of truth) are surfaced as *"provided from settings/env"* and are **not collected as form
+  values by default**: left blank, they are omitted from argv and the spawned `pflow run` resolves them
+  by name from `settings.env`/`os.environ`. The user may type a literal override. Required-ness is
+  enforced by the run (surfaced via the overlay), not hard-blocked in the form, so an env-resolved
+  required input need not be re-typed.
 - Submit → `fetchRunNode`-style call to `POST /api/run` → on success the overlay switches to
   **follow-newest-live** (the existing RunSelector mechanism) so the launched run lights up.
 - A workflow with no inputs shows a "▶ Run" confirm. Each fetch owns its failure (DR-6 posture) — a
@@ -164,8 +199,25 @@ rather than adding a new subsystem:
 - The Run panel has a **"load inputs from"** picker: *Defaults* + the last N past runs (labeled
   timeAgo + status), each prefilling the form from that run's `meta.inputs`. The user may tweak before
   submitting.
-- Secret fields follow the secret-prefill decision (server-side reuse; never sent to the browser).
+- Sensitive-named fields are **server-redacted out of the prefill** (never sent to the browser); the
+  user leaves them blank to re-resolve from settings/env, or types a literal override.
 - The clock/RunSelector per-row ↻ opens the Run panel with that run pre-selected (optional sugar).
+
+### Agent — open/replay a specific run
+- **`pflow ui <wf> --run <id>`**: a new `--run` option on the `ui`/serve command opens the Viewer pinned
+  to that run by adding `?run=<id>` to the served URL (`_serve_url`); the frontend already reads `?run=`
+  and replays. `<id>` is the run's `execution_id` (the trace meta's run id).
+- **`select-run` Point verb**: a new agent verb (CLI subcommand → `POST /api/command` carrying the run
+  id) that the server broadcasts to every open Viewer of that workflow as `{type:"select-run", run:<id>}`.
+  The browser dispatches it to the existing `selectRun` path (switch the pinned run, honoring the
+  `if (next === runId) return` re-pick guard). Unlike focus/frame the verb does **not** resolve a graph
+  target — the run id passes through (like `clear`). A stale/unknown id surfaces the existing
+  `run-not-found` path, never a blank canvas.
+- **One verb vocabulary, kept in lockstep:** there is no shared verb enum — `select-run` is added to the
+  Python whitelist (`command()`, `server.py`) and the TS dispatch + `PointHandlers` (`events.ts`).
+- **Docs:** update `guide/features/ui.md` (Point verbs + the `&run=` contract), `ui/CLAUDE.md` (the Live
+  interaction channel envelope — and correct its now-stale "defines no run/trace event schema" claim,
+  which Task 173 already invalidated), and `web/CLAUDE.md` (overlay seam).
 
 ### Frontmatter deprecation (follow-on — out of scope here, documented for the sequel)
 - Once `meta.inputs` is authoritative, the frontmatter `last_execution_params` is redundant and the
@@ -182,6 +234,15 @@ rather than adding a new subsystem:
 - **Inputs flow:** `pflow run wf name=World` → `parse_workflow_params` → `infer_type` (bool/int/float/
   json/str coercion, `param_parsing.py`) → seeded directly into the shared store (`runner.py:263-292`);
   there is **no input node execution** and no trace event for inputs.
+- **Secrets model (verified 2026-06-30):** provider keys (OpenAI/Anthropic) come from `os.environ` /
+  `~/.pflow/settings.json`'s `env` map and are read by LiteLLM directly — **never workflow inputs**
+  (`llm_config.py`, `inject_settings_env_vars`). A workflow input is resolved by a 5-tier precedence
+  (CLI arg → `os.environ` → `settings.env` → default → error) matching by **input *name***
+  (`ir_preparation.py:281-327`); there is **no `${VAR}`-in-default env expansion**. Sensitivity is
+  inferred from the input *name* via `is_sensitive_parameter` (`security_utils.py`, 20 names,
+  word-boundary match) at display/persist boundaries — there is no "secret" input type or separate
+  secrets store. This is *why* the form need not collect secrets: a blank sensitive field re-resolves
+  from settings/env at run time.
 - **Trace meta lacks inputs today:** `_meta_fields` (`workflow_trace.py:945`) = `format_version,
   execution_id, workflow_name, workflow_path, start_time, only_node, content_hash`. The keystone adds
   `inputs`.
@@ -240,9 +301,10 @@ rather than adding a new subsystem:
 3. Run panel + form (generated from `/api/graph`) + ▶ + overlay follow-newest.
 4. IO-node inspect (`/api/run-node` IO projection + gate extension).
 5. Re-run prefill picker (+ clock ↻ sugar).
-6. (Optional, later) standalone bookmarkable form view (`?view=form`); file-upload inputs explicitly
+6. Agent run-selection: `pflow ui <wf> --run <id>` flag + the `select-run` Point verb (+ the doc updates).
+7. (Optional, later) standalone bookmarkable form view (`?view=form`); file-upload inputs explicitly
    deferred (multipart + where files land = a new concern).
-7. (Optional, later) per-field value autocomplete.
+8. (Optional, later) per-field value autocomplete.
 
 ## Verification
 
@@ -259,8 +321,12 @@ rather than adding a new subsystem:
   normal value full); click the output node → the workflow result; click a producing node → its output.
   Degrades cleanly on a text-mode run with no `json_output`.
 - **Re-run:** the "load inputs from" picker lists past runs; selecting one prefills the form from its
-  `meta.inputs`; a secret field is never populated with a real value in the browser (server-side reuse);
-  submitting reproduces the run (and cache-enabled nodes light "cached").
+  `meta.inputs`; a sensitive-named field is never populated with a real value in the browser (the server
+  redacts it out of the prefill; it re-resolves from settings/env); submitting reproduces the run (and
+  cache-enabled nodes light "cached").
+- **Agent run-selection:** `pflow ui <wf> --run <id>` opens a Viewer replaying that run; with a Viewer
+  already open, the `select-run` verb switches it to the given run (overlay re-pins, re-pick guard holds);
+  a stale/unknown run id surfaces the existing `run-not-found` path, not a blank canvas.
 - **Faithfulness:** a form launch and the equivalent hand-typed `pflow run …` produce identical results.
 - **Gates:** `make test` + `make check` (Python), `vitest` + `tsc` (frontend) green vs the captured
   baseline; real-browser verification via the `screenshot-pflow-web-ui` skill + the overlay-status
@@ -290,3 +356,9 @@ rather than adding a new subsystem:
   `src/pflow/cli/commands/history.py`, `src/pflow/cli/rerun_display.py` (orphaned).
 - **Secret redaction:** `src/pflow/core/security_utils.py` (`is_sensitive_parameter`,
   `sanitize_parameters`).
+- **Agent run-selection (Point channel):** `src/pflow/cli/commands/ui.py` (`_serve_url:82`, `serve_cmd`,
+  `focus_cmd:493`/`frame_cmd`/`clear_focus_cmd`, `_point_request:380`), `src/pflow/ui/server.py`
+  (`command:532`, verb whitelist `:543`), `web/src/api/events.ts` (`subscribe:77`, `PointHandlers:6`,
+  dispatch `:108-155`), `web/src/views/GraphView.tsx` (`selectRun:236`, SSE handlers `:648-713`,
+  `?run=` read `:101`). Docs: `src/pflow/guide/features/ui.md` (`:41-45`, `:71-76`),
+  `src/pflow/ui/CLAUDE.md`, `web/CLAUDE.md`.

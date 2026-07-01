@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
+import logoUrl from "../assets/logo.png";
 import { ApiError, fetchCatalog, fetchRuns } from "../api/client";
 import { runMark } from "../components/RunSelector";
 import type { CatalogItem, RunInfo } from "../types";
@@ -238,7 +239,10 @@ export function CatalogView({ onOpen }: { onOpen: (workflow: string) => void }):
   return (
     <div className="catalog">
       <header className="catalog-header">
-        <h1>pflow workflows</h1>
+        <div className="catalog-brand">
+          <img className="catalog-logo" src={logoUrl} alt="" />
+          <h1>pflow workflows</h1>
+        </div>
         <p>Pick a workflow to see its structure, wiring, and prompts.</p>
       </header>
 

@@ -73,6 +73,60 @@ class TestUiRouting:
         assert "workflow=demo&watch=0" in result.output
 
 
+class TestServeRun:
+    """`pflow ui <wf> --run <id>` (Task 175): smart open-or-switch. Fresh/no-viewer → open a pinned tab;
+    a live Viewer of the workflow → switch it via a select-run broadcast (no duplicate tab)."""
+
+    def test_serve_url_pins_the_run_id(self) -> None:
+        url = ui_module._serve_url(8765, "demo", False, run="abc123")
+        assert "workflow=demo" in url and "run=abc123" in url
+
+    def test_fresh_start_opens_a_pinned_tab(self) -> None:
+        runner = CliRunner()
+        with patch.object(ui_module, "_port_available", return_value=True), patch("uvicorn.Server.run"):
+            result = runner.invoke(ui_module.ui_cmd, ["demo", "--run", "abc123", "--no-open"])
+        assert result.exit_code == 0, result.output
+        assert "run=abc123" in result.output  # a fresh start has no Viewer to switch → opens pinned
+
+    def test_reuse_with_a_live_viewer_switches_it_via_select_run(self) -> None:
+        runner = CliRunner()
+        with (
+            patch.object(ui_module, "_port_available", return_value=False),
+            patch.object(ui_module, "_probe_health", return_value={"service": "pflow-ui", "windows": 1}),
+            patch(
+                "httpx.request",
+                return_value=_response(
+                    200, {"sent_to": 1, "windows": [{"visibility": "visible"}], "workflow_key": "k"}
+                ),
+            ) as request,
+            patch("webbrowser.open") as wb_open,
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["demo", "--run", "abc123"])
+        assert result.exit_code == 0, result.output
+        assert request.call_args.kwargs["json"] == {"workflow": "demo", "type": "select-run", "target": "abc123"}
+        assert "switched it to run abc123" in result.output
+        wb_open.assert_not_called()  # no duplicate tab
+
+    def test_reuse_without_a_viewer_opens_a_pinned_tab(self) -> None:
+        runner = CliRunner()
+        with (
+            patch.object(ui_module, "_port_available", return_value=False),
+            patch.object(ui_module, "_probe_health", return_value={"service": "pflow-ui", "windows": 0}),
+            patch("httpx.request") as request,
+            patch("webbrowser.open") as wb_open,
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["demo", "--run", "abc123"])
+        assert result.exit_code == 0, result.output
+        assert "run=abc123" in result.output  # no live Viewer → open a pinned tab
+        request.assert_not_called()  # no select-run POST — nothing to switch
+        wb_open.assert_called_once()
+
+    def test_run_without_a_workflow_errors_actionably(self) -> None:
+        result = CliRunner().invoke(ui_module.serve_cmd, ["--run", "abc123"])
+        assert result.exit_code == 1
+        assert "needs a workflow" in result.output
+
+
 class TestPointCommands:
     def test_json_mode_passes_server_payload_through(self) -> None:
         payload = _dispatch_payload()

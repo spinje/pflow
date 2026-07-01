@@ -130,16 +130,58 @@ secrets recursively redacted by key name. `400` on a missing/malformed `ref`; `4
 project). A read-only GET of trace content, same exposure class as `/api/graph` (the CORS tripwire below
 applies). The reader is `run_node.run_node_detail`.
 
+### `POST /api/run`
+→ `200` `{"status": "spawned", "run_id": "<id>"}` — spawns a **detached** `pflow run` for a resolved workflow
++ inputs, returning the run's server-minted `execution_id` so the frontend can PIN the overlay to it
+(Task 175). Body: `{"workflow": "<name|path>", "inputs": {"<name>": "<token-string>"}}` — `inputs` values
+are **strings** (channel A: they become the CLI's `name=value` argv tokens verbatim; the spawned run's
+`infer_type` + declared-type coercion re-type them). The server stays a **pure observer** (ADR-0008): it
+does the FULL compile the spawn will do **off the event loop** (`asyncio.to_thread` → `_preflight`:
+`resolve_workflow` + `parse_workflow_params` + `compile_workflow`), then spawns
+`subprocess.Popen([sys.executable, "-m", "pflow.cli", "run", <key>, "--output-format", "json", *tokens],
+stdin/stdout/stderr=DEVNULL, start_new_session=True)` — **no in-process execution, no retained handle**.
+The server MINTS the run's `execution_id` and FORCES it onto the child (`env` `PFLOW_EXECUTION_ID` →
+`RunnerConfig.execution_id` → the trace), returning `{"status": "spawned", "run_id": <id>}`; the frontend PINS
+the overlay to that id (NOT follow-newest — pinning is what stops a shorter new run from reverting to an older
+still-live one). The spawned run writes its own streaming trace; the tailer resolves the pinned id (with a
+startup grace window — the child hasn't written its meta line yet) and the overlay lights it up.
+**`Popen`, NOT `asyncio.create_subprocess_exec`** (load-bearing): asyncio's
+transport finalizer SIGKILLs a live child when the loop closes, which would kill an in-flight run when the
+user closes `pflow ui` — the coupling ADR-0008 forbids. **`-m pflow.cli`, NOT `-m pflow`** (`pflow` has no
+`__main__.py`). Status arms: `200` on spawn; `404` unresolvable workflow (fuzzy suggestions; **never** inline
+content); `400` malformed body OR a **pre-flight failure** (missing required input / unknown node type /
+bad param) — body `{"errors": [<Diagnostic.to_dict()> ...]}`, so an agent gets actionable diagnostics
+instead of a silently-dead run. Runtime node failures surface via the overlay, not this response. The
+handler is `server.run`; the pre-flight converts the silent *pre-trace-failure class* (a run that dies
+before writing its `meta` line) into a clean `400`.
+
+### `GET /api/run-inputs?workflow=<name|path>&run=<id>`
+→ `200` `{ "<name>": "<token-string>" }` — a past run's recorded inputs as **form-ready token strings**,
+for the Run panel's re-run prefill (Task 175 Phase 5). Reads the run's `meta.inputs` (the Phase-1 keystone),
+**omits sensitive-named keys** (`is_sensitive_parameter` — a past run's resolved secret never reaches the
+browser; the form re-resolves it from settings/env by name), and renders each remaining value via
+`format_param_value` (the inverse of the CLI's `infer_type`: bool→`true`/`false`, list/dict→compact JSON,
+scalars→str) so the tokens drop straight into the form's channel-A controls. `400` missing `workflow`; `404`
+unresolvable workflow / no matching run; a run whose trace predates `meta.inputs` returns `{}` (graceful — the
+picker shows it with nothing to prefill). A read-only GET, same exposure class as `/api/run-node` (the reader
+is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state).
+
 ### Live interaction channel
 
 - `GET /api/events?workflow=<name|path>&visibility=<visible|hidden>` subscribes a
-  Viewer to the SSE envelope `{type, ...}`. The envelope is vocabulary-agnostic:
-  this task defines `connected`, `focus`, `frame`, and `clear`; it deliberately
-  defines no run/trace event schema.
-- `POST /api/command` validates a `focus`/`frame` target against a fresh graph (or
-  broadcasts `clear`) and reports `sent_to`, per-window visibility, and the
-  canonical `workflow_key`. It reports messages queued to live connections, not
-  browser apply acknowledgments.
+  Viewer to the SSE envelope `{type, ...}`. The envelope is vocabulary-agnostic and
+  the verb set has grown: `connected`, the Point verbs `focus`/`frame`/`clear` and
+  `select-run` (Task 175 — `{type:"select-run", run:<id>}`, switches the Viewer to a
+  run), plus the Task-173 run/overlay stream (`run-snapshot`/`run-events`/
+  `run-complete`/`run-reset`/`run-not-found`/`run-stopped`/`run-stale`). (An earlier
+  note here claimed the envelope "defines no run/trace event schema" — Task 173
+  invalidated that; the run-* schema is the overlay's, see `run_tailer`.)
+- `POST /api/command` validates a `focus`/`frame` target against a fresh graph, or
+  broadcasts `clear` / `select-run` (both pass-through — `clear` before the target is
+  read, `select-run` after, carrying the run id in `target` with NO graph resolution;
+  a stale run id surfaces the frontend's `run-not-found`, never a server error). It
+  reports `sent_to`, per-window visibility, and the canonical `workflow_key` — messages
+  queued to live connections, not browser apply acknowledgments.
 - `POST /api/interaction` records deliberate user actions; `GET /api/activity`
   returns the bounded, newest-first snapshot. `POST /api/visibility` updates one
   connection. All POSTs require `application/json`.
@@ -170,9 +212,16 @@ clears connections and activity.
 > do not replace it with a second `request.is_disconnected()` receive consumer.
 
 The server binds loopback and sends no CORS headers. JSON POSTs force a cross-origin
-preflight, and EventSource responses are unreadable cross-origin. The worst live
-command changes focus in the user's Viewer; it has no file/system side effect. Any
-future mutating or live-run endpoint must re-evaluate this boundary.
+preflight, and EventSource responses are unreadable cross-origin. The one residual
+gap — **DNS rebinding** (an attacker domain re-pointed at `127.0.0.1`, so the browser
+sends same-origin requests it can also READ) — is closed by the **`_LoopbackOnly`
+middleware**, a `Host`-header loopback check on **EVERY route** (reads AND writes): a
+non-loopback `Host` → `403` for `/api/source` / `/api/graph` / `/api/run-node` / … as
+well as the mutating POSTs (`command`/`interaction`/`visibility`/`/api/run`). Being
+middleware, not a per-handler call, it covers every future endpoint by default — there is
+**no** "route it through `_json_body`" invariant to remember. `/api/run` (Task 175) spawns
+a real `pflow run` behind this same posture: resolvable name/path only (never inline
+content), the normal CLI spawned detached, no in-process execution.
 
 ### Static bundle (`/` + assets)
 The SPA builds into `src/pflow/ui/static/` (Vite `build.outDir`, `base = "./"`

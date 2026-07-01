@@ -4,17 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.ui.server import _ACTIVITY_MAX, _Hub, _workflow_key, create_app, events
 from tests.shared.markdown_utils import write_workflow_file
+
+
+def _client(app: Starlette | None = None) -> TestClient:
+    """A TestClient whose default Host is loopback so requests pass the ``_LoopbackOnly`` guard.
+
+    Starlette's TestClient defaults to ``base_url="http://testserver"`` → ``Host: testserver``, which the
+    Task-175 DNS-rebinding guard (the ``_LoopbackOnly`` middleware, on EVERY route — reads and writes)
+    refuses with 403. A real browser / CLI talking to the loopback server always sends a loopback Host, so
+    this is the faithful default."""
+    return TestClient(app if app is not None else create_app(), base_url="http://127.0.0.1")
+
 
 _VALID_IR = {
     "nodes": [
@@ -119,16 +133,16 @@ class TestHealthEndpoint:
         app.state.hub.register(key, "hidden")
         app.state.hub.register("/different.pflow.md", "visible")  # other workflow — must NOT count
 
-        body = TestClient(app).get("/api/health", params={"workflow": "discoverable"}).json()
+        body = _client(app).get("/api/health", params={"workflow": "discoverable"}).json()
 
         assert body == {"service": "pflow-ui", "workflow_key": key, "windows": 2}
 
     def test_identity_only_without_a_workflow(self) -> None:
-        assert TestClient(create_app()).get("/api/health").json() == {"service": "pflow-ui"}
+        assert _client().get("/api/health").json() == {"service": "pflow-ui"}
 
     def test_unknown_workflow_is_identity_only_not_404(self) -> None:
         # A liveness probe must answer regardless — unlike command()/activity(), which 404.
-        response = TestClient(create_app()).get("/api/health", params={"workflow": "no-such-workflow-xyz"})
+        response = _client().get("/api/health", params={"workflow": "no-such-workflow-xyz"})
         assert response.status_code == 200
         assert response.json() == {"service": "pflow-ui"}
 
@@ -142,7 +156,7 @@ class TestInteractionEndpoints:
         app.state.hub.register(key, "hidden")
         app.state.hub.register("/different.pflow.md", "visible")
 
-        response = TestClient(app).post(
+        response = _client(app).post(
             "/api/command",
             json={"workflow": str(workflow), "type": "focus", "target": "greet"},
         )
@@ -167,7 +181,7 @@ class TestInteractionEndpoints:
         app = create_app()
         conn = app.state.hub.register(str(workflow.resolve()), "visible")
 
-        response = TestClient(app).post(
+        response = _client(app).post(
             "/api/command",
             json={"workflow": str(workflow), "type": "clear"},
         )
@@ -175,6 +189,33 @@ class TestInteractionEndpoints:
         assert response.status_code == 200
         assert response.json()["sent_to"] == 1
         assert conn.queue.get_nowait() == {"type": "clear"}
+
+    def test_select_run_broadcasts_the_run_id_as_pass_through(self, tmp_path: Path) -> None:
+        # Task 175: select-run carries a RUN id in `target` and is PASS-THROUGH — broadcast as
+        # {type:"select-run", run:<id>} with NO resolve_target (a run isn't a graph node/edge).
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        response = _client(app).post(
+            "/api/command",
+            json={"workflow": str(workflow), "type": "select-run", "target": "run-abc"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["sent_to"] == 1
+        assert conn.queue.get_nowait() == {"type": "select-run", "run": "run-abc"}
+
+    def test_select_run_requires_a_target(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        response = _client().post("/api/command", json={"workflow": str(workflow), "type": "select-run"})
+        assert response.status_code == 400
+
+    def test_unknown_command_verb_is_rejected(self, tmp_path: Path) -> None:
+        # The verb whitelist still rejects anything outside {focus, frame, clear, select-run}.
+        workflow = _workflow(tmp_path)
+        response = _client().post("/api/command", json={"workflow": str(workflow), "type": "teleport", "target": "x"})
+        assert response.status_code == 400
 
     def test_point_build_runs_off_the_hub_event_loop(self, tmp_path: Path) -> None:
         workflow = _workflow(tmp_path)
@@ -184,7 +225,7 @@ class TestInteractionEndpoints:
 
         to_thread = AsyncMock(side_effect=run_in_thread)
         with patch("pflow.ui.server.asyncio.to_thread", to_thread):
-            response = TestClient(create_app()).post(
+            response = _client().post(
                 "/api/command",
                 json={"workflow": str(workflow), "type": "focus", "target": "greet"},
             )
@@ -196,7 +237,7 @@ class TestInteractionEndpoints:
         workflow = _workflow(tmp_path)
         app = create_app()
         conn = app.state.hub.register(str(workflow.resolve()), "visible")
-        client = TestClient(app)
+        client = _client(app)
 
         response = client.post(
             "/api/command",
@@ -209,7 +250,7 @@ class TestInteractionEndpoints:
         assert conn.queue.empty()
 
     def test_unknown_workflow_name_is_actionable_404(self) -> None:
-        response = TestClient(create_app()).post(
+        response = _client().post(
             "/api/command",
             json={"workflow": "does-not-exist", "type": "focus", "target": "greet"},
         )
@@ -220,7 +261,7 @@ class TestInteractionEndpoints:
 
     def test_mutating_endpoints_require_json_content_type(self, tmp_path: Path) -> None:
         workflow = _workflow(tmp_path)
-        client = TestClient(create_app())
+        client = _client()
 
         for path in ("/api/command", "/api/interaction", "/api/visibility"):
             response = client.post(path, content=json.dumps({"workflow": str(workflow)}))
@@ -234,7 +275,7 @@ class TestInteractionEndpoints:
             workflow,
         )
 
-        response = TestClient(create_app()).post(
+        response = _client().post(
             "/api/command",
             json={"workflow": str(workflow), "type": "focus", "target": "bad"},
         )
@@ -244,7 +285,7 @@ class TestInteractionEndpoints:
 
     def test_interactions_are_recorded_and_read_as_an_aged_snapshot(self, tmp_path: Path) -> None:
         workflow = _workflow(tmp_path)
-        client = TestClient(create_app())
+        client = _client()
         event = {
             "workflow": str(workflow),
             "type": "node_click",
@@ -272,7 +313,7 @@ class TestInteractionEndpoints:
         # Arbitrary client-supplied keys must not leak into the Watch snapshot, so
         # the agent reading /api/activity sees a predictable event shape.
         workflow = _workflow(tmp_path)
-        client = TestClient(create_app())
+        client = _client()
         event = {
             "workflow": str(workflow),
             "type": "node_click",
@@ -287,7 +328,7 @@ class TestInteractionEndpoints:
         assert recorded[0]["type"] == "node_click"
 
     def test_unknown_workflow_activity_is_actionable_404(self) -> None:
-        response = TestClient(create_app()).get(
+        response = _client().get(
             "/api/activity",
             params={"workflow": "does-not-exist"},
         )
@@ -300,13 +341,158 @@ class TestInteractionEndpoints:
         app = create_app()
         conn = app.state.hub.register(str(workflow.resolve()), "visible")
 
-        response = TestClient(app).post(
+        response = _client(app).post(
             "/api/visibility",
             json={"conn_id": conn.conn_id, "visibility": "hidden"},
         )
 
         assert response.status_code == 204
         assert conn.visibility == "hidden"
+
+
+def _workflow_with_input(tmp_path: Path, *, required: bool) -> Path:
+    """A workflow with one declared string input ``text``, REFERENCED in a node (an unused declared
+    input is a parse error). ``required=True`` omits the default so a blank submit fails the pre-flight."""
+    default_line = "" if required else "- default: hi\n"
+    path = tmp_path / "withinput.pflow.md"
+    path.write_text(
+        "# WithInput\n\nEchoes an input.\n\n## Inputs\n\n"
+        "### text\n\nText to echo.\n\n- type: string\n" + default_line + "\n"
+        '## Steps\n\n### echo\n\nEchoes the text.\n\n- type: shell\n- command: echo "${text}"\n',
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestRunEndpoint:
+    """``POST /api/run`` — spawns a DETACHED ``pflow run`` (Task 175). ``subprocess.Popen`` is patched in
+    every test so no real subprocess is spawned; the off-loop pre-flight (real ``compile_workflow``) runs."""
+
+    def test_spawn_invoked_with_expected_detached_argv(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)  # the no-input _VALID_IR
+        key = str(workflow.resolve())
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/run", json={"workflow": str(workflow), "inputs": {}})
+
+        assert response.status_code == 200
+        # The minted run_id is returned (so the browser can PIN the overlay to this exact run) AND forced
+        # onto the spawned run via PFLOW_EXECUTION_ID (Task 175).
+        body = response.json()
+        assert body["status"] == "spawned"
+        run_id = body["run_id"]
+        assert isinstance(run_id, str) and run_id
+        popen.assert_called_once()
+        argv = popen.call_args.args[0]
+        assert argv == [sys.executable, "-m", "pflow.cli", "run", key, "--output-format", "json"]
+        kwargs = popen.call_args.kwargs
+        assert kwargs["start_new_session"] is True
+        assert kwargs["stdin"] == kwargs["stdout"] == kwargs["stderr"] == subprocess.DEVNULL
+        assert kwargs["env"]["PFLOW_EXECUTION_ID"] == run_id  # forced onto the child so the pin resolves
+
+    def test_declared_inputs_become_one_argv_token_each_injection_safe(self, tmp_path: Path) -> None:
+        # A value with a space and a shell metacharacter must arrive as ONE unparsed argv element.
+        workflow = _workflow_with_input(tmp_path, required=False)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post(
+                "/api/run",
+                json={"workflow": str(workflow), "inputs": {"text": "a b; rm -rf /"}},
+            )
+
+        assert response.status_code == 200
+        argv = popen.call_args.args[0]
+        assert argv[-1] == "text=a b; rm -rf /"  # single token, never shell-split
+
+    def test_unknown_workflow_is_404_and_does_not_spawn(self) -> None:
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/run", json={"workflow": "does-not-exist-xyz", "inputs": {}})
+
+        assert response.status_code == 404
+        assert "does-not-exist-xyz" in response.json()["error"]
+        popen.assert_not_called()
+
+    def test_malformed_body_is_400_and_does_not_spawn(self, tmp_path: Path) -> None:
+        workflow = str(_workflow(tmp_path))
+        bad_bodies = [
+            {"inputs": {}},  # missing 'workflow'
+            {"workflow": workflow, "inputs": ["not", "an", "object"]},  # inputs not an object
+            {"workflow": workflow, "inputs": {"count": 5}},  # non-string input value
+        ]
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            for body in bad_bodies:
+                response = _client().post("/api/run", json=body)
+                assert response.status_code == 400, body
+        popen.assert_not_called()
+
+    def test_missing_required_input_is_400_with_diagnostics_and_does_not_spawn(self, tmp_path: Path) -> None:
+        # The pre-flight compile (off-loop) catches the silent pre-trace-failure class as a clean 400.
+        workflow = _workflow_with_input(tmp_path, required=True)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/run", json={"workflow": str(workflow), "inputs": {}})
+
+        assert response.status_code == 400
+        errors = response.json()["errors"]
+        assert errors and any("text" in json.dumps(err) for err in errors)
+        popen.assert_not_called()
+
+
+class TestHostGuard:
+    """The ``_LoopbackOnly`` middleware — the DNS-rebinding guard on EVERY route (Task 175), reads and
+    writes. A non-loopback Host is 403; loopback variants pass. (Read-endpoint coverage is pinned by
+    ``test_guard_also_covers_read_endpoints``.)"""
+
+    def test_non_loopback_host_is_403_and_does_not_spawn(self, tmp_path: Path) -> None:
+        workflow = str(_workflow(tmp_path))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post(
+                "/api/run",
+                json={"workflow": workflow, "inputs": {}},
+                headers={"host": "evil.com"},
+            )
+
+        assert response.status_code == 403
+        popen.assert_not_called()
+
+    def test_loopback_hosts_pass_the_guard(self, tmp_path: Path) -> None:
+        # 127.0.0.1[:port], localhost[:port] (case-insensitive), and an IPv6 [::1]:port literal all resolve to loopback.
+        workflow = str(_workflow(tmp_path))
+        for host in ("127.0.0.1:8765", "localhost:8765", "LOCALHOST:8765", "[::1]:8765"):
+            with patch("pflow.ui.server.subprocess.Popen"):
+                response = _client().post(
+                    "/api/run",
+                    json={"workflow": workflow, "inputs": {}},
+                    headers={"host": host},
+                )
+            assert response.status_code == 200, host
+
+    def test_guard_also_rejects_the_existing_mutating_posts(self, tmp_path: Path) -> None:
+        workflow = str(_workflow(tmp_path))
+        evil = {"host": "evil.com"}
+        assert (
+            _client().post("/api/command", json={"workflow": workflow, "type": "clear"}, headers=evil).status_code
+            == 403
+        )
+        assert (
+            _client().post("/api/interaction", json={"workflow": workflow, "type": "x"}, headers=evil).status_code
+            == 403
+        )
+        assert (
+            _client().post("/api/visibility", json={"conn_id": "c", "visibility": "hidden"}, headers=evil).status_code
+            == 403
+        )
+
+    def test_guard_also_covers_read_endpoints(self, tmp_path: Path) -> None:
+        # The guard is middleware on EVERY route, so a DNS-rebinding attacker can't READ workflow/trace
+        # content (/api/source, /api/graph, ...) either — not just mutate. A non-loopback Host → 403; the
+        # same request from loopback is NOT 403 (it reaches the handler: 200/400/422, endpoint-dependent).
+        workflow = str(_workflow(tmp_path))
+        evil = {"host": "evil.com"}
+        for path, params in (
+            ("/api/graph", {"workflow": workflow}),
+            ("/api/source", {"workflow": workflow}),
+            ("/api/catalog", {}),
+        ):
+            assert _client().get(path, params=params, headers=evil).status_code == 403, path
+            assert _client().get(path, params=params).status_code != 403, path
 
 
 def test_sse_disconnect_unregisters_connection_via_raw_asgi(tmp_path: Path) -> None:
@@ -342,7 +528,7 @@ def test_sse_disconnect_unregisters_connection_via_raw_asgi(tmp_path: Path) -> N
         "path": "/api/events",
         "raw_path": b"/api/events",
         "query_string": urlencode({"workflow": str(workflow), "visibility": "visible"}).encode(),
-        "headers": [],
+        "headers": [(b"host", b"127.0.0.1")],  # the _LoopbackOnly guard 403s a request with no/non-loopback Host
         "client": ("127.0.0.1", 12345),
         "server": ("127.0.0.1", 8765),
         "root_path": "",

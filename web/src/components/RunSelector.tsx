@@ -13,6 +13,10 @@ interface RunSelectorProps {
   onSelect: (runId: string | null) => void;
 }
 
+// Task 175: poll cadence for the "a run is live" signal that pulses the clock. The /api/runs scan is
+// cached (dir mtime + per-file (mtime,size)), so polling a local debug dir at this rate is cheap.
+const _LIVE_POLL_MS = 4000;
+
 // One run's status mark — composed from the RAW facts (DR-2), mirroring the node status palette
 // (running blue · success green · failed red · degraded amber · cached/interrupted grey). Exported so the
 // catalog's ran-but-unsaved rows (CatalogView) compose the same palette — one definition of run→mark.
@@ -38,21 +42,26 @@ export function RunSelector({ workflow, runId, onSelect }: RunSelectorProps): JS
   const [runs, setRuns] = useState<RunInfo[]>([]);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Fetch lazily on open (and refresh each open) so the list is current without polling.
+  // Poll this workflow's runs: drives the pulsing-clock "a run is live" signal (Task 175) AND keeps the
+  // menu list current. Its OWN catch (DR-6): a failure shows an empty list, never breaks the rail.
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
-    fetchRuns(workflow)
-      .then((r) => {
-        if (!cancelled) setRuns(r);
-      })
-      .catch(() => {
-        if (!cancelled) setRuns([]); // DR-6: empty on failure; the rail stays alive
-      });
+    const load = (): void => {
+      fetchRuns(workflow)
+        .then((r) => {
+          if (!cancelled) setRuns(r);
+        })
+        .catch(() => {
+          if (!cancelled) setRuns([]);
+        });
+    };
+    load();
+    const timer = setInterval(load, _LIVE_POLL_MS);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [open, workflow]);
+  }, [workflow]);
 
   // A transient popover, not a panel: dismiss on an outside click.
   useEffect(() => {
@@ -69,11 +78,15 @@ export function RunSelector({ workflow, runId, onSelect }: RunSelectorProps): JS
     setOpen(false);
   };
 
+  // Task 175: a run is in flight for this workflow → pulse the clock blue, so a live run (incl. one you're
+  // NOT viewing — e.g. a long run still going after you pinned a newer one) is visible at a glance.
+  const liveCount = runs.filter((run) => run.live).length;
+
   return (
     <div className="run-selector" ref={ref}>
       <button
-        className={"rail-button" + (runId ? " active" : "")}
-        aria-label="Runs"
+        className={"rail-button" + (runId ? " active" : "") + (liveCount > 0 ? " run-live-pulse" : "")}
+        aria-label={liveCount > 0 ? "Runs (a run is live)" : "Runs"}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >

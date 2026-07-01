@@ -8,8 +8,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
 import { IoPanel } from "./IoPanel";
-import type { RFEdge, RFGraph, RFGroup, RFNode } from "../types";
+import type { RFEdge, RFGraph, RFGroup, RFNode, RFRef, RunNodeDetail } from "../types";
 
+// Task 175 — the per-port "this run" value fetch (mirrors ThisRunSection's mock of the same seam).
+vi.mock("../api/client", () => ({ fetchRunNode: vi.fn() }));
 // Same insulation as EdgePanel/GraphView: a port description with a fenced
 // block would mount CodeBlock and run the real shiki load under jsdom —
 // setState after assertions + cross-test bleed through the memoized promise.
@@ -17,6 +19,8 @@ vi.mock("../utils/highlight", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../utils/highlight")>();
   return { ...actual, highlight: vi.fn().mockResolvedValue(null) };
 });
+import { fetchRunNode } from "../api/client";
+const mockFetch = vi.mocked(fetchRunNode);
 
 afterEach(cleanup);
 
@@ -99,13 +103,27 @@ const graph: RFGraph = {
   ],
 };
 
-function show(groupId: string, over: { rendered?: string[]; markedPortId?: string | null; onNavigate?: (f: string, s?: string | null) => void } = {}): void {
+function show(
+  groupId: string,
+  over: {
+    rendered?: string[];
+    markedPortId?: string | null;
+    onNavigate?: (f: string, s?: string | null) => void;
+    hasRunContext?: boolean;
+    runId?: string | null;
+    completedRunId?: string | null;
+  } = {},
+): void {
   const g = graph.groups.find((x) => x.id === groupId)!;
   render(
     <IoPanel
       group={g}
       graph={graph}
       workflowName="lyrics-generator"
+      workflow="lyrics-generator"
+      runId={over.runId ?? null}
+      hasRunContext={over.hasRunContext ?? false}
+      completedRunId={over.completedRunId ?? null}
       renderedIds={new Set(over.rendered ?? graph.nodes.map((n) => n.id))}
       markedPortId={over.markedPortId ?? null}
       onNavigate={over.onNavigate ?? noop}
@@ -166,6 +184,10 @@ describe("IoPanel — inputs", () => {
         group={g.groups[0]!}
         graph={g}
         workflowName="lyrics-generator"
+        workflow="lyrics-generator"
+        runId={null}
+        hasRunContext={false}
+        completedRunId={null}
         renderedIds={new Set(g.nodes.map((n) => n.id))}
         markedPortId={null}
         onNavigate={noop}
@@ -210,5 +232,104 @@ describe("IoPanel — outputs", () => {
     // rows use — producedTypeOf).
     expect(screen.getByText("str")).toBeTruthy();
     expect(screen.queryByText("any")).toBeNull();
+  });
+});
+
+// Task 175 — each port's value for the in-context run, projected by /api/run-node (server-side).
+function detailFor(ref: RFRef): RunNodeDetail {
+  const isInput = ref.port === "in";
+  return {
+    node_type: isInput ? "input" : "output",
+    status: "recorded",
+    duration_ms: null,
+    cost_usd: null,
+    tokens: null,
+    error: null,
+    input: isInput ? { [ref.node_id]: ref.node_id === "topic" ? "AI ethics" : 7 } : {},
+    output: isInput ? null : "Final report text",
+  };
+}
+
+describe("IoPanel — this run", () => {
+  afterEach(() => mockFetch.mockReset());
+
+  it("does NOT fetch a run value, and shows no 'this run' block, when no run is in context", () => {
+    show("g0", { hasRunContext: false });
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(screen.queryByText("this run")).toBeNull();
+  });
+
+  it("shows each input port's run value under a 'this run' label when a run is in context", async () => {
+    mockFetch.mockImplementation((_wf, _run, ref) => Promise.resolve(detailFor(ref)));
+    show("g0", { hasRunContext: true });
+    expect(await screen.findByText("AI ethics")).toBeTruthy();
+    expect(await screen.findByText("7")).toBeTruthy(); // the run value (7), distinct from the default (5)
+    expect(screen.getAllByText("this run")).toHaveLength(2); // one per input port
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders an output port's run value", async () => {
+    mockFetch.mockImplementation((_wf, _run, ref) => Promise.resolve(detailFor(ref)));
+    show("g1", { hasRunContext: true });
+    expect(await screen.findByText("Final report text")).toBeTruthy();
+  });
+
+  it("shows 'no recorded value' when a port has none for this run (404 / absent / text-mode output)", async () => {
+    mockFetch.mockRejectedValue(new Error("404"));
+    show("g1", { hasRunContext: true });
+    expect(await screen.findByText("no recorded value")).toBeTruthy();
+  });
+
+  it("refetches an output port when the run completes (completedRunId change) — a value fetched mid-run appears", async () => {
+    // Output ports 404 until run.complete writes json_output, so an open panel first lands on absent…
+    mockFetch.mockRejectedValueOnce(new Error("404"));
+    const g = graph.groups.find((x) => x.id === "g1")!;
+    const io = (completedRunId: string | null): JSX.Element => (
+      <IoPanel
+        group={g}
+        graph={graph}
+        workflowName="w"
+        workflow="w"
+        runId="r1"
+        hasRunContext={true}
+        completedRunId={completedRunId}
+        renderedIds={new Set(graph.nodes.map((n) => n.id))}
+        markedPortId={null}
+        onNavigate={noop}
+        onClose={noop}
+      />
+    );
+    const { rerender } = render(io(null));
+    expect(await screen.findByText("no recorded value")).toBeTruthy();
+    // …then run.complete arrives → completedRunId changes → the effect refetches, now with the value present.
+    mockFetch.mockImplementation((_wf, _run, ref) => Promise.resolve(detailFor(ref)));
+    rerender(io("r1"));
+    expect(await screen.findByText("Final report text")).toBeTruthy();
+  });
+
+  it("does NOT refetch INPUT ports on completion (inputs are t=0-stable — no flash/refetch)", async () => {
+    mockFetch.mockImplementation((_wf, _run, ref) => Promise.resolve(detailFor(ref)));
+    const g = graph.groups.find((x) => x.id === "g0")!; // two input ports
+    const io = (completedRunId: string | null): JSX.Element => (
+      <IoPanel
+        group={g}
+        graph={graph}
+        workflowName="w"
+        workflow="w"
+        runId="r1"
+        hasRunContext={true}
+        completedRunId={completedRunId}
+        renderedIds={new Set(graph.nodes.map((n) => n.id))}
+        markedPortId={null}
+        onNavigate={noop}
+        onClose={noop}
+      />
+    );
+    const { rerender } = render(io(null));
+    await screen.findByText("AI ethics"); // both inputs fetched once
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    rerender(io("r1")); // run.complete → inputs are gated OUT of the completion epoch → no refetch
+    await Promise.resolve();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });

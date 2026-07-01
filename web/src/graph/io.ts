@@ -92,6 +92,43 @@ export function wrapperPorts(graph: RFGraph, wrapper: RFGroup): Port[] {
     }));
 }
 
+// One TOP-LEVEL workflow input, as the run form's model (Task 175). Derived from
+// the `kind==="input"` nodes the contract ships — exactly the inputs the CLI takes
+// as `name=value` args, so the form is faithful to a hand-typed run.
+export type InputField = {
+  // The bare input name (`ref.node_id`) — the `name` in the `name=value` token.
+  name: string;
+  dataType: string | null;
+  // Absent `required:` ⇒ true (the ir_schema default every runtime reader applies).
+  required: boolean;
+  // The authored `default:` value verbatim; null when absent.
+  defaultValue: unknown;
+  description: string | null;
+  // Sensitive-NAMED (is_sensitive_parameter): rendered with a "from settings/env"
+  // hint and left blank by default — the spawned run re-resolves it by name.
+  sensitive: boolean;
+};
+
+/** The TOP-LEVEL workflow's inputs as form fields, in contract order. Reads the
+ *  `kind==="input"` body nodes directly (NOT wrapperPorts, which maps `io` to a
+ *  `Port` that DROPS `sensitive`) — `sensitive` is read straight off the raw `io`,
+ *  the single source of truth the renderer attaches it to (input nodes only).
+ *
+ *  Sub-workflow input nodes (non-empty `ancestor_path`) are excluded: only the
+ *  top-level inputs are the CLI's `name=value` args. */
+export function inputFields(graph: RFGraph): InputField[] {
+  return graph.nodes
+    .filter((n) => n.kind === "input" && n.ref.ancestor_path.length === 0 && n.io != null)
+    .map((n) => ({
+      name: n.ref.node_id,
+      dataType: n.io!.data_type,
+      required: n.io!.required,
+      defaultValue: n.io!.default ?? null,
+      description: n.purpose || null,
+      sensitive: n.io!.sensitive ?? false,
+    }));
+}
+
 /** Decorator-shell batch groups — batch boxes that must NEVER render. The contract
  *  models "batched X" as batch-wrapping-X, but presentationally batch is a MODIFIER on
  *  the thing itself — the deck + ×N chip, not a box to travel through (user decision

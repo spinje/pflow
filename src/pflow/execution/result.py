@@ -21,6 +21,10 @@ class RunnerConfig:
     cache_enabled: bool = True
     verbose: bool = False
     only_node: str | None = None
+    # Task 175: force the run's execution_id instead of minting a fresh UUID. Set ONLY by a `pflow ui`
+    # ▶ launch (server mints the id, threads it via PFLOW_EXECUTION_ID → the CLI run command → here) so
+    # the browser can PIN the overlay to the exact run it spawned. None (every other path) → mint.
+    execution_id: str | None = None
     # When True (default), WorkflowRunner.run finalizes the streamed trace it opened, so ANY caller —
     # including a library caller that just inspects the result and never saves — gets a COMPLETE, closed
     # trace file instead of an open handle + a trailer-less "incomplete" file. The CLI sets this False

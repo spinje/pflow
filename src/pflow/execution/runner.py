@@ -157,6 +157,9 @@ class WorkflowRunner:
                 # Stamped into the trace `meta` line; the replay tailer compares it to the current file's
                 # digest to flag a stale (different-version) run (Task 173).
                 content_hash=content_hash,
+                # Task 175: None for every normal run (mint a UUID); a `pflow ui` ▶ launch forces it so
+                # the browser can pin the overlay to the exact run it spawned.
+                execution_id=config.execution_id,
             )
 
             mcp_pool = MCPConnectionPool()
@@ -277,6 +280,19 @@ class WorkflowRunner:
         # resolved_defaults contains ONLY defaults for inputs not provided by the user,
         # so this doesn't overwrite user values.
         shared_store.update(workflow.resolved_defaults)
+
+        # Task 175: stamp the run's resolved top-level inputs onto the trace's eager
+        # ``meta`` line. ORDERING IS LOAD-BEARING — this MUST run after the defaults
+        # merge above (so every input holds its FINAL value) and BEFORE engine.run()
+        # below (which calls trace.start_streaming() and flushes the meta line). The
+        # snapshot is IR-driven: resolved.ir["inputs"] is keyed by bare input name and
+        # shared_store holds each input's resolved value (user arg / env / settings /
+        # default), so this is immune to the params-vs-defaults split and never carries
+        # ``_``/``__`` internal keys. Do NOT replace with {**params, **resolved_defaults}.
+        if trace_collector is not None:
+            trace_collector.inputs = {
+                name: shared_store[name] for name in resolved.ir.get("inputs", {}) if name in shared_store
+            }
 
         engine = WorkflowEngine(
             metrics_collector=metrics_collector,

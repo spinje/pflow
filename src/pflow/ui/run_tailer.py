@@ -34,6 +34,17 @@ logger = logging.getLogger(__name__)
 
 _POLL_S = 0.25  # poll cadence; node-paced events make this comfortably fast for a local viewer
 
+# Task 175: a pinned run launched from the ▶ form is pinned by id BEFORE its detached process has written
+# its meta line. Retry the pinned resolve for this grace window so a fresh launch resolves once its trace
+# appears; a genuinely-stale bookmark still surfaces run-not-found, just after the grace (rare, and a few
+# seconds' delay is invisible). The window MUST exceed the child's worst-case time-to-meta: interpreter
+# start + `import pflow.cli` + resolve/parse + `compile_workflow` (an `llm` node cold-imports litellm, ~1-3s)
+# + prepare_inputs + engine start_streaming. 6s (the original) was tight enough that a cold/loaded machine
+# could exceed it → the pinned tailer ended and the overlay stuck on "run not found" while the run ran on
+# invisibly (deep-review, concurrency). 60 * 0.25s = 15s gives cold-start headroom. (A more robust future
+# fix is a one-time re-arm on a post-launch run-not-found; the wider window covers the concrete case now.)
+_PINNED_RESOLVE_ATTEMPTS = 60
+
 
 def _debug_dir() -> Path:
     return Path.home() / ".pflow" / "debug"
@@ -62,7 +73,14 @@ def _read_meta(path: Path) -> dict[str, Any] | None:
         line = json.loads(first)
     except ValueError:
         return None
-    return line if isinstance(line, dict) and line.get("kind") == "meta" else None
+    if not (isinstance(line, dict) and line.get("kind") == "meta"):
+        return None
+    # Task 175: this meta is an IDENTITY probe (execution_id / workflow_path / final_status), cached in
+    # _SCAN_CACHE for the process lifetime per trace. Drop `inputs` — it's raw + potentially large (a
+    # multi-KB text input, retained for every run in ~/.pflow/debug), and NO cache consumer reads it:
+    # run_node's read_run_inputs / _io_detail re-read the file via _read_trace_lines. Keeps the cache small.
+    line.pop("inputs", None)
+    return line
 
 
 def _scan_tail_for_terminal(tail: bytes) -> tuple[bool, str | None] | None:
@@ -407,7 +425,16 @@ class RunTailer:
         ``self._stale_version`` (Task 173); if stale, broadcast ``run-stale`` HERE — the present subscriber's
         snapshot was already taken (before this task ran) with stale=False, so snapshot-only would miss it.
         Late subscribers get it from ``snapshot()`` instead. Mirrors run-stopped's dual delivery."""
-        pinned = await asyncio.to_thread(self._resolve_pinned)  # also latches self._stale_version
+        # Retry the resolve for a grace window: a run pinned right after a ▶ launch (Task 175 — the form
+        # pins the run it just spawned by id) may not have written its meta line yet. A stale bookmark
+        # never resolves → run-not-found after the grace (a few seconds' delay, invisible for a rare case).
+        pinned = None
+        for attempt in range(_PINNED_RESOLVE_ATTEMPTS):
+            pinned = await asyncio.to_thread(self._resolve_pinned)  # also latches self._stale_version
+            if pinned is not None:
+                break
+            if attempt < _PINNED_RESOLVE_ATTEMPTS - 1:
+                await asyncio.sleep(_POLL_S)
         if pinned is None:
             self._broadcast(self._key, {"type": "run-not-found", "run_id": self._run_id})
             return False
@@ -576,7 +603,14 @@ class RunTailer:
 # The run-complete banner's allowlist — the small summary fields the frontend banner reads (PR #543 review).
 # Deliberately EXCLUDES `json_output` / `warnings` (the full payloads `_aggregates()` puts on the trailer)
 # from the live wire + snapshot, mirroring `_run_event`'s node-wire allowlist.
-_RUN_COMPLETE_FIELDS = ("final_status", "nodes_executed", "nodes_failed", "failed_node_ids")
+_RUN_COMPLETE_FIELDS = (
+    "final_status",
+    "nodes_executed",
+    "nodes_failed",
+    "failed_node_ids",
+    "duration_ms",
+    "execution_id",
+)
 
 
 def _run_event(line: dict[str, Any]) -> dict[str, Any]:

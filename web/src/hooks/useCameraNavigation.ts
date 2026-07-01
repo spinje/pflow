@@ -27,6 +27,9 @@ interface CameraNavigationArgs {
   setSelectedId: Dispatch<SetStateAction<string | null>>;
   /** Wipes the hover marks — a navigation can unmount the hovered source. */
   clearHover: () => void;
+  /** A `?run=` deep-link opens the run callout, which frames the initial camera on its anchor (Task 175).
+   *  Skip the ONE initial whole-graph fit so the two don't fight (later view-change fits are unaffected). */
+  suppressInitialFit: boolean;
 }
 
 export interface CameraNavigation {
@@ -46,6 +49,7 @@ export function useCameraNavigation({
   setFocus,
   setSelectedId,
   clearHover,
+  suppressInitialFit,
 }: CameraNavigationArgs): CameraNavigation {
   const { fitView, getNodes } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
@@ -89,6 +93,8 @@ export function useCameraNavigation({
   // resolvable node=, frame just that node (a close-up); else fit the whole graph.
   const fitKey = `${workflow}|${direction}|${nodeParam ?? ""}`;
   const lastFit = useRef<string>("");
+  // One-shot: the ?run= deep-link skips ONLY the first whole-graph fit (the run callout frames it instead).
+  const suppressedInitialFit = useRef(false);
   useEffect(() => {
     // Fit only once React Flow has MEASURED the laid-out nodes (real positions + sizes).
     // A raw rAF after "ready" races the layout→store sync, so a single-node fit lands on
@@ -98,11 +104,19 @@ export function useCameraNavigation({
     if (status !== "ready" || !nodesInitialized) return;
     if (lastFit.current === fitKey) return;
     lastFit.current = fitKey;
+    // A `?run=` deep-link: the run callout frames the initial camera on its anchor, so SKIP this one
+    // whole-graph fit (they'd fight and the whole-graph fit — the parent effect — would win, shrinking the
+    // box). One-shot via the ref: a later direction flip (new fitKey) re-fits normally. An explicit `?node=`
+    // still wins (it asked to frame a node). NOT suppressed without an anchor (then the graph fit is right).
+    if (suppressInitialFit && !suppressedInitialFit.current && !nodeParam) {
+      suppressedInitialFit.current = true;
+      return;
+    }
     const rendered = new Set(getNodes().map((n) => n.id));
     const flatId = nodeParam ? resolveNodeFlatId(graphRef.current, rendered, nodeParam) : null;
     if (flatId) fitView({ nodes: [{ id: flatId }], padding: 0.5, maxZoom: 1.5, duration: 200 });
     else fitView({ padding: 0.2, duration: 200 });
-  }, [status, fitKey, fitView, nodeParam, nodesInitialized, getNodes]);
+  }, [status, fitKey, fitView, nodeParam, nodesInitialized, getNodes, suppressInitialFit]);
 
   // Chip navigation: focus always moves; the panel swaps only when the chip
   // names a selectable subject (an IO-port chip keeps this edge panel open).
