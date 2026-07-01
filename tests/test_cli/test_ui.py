@@ -29,6 +29,14 @@ from pflow.runtime.workflow_trace import format_trace_filename
 from pflow.ui.server import _json, create_app
 from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
+
+def _local(*args: object, **kwargs: object) -> TestClient:
+    """A TestClient with a loopback Host — the ``_LoopbackOnly`` guard 403s TestClient's default
+    ``testserver`` Host (a real browser/CLI on the loopback server always sends a loopback Host)."""
+    kwargs.setdefault("base_url", "http://127.0.0.1")
+    return TestClient(*args, **kwargs)  # type: ignore[arg-type]
+
+
 _VALID_IR = {
     "nodes": [
         {"id": "greet", "type": "shell", "params": {"command": "echo hello"}},
@@ -49,7 +57,7 @@ def _save_workflow(name: str, *, description: str | None = None) -> None:
 class TestCatalogEndpoint:
     def test_empty_catalog_returns_json_list(self) -> None:
         """A clean registry yields an empty JSON array (200)."""
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/catalog")
         assert response.status_code == 200
         assert response.json() == []
@@ -57,7 +65,7 @@ class TestCatalogEndpoint:
     def test_catalog_lists_saved_workflows_without_ir(self) -> None:
         """A saved workflow appears with name/description/path and no ``ir``."""
         _save_workflow("demo", description="A demo workflow")
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/catalog")
 
         assert response.status_code == 200
@@ -76,7 +84,7 @@ class TestGraphEndpoint:
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/graph", params={"workflow": str(workflow_path)})
 
         assert response.status_code == 200
@@ -97,7 +105,7 @@ class TestGraphEndpoint:
 
     def test_missing_workflow_param_is_400(self) -> None:
         """No ``workflow`` query param → 400 with a structured error body."""
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/graph")
         assert response.status_code == 400
         assert response.json()["errors"][0]["message"]
@@ -108,7 +116,7 @@ class TestGraphEndpoint:
         workflow_path = tmp_path / "invalid.pflow.md"
         write_workflow_file(bad_ir, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/graph", params={"workflow": str(workflow_path)})
 
         assert response.status_code == 422
@@ -117,7 +125,7 @@ class TestGraphEndpoint:
 
     def test_nonexistent_workflow_is_422(self) -> None:
         """An unresolvable workflow reference → 422 (resolution failure)."""
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/graph", params={"workflow": "no-such-workflow-xyz"})
         assert response.status_code == 422
         assert response.json()["errors"]
@@ -135,7 +143,7 @@ class TestGraphEndpoint:
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
-        client = TestClient(create_app(), raise_server_exceptions=False)
+        client = _local(create_app(), raise_server_exceptions=False)
         with patch(
             "pflow.ui.server.resolve_validate_build",
             side_effect=RuntimeError("simulated builder bug"),
@@ -167,7 +175,7 @@ class TestSourceEndpoint:
         workflow_path = tmp_path / "with-inputs.pflow.md"
         write_workflow_file(workflow_ir, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/source", params={"workflow": str(workflow_path)})
 
         assert response.status_code == 200
@@ -205,7 +213,7 @@ class TestSourceEndpoint:
         unrelated_path = tmp_path / "unrelated.pflow.md"
         unrelated_path.write_text("# Unrelated\n", encoding="utf-8")
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/source", params={"workflow": str(parent_path)})
 
         assert response.status_code == 200
@@ -263,7 +271,7 @@ class TestSourceEndpoint:
         def _fake_path(arg: object) -> object:
             return _UnreadablePath() if str(arg) == child_key else Path(str(arg))
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         with patch("pflow.ui.server.Path", _fake_path):
             response = client.get("/api/source", params={"workflow": str(parent_path)})
 
@@ -275,7 +283,7 @@ class TestSourceEndpoint:
 
     def test_missing_workflow_param_is_400(self) -> None:
         """No ``workflow`` query param → 400 with a structured error body."""
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/source")
         assert response.status_code == 400
         assert response.json()["errors"][0]["message"]
@@ -286,7 +294,7 @@ class TestSourceEndpoint:
         workflow_path = tmp_path / "invalid.pflow.md"
         write_workflow_file(bad_ir, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/source", params={"workflow": str(workflow_path)})
 
         assert response.status_code == 422
@@ -298,7 +306,7 @@ class TestSourceEndpoint:
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
-        client = TestClient(create_app(), raise_server_exceptions=False)
+        client = _local(create_app(), raise_server_exceptions=False)
         with patch(
             "pflow.ui.server.resolve_validate_build",
             side_effect=RuntimeError("simulated source builder bug"),
@@ -314,7 +322,7 @@ class TestSourceEndpoint:
             title="Inline",
         )
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/source", params={"workflow": workflow})
 
         assert response.status_code == 200
@@ -334,7 +342,7 @@ class TestVersionEndpoint:
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/version", params={"workflow": str(workflow_path)})
 
         assert response.status_code == 200
@@ -345,7 +353,7 @@ class TestVersionEndpoint:
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         first = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
         second = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
         assert first == second
@@ -358,7 +366,7 @@ class TestVersionEndpoint:
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         before = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
 
         # Force a distinct mtime (deterministic across fast test runs).
@@ -369,7 +377,7 @@ class TestVersionEndpoint:
         assert before != after
 
     def test_missing_workflow_param_is_400(self) -> None:
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/version")
         assert response.status_code == 400
         assert response.json()["errors"][0]["message"]
@@ -382,7 +390,7 @@ class TestVersionEndpoint:
         workflow_path = tmp_path / "invalid.pflow.md"
         write_workflow_file(bad_ir, workflow_path)
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/version", params={"workflow": str(workflow_path)})
 
         assert response.status_code == 200
@@ -397,7 +405,7 @@ class TestVersionEndpoint:
         # not just validation).
         workflow_path.write_text("# Broken\n\n## Steps\n\n### greet\n\n```shell\necho hi\n```\n", encoding="utf-8")
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         before = client.get("/api/version", params={"workflow": str(workflow_path)}).json()["fingerprint"]
 
         import os
@@ -411,7 +419,7 @@ class TestVersionEndpoint:
     def test_deleted_workflow_returns_200_constant_so_the_poll_survives(self) -> None:
         """If even resolution fails (the file is gone), the fingerprint is a
         stable constant — the poll keeps running until the file returns."""
-        client = TestClient(create_app())
+        client = _local(create_app())
         response = client.get("/api/version", params={"workflow": "no-such-workflow-xyz"})
         assert response.status_code == 200
         assert response.json()["fingerprint"]
@@ -426,7 +434,7 @@ class TestVersionEndpoint:
         # Corrupt the saved file into a PARSE error (missing the node description).
         path.write_text("# Demo\n\n## Steps\n\n### greet\n\n```shell\necho hi\n```\n", encoding="utf-8")
 
-        client = TestClient(create_app())
+        client = _local(create_app())
         before = client.get("/api/version", params={"workflow": "demo"}).json()["fingerprint"]
 
         import os
@@ -444,7 +452,7 @@ class TestVersionEndpoint:
         workflow_path = tmp_path / "wf.pflow.md"
         write_workflow_file(_VALID_IR, workflow_path)
 
-        client = TestClient(create_app(), raise_server_exceptions=False)
+        client = _local(create_app(), raise_server_exceptions=False)
         with patch("pflow.ui.server.resolve_validate_build", side_effect=RuntimeError("boom")):
             response = client.get("/api/version", params={"workflow": str(workflow_path)})
 
@@ -476,7 +484,7 @@ class TestFrontendFallback:
         bundle is gitignored but DOES exist on disk after a Phase-4 build.
         """
         with patch("pflow.ui.server._STATIC_DIR", tmp_path):
-            client = TestClient(create_app())
+            client = _local(create_app())
             response = client.get("/")
         assert response.status_code == 503
         assert "make ui-build" in response.text
@@ -489,7 +497,7 @@ class TestFrontendFallback:
         (tmp_path / "assets" / "app.js").write_text("console.log('hi')")
 
         with patch("pflow.ui.server._STATIC_DIR", tmp_path):
-            client = TestClient(create_app())
+            client = _local(create_app())
             root = client.get("/")
             asset = client.get("/assets/app.js")
             api = client.get("/api/catalog")
@@ -513,7 +521,7 @@ class TestFrontendFallback:
         (tmp_path / "assets" / "app-CAFE1234.js").write_text("console.log('hi')")
 
         with patch("pflow.ui.server._STATIC_DIR", tmp_path):
-            client = TestClient(create_app())
+            client = _local(create_app())
             root = client.get("/")
             asset = client.get("/assets/app-CAFE1234.js")
 
@@ -937,7 +945,7 @@ class TestRunsEndpoint:
 
         with open(live_path, encoding="utf-8") as writer:
             fcntl.flock(writer.fileno(), fcntl.LOCK_EX)  # simulate the producer holding its trace open
-            body = TestClient(create_app()).get("/api/runs").json()
+            body = _local(create_app()).get("/api/runs").json()
         by_id = {r["run_id"]: r for r in body}
         assert set(by_id) == {"done", "crashed", "live"}
         assert by_id["done"]["complete"] is True and by_id["done"]["final_status"] == "success"
@@ -983,7 +991,7 @@ class TestRunsEndpoint:
             complete=True,
             execution_id="y-run",
         )
-        body = TestClient(create_app()).get("/api/runs", params={"workflow": str(wf_x)}).json()
+        body = _local(create_app()).get("/api/runs", params={"workflow": str(wf_x)}).json()
         by_id = {r["run_id"]: r for r in body}
         assert set(by_id) == {"x-full", "x-only"}, "filtered to X; --only labelled, not excluded; Y absent"
         assert by_id["x-only"]["only_node"] == "b"
@@ -992,13 +1000,13 @@ class TestRunsEndpoint:
     def test_empty_dir_returns_empty_list(self, tmp_path, monkeypatch) -> None:
         """No trace dir (fresh install) → ``200 + []`` (genuinely zero runs), never an error."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        resp = TestClient(create_app()).get("/api/runs")
+        resp = _local(create_app()).get("/api/runs")
         assert resp.status_code == 200 and resp.json() == []
 
     def test_unknown_workflow_name_404(self, tmp_path, monkeypatch) -> None:
         """``?workflow=<unresolvable>`` → 404 (mirrors ``/api/events`` — a named filter must resolve)."""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        resp = TestClient(create_app()).get("/api/runs", params={"workflow": "no-such-workflow-xyz"})
+        resp = _local(create_app()).get("/api/runs", params={"workflow": "no-such-workflow-xyz"})
         assert resp.status_code == 404
 
     def test_run_entry_buckets_runs_by_git_root(self, tmp_path, monkeypatch) -> None:
@@ -1034,7 +1042,7 @@ class TestRunsEndpoint:
             complete=True,
             execution_id="inline",
         )
-        by_id = {r["run_id"]: r for r in TestClient(create_app()).get("/api/runs").json()}
+        by_id = {r["run_id"]: r for r in _local(create_app()).get("/api/runs").json()}
         assert by_id["in-repo"]["git_root"] == str(repo.resolve())
         assert by_id["loose"]["git_root"] is None  # under no repo → the catalog's "Other" bucket
         assert by_id["inline"]["git_root"] is None  # inline (ir-hash:) has no file

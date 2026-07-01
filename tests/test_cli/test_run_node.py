@@ -22,6 +22,13 @@ from pflow.ui.run_node import read_run_inputs, run_node_detail
 from pflow.ui.server import create_app
 
 
+def _local(*args: object, **kwargs: object) -> TestClient:
+    """A TestClient with a loopback Host — the ``_LoopbackOnly`` guard 403s TestClient's default
+    ``testserver`` Host (a real browser/CLI on the loopback server always sends a loopback Host)."""
+    kwargs.setdefault("base_url", "http://127.0.0.1")
+    return TestClient(*args, **kwargs)  # type: ignore[arg-type]
+
+
 def _event(node_id: str, *, ancestor_path: list | None = None, port=None, seq: int = 0, eid: int = 0, **fields) -> dict:
     """One completion ``event`` line. Defaults to a shell node; ``**fields`` override / add payload
     (``node_type``, ``node_params``, ``node_output``, ``llm_call``, ``llm_prompt``, ``status``, ...)."""
@@ -592,11 +599,11 @@ def test_cli_json_run_records_json_output_result_on_run_complete(tmp_path, monke
 
 class TestRunInputsEndpoint:
     def test_missing_workflow_is_400(self) -> None:
-        r = TestClient(create_app()).get("/api/run-inputs", params={"run": "x"})
+        r = _local(create_app()).get("/api/run-inputs", params={"run": "x"})
         assert r.status_code == 400
 
     def test_unknown_workflow_is_404(self) -> None:
-        r = TestClient(create_app()).get("/api/run-inputs", params={"workflow": "no-such-workflow-xyz", "run": "x"})
+        r = _local(create_app()).get("/api/run-inputs", params={"workflow": "no-such-workflow-xyz", "run": "x"})
         assert r.status_code == 404
 
     def test_happy_path_returns_tokens_without_secrets(self, tmp_path, monkeypatch) -> None:
@@ -605,7 +612,7 @@ class TestRunInputsEndpoint:
         wf_file.write_text("# x")
         resolved = str(wf_file.resolve())
         _write_io_trace(debug, resolved, "20260101-000000-000020", inputs={"name": "World", "api_key": "sk-secret"})
-        r = TestClient(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "run-1"})
+        r = _local(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "run-1"})
         assert r.status_code == 200
         assert r.json() == {"name": "World"}
 
@@ -615,7 +622,7 @@ class TestRunInputsEndpoint:
         wf_file.write_text("# x")
         resolved = str(wf_file.resolve())
         _write_io_trace(debug, resolved, "20260101-000000-000020", inputs={"name": "World"})
-        r = TestClient(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "ghost"})
+        r = _local(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "ghost"})
         assert r.status_code == 404
 
 
@@ -624,25 +631,25 @@ class TestRunInputsEndpoint:
 
 class TestRunNodeEndpoint:
     def test_missing_workflow_param_is_400(self) -> None:
-        r = TestClient(create_app()).get("/api/run-node", params={"ref": "{}"})
+        r = _local(create_app()).get("/api/run-node", params={"ref": "{}"})
         assert r.status_code == 400
 
     def test_missing_ref_is_400(self, tmp_path, monkeypatch) -> None:
         _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
         wf_file.write_text("# x")
-        r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file)})
+        r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file)})
         assert r.status_code == 400
 
     def test_malformed_ref_is_400(self, tmp_path, monkeypatch) -> None:
         _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
         wf_file.write_text("# x")
-        r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": "not-json"})
+        r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": "not-json"})
         assert r.status_code == 400
 
     def test_unknown_workflow_is_404(self) -> None:
-        r = TestClient(create_app()).get("/api/run-node", params={"workflow": "does-not-exist-xyz", "ref": "{}"})
+        r = _local(create_app()).get("/api/run-node", params={"workflow": "does-not-exist-xyz", "ref": "{}"})
         assert r.status_code == 404
 
     def test_happy_path_returns_detail(self, tmp_path, monkeypatch) -> None:
@@ -652,7 +659,7 @@ class TestRunNodeEndpoint:
         resolved = str(wf_file.resolve())
         _write_trace(debug, resolved, "20260101-000000-000001", [_event("greet", node_output={"stdout": "hi"})])
         ref = json.dumps({"node_id": "greet", "ancestor_path": [], "port": None})
-        r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
+        r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
         assert r.status_code == 200
         assert r.json()["node_type"] == "shell" and r.json()["output"] == {"stdout": "hi"}
 
@@ -664,7 +671,7 @@ class TestRunNodeEndpoint:
         resolved = str(wf_file.resolve())
         _write_trace(debug, resolved, "20260101-000000-000001", [_event("greet", node_output={"stdout": "hi"})])
         ref = json.dumps({"node_id": "greet", "ancestor_path": [], "port": None})
-        r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref, "run": ""})
+        r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref, "run": ""})
         assert r.status_code == 200 and r.json()["output"] == {"stdout": "hi"}
 
     def test_no_matching_event_is_404(self, tmp_path, monkeypatch) -> None:
@@ -674,7 +681,7 @@ class TestRunNodeEndpoint:
         resolved = str(wf_file.resolve())
         _write_trace(debug, resolved, "20260101-000000-000001", [_event("greet")])
         ref = json.dumps({"node_id": "absent", "ancestor_path": [], "port": None})
-        r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
+        r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
         assert r.status_code == 404
 
     def test_io_input_ref_returns_200_with_projected_value(self, tmp_path, monkeypatch) -> None:
@@ -685,6 +692,6 @@ class TestRunNodeEndpoint:
         resolved = str(wf_file.resolve())
         _write_io_trace(debug, resolved, "20260101-000000-000010", inputs={"name": "World"})
         ref = json.dumps({"node_id": "name", "ancestor_path": [], "port": "in"})
-        r = TestClient(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
+        r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": ref})
         assert r.status_code == 200
         assert r.json()["node_type"] == "input" and r.json()["input"] == {"name": "World"}

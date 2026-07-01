@@ -62,10 +62,12 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from pflow.core.diagnostic import exception_to_diagnostics
 from pflow.core.exceptions import PflowError
@@ -430,36 +432,49 @@ def _workflow_not_found(value: str) -> Response:
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
-def _require_local_origin(request: Request) -> Response | None:
-    """Reject any mutating request whose ``Host`` header isn't loopback (the DNS-rebinding guard).
-
-    The server binds ``127.0.0.1`` and sends no CORS headers, which blocks a cross-origin page from
-    READING responses — but a DNS-rebinding attack points an attacker domain at ``127.0.0.1`` so the
-    browser sends same-origin requests the server would otherwise honor. Pinning ``Host`` to loopback
-    closes that last gap. Returns a ``403`` Response when the host isn't loopback, else ``None``.
-
-    A real browser/CLI talking to the loopback server always sends ``127.0.0.1``/``localhost``/``::1``
-    (optionally ``:port``, or an IPv6 literal in brackets). Parse the host part off the header, strip the
-    port, unwrap an ``[::1]`` IPv6 bracket, and membership-check the loopback set."""
-    host = request.headers.get("host", "")
+def _host_is_local(host: str) -> bool:
+    """True if the ``Host`` header names loopback. A real browser/CLI talking to the loopback server always
+    sends ``127.0.0.1``/``localhost``/``::1`` (optionally ``:port``, or an IPv6 literal in brackets). Strip
+    the port, unwrap an ``[::1]`` bracket, and membership-check the loopback set; a bare IPv6 like ``::1``
+    (multiple colons, no brackets) is kept whole."""
     if host.startswith("["):  # IPv6 literal, e.g. "[::1]:8765" → "::1"
         hostname = host[1:].partition("]")[0]
     else:  # strip a trailing :port only when there's exactly one colon (bare IPv6 like "::1" has more)
         hostname = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
-    if hostname not in _LOOPBACK_HOSTS:
-        return _json(
-            {"error": f"Refused: this endpoint accepts loopback requests only (Host {host!r} is not local)."},
-            status_code=403,
-        )
-    return None
+    return (
+        hostname.lower() in _LOOPBACK_HOSTS
+    )  # host names are case-insensitive (a non-normalizing client may send "LocalHost")
+
+
+class _LoopbackOnly:
+    """Reject any request whose ``Host`` header isn't loopback — the DNS-rebinding guard, on EVERY route.
+
+    The server binds ``127.0.0.1`` and sends no CORS headers, which blocks a cross-origin page from READING
+    responses — but a DNS-rebinding attack points an attacker domain at ``127.0.0.1`` so the browser sends
+    same-origin requests the server would otherwise honor (and can READ, defeating the no-CORS defense).
+    Pinning ``Host`` to loopback closes that gap. Applied as middleware — a property of the SERVER, not of
+    each handler — so it covers reads (``/api/source`` etc.) as well as mutating POSTs, and every future
+    endpoint by default; there is no "route it through ``_json_body``" invariant to remember.
+
+    Pure ASGI, NOT ``BaseHTTPMiddleware`` (load-bearing): it must not wrap the long-lived ``/api/events``
+    SSE stream. It either short-circuits a non-loopback request with ``403`` or delegates untouched, so the
+    stream flows normally."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and not _host_is_local(Headers(scope=scope).get("host", "")):
+            response = _json(
+                {"error": "Refused: this server accepts loopback requests only (non-local Host)."},
+                status_code=403,
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
 
 
 async def _json_body(request: Request) -> dict[str, object] | Response:
-    # The shared choke point for every mutating POST: enforce a loopback Host FIRST (before content-type
-    # / body parsing), so a DNS-rebinding request is refused before any work. See _require_local_origin.
-    forbidden = _require_local_origin(request)
-    if forbidden is not None:
-        return forbidden
     content_type = request.headers.get("content-type", "").partition(";")[0].strip().lower()
     if content_type != "application/json":
         return _json(
@@ -702,7 +717,9 @@ async def run(request: Request) -> Response:
     The server stays a pure observer (ADR-0008): it spawns the normal CLI as a detached subprocess that
     writes its own streaming trace; the existing tailer discovers it and the overlay lights it up live.
     No in-process execution, no per-run process state. The only new mutation is this one spawn."""
-    body = await _json_body(request)  # Host guard + content-type/JSON-object enforcement
+    body = await _json_body(
+        request
+    )  # content-type + JSON-object enforcement (loopback Host is the _LoopbackOnly middleware)
     if isinstance(body, Response):
         return body
 
@@ -993,23 +1010,21 @@ def create_app() -> Starlette:
         routes.append(Route("/{path:path}", _frontend_not_built))
     # SECURITY (load-bearing — do NOT add CORSMiddleware without re-evaluating):
     # the server binds 127.0.0.1 (cli/commands/ui.py) and sets NO CORS headers.
-    # `/api/graph?workflow=<path>` reads arbitrary filesystem paths, and a
-    # resolution failure returns a 422 whose diagnostics may echo a source line.
-    # With no `Access-Control-Allow-Origin`, a browser blocks any cross-origin
-    # page from READING that response — so a malicious site can't exfiltrate
-    # workflow/file contents via the local user's browser. Mutating POSTs require
-    # `Content-Type: application/json`, forcing a cross-origin preflight that
-    # fails without CORS; EventSource likewise cannot read commands cross-origin.
-    # The one residual gap — DNS rebinding (an attacker domain re-pointed at
-    # 127.0.0.1, so the browser sends same-origin requests) — is now CLOSED by the
-    # `_require_local_origin` Host check at the top of `_json_body`, covering EVERY
-    # mutating POST. `/api/run` (Task 175) spawns a detached `pflow run` — a real
-    # side effect, the exact "future mutating or live-run endpoint" this block
-    # flagged — so it rides the same loopback + no-CORS + Host posture: it accepts a
-    # resolvable name/path only (never inline content) and spawns the normal CLI, no
-    # in-process execution. Any NEW mutating endpoint MUST flow through `_json_body`
-    # so the Host guard holds.
+    # `/api/graph?workflow=<path>` reads arbitrary filesystem paths and `/api/source`
+    # returns raw `.pflow.md` text, so responses can carry workflow/file contents.
+    # With no `Access-Control-Allow-Origin`, a browser blocks a cross-origin page
+    # from READING those responses, and mutating POSTs require `application/json`
+    # (a cross-origin preflight that fails without CORS). The one way past both is
+    # DNS rebinding (an attacker domain re-pointed at 127.0.0.1 → the browser sends
+    # SAME-origin requests it can also read) — CLOSED for reads AND writes by the
+    # `_LoopbackOnly` middleware below: a `Host`-header loopback check on EVERY
+    # route. Because it's middleware (not a per-handler call), a new endpoint is
+    # covered by default — no "must route through `_json_body`" invariant to forget.
+    # `/api/run` (Task 175) spawns a detached `pflow run` behind this same posture:
+    # a resolvable name/path only (never inline content), the normal CLI spawned, no
+    # in-process execution.
     app = Starlette(routes=routes)
+    app.add_middleware(_LoopbackOnly)
     app.state.hub = _Hub()
     return app
 

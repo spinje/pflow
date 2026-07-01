@@ -21,11 +21,12 @@ from tests.shared.markdown_utils import write_workflow_file
 
 
 def _client(app: Starlette | None = None) -> TestClient:
-    """A TestClient whose default Host is loopback so mutating POSTs pass ``_require_local_origin``.
+    """A TestClient whose default Host is loopback so requests pass the ``_LoopbackOnly`` guard.
 
     Starlette's TestClient defaults to ``base_url="http://testserver"`` → ``Host: testserver``, which the
-    Task-175 DNS-rebinding guard (enforced at the top of ``_json_body``) refuses with 403. A real browser
-    / CLI talking to the loopback server always sends a loopback Host, so this is the faithful default."""
+    Task-175 DNS-rebinding guard (the ``_LoopbackOnly`` middleware, on EVERY route — reads and writes)
+    refuses with 403. A real browser / CLI talking to the loopback server always sends a loopback Host, so
+    this is the faithful default."""
     return TestClient(app if app is not None else create_app(), base_url="http://127.0.0.1")
 
 
@@ -435,8 +436,9 @@ class TestRunEndpoint:
 
 
 class TestHostGuard:
-    """``_require_local_origin`` — the DNS-rebinding guard at the top of ``_json_body``, covering EVERY
-    mutating POST (Task 175). A non-loopback Host is 403; loopback variants pass."""
+    """The ``_LoopbackOnly`` middleware — the DNS-rebinding guard on EVERY route (Task 175), reads and
+    writes. A non-loopback Host is 403; loopback variants pass. (Read-endpoint coverage is pinned by
+    ``test_guard_also_covers_read_endpoints``.)"""
 
     def test_non_loopback_host_is_403_and_does_not_spawn(self, tmp_path: Path) -> None:
         workflow = str(_workflow(tmp_path))
@@ -451,9 +453,9 @@ class TestHostGuard:
         popen.assert_not_called()
 
     def test_loopback_hosts_pass_the_guard(self, tmp_path: Path) -> None:
-        # 127.0.0.1[:port], localhost[:port], and an IPv6 [::1]:port literal all resolve to loopback.
+        # 127.0.0.1[:port], localhost[:port] (case-insensitive), and an IPv6 [::1]:port literal all resolve to loopback.
         workflow = str(_workflow(tmp_path))
-        for host in ("127.0.0.1:8765", "localhost:8765", "[::1]:8765"):
+        for host in ("127.0.0.1:8765", "localhost:8765", "LOCALHOST:8765", "[::1]:8765"):
             with patch("pflow.ui.server.subprocess.Popen"):
                 response = _client().post(
                     "/api/run",
@@ -477,6 +479,20 @@ class TestHostGuard:
             _client().post("/api/visibility", json={"conn_id": "c", "visibility": "hidden"}, headers=evil).status_code
             == 403
         )
+
+    def test_guard_also_covers_read_endpoints(self, tmp_path: Path) -> None:
+        # The guard is middleware on EVERY route, so a DNS-rebinding attacker can't READ workflow/trace
+        # content (/api/source, /api/graph, ...) either — not just mutate. A non-loopback Host → 403; the
+        # same request from loopback is NOT 403 (it reaches the handler: 200/400/422, endpoint-dependent).
+        workflow = str(_workflow(tmp_path))
+        evil = {"host": "evil.com"}
+        for path, params in (
+            ("/api/graph", {"workflow": workflow}),
+            ("/api/source", {"workflow": workflow}),
+            ("/api/catalog", {}),
+        ):
+            assert _client().get(path, params=params, headers=evil).status_code == 403, path
+            assert _client().get(path, params=params).status_code != 403, path
 
 
 def test_sse_disconnect_unregisters_connection_via_raw_asgi(tmp_path: Path) -> None:
@@ -512,7 +528,7 @@ def test_sse_disconnect_unregisters_connection_via_raw_asgi(tmp_path: Path) -> N
         "path": "/api/events",
         "raw_path": b"/api/events",
         "query_string": urlencode({"workflow": str(workflow), "visibility": "visible"}).encode(),
-        "headers": [],
+        "headers": [(b"host", b"127.0.0.1")],  # the _LoopbackOnly guard 403s a request with no/non-loopback Host
         "client": ("127.0.0.1", 12345),
         "server": ("127.0.0.1", 8765),
         "root_path": "",

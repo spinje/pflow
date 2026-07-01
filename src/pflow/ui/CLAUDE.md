@@ -214,13 +214,14 @@ clears connections and activity.
 The server binds loopback and sends no CORS headers. JSON POSTs force a cross-origin
 preflight, and EventSource responses are unreadable cross-origin. The one residual
 gap — **DNS rebinding** (an attacker domain re-pointed at `127.0.0.1`, so the browser
-sends same-origin requests) — is closed by **`_require_local_origin`**, a `Host`-header
-loopback check enforced at the **top of `_json_body`**, so it covers EVERY mutating POST
-(`command`/`interaction`/`visibility` AND `/api/run`). A non-loopback `Host` → `403`. `/api/run`
-spawns a real `pflow run` (Task 175 — the "future mutating or live-run endpoint" this note
-flagged) and rides the same loopback + no-CORS + Host posture: resolvable name/path only, the
-normal CLI spawned detached, no in-process execution. **Any new mutating endpoint MUST flow
-through `_json_body`** so the Host guard holds.
+sends same-origin requests it can also READ) — is closed by the **`_LoopbackOnly`
+middleware**, a `Host`-header loopback check on **EVERY route** (reads AND writes): a
+non-loopback `Host` → `403` for `/api/source` / `/api/graph` / `/api/run-node` / … as
+well as the mutating POSTs (`command`/`interaction`/`visibility`/`/api/run`). Being
+middleware, not a per-handler call, it covers every future endpoint by default — there is
+**no** "route it through `_json_body`" invariant to remember. `/api/run` (Task 175) spawns
+a real `pflow run` behind this same posture: resolvable name/path only (never inline
+content), the normal CLI spawned detached, no in-process execution.
 
 ### Static bundle (`/` + assets)
 The SPA builds into `src/pflow/ui/static/` (Vite `build.outDir`, `base = "./"`

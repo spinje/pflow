@@ -13,7 +13,7 @@
 **Read these first (path · symbol):**
 - `runtime/workflow_trace.py` · `WorkflowTraceCollector.inputs` + `_meta_fields()` — the **keystone**: `meta.inputs` on the eager trace line.
 - `execution/runner.py` · `_compile_and_execute` — the `meta.inputs` stamp (ordering-critical) + `RunnerConfig.execution_id` threading.
-- `ui/server.py` · `run()` (detached spawn), `_require_local_origin`+`_json_body` (Host guard), `command()` (the `select-run` verb), `run_inputs()`.
+- `ui/server.py` · `run()` (detached spawn), `_LoopbackOnly` middleware + `_host_is_local` (the Host guard — see invariant 5), `command()` (the `select-run` verb), `run_inputs()`.
 - `ui/run_node.py` · `run_node_detail`/`_io_detail`/`read_run_inputs` + the shared raw-read helpers `_read_trace_lines`/`_blob_map`/`_line_of_kind`.
 - `ui/run_tailer.py` · `_start_pinned`/`_PINNED_RESOLVE_ATTEMPTS`/`_read_meta`.
 - Frontend: `web/src/components/IoPanel.tsx` (`PortRunValue`), `RunPanel.tsx` (picker + smart `onLaunched`), `api/events.ts` (`select-run` arm), `views/GraphView.tsx` (`selectRun`, `pointHandlers.current`, `hasRunContext`, `onRunLaunched`).
@@ -23,7 +23,7 @@
 2. **The `meta.inputs` stamp MUST run before `engine.run()`** (which calls `start_streaming()` → flushes the eager meta line at t=0). Move it later → the meta line ships `inputs:null` → Phase 4 input-inspect + Phase 5 re-run silently break. (Pinned by `test_meta_inputs.py::…on_eager_meta_line_before_node_events`.)
 3. **Read traces as RAW JSONL lines** (`run_node._read_trace_lines`), NEVER `load_trace_file` — it strips `ancestor_path`/`port`, the exact keys the overlay/panel join on → blank panels, no error.
 4. **IO redaction matches by PORT NAME:** `_redact({name: value})`, not `_redact(value)`. `_redact` matches dict KEYS; a bare scalar has no key → a sensitive-named input's value leaks to the browser.
-5. **Every mutating POST flows through `_json_body`** (which calls `_require_local_origin` FIRST). A new POST that bypasses it skips the DNS-rebinding Host guard.
+5. **The `_LoopbackOnly` middleware rejects any non-loopback `Host` on EVERY route** (reads AND writes) — the DNS-rebinding guard. *(Hardened after the initial review: it began as a `_require_local_origin` call at the top of `_json_body`, covering only mutating POSTs — a rebinding attacker could still READ `/api/source` etc. Moving it to middleware closed reads too and removed the "must route through `_json_body`" footgun. `_json_body` now does content-type/JSON only.)*
 6. **`run.complete.json_output["result"]` requires the CLI's `set_json_output` to run BEFORE `finalize()`.** Reorder → output-node "This run" panels return null ("no recorded output") while every fixture test stays green. (Pinned by `test_run_node.py::test_cli_json_run_records_json_output_result_on_run_complete`.)
 7. **Secrets: RAW on disk, redacted on READ / omitted on PREFILL.** No write-time masking — re-run needs faithful values. `_io_detail` redacts (display shows the key exists); `read_run_inputs` omits (a secret never reaches the browser).
 8. **Never add `sensitive` to the Python `IOPort` dataclass** — the wire ships `asdict(node.io)`, so it would leak onto OUTPUT nodes. It's a renderer-injected flag (`react_flow.py`), input-nodes-only; mirror it in the TS `IOPort` only.
@@ -44,7 +44,7 @@ The plan was solid but its **line numbers are ALL stale** (phases 3/4/4.5 drift)
 - **Point-channel verb = 3 lockstep sites, no shared enum:** server `command()` whitelist + `events.ts` dispatch arm + `GraphView.pointHandlers.current` ref. A new verb routes through the ref (its identity tracks the deps), NEVER through the subscribe-effect dep array (churn). `clear`/`select-run` are pass-through (no `resolve_target`); `focus`/`frame` resolve a graph target.
 - **Shared raw trace-read helpers** (`_read_trace_lines`/`_blob_map`/`_line_of_kind`) — three readers (`run_node_detail`, `_io_detail`, `read_run_inputs`) reuse them; don't reimplement a trace read.
 - **Pre-flight the full compile off-loop** (`asyncio.to_thread` → `_preflight` = resolve+parse+`compile_workflow`) to convert the silent pre-trace-failure class into a clean 400 with diagnostics.
-- **`_require_local_origin` as a single choke point** in `_json_body` — one guard covers all mutating POSTs.
+- **A loopback-`Host` guard as ASGI middleware** (`_LoopbackOnly`) — one check on every route (reads + writes), covered-by-default for future endpoints. (NOT a per-handler call — that only guards the routes that remember to make it.)
 
 **Reject (tried/considered and wrong here):** `-m pflow` · `asyncio.create_subprocess_exec` · gating IO inspect on `ReadPanel`/`selectedNode` · `_redact(<scalar>)` · `sensitive` on the `IOPort` dataclass · adding a verb to the subscribe-effect deps instead of the ref.
 
