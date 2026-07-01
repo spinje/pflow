@@ -456,7 +456,10 @@ def serve_cmd(
                 health = _probe_health(port, reuse_workflow)
                 if health is not None and _int_field(health, "windows") > 0:
                     _point_request(ctx, port, reuse_workflow, "select-run", run, output_json=False)
-                    click.echo(f"pflow UI already showing {reuse_workflow} — switched it to run {run}", err=True)
+                    # `select-run` is latched (Issue #539), so this steers the open window whether it's
+                    # visible (live) or backgrounded (caught up on return) — even if `windows` was counting a
+                    # just-closing tab, the latch still delivers on reopen. So report the steer plainly.
+                    click.echo(f"pflow UI already showing {reuse_workflow} — steering it to run {run}", err=True)
                     ctx.exit(0)
                     return
             url = _serve_url(port, reuse_workflow, no_auto_update, run=run)

@@ -106,6 +106,36 @@ class TestHub:
         assert filtered[0]["sequence"] == _ACTIVITY_MAX + 4
         assert filtered[-1]["sequence"] == 6
 
+    def test_set_point_latches_the_latest_command_with_a_monotonic_epoch(self) -> None:
+        # Issue #539: the hub remembers the agent's current Point per workflow_key, stamped with a
+        # strictly-increasing epoch, so events() can replay the LATEST one to a new/reconnecting Viewer.
+        hub = _Hub()
+        assert hub.point_for("/a.pflow.md") is None
+        first = hub.set_point("/a.pflow.md", {"type": "focus", "target": {"kind": "node"}})
+        second = hub.set_point("/a.pflow.md", {"type": "clear"})
+        assert first["epoch"] == 1 and second["epoch"] == 2  # broadcast order → monotonic epoch
+        assert hub.point_for("/a.pflow.md") == {"type": "clear", "epoch": 2}  # latch holds the latest
+        assert hub.point_for("/other.pflow.md") is None  # scoped per workflow_key
+
+    def test_set_run_latches_on_a_separate_store_sharing_the_epoch(self) -> None:
+        # Issue #539: the run selection latches independently of the Point latch (orthogonal state, both
+        # replayed on subscribe), but on ONE monotonic epoch sequence so they stay comparably ordered.
+        hub = _Hub()
+        assert hub.run_for("/a.pflow.md") is None
+        point = hub.set_point("/a.pflow.md", {"type": "focus"})
+        run = hub.set_run("/a.pflow.md", {"type": "select-run", "run": "r1"})
+        assert point["epoch"] == 1 and run["epoch"] == 2  # one shared monotonic sequence
+        assert hub.run_for("/a.pflow.md") == {"type": "select-run", "run": "r1", "epoch": 2}
+        assert hub.point_for("/a.pflow.md") == {"type": "focus", "epoch": 1}  # separate stores, both kept
+
+    def test_boot_id_is_a_stable_per_process_nonce(self) -> None:
+        # The restart-fence the client resets its epoch baseline against: stable within a process,
+        # distinct across _Hub instances (a server restart mints a fresh one, restarting the counter).
+        hub = _Hub()
+        assert isinstance(hub.boot_id, str) and hub.boot_id
+        assert hub.boot_id == hub.boot_id
+        assert hub.boot_id != _Hub().boot_id
+
 
 class TestHealthEndpoint:
     """``/api/health`` — the discovery/reuse probe. It TOUCHES THE HUB, so the
@@ -174,6 +204,7 @@ class TestInteractionEndpoints:
                 "kind": "node",
                 "ref": {"node_id": "greet", "ancestor_path": [], "port": None},
             },
+            "epoch": 1,  # Issue #539: focus/frame/clear carry a monotonic epoch for latch dedup
         }
 
     def test_clear_does_not_require_a_target(self, tmp_path: Path) -> None:
@@ -188,7 +219,7 @@ class TestInteractionEndpoints:
 
         assert response.status_code == 200
         assert response.json()["sent_to"] == 1
-        assert conn.queue.get_nowait() == {"type": "clear"}
+        assert conn.queue.get_nowait() == {"type": "clear", "epoch": 1}  # Issue #539: epoch stamp
 
     def test_select_run_broadcasts_the_run_id_as_pass_through(self, tmp_path: Path) -> None:
         # Task 175: select-run carries a RUN id in `target` and is PASS-THROUGH — broadcast as
@@ -204,12 +235,56 @@ class TestInteractionEndpoints:
 
         assert response.status_code == 200
         assert response.json()["sent_to"] == 1
-        assert conn.queue.get_nowait() == {"type": "select-run", "run": "run-abc"}
+        # Issue #539: select-run now carries a monotonic `epoch` (it's latched for steering, like Point).
+        assert conn.queue.get_nowait() == {"type": "select-run", "run": "run-abc", "epoch": 1}
 
     def test_select_run_requires_a_target(self, tmp_path: Path) -> None:
         workflow = _workflow(tmp_path)
         response = _client().post("/api/command", json={"workflow": str(workflow), "type": "select-run"})
         assert response.status_code == 400
+
+    def test_focus_latches_the_point_even_with_no_live_windows(self, tmp_path: Path) -> None:
+        # Issue #539: the latch exists precisely to reach a tab that was NOT connected when the command
+        # fired, so storing it must not depend on there being live windows.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        key = str(workflow.resolve())
+
+        response = _client(app).post(
+            "/api/command", json={"workflow": str(workflow), "type": "focus", "target": "greet"}
+        )
+
+        assert response.json()["sent_to"] == 0  # nobody connected
+        assert app.state.hub.point_for(key) == {
+            "type": "focus",
+            "target": {"kind": "node", "ref": {"node_id": "greet", "ancestor_path": [], "port": None}},
+            "epoch": 1,
+        }
+
+    def test_clear_replaces_the_latched_focus_with_a_higher_epoch(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        key = str(workflow.resolve())
+        client = _client(app)
+
+        client.post("/api/command", json={"workflow": str(workflow), "type": "focus", "target": "greet"})
+        client.post("/api/command", json={"workflow": str(workflow), "type": "clear"})
+
+        # The latch holds the LATEST command (the clear), so a reopening tab catches up to the clear rather
+        # than re-applying a stale highlight; its epoch is higher than the focus it superseded.
+        assert app.state.hub.point_for(key) == {"type": "clear", "epoch": 2}
+
+    def test_select_run_latches_the_run_selection(self, tmp_path: Path) -> None:
+        # Issue #539: select-run is latched (on its OWN store) so the agent can steer a backgrounded/returning
+        # window to a run. It does NOT touch the Point latch — focus and run selection are orthogonal state.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        key = str(workflow.resolve())
+
+        _client(app).post("/api/command", json={"workflow": str(workflow), "type": "select-run", "target": "run-abc"})
+
+        assert app.state.hub.run_for(key) == {"type": "select-run", "run": "run-abc", "epoch": 1}
+        assert app.state.hub.point_for(key) is None  # the focus latch is untouched
 
     def test_unknown_command_verb_is_rejected(self, tmp_path: Path) -> None:
         # The verb whitelist still rejects anything outside {focus, frame, clear, select-run}.
@@ -248,6 +323,8 @@ class TestInteractionEndpoints:
         assert response.json()["resolved"] == {"matched": 0, "suggestions": ["greet"]}
         assert response.json()["sent_to"] == 0
         assert conn.queue.empty()
+        # A zero/ambiguous match neither broadcasts NOR latches — no epoch is minted (Issue #539).
+        assert app.state.hub.point_for(str(workflow.resolve())) is None
 
     def test_unknown_workflow_name_is_actionable_404(self) -> None:
         response = _client().post(
@@ -595,6 +672,83 @@ def test_idle_connection_emits_keepalive_frames(tmp_path: Path) -> None:
         connected, snapshot, keepalive = asyncio.run(_drive())
 
     assert '"type": "connected"' in connected
+    assert '"boot_id"' in connected  # Issue #539: the restart-fence nonce rides the handshake
     assert '"type": "run-snapshot"' in snapshot  # Task-173 catch-up frame for new viewers
     assert keepalive.strip().startswith(":")  # the idle keepalive comment frame
     assert app.state.hub.windows_for(str(workflow.resolve())) == []
+
+
+def test_events_replays_the_latched_point_to_a_new_connection(tmp_path: Path) -> None:
+    """Issue #539: a Viewer connecting AFTER an agent Point catches up to it.
+
+    A focus issued while a tab was hidden (its SSE closed to free a connection slot) — or before a new tab
+    opened — is latched server-side; every new /api/events stream replays it right after the run snapshot,
+    so the tab adopts the agent's current highlight. Drives the response generator directly (same technique
+    as the keepalive test) to read the ordered frames without racing the ASGI disconnect listener."""
+    workflow = _workflow(tmp_path)
+    app = create_app()
+
+    # An agent points at a node while no tab of this workflow is connected.
+    _client(app).post("/api/command", json={"workflow": str(workflow), "type": "focus", "target": "greet"})
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/events",
+        "query_string": urlencode({"workflow": str(workflow), "visibility": "visible"}).encode(),
+        "headers": [],
+        "app": app,
+    }
+
+    async def _drive() -> tuple[str, str, str]:
+        response = await events(Request(scope))
+        body = response.body_iterator
+        connected = await asyncio.wait_for(body.__anext__(), timeout=2.0)
+        snapshot = await asyncio.wait_for(body.__anext__(), timeout=2.0)
+        latched = await asyncio.wait_for(body.__anext__(), timeout=2.0)  # the Point replay, after the snapshot
+        await body.aclose()
+        return connected, snapshot, latched
+
+    connected, snapshot, latched = asyncio.run(_drive())
+
+    assert '"type": "connected"' in connected
+    assert '"type": "run-snapshot"' in snapshot
+    payload = json.loads(latched.removeprefix("data: ").strip())
+    assert payload["type"] == "focus"
+    assert payload["target"]["ref"]["node_id"] == "greet"
+    assert payload["epoch"] == 1  # the client dedups against this so the replay is idempotent
+
+
+def test_events_replays_the_latched_run_selection_to_a_new_connection(tmp_path: Path) -> None:
+    """Issue #539: `select-run` is latched, so a window that connects AFTER the agent steered the workflow to
+    a run catches up to it — this is what lets the agent steer a backgrounded/returning window, not just a
+    live one. Only the run is latched here, so the replay is the third frame (connected → snapshot → run)."""
+    workflow = _workflow(tmp_path)
+    app = create_app()
+
+    # The agent steers the workflow to a run while no tab is connected.
+    _client(app).post("/api/command", json={"workflow": str(workflow), "type": "select-run", "target": "run-xyz"})
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/events",
+        "query_string": urlencode({"workflow": str(workflow), "visibility": "visible"}).encode(),
+        "headers": [],
+        "app": app,
+    }
+
+    async def _drive() -> tuple[str, str, str]:
+        response = await events(Request(scope))
+        body = response.body_iterator
+        connected = await asyncio.wait_for(body.__anext__(), timeout=2.0)
+        snapshot = await asyncio.wait_for(body.__anext__(), timeout=2.0)
+        steered = await asyncio.wait_for(body.__anext__(), timeout=2.0)  # the run replay, after the snapshot
+        await body.aclose()
+        return connected, snapshot, steered
+
+    connected, snapshot, steered = asyncio.run(_drive())
+
+    assert '"type": "connected"' in connected
+    assert '"type": "run-snapshot"' in snapshot
+    assert json.loads(steered.removeprefix("data: ").strip()) == {"type": "select-run", "run": "run-xyz", "epoch": 1}

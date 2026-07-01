@@ -104,7 +104,9 @@ class TestServeRun:
             result = runner.invoke(ui_module.ui_cmd, ["demo", "--run", "abc123"])
         assert result.exit_code == 0, result.output
         assert request.call_args.kwargs["json"] == {"workflow": "demo", "type": "select-run", "target": "abc123"}
-        assert "switched it to run abc123" in result.output
+        # select-run is latched (Issue #539), so this reliably steers the open window (live or on return) —
+        # report the steer plainly rather than hedging.
+        assert "steering it to run abc123" in result.output
         wb_open.assert_not_called()  # no duplicate tab
 
     def test_reuse_without_a_viewer_opens_a_pinned_tab(self) -> None:
