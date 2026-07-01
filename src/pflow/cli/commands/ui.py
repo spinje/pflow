@@ -456,7 +456,15 @@ def serve_cmd(
                 health = _probe_health(port, reuse_workflow)
                 if health is not None and _int_field(health, "windows") > 0:
                     _point_request(ctx, port, reuse_workflow, "select-run", run, output_json=False)
-                    click.echo(f"pflow UI already showing {reuse_workflow} — switched it to run {run}", err=True)
+                    # `windows > 0` can't tell a live-visible tab from a just-backgrounded tab's ≤15s
+                    # lingering-closed connection, and `select-run` isn't latched (Issue #539) — so report
+                    # honestly rather than assert success; an agent can re-run to open a fresh tab if nothing
+                    # changed. (A future fix could open a pinned tab here instead of trusting `windows`.)
+                    click.echo(
+                        f"pflow UI already showing {reuse_workflow} — asked it to switch to run {run}. "
+                        f"If the view didn't change, that tab was closing; re-run to open a fresh pinned tab.",
+                        err=True,
+                    )
                     ctx.exit(0)
                     return
             url = _serve_url(port, reuse_workflow, no_auto_update, run=run)

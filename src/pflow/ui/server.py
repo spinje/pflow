@@ -131,7 +131,9 @@ class _Hub:
         # highlight. `boot_id` fences the epoch across a server restart: a fresh process restarts the counter
         # at 1, so the client resets its `lastAppliedEpoch` baseline when this nonce changes on reconnect,
         # else a surviving tab would silently skip the new server's lower-numbered Points. Loop-owned like the
-        # rest of the hub (mutated only from command(), on the event loop).
+        # rest of the hub (mutated only from command(), on the event loop). Deliberately NEVER evicted (unlike
+        # `_conns`/tailers): a brand-new tab minutes after the last one closed must still catch up, so pruning
+        # on last-window-close would defeat the feature — bounded by O(#workflows ever pointed at), negligible.
         self._points: dict[str, dict[str, object]] = {}
         self._point_epoch = itertools.count(1)
         self.boot_id = uuid.uuid4().hex
@@ -189,6 +191,10 @@ class _Hub:
         epoch-dedup applies it only if newer than what it already showed — a returning tab catches up without
         clobbering the user's own navigation. The epoch encodes BROADCAST order, not request-arrival order
         (``clear`` stamps before focus/frame's off-loop build), which matches what live clients already see.
+
+        The returned envelope is stored in ``_points`` AND broadcast to every conn as the SAME dict — it is
+        immutable once minted (this method always builds a fresh dict; no consumer mutates it, only
+        ``json.dumps``), so sharing the reference between the latch and the broadcast queues is torn-read-free.
         """
         envelope = {**message, "epoch": next(self._point_epoch)}
         self._points[workflow_key] = envelope
