@@ -317,6 +317,32 @@ describe("subscribe point epoch dedup (#539)", () => {
     expect(h.focus).toHaveBeenCalledTimes(2);
     unsubscribe();
   });
+
+  it("dedups select-run on its own channel (newer steer applies, stale/duplicate skipped)", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit({ type: "select-run", run: "r1", epoch: 2 }); // applied
+    source.emit({ type: "select-run", run: "r0", epoch: 1 }); // stale → skipped
+    source.emit({ type: "select-run", run: "r1", epoch: 2 }); // duplicate (replayed latch) → skipped
+    source.emit({ type: "select-run", run: "r2", epoch: 3 }); // newer steer → applied
+
+    expect(h.selectRun.mock.calls.map((c) => c[0])).toEqual(["r1", "r2"]);
+    unsubscribe();
+  });
+
+  it("keeps the point and run dedup baselines independent", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit(focus(5)); // point channel → 5
+    source.emit({ type: "select-run", run: "r1", epoch: 3 }); // run channel: 3 > 0 → applied, NOT skipped
+    expect(h.focus).toHaveBeenCalledTimes(1);
+    expect(h.selectRun).toHaveBeenCalledTimes(1); // a lower run epoch isn't gated by the higher point epoch
+    unsubscribe();
+  });
 });
 
 describe("reportInteraction", () => {

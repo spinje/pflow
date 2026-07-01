@@ -83,9 +83,9 @@ const RETRY_MS = 1000; // localhost single-user: a fixed beat beats exponential 
  *   visibility-agnostic. That single `open()` chokepoint (guarded on `source`/`stopped`/hidden) keeps at
  *   most one live EventSource and one pending reconnect across every hide/show/error interleave.
  *
- * A reopened (or brand-new) tab catches up: the server replays the run `snapshot()` and the latched Point,
- * epoch-deduped against `lastAppliedEpoch` (re-baselined when the server's `boot_id` changes on restart) so
- * it adopts a newer highlight without clobbering the user's own navigation.
+ * A reopened (or brand-new) tab catches up: the server replays the run `snapshot()`, the latched Point, and
+ * the latched run selection (`select-run`) — each epoch-deduped on its own baseline (re-based when the
+ * server's `boot_id` changes on restart) so it adopts newer agent state without clobbering the user's own.
  */
 export function subscribe(
   workflow: string,
@@ -96,10 +96,11 @@ export function subscribe(
   let connId: string | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
-  // Issue #539 Point-latch dedup: the highest Point epoch this Viewer has applied, and the server identity
-  // it counts against. Both survive the internal close/reopen (same closure); a fresh subscribe() resets
-  // them. A replayed latch with epoch <= lastAppliedEpoch is skipped — idempotent catch-up, no clobber.
-  let lastAppliedEpoch = 0;
+  // Issue #539 latch dedup: the highest epoch this Viewer has applied on each channel (`point` = focus/
+  // frame/clear; `run` = select-run — orthogonal state, so separate baselines), and the server identity they
+  // count against. All survive the internal close/reopen (same closure); a fresh subscribe() resets them.
+  // A replayed latch with epoch <= its channel's baseline is skipped — idempotent catch-up, no clobber.
+  const applied = { point: 0, run: 0 };
   let serverBootId: string | null = null;
 
   const reportVisibility = (): void => {
@@ -112,14 +113,14 @@ export function subscribe(
     }).catch(() => undefined);
   };
 
-  // True if a Point (focus/frame/clear) should be applied — i.e. it is not a replayed latch this Viewer has
-  // already superseded — bumping the baseline when it is. A missing/non-number epoch (old server, or a
-  // direct test emit) always admits and never bumps. Callers gate this AFTER payload validation, so a
+  // True if a latched command on this channel should be applied — i.e. it is not a replay this Viewer has
+  // already superseded — bumping the channel's baseline when it is. A missing/non-number epoch (old server,
+  // or a direct test emit) always admits and never bumps. Callers gate this AFTER payload validation, so a
   // malformed message never bumps the baseline.
-  const admitEpoch = (rawEpoch: unknown): boolean => {
+  const admitEpoch = (rawEpoch: unknown, channel: "point" | "run"): boolean => {
     const epoch = typeof rawEpoch === "number" ? rawEpoch : null;
-    if (epoch !== null && epoch <= lastAppliedEpoch) return false;
-    if (epoch !== null) lastAppliedEpoch = epoch;
+    if (epoch !== null && epoch <= applied[channel]) return false;
+    if (epoch !== null) applied[channel] = epoch;
     return true;
   };
 
@@ -157,11 +158,12 @@ export function subscribe(
       }
       if (!isRecord(message) || typeof message.type !== "string") return;
       if (message.type === "connected" && typeof message.conn_id === "string") {
-        // A restarted server restarts its Point epoch at 1; reset the dedup baseline when its `boot_id`
-        // changes so a reconnecting tab doesn't skip the new process's lower-numbered Points (Issue #539).
+        // A restarted server restarts its epoch counter at 1; reset BOTH channel baselines when its
+        // `boot_id` changes so a reconnecting tab doesn't skip the new process's lower-numbered commands.
         if (typeof message.boot_id === "string" && message.boot_id !== serverBootId) {
           serverBootId = message.boot_id;
-          lastAppliedEpoch = 0;
+          applied.point = 0;
+          applied.run = 0;
         }
         connId = message.conn_id;
         // A reconnect reopens with the original URL, whose visibility value may
@@ -169,11 +171,13 @@ export function subscribe(
         // do not wait for another visibility transition.
         reportVisibility();
       } else if (message.type === "clear") {
-        if (admitEpoch(message.epoch)) handlers.clear();
+        if (admitEpoch(message.epoch, "point")) handlers.clear();
       } else if ((message.type === "focus" || message.type === "frame") && isTarget(message.target)) {
-        if (admitEpoch(message.epoch)) handlers[message.type](message.target);
+        if (admitEpoch(message.epoch, "point")) handlers[message.type](message.target);
       } else if (message.type === "select-run" && typeof message.run === "string") {
-        handlers.selectRun(message.run); // Task 175: switch the open Viewer to the broadcast run id
+        // Task 175: switch the open Viewer to the broadcast run id. Issue #539: latched + epoch-deduped on
+        // its own channel, so the agent can steer a backgrounded/returning window, not just a live one.
+        if (admitEpoch(message.epoch, "run")) handlers.selectRun(message.run);
       } else if (message.type === "run-events" && Array.isArray(message.events)) {
         handlers.runEvents?.(message.events.filter(isRunEvent));
       } else if (message.type === "run-snapshot" && Array.isArray(message.nodes)) {

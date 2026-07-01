@@ -135,6 +135,12 @@ class _Hub:
         # `_conns`/tailers): a brand-new tab minutes after the last one closed must still catch up, so pruning
         # on last-window-close would defeat the feature — bounded by O(#workflows ever pointed at), negligible.
         self._points: dict[str, dict[str, object]] = {}
+        # The agent's current run selection per workflow_key: `select-run` is latched the same way, so the
+        # agent can STEER an open window to a run whether it's visible (delivered live) or backgrounded
+        # (caught up on return). Separate from `_points` because focus and run selection are orthogonal
+        # state — a returning tab catches up to BOTH. Shares `_point_epoch`; the client dedups it on a
+        # SEPARATE baseline. Same never-evicted rationale as `_points`.
+        self._selected_run: dict[str, dict[str, object]] = {}
         self._point_epoch = itertools.count(1)
         self.boot_id = uuid.uuid4().hex
         # Task 173: one live-run tailer per (workflow_key, run_id) — started on first viewer subscribe and
@@ -182,23 +188,42 @@ class _Hub:
         run-events. A subset of ``windows_for`` (which spans every run of the workflow, for Point)."""
         return [c for c in self._conns.values() if c.workflow_key == workflow_key and c.run_id == run_id]
 
-    def set_point(self, workflow_key: str, message: dict[str, object]) -> dict[str, object]:
-        """Latch the agent's current Point for a workflow and return the broadcast envelope with its epoch.
+    def _stamp(self, message: dict[str, object]) -> dict[str, object]:
+        """A fresh, immutable-once-minted envelope carrying the next monotonic Point epoch.
 
-        Issue #539: focus/frame/clear are transient broadcasts with no snapshot replay, so a tab whose SSE
-        was closed while hidden would miss them. We stamp each with a monotonic ``epoch`` and remember the
-        latest per workflow_key; ``events()`` replays it to every new/reconnecting Viewer, and the client's
-        epoch-dedup applies it only if newer than what it already showed — a returning tab catches up without
-        clobbering the user's own navigation. The epoch encodes BROADCAST order, not request-arrival order
-        (``clear`` stamps before focus/frame's off-loop build), which matches what live clients already see.
-
-        The returned envelope is stored in ``_points`` AND broadcast to every conn as the SAME dict — it is
-        immutable once minted (this method always builds a fresh dict; no consumer mutates it, only
-        ``json.dumps``), so sharing the reference between the latch and the broadcast queues is torn-read-free.
+        Always a NEW dict (the store and the broadcast queues share this one reference; no consumer mutates
+        it, only ``json.dumps``), so cross-queue sharing is torn-read-free. The epoch encodes BROADCAST order,
+        not request-arrival order (``clear`` stamps before focus/frame's off-loop build) — what live clients
+        already see. Shared by both latches so focus and run selection stay on one monotonic sequence.
         """
-        envelope = {**message, "epoch": next(self._point_epoch)}
+        return {**message, "epoch": next(self._point_epoch)}
+
+    def set_point(self, workflow_key: str, message: dict[str, object]) -> dict[str, object]:
+        """Latch the agent's current Point (focus/frame/clear) and return the epoch-stamped broadcast envelope.
+
+        Issue #539: these are transient broadcasts with no snapshot replay, so a tab whose SSE was closed
+        while hidden would miss them. We remember the latest per workflow_key; ``events()`` replays it to every
+        new/reconnecting Viewer, and the client's epoch-dedup applies it only if newer than what it already
+        showed — a returning tab catches up without clobbering the user's own navigation.
+        """
+        envelope = self._stamp(message)
         self._points[workflow_key] = envelope
         return envelope
+
+    def set_run(self, workflow_key: str, message: dict[str, object]) -> dict[str, object]:
+        """Latch the agent's current run selection (``select-run``) and return the epoch-stamped envelope.
+
+        Mirrors ``set_point`` on a separate store so the agent can STEER an open window to a run: a visible
+        window gets it live, a backgrounded one catches up on return via the ``events()`` replay. The
+        client dedups it on its own baseline, so re-steering works and a user's later manual run pick isn't
+        clobbered by a replay of an already-applied selection.
+        """
+        envelope = self._stamp(message)
+        self._selected_run[workflow_key] = envelope
+        return envelope
+
+    def run_for(self, workflow_key: str) -> dict[str, object] | None:
+        return self._selected_run.get(workflow_key)
 
     def point_for(self, workflow_key: str) -> dict[str, object] | None:
         return self._points.get(workflow_key)
@@ -575,10 +600,11 @@ async def events(request: Request) -> Response:
             # it. The epoch-carrying envelope is deduped client-side, so replaying it is idempotent. Unlike
             # the snapshot above there is NO follow-up stream to re-sync this, but the trigger for a dropped
             # replay is near-impossible (the fresh 64-slot queue holds only the snapshot at this point).
-            latched = hub.point_for(workflow_key)
-            if latched is not None:
-                with contextlib.suppress(asyncio.QueueFull):
-                    conn.queue.put_nowait(latched)
+            # ...and to the agent's current run selection, so `select-run` steers a returning/new window too.
+            for latched in (hub.point_for(workflow_key), hub.run_for(workflow_key)):
+                if latched is not None:
+                    with contextlib.suppress(asyncio.QueueFull):
+                        conn.queue.put_nowait(latched)
             while conn.active:
                 try:
                     message = await asyncio.wait_for(conn.queue.get(), timeout=_KEEPALIVE_S)
@@ -665,10 +691,11 @@ async def command(request: Request) -> Response:
     # skips resolve_target entirely (a run isn't a node/edge). The browser's selectRun applies it (honoring
     # its own re-pick guard); a stale/unknown id surfaces the frontend's run-not-found path in the open
     # Viewer, never a server error — so no server-side run validation. Placed AFTER `target` is read (unlike
-    # `clear`, which returns before it) since the id lives in `target`.
+    # `clear`, which returns before it) since the id lives in `target`. Issue #539: latched (like Point) so
+    # the agent can steer a backgrounded/returning window to the run, not just a currently-visible one.
     if command_type == "select-run":
-        conns = hub.broadcast(workflow_key, {"type": "select-run", "run": target})
-        return _json(_dispatch_report(workflow_key, conns))
+        steered = hub.set_run(workflow_key, {"type": "select-run", "run": target})
+        return _json(_dispatch_report(workflow_key, hub.broadcast(workflow_key, steered)))
 
     try:
         # Validation/build can recurse through large nested workflows. Keep it
