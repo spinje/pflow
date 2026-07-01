@@ -976,6 +976,10 @@ class WorkflowTraceCollector:
         agg: dict[str, Any] = {
             "end_time": datetime.now().isoformat(),
             "duration_ms": round(duration_ms, 2),
+            # The run's id on the run.complete trailer too (it's on the meta line as well) — so a live-overlay
+            # consumer tailing only the trailer learns which run finished without re-reading the head (Task 175
+            # run callout shows it). Small string; unlike json_output/warnings it's wire-safe.
+            "execution_id": self.execution_id,
             "final_status": final_status,
             "nodes_executed": len(self._top_level_events()),
             "nodes_failed": len(failed_node_ids),

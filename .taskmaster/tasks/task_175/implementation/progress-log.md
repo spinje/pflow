@@ -98,3 +98,240 @@ Started a real `pflow ui` server, `curl POST /api/run` (loopback) → `200 {"sta
 - `make check`: ruff + ruff-format + mypy (239 files) + deptry all clean.
 
 **No loose ends. Phase 2 is complete and verified (unit + real-server end-to-end + security).**
+
+---
+
+## Phase 3 — Frontend: ▶ Rail button → Run side-panel + form + launch
+
+**Status:** ✅ complete — awaiting review
+
+### Changes made
+
+1. **Schema flag (renderer seam, input-only).** `react_flow.py` — new `_io(node)` helper attaches
+   `sensitive = is_sensitive_parameter(node.id.node_id)` to `kind=="input"` nodes' `io` ONLY (NOT the
+   `IOPort` dataclass — `asdict` would leak it onto outputs). Mirrored `sensitive?: boolean` (optional) in
+   the TS `IOPort`. **Regenerated the 3 contract fixtures** (`deep-research`/`run-cycle`/
+   `prompt-caching-multi-chunk` carry inputs; `conditional-branching` has none → unchanged).
+2. **`web/src/utils/controlForType.ts`** (NEW, + test) — the pure 7-case `data_type → control` map
+   (number/integer→number, boolean→checkbox, object/array→textarea, else→text). *Deviation: placed in
+   `utils/` not the plan's `util/` — the repo dir is `utils/`; the plan had a typo.*
+3. **`web/src/graph/io.ts`** — `inputFields(graph)` + `InputField` type (NEW, + tests): enumerates
+   TOP-LEVEL `kind=="input"` nodes (empty `ancestor_path`), reading `sensitive` straight off raw `io`
+   (NOT `wrapperPorts`, which drops it). Re-exported via the `flow.ts` façade.
+4. **`web/src/components/RunForm.tsx`** (NEW, + test) — the reusable controlled seam: one control per
+   input via `controlForType`, required markers, prefill display, the sensitive "from settings/env" hint,
+   the no-input "▶ Run" confirm, inline 400 errors, submit-disabled-while-in-flight. Channel-A token
+   strings throughout.
+5. **`web/src/components/RunPanel.tsx`** (NEW) — the `.read-panel`-shell chrome: builds `InputField[]`,
+   owns `values`/`submitting`/`errors`, prefills defaults (`defaultToken` — sensitive stays blank), omits
+   blank fields on submit (faithful to "don't pass the arg"), calls `runWorkflow`, `onLaunched` on success.
+6. **`web/src/api/client.ts`** — `runWorkflow(workflow, inputs)` (+ tests): typed-ApiError POST `/api/run`,
+   `application/json` header, surfaces 400 diagnostics via `ApiError.errors`.
+7. **`web/src/components/Rail.tsx`** — ▶ `RailButton` at the rail BOTTOM (new `onRun`/`runPanelOpen` props,
+   `showPlay` gate); separator above it; added to the null-return guard.
+8. **`web/src/views/GraphView.tsx`** — `runPanelOpen` state (outside `selectedId`); `toggleRunPanel` +
+   `onRunLaunched` (= `selectRun(null)` follow-newest + close); `onRun={graph ? toggleRunPanel : undefined}`
+   to Rail; renders `RunPanel` (+ shares the right-panel resizer) when `runPanelOpen && graph`.
+9. **`web/src/index.css`** — `.run-form`/`.run-field`/`.run-submit` etc. (`.run-panel` rides `.read-panel`'s
+   scoped chrome tokens, so no new chrome-scope entry needed).
+
+### Decisions / deviations (with rationale)
+
+- **`controlForType` lives in `utils/` not `util/`** — the plan's path was a typo; the repo dir is `utils/`.
+- **`inputFields` lives in `graph/io.ts` (pure), not inlined in the component** — IO enumeration is a pure
+  contract transform; co-locating it with `wrapperPorts`/`ioOwners` keeps the single-copy locality and makes
+  it node-env testable. The plan named `wrapperPorts` only as a *reference* (it drops `sensitive`).
+- **The Phase-5 "load inputs from" picker (`loadFrom`) is deliberately NOT built here.** The plan assigns the
+  picker to Phase 5 ("the picker (Phase 5)"); adding an unused `loadFrom` prop now would be dead scaffolding
+  (fails the simplicity bar). RunForm's controlled surface is exactly the seam Phase 5 extends — the picker
+  adds a prefill *source*, not new form mechanics. **Not a skipped step** — it's a different phase.
+- **RunPanel reuses `PanelHeader`** (input glyph + `IO_COLOR`, eyebrow "run workflow", no `onNavigate`) — the
+  run form is about inputs; reusing the existing chrome is the smallest faithful choice (no new header).
+- **At most ONE right-side panel — the Run panel REPLACES the selection panel while open** (render-level
+  ternary; `selectedId` preserved underneath, so closing ▶ returns to the selection). *Found in self-review:*
+  an earlier draft rendered RunPanel AND a selection panel as two sibling `.read-panel`s — but they are
+  `flex: 0 0 var(--panel-w)` no-shrink, and `usePanelPair` only budgets the source pane against ONE right
+  panel, so source + 2 right panels would crush the canvas (the exact class the reclamp exists to prevent).
+  The single-slot model fixes the crush AND reads cleaner; still "outside the `selectedId` model" (the boolean
+  is independent — it just shares the one right slot in render, doesn't touch `selectedId`).
+- **Submit OMITS blank fields** (not `name=`) so they resolve via the CLI's normal precedence — faithful to a
+  hand-typed run that simply doesn't pass the arg. Required-ness is enforced by the Phase-2 pre-flight (a
+  blank required field → 400 with an actionable diagnostic shown inline), NOT hard-blocked in the form.
+- **Known minor limitation (noted, not fixed):** a live-source edit that ADDS an input while the Run panel is
+  open won't show the new field until the panel is reopened (`values` is initialized once at mount).
+  Rare-case; a sync effect would add complexity for a theorized need — reopening fixes it.
+
+### Faithfulness (verification #4)
+
+Holds *by construction* (channel A): the form sends `{topic: "cats"}` → the server builds the `topic=cats`
+argv token → spawns the identical CLI the user would hand-type. Pinned by the client test (the POST body)
+and the GraphView test (`runWorkflow("demo", { topic: "cats" })`).
+
+### Tests added
+
+- `utils/controlForType.test.ts` — every canonical type + null/Python-alias fallback.
+- `graph/io.test.ts` — `inputFields` field mapping, sub-workflow exclusion, missing-`sensitive`→false.
+- `api/client.test.ts` — `runWorkflow` POST shape/header, 400-with-diagnostics, 404.
+- `components/RunForm.test.tsx` — control mapping, prefill, required marker, sensitive hint, no-input confirm,
+  checkbox token emission, submit/disabled contract, inline 400 errors.
+- `views/GraphView.test.tsx` — ▶ toggles the panel; the Run panel REPLACES a selection panel and restores it
+  on close (one right panel); **submit spawns ONLY the filled+non-sensitive inputs** — a sensitive input stays
+  BLANK in the DOM despite an authored default (secrets boundary) and a blank required input is OMITTED, not
+  sent as `name=''` (faithfulness), then follows-newest (un-pins `?run=`) + closes; a spawn failure shows
+  diagnostics inline without blanking the canvas.
+- `tests/test_core/test_graph_react_flow_renderer.py` — `sensitive` on inputs (True/False by name), NEVER on
+  outputs; updated the sub-workflow-input `io` assertion to include `sensitive`.
+
+### Real-browser verification (mandatory loop — `make ui-build` + restart `pflow ui`)
+
+All via the `screenshot-pflow-web-ui` skill + a custom `launch-and-watch.pflow.md` (one MCP session:
+navigate → settle → click ▶ → click ▶ Run → poll for the run):
+
+1. ▶ renders at the rail BOTTOM, distinct from the clock/RunSelector at the top (screenshot).
+2. ▶ on `examples/core/template-variables.pflow.md` → form generated: required `*` markers, prefilled
+   defaults (`utf-8`/`./backups`/`./output`/`unknown`), `api_token` blank + the "from settings/env" hint,
+   descriptions as helper text — canvas NOT blanked (screenshot).
+3. No-input workflow → "This workflow takes no inputs." + the "▶ Run" confirm (screenshot).
+4. **End-to-end:** submit → real detached spawn → overlay lit `run status: success` + banner "Run success ·
+   1 nodes" + panel auto-closed on success (`{badge, banner, panelClosedOnSuccess:true}` + screenshot).
+
+### Gates (vs baseline 8232)
+
+- `make test`: **8247 passed**, 0 failed (8246 + 1 new renderer test; the modified renderer assertion is the
+  same test). `make check`: ruff + ruff-format + mypy (239 files) + deptry all clean.
+- Frontend: `npx vitest run` **641 passed** (49 files); `make ui-build` (tsc strict + vite) clean.
+
+### Self-review pass (post-implementation)
+
+Re-scrutinized the diff for loose ends. Found + fixed ONE real bug — the double-right-panel canvas crush
+(above). Confirmed NON-issues: stale-value leak on reload (removed inputs are ignored — submit iterates the
+fresh `inputs`, only an ADDED input needs a reopen); ▶ correctly hidden in loading/error states (`graph` null
+→ `onRun` undefined, and the rail isn't rendered in the error early-return); sensitive defaults aren't a new
+exposure (`/api/graph` has shipped authored `io.default` inline since Task 168 — the form just never PREFILLS
+a sensitive field); submit-disable guards both click and Enter. Re-verified the form renders correctly after
+the panel restructure (advanced-mode browser screenshot).
+
+### Test-fidelity pass (passing the RIGHT thing)
+
+Stepped back and audited every test for "passing the right thing," not coverage. Found ONE high-value gap and
+fixed it; found NO shallow tests to remove.
+
+- **Gap fixed (highest value):** the submit test only covered a non-sensitive prefilled input, so the two most
+  consequential behaviors were unexercised — (1) `defaultToken` blanking a SENSITIVE field even when it has an
+  authored default (a regression would push a secret's default into the browser + onto the spawn), and (2) the
+  omit-blank submit filter (a regression to `name=''` would diverge from a hand-typed run — the faithfulness
+  guarantee). Strengthened the existing submit test with a 3-input graph (defaulted / required-blank /
+  sensitive-with-default) asserting the secret field is blank in the DOM and the spawn payload is `{topic:cats}`
+  only. Folded into the existing test (no near-duplicate).
+- **Audited, kept (not shallow):** `controlForType` (full canonical-type contract of a pure fn), `inputFields`
+  sub-workflow-exclusion + reads-`sensitive`-off-raw-`io` (the load-bearing wrapperPorts-drops-it guard), the
+  checkbox→`"true"`/`"false"` channel-A pin, the renderer inputs-only/never-outputs `sensitive` guard. Each
+  fails on a real regression.
+- **Deliberately NOT added:** a TS test loading a committed fixture to pin the Python↔TS `sensitive` wire-key
+  name — `inputFields`'s resilient `?? false` makes any such unit assertion pass even on a rename (it would be
+  a shallow test). That seam is instead pinned by the Python renderer test + the committed-fixture drift guard
+  + the REAL browser check (the `api_token` field actually showed the "from settings/env" hint — the true
+  cross-boundary proof the key name matches).
+
+**No loose ends. Phase 3 is complete and verified (unit + tsc + real-browser end-to-end launch + two
+self-review passes: correctness + test-fidelity).**
+
+---
+
+## Phase 3 — Run-progress callout (post-review UX iteration)
+
+After clicking through the live UI, the user iterated the run experience over several rounds. Net result:
+clicking ▶ launches the run, the side form hands off to a **canvas callout** that streams live per-node
+progress. (Consolidated from the round-by-round entries.)
+
+### What shipped
+- **"Inputs" heading** on the form (shown only when inputs exist; the no-input case keeps the "▶ Run" confirm).
+- **`NodeCallout`** (`components/NodeCallout.tsx`) — a REUSABLE flow-space callout anchored to a canvas node
+  (`ViewportPortal` → pans/zooms like a node; NOT a store node, so the contract-driven ELK pass stays pure).
+  Placed perpendicular to the spine (TD→left, LR→above); frames the camera ONCE on open via `setCenter` at a
+  fixed modest zoom. Content-agnostic — Run drops `RunProgress` in; **Task 174's agent-"say" bubble is the
+  second consumer** (the two-consumer bar that justified building it). Chosen over a side-panel progress view
+  to match the spatial model and turn the abrupt panel-close into a deliberate handoff (form = input → callout
+  = live output).
+- **`RunProgress`** + `runSteps`/`ProgressStep` (`graph/focus.ts`, pure) — a MINIATURE of the canvas spine,
+  fed by the SAME `runStatus` map the badges use (no new observation; server stays a pure observer). Top-level
+  steps render as small HOLLOW tiles (colored ring + opaque interior — the canvas node look minus the icon)
+  joined by continuous gradient connectors that run BEHIND the tiles; each tile is grey while pending and wears
+  its node's identity color once run (via `nodeColor` — shell green / code amber / transform cyan), and the
+  RUNNING tile pulses a full-color inner core. One compact line per step (`name … ms`); batch `×N` from the
+  contract.
+- **Interactive callout:** the ✕ dismisses it, and each step **name is a button** that scrolls to + selects
+  that node on the canvas (reuses GraphView's `onNavigate` — focus + camera follow + ReadPanel). Two-part fix
+  for the RF `ViewportPortal`: (1) **`pointer-events: auto`** on the callout — RF sets the viewport to
+  `pointer-events: none` and re-enables per node, so a portal child inherits `none` and clicks fell THROUGH to
+  the pane (the real bug — a `dispatchEvent` test missed it by bypassing hit-testing; `document.elementFromPoint`
+  is the honest probe); (2) **`nopan nodrag nowheel`** so the pan-drag doesn't fire and the body scrolls
+  without zooming. Verified both buttons are `reachable` via `elementFromPoint`.
+- **Pin a past run → the callout reappears** showing that run. Selecting a SPECIFIC run from the RunSelector
+  (clock) OR loading a `?run=` deep-link now opens the same callout, anchored at the Inputs card, showing the
+  pinned run's replayed per-node states + outcome (the re-subscribe repopulates `runStatus` from the run's
+  snapshot). `setRunCalloutOpen(next !== null)` in `selectRun` (pin opens, "Live — follow newest" closes); the
+  deep-link seeds `runCalloutOpen` from `?run=` at mount. The launch flow is unaffected because `onRunLaunched`
+  forces it open AFTER its `selectRun(null)` (last setState in the batch wins).
+- **Total run time + run id on the callout.** Bottom-right total (the run's wall-clock) + the run id in the
+  header (between "RUN" and ✕, shortened, full UUID on hover). Both via the run.complete trailer: `duration_ms`
+  was already written by the producer (`_aggregates`), and I added `execution_id` to it; both are now in the
+  SSE allowlist (`_RUN_COMPLETE_FIELDS`) + the TS `RunComplete`. So the run id shows even for a LIVE launch
+  (follow-newest, `runId` null) — it surfaces from the banner's `execution_id` on completion — as well as for
+  a pinned/deep-link run (immediately, from `runId`). NodeCallout gained a content-agnostic `subtitle` header
+  slot (Task 174 reuse). Browser-verified on a fresh launch: header `b303a7e1`, total `2.5s`. (`duration_ms`
+  is genuine wall-clock from the trailer, NOT a sum of step times.)
+- **Deep-link camera fix (the real subtlety):** a `?run=` load opens the callout AND mounts the graph in the
+  same commit, where the camera hook's whole-graph `fitView` (the PARENT effect) runs AFTER the callout's
+  `setCenter` (a CHILD effect) — so the whole-graph fit won and the box rendered tiny (`scale 0.42`). An rAF
+  defer didn't fix it (the `framedRef` one-shot + cleanup cancels the deferred call on a beautiful-mode
+  re-measure). Clean fix = single camera authority: `useCameraNavigation` gains `suppressInitialFit` (GraphView
+  passes it for a `?run=` load with an anchor) and SKIPS its one initial whole-graph fit — one-shot via a ref,
+  so a later direction flip still re-fits, and an explicit `?node=` still wins. Now the callout frames
+  uncontested at `zoom 1.1`. Pinned by hook tests (suppress skips / default fits / one-shot / `?node=` wins);
+  browser-verified both paths (`scale 1.1`, readable box) — RunSelector pick AND `?run=` deep-link.
+
+### Bugs found + fixed during iteration (load-bearing)
+- **Edges blink invisible mid-run** (pre-existing Task-173 interaction; reproduced `[5,5,0,5,0,5,5,5]`): the
+  decoration effect re-ran on every `runStatus` tick and called `setEdges(new array)`, but `applyStatus` only
+  restyles NODES — re-rendering all edges raced the node re-measure. Fix: edges depend only on `(laid, focus)`,
+  so SKIP `setEdges` on a status-only re-decoration (`paintedFocusRef` in `useWorkflowGraph`). Smoother for ALL
+  runs now, not just UI-launched ones.
+- **Camera yanked on select/deselect:** the callout's camera frame was a reactive effect; a beautiful-mode
+  re-layout flipped its `ready` flag and re-fired it. Fix: strict one-shot per open (`framedRef`) — position
+  stays reactive, the MOVE doesn't.
+- **Callout flicker / connector gaps / bleed-through:** cache the last good anchor rect (no unmount on a
+  transient re-measure); connectors are ONE continuous gradient line tucked behind OPAQUE tile interiors
+  (`var(--bg-raised)`), so they show only in the gaps and read centered.
+- **Prior run flashes on re-run:** when ALREADY following-newest, `selectRun(null)` is a no-op so its
+  synchronous run-state clear never fired — the callout opened on the LAST completed run until the new run's
+  events arrived. Fix: `onRunLaunched` clears `runStatus`/banner itself (the follow-newest connection then
+  repopulates from the new run). Pinned by a test (completed badge+banner → launch → both cleared) and a
+  browser probe (post-re-run samples are `Running…`, never the old `Run success`).
+
+### Deferred (flagged to the user)
+- **Live batch `k/N` counter:** not available from overlay data — per-item progress is buffered in
+  `shared["_batch_trace"]` and the host writes ONE trace event at completion (the CLI's live counter is a
+  callback never written to the trace the overlay tails). Would need new streamed batch-progress plumbing
+  (producer → tailer `_run_event` allowlist → SSE → frontend). Static `×N` shipped.
+- **Connector-flare shapes** (the canvas `Connector` cove): tuned for 56px node tiles — won't read at the 11px
+  mini-tiles and fights the compaction. Left the clean line-into-tile.
+
+### Gates
+- Frontend **654 vitest** (50 files) + tsc strict + `make ui-build` clean. `runSteps`/`RunProgress` tests cover
+  the role facts, grey→identity coloring, the running-core, `×N`, and the outcome; `NodeCallout`'s
+  positioning/camera are browser-verified (jsdom has no real flow-space layout). Python untouched — stays
+  **8247** / `make check` green.
+- Real-browser loop verified end-to-end: ▶ → form → submit → form closes, camera frames the callout, the spine
+  streams grey→color with cross-color gradient connectors → "Run success · N nodes".
+
+### Overall-run-status badge on the callout (user request)
+
+The callout's outcome line lacked the round node-style status badge. Added the **overall run-status badge**
+(the SAME `StatusBadge` nodes carry at top-right, reused via its existing `inline` variant — pixel-consistent,
+no duplication) at the **lower-left** of the callout, beside the outcome word: a blue spinner while running →
+green ✓ on success → red ! on failure. `final_status` has no `NodeStatus` for "degraded" → mapped to the amber
+"stopped" badge (the outcome TEXT carries the exact word). `RunProgress.tsx` (unified the running/done outcome
+line so the badge shows in both states) + `.run-progress-outcome-label`/badge-size CSS. Tested (badge status
+class by run outcome incl. degraded→stopped); browser-verified both states (spinner + ✓, matching the canvas
+node badge). Frontend **660 vitest** + tsc + `make ui-build` clean.

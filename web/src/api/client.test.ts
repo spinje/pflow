@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, fetchGraph, fetchRunNode, fetchSource, fetchVersion } from "./client";
+import { ApiError, fetchGraph, fetchRunNode, fetchSource, fetchVersion, runWorkflow } from "./client";
 import type { RunNodeDetail } from "../types";
 
 function mockFetch(status: number, body: unknown): void {
@@ -63,6 +63,37 @@ describe("fetchRunNode", () => {
     await expect(fetchRunNode("/wf", null, { node_id: "a", ancestor_path: [], port: null })).rejects.toMatchObject({
       status: 404,
     });
+  });
+});
+
+describe("runWorkflow", () => {
+  it("POSTs {workflow, inputs} as application/json and resolves on a 200 spawn", async () => {
+    const calls: Array<[string, RequestInit]> = [];
+    globalThis.fetch = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push([String(url), init]);
+      return { ok: true, status: 200, json: async () => ({ status: "spawned" }) };
+    }) as unknown as typeof fetch;
+
+    await expect(runWorkflow("/wf.pflow.md", { name: "World", count: "3" })).resolves.toBeUndefined();
+    const [url, init] = calls[0]!;
+    expect(url).toBe("/api/run");
+    expect(init.method).toBe("POST");
+    // The application/json header is load-bearing for the server's no-CORS posture.
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(init.body as string)).toEqual({ workflow: "/wf.pflow.md", inputs: { name: "World", count: "3" } });
+  });
+
+  it("throws ApiError with the pre-flight diagnostics on a 400 (so the form shows them inline)", async () => {
+    mockFetch(400, { errors: [{ message: "Workflow requires input 'name': the greeting target" }] });
+    await expect(runWorkflow("/wf", {})).rejects.toMatchObject({
+      status: 400,
+      errors: [{ message: "Workflow requires input 'name': the greeting target" }],
+    });
+  });
+
+  it("throws ApiError on a 404 unknown workflow", async () => {
+    mockFetch(404, { errors: [{ message: "Workflow 'nope' not found." }] });
+    await expect(runWorkflow("nope", {})).rejects.toBeInstanceOf(ApiError);
   });
 });
 

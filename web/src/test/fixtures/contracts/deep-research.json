@@ -13,7 +13,8 @@
       "io": {
         "data_type": "array",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -41,7 +42,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -366,7 +368,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -399,7 +402,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -595,7 +599,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -632,7 +637,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -931,7 +937,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -964,7 +971,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -1076,7 +1084,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,
@@ -1109,7 +1118,8 @@
       "io": {
         "data_type": "string",
         "required": true,
-        "default": null
+        "default": null,
+        "sensitive": false
       },
       "loop": null,
       "batch": null,

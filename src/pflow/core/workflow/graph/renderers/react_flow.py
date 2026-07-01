@@ -22,6 +22,7 @@ import dataclasses
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from pflow.core.security_utils import is_sensitive_parameter
 from pflow.core.workflow.graph.model import (
     AncestorStep,
     Container,
@@ -239,7 +240,7 @@ class _ReactFlowRenderer:
             kind=node.kind,
             purpose=node.purpose,
             params=[self._param(node, name, value) for name, value in node.params.items()],
-            io=asdict(node.io) if node.io is not None else None,
+            io=self._io(node),
             loop=asdict(node.loop) if node.loop is not None else None,
             batch=asdict(node.batch) if node.batch is not None else None,
             parent=self._group_id_map.get(node.parent) if node.parent is not None else None,
@@ -283,6 +284,24 @@ class _ReactFlowRenderer:
         if node.kind == "llm":
             return _llm_kind_shape(node, field="response")
         return None
+
+    def _io(self, node: Node) -> dict[str, Any] | None:
+        """The node's ``io`` payload, with the ``sensitive`` fact for INPUT nodes.
+
+        ``sensitive`` is attached HERE (the renderer seam), for ``kind == "input"``
+        nodes ONLY — not on the ``IOPort`` dataclass: that model is
+        renderer-agnostic, and since the wire ships ``asdict(node.io)`` putting the
+        flag on the dataclass would also leak it onto OUTPUT nodes. It drives the
+        run form's "provided from settings/env" hint (Task 175); the client reads
+        it only as a hint and never re-derives the redaction rule.
+        ``is_sensitive_parameter`` is the single word-boundary rule (security_utils).
+        """
+        if node.io is None:
+            return None
+        io = asdict(node.io)
+        if node.kind == "input":
+            io["sensitive"] = is_sensitive_parameter(node.id.node_id)
+        return io
 
     def _param(self, node: Node, name: str, value: Any) -> RFParam:
         source = node.param_sources.get(name)

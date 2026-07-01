@@ -113,6 +113,25 @@ export async function fetchRuns(workflow?: string): Promise<RunInfo[]> {
   return body as RunInfo[];
 }
 
+/** Spawn a detached `pflow run` for `workflow` with `inputs` (Task 175). `inputs`
+ *  values are TOKEN STRINGS — they become the CLI's `name=value` argv verbatim
+ *  (channel A: the spawned run's infer_type + declared-type coercion re-type them).
+ *  Resolves on a 200 spawn; throws ApiError on a 400 (malformed body OR a pre-flight
+ *  failure carrying actionable diagnostics in `.errors`) / 404 (unknown workflow), so
+ *  the form surfaces the diagnostics inline (DR-6) — never blanks the canvas. Uses
+ *  this typed-error client (not the fire-and-forget events.ts POSTs); the
+ *  application/json header is load-bearing for the server's no-CORS posture. */
+export async function runWorkflow(workflow: string, inputs: Record<string, string>): Promise<void> {
+  const response = await fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workflow, inputs }),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+}
+
 function isRunNodeDetail(value: unknown): value is RunNodeDetail {
   if (!value || typeof value !== "object") return false;
   const d = value as Record<string, unknown>;

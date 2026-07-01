@@ -5,9 +5,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyStatus, refKey } from "./focus";
+import { applyStatus, refKey, runSteps } from "./focus";
 import type { FlowNode, GroupData, LeafData } from "./flow";
-import type { NodeRunState, NodeStatus, RFNode, RFRef } from "../types";
+import type { NodeRunState, NodeStatus, RFGraph, RFNode, RFRef } from "../types";
 
 // A minimal type-correct RFNode (the contract node every leaf/end FlowNode wraps).
 function rfNode(id: string, ref: RFRef): RFNode {
@@ -293,5 +293,61 @@ describe("applyStatus — markUnmatched (Task 173 stale-replay 'no recorded stat
     const [outPrimary, outSecondary] = applyStatus([primary, secondary], new Map(), true) as [FlowNode, FlowNode];
     expect(groupStatusOf(outPrimary)).toBe("unrecorded"); // a joinable host with no state → marked
     expect(outSecondary).toBe(secondary); // non-primary group is not a join target → never marked
+  });
+});
+
+describe("runSteps — the run-progress callout model (Task 175)", () => {
+  const top = (flat: string, name: string, kind = "shell"): RFNode => ({
+    ...rfNode(flat, { node_id: name, ancestor_path: [], port: null }),
+    kind,
+  });
+
+  it("lists top-level executable nodes with live status + duration, in graph order", () => {
+    const fetch = top("n0", "fetch");
+    const transform = top("n1", "transform");
+    const graph: RFGraph = { nodes: [fetch, transform], edges: [], groups: [] };
+    const status = new Map<string, NodeRunState>([
+      [refKey(fetch.ref), { status: "success", durationMs: 400 }],
+      [refKey(transform.ref), { status: "running" }],
+    ]);
+    expect(runSteps(graph, status)).toEqual([
+      { id: "n0", name: "fetch", kind: "shell", isDecision: false, isTransform: false, batchCount: null, status: "success", durationMs: 400 },
+      { id: "n1", name: "transform", kind: "shell", isDecision: false, isTransform: false, batchCount: null, status: "running", durationMs: null },
+    ]);
+  });
+
+  it("carries the role facts (kind/decision/transform) for tile coloring + the batch count for ×N", () => {
+    const batched: RFNode = {
+      ...top("n0", "proc"),
+      batch: { parallel: false, dynamic: false, as_name: "item", source_ref: null, count: 10, items: null },
+    };
+    const decision: RFNode = { ...top("n1", "gate", "code"), is_decision: true };
+    const graph: RFGraph = { nodes: [batched, decision], edges: [], groups: [] };
+    const out = runSteps(graph, new Map());
+    expect(out[0]).toMatchObject({ name: "proc", kind: "shell", batchCount: 10 });
+    expect(out[1]).toMatchObject({ name: "gate", kind: "code", isDecision: true, batchCount: null });
+  });
+
+  it("a node with no event reads pending (the absence of a status)", () => {
+    const graph: RFGraph = { nodes: [top("n0", "x")], edges: [], groups: [] };
+    expect(runSteps(graph, new Map()).map((s) => s.status)).toEqual(["pending"]);
+  });
+
+  it("excludes IO ports, the synthetic end, and NESTED sub-workflow nodes — top-level steps only", () => {
+    const nested: RFNode = {
+      ...rfNode("n4", { node_id: "child", ancestor_path: [{ node_id: "host", batch_index: null }], port: null }),
+    };
+    const graph: RFGraph = {
+      nodes: [
+        { ...rfNode("n0", { node_id: "in", ancestor_path: [], port: "in" }), kind: "input" },
+        { ...rfNode("n1", { node_id: "out", ancestor_path: [], port: "out" }), kind: "output" },
+        { ...rfNode("n2", { node_id: "__end__", ancestor_path: [], port: null }), kind: "end" },
+        top("n3", "step"),
+        nested,
+      ],
+      edges: [],
+      groups: [],
+    };
+    expect(runSteps(graph, new Map()).map((s) => s.name)).toEqual(["step"]);
   });
 });

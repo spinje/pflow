@@ -322,6 +322,9 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
   // The laid snapshot currently painted — animation triggers only when a NEW snapshot
   // lands, never on a focus-only re-decoration of the same one.
   const paintedRef = useRef<{ nodes: FlowNode[]; edges: FlowEdge[]; key: string } | null>(null);
+  // The focus the edges were last painted for — together with `paintedRef` (the laid snapshot) it tells a
+  // status-only re-decoration (skip setEdges) from a focus/layout change (must re-paint edges).
+  const paintedFocusRef = useRef<string | null>(null);
   useEffect(() => {
     if (laid === null || laid.key !== layoutKey) return;
     if (animRef.current !== null) {
@@ -332,8 +335,17 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
     // Task 173: overlay live run status AFTER focus — a pure restyle (no re-layout). A status-only
     // change keeps the same `laid`, so isNewLayout stays false and this snaps instantly (no animation).
     decorated.nodes = applyStatus(decorated.nodes, runStatus, markUnmatched);
-    const isNewLayout = paintedRef.current !== laid;
+    const prevLaid = paintedRef.current;
+    const isNewLayout = prevLaid !== laid;
+    // Edges depend ONLY on (laid, focus) — applyStatus restyles NODES, never edges. So a status-only
+    // re-decoration (same laid + same focus, every live runStatus tick) produces structurally identical
+    // edges; re-setting them there forced React Flow to re-render ALL edges each tick, which raced the
+    // node re-measure and transiently blanked every edge while a run streamed (user-caught, esp. with a
+    // focus/expansion active). Skip setEdges then — RF still re-paths edges from the updated node
+    // positions in the store, so nothing goes stale.
+    const edgesUnchanged = prevLaid === laid && paintedFocusRef.current === focus;
     paintedRef.current = laid;
+    paintedFocusRef.current = focus;
     const from = isNewLayout ? pendingFromRef.current : null;
     const pan = isNewLayout ? pendingPanRef.current : null;
     pendingFromRef.current = null;
@@ -361,7 +373,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
 
     if (!animate) {
       setNodes(decorated.nodes);
-      setEdges(decorated.edges);
+      if (!edgesUnchanged) setEdges(decorated.edges);
       if (pan) {
         const vp = getViewport();
         setViewport({ zoom: vp.zoom, x: vp.x - pan.dx * vp.zoom, y: vp.y - pan.dy * vp.zoom });

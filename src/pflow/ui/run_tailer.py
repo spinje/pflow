@@ -576,7 +576,14 @@ class RunTailer:
 # The run-complete banner's allowlist — the small summary fields the frontend banner reads (PR #543 review).
 # Deliberately EXCLUDES `json_output` / `warnings` (the full payloads `_aggregates()` puts on the trailer)
 # from the live wire + snapshot, mirroring `_run_event`'s node-wire allowlist.
-_RUN_COMPLETE_FIELDS = ("final_status", "nodes_executed", "nodes_failed", "failed_node_ids")
+_RUN_COMPLETE_FIELDS = (
+    "final_status",
+    "nodes_executed",
+    "nodes_failed",
+    "failed_node_ids",
+    "duration_ms",
+    "execution_id",
+)
 
 
 def _run_event(line: dict[str, Any]) -> dict[str, Any]:

@@ -62,12 +62,16 @@ export interface RunEvent {
 // (`success` | `degraded` | `failed`) — distinct from any single node's status.
 export interface RunComplete {
   final_status?: string;
-  // The run.complete wire is a 4-field allowlist (run_tailer._RUN_COMPLETE_FIELDS); duration_ms / json_output
-  // / warnings are deliberately NOT carried on the live SSE wire or the snapshot. Add a field here only after
-  // adding it to that allowlist, or it is silently dropped at the projection.
+  // The run.complete wire is an allowlist (run_tailer._RUN_COMPLETE_FIELDS); json_output / warnings are
+  // deliberately NOT carried on the live SSE wire or the snapshot. Add a field here only after adding it to
+  // that allowlist, or it is silently dropped at the projection.
   nodes_executed?: number;
   nodes_failed?: number;
   failed_node_ids?: string[];
+  // Total run wall-clock (Task 175 — the callout's bottom-right total) and the run's id (Task 175 — the
+  // callout header), both added to the allowlist. Present on the run-complete banner / a replayed snapshot.
+  duration_ms?: number;
+  execution_id?: string;
 }
 
 // One run from GET /api/runs (Task 173 D6) — the catalog running-indicator + the run selector read this.
@@ -138,6 +142,11 @@ export interface IOPort {
   required: boolean;
   // The authored `default:` value verbatim; null when absent.
   default: unknown;
+  // Whether the input's NAME is sensitive (is_sensitive_parameter, word-boundary).
+  // Attached by the renderer to `kind=="input"` nodes ONLY (Task 175) — absent on
+  // output nodes' io. Drives the run form's "provided from settings/env" hint; the
+  // client never re-derives the redaction rule. (Optional: undefined ⇒ not an input.)
+  sensitive?: boolean;
 }
 
 export type UnexpandedReason = "depth_limit" | "unresolved" | "dynamic_path" | "cycle";

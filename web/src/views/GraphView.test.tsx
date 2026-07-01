@@ -11,13 +11,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 
 import { installReactFlowJsdomMocks } from "../test/rf-jsdom";
 import type { FlowNode } from "../graph/flow";
-import type { RFGraph } from "../types";
+import type { RFGraph, RFNode } from "../types";
 
 // Mock only the network seam; keep the REAL ApiError so the api.ts -> GraphView
 // error contract (not a fabricated shape) is what the banner test exercises.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn(), fetchRunNode: vi.fn() };
+  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn(), fetchRunNode: vi.fn(), runWorkflow: vi.fn() };
 });
 const live = vi.hoisted(() => ({
   handlers: null as import("../api/events").PointHandlers | null,
@@ -64,7 +64,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
-import { ApiError, fetchGraph, fetchRunNode, fetchRuns, fetchSource } from "../api/client";
+import { ApiError, fetchGraph, fetchRunNode, fetchRuns, fetchSource, runWorkflow } from "../api/client";
 import type { RunHandlers } from "../api/events";
 import { layoutGraph } from "../graph/layout";
 import { highlight } from "../utils/highlight";
@@ -155,6 +155,8 @@ beforeEach(() => {
     }),
   });
   vi.mocked(fetchGraph).mockReset();
+  vi.mocked(runWorkflow).mockReset();
+  vi.mocked(runWorkflow).mockResolvedValue(undefined);
   vi.mocked(fetchRuns).mockReset();
   vi.mocked(fetchRunNode).mockReset();
   vi.mocked(fetchSource).mockReset();
@@ -906,5 +908,158 @@ describe("GraphView mount", () => {
     await waitFor(() => expect(screen.getByText(/could not lay out this workflow/i)).toBeTruthy());
     expect(screen.queryByText("Laying out…")).toBeNull();
     consoleError.mockRestore();
+  });
+});
+
+// A workflow whose three inputs exercise the WHOLE submit contract end-to-end through
+// RunPanel: `topic` (default → prefilled, sent), `name` (required, no default → blank →
+// OMITTED, so the pre-flight gives a clean 400 rather than the run getting name=''), and
+// `api_key` (SENSITIVE with a default → field stays BLANK despite the default, and is
+// OMITTED so the spawned run re-resolves it from settings/env — the secrets boundary).
+function input(id: string, name: string, io: NonNullable<RFNode["io"]>): RFNode {
+  return {
+    id,
+    ref: { node_id: name, ancestor_path: [], port: "in" },
+    kind: "input",
+    purpose: `the ${name}`,
+    params: [],
+    io,
+    loop: null,
+    batch: null,
+    parent: "g_in",
+    source: null,
+    is_decision: false,
+    is_terminal: false,
+    is_group_host: false,
+    is_transform: false,
+    output_shape: null,
+    cached_prefix: null,
+    unexpanded: null,
+    annotations: {},
+  };
+}
+const GRAPH_WITH_INPUT: RFGraph = {
+  nodes: [
+    input("in0", "topic", { data_type: "string", required: false, default: "cats", sensitive: false }),
+    input("in1", "name", { data_type: "string", required: true, default: null, sensitive: false }),
+    // A sensitive input WITH an authored default — the form must NOT prefill the default.
+    input("in2", "api_key", { data_type: "string", required: true, default: "should-not-prefill", sensitive: true }),
+    ...GRAPH.nodes,
+  ],
+  edges: GRAPH.edges,
+  groups: [
+    { id: "g_in", kind: "input_wrapper", parent: null, host: null, members: ["in0", "in1", "in2"], nesting_depth: 0, annotations: {} },
+  ],
+};
+
+describe("GraphView — Run panel (Task 175)", () => {
+  it("the ▶ rail button toggles the Run panel open and closed", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+
+    // The ▶ is its own rail control, distinct from the clock ("Runs").
+    fireEvent.click(screen.getByLabelText("Run workflow"));
+    expect(await screen.findByText(/takes no inputs/i)).toBeTruthy(); // panel mounted (no-input confirm)
+    fireEvent.click(screen.getByLabelText("Run workflow"));
+    expect(screen.queryByText(/takes no inputs/i)).toBeNull(); // panel closed
+  });
+
+  it("the Run panel REPLACES an open selection panel, restoring it on close (one right panel)", async () => {
+    // Two no-shrink .read-panels + the source pane would exceed usePanelPair's
+    // source-vs-one-right-panel budget and crush the canvas. The run panel shares the
+    // one right slot (selectedId preserved underneath), so at most one ever renders.
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+
+    // Select a node → its ReadPanel opens (the node's name as the panel <h2>).
+    fireEvent.click(screen.getByText("say hi"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "greet" })).toBeTruthy());
+
+    // Open ▶ → the Run panel REPLACES the ReadPanel (selection panel gone).
+    fireEvent.click(screen.getByLabelText("Run workflow"));
+    expect(await screen.findByText(/takes no inputs/i)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "greet" })).toBeNull();
+
+    // Close ▶ → the preserved selection's ReadPanel returns.
+    fireEvent.click(screen.getByLabelText("Run workflow"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "greet" })).toBeTruthy());
+    expect(screen.queryByText(/takes no inputs/i)).toBeNull();
+  });
+
+  it("submit spawns ONLY the filled+non-sensitive inputs (secrets blank, blanks omitted), then follows-newest + closes", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH_WITH_INPUT);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    // Start PINNED to a past run so follow-newest is observable (selectRun(null) is a
+    // no-op when already unpinned). syncUrl drops ?run= on un-pin.
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    try {
+      render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+
+      fireEvent.click(screen.getByLabelText("Run workflow"));
+      // `topic` prefills from its default; `api_key` stays BLANK despite having an
+      // authored default — the form never collects a secret (the secrets boundary).
+      const topic = (await screen.findByLabelText(/topic/i)) as HTMLInputElement;
+      expect(topic.value).toBe("cats");
+      expect((screen.getByLabelText(/api_key/i) as HTMLInputElement).value).toBe("");
+      expect((screen.getByLabelText(/^name/i) as HTMLInputElement).value).toBe(""); // required, no default → blank
+
+      fireEvent.click(screen.getByRole("button", { name: "▶ Run" }));
+
+      // Faithful to a hand-typed run: only `topic=cats` rides; `name` (blank required) and
+      // `api_key` (sensitive, blank) are OMITTED — NOT sent as empty strings. The pre-flight
+      // 400s the missing required `name`; the spawned run re-resolves `api_key` by name.
+      await waitFor(() => expect(runWorkflow).toHaveBeenCalledWith("demo", { topic: "cats" }));
+      // Follows-newest (un-pins: ?run= removed) + the panel closes.
+      await waitFor(() => expect(new URLSearchParams(window.location.search).has("run")).toBe(false));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "▶ Run" })).toBeNull());
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
+  it("launching CLEARS the previous completed run's state (no stale flash before the new run lights up)", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+
+    // A prior run completed while following-newest: a node lit + the run banner showed.
+    const run = live.handlers as unknown as RunHandlers;
+    act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
+    act(() => run.runComplete({ final_status: "success", nodes_executed: 1 }));
+    await waitFor(() => expect(screen.getByLabelText("run status: success")).toBeTruthy());
+    expect(screen.getByText(/Run success/)).toBeTruthy();
+
+    // Launch again. selectRun(null) is a no-op here (already unpinned), so onRunLaunched must clear the stale
+    // run state itself — else the callout would open on the LAST run until the new run's events arrive.
+    fireEvent.click(screen.getByLabelText("Run workflow"));
+    fireEvent.click(await screen.findByRole("button", { name: "▶ Run" }));
+    await waitFor(() => expect(runWorkflow).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByLabelText("run status: success")).toBeNull()); // node status cleared
+    expect(screen.queryByText(/Run success/)).toBeNull(); // run banner cleared
+  });
+
+  it("a spawn failure shows the diagnostics inline and never blanks the canvas (DR-6)", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchRuns).mockResolvedValue([]);
+    vi.mocked(runWorkflow).mockRejectedValue(
+      new ApiError(400, [{ message: "Workflow requires input 'name': the greeting target" }]),
+    );
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText("Run workflow"));
+    fireEvent.click(await screen.findByRole("button", { name: "▶ Run" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText(/Workflow requires input 'name'/)).toBeTruthy();
+    // The panel stays open (the form shows the error) and the canvas is intact.
+    expect(screen.getByText("say hi")).toBeTruthy();
   });
 });

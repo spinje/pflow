@@ -18,7 +18,7 @@ import "@xyflow/react/dist/style.css";
 import { reportInteraction, subscribe, type PointHandlers } from "../api/events";
 import { collapsibleGroupIds, initialCollapsed, revealNodes } from "../graph/collapse";
 import { autoDirection } from "../graph/direction";
-import { consumedReadPaths, ioOwners, refKey, rowTouches, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
+import { consumedReadPaths, ioOwners, refKey, rowTouches, runSteps, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
 import {
   edgeIdForTarget,
   edgeTargetForId,
@@ -44,10 +44,13 @@ import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
 import { IoPanel } from "../components/IoPanel";
+import { NodeCallout } from "../components/NodeCallout";
 import { nodeTypes } from "../components/nodes";
 import { PanelResizer } from "../components/PanelResizer";
+import { RunProgress } from "../components/RunProgress";
 import { Rail } from "../components/Rail";
 import { ReadPanel } from "../components/ReadPanel";
+import { RunPanel } from "../components/RunPanel";
 import { RunSelector } from "../components/RunSelector";
 import { SourcePane } from "../components/SourcePane";
 import { Toolbar } from "../components/Toolbar";
@@ -66,6 +69,14 @@ const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationM
 // `unrecorded` (absent from a stale-version replay) are excluded; `pending` is the absence of any status. A
 // status-driven CONDITIONAL render (not CSS-hide), so a loop's next iteration remounts → refetches the latest.
 const TERMINAL_RUN_STATUSES = new Set<string>(["success", "cached", "failed"]);
+
+// The pflow ">>" chevrons before the run callout's "RUN" title (its leading mark).
+const RUN_CHEVRONS = (
+  <svg width={17} height={11} viewBox="0 0 17 11" fill="none" aria-hidden>
+    <path d="M2 2l3.5 3.5L2 9" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M9 2l3.5 3.5L9 9" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
 export function GraphView(props: GraphViewProps): JSX.Element {
   return (
@@ -109,6 +120,20 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // workflow than the file on disk now (a node renamed/removed/re-nested). Nodes whose id is unchanged still
   // light correctly; show an honest banner that the rest may not match. Latched server-side; pinned-only.
   const [runStale, setRunStale] = useState(false);
+  // Task 175: the Run panel's open/close — a boolean OUTSIDE the `selectedId`
+  // selection model (like the RunSelector popover), so opening the launch form
+  // never races the three selection panels.
+  const [runPanelOpen, setRunPanelOpen] = useState(false);
+  // Task 175: after launch the form hands off to a canvas CALLOUT anchored at the
+  // Inputs card, streaming live per-node progress (reuses the overlay's runStatus).
+  // Opens on launch, on an interactive RunSelector pin, AND on load for a `?run=`
+  // deep-link (parity — the pinned run's box should appear when you open its URL).
+  const [runCalloutOpen, setRunCalloutOpen] = useState<boolean>(
+    () => Boolean(new URLSearchParams(window.location.search).get("run")),
+  );
+  // Whether THIS page load was a `?run=` deep-link (immutable). The run callout then frames the initial
+  // camera on its anchor, so the camera hook skips the competing one-shot whole-graph fit.
+  const runDeepLinkRef = useRef(Boolean(new URLSearchParams(window.location.search).get("run")));
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -247,9 +272,49 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       setRunMissing(false);
       setRunStopped(false);
       setRunStale(false);
+      // Pinning a SPECIFIC past run (from the RunSelector) opens its run callout — the same box a launch
+      // hands off to, now showing that run's replayed per-node states (the re-subscribe repopulates
+      // runStatus from the pinned run's snapshot). "Live — follow newest" (null) has no specific run to
+      // show → close it; a launch re-opens it explicitly in onRunLaunched (which runs after this).
+      setRunCalloutOpen(next !== null);
     },
     [runId, syncUrl],
   );
+  // Task 175: the ▶ toggles the Run FORM; toggling it always clears any prior run
+  // callout (a fresh launch starts clean).
+  const toggleRunPanel = useCallback(() => {
+    setRunCalloutOpen(false);
+    setRunPanelOpen((open) => !open);
+  }, []);
+  // A successful spawn: switch the overlay to follow-newest-live (selectRun(null) — the
+  // existing mechanism, a no-op when already unpinned) so the launched run lights up,
+  // close the form, and HAND OFF to the canvas callout streaming live progress.
+  const onRunLaunched = useCallback(() => {
+    selectRun(null);
+    // selectRun(null) is a NO-OP when ALREADY following-newest, so its synchronous run-state clear doesn't
+    // fire — clear it here too, or the callout opens showing the LAST (usually completed) run for a beat,
+    // until the new run's first events arrive (a stale flash, user-caught). The live follow-newest
+    // connection repopulates from the new run's runReset + snapshot/events.
+    setRunStatus(new Map());
+    setRunBanner(null);
+    setRunStopped(false);
+    setRunStale(false);
+    setRunMissing(false);
+    setRunPanelOpen(false);
+    setRunCalloutOpen(true);
+  }, [selectRun]);
+  // The node the run-progress callout anchors to: the top-level Inputs card (its RF node id IS the
+  // top-level input_wrapper group's flat id), falling back to the first top-level executable node for a
+  // no-input workflow. null → nothing to anchor to (no graph) → no callout.
+  const runAnchorId = useMemo(() => {
+    if (!graph) return null;
+    const inputCard = graph.groups.find((g) => g.kind === "input_wrapper" && !g.parent && g.members.length > 0);
+    if (inputCard) return inputCard.id;
+    const entry = graph.nodes.find(
+      (n) => n.ref.ancestor_path.length === 0 && n.kind !== "input" && n.kind !== "output" && n.kind !== "end",
+    );
+    return entry?.id ?? null;
+  }, [graph]);
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   // The read panel's source-link click: open the pane (if closed) and bump a
   // counter so SourcePane re-scrolls to the selected node's line even when it's
@@ -514,6 +579,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     setFocus,
     setSelectedId,
     clearHover,
+    suppressInitialFit: runDeepLinkRef.current && Boolean(runAnchorId),
   });
   const onNavigate = useCallback(
     (focusId: string, selected?: string | null): void => {
@@ -757,6 +823,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       openCount={collapsibleIds.length - collapsed.size}
       focused={focus !== null}
       searchNodes={showSourceToggle ? searchNodes : undefined}
+      // The ▶ needs the schema to build the form — gate it on a loaded graph.
+      onRun={graph ? toggleRunPanel : undefined}
+      runPanelOpen={runPanelOpen}
       onSourceOpen={changeSourceOpen}
       onCollapseAll={onCollapseAll}
       onExpandAll={onExpandAll}
@@ -880,11 +949,51 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
           >
             <Background bgColor="#0D0D0D" color="#272727" />
             <Controls showInteractive={false} />
+            {/* Task 175: live run progress, anchored on the canvas at the Inputs card (ViewportPortal →
+                flow-space, so it pans/zooms like a node). Reuses the overlay's runStatus — no new
+                observation. The reusable NodeCallout shell is Task 174's "say" bubble target too. */}
+            {runCalloutOpen && graph && runAnchorId && (
+              <NodeCallout
+                anchorId={runAnchorId}
+                direction={direction}
+                icon={RUN_CHEVRONS}
+                title="Run"
+                // The run id: the pinned id (RunSelector / ?run=), else the completed run's id from the banner
+                // (a live run surfaces its id on completion). Shortened, full on hover.
+                subtitle={
+                  (runId ?? runBanner?.execution_id) ? (
+                    <span title={runId ?? runBanner?.execution_id}>{(runId ?? runBanner?.execution_id)!.slice(0, 8)}</span>
+                  ) : undefined
+                }
+                onClose={() => setRunCalloutOpen(false)}
+              >
+                <RunProgress
+                  steps={runSteps(graph, runStatus)}
+                  banner={runBanner}
+                  onSelectStep={(id) => onNavigate(id, id)}
+                />
+              </NodeCallout>
+            )}
           </ReactFlow>
           </div>
-          {rightPanelOpen && (
+          {(rightPanelOpen || (runPanelOpen && graph)) && (
             <PanelResizer onResize={onPanelResize} onReset={onPanelReset} />
           )}
+          {/* At most ONE right-side panel: the Run panel REPLACES the selection panel
+              while open (selectedId is preserved underneath, so closing ▶ returns to it).
+              Two no-shrink .read-panels + the source pane would exceed usePanelPair's
+              source-vs-one-right-panel budget and crush the canvas — the run panel is
+              outside the selectedId model in STATE, but shares the one right slot. */}
+          {runPanelOpen && graph ? (
+            <RunPanel
+              workflow={workflow}
+              workflowName={workflowName}
+              graph={graph}
+              onLaunched={onRunLaunched}
+              onClose={() => setRunPanelOpen(false)}
+            />
+          ) : (
+            <>
           {graph && selectedEdge && (
             <EdgePanel
               edge={selectedEdge}
@@ -934,6 +1043,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               showRunDetail={TERMINAL_RUN_STATUSES.has(selectedRunState?.status ?? "")}
               runEventId={selectedRunState?.id ?? null}
             />
+          )}
+            </>
           )}
         </div>
       </div>

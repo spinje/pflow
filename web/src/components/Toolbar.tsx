@@ -1,3 +1,4 @@
+import logoUrl from "../assets/logo.png";
 import type { Density, Direction } from "../graph/flow";
 
 interface ToolbarProps {
@@ -18,21 +19,10 @@ interface ToolbarProps {
 export function Toolbar(props: ToolbarProps): JSX.Element {
   return (
     <header className="toolbar">
-      <button className="toolbar-back" onClick={props.onBack} title="Back to catalog" aria-label="Back to catalog">
-        <svg
-          width={18}
-          height={18}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.7}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-        >
-          <line x1="19" y1="12" x2="5" y2="12" />
-          <polyline points="12 19 5 12 12 5" />
-        </svg>
+      {/* The pflow mark doubles as the home / back-to-catalog anchor (consolidating the
+          old back-arrow): identity + nav in one element, the convention these canvas tools follow. */}
+      <button className="toolbar-back" onClick={props.onBack} title="pflow — back to catalog" aria-label="Back to catalog">
+        <img className="toolbar-logo" src={logoUrl} alt="pflow" />
       </button>
       <h1 className="toolbar-title" title={props.path}>
         {props.title}
