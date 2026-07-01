@@ -728,3 +728,58 @@ open/replay-a-run verb — all implemented, deep-reviewed, hardened, and green.*
 Task 175 (phases 1–6 + deep-review fixes + task-review) committed and pushed to `feat/web-ui-workflows`.
 PR: https://github.com/spinje/pflow/pull/547 (base `main`, 64 files, +5071/−173). Gates green:
 `make test` 8273, `make check` clean, `tsc` 0, `vitest` 676. Taskmaster-tracked (no GH issue).
+
+---
+
+## Post-PR review + hardening (2026-07-01)
+
+A fresh review of the merged-into-branch implementation (verified against the real diff, not the
+task-review's account) surfaced one worth-acting-on finding + two edges already tracked, then fixed the finding.
+
+### Finding #1 (FIXED, commit `456c6d1b`) — DNS-rebinding reached the READ endpoints; the security comment overclaimed
+- **Gap**: the Host guard was a per-POST call inside `_json_body`, so it covered only mutating POSTs. A
+  DNS-rebinding attacker (who defeats the no-CORS "can't read response" defense) could still `GET
+  /api/source` (raw `.pflow.md`, may hold hardcoded tokens), `/api/graph`, `/api/run-node`,
+  `/api/run-inputs`. The rewritten comment claimed DNS rebinding "CLOSED" — true only for *mutation*.
+- **Root fix (simpler, not more machinery)**: replace the per-POST call with a global **`_LoopbackOnly`
+  ASGI middleware** on EVERY route → makes loopback-Host a property of the *server* (what rebinding
+  attacks), covers reads + every future endpoint by default, and **deletes** the "must route through
+  `_json_body`" invariant. `_json_body` now does content-type/JSON only. Net: fewer moving parts.
+- **Load-bearing detail**: **pure-ASGI, NOT `BaseHTTPMiddleware`** — the latter breaks the long-lived
+  `/api/events` SSE stream; pure-ASGI either 403s early or delegates `send`/`receive` untouched.
+- **Deliberately dropped as premature**: a configurable `--allow-host` escape hatch (for remote-dev
+  tunnels with custom Hosts) — no users, theorized need; trivial + reversible to add if one ever appears.
+- Applied one review Suggestion: case-insensitive host match (`hostname.lower()` — host names are
+  case-insensitive per spec); skipped two (tighten `!=403`; a dedicated pure-ASGI pin — the raw-ASGI
+  disconnect test already streams frames *through* the middleware and would fail a `BaseHTTPMiddleware` swap).
+
+### Tests (the churn closing reads forced)
+- Guarding reads means the bare-`TestClient` GET tests (default `Host: testserver`) now 403, so
+  `test_ui.py` + `test_run_node.py` route through a loopback `_local()` helper (~43 sed'd call sites — the
+  `raise_server_exceptions=False` arg survives via `*args`/`**kwargs`); the raw-ASGI SSE scope gained a
+  loopback `host` header; **new** `test_guard_also_covers_read_endpoints` pins the read coverage; the
+  loopback matrix gained a `LOCALHOST` case for the case-insensitivity fix.
+
+### Deep-review (2 fitting agents, code mode on the working-tree diff)
+- `review-concurrency-safety` + `review-test-fidelity`: **0 Critical / 0 Warning**, verified by reading
+  Starlette 0.47.3 source (SSE non-interference, `add_middleware` wiring, `request.app.state.hub` still
+  resolves, fail-closed host parse) and by *mutation-testing* the guard test (fails in both directions).
+
+### Verification (manual, at the live seam — the review's core concern)
+- Ran a real `pflow ui` + curl: a spawned run (`POST /api/run` → `{status:spawned, run_id}`) lit the pinned
+  overlay with the full lifecycle `connected → run-snapshot → run-events/run-event → run-complete`
+  **through the middleware** (proves it's transparent to SSE); non-loopback `Host` → 403 on reads, writes,
+  SSE, and `/api/health`; Host parse correct for `127.0.0.1:p` / `localhost:p` / `[::1]:p` / bare `::1`;
+  the pre-flight returned an actionable 400 on a malformed workflow. `make test` **8274**, `make check` clean.
+
+### Other findings — decided NOT to code
+- **Cold-start pinned-resolve race** (a launch dying before its meta line, or a >15s cold start, strands
+  the overlay on "run not found") — already tracked as **GH #546** (design + one-time-re-arm fix noted).
+- **#4** (a *required boolean with no default* renders as unchecked = "unset" → pre-flight 400) and **#5**
+  (a trace read-error → 404 "run not found", pre-existing convention shared with `run_node_detail`) —
+  both rare, both **non-silent** (pre-flight message / debug breadcrumb); every fix adds UI/semantics or
+  cross-cutting complexity for a theorized (no-users) problem. Left as-is; optionally file as low-pri issues.
+
+Scope note: `task-175.md` (spec) + `implementation-plan.md` still name the pre-hardening
+`_require_local_origin`/`_json_body` design — intentionally, as point-in-time records; the durable
+forward-reference (`task-review.md`) was updated to the middleware.
