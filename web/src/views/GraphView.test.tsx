@@ -1004,16 +1004,19 @@ describe("GraphView — Run panel (Task 175)", () => {
       // `topic` prefills from its default; `api_key` stays BLANK despite having an
       // authored default — the form never collects a secret (the secrets boundary).
       const topic = (await screen.findByLabelText(/topic/i)) as HTMLInputElement;
-      expect(topic.value).toBe("cats");
+      expect(topic.value).toBe("cats"); // its default shows, editable
       expect((screen.getByLabelText(/api_key/i) as HTMLInputElement).value).toBe("");
       expect((screen.getByLabelText(/^name/i) as HTMLInputElement).value).toBe(""); // required, no default → blank
+      // Edit `topic` AWAY from its default so it's a genuine user-set value (an UNTOUCHED default is
+      // omitted so the run resolves it via CLI precedence — Codex F2, unit-tested in RunPanel.test.tsx).
+      fireEvent.change(topic, { target: { value: "dogs" } });
 
       fireEvent.click(screen.getByRole("button", { name: "▶ Run" }));
 
-      // Faithful to a hand-typed run: only `topic=cats` rides; `name` (blank required) and
+      // Faithful to a hand-typed run: only the edited `topic=dogs` rides; `name` (blank required) and
       // `api_key` (sensitive, blank) are OMITTED — NOT sent as empty strings. The pre-flight
       // 400s the missing required `name`; the spawned run re-resolves `api_key` by name.
-      await waitFor(() => expect(runWorkflow).toHaveBeenCalledWith("demo", { topic: "cats" }));
+      await waitFor(() => expect(runWorkflow).toHaveBeenCalledWith("demo", { topic: "dogs" }));
       // PINS the overlay to the run just spawned (?run=<the returned id>) — NOT follow-newest, so it
       // won't revert to an older still-live run when this one finishes. The panel closes.
       await waitFor(() => expect(new URLSearchParams(window.location.search).get("run")).toBe("spawned-run-1"));

@@ -783,3 +783,57 @@ task-review's account) surfaced one worth-acting-on finding + two edges already 
 Scope note: `task-175.md` (spec) + `implementation-plan.md` still name the pre-hardening
 `_require_local_origin`/`_json_body` design — intentionally, as point-in-time records; the durable
 forward-reference (`task-review.md`) was updated to the middleware.
+
+---
+
+## PR bot-review evaluation + fixes (2026-07-01)
+
+Evaluated the reviews waiting on PR #547 (all generated on the PRE-hardening commit `cd991c02`, so cross-
+checked each against HEAD): **gemini** errored out (no review); **claude[bot]** found no blockers (3 minor/
+accepted suggestions); **Codex** found 6 findings — notably **real bugs my own review + both deep-review
+passes missed**. Verified every finding against the code (a `pflow-codebase-searcher` confirmed the 5-tier
+precedence + coercion mechanics). Applied 4; the others are recorded decisions.
+
+### Applied (all unit-tested; `make test` 8275 · `make check` clean · `tsc` 0 · `vitest` 683)
+- **F1 (P1 secret leak) — `run_node.read_run_inputs`.** It only checked the TOP-LEVEL input name, so an
+  object input like `config={"api_key": …}` (non-sensitive name) had its nested secret JSON-encoded into a
+  `/api/run-inputs` prefill token → the browser. Fix: omit any input where `_redact({name: value}) !=
+  {name: value}` — reuses the ONE recursive key-name redactor (`_io_detail`'s), and subsumes the old
+  top-level check (no second sensitivity walk). Tested nested-dict + list-of-dict.
+- **F2 (faithfulness) — `RunPanel` launch payload.** The form prefilled every default and omitted only
+  *blank* tokens, so an untouched default was sent as an explicit arg → overrode an env/settings value a
+  no-arg `pflow run` would use (and re-inferred string defaults like `001`). Fix: **dirty-tracking** — the
+  payload is exactly the fields the user edited (`onChange`) or loaded-to-reproduce (`loadFrom` seeds the
+  run's keys); untouched → omitted → CLI precedence resolves it. (First tried a `!== defaultToken`
+  heuristic; replaced it — it conflated "untouched" with "typed the default", dropping a re-run value that
+  equalled the default. Dirty-tracking has no such edge and reads more obviously.)
+- **F5 (P2 functional) — IO output values never appeared after a live run.** `PortRunValue`'s effect deps
+  didn't change on completion, so an output fetched mid-run (404 until `run.complete` writes
+  `json_output`) stuck on "no recorded value". Fix: thread `runBanner?.execution_id` (GraphView → IoPanel →
+  `PortRunValue`) into the deps — **gated to `kind === "output"`** (`outputRunEpoch`): inputs are
+  t=0-stable, so including them would needlessly refetch AND flash-empty every input on completion.
+- **F6 (P2 race) — `RunPanel.loadFrom`.** No request guard, so a slow earlier `fetchRunInputs` could
+  resolve after a newer pick and overwrite the form. Fix: a monotonic `loadReqRef`; drop non-latest
+  responses.
+
+### NOT coded (recorded decisions)
+- **F3** (re-run of a numeric-looking STRING like `001`/`false` re-infers to `1`/`False`): re-litigates the
+  channel-A decision (`task-175.md:84-90` — "fix at the ROOT in the CLI's coercion, optional, not a
+  precondition"). F2's fix removed the default-sourced half; the residual is narrow (a string value from a
+  default/env — a CLI arg already collapsed it at original run time). Left; optionally file a root-coercion
+  issue.
+- **F4** (required boolean, no default → unchecked = "unset" → pre-flight 400): current behavior is
+  actually **CLI-faithful** (a hand-typed run with no arg ALSO errors on a required-no-default input) and
+  non-silent. Codex's suggested "default to false" would make the form LAUNCH where the CLI errors — a
+  silent wrong guess / form≠CLI divergence, so rejected. The only faithful improvement is a 3-state
+  select `[—, true, false]` for that rare shape (a checkbox has no "unset") — low-pri UI polish, deferred.
+- **claude[bot] C1** (RunSelector polls `/api/runs` every 4s even backgrounded — gate on
+  `visibilityState`, low impact given the mtime cache), **C2** (Host-parse `count(":")==1` heuristic — a
+  hand-crafted `localhost:80@evil.com` passes, but that's not a Host a browser emits under DNS rebinding →
+  **not a reachable bypass**; the `_host_is_local` fn now lower-cases too), **C3** (single-launch zombie
+  until server exit — accepted; retaining a handle would reintroduce the ADR-0008 SIGKILL coupling).
+
+### Not browser-verified
+F5 is the one applied fix with browser-observable behavior (an output value appearing as a live run
+completes). The refetch mechanism is unit-tested + the wiring type-checked, but not driven in a live
+browser — worth a `make ui-build` + live-run check before merge.

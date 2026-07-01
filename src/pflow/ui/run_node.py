@@ -60,13 +60,14 @@ def run_node_detail(workflow_key: str, run_id: str | None, ref: dict[str, Any]) 
 def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | None:
     """A past run's recorded inputs as form-ready token strings, for the re-run prefill (Task 175 Phase 5).
 
-    Reads the trace's ``meta.inputs`` (the Phase-1 keystone), OMITS sensitive-named keys
-    (``is_sensitive_parameter``) — a past run's resolved secret never reaches the browser; the form
-    re-resolves it from settings/env by name — and renders each remaining value via ``format_param_value``
-    (the inverse of the CLI's ``infer_type``: bools→``true``/``false``, list/dict→compact JSON, scalars→str),
-    so the tokens drop straight into the form's channel-A controls. ``None`` when no trace/run is found
-    (→ 404); ``{}`` for a run whose trace predates ``meta.inputs`` (graceful — the picker shows it with
-    nothing to prefill). ``meta.inputs`` is written un-interned, so its values carry no blob refs."""
+    Reads the trace's ``meta.inputs`` (the Phase-1 keystone), OMITS any input carrying a secret — a
+    top-level sensitive name OR a nested sensitive key like ``config.api_key`` (a past run's resolved
+    secret never reaches the browser; the form re-resolves it from settings/env) — and renders each
+    remaining value via ``format_param_value`` (the inverse of the CLI's ``infer_type``:
+    bools→``true``/``false``, list/dict→compact JSON, scalars→str), so the tokens drop straight into the
+    form's channel-A controls. ``None`` when no trace/run is found (→ 404); ``{}`` for a run whose trace
+    predates ``meta.inputs`` (graceful — the picker shows it with nothing to prefill). ``meta.inputs`` is
+    written un-interned, so its values carry no blob refs."""
     from pflow.cli.param_parsing import format_param_value
 
     trace_path = _resolve_trace(workflow_key, run_id)
@@ -78,15 +79,20 @@ def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | N
     inputs = (_line_of_kind(lines, "meta") or {}).get("inputs")
     if not isinstance(inputs, dict):
         return {}
-    return {
-        name: format_param_value(value)
-        for name, value in inputs.items()
-        # Skip sensitive-named keys (server-side secret redaction) AND None values: format_param_value(None)
-        # is the literal token "None", which infer_type would re-type to the STRING "None" on re-run — a
-        # silent value change from the original null. Omitting the key lets it re-resolve to its default,
-        # consistent with the form's blank-omission policy.
-        if isinstance(name, str) and value is not None and not is_sensitive_parameter(name)
-    }
+    tokens: dict[str, str] = {}
+    for name, value in inputs.items():
+        if not isinstance(name, str) or value is None:
+            # None → omit: format_param_value(None) is the literal token "None", which infer_type would
+            # re-type to the STRING "None" on re-run — a silent change from the original null. Omitting
+            # lets it re-resolve to its default, consistent with the form's blank-omission policy.
+            continue
+        if _redact({name: value}) != {name: value}:
+            # A secret at ANY depth (the top-level name, or a nested key inside an object/list input) →
+            # omit, so it re-resolves from settings/env instead of shipping to the browser. Reuses the one
+            # recursive key-name redactor; a changed value means it contained a sensitive-named key.
+            continue
+        tokens[name] = format_param_value(value)
+    return tokens
 
 
 def _resolve_trace(workflow_key: str, run_id: str | None) -> Path | None:

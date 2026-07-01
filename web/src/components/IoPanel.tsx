@@ -28,6 +28,7 @@ export function IoPanel({
   workflow,
   runId,
   hasRunContext,
+  completedRunId,
   renderedIds,
   markedPortId,
   onNavigate,
@@ -43,6 +44,10 @@ export function IoPanel({
   workflow: string;
   runId: string | null;
   hasRunContext: boolean;
+  // The id of the run that just completed (null until run.complete). OUTPUT ports 404 until the trailer
+  // writes json_output, so this changes on completion → PortRunValue refetches and the value appears
+  // without reopening the panel (Codex P2).
+  completedRunId: string | null;
   renderedIds: ReadonlySet<string>;
   // A focused row's port id — its entry gets the marked treatment (card click =
   // the whole interface, row click = the same panel scrolled to one port).
@@ -158,7 +163,14 @@ export function IoPanel({
                   (else every port would show an empty block) and on the port carrying a structural ref
                   (the same identity /api/run-node joins on). Redaction is server-side. */}
               {hasRunContext && portNode && (
-                <PortRunValue workflow={workflow} runId={runId} nodeRef={portNode.ref} kind={kind} portName={port.name} />
+                <PortRunValue
+                  workflow={workflow}
+                  runId={runId}
+                  completedRunId={completedRunId}
+                  nodeRef={portNode.ref}
+                  kind={kind}
+                  portName={port.name}
+                />
               )}
             </div>
           );
@@ -176,12 +188,17 @@ export function IoPanel({
 function PortRunValue({
   workflow,
   runId,
+  completedRunId,
   nodeRef,
   kind,
   portName,
 }: {
   workflow: string;
   runId: string | null;
+  // Refetch discriminator: an OUTPUT port 404s until the run's run.complete trailer writes json_output, so
+  // a fetch during a live run lands on "absent". This changes when the run completes → the effect re-runs
+  // and the output value appears without reopening the panel (Codex P2). Harmless for inputs (same value).
+  completedRunId: string | null;
   nodeRef: RFRef;
   kind: "input" | "output";
   portName: string;
@@ -189,6 +206,12 @@ function PortRunValue({
   const [state, setState] = useState<{ phase: "loading" | "value" | "absent"; value?: unknown }>({
     phase: "loading",
   });
+
+  // Inputs are recorded at t=0 and never change during a run → they fetch ONCE. Only OUTPUTS (404 until
+  // run.complete writes json_output) refetch when the run completes, so gate the completion epoch to
+  // outputs — otherwise every input port would re-fetch (and briefly flash empty via the loading phase) on
+  // completion for no gain.
+  const outputRunEpoch = kind === "output" ? completedRunId : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -208,7 +231,7 @@ function PortRunValue({
     return () => {
       cancelled = true;
     };
-  }, [workflow, runId, refKey(nodeRef), kind, portName]);
+  }, [workflow, runId, outputRunEpoch, refKey(nodeRef), kind, portName]);
 
   // Loading is brief over loopback — render nothing rather than a placeholder that would flash on N ports.
   if (state.phase === "loading") return <></>;

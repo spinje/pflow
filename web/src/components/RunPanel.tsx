@@ -10,7 +10,7 @@
 // reverting to an older still-live one). A spawn/pre-flight failure shows inline in
 // the form and never blanks the canvas (DR-6 — each fetch owns its failure).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PanelHeader } from "./PanelHeader";
 import { RunForm } from "./RunForm";
@@ -55,6 +55,12 @@ export function RunPanel({
 }): JSX.Element {
   const inputs = useMemo(() => inputFields(graph), [graph]);
   const [values, setValues] = useState<Record<string, string>>(() => defaultValues(inputs));
+  // Fields the user SET (edited) or LOADED from a past run — the launch sends exactly these (when
+  // non-blank). An untouched field is omitted so the spawned run resolves it via the CLI's normal
+  // precedence (CLI arg → env → settings → default), faithful to a hand-typed `pflow run` that just
+  // doesn't pass the arg. (Forcing every shown default as an explicit arg would override an env/settings
+  // value a no-arg run uses, and re-infer string defaults like `001`/`false` — Codex F2.)
+  const [dirty, setDirty] = useState<Set<string>>(() => new Set());
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<ApiErrorEntry[]>([]);
   // "load inputs from" picker (Phase 5): this workflow's past runs + the selected source ("defaults" or a
@@ -62,6 +68,9 @@ export function RunPanel({
   // RunSelector clock). Its own catch (DR-6): a runs-fetch failure shows just "Defaults".
   const [runs, setRuns] = useState<RunInfo[]>([]);
   const [source, setSource] = useState<string>("defaults");
+  // Monotonic id for the in-flight prefill fetch, so a slow earlier `fetchRunInputs` can't resolve after a
+  // newer selection and overwrite the form (the dropdown would then show one source, the values another).
+  const loadReqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +84,7 @@ export function RunPanel({
 
   const onChange = useCallback((name: string, value: string) => {
     setValues((prev) => ({ ...prev, [name]: value }));
+    setDirty((prev) => (prev.has(name) ? prev : new Set(prev).add(name)));
   }, []);
 
   // Prefill the form from a source: "defaults" → the declared defaults; a run id → that run's recorded
@@ -85,26 +95,35 @@ export function RunPanel({
     (src: string) => {
       setSource(src);
       setErrors([]);
+      const reqId = ++loadReqRef.current; // bump on every pick; the newest wins, stale responses are dropped
       if (src === "defaults") {
         setValues(defaultValues(inputs));
+        setDirty(new Set()); // untouched defaults → omit → the run resolves them via CLI precedence
         return;
       }
       fetchRunInputs(workflow, src)
-        .then((tokens) => setValues(Object.fromEntries(inputs.map((f) => [f.name, tokens[f.name] ?? ""]))))
-        .catch((err) =>
-          setErrors(err instanceof ApiError ? err.errors : [{ message: "Could not load that run's inputs." }]),
-        );
+        .then((tokens) => {
+          if (loadReqRef.current !== reqId) return; // a newer selection superseded this fetch
+          setValues(Object.fromEntries(inputs.map((f) => [f.name, tokens[f.name] ?? ""])));
+          setDirty(new Set(Object.keys(tokens))); // reproduce: send exactly the run's recorded inputs
+        })
+        .catch((err) => {
+          if (loadReqRef.current !== reqId) return;
+          setErrors(err instanceof ApiError ? err.errors : [{ message: "Could not load that run's inputs." }]);
+        });
     },
     [inputs, workflow],
   );
 
   const onSubmit = useCallback(() => {
-    // Omit blank fields so they resolve via the CLI's normal precedence (default →
-    // env → settings) — faithful to a hand-typed run that simply doesn't pass the arg.
+    // The payload is exactly the dirty (user-set or run-loaded) fields that are non-blank. An untouched
+    // field — or one cleared to blank — is omitted so it resolves via CLI precedence (see `dirty`). A
+    // past-run prefill marks its fields dirty, so re-run reproduces them faithfully even when a value
+    // happens to equal the current default.
     const payload: Record<string, string> = {};
     for (const field of inputs) {
       const token = values[field.name] ?? "";
-      if (token !== "") payload[field.name] = token;
+      if (dirty.has(field.name) && token !== "") payload[field.name] = token;
     }
     setSubmitting(true);
     setErrors([]);
@@ -114,7 +133,7 @@ export function RunPanel({
         setErrors(err instanceof ApiError ? err.errors : [{ message: "Could not start the run." }]);
         setSubmitting(false); // re-enable; on success the panel is already gone
       });
-  }, [inputs, values, workflow, onLaunched]);
+  }, [inputs, values, dirty, workflow, onLaunched]);
 
   return (
     <aside className="read-panel run-panel">

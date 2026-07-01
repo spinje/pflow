@@ -1018,6 +1018,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               workflow={workflow}
               runId={runId}
               hasRunContext={hasRunContext}
+              completedRunId={runBanner?.execution_id ?? null}
               renderedIds={renderedIds}
               markedPortId={focus != null && selectedIoGroup.members.includes(focus) ? focus : null}
               onNavigate={onNavigate}

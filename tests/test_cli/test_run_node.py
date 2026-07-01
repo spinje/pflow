@@ -542,6 +542,24 @@ def test_read_run_inputs_omits_sensitive_named_keys(tmp_path, monkeypatch) -> No
     assert read_run_inputs(wf, "run-1") == {"topic": "cats"}
 
 
+def test_read_run_inputs_omits_inputs_with_a_nested_secret(tmp_path, monkeypatch) -> None:
+    """F1 (Codex P1): an object/list input whose TOP-LEVEL name isn't sensitive but that carries a nested
+    sensitive key (``config.api_key``, a list-of-dict ``token``) must be OMITTED whole — else
+    format_param_value would JSON-encode the resolved secret into a prefill token the browser sees. The
+    top-level-name check alone leaks it; the recursive ``_redact`` (the same one ``_io_detail`` uses) catches
+    it, matching the display path's redaction."""
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(
+        debug,
+        wf,
+        "20260101-000000-000020",
+        inputs={"topic": "cats", "config": {"region": "us", "api_key": "sk-secret"}, "creds": [{"token": "t"}]},
+    )
+    # config (nested api_key) and creds (list-of-dict token) are omitted; only the clean topic survives.
+    assert read_run_inputs(wf, "run-1") == {"topic": "cats"}
+
+
 def test_read_run_inputs_none_for_unknown_run(tmp_path, monkeypatch) -> None:
     debug = _debug(tmp_path, monkeypatch)
     wf = str(tmp_path / "wf.pflow.md")
