@@ -720,3 +720,11 @@ mechanism `--run` drives); there is NO separate `pflow ui select-run` CLI subcom
 
 **Task 175 (phases 1–6) is complete: launch ▶, inspect (click any node), re-run picker, and the agent
 open/replay-a-run verb — all implemented, deep-reviewed, hardened, and green.**
+
+---
+
+## PR opened
+
+Task 175 (phases 1–6 + deep-review fixes + task-review) committed and pushed to `feat/web-ui-workflows`.
+PR: https://github.com/spinje/pflow/pull/547 (base `main`, 64 files, +5071/−173). Gates green:
+`make test` 8273, `make check` clean, `tsc` 0, `vitest` 676. Taskmaster-tracked (no GH issue).
