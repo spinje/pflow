@@ -232,14 +232,15 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 169: Agent↔Browser Interaction Channel
 - ✅ Task 172: Streamable trace
 - ✅ Task 173: Live execution overlay
+- ✅ Task 175: Run workflows from the UI
 
 ### Planned Features (in order of priority)
 
 **Next?** (in build order)
-- Task 175: Run workflows from the UI
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 164: Resume Workflow From a Failed Node
 - Task 171: Durable Resume Tokens & Non-TTY Gates
+- Task 176: Web-UI Approval Bridge
 - Task 174: Agent Voice Narration — "Point & Say" for UI
 
 **v0.14.0**
