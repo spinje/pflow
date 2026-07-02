@@ -2,7 +2,7 @@
 name: pflow-codebase-searcher
 description: "Search and navigate the pflow codebase. Use for: finding implementations, tracing data flows through CLI/runtime/nodes, understanding node lifecycle patterns, locating test coverage, resolving doc-vs-code conflicts. Launch multiple instances in PARALLEL for complex searches. Do NOT use for: general Python questions, writing code, simple file reads, or easy searches. Supports DEPTH: quick | medium | thorough (default: medium)."
 tools: Bash, Glob, Grep, LS, Read
-model: fable
+model: opus
 effort: low
 color: orange
 ---
