@@ -1,8 +1,8 @@
 ---
 name: code-implementer
 description: "Implement small, focused tasks in the pflow project: new functions/files, bug fixes, refactoring, or component integration. Caller MUST provide comprehensive context (requirements, file paths, patterns to follow, definition of done). Bigger tasks need bigger context. Do NOT use for: entire features, tasks requiring deep node/engine knowledge, or primary test writing (use test-writer-fixer instead)."
-model: opus
-effort: medium
+model: fable
+effort: high
 color: green
 ---
 

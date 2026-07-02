@@ -2,7 +2,7 @@
 name: review-feature-interactions
 description: "Enumerate how changes interact with existing features (batch, nested workflows, branching, caching, error handling, MCP, output/display). Catches: untested feature combinations, new abstraction boundaries, three-way interaction bugs, error handling dimension mismatches, feature parity gaps."
 tools: Bash, Glob, Grep, LS, Read
-model: opus
+model: fable
 effort: medium
 color: red
 ---
