@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from pflow.core.cache_ttl import build_unsupported_cache_ttl_diagnostic, unsupported_cache_ttl_message
 from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
+from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest
 from pflow.core.llm_providers import detect_provider, extract_provider_prefix
 
 # Typed discriminators for LLMCallError subclasses. Carried as Literal so
@@ -941,6 +942,114 @@ class OnlySnapshotMissingError(PflowError):
                 context={"category": "execution_failure"},
             )
         ]
+
+
+class GateDenied(PflowError):
+    """A human denied an approval Gate (Task 125).
+
+    A human verdict, NOT a node failure: the gated node never ran, nothing broke.
+    This exception is pure control flow — it must cross every generic
+    ``except Exception`` between the gate and the runner UN-converted (engine
+    ``_execute_node``, ``WorkflowExecutor.exec``, batch retry loops via
+    ``retriable=False``), where the runner maps it to a clean DENIED result.
+    Never route it through ``error_action``/on-error edges — a workflow must not
+    "handle" a human's no.
+    """
+
+    retriable = False
+
+    def __init__(self, request: GateRequest):
+        self.request = request
+        super().__init__(f"Denied at gate '{request.node_id}'.")
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Gate denied",
+                node_id=self.request.node_id,
+                source="runtime",
+                context={"category": "gate", "gate": _masked_gate_payload(self.request)},
+            )
+        ]
+
+
+class GateNotInteractiveError(PflowError):
+    """A Gate fired but this run has no way to ask a human (Task 125).
+
+    Carries the full ``GateRequest`` so the operating agent can show its human
+    exactly WHAT was about to happen — approving blind defeats the gate. Like
+    ``GateDenied``, it is exempted from every generic exception-conversion
+    boundary (``retriable=False`` keeps batch retry loops from re-firing the
+    gate); the runner surfaces it as a normal FAILED result with these
+    diagnostics intact.
+    """
+
+    retriable = False
+
+    def __init__(self, request: GateRequest, *, parallel_batch: bool = False):
+        self.request = request
+        self.parallel_batch = parallel_batch
+        if parallel_batch:
+            cause = "it fired inside a parallel batch item, which cannot host a prompt"
+        else:
+            cause = "this run is non-interactive (launched from the web UI, MCP, or a pipe — no terminal to prompt on)"
+        kind = "approval" if request.kind == GATE_KIND_APPROVAL else "escalation"
+        super().__init__(f"Step '{request.node_id}' requires a human {kind} decision, but {cause}.")
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        suggestions = [
+            "If you are an AI agent: ask your human before continuing — this gate exists so a person reviews the action."
+        ]
+        if self.request.kind == GATE_KIND_APPROVAL:
+            suggestions.append(
+                f"With their OK, pre-approve ONLY this gate: CLI `--auto-approve={self.request.node_id}`; "
+                f'MCP workflow_execute: `auto_approve=["{self.request.node_id}"]`.'
+            )
+            if self.parallel_batch:
+                suggestions.append(
+                    "Or restructure: move `approval:` to a step outside the batch, "
+                    "or set `parallel: false` on the batch."
+                )
+        else:
+            suggestions.append(
+                "Escalations cannot be pre-approved — run interactively, "
+                "or re-run with the answer supplied as a workflow input."
+            )
+        suggestions.append("pflow cannot yet hold a gate open for a later answer.")
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Gate needs a human",
+                node_id=self.request.node_id,
+                source="runtime",
+                suggestions=suggestions,
+                context={
+                    "category": "gate",
+                    "gate": _masked_gate_payload(self.request),
+                    "parallel_batch": self.parallel_batch,
+                },
+            )
+        ]
+
+
+def _masked_gate_payload(request: GateRequest) -> dict[str, Any]:
+    """GateRequest as a dict with secret-like preview values redacted.
+
+    The diagnostic reaches agents/humans through error text and MCP responses —
+    secrets don't inform an approval decision. (The trace's gate event carries
+    the unmasked payload, consistent with the trace's ``template_resolutions``.)
+    """
+    from pflow.core.security_utils import mask_sensitive_value
+
+    payload = request.to_dict()
+    payload["preview"] = {
+        key: mask_sensitive_value(key, value) if isinstance(value, str) else value
+        for key, value in payload.get("preview", {}).items()
+    }
+    return payload
 
 
 class MaxNodeVisitsError(RuntimeError):

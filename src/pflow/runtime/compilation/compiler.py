@@ -20,6 +20,7 @@ from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.core.node import Node
 from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR
+from pflow.core.workflow.gate_validation import check_approval_allowed
 from pflow.core.workflow.loop_validation import check_loop_polarity
 from pflow.registry import Registry
 from pflow.runtime.engine import instrumentation
@@ -381,6 +382,7 @@ def _create_node_and_config(
         prompt_cache_items=_extract_prompt_cache_items(node_data),
         prewarm=_extract_prewarm(node_data),
         loop_config=loop_config,
+        approval=_extract_approval(node_data),
     )
 
     return node_instance, node_config
@@ -687,6 +689,35 @@ def _extract_prewarm(node_data: dict[str, Any]) -> bool:
             suggestion="Set prewarm to true or false (e.g., `prewarm: true`).",
         )
     return raw
+
+
+def _extract_approval(node_data: dict[str, Any]) -> bool:
+    """Coerce ``approval:`` into a bool. Only the literal string ``"required"`` is
+    accepted (schema enforces the enum; this is the compile-path mirror for
+    programmatic IRs that skip schema validation). Also enforces the batch
+    exclusion via the shared ``check_approval_allowed`` rule so the run path
+    fails fast even when validation was bypassed."""
+    raw = node_data.get("approval")
+    if raw is None:
+        return False
+    if raw != "required":
+        raise CompilationError(
+            f"approval must be the string 'required'; got {type(raw).__name__}: {raw!r}",
+            phase="validation",
+            node_id=node_data.get("id"),
+            node_type=node_data.get("type"),
+            suggestion="The only supported value is `approval: required`.",
+        )
+    batch_error = check_approval_allowed(node_data)
+    if batch_error is not None:
+        raise CompilationError(
+            batch_error,
+            phase="validation",
+            node_id=node_data.get("id"),
+            node_type=node_data.get("type"),
+            suggestion="Move `approval: required` to the step before or after the batch.",
+        )
+    return True
 
 
 def _build_cache_block(ir_dict: dict[str, Any]) -> Optional[CacheBlockIR]:

@@ -37,21 +37,43 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │
         ├─ INSIDE try (template errors get trace recording):
         │  4-7. plan_node() → decides cached/miss and returns NodePlan
+        │  7.5. Task 125: if config.approval → run_approval_gate (gate.py) — pause,
+        │      resolve via shared["__gate_resolver__"], gate events streamed. BEFORE
+        │      step 8/8.5 so a denied node never appears in trace/progress. Deny →
+        │      GateDenied; no resolver → GateNotInteractiveError (both exempted below).
+        │      Cache hits early-return upstream — cached nodes never gate.
         │  8. call_start_callback
-        │  9. execute: batch → execute_batch() | single → node._run(namespaced_store)
+        │  9. execute: batch → execute_batch() + scan_batch_escalations (an UNDECIDED
+        │      escalation marker in an item result → loud PflowError; per-item gates
+        │      don't exist on direct batch hosts) | single → node._run(namespaced_store)
         │  10. detect_api_warning → handle_api_warning if found (returns "error").
         │      Runs ONLY for clean-success actions (_CLEAN_SUCCESS_ACTIONS); an
         │      error/custom-route action skips it — the node's verdict stands (GH #301/#474).
-        │  11. cache_result, 12. write_memo_cache (SKIP when cache_enabled=False)
+        │  10.5. Task 125: detect_escalation (non-batch, clean-success actions only) —
+        │      an undecided `result.escalation` marker. Detection here so an escalating
+        │      result (an INCOMPLETE work product) skips BOTH cache writes below; the
+        │      pause itself is step 17.7. Malformed markers → degrading warning, no pause.
+        │  11. cache_result, 12. write_memo_cache (SKIP when cache_enabled=False;
+        │      BOTH skipped when escalating)
         │  13-17. duration, metrics, record_trace, call_completion_callback
         │  17.5. if action starts with "error": mark_node_failed (archive to __failures__,
         │        + warning= when error successor exists → triggers DEGRADED, GH #246)
-        │  17.6. if config.loop_config and not error: _loop_should_reenter (loop_control)
-        │        evaluates `while:` over the node's fresh output → `continue` (re-run
-        │        the same node, byte-for-byte a backward-edge revisit) or fall through;
-        │        cap-hit stamps loop_stopped + emits an INFO advisory (issue #445)
+        │  17.7. Task 125: if escalation → run_escalation_gate — pause AFTER the node's
+        │        own completion trace/callback (its success record stands), write the
+        │        human's decision INTO the marker (result.escalation.decision — decided
+        │        markers never re-prompt), gate events streamed. Runs before the walk's
+        │        loop-re-entry check reads the store, so `loop:` + carry folds
+        │        ${step.result.escalation.decision} into the next iteration.
+        │  (17.6 loop re-entry lives in _run_inner, after _execute_node returns)
         │
-        └─ EXCEPT (error path):
+        └─ EXCEPT:
+           (GateDenied, GateNotInteractiveError) → stamp trace.gate_outcome
+           ("denied"/"failed" — the trailer channel; _determine_trace_status has no
+           other signal for a gate stop) and re-raise UNTOUCHED: no record_trace(error),
+           no error callback, no mark_node_failed — a gate verdict is control flow,
+           not a node failure. Same re-raise arm exists in WorkflowExecutor.exec, and
+           both exceptions carry retriable=False so batch retry loops re-raise too.
+           Generic error path (everything else):
            metrics, record_trace(error=e),
            call_completion_callback(action="error", error=e),
            mark_node_failed (archive to __failures__),

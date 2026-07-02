@@ -185,6 +185,14 @@ shared["__failures__"] = {
 # System keys
 shared["__trace_collector__"] = WorkflowTraceCollector
 shared["__progress_callback__"] = func
+shared["__gate_resolver__"] = func            # Task 125: resolver(request, *, allow_prompt) -> GateResolution.
+                                              # Installed by the CLI/MCP layer (Phase 3); absent → any gate
+                                              # raises GateNotInteractiveError (loud, payload-carrying). In
+                                              # _PROPAGATED_KEYS so nested gates prompt through the same channel.
+shared["__gate_prompt_allowed__"] = bool      # Task 125: False ONLY inside parallel-batch worker stores (set by
+                                              # batch_executor.process_item) — the resolver may still auto-approve
+                                              # from its flag set but must not prompt. Propagated so the ban
+                                              # reaches grandchildren. Absent = True.
 shared["__warnings__"] = {}               # Node warnings → DEGRADED status.
                                           # Values may be legacy strings,
                                           # structured warning dicts, or

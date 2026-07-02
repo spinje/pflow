@@ -14,6 +14,7 @@ core/workflow/
 ├── validator.py             # Unified 10-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
 ├── loop_validation.py        # check_loop_polarity: shared while/until exactly-one-of rule (compiler + validate path)
+├── gate_validation.py        # Task 125 — check_approval_allowed: shared approval-not-on-batch rule (compiler + validate path)
 ├── graph/                   # Renderer-agnostic workflow graph model + renderers
 │   ├── __init__.py          # Re-exports build_graph, render_mermaid, model dataclasses
 │   ├── model.py             # GraphModel, NodeId, Node/Edge/Container dataclasses

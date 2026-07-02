@@ -81,6 +81,22 @@ every *prior* step's output reused from the most recent full run, so only the ta
 re-executes and upstream side effects never re-fire. Requires a prior full run.
 _Avoid_: replay, restore, checkpoint.
 
+**Gate** — a pause in a Run where execution halts for a human decision before continuing.
+Two kinds: an Approval (author-declared) and an Escalation (agent-raised). The decision
+payload is structured data, rendered by whatever surface the human is on.
+_Avoid_: breakpoint, checkpoint, pause (unqualified).
+
+**Approval** — an author-declared Gate on a step: the Run halts *before* the step fires,
+shows the resolved action about to happen, and a human approves or denies it. Its position
+is known before the Run starts. _Avoid_: confirmation, ack, gate (unqualified).
+
+**Escalation** — an agent-raised Gate: mid-Run, an agent surfaces a decision it won't make
+alone (options, tradeoffs, a recommendation) and the human's choice feeds back into the
+work. Unpredictable — zero to many per Run. _Avoid_: interrupt, question, exception.
+
+**Denial** — the human's "no" at an Approval: the Run stops cleanly before the gated step
+runs. A human verdict, not a Failed run — nothing broke. _Avoid_: rejection, abort, failure.
+
 **Prompt cache** — provider-side reuse of a static prompt *prefix* across LLM calls, declared
 in a workflow's `## Cache` block (or per-step `prompt_cache:`). Discounts input tokens; the
 step still executes and calls the provider every time. _Avoid_: cache (unqualified), KV cache.
@@ -160,6 +176,14 @@ Auto-update is the *Viewer* watching the *source `.pflow.md`* to live-rebuild th
 with `--no-auto-update`); Watch is the *agent* watching the *user's* interactions (read via
 `user-activity`); Overlay is the *Viewer* watching a *Run's trace* to draw live execution state.
 Different watcher, different watched, every time.
+
+**Approval vs Escalation** — both halt a Run for a human. Discriminator: who knows about it
+before the Run — an Approval is authored at a known step (approve/deny a known action); an
+Escalation is raised by an agent at runtime (choose among options nobody could list in
+advance).
+
+**Denial vs Failed** — both end a Run early. Discriminator: Denial is a human's verdict at a
+Gate (the gated step never ran; nothing broke); Failed is a fatal error (something did).
 
 **Workflow vs Run** — both name "the thing that ran." Discriminator: the Workflow is the reusable
 `.pflow.md` *definition* (authored once); a Run is one *execution* of it (one per `pflow run`). One

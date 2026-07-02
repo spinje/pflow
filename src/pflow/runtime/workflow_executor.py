@@ -7,6 +7,8 @@ from typing import Any, ClassVar, Optional
 
 from pflow.core.diagnostic import Diagnostic, format_child_provenance, normalize_runtime_warning
 from pflow.core.exceptions import (
+    GateDenied,
+    GateNotInteractiveError,
     MarkdownParseError,
     PflowError,
     WorkflowNotFoundError,
@@ -151,6 +153,11 @@ class WorkflowExecutor(BaseNode):
         # the child must inherit the active loop depth so its inner nodes also
         # suppress memo reads for the duration of the iteration.
         "__loop_active__",
+        # Task 125: gates inside sub-workflows resolve through the same human
+        # channel as the parent's — and the parallel-batch "no prompting here"
+        # flag must reach grandchildren too (a per-item heuristic would not).
+        "__gate_resolver__",
+        "__gate_prompt_allowed__",
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
@@ -435,19 +442,22 @@ class WorkflowExecutor(BaseNode):
         try:
             result = engine.run(compiled, child_storage)
 
-            # OLD path only (run_collector is None): hand the buffer's events to the parent engine to
-            # embed. On the NEW path the child's nodes already recorded flat into the run collector.
-            if run_collector is None and trace_for_child and trace_for_child.events:
-                self._child_trace_events = trace_for_child.events
+            self._stash_child_buffer(run_collector, trace_for_child)
 
             # Detect sub-workflow failure via action string
             if isinstance(result, str) and result.startswith("error"):
                 return self._child_failure_result(prep_res, child_storage, workflow_path)
 
             return {"success": True, "result": result, "child_storage": child_storage}
+        except (GateDenied, GateNotInteractiveError):
+            # Task 125: a gate verdict from inside the child must cross this
+            # boundary UN-converted. Folding it into _child_failure_result would
+            # make it error_action-routable — a workflow continuing past a
+            # human's denial — and would flatten the payload-carrying
+            # diagnostic. (KeyboardInterrupt already passes — BaseException.)
+            raise
         except Exception as e:
-            if run_collector is None and trace_for_child and trace_for_child.events:
-                self._child_trace_events = trace_for_child.events
+            self._stash_child_buffer(run_collector, trace_for_child)
             # A strict-mode template failure carries its structured Diagnostic
             # (unresolved_references, peer suggestions) ONLY on the exception — it
             # is never in child_storage — so capture it here for full fidelity.
@@ -575,6 +585,13 @@ class WorkflowExecutor(BaseNode):
         for key, value in child_storage.items():
             if WorkflowExecutor.is_exposable_child_key(key, child_input_keys):
                 shared[key] = value
+
+    def _stash_child_buffer(self, run_collector: Any, trace_for_child: Any) -> None:
+        """OLD path only (``run_collector is None``): hand the buffer collector's events
+        to the parent engine to embed as ``sub_workflow_events``. On the NEW path the
+        child's nodes already recorded flat into the run collector — no-op."""
+        if run_collector is None and trace_for_child and trace_for_child.events:
+            self._child_trace_events = trace_for_child.events
 
     def _child_failure_result(
         self,

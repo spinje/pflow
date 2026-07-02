@@ -69,6 +69,7 @@ class NodeConfig:
     prompt_cache_items: tuple[str, ...] = ()
     prewarm: bool = False  # Task 159: per-node serialize-first-then-fan-out opt-in.
     loop_config: Optional["LoopConfig"] = None  # issue #445: None if not a loop node.
+    approval: bool = False  # Task 125: pause for human approval before exec.
 
 
 @dataclass

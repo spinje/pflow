@@ -11,6 +11,7 @@ src/pflow/core/
 ├── __init__.py              # Public API exports
 ├── node.py                  # Node lifecycle primitives (BaseNode, Node, wiring operators)
 ├── exceptions.py            # Exception hierarchy (incl. CompilationError, MaxNodeVisitsError)
+├── gate.py                  # Task 125: GateRequest/GateResolution — the human-decision payload (ADR-0009: the payload is the seam)
 ├── diagnostic.py            # Diagnostic type, exception conversion, dedup
 ├── diagnostic_render.py     # format_diagnostic text renderer
 ├── ir_schema.py             # IR schema definition and validation
@@ -80,6 +81,12 @@ PflowError(Exception)                    <- base for all pflow errors
   |- UnsupportedCacheTTLError            <- cache TTL not supported by provider (Task 159)
   |- ReportGenerationError               <- trace report generation failure
   |- OnlySnapshotMissingError            <- --only has no prior full-run trace to restore upstream from (issue #443)
+  |- GateDenied                          <- Task 125: human denied an approval gate. retriable=False. NEVER a node
+  |                                         failure — exempted (re-raised untouched) at every generic except between
+  |                                         the gate and the runner (engine, WorkflowExecutor, batch retry loops)
+  |- GateNotInteractiveError             <- Task 125: gate fired with no human channel (no resolver / parallel-batch
+  |                                         worker). retriable=False, same exemptions. to_diagnostics() carries the
+  |                                         full GateRequest (secrets masked) + the ask-your-human remediation ladder
   |- LoopConditionError                  <- loop `until`/condition evaluation failed (raised by runtime/engine/loop_control.py)
   |- LoopCarryError                      <- loop carry-state propagation failed (raised by runtime/engine/loop_control.py)
   |- LLMCallError                        <- LLM adapter base for ALL provider errors (raised by llm_client)

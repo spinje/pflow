@@ -1607,7 +1607,10 @@ def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
     #   prompt_cache / prewarm — Task 159 LLM cache opt-ins; top-level so the
     #     ``cache.invalid-on-non-llm`` rule and IR-schema check (B2.2/B2.3) see them
     #     and validator step 8 doesn't silently allow them on non-LLM nodes.
-    for top_level_field in ("batch", "loop", "retry", "cache", "prompt_cache", "prewarm"):
+    #   approval     — Task 125 human approval gate; top-level so it never leaks
+    #     into node exec params or the cache hash, and the batch-exclusion rule
+    #     can inspect node["approval"] directly.
+    for top_level_field in ("batch", "loop", "retry", "cache", "prompt_cache", "prewarm", "approval"):
         if top_level_field in all_params:
             node[top_level_field] = all_params.pop(top_level_field)
 
