@@ -140,6 +140,12 @@ class PlanEntry:
     # The planner plans the body once and the summary multiplies this entry's
     # single-pass cost/duration (and its sub_plan rollup) by this factor.
     loop_iterations: int | None = None
+    # Task 125: this node declares `approval: required` — the run pauses for a
+    # human before it executes. Stamped from NodeConfig in the planner's shared
+    # annotate funnel (covers standard AND sub-workflow entries); dry-run is the
+    # agent's gate-discovery surface, so plan-says-pause ⟺ engine-pauses is
+    # drift-suite pinned.
+    approval: bool = False
 
 
 @dataclass(frozen=True)

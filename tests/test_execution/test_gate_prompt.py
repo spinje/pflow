@@ -1,0 +1,176 @@
+"""Unit tests for the TTY gate resolver (Task 125 Phase 3 — execution/gate_prompt.py).
+
+The resolver is the ONE builder every surface uses (CLI interactive, MCP non-TTY,
+parallel-batch worker via ``allow_prompt=False``). These tests pin its contract:
+auto-approve is approval-only and thread-config-independent; prompting requires
+stdin+stderr TTY (NOT stdout — Decision 14); every no-prompt path raises the
+payload-carrying ``GateNotInteractiveError``; Ctrl-C (click Abort) becomes
+``KeyboardInterrupt`` so the engine never archives it as a node failure.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import click
+import pytest
+
+from pflow.core.exceptions import GateNotInteractiveError
+from pflow.core.gate import GateRequest, GateResolution
+from pflow.execution.gate_prompt import build_gate_resolver, can_prompt
+
+
+class _FakeOC:
+    """Duck-typed OutputController: just the fields/seam the resolver reads."""
+
+    def __init__(
+        self, *, stdin_tty: bool = True, stdout_tty: bool = False, stderr_tty: bool = True, print_flag: bool = False
+    ):
+        self.stdin_tty = stdin_tty
+        self.stdout_tty = stdout_tty
+        self.stderr_tty = stderr_tty
+        self.print_flag = print_flag
+        self.prompt_preparations = 0
+
+    def prepare_for_prompt(self) -> None:
+        self.prompt_preparations += 1
+
+
+def _approval(node_id: str = "notify", **preview: Any) -> GateRequest:
+    return GateRequest(
+        node_id=node_id, node_type="ShellNode", kind="action_approval", preview=preview or {"command": "echo hi"}
+    )
+
+
+def _escalation(**kwargs: Any) -> GateRequest:
+    return GateRequest(node_id="agent-step", node_type="ClaudeCodeNode", kind="decision_escalation", **kwargs)
+
+
+class TestCanPrompt:
+    def test_requires_stdin_and_stderr_tty_but_not_stdout(self):
+        # Decision 14: `pflow wf | jq` (stdout piped) at a real terminal must still gate.
+        assert can_prompt(_FakeOC(stdin_tty=True, stderr_tty=True, stdout_tty=False)) is True
+
+    def test_false_without_controller_or_under_print_flag_or_non_tty(self):
+        assert can_prompt(None) is False
+        assert can_prompt(_FakeOC(print_flag=True)) is False
+        assert can_prompt(_FakeOC(stdin_tty=False)) is False
+        assert can_prompt(_FakeOC(stderr_tty=False)) is False
+
+
+class TestAutoApprove:
+    def test_flag_approves_named_approval_gate_without_prompting(self):
+        resolver = build_gate_resolver(frozenset({"notify"}), None)
+        resolution = resolver(_approval("notify"))
+        assert resolution == GateResolution(approved=True, resolved_via="flag")
+
+    def test_flag_works_with_prompting_disallowed(self):
+        # The parallel-batch worker path: allow_prompt=False must not disable the flag.
+        resolver = build_gate_resolver(frozenset({"notify"}), None)
+        resolution = resolver(_approval("notify"), allow_prompt=False)
+        assert resolution.approved is True and resolution.resolved_via == "flag"
+
+    def test_flag_never_resolves_an_escalation(self):
+        # You cannot pre-answer an unknown question.
+        resolver = build_gate_resolver(frozenset({"agent-step"}), None)
+        with pytest.raises(GateNotInteractiveError):
+            resolver(_escalation(question="which schema?"))
+
+    def test_unlisted_gate_without_tty_raises_with_payload(self):
+        resolver = build_gate_resolver(frozenset({"other"}), None)
+        with pytest.raises(GateNotInteractiveError) as exc_info:
+            resolver(_approval("notify"))
+        assert exc_info.value.request.node_id == "notify"
+        assert exc_info.value.parallel_batch is False
+
+    def test_allow_prompt_false_is_the_only_source_of_parallel_batch(self):
+        resolver = build_gate_resolver(frozenset(), _FakeOC())
+        with pytest.raises(GateNotInteractiveError) as exc_info:
+            resolver(_approval(), allow_prompt=False)
+        assert exc_info.value.parallel_batch is True
+
+
+class TestPromptFlows:
+    def test_approval_yes_and_no(self, monkeypatch):
+        oc = _FakeOC()
+        resolver = build_gate_resolver(frozenset(), oc)
+        for answer, approved in ((True, True), (False, False)):
+            monkeypatch.setattr(click, "confirm", lambda *a, _answer=answer, **k: _answer)
+            resolution = resolver(_approval())
+            assert resolution.approved is approved
+            assert resolution.resolved_via == "prompt"
+        assert oc.prompt_preparations == 2, "prompt must close the open progress partial line first"
+
+    def test_escalation_numbered_choice_maps_to_option_label(self, monkeypatch):
+        monkeypatch.setattr(click, "prompt", lambda *a, **k: "2")
+        resolver = build_gate_resolver(frozenset(), _FakeOC())
+        request = _escalation(
+            question="one config file or per-env?",
+            options=({"label": "merge", "description": "simpler"}, {"label": "per-env", "tradeoffs": "more files"}),
+            recommendation="per-env",
+        )
+        resolution = resolver(request)
+        assert resolution == GateResolution(approved=True, resolved_via="prompt", chosen="per-env")
+
+    def test_escalation_free_text_becomes_chosen(self, monkeypatch):
+        monkeypatch.setattr(click, "prompt", lambda *a, **k: "  keep both, gate on env var  ")
+        resolver = build_gate_resolver(frozenset(), _FakeOC())
+        resolution = resolver(_escalation(question="?", options=({"label": "a"},)))
+        assert resolution.chosen == "keep both, gate on env var"
+
+    def test_out_of_range_number_is_free_text_not_crash(self, monkeypatch):
+        monkeypatch.setattr(click, "prompt", lambda *a, **k: "9")
+        resolver = build_gate_resolver(frozenset(), _FakeOC())
+        resolution = resolver(_escalation(question="?", options=({"label": "a"},)))
+        assert resolution.chosen == "9"
+
+    def test_ctrl_c_abort_becomes_keyboard_interrupt(self, monkeypatch):
+        # click.Abort is an Exception subclass — if it escaped as-is, the engine's
+        # generic except arm would archive the gate as a node failure.
+        def _abort(*a: Any, **k: Any) -> bool:
+            raise click.exceptions.Abort()
+
+        monkeypatch.setattr(click, "confirm", _abort)
+        resolver = build_gate_resolver(frozenset(), _FakeOC())
+        with pytest.raises(KeyboardInterrupt):
+            resolver(_approval())
+
+
+class TestPreviewRendering:
+    def _rendered(self, request: GateRequest, monkeypatch, capsys) -> str:
+        monkeypatch.setattr(click, "confirm", lambda *a, **k: True)
+        build_gate_resolver(frozenset(), _FakeOC())(request)
+        return capsys.readouterr().err
+
+    def test_secret_values_masked_long_values_truncated_newlines_escaped(self, monkeypatch, capsys):
+        rendered = self._rendered(
+            _approval(api_key="sk-super-secret", body="line1\nline2", note="x" * 500),
+            monkeypatch,
+            capsys,
+        )
+        assert "sk-super-secret" not in rendered
+        assert "line1\\nline2" in rendered
+        assert "… (500 chars)" in rendered
+        assert "Approval required: notify (ShellNode)" in rendered
+
+    def test_non_string_values_render_as_compact_json(self, monkeypatch, capsys):
+        rendered = self._rendered(_approval(payload={"a": 1, "b": [True, None]}), monkeypatch, capsys)
+        assert '{"a": 1, "b": [true, null]}' in rendered
+
+    def test_escalation_renders_options_with_recommendation_marker(self, monkeypatch, capsys):
+        monkeypatch.setattr(click, "prompt", lambda *a, **k: "1")
+        build_gate_resolver(frozenset(), _FakeOC())(
+            _escalation(
+                question="merge configs?",
+                options=(
+                    {"label": "merge", "description": "simpler", "tradeoffs": "breaks overrides"},
+                    {"label": "split"},
+                ),
+                recommendation="split",
+            )
+        )
+        rendered = capsys.readouterr().err
+        assert "Escalation from agent-step" in rendered
+        assert "merge configs?" in rendered
+        assert "1. merge — simpler — breaks overrides" in rendered
+        assert "2. split (rec)" in rendered

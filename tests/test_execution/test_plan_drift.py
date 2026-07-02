@@ -2787,3 +2787,177 @@ def test_plan_downstream_batch_respects_depth_guard(tmp_path, monkeypatch) -> No
     fanout = next(e for e in plan.entries if e.node_id == "fanout")
     assert fanout.status != "opaque", "downstream batch at max depth must error, not emit clean opaque"
     assert any("Max sub-workflow depth" in d.message for d in plan.diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# Task 125: the approval-gate parity pin — "plan says would-pause ⟺ engine
+# pauses". Compared by node-id SET, not count (a gated loop node is ONE plan
+# entry but N pause events), across every gate shape the ledger allows: a
+# standard node, a gated workflow-type node, a gate INSIDE the child, and a
+# gated loop node. Mutation-verified at authoring time: stamping
+# `approval=False` in `_annotate_entry` fails the plan side; skipping
+# `run_approval_gate` fails the engine side.
+# ---------------------------------------------------------------------------
+
+
+def _gated_shapes_ir(tmp_path: Path) -> dict[str, Any]:
+    child_path = tmp_path / "gated-child.pflow.md"
+    write_workflow_file(
+        {
+            "nodes": [
+                {"id": "inner-gate", "type": "shell", "params": {"command": "printf inner"}, "approval": "required"},
+            ],
+            "edges": [],
+        },
+        child_path,
+    )
+    loop_code = "i: int\nresult: dict = {'done': i >= 2}"
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "plain", "type": "shell", "params": {"command": "printf plain"}},
+            {"id": "gated-shell", "type": "shell", "params": {"command": "printf gated"}, "approval": "required"},
+            {
+                "id": "gated-sub",
+                "type": "workflow",
+                "params": {"workflow": str(child_path)},
+                "approval": "required",
+            },
+            {
+                "id": "gated-loop",
+                "type": "code",
+                "params": {"code": loop_code, "inputs": {"i": "${__iteration__}"}},
+                "approval": "required",
+                "loop": {"until": "${gated-loop.result.done}", "max_iterations": 3},
+            },
+        ],
+        "edges": [
+            {"from": "plain", "to": "gated-shell"},
+            {"from": "gated-shell", "to": "gated-sub"},
+            {"from": "gated-sub", "to": "gated-loop"},
+        ],
+        "start_node": "plain",
+    }
+
+
+def _flatten_gated_ids(entries: list[Any]) -> set[str]:
+    gated: set[str] = set()
+    for entry in entries:
+        if entry.approval:
+            gated.add(entry.node_id)
+        if entry.sub_plan is not None:
+            gated |= _flatten_gated_ids(entry.sub_plan.entries)
+    return gated
+
+
+@pytest.mark.trace_files
+def test_plan_would_pause_matches_engine_gate_pauses(tmp_path, monkeypatch) -> None:
+    import json
+
+    from pflow.core.gate import GateResolution
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    ir = _gated_shapes_ir(tmp_path)
+    registry = Registry()
+    cache = MemoizationCache(read_enabled=True)
+
+    # Plan side: gated entries by node-id set, nested sub-plans included.
+    compiled = compile_workflow(ir, registry=registry)
+    plan = build_plan(compiled, {}, cache, registry, workflow_name="gated-shapes")
+    plan_gated = _flatten_gated_ids(plan.entries)
+
+    # Engine side: a REAL run (auto-approving resolver — the test never prompts),
+    # gate pause events read from the streamed trace (gate lines are disk-only).
+    collector = WorkflowTraceCollector(
+        "gated-shapes", workflow_path=str(tmp_path / "gated-shapes.pflow.md"), is_run_scoped=True, stream_to_disk=True
+    )
+    shared: dict[str, Any] = {
+        "__gate_resolver__": lambda request, *, allow_prompt=True: GateResolution(approved=True, resolved_via="flag")
+    }
+    engine = WorkflowEngine(trace_collector=collector)
+    try:
+        compiled_for_run = compile_workflow(ir, registry=Registry())
+        engine.run(compiled_for_run, shared)
+    finally:
+        collector.finalize()
+    pause_lines = [
+        json.loads(line)
+        for line in collector._stream_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and '"gate"' in line
+    ]
+    pauses = [ln for ln in pause_lines if ln.get("kind") == "gate" and ln.get("phase") == "pause"]
+    engine_gated = {ln["node_id"] for ln in pauses}
+
+    assert plan_gated == engine_gated == {"gated-shell", "gated-sub", "inner-gate", "gated-loop"}
+    # The SET comparison is load-bearing: the gated loop node pauses per
+    # iteration (2 real iterations) but is exactly one plan entry.
+    loop_pauses = [ln for ln in pauses if ln["node_id"] == "gated-loop"]
+    assert len(loop_pauses) == 2, f"expected one pause per loop iteration, got {len(loop_pauses)}"
+
+
+def test_dry_run_renders_approval_tag_and_footer(tmp_path) -> None:
+    ir = _gated_shapes_ir(tmp_path)
+    registry = Registry()
+    compiled = compile_workflow(ir, registry=registry)
+    plan = build_plan(compiled, {}, MemoizationCache(read_enabled=True), registry, workflow_name="gated-shapes")
+
+    text = format_plan_text(plan)
+    assert "gated-shell  [shell, approval]" in text
+    assert ", approval]" in text.split("gated-sub")[1].splitlines()[0]  # sub-workflow line carries the tag
+    assert "pause for approval at run time" in text
+    assert "--auto-approve=gated-shell" in text
+
+    from pflow.execution.formatters.plan_formatter import format_plan_json
+
+    document = format_plan_json(plan)
+    by_id = {e["node_id"]: e for e in document["plan"]}
+    assert by_id["gated-shell"].get("approval") is True
+    assert by_id["gated-sub"].get("approval") is True
+    assert "approval" not in by_id["plain"]
+
+
+def test_cached_gated_node_not_stamped_and_engine_skips_gate(tmp_path) -> None:
+    """A cache HIT never gates (the engine seam sits after the cache early-return),
+    so the plan must not stamp `approval` on a cached entry — else the ⏸ footer and
+    JSON `approval` field promise a pause the engine won't make (deep-review find:
+    the safe-direction half of the parity invariant, unpinned until now)."""
+    from pflow.core.gate import GateResolution
+
+    ir = {
+        "nodes": [
+            {
+                "id": "gated-cached",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": "printf gated"},
+                "approval": "required",
+            },
+        ],
+        "edges": [],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    # Seed: real run through the gate (auto-approving resolver), which memo-caches.
+    prompts: list[str] = []
+
+    def approve(request, *, allow_prompt=True):
+        prompts.append(request.node_id)
+        return GateResolution(approved=True, resolved_via="flag")
+
+    shared: dict[str, Any] = {"__gate_resolver__": approve, "__memoization_cache__": cache}
+    WorkflowEngine().run(compiled, shared)
+    assert prompts == ["gated-cached"], "seed run must gate once"
+
+    # Plan side: the entry is cached → NOT stamped, absent from the footer/JSON.
+    plan = build_plan(compiled, {}, cache, registry, workflow_name="gated-cached")
+    (entry,) = plan.entries
+    assert entry.status == "cached"
+    assert entry.approval is False
+    assert "pause for approval" not in format_plan_text(plan)
+
+    # Engine side: the second run cache-hits and never invokes the resolver again.
+    shared2: dict[str, Any] = {"__gate_resolver__": approve, "__memoization_cache__": cache}
+    WorkflowEngine().run(compiled, shared2)
+    assert prompts == ["gated-cached"], "cache hit must not re-gate"

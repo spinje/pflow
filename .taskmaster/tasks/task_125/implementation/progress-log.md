@@ -188,3 +188,194 @@ node using dynamic `next:` routing cannot escalate from the same execution (its 
 is the route target). The escalating step should be the agent step (action "default"),
 with routing decided downstream. Document in the guide (Phase 6); add to the plan's
 edge ledger if the owner wants it surfaced earlier.
+
+## 2026-07-02 — Session 2: Phases 3–4 (OWNER DIRECTIVE: implement 3+4, then STOP for human review)
+
+Baseline re-captured at session start: 8335 passed (matches session-1 close), check green.
+
+### Phase 4 gap check — already complete, nothing added
+
+Every Phase 4 bullet verified shipped by session 1: `record_gate` (disk-only, gate_outcome
+trailer channel, `workflow_trace.py:650`), `trace_io._partition_trace_lines` gate arm,
+pause-before-prompt / resolution-before-raise ordering (in `runtime/engine/gate.py`),
+`resolved_via` on resolutions, round-trip + child-stream + trailer pins (test_gate_trace.py
++ commit 301a002c). Phase 4 required zero session-2 code.
+
+### Phase 3 implemented
+
+New file:
+- `src/pflow/execution/gate_prompt.py` — `build_gate_resolver` (ONE builder, every surface:
+  CLI interactive / MCP `output_controller=None` / parallel-batch via `allow_prompt=False`),
+  `can_prompt` (stdin+stderr TTY, NOT `is_interactive()` — Decision 14, verified live:
+  JSON mode with stdout piped still prompts), TTY renderers (aligned masked truncated
+  preview; escalation numbered options + `(rec)` + free text), click `Abort` →
+  `KeyboardInterrupt` (the engine-archives-Abort-as-node-failure trap).
+
+Modified:
+- `core/workflow/status.py` — `WorkflowStatus.DENIED = "denied"`.
+- `execution/runner.py` — `run(gate_resolver=...)` kwarg mirroring `progress_callback`
+  end-to-end (→ `_initialize_shared_store` → `shared["__gate_resolver__"]`);
+  `_exception_to_result` derives DENIED from `isinstance(exception, GateDenied)`.
+- `core/output_controller.py` — `prepare_for_prompt()` public seam (closes the partial
+  line; batch `\r` counters ride the same physical line, so no extra state).
+- `cli/commands/run.py` — `--auto-approve` (multiple, in `_PFLOW_FLAGS`);
+  `_prepare_gate_resolver` (builds resolver + two pre-flight warnings: unknown flag id
+  with fuzzy suggestion via `find_similar_items`, non-interactive-with-unapproved-gates;
+  both scan TOP-LEVEL ir_data nodes only — documented limitation — and are `-p`-suppressed);
+  `_display_execution_result` DENIED first-branch → `_display_denied_result` (text prose
+  with steps-completed count, or JSON document `{success:false, status:"denied", error,
+  gate:{...masked payload}}` — the denied branch bypasses `output_error`, so JSON mode
+  needed its own emitter) → `ctx.exit(3)`.
+- `cli/workflow_output.py` — `denied` arm in `_format_workflow_completion_status`
+  (the ✓-fallthrough silent-misbehavior site).
+- `mcp_server/tools/execution_tools.py` + `services/execution_service.py` —
+  `auto_approve` param on `workflow_execute` → `build_gate_resolver(frozenset(...), None)`
+  → `runner.run(gate_resolver=...)`; docstring tells agents to ask their human.
+- Web: `RunProgress.tsx` `runBadgeStatus` denied arm (amber "stopped" badge, never green ✓);
+  `index.css` `.run-banner.run-denied` + `.run-progress-outcome.run-denied` (amber family).
+  GraphView banner + outcome-line classes are template-derived (`run-${final_status}`) —
+  no TSX change needed there, CSS only.
+- CLAUDE.md updates: cli (exit-code contract + flags list), execution (gate_prompt.py entry).
+
+### Deviations from the reviewed plan (all simplifications, record for review)
+
+1. **No `RunnerConfig.auto_approve` field.** The resolver travels as a `run()` kwarg
+   (mirroring `progress_callback` exactly — the plan's own installation section); CLI and
+   MCP each build their own resolver, and the CLI's pre-flight warnings scan `ir_data`
+   CLI-side. RunnerConfig stays execution-only config; nothing needed the tuple.
+2. **No dedicated runner `except GateDenied/GateNotInteractiveError` arms.** The generic
+   `_exception_to_result` already preserves payload diagnostics via `to_diagnostics()`
+   (pinned in session 1); DENIED is a one-line status derivation inside it.
+   `GateNotInteractiveError` needed zero runner changes.
+3. **`prepare_for_prompt` closes only the partial line** — the plan's separate
+   batch-`\r`-counter concern is moot: batch progress rewrites the SAME physical line
+   opened by `node_start` (`_partial_line_open` stays true until completion).
+
+### Verification (session 2 close)
+
+- `make test`: **8362 passed / 0 failed** (session-1 close 8335 → +27, zero regressions).
+- `make test-e2e`: 43 passed. `make check`: fully green (fresh run post-format; mypy 243 files).
+- Web: `tsc --noEmit` clean; `npx vitest run` 693 passed.
+- **Live CLI verification (real pty via `script`, no mocks):** deny → exit 3 + amber
+  "stopped cleanly" line + steps-completed count; approve → exit 0, step runs; JSON deny →
+  the denied document with resolved preview; `--auto-approve=guarded-step` → exit 0 with
+  the visible "pre-approved" stderr line; typo'd id → fuzzy "Did you mean" warning;
+  non-interactive → run-start warning then loud fail at gate (exit 1) with the
+  ask-your-human ladder; resolved preview shows the actual substituted command.
+- New tests (+27): `tests/test_execution/test_gate_prompt.py` (15 — resolver contract,
+  Decision-14 TTY rule, Abort→KI, masking/truncation/options rendering);
+  `tests/test_cli/test_approval_gate_cli.py` (8 — exit 3, JSON document, auto-approve,
+  fuzzy warning, non-interactive warn+fail, `-p` suppression, completion-status arm);
+  `tests/test_runtime/test_approval_gate.py` (+2 — runner DENIED contract, resolver
+  reaches nested child engines); `tests/test_integration/test_cli_mcp_parity.py` (+2 —
+  MCP loud-fail with remediation ladder, `auto_approve` off-main-thread via
+  `asyncio.to_thread`, pinning the no-thread-guard design).
+
+### Open at the review boundary (all CLOSED later this session — see Phases 5–7 below)
+
+- Web denied-state screenshot → taken (Phases 5–7 section).
+- Phases 5–6 + remaining pins → implemented (below).
+- Accepted cosmetics carried forward (prompt_cache_analysis denied-trace labels;
+  run-start warning is top-level-only).
+
+## 2026-07-02 — Session 2 (continued): Phases 5–7 + loose-ends audit (owner: "continue, fully happy, then /deep-review → fix → /create-pr")
+
+### Phase 5 — dry-run parity
+
+- `PlanEntry.approval: bool = False` (`execution/result.py`).
+- **`_annotate_loop_entry` renamed `_annotate_entry`** (the plan's own instruction — the
+  name stays honest) and stamps `approval` from NodeConfig BEFORE the loop early-return.
+  All three call sites updated; `execution/CLAUDE.md` gained a "Cross-cutting entry
+  stamps" section.
+- Render: `_tag_from_entry` appends `approval` (→ `[shell, approval]`); explicit
+  `, approval` suffix on the sub-workflow and opaque lines (they bypass the tag helper);
+  `_entry_to_dict` emits sparse `"approval": true`; new `_append_gate_footer` (extracted
+  to keep `format_plan_text` under C901 — fold, not noqa) renders
+  `⏸ N step(s) pause for approval … non-interactive runs need --auto-approve=…`,
+  collecting gated ids RECURSIVELY through nested sub_plans (first-seen dedup).
+- **Drift pin** `test_plan_would_pause_matches_engine_gate_pauses`
+  (tests/test_execution/test_plan_drift.py): plan-side flattened gated-id set ⟺ engine
+  gate PAUSE events from a real streamed run, across all allowed shapes (standard node,
+  gated workflow-type node, gate INSIDE the child, gated loop node). Compared by node-id
+  SET; an explicit count assert proves the loop node pauses per iteration (2) while being
+  one entry. **Mutation-verified BOTH sides** (plan-side stamp disabled → fail; engine-side
+  pause event suppressed → fail; reverted, green). Plus
+  `test_dry_run_renders_approval_tag_and_footer` (text tag, sub-workflow tag, footer, JSON).
+- **Bug found by the pin: `tests/shared/markdown_utils.ir_to_markdown` silently DROPPED
+  the `approval` field** — a gated fixture written through it tested nothing. Fixed
+  (emits `- approval: <value>` beside `cache`); this is the shared utility 30+ test files
+  use, so future gated fixtures can't silently de-gate.
+
+### Phase 6 — docs
+
+- `src/pflow/guide/features/approval.md` (new): both gate kinds, declaration rules,
+  the agent-operator playbook (dry-run discovery → ask your human → scoped
+  `--auto-approve`), the escalation `result.escalation` contract (`output_schema`
+  REQUIRED on claude-code escalators; string-marker form; decision write-back +
+  idempotency), the loop+carry re-fork recipe, calibration guidance, batch restrictions,
+  clean-success-action rule, observability (resolved_via audit, exit 3, denied trace).
+- Topic wiring per guide/CLAUDE.md's checklist: `_node_topics` hook (+
+  `test_detect_approval_gate`), `entry.md` features row, `approval` in
+  `RESERVED_WORKFLOW_NAMES` (save_service.py), `guide/core.md` node-fields line.
+- `docs/how-it-works/approval-gates.mdx` (+ `docs.json` nav), `--auto-approve` row in
+  `docs/reference/cli/index.mdx`.
+- `d1-event-schema.md`: reserved `gate` kind marked SHIPPED with the disk-only pointer.
+- Root `CLAUDE.md`: Task 125 → Recently Completed; removed from Next.
+
+### Phase 7 / loose ends closed
+
+- **Web denied-state verified visually** (screenshot-pflow-web-ui, headless Chrome, real
+  denied trace `final_status: "denied"` + 2 gate lines): amber "Run denied · 1 nodes"
+  banner, amber outcome + stopped-badge in the run callout, gated step shows *pending*
+  (never failed), zero green ✓. Screenshot at scratchpad
+  `gated-db73b1c8-…-t125-….png`.
+- Frontend pin added: `RunProgress.test.tsx` denied arm (amber badge + `run-denied` class,
+  never the success fallthrough).
+- Live CLI: dry-run text shows `[shell, approval]` + the ⏸ footer; JSON carries
+  `"approval": true` (verified against a real workflow).
+
+### Final verification (Phases 5–7 close)
+
+- `make test`: **8365 passed** (session-2 midpoint 8362 → +3: drift pin, render test,
+  guide detection; net +30 over session-1 close). `make test-e2e`: 43. `make check`:
+  fully green (fresh run). Web: `tsc --noEmit` clean, **694 vitest passed** (+1).
+- One C901 trip (`format_plan_text` 11>10) fixed by folding the footer into
+  `_append_gate_footer` — the braindump's predicted boundary, handled per house rule.
+- Still uncommitted: everything from session 2. Next: /deep-review → fix verified
+  findings → update this log → /create-pr (owner instruction).
+
+### Deep-review (Phases 3–7 diff, 6 agents) — 6 confirmed findings, all fixed
+
+Battery: silent-failures + impact-completeness (the owner-mandated pairing) +
+feature-interactions + agent-ux + test-fidelity + simplicity. Zero criticals; zero
+disputed. Fixes (each pinned by a test unless noted):
+
+1. **Denied JSON ≠ unified failure shape** (agent-ux) → `_display_denied_result` now
+   emits `errors` + `diagnostics` arrays (superset of `format_error_json`'s contract)
+   alongside `gate`.
+2. **Unmatched `--auto-approve` id phrased as a typo verdict** (agent-ux) —
+   contradicted the dry-run footer for legitimate nested-gate ids (flat namespace).
+   Reworded to a neutral note: nested-match possibility first, closest top-level
+   match second. Test + cli/CLAUDE.md updated.
+3. **Cached-but-gated entries stamped `approval: true`** (silent-failures) — plan
+   promised a pause a cache hit never makes. `_annotate_entry` skips `cached`
+   entries; new two-sided pin `test_cached_gated_node_not_stamped_and_engine_skips_gate`.
+4. **`runMark` denied fallthrough** (impact-completeness) — the third web status
+   surface (RunSelector + CatalogView) rendered denied as grey "stale". Amber
+   `run-denied` arm + CSS; stale status-enum comments refreshed.
+5. **Non-interactive `--only` warned about unreachable gates** (feature-interactions)
+   — gate scan now scopes to the `--only` target (+ None-id guard); new test.
+6. **Gate events inside batch-item sub-workflows don't reach the trace**
+   (feature-interactions) — CONFIRMED, DIFFERENT FIX: buffered child events must not
+   carry gate lines (that recreates the --only-seeding hazard the disk-only invariant
+   prevents), and Task 171 reworks gate records; documented as a v1 audit limitation
+   in guide/features/approval.md ("gate outside the batch if you need the record").
+   Flag for Task 171: batch-item gate records.
+
+Suggestion applied: denied-JSON preview assertion tightened to the exact resolved
+value (test-fidelity). Deliberately NOT acted on: `GateResolution.notes` (forward-shape
+for 171/176), masking rule in two render surfaces (different media) — both simplicity
+take-or-leave notes.
+
+Post-fix gates: `make test` **8367** (+2 pins) / e2e 43 / `make check` green /
+web tsc + **694** vitest green.

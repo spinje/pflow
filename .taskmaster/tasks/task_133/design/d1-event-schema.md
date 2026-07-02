@@ -226,7 +226,10 @@ The retry-aggregated `llm_usage` dict. **LLMNode** carries (all always unless no
   first-class events (today inline) — which also requires teaching `_rebuild_event_tree`/`tree()` to
   re-nest `batch_items` (today only `sub_workflow_events`), so batch-promotion and the `tree()` view are
   coupled — and the **parallel-batch `seq` ordering** choice (completion vs index order).
-- **`gate`/escalation `kind`** for Task 125 HITL (a non-result event — schema must allow it).
+- **`gate`/escalation `kind`** for Task 125 HITL — **SHIPPED (2026-07-02)**: `kind: "gate"`
+  lines (pause carrying the `GateRequest` + resolution with `resolved_via`), DISK-ONLY like
+  `node.start` (never in `collector.events`); the reconstruct reader treats the kind as
+  known-but-ignored (`trace_io._partition_trace_lines`). Writer: `WorkflowTraceCollector.record_gate`.
 - **OTel exporter:** align field names so export is a rename; build only when a second real consumer
   appears.
 

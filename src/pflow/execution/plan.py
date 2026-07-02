@@ -780,9 +780,9 @@ def _make_downstream_entry(
             cause="downstream",
             child_only_node=child_only_node,
         )
-        return _annotate_loop_entry(sub_entry, config, shared)
+        return _annotate_entry(sub_entry, config, shared)
 
-    return _annotate_loop_entry(
+    return _annotate_entry(
         _execute_entry(config, cache, cause="downstream", workflow_path=workflow_path), config, shared
     )
 
@@ -841,22 +841,34 @@ def _plan_one_node(
         )
     else:
         entry = _plan_standard_node(curr, config, shared, cache)
-    return _annotate_loop_entry(entry, config, shared)
+    return _annotate_entry(entry, config, shared)
 
 
-def _annotate_loop_entry(entry: PlanEntry, config: NodeConfig, shared: dict[str, Any]) -> PlanEntry:
-    """Stamp ``loop_iterations`` on a ``loop:`` node's entry (issue #445).
+def _annotate_entry(entry: PlanEntry, config: NodeConfig, shared: dict[str, Any]) -> PlanEntry:
+    """Stamp cross-cutting NodeConfig facts on a finished entry.
 
-    The planner walks the loop body ONCE — re-entry is not an edge, so the
-    walker never repeats it — then records the resolved ``max_iterations`` upper
-    bound here. ``_summarize`` multiplies the entry's single-pass cost/duration
-    (and any sub_plan rollup) by this factor, and flips the plan to
-    ``upper_bound`` cost basis. A loop is by nature a do-while with an unknown
-    real iteration count, so the cap is the honest worst case for a cost gate.
+    Every entry — standard AND sub-workflow, both dispatch paths — routes
+    through this funnel, which is what makes the stamps parity-safe (stamping
+    only in ``_plan_standard_node`` would miss gated workflow-type nodes).
+
+    - ``approval`` (Task 125): the node pauses for a human before executing.
+      Dry-run is the agent's gate-discovery surface; the drift suite pins
+      plan-says-pause ⟺ engine-pauses. NOT stamped on ``cached`` entries — the
+      engine's gate seam sits after the cache early-return, so a cache hit
+      never gates (nothing to approve); stamping it would make the ⏸ footer
+      and the JSON ``approval`` field promise a pause the engine won't make.
+    - ``loop_iterations`` (issue #445): the planner walks a ``loop:`` body ONCE
+      — re-entry is not an edge — then records the resolved ``max_iterations``
+      upper bound. ``_summarize`` multiplies the entry's single-pass
+      cost/duration (and any sub_plan rollup) by this factor and flips the plan
+      to ``upper_bound`` cost basis: the honest worst case for a cost gate.
     """
+    from dataclasses import replace
+
+    if config.approval and entry.status != "cached":
+        entry = replace(entry, approval=True)
     if config.loop_config is None:
         return entry
-    from dataclasses import replace
 
     try:
         cap = resolve_loop_cap(config.loop_config, shared, config.node_id)

@@ -374,13 +374,13 @@ class TestRunnerBoundary:
     """End-to-end through WorkflowRunner (tests/CLAUDE.md pitfall #20: engine-level
     tests can pass while the real pipeline breaks).
 
-    Pins TODAY's production behavior for a gated run with no resolver installed
-    (which is every CLI/MCP run until Phase 3): the run fails as a result (never a
-    propagated exception — the CLI's trace finalize depends on a non-None result),
-    the payload-carrying gate diagnostic survives runner conversion intact, and it
-    is JSON-serializable end to end (the MCP/JSON formatters serialize it verbatim).
-    Phase 3 will CHANGE the denied half of this boundary — these assertions are the
-    contract its edits must consciously update, not silently break.
+    Pins the production behavior for a gated run with no resolver installed
+    (any caller not passing ``gate_resolver`` — e.g. a bare library caller): the
+    run fails as a result (never a propagated exception — the CLI's trace finalize
+    depends on a non-None result), the payload-carrying gate diagnostic survives
+    runner conversion intact, and it is JSON-serializable end to end (the MCP/JSON
+    formatters serialize it verbatim). The denied half (Phase 3) maps GateDenied →
+    ``WorkflowStatus.DENIED``, pinned below.
     """
 
     def test_noninteractive_gate_through_runner_keeps_payload_diagnostics(self):
@@ -415,6 +415,68 @@ class TestRunnerBoundary:
         assert "hello" in result.shared_after["a"]["stdout"]
         assert "b" not in result.shared_after
         assert not result.shared_after.get("__failures__")
+
+    def test_denied_gate_through_runner_yields_denied_status_not_failed(self):
+        """Phase 3 (Decision 5): a human's "no" is WorkflowStatus.DENIED — a clean
+        stop the CLI maps to exit 3 — never FAILED, never a __failures__ entry."""
+        from pflow.core.gate import GateResolution
+        from pflow.core.workflow.status import WorkflowStatus
+        from pflow.execution import WorkflowRunner
+        from pflow.execution.result import RunnerConfig
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "a", "type": "shell", "params": {"command": "echo hello"}},
+                {"id": "b", "type": "shell", "params": {"command": "echo boom"}, "approval": "required"},
+            ],
+            "edges": [{"from": "a", "to": "b"}],
+        }
+
+        def deny(request, *, allow_prompt=True):
+            return GateResolution(approved=False, resolved_via="prompt")
+
+        result = WorkflowRunner().run(ir, {}, config=RunnerConfig(trace_enabled=False), gate_resolver=deny)
+        assert result.success is False
+        assert result.status is WorkflowStatus.DENIED
+        # The gated node never ran, nothing broke, upstream survives.
+        assert "b" not in result.shared_after
+        assert not result.shared_after.get("__failures__")
+        assert "hello" in result.shared_after["a"]["stdout"]
+        # The denial diagnostic carries the gate payload for the JSON/MCP surfaces.
+        gate_diags = [d for d in result.diagnostics if (d.context or {}).get("category") == "gate"]
+        assert gate_diags and gate_diags[0].node_id == "b"
+
+    def test_approving_resolver_installed_via_runner_reaches_nested_engines(self, tmp_path):
+        """The gate_resolver kwarg mirrors progress_callback: __gate_resolver__ is
+        propagated into sub-workflow child engines, so a CHILD gate prompts/approves
+        through the SAME resolver with zero WorkflowExecutor plumbing."""
+        from pflow.core.gate import GateResolution
+        from pflow.execution import WorkflowRunner
+        from pflow.execution.result import RunnerConfig
+
+        child_path = tmp_path / "child.pflow.md"
+        child_path.write_text(
+            "# Child\n\nChild with a gated step.\n\n## Steps\n\n"
+            "### gated-child\n\nDo the child action.\n\n"
+            "- type: shell\n"
+            "- command: echo child-ran\n"
+            "- approval: required\n"
+        )
+        parent = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "sub", "type": "workflow", "params": {"workflow": str(child_path)}}],
+            "edges": [],
+        }
+        seen: list[str] = []
+
+        def approve(request, *, allow_prompt=True):
+            seen.append(request.node_id)
+            return GateResolution(approved=True, resolved_via="prompt")
+
+        result = WorkflowRunner().run(parent, {}, config=RunnerConfig(trace_enabled=False), gate_resolver=approve)
+        assert result.success, f"child-gated run failed: {[d.message for d in result.diagnostics]}"
+        assert seen == ["gated-child"]
 
 
 class TestBatchInteractions:

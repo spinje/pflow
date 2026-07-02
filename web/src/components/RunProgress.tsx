@@ -19,11 +19,16 @@ export type RunOutcome = "stopped" | "not-found" | null;
 // The overall-run status badge (the SAME round node badge used at a node's top-right): a spinner while
 // running, ✓ on success, ! on failure. A completed run reads its banner; otherwise a terminal `outcome`
 // (stopped/not-found) wins over the live spinner. final_status has no NodeStatus for "degraded"
-// (succeeded-with-warnings) — the closest badge is the amber "stopped"; the outcome TEXT carries the word.
+// (succeeded-with-warnings) or "denied" (human's no at a gate, Task 125) — the closest badge for both
+// is the amber "stopped"; the outcome TEXT carries the exact word.
 function runBadgeStatus(banner: RunComplete | null, outcome: RunOutcome): NodeStatus {
   if (banner) {
     if (banner.final_status === "failed") return "failed";
     if (banner.final_status === "degraded") return "stopped";
+    // Task 125: a human denied an approval gate — clean stop, not a failure. Amber like
+    // degraded/stopped (the outcome text carries the word "denied"); the success ✓
+    // fallthrough below must never render a human's "no" as green.
+    if (banner.final_status === "denied") return "stopped";
     return "success";
   }
   if (outcome === "stopped") return "stopped";

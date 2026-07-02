@@ -18,6 +18,7 @@ from pflow.core.diagnostic import (
 )
 from pflow.core.exceptions import (
     CompilationError,
+    GateDenied,
     MarkdownParseError,
     SchemaValidationError,
     WorkflowNotFoundError,
@@ -93,6 +94,7 @@ class WorkflowRunner:
         config: RunnerConfig,
         *,
         progress_callback: Optional[Callable] = None,
+        gate_resolver: Optional[Callable] = None,
         workflow_manager: Optional[WorkflowManager] = None,
         workflow_name: Optional[str] = None,
     ) -> ExecutionResult:
@@ -103,6 +105,10 @@ class WorkflowRunner:
             params: User-provided parameters. Copied at boundary.
             config: Immutable execution configuration.
             progress_callback: Optional per-node progress callback for CLI streaming.
+            gate_resolver: Optional Task 125 gate resolver (see ``core/gate.py`` for
+                the contract; built via ``execution.gate_prompt.build_gate_resolver``).
+                Installed as ``__gate_resolver__`` exactly like the progress callback.
+                None = gates fail loudly with ``GateNotInteractiveError``.
             workflow_manager: For metadata update on saved workflows. None = skip.
             workflow_name: Saved workflow name for metadata. None = skip.
 
@@ -171,6 +177,7 @@ class WorkflowRunner:
                 params,
                 config,
                 progress_callback,
+                gate_resolver,
                 workflow_manager,
                 workflow_name,
                 validation_warnings,
@@ -241,6 +248,7 @@ class WorkflowRunner:
         params: dict[str, Any],
         config: RunnerConfig,
         progress_callback: Optional[Callable],
+        gate_resolver: Optional[Callable],
         workflow_manager: Optional[WorkflowManager],
         workflow_name: Optional[str],
         validation_warnings: list[Diagnostic],
@@ -267,6 +275,7 @@ class WorkflowRunner:
             params,
             config.verbose,
             progress_callback,
+            gate_resolver,
             mcp_pool,
             cache,
             trace_collector,
@@ -572,6 +581,7 @@ class WorkflowRunner:
         params: dict[str, Any],
         verbose: bool,
         progress_callback: Optional[Callable],
+        gate_resolver: Optional[Callable],
         mcp_pool: Any,
         cache: Any,
         trace_collector: Any,
@@ -586,6 +596,9 @@ class WorkflowRunner:
 
         if progress_callback is not None:
             shared_store["__progress_callback__"] = progress_callback
+
+        if gate_resolver is not None:
+            shared_store["__gate_resolver__"] = gate_resolver
 
         shared_store["__mcp_pool__"] = mcp_pool
         shared_store["__memoization_cache__"] = cache
@@ -790,9 +803,14 @@ class WorkflowRunner:
                 diagnostic for diagnostic in diagnostics if diagnostic.severity in {Severity.WARNING, Severity.INFO}
             ])
 
+        # A denied gate is a human verdict, not a failure (Task 125 Decision 5):
+        # the gated node never ran, nothing broke. Payload diagnostics arrive
+        # intact via exception_to_diagnostics → GateDenied.to_diagnostics above;
+        # the CLI maps DENIED to its own display + exit code 3.
+        status = WorkflowStatus.DENIED if isinstance(exception, GateDenied) else WorkflowStatus.FAILED
         return ExecutionResult(
             success=False,
-            status=WorkflowStatus.FAILED,
+            status=status,
             shared_after=shared_after,
             trace=trace_collector,
             diagnostics=diagnostics,

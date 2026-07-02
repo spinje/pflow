@@ -304,7 +304,7 @@ Parsed record array from the fetch response.
 
 **Output fields**: `source` (template expression like `${node.key}`), `type` (optional hint), `stdout` (true|false — at most one output may set this; marks the output that streams to stdout in text mode), description as prose.
 
-**Node fields**: `type` (required), top-level controls like `batch`, `loop`, `retry`, `cache`, `prompt_cache`, and `prewarm`, then node params as `- key: value`. Code/prompts/batch go in tagged code blocks.
+**Node fields**: `type` (required), top-level controls like `batch`, `loop`, `retry`, `cache`, `prompt_cache`, `prewarm`, and `approval` (pause for a human before the step runs — see `pflow guide approval`), then node params as `- key: value`. Code/prompts/batch go in tagged code blocks.
 
 **Execution order**: Top to bottom in `## Steps`. No explicit edges.
 

@@ -12,6 +12,15 @@ src/pflow/execution/
 ├── workflow_resolver.py     # Unified workflow resolution (file, library, markdown, dict → ResolvedWorkflow)
 ├── executor_service.py      # Internal utility: error extraction helpers (build_error_list, determine_error_category, etc.)
 ├── execution_state.py       # Per-node execution state building (shared CLI/MCP)
+├── gate_prompt.py           # Task 125 gate resolver: build_gate_resolver() + TTY prompt renderers.
+│                            #   ONE builder, every surface: CLI interactive (prompts on stderr,
+│                            #   reads stdin — can_prompt() is stdin+stderr TTY, deliberately NOT
+│                            #   is_interactive(), so `pflow wf | jq` still gates), MCP (output_controller
+│                            #   =None → auto-approve only), parallel-batch worker (allow_prompt=False).
+│                            #   click lives HERE, never in runtime/. Ctrl-C: click Abort → KeyboardInterrupt.
+│                            #   Installed via runner.run(gate_resolver=...) → shared["__gate_resolver__"]
+│                            #   (mirrors progress_callback end-to-end). Denial surfaces as
+│                            #   WorkflowStatus.DENIED (derived in _exception_to_result from GateDenied).
 ├── plan.py                  # Dry-run planner — graph walker with explicit `Transition` state machine
 └── formatters/              # Shared output formatters (return strings/dicts, NEVER print)
     ├── error_formatter.py
@@ -124,9 +133,17 @@ When `_plan_sub_workflow(cause="downstream")` recurses into a child, it passes `
 
 Load-bearing: without recursion in BFS mode, any sub-workflow reached post-first-miss became a leaf entry with no `sub_plan`, hiding every nested LLM cost. Agents cost-gating after an upstream edit silently under-reported — the #1 iteration pattern. Mutation-tested: `tests/test_execution/test_plan_drift.py::test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats`.
 
-### Loop-node planning (`_annotate_loop_entry`, issue #445)
+### Cross-cutting entry stamps (`_annotate_entry` — the shared funnel)
 
-The planner walks a `loop:` node's body exactly ONCE — re-entry is not a graph edge, so the walker never repeats it — then `_annotate_loop_entry` stamps `loop_iterations` = the resolved `max_iterations` cap (`resolve_loop_cap`; falls back to `MAX_NODE_VISITS` when the cap is a plan-time-unresolvable template, rather than crashing the dry run). `_summarize` multiplies that single-pass cost/duration (and any `sub_plan` rollup) by `loop_iterations` and flips the plan to `cost_basis="upper_bound"`. A loop is a do-while with unknown real iteration count, so the cap is the honest worst case for a cost gate.
+EVERY entry, standard and sub-workflow alike, routes through `_annotate_entry` — the one place
+plan-time NodeConfig facts land on entries. It stamps `approval` (Task 125: gated nodes render
+`[<type>, approval]` + the footer pause line; dry-run is the agent's gate-discovery surface, and
+the drift suite pins plan-says-pause ⟺ engine-pauses) and `loop_iterations` (below). Stamping in
+`_plan_standard_node` instead would miss gated workflow-type nodes — a parity lie.
+
+### Loop-node planning (issue #445)
+
+The planner walks a `loop:` node's body exactly ONCE — re-entry is not a graph edge, so the walker never repeats it — then `_annotate_entry` stamps `loop_iterations` = the resolved `max_iterations` cap (`resolve_loop_cap`; falls back to `MAX_NODE_VISITS` when the cap is a plan-time-unresolvable template, rather than crashing the dry run). `_summarize` multiplies that single-pass cost/duration (and any `sub_plan` rollup) by `loop_iterations` and flips the plan to `cost_basis="upper_bound"`. A loop is a do-while with unknown real iteration count, so the cap is the honest worst case for a cost gate.
 
 ### Placeholder child inputs in downstream mode
 

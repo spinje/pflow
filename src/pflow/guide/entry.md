@@ -55,6 +55,8 @@ Features — when the user says X, load topic Y:
                    → "if X then Y", "classify and route", "pick a path based on data"
   error-handling   Retry, fallback, recover from failures
                    → "retry on failure", "fall back if X fails", "handle the error", "undo on failure"
+  approval         Human-in-the-loop gates — pause for a yes/no or a decision
+                   → "ask before sending", "confirm before deploying", "let me approve it", "escalate to me if unsure"
   sub-workflows    Reusable composition, bounded iteration
                    → "reuse this", "same validation as X", "iterate over a fixed count"
   prompt-caching   Provider prompt caching, ## Cache, prompt_cache:

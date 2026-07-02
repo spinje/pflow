@@ -126,6 +126,19 @@ describe("RunProgress", () => {
     expect(badge()?.className).toContain("status-stopped");
   });
 
+  it("renders a DENIED run amber — never the green success fallthrough (Task 125)", () => {
+    // A human's "no" at an approval gate: the badge is the amber stopped shape, the
+    // outcome row carries run-denied, and the text says the word.
+    render(
+      <RunProgress steps={[step("a", { status: "success" })]} banner={{ final_status: "denied", nodes_executed: 1 }} />,
+    );
+    const badge = document.querySelector(".run-progress-outcome .status-badge");
+    expect(badge?.className).toContain("status-stopped");
+    expect(badge?.className).not.toContain("status-success");
+    const outcome = screen.getByText(/Run denied · 1 nodes/).closest(".run-progress-outcome");
+    expect(outcome?.className).toContain("run-denied");
+  });
+
   it("resolves a no-banner terminal run via `outcome` instead of spinning a fake 'Running…'", () => {
     // The callout is a second consumer of run-lifecycle state. stopped (process killed) and not-found
     // (stale ?run=) never set a banner, so without `outcome` the outcome line spun "Running…" forever

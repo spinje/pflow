@@ -168,6 +168,8 @@ def _node_topics(node: dict, available: set[str]) -> set[str]:
         topics.add("loop")
     if node.get("retry") is not None:
         topics.add("error-handling")
+    if node.get("approval") is not None:
+        topics.add("approval")
     # Caching: per-node opt-in. Presence (not truthiness) — ``prewarm: false`` is
     # still engaging with the feature and should surface the guide.
     if node.get("prompt_cache") is not None or node.get("prewarm") is not None:

@@ -315,15 +315,14 @@ CLI's `finally` finalizes the trailer.
 ### 3.2 Status ripple (complete consumer map — every site verified)
 
 - `WorkflowStatus.DENIED = "denied"` (`core/workflow/status.py:6-21`; str-Enum, additive).
-- Runner **[review-fix — both exceptions]**: dedicated arms in `run()` BEFORE the generic
-  `except Exception` (`runner.py:185-189`): `except GateDenied` →
-  `ExecutionResult(success=False, status=WorkflowStatus.DENIED, ...)` with a denial
-  diagnostic carrying the `GateRequest`; `except GateNotInteractiveError` →
-  `ExecutionResult(success=False, status=FAILED, diagnostics=e.to_diagnostics())` (payload
-  intact — never through the generic `_exception_to_result` flattening). MUST convert to
-  results (not propagate): the CLI's trace finalize at `run.py:340-347` only runs when
-  `result` is non-None — propagating would leave an `incomplete` trace. `_determine_status`
-  (`runner.py:626-642`) never sees these (exception path) — no change there.
+- Runner **[AS-IMPLEMENTED — simpler than reviewed]**: NO dedicated except arms. The generic
+  `_exception_to_result` was verified (session-1 pin) to preserve payload diagnostics via
+  `exception_to_diagnostics` → `to_diagnostics()` — it never flattened them — so DENIED is a
+  one-line status derivation inside it (`isinstance(exception, GateDenied)`), and
+  `GateNotInteractiveError` needed zero runner changes. Both still convert to results (not
+  propagate): the CLI's trace finalize at `run.py:340-347` only runs when `result` is
+  non-None. `_determine_status` (`runner.py:626-642`) never sees these (exception path) —
+  no change there.
 - CLI `_display_execution_result` (`run.py:358-394`): new first branch on
   `result.status is WorkflowStatus.DENIED` → denial output + `ctx.exit(3)`.
   **Denied output is format-aware** **[review-fix]**: text mode → the prose denial line;
@@ -417,9 +416,13 @@ Long preview values: truncate in the renderer only (e.g. 200 chars + `… (N cha
 
 ### 3.4 Flags
 
-- `--auto-approve` (`multiple=True`) in `run.py` → `RunnerConfig.auto_approve:
-  tuple[str, ...] = ()` (`execution/result.py:13-32`, frozen, shared CLI/MCP) → runner builds
-  the resolver. Unknown node-id in the flag: warn at start, don't fail — match against ALL
+- `--auto-approve` (`multiple=True`) in `run.py`. **[AS-IMPLEMENTED]** NO
+  `RunnerConfig.auto_approve` field: the resolver travels as a `runner.run(gate_resolver=...)`
+  kwarg mirroring `progress_callback` end-to-end (CLI and MCP each build their own via
+  `build_gate_resolver`; the CLI pre-flight warnings scan `ir_data` CLI-side in
+  `_prepare_gate_resolver`). Also add the flag to `_PFLOW_FLAGS` (run.py:615 — the
+  misplaced-flag guard pin enforces this). Unknown node-id in the flag: warn at start,
+  don't fail — match against ALL
   top-level node ids (a child gate id is legitimate but invisible here; phrase as
   "no top-level step named X") with a fuzzy suggestion via
   `core/suggestion_utils.find_similar_items` and the list of gated top-level ids
@@ -619,6 +622,9 @@ Verification section of task-125.md, concretely:
 1. Baseline `make test` / `make check` — DONE 2026-07-02: 8283 passed / 0 failed; check green.
 2. Phases 1 → 2 → 3 → 4 → 5 → 6, tests as you go (test-as-you-code norm), then Phase 7 gaps.
    **OWNER DIRECTIVE 2026-07-02: implement Phases 1–2 ONLY, then STOP for review.**
+   **STATUS: Phases 1–2 DONE + reviewed + committed (2e533e2f, 301a002c). Phases 3–4 DONE
+   (session 2, uncommitted — see progress log; Phase 4 needed zero new code). Next
+   increment: Phases 5 → 6 → remaining 7 pins (dry-run parity is the big one).**
 3. Re-run `make test` / `make check`; report the delta against the baseline.
 4. Run the `/verify` skill on the TTY flow (a real gated workflow in a terminal) — tests
    can't exercise a real prompt.

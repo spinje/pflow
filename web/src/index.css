@@ -733,6 +733,10 @@ button.active {
 .run-banner.run-stale {
   border-color: #d29922;
 }
+/* Denied at an approval gate (Task 125) — a human's "no", clean stop: amber, never red/green. */
+.run-banner.run-denied {
+  border-color: #d29922;
+}
 
 /* Catalog "● running" badge (Task 173 D6) — a pulsing dot + label on a workflow with a live run. */
 .catalog-item-running {
@@ -861,6 +865,10 @@ button.active {
   color: #8b949e;
 }
 .run-mark.run-stopped {
+  color: #d29922;
+}
+/* Denied at an approval gate (Task 125) — amber, matching the banner/outcome treatment. */
+.run-mark.run-denied {
   color: #d29922;
 }
 
@@ -2437,6 +2445,10 @@ textarea.run-field-input {
 }
 /* A killed run (no banner) — amber, mirroring the canvas .run-banner.run-stopped + degraded. */
 .run-progress-outcome.run-stopped {
+  color: var(--status-stopped);
+}
+/* Denied at an approval gate (Task 125) — amber, mirroring the canvas .run-banner.run-denied. */
+.run-progress-outcome.run-denied {
   color: var(--status-stopped);
 }
 

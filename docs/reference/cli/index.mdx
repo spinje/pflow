@@ -81,6 +81,7 @@ pflow ~/workflows/analysis.pflow.md param=value
 | `--no-trace` | Disable workflow trace saving |
 | `--cache/--no-cache` | Enable/disable memoization cache reads (default: enabled) |
 | `--only NODE` | Re-run just this node against a snapshot of the last full run (upstream restored, not re-executed; needs a prior full run) |
+| `--auto-approve NODE` | Pre-approve one approval gate by step name (repeatable; no approve-all form). See [Approval gates](/how-it-works/approval-gates) |
 | `--validate-only` | Validate workflow without running |
 | `--dry-run` | Preview which nodes would run or serve from cache, without executing |
 | `--help` | Show help message |
