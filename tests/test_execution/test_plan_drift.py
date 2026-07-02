@@ -414,6 +414,63 @@ def test_plan_batch_sub_workflow_partial_cache_matches_execution(tmp_path) -> No
     assert _log_lines(log_file) == ["a", "b", "c"]
 
 
+def test_plan_batch_sub_workflow_preserves_child_approval_flag(tmp_path) -> None:
+    """Code-review fix: a gated step inside a batched sub-workflow's child must
+    still show `approval: true` in the aggregated dry-run entry.
+
+    `_aggregate_batch_child_plans` builds a FRESH synthetic PlanEntry per
+    node-id (collapsing per-item entries into one view) — it must forward
+    `approval` from the per-item entries, or the dry-run footer/JSON silently
+    omits a gate the engine still pauses on (or fails loudly on, non-
+    interactively) at runtime — the resolver's namespace is flat across the
+    whole workflow tree, so the child gate fires regardless of batching.
+
+    Mutation: drop the `approval=...` kwarg from the synthetic PlanEntry in
+    `_aggregate_batch_child_plans` → this assertion fails (defaults to False).
+    """
+    child_path = tmp_path / "gated-child.pflow.md"
+    parent_path = tmp_path / "gated-parent.pflow.md"
+
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [
+                {
+                    "id": "gated-echo",
+                    "type": "shell",
+                    "params": {"command": "printf '${value}'"},
+                    "approval": "required",
+                }
+            ],
+            "edges": [],
+            "outputs": {"out": {"source": "${gated-echo.stdout}", "description": "Echoed value"}},
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "inputs": {"items": {"type": "array"}},
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"value": "${item}"}},
+                    "batch": {"items": "${items}"},
+                }
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+
+    plan = _runner_plan(parent_path, {"items": ["a", "b"]})
+    assert [entry.status for entry in plan.entries] == ["sub_workflow"]
+    fanout = plan.entries[0]
+    assert fanout.sub_plan is not None
+    child_entry = next(e for e in fanout.sub_plan.entries if e.node_id == "gated-echo")
+    assert child_entry.approval is True
+
+
 def test_plan_cache_false_always_executes(tmp_path) -> None:
     """Nodes with cache:false must re-execute regardless of previous runs."""
     log_file = tmp_path / "cache-false.log"

@@ -1333,6 +1333,39 @@ class WorkflowEngine:
             # fired under a buffered child collector.
             if self.trace is not None:
                 self.trace.gate_outcome = "denied" if isinstance(gate_exc, GateDenied) else "failed"
+
+                # Code-review fix: a sub-workflow HOST's own completion event is
+                # normally recorded at step 16 below, reusing the seq
+                # WorkflowExecutor.exec() reserved via trace.descend(). Re-raising
+                # here means node._run() never returns, so step 16 never runs —
+                # the reserved seq gets no event. If a SIBLING step inside that
+                # sub-workflow already recorded before the gate fired, its event's
+                # parent_id now points at nothing: an in-memory tree() rebuild
+                # (finalize(), or any caller of collect_llm_calls()) raises
+                # "orphan event" — silently losing the run's own trace file (or
+                # crashing a caller that hits tree() directly). Recording the
+                # host's event here closes the reservation. success=True: the
+                # WorkflowExecutor node itself didn't error — the run's
+                # denied/failed verdict is carried independently by gate_outcome
+                # above, not by this per-node flag. Fires once per nesting level
+                # (each ancestor's own _execute_node catches this exception and
+                # checks its own node's _host_frame as it re-raises in turn).
+                host_frame = getattr(node, "_host_frame", None)
+                if host_frame is not None:
+                    record_trace(
+                        config.node_id,
+                        config.node_type_name,
+                        shared,
+                        start_time,
+                        shared_keys_before,
+                        last_resolutions,
+                        batch_trace_items,
+                        child_trace_events,
+                        node.params,
+                        self.trace,
+                        success=True,
+                        frame=host_frame,
+                    )
             raise
 
         except Exception as e:

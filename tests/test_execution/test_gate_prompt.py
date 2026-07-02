@@ -89,6 +89,29 @@ class TestAutoApprove:
             resolver(_approval(), allow_prompt=False)
         assert exc_info.value.parallel_batch is True
 
+    def test_flag_echo_suppressed_on_worker_thread_with_real_output_controller(self, capsys):
+        # Code-review fix: the auto-approve visibility echo must NOT touch a real
+        # (unbuffered) OutputController when called with allow_prompt=False — that
+        # combination means this call is running on a parallel-batch WORKER
+        # thread, where the per-worker progress buffer (not the real controller)
+        # is the only concurrency-safe channel. Previously this test gap existed
+        # because the only prior coverage used output_controller=None (the echo
+        # early-returns regardless) or a RecordingResolver test double (never
+        # touches build_gate_resolver's real echo at all).
+        oc = _FakeOC()
+        resolver = build_gate_resolver(frozenset({"notify"}), oc)
+        resolution = resolver(_approval("notify"), allow_prompt=False)
+        assert resolution == GateResolution(approved=True, resolved_via="flag")
+        assert oc.prompt_preparations == 0, "must not touch the real OutputController from a worker thread"
+        assert capsys.readouterr().err == ""
+
+    def test_flag_echo_still_fires_on_main_thread(self, capsys):
+        oc = _FakeOC()
+        resolver = build_gate_resolver(frozenset({"notify"}), oc)
+        resolver(_approval("notify"), allow_prompt=True)
+        assert oc.prompt_preparations == 1
+        assert "pre-approved via --auto-approve=notify" in capsys.readouterr().err
+
 
 class TestPromptFlows:
     def test_approval_yes_and_no(self, monkeypatch):
@@ -156,6 +179,28 @@ class TestPreviewRendering:
     def test_non_string_values_render_as_compact_json(self, monkeypatch, capsys):
         rendered = self._rendered(_approval(payload={"a": 1, "b": [True, None]}), monkeypatch, capsys)
         assert '{"a": 1, "b": [true, null]}' in rendered
+
+    def test_nested_secret_in_dict_value_is_redacted(self, monkeypatch, capsys):
+        # Code-review fix: mask_sensitive_value only checks the top-level key —
+        # a secret nested inside a dict/list value (headers on an http node,
+        # inputs on a sub-workflow) must not render verbatim.
+        rendered = self._rendered(
+            _approval(headers={"Authorization": "Bearer sk-super-secret", "Accept": "application/json"}),
+            monkeypatch,
+            capsys,
+        )
+        assert "sk-super-secret" not in rendered
+        assert "<REDACTED>" in rendered
+        assert "application/json" in rendered  # non-secret nested value survives
+
+    def test_nested_secret_in_list_of_dicts_is_redacted(self, monkeypatch, capsys):
+        rendered = self._rendered(
+            _approval(inputs=[{"api_key": "sk-live-abc123"}, {"name": "safe"}]),
+            monkeypatch,
+            capsys,
+        )
+        assert "sk-live-abc123" not in rendered
+        assert "safe" in rendered
 
     def test_escalation_renders_options_with_recommendation_marker(self, monkeypatch, capsys):
         monkeypatch.setattr(click, "prompt", lambda *a, **k: "1")

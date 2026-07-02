@@ -25,7 +25,7 @@ import click
 from pflow.core.exceptions import GateNotInteractiveError
 from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest, GateResolution
 from pflow.core.output_controller import OutputController
-from pflow.core.security_utils import mask_sensitive_value
+from pflow.core.security_utils import mask_sensitive_value, sanitize_parameters
 
 GateResolver = Callable[..., GateResolution]
 
@@ -59,7 +59,8 @@ def build_gate_resolver(
 
     def resolver(request: GateRequest, *, allow_prompt: bool = True) -> GateResolution:
         if request.kind == GATE_KIND_APPROVAL and request.node_id in auto_approve:
-            _echo_auto_approved(request, output_controller)
+            if allow_prompt:
+                _echo_auto_approved(request, output_controller)
             return GateResolution(approved=True, resolved_via="flag")
         if allow_prompt and output_controller is not None and can_prompt(output_controller):
             return _prompt(request, output_controller)
@@ -69,7 +70,19 @@ def build_gate_resolver(
 
 
 def _echo_auto_approved(request: GateRequest, output_controller: Optional[OutputController]) -> None:
-    """One stderr line so a pre-approved gate is visible, never silent."""
+    """One stderr line so a pre-approved gate is visible, never silent.
+
+    Code-review fix: the CALLER gates this on ``allow_prompt`` — ``allow_prompt=
+    False`` means this resolver call is running on a parallel-batch WORKER
+    thread (``__gate_prompt_allowed__``), where ``output_controller`` is the
+    real, shared one (not buffered, unlike the progress callback). Echoing
+    there would call ``prepare_for_prompt()``/``click.echo(err=True)``
+    concurrently with the main thread's progress drain — exactly the race the
+    per-worker progress buffer exists to prevent (see `engine/CLAUDE.md`
+    "Per-worker progress buffer"). Worker output is buffered anyway and the
+    flag was already an explicit human pre-approval, so silence there is an
+    acceptable trade for correctness.
+    """
     if output_controller is None or output_controller.print_flag:
         return
     output_controller.prepare_for_prompt()
@@ -139,14 +152,22 @@ def _format_preview(preview: dict[str, Any]) -> list[str]:
 
     Values are flattened to one line each (newlines escaped) so the block stays
     scannable; the full unmasked payload lives in the gate trace event.
+
+    ``mask_sensitive_value`` only checks the TOP-LEVEL key, so a dict/list value
+    (``headers: {Authorization: ...}``) is recursed through the existing
+    ``sanitize_parameters`` sanitizer instead — code-review fix: previously such
+    a nested secret rendered verbatim in the approval prompt.
     """
     if not preview:
         return ["(no parameters)"]
     width = max(len(key) for key in preview)
     lines = []
     for key, value in preview.items():
-        text = value if isinstance(value, str) else _compact_json(value)
-        text = mask_sensitive_value(key, text) if isinstance(value, str) else text
+        if isinstance(value, str):
+            text = mask_sensitive_value(key, value)
+        else:
+            masked_value = sanitize_parameters({key: value}).get(key, value)
+            text = _compact_json(masked_value)
         text = text.replace("\n", "\\n")
         if len(text) > _PREVIEW_VALUE_CHARS:
             text = f"{text[:_PREVIEW_VALUE_CHARS]}… ({len(text)} chars)"

@@ -379,3 +379,124 @@ take-or-leave notes.
 
 Post-fix gates: `make test` **8367** (+2 pins) / e2e 43 / `make check` green /
 web tsc + **694** vitest green.
+
+## 2026-07-02 — Session 3: GitHub PR review evaluation + fixes (`/evaluate-review`)
+
+Two real reviews on PR #554: a `claude[bot]` comment (1 Warning + 2 Suggestions,
+seam-focused: concurrency, cross-boundary control flow, validation↔runtime parity)
+and a Codex inline review (4 findings across 4 files). Evaluated with 4 parallel
+`pflow-codebase-searcher` verification agents + direct reads of the two most
+consequential fix sites (engine.py gate-exception handler, workflow_trace.py
+`descend()`/`tree()`) before proposing a plan. **5 confirmed, 1 disputed, 0
+needs-investigation** — user approved the full plan; all 5 implemented and
+mutation-verified (temporary Edit + revert per fix, never git stash).
+
+### 1. Orphaned trace event on a nested gate stop — CONFIRMED, different fix (most severe)
+
+Real bug, but the reviewer's mechanism was subtly off. Root cause: `WorkflowExecutor.
+descend()` reserves a seq for a sub-workflow host; children record with `parent_id` =
+that seq; the host's OWN completion event is normally written at engine step 16
+(`record_trace`, reusing `node._host_frame` — read only AFTER `node._run()` returns).
+But the Task 125 gate-exception arm `raise`s instead of returning (by design — a
+denial can't be error-routed), so step 16 never runs and the reserved seq gets no
+event. If an earlier SIBLING step inside that sub-workflow already recorded, its
+event orphans. **Actual impact (verified live, not the reviewer's framing): NOT a
+later disk-read crash** — `finalize()` itself calls `tree()` in-memory and raises
+*before* writing the `run.complete` trailer; `runner.py`'s `contextlib.suppress`
+silently swallows it, so the run exits with the right code but **the trace file is
+silently lost** (one easy-to-miss log line). Also a **latent hard-crash surface**:
+`error_formatter.py:85-88`'s `collect_llm_calls()` → `tree()` raises outright for
+any caller threading `metrics_collector` + `shared_storage` together.
+
+Fix (`runtime/engine/engine.py`, the `except (GateDenied, GateNotInteractiveError)`
+handler): `host_frame = getattr(node, "_host_frame", None)`; if set, call
+`record_trace(..., success=True, frame=host_frame)` before re-raising — the *node*
+itself didn't error, the run's denied/failed verdict is already carried
+independently by `gate_outcome`. Fires once per nesting level for free (the same
+exception re-raises through each ancestor's own `_execute_node`, each checking its
+own node's `_host_frame`) — no `workflow_executor.py` change needed.
+
+Tests (`tests/test_runtime/test_gate_trace.py`, both mutation-verified — reverting
+the fix reproduces the exact `orphan event: parent_id ... not found`
+`JSONDecodeError`): `test_denied_nested_gate_after_sibling_event_does_not_orphan_trace`,
+`test_noninteractive_nested_gate_after_sibling_event_does_not_orphan_trace` — a
+sub-workflow with an earlier sibling step then a gated step; assert `run.complete`
+IS written, `final_status` is `denied`/`failed` (not silently `incomplete`), and
+`tree()` rebuilds without raising.
+
+### 2. Gate preview masking doesn't recurse into dict/list values — CONFIRMED
+
+`claude[bot]` (Suggestion) and Codex (P1) independently flagged the same gap:
+`gate_prompt.py::_format_preview` and `exceptions.py::_masked_gate_payload` both
+masked only `isinstance(value, str)` — a nested secret (`headers: {Authorization:
+"Bearer ..."}`) rendered/serialized verbatim, reaching the TTY prompt AND
+`GateNotInteractiveError.to_diagnostics()` (→ `--output-format json` / MCP tool
+responses). Fix: reuse the existing recursive `sanitize_parameters()`
+(`core/security_utils.py`) for non-string preview values in both sites — top-level
+string masking (`mask_sensitive_value`) unchanged, so the existing 200-char preview
+truncation behavior isn't disturbed. Tests (both mutation-verified): nested-dict and
+nested-list-of-dicts cases in `test_gate_prompt.py`
+(`test_nested_secret_in_dict_value_is_redacted`,
+`test_nested_secret_in_list_of_dicts_is_redacted`) and
+`test_approval_gate.py::test_secret_nested_in_dict_value_masked_in_diagnostic`
+(diagnostic masked, in-memory `request.preview` stays unmasked — trace-consistent).
+
+### 3. Auto-approve echo races a parallel-batch worker thread — CONFIRMED
+
+`claude[bot]` (Warning). `_echo_auto_approved` fired unconditionally on `auto_approve`
+match, ignoring `allow_prompt` — but `__gate_resolver__` propagates into worker
+`item_shared` UNCHANGED (only `__gate_prompt_allowed__`/the progress callback are
+swapped/buffered), so a flagged nested gate inside a parallel-batch sub-workflow item
+called `output_controller.prepare_for_prompt()` + `click.echo(err=True)` on the
+WORKER thread — exactly the race the per-worker progress buffer exists to prevent.
+The existing parallel-batch test used a `RecordingResolver` test double with no
+`OutputController`, so this was genuinely uncovered. Fix: gate the echo on
+`allow_prompt` in the resolver closure (worker output is buffered anyway; the flag
+was already an explicit human pre-approval). Tests (mutation-verified):
+`test_flag_echo_suppressed_on_worker_thread_with_real_output_controller` (real
+`build_gate_resolver` + fake-but-real-shaped `OutputController`, `allow_prompt=False`
+→ zero `prepare_for_prompt()` calls, zero stderr) +
+`test_flag_echo_still_fires_on_main_thread` (positive case).
+
+### 4. Batch-of-sub-workflow dry-run drops the child's `approval` flag — CONFIRMED
+
+Codex (P2). `_aggregate_batch_child_plans` (`execution/plan.py`) builds fresh
+synthetic `PlanEntry` objects per node-id when collapsing per-item batch-of-workflow
+plans — `approval` wasn't in the copied-fields list, silently defaulting to `False`
+even though the child gates correctly at runtime (resolver namespace is flat).
+Fix: `approval=any(entry.approval for entry in entries_for_node)`. Test
+(mutation-verified): `test_plan_batch_sub_workflow_preserves_child_approval_flag`
+in `test_plan_drift.py` — batch-of-workflow whose child has a gated step; assert the
+aggregated entry shows `approval=True`.
+
+### 5. `sorted()` on a set that could contain `None` — CONFIRMED (unreachable today, cheap fix)
+
+`claude[bot]` (Suggestion). `_prepare_gate_resolver`'s `node_ids` set could contain
+`None` if a node dict lacked `"id"`, crashing `sorted()` with a mixed-type
+`TypeError`. Verified unreachable in practice (the markdown parser always sets
+`"id"`; no CLI path passes a bare dict IR that skips it) but the guard costs
+nothing. Fix: filter falsy ids at construction. Test (mutation-verified,
+reproduces the exact `TypeError`):
+`test_prepare_gate_resolver_tolerates_node_missing_id`.
+
+### Disputed
+
+**Docs example flag placement** (Codex P2) — claimed `pflow my-workflow
+--auto-approve=notify-slack` wouldn't work (flag after the workflow name). Verified
+empirically wrong: `run`'s `allow_interspersed_args=True` + `--auto-approve` being a
+*recognized* Click option means position doesn't matter (tested all 4 orderings by
+parsing the real command). No doc change.
+
+### Post-fix verification
+
+`make test`: **8376 passed** (session-2 close 8367 → +9: 2 orphan-trace tests, 2
+nested-secret masking tests (gate_prompt) + 1 (exceptions/approval_gate), 2
+worker-echo tests, 1 batch-approval-plan test, 1 sorted-None test). `make test-e2e`:
+43. `make check`: fully green (one RUF012 lint on the new test's fake-ctx class,
+fixed by switching to `types.SimpleNamespace`). Web: `tsc --noEmit` clean, 694
+vitest passed (untouched by this session — web wasn't in scope for any confirmed
+finding). All 5 fixes mutation-verified via temporary Edit + revert (never git
+stash, per the session-1 lesson).
+
+Next: update this log (done) → `/create-pr` follow-up (push + note on the existing
+PR #554, since it already exists — no new PR).

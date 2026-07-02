@@ -130,6 +130,29 @@ class TestApprovalGate:
         # The in-memory payload itself stays unmasked (trace-consistent).
         assert exc_info.value.request.preview["api_key"] == "sk-super-secret"
 
+    def test_secret_nested_in_dict_value_masked_in_diagnostic(self):
+        # Code-review fix: mask_sensitive_value only checks the TOP-LEVEL key —
+        # a secret nested inside a dict value (e.g. `headers:` on an http node)
+        # must not reach the MCP/JSON-visible diagnostic unmasked.
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call",
+                    "type": "shell",
+                    "params": {"command": "echo x", "headers": {"Authorization": "Bearer sk-super-secret"}},
+                    "approval": "required",
+                }
+            ],
+            "edges": [],
+        }
+        with pytest.raises(GateNotInteractiveError) as exc_info:
+            _run(ir, {})
+        diag = exc_info.value.to_diagnostics()[0]
+        assert diag.context["gate"]["preview"]["headers"]["Authorization"] == "<REDACTED>"
+        # The in-memory payload itself stays unmasked (trace-consistent).
+        assert exc_info.value.request.preview["headers"]["Authorization"] == "Bearer sk-super-secret"
+
     def test_cached_node_never_gates(self, tmp_path, monkeypatch):
         from pathlib import Path
 

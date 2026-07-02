@@ -1877,6 +1877,12 @@ def _aggregate_batch_child_plans(
                 batch_items_cached=cached_count,
                 batch_items_total=items_traversed,
                 sub_plan=template_entry.sub_plan,
+                # Code-review fix: a gated step INSIDE a batched sub-workflow's
+                # child still gates at runtime (the resolver's namespace is flat
+                # across the tree) — dropping this here would make the dry-run
+                # footer/JSON silently omit a gate the engine will still pause
+                # or fail loudly on.
+                approval=any(entry.approval for entry in entries_for_node),
             )
         )
 

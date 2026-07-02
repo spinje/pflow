@@ -369,7 +369,11 @@ def _prepare_gate_resolver(
 
     auto_approve = frozenset(ctx.obj.get("auto_approve") or ())
     nodes = ir_data.get("nodes", [])
-    node_ids = {node.get("id") for node in nodes}
+    # Defensive: schema validation (which requires "id" on every node) hasn't
+    # run yet at this call site. Filtering falsy ids here (rather than at each
+    # sorted() call below) keeps a malformed node dict from raising TypeError
+    # on a mixed None/str sort.
+    node_ids = {node.get("id") for node in nodes if node.get("id")}
     # Under --only, only the target executes (upstream is snapshot-seeded) — a gate
     # anywhere else cannot fire, so warning about it would be a false alarm.
     only_node = ctx.obj.get("only_node")

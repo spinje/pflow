@@ -104,6 +104,18 @@ class TestAutoApprove:
         assert "closest top-level match is 'guarded-step'" in result.stderr
         assert "Top-level gated steps: guarded-step" in result.stderr
 
+    def test_prepare_gate_resolver_tolerates_node_missing_id(self):
+        # Code-review fix: schema validation (which requires "id" on every node)
+        # hasn't run yet at this call site — a node dict missing "id" must not
+        # crash `sorted()` on a set containing None mixed with strings.
+        from types import SimpleNamespace
+
+        from pflow.cli.commands.run import _prepare_gate_resolver
+
+        fake_ctx = SimpleNamespace(obj={"auto_approve": ("bogus",), "only_node": None, "print_flag": False})
+        ir_data = {"nodes": [{"type": "shell", "params": {}}, {"id": "real-step", "type": "shell"}]}
+        _prepare_gate_resolver(fake_ctx, ir_data, None)  # must not raise
+
 
 class TestNonInteractive:
     def test_warns_at_start_then_fails_at_gate_exit_1(self, gated_workflow):

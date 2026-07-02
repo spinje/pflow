@@ -142,6 +142,76 @@ class TestGateTraceEvents:
         )
         assert resolution["resolution"] == "non_interactive"
 
+    def _nested_gate_after_sibling_ir(self, tmp_path: Path, name: str) -> dict[str, Any]:
+        """A sub-workflow with an EARLIER sibling step (records an event under the
+        host) followed by a LATER gated step — the shape that orphans a trace event
+        if the host's own completion event is never recorded on a gate stop."""
+        child = tmp_path / f"{name}.pflow.md"
+        child.write_text(
+            "# Child\n\nSibling then a gated step.\n\n## Steps\n\n"
+            "### sibling\n\nRuns first, recording an event under the host.\n\n"
+            "- type: shell\n- command: echo sibling\n\n"
+            "### gated-step\n\nThe gate stops here.\n\n"
+            "- type: shell\n- command: echo gated\n- approval: required\n"
+        )
+        return {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "sub", "type": "workflow", "params": {"workflow": str(child)}}],
+            "edges": [],
+        }
+
+    def test_denied_nested_gate_after_sibling_event_does_not_orphan_trace(self, tmp_path, monkeypatch):
+        """Code-review fix: a sub-workflow HOST's own trace event must be recorded
+        even when a gate stops mid-way through it. Before the fix, ``finalize()``
+        itself raised in memory (an orphaned sibling event — parent_id pointing at
+        the host's reserved-but-never-written seq), silently swallowed by the
+        runner's ``contextlib.suppress``, leaving NO ``run.complete`` trailer — the
+        trace read back as ``final_status="incomplete"`` instead of "denied", and
+        any direct caller of ``tree()``/``collect_llm_calls()`` would crash outright.
+        """
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        collector = WorkflowTraceCollector(
+            "nested-denied",
+            workflow_path=str(tmp_path / "nested-denied.pflow.md"),
+            is_run_scoped=True,
+            stream_to_disk=True,
+        )
+        compiled = compile_workflow(self._nested_gate_after_sibling_ir(tmp_path, "child-denied"), Registry())
+        with pytest.raises(GateDenied):
+            WorkflowEngine(trace_collector=collector).run(compiled, {"__gate_resolver__": _denier})
+        collector.finalize()  # must not raise
+
+        lines = _read_lines(collector._stream_path)
+        assert any(ln["kind"] == "run.complete" for ln in lines), "finalize() must reach the trailer write"
+        trace = load_trace_file(collector._stream_path)
+        assert trace["final_status"] == "denied"
+        # tree() rebuilt successfully (load_trace_file calls it) — the sibling's
+        # event is not an orphan; the whole point of the fix.
+        assert collector.tree()
+
+    def test_noninteractive_nested_gate_after_sibling_event_does_not_orphan_trace(self, tmp_path, monkeypatch):
+        """Same orphan risk via the non-interactive-fail variant of the same
+        gate-exception exemption arm."""
+        from pflow.core.exceptions import GateNotInteractiveError
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        collector = WorkflowTraceCollector(
+            "nested-noninteractive",
+            workflow_path=str(tmp_path / "nested-noninteractive.pflow.md"),
+            is_run_scoped=True,
+            stream_to_disk=True,
+        )
+        compiled = compile_workflow(self._nested_gate_after_sibling_ir(tmp_path, "child-noninteractive"), Registry())
+        with pytest.raises(GateNotInteractiveError):
+            WorkflowEngine(trace_collector=collector).run(compiled, {})
+        collector.finalize()  # must not raise
+
+        lines = _read_lines(collector._stream_path)
+        assert any(ln["kind"] == "run.complete" for ln in lines)
+        trace = load_trace_file(collector._stream_path)
+        assert trace["final_status"] == "failed"
+        assert collector.tree()
+
     def test_nested_child_gate_events_land_in_run_stream(self, tmp_path, monkeypatch):
         """A gate inside a sub-workflow (the harness's primary shape) with a REAL
         run-scoped collector: NEW-path children share the run collector, so the
