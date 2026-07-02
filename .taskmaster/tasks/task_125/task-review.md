@@ -5,7 +5,9 @@
 - Implemented 2026-07-02, branch `feat/human-loop-approval-gates`, PR #554 (open, not yet merged).
 - Commits: `2e533e2f` (phases 1-2, engine substrate), `301a002c` (phase 1-2 test pins), `2593884c`
   (phases 3-7: resolver, DENIED status, `--auto-approve`, dry-run parity, docs), `9fe66c96`
-  (5 code-review fixes post-PR).
+  (5 code-review fixes post-PR), `5f161e4e` (verification-sweep fixes: batch-item index,
+  `GateResolverError`, escalation cost-trap doc, CLAUDE.md audit), plus the gate-preview
+  masking rework (mask-only `masked_preview`, no truncation — progress log session 4).
 - Chronological journey (plan, deviations, deep-review findings, day-by-day): see
   `implementation/progress-log.md` — this review does not re-narrate it.
 - Project stakes: pflow is MVP-feature-complete on PyPI but explicitly has "no users yet — no
@@ -23,13 +25,14 @@ stop (`WorkflowStatus.DENIED`, exit 3), not a failure. Durable/non-TTY gates are
 scope** — Task 171 builds on this substrate without changing the payload shape.
 
 **Read these first**:
-- `src/pflow/core/gate.py` — `GateRequest`/`GateResolution` (the payload IS the seam, ADR-0009).
+- `src/pflow/core/gate.py` — `GateRequest`/`GateResolution` (the payload IS the seam, ADR-0009)
+  + `masked_preview` (THE masking policy for every gate render surface — mask-only, never truncates).
 - `src/pflow/runtime/engine/gate.py` — `resolve_gate`, `run_approval_gate`, `detect_escalation`,
   `run_escalation_gate`, `scan_batch_escalations` (the engine-side "when").
 - `src/pflow/runtime/engine/engine.py:994` `_execute_node` — seams at step 7.5 (pre-exec
   approval), 10.5/17.7 (post-exec escalation detect/pause), and the
-  `except (GateDenied, GateNotInteractiveError)` handler (~line 1324) — the ONLY place a gate
-  verdict is distinguished from a node failure.
+  `except (GateDenied, GateNotInteractiveError, GateResolverError)` handler (~line 1324) — the
+  ONLY place a gate verdict is distinguished from a node failure.
 - `src/pflow/execution/gate_prompt.py` — `build_gate_resolver` (the "how" — CLI TTY / MCP /
   parallel-worker, ONE function).
 - `src/pflow/execution/plan.py::_annotate_entry` (renamed from `_annotate_loop_entry`) — the
@@ -95,8 +98,10 @@ it closely but diverged in a few places worth knowing:
 
 **The payload-is-the-seam pattern (ADR-0009) paid off repeatedly** — one `GateRequest.to_dict()`
 feeds the TTY prompt, the `gate` trace event, the masked `GateNotInteractiveError` diagnostic,
-and (unchanged) will feed Task 171's persistence. When a review flagged masking as broken, the
-fix touched exactly the two render sites, not the payload itself. **Reuse this for any future
+and (unchanged) will feed Task 171's persistence. When reviews flagged masking twice (nested
+secrets rendered verbatim; then non-secrets over-truncated), the fixes converged on ONE
+`masked_preview` beside the payload — render sites merely delegate, and the payload itself never
+changed. **Reuse this for any future
 human-decision or cross-surface payload**: one JSON-native dataclass, resolved by a plain
 function, never an ABC/strategy hierarchy (`ApprovalSurface` was explicitly proposed and
 rejected — "one adapter is a hypothetical seam" per project language).
@@ -151,17 +156,32 @@ node using dynamic `next:` routing cannot escalate from the same execution (its 
 route target, and the detector defers to a node's own routing verdict, mirroring the existing
 api-warning-detector rule). Escalate from the agent step; route on the decision downstream.
 
-**The masking fix lives in two independent call sites** (`gate_prompt.py::_format_preview` and
-`exceptions.py::_masked_gate_payload`), both now calling `sanitize_parameters()` for non-string
-values but as separate, hand-written call expressions — there is no single shared "mask a gate
-preview" function. If the masking policy changes again, both sites need editing; nothing
-enforces they stay in sync beyond code review.
+**Gate-preview masking is ONE shared function and it must never truncate**:
+`core/gate.py::masked_preview` (recursive redaction of secret-NAMED keys via
+`is_sensitive_parameter`), delegated to by both render sites (`gate_prompt.py::_format_preview`
+and `exceptions.py::_masked_gate_payload`). History that must not repeat: the first version
+routed nested values through `sanitize_parameters()`, whose side effect cuts any nested string
+over 100 chars down to ~20 — blinding the approver to an http `json:` body or sub-workflow
+`inputs:` field (PR #554 review warning; the tradeoff was originally accepted on the wrong
+belief it truncated "to 100 chars"). Length truncation belongs to each renderer only (the TTY
+prompt's 200-char step; diagnostics carry full masked values, matching the untruncated-payload
+rule). Pinned by the mutation-verified `long_nonsecret` tests in `test_gate_prompt.py` and
+`test_approval_gate.py`.
 
-**`sanitize_parameters()` truncates long strings to 100 chars** — a side effect of reusing it
-for nested-value masking that's more aggressive than `_format_preview`'s own 200-char
-truncation. Deliberately left as-is (applies only to previously-untruncated nested dict/list
-values, not top-level strings, which keep their existing 200-char path) — but if a preview ever
-looks unexpectedly short, this is why.
+**A resolver bug is gate-scoped, not a node failure (`GateResolverError`)** — added after an
+independent verification sweep: an unexpected resolver exception (or wrong return type) at the
+post-exec escalation seam previously fell to the generic except arm, which recorded a duplicate
+error event and archived the node's genuinely-successful output into `__failures__`. The new
+exception shares the gate exemptions (`retriable=False`, both boundary re-raise tuples, the
+host-frame trace fix), emits a `resolution: "error"` gate line, and reads `failed` in the
+trailer via `gate_outcome`.
+
+**Non-interactive escalation discards completed work** — the escalating step ran to completion,
+but its result is deliberately never cached (Decision 10: a cached escalation would replay on a
+later run as resolved-without-a-decision, because cache hits early-return before the detect
+seam), so the abort-and-rerun path re-pays the whole agent step. Documented in
+`guide/features/approval.md`; the real fix is Task 171 holding the gate open. Task 171 designers:
+this is the cost trap your feature eliminates.
 
 **Batch-item gate events do not reach the trace** (deliberately NOT fixed — a known v1
 limitation, documented in `guide/features/approval.md`). A gate answered inside a `batch:`
@@ -172,11 +192,12 @@ task reworks how gate records persist anyway.
 ## Integration Points
 
 **Depends on** (pre-existing, unmodified by this task): the `--only` snapshot machinery
-(`seed_snapshot_into_shared`, the loader's status allowlist — extended to reject `"denied"` too,
-same shape as `"failed"`), the `_PROPAGATED_KEYS` shared-store propagation mechanism (gained two
-new keys: `__gate_resolver__`, `__gate_prompt_allowed__`), `sanitize_parameters()` (a third
-consumer added), the streamed-trace disk-only-line convention (`node.start` was the only
-precedent; `gate` is the second).
+(`seed_snapshot_into_shared`; the loader's success/degraded allowlist naturally excludes
+`"denied"` — no code change was needed for that), the `_PROPAGATED_KEYS` shared-store
+propagation mechanism (gained two new keys: `__gate_resolver__`, `__gate_prompt_allowed__`),
+`is_sensitive_parameter()` (the shared word-aware secret-name rule, consumed by
+`core/gate.py::masked_preview`), the streamed-trace disk-only-line convention (`node.start` was
+the only precedent; `gate` is the second).
 
 **Now depended on by** (forward): Task 171 (durable/non-TTY gates) persists `GateRequest`/
 `GateResolution` **unchanged** — do not casually restructure either dataclass without checking
@@ -209,7 +230,9 @@ parameter `auto_approve`. New exit code `3` (denied; click still owns `2`).
   resolver and could never have caught the echo race. **Mutation-verified.**
 - `tests/test_runtime/test_approval_gate.py::test_secret_nested_in_dict_value_masked_in_diagnostic`
   + `test_gate_prompt.py`'s nested-secret tests — **mutation-verified**, guard the
-  credential-disclosure surface specifically (not just "masking exists," but "masking recurses").
+  credential-disclosure surface specifically (not just "masking exists," but "masking recurses");
+  the `long_nonsecret` pins in both files guard the opposite failure ("masking doesn't
+  over-truncate what the human is approving").
 - `tests/test_runtime/test_approval_gate.py::TestRunnerBoundary` class — end-to-end through
   `WorkflowRunner().run()` (not just the engine), pins that `GateDenied` → `WorkflowStatus.DENIED`
   and `GateNotInteractiveError` → `FAILED` with intact payload diagnostics survive the full

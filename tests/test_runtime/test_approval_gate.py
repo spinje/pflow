@@ -153,6 +153,30 @@ class TestApprovalGate:
         # The in-memory payload itself stays unmasked (trace-consistent).
         assert exc_info.value.request.preview["headers"]["Authorization"] == "Bearer sk-super-secret"
 
+    def test_long_nonsecret_nested_value_intact_in_diagnostic(self):
+        # PR #554 review warning: sanitize_parameters cut long non-secret nested
+        # values to ~20 chars in the MCP/JSON-visible diagnostic — the agent must
+        # be able to show its human the FULL action (approving blind defeats the
+        # gate). Masking is mask-only; the diagnostic never truncates.
+        body = "b" * 150
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call",
+                    "type": "shell",
+                    "params": {"command": "echo x", "json": {"body": body, "token": "sk-super-secret"}},
+                    "approval": "required",
+                }
+            ],
+            "edges": [],
+        }
+        with pytest.raises(GateNotInteractiveError) as exc_info:
+            _run(ir, {})
+        preview = exc_info.value.to_diagnostics()[0].context["gate"]["preview"]
+        assert preview["json"]["body"] == body  # full value, no "...<truncated>" cut
+        assert "sk-super-secret" not in str(preview)  # nested secret still redacted
+
     def test_cached_node_never_gates(self, tmp_path, monkeypatch):
         from pathlib import Path
 

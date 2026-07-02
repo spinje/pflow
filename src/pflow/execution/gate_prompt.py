@@ -23,9 +23,8 @@ from typing import Any, Callable, Optional
 import click
 
 from pflow.core.exceptions import GateNotInteractiveError
-from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest, GateResolution
+from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest, GateResolution, masked_preview
 from pflow.core.output_controller import OutputController
-from pflow.core.security_utils import mask_sensitive_value, sanitize_parameters
 
 GateResolver = Callable[..., GateResolution]
 
@@ -151,23 +150,17 @@ def _format_preview(preview: dict[str, Any]) -> list[str]:
     """Aligned ``key: value`` lines, secret-masked and display-truncated.
 
     Values are flattened to one line each (newlines escaped) so the block stays
-    scannable; the full unmasked payload lives in the gate trace event.
-
-    ``mask_sensitive_value`` only checks the TOP-LEVEL key, so a dict/list value
-    (``headers: {Authorization: ...}``) is recursed through the existing
-    ``sanitize_parameters`` sanitizer instead — code-review fix: previously such
-    a nested secret rendered verbatim in the approval prompt.
+    scannable; the full unmasked payload lives in the gate trace event. Masking
+    is the shared ``masked_preview`` (recursive, mask-only); truncation happens
+    ONLY here, at the 200-char display budget — never inside the masking step,
+    so a long non-secret nested value stays reviewable.
     """
     if not preview:
         return ["(no parameters)"]
     width = max(len(key) for key in preview)
     lines = []
-    for key, value in preview.items():
-        if isinstance(value, str):
-            text = mask_sensitive_value(key, value)
-        else:
-            masked_value = sanitize_parameters({key: value}).get(key, value)
-            text = _compact_json(masked_value)
+    for key, value in masked_preview(preview).items():
+        text = value if isinstance(value, str) else _compact_json(value)
         text = text.replace("\n", "\\n")
         if len(text) > _PREVIEW_VALUE_CHARS:
             text = f"{text[:_PREVIEW_VALUE_CHARS]}… ({len(text)} chars)"

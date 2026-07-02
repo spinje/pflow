@@ -20,6 +20,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, Optional
 
+from pflow.core.security_utils import is_sensitive_parameter
+
 GATE_KIND_APPROVAL: Literal["action_approval"] = "action_approval"
 GATE_KIND_ESCALATION: Literal["decision_escalation"] = "decision_escalation"
 
@@ -97,3 +99,27 @@ def build_escalation_request(node_id: str, node_type: str, marker: Any) -> GateR
         options=options,
         recommendation=str(recommendation) if recommendation is not None else None,
     )
+
+
+def masked_preview(preview: dict[str, Any]) -> dict[str, Any]:
+    """Preview with secret-NAMED values redacted (recursively) — never truncated.
+
+    THE masking policy for every gate render surface (TTY prompt, error
+    diagnostics); the trace's gate event stays unmasked, consistent with the
+    trace's ``template_resolutions``. Masking only — length truncation belongs
+    to each renderer (the TTY prompt's 200-char step): routing values through
+    ``sanitize_parameters`` here cut long non-secret nested values (an http
+    ``json:`` body, a sub-workflow ``inputs:`` field) to ~20 chars, blinding
+    the approver to what they were approving (PR #554 review warning).
+    """
+
+    def mask(key: Optional[str], value: Any) -> Any:
+        if key is not None and is_sensitive_parameter(key):
+            return "<REDACTED>"
+        if isinstance(value, dict):
+            return {k: mask(str(k), v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [mask(None, item) for item in value]
+        return value
+
+    return {key: mask(key, value) for key, value in preview.items()}

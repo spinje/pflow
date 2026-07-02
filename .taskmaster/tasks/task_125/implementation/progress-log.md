@@ -560,3 +560,38 @@ Process note: repeated the session-1 git lesson the hard way — a
 `git checkout -- <file>` used to revert a mutation also wiped the session's
 uncommitted edits to that file (re-applied immediately; later mutations used
 temporary Edit + revert as the log already prescribes).
+
+## 2026-07-02 — Session 4 (continued): PR-review warning fix — gate-preview masking rework
+
+Evaluated claude[bot]'s review of 9fe66c96 (PR #554): no blockers, 1 Warning,
+2 optional suggestions. Actions:
+
+- **Warning CONFIRMED and fixed** (the earlier "accepted as-is" call was made on
+  a wrong premise): `sanitize_parameters` cuts nested strings >100 chars to
+  **20 chars** (`value[:20] + "...<truncated>"`, security_utils.py:138-139) —
+  the task-review had recorded it as "truncates to 100 chars". A gated http
+  `json:` body or sub-workflow `inputs:` field showed the approver 20 chars, on
+  BOTH decision surfaces (TTY prompt + MCP/JSON diagnostic). Fix: new shared
+  `core/gate.py::masked_preview` — recursive redaction of secret-NAMED keys via
+  `is_sensitive_parameter`, NO truncation (truncation stays renderer-only: the
+  TTY 200-char step; diagnostics carry full masked values, per the plan's
+  untruncated-payload rule). Both render sites now delegate — this also closes
+  the task-review's "two hand-written masking call sites" wart. Tests
+  (mutation-verified against the old sanitize path):
+  `test_long_nonsecret_nested_value_survives_to_display_budget` (gate_prompt) +
+  `test_long_nonsecret_nested_value_intact_in_diagnostic` (approval_gate).
+  Behavior delta accepted knowingly: nested non-secret values are no longer
+  length-limited in diagnostics (the trace already carried them in full).
+- **Suggestion 1 (batch-host edge note)**: added the one-line comment in the
+  engine gate-arm (batch hosts never set `_host_frame` — batch-item children
+  use buffered collectors, no `descend()`). No new test — the guard is
+  defensive and the path is exercised by existing sequential-batch deny pins.
+- **Suggestion 2 (comment density)**: reviewer requested no change; none made.
+- **Task-review accuracy pass** (owner request): commit list extended
+  (5f161e4e + this fix); the two stale masking paragraphs replaced with the
+  masked_preview invariant + its history; added GateResolverError and the
+  non-interactive-escalation cost trap to Gotchas (flagged for Task 171
+  designers); "allowlist extended to reject denied" corrected (the allowlist
+  naturally excludes it — no code change existed); integration point corrected
+  from `sanitize_parameters` to `is_sensitive_parameter`; engine handler tuple
+  and Read First list updated for GateResolverError/masked_preview.

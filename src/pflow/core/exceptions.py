@@ -1072,26 +1072,18 @@ class GateResolverError(PflowError):
 
 
 def _masked_gate_payload(request: GateRequest) -> dict[str, Any]:
-    """GateRequest as a dict with secret-like preview values redacted.
+    """GateRequest as a dict with secret-named preview values redacted.
 
     The diagnostic reaches agents/humans through error text and MCP responses —
-    secrets don't inform an approval decision. (The trace's gate event carries
-    the unmasked payload, consistent with the trace's ``template_resolutions``.)
-
-    ``mask_sensitive_value`` only checks the TOP-LEVEL key, so a dict/list value
-    (``headers: {Authorization: ...}``) recurses through ``sanitize_parameters``
-    instead — code-review fix: previously such a nested secret reached MCP/JSON
-    error surfaces unmasked.
+    secrets don't inform an approval decision, but everything ELSE must survive
+    in full (approving blind defeats the gate). Delegates to the shared
+    ``masked_preview`` (mask-only, recursive, no truncation); the trace's gate
+    event carries the unmasked payload, consistent with ``template_resolutions``.
     """
-    from pflow.core.security_utils import mask_sensitive_value, sanitize_parameters
+    from pflow.core.gate import masked_preview
 
     payload = request.to_dict()
-    payload["preview"] = {
-        key: mask_sensitive_value(key, value)
-        if isinstance(value, str)
-        else sanitize_parameters({key: value}).get(key, value)
-        for key, value in payload.get("preview", {}).items()
-    }
+    payload["preview"] = masked_preview(payload.get("preview", {}))
     return payload
 
 

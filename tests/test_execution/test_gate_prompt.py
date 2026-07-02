@@ -193,6 +193,21 @@ class TestPreviewRendering:
         assert "<REDACTED>" in rendered
         assert "application/json" in rendered  # non-secret nested value survives
 
+    def test_long_nonsecret_nested_value_survives_to_display_budget(self, monkeypatch, capsys):
+        # PR #554 review warning: routing preview values through
+        # sanitize_parameters cut long NON-secret nested strings to ~20 chars —
+        # blinding the approver. Masking must not truncate; only the renderer's
+        # 200-char display budget applies.
+        body = "b" * 150
+        rendered = self._rendered(
+            _approval(json={"body": body, "token": "sk-super-secret"}),
+            monkeypatch,
+            capsys,
+        )
+        assert body in rendered  # full 150-char value visible (under the 200 budget)
+        assert "<truncated>" not in rendered
+        assert "sk-super-secret" not in rendered  # nested secret still redacted
+
     def test_nested_secret_in_list_of_dicts_is_redacted(self, monkeypatch, capsys):
         rendered = self._rendered(
             _approval(inputs=[{"api_key": "sk-live-abc123"}, {"name": "safe"}]),

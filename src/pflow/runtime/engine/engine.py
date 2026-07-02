@@ -1351,6 +1351,8 @@ class WorkflowEngine:
                 # above, not by this per-node flag. Fires once per nesting level
                 # (each ancestor's own _execute_node catches this exception and
                 # checks its own node's _host_frame as it re-raises in turn).
+                # Batch hosts stay None here: batch-item children run under
+                # buffered collectors (descend() is never called on that path).
                 host_frame = getattr(node, "_host_frame", None)
                 if host_frame is not None:
                     record_trace(
