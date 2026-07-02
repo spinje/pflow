@@ -21,6 +21,7 @@ from pflow.core.diagnostic import (
 )
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.types import is_template_reserved_internal_key
+from pflow.core.workflow.gate_validation import check_approval_allowed
 from pflow.core.workflow.loop_validation import check_loop_polarity
 from pflow.runtime.template_resolver import TemplateResolver
 
@@ -466,6 +467,7 @@ def validate_data_flow(
         valid_simple_refs.add("__iteration__")
 
     diagnostics.extend(_validate_loop_node_combos(workflow_ir))
+    diagnostics.extend(_validate_approval_node_combos(workflow_ir))
 
     # Build execution order
     try:
@@ -623,6 +625,34 @@ def _validate_loop_carry_value_self_ref(node_id: Optional[str], key: Any, value:
     if root == node_id:
         return []
     return [_make_loop_carry_self_ref_diagnostic(node_id, key, value)]
+
+
+def _validate_approval_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Reject unsupported ``approval:`` combinations (Task 125).
+
+    Mirrors the compiler's fail-fast check so the save / ``--validate-only`` path —
+    which never compiles — rejects them too (same dual as the batch/loop exclusion).
+    """
+    diagnostics: list[Diagnostic] = []
+    for node in workflow_ir.get("nodes", []):
+        error = check_approval_allowed(node)
+        if error is not None:
+            node_id = node.get("id")
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    node_id=node_id,
+                    message=f"Node '{node_id}': {error}",
+                    suggestions=[
+                        "Move `approval: required` to the step before or after the batch — "
+                        "that is where a whole-batch review belongs.",
+                    ],
+                    context={"category": "validation", "path": f"nodes[id={node_id}].approval"},
+                )
+            )
+    return diagnostics
 
 
 def _make_loop_namespacing_diagnostic(node_id: Optional[str]) -> Diagnostic:

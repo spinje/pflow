@@ -229,12 +229,20 @@ class ExecutionService(BaseService):
 
     @classmethod
     @ensure_stateless
-    def execute_workflow(cls, workflow: Any, parameters: dict[str, Any] | None = None) -> str:
+    def execute_workflow(
+        cls,
+        workflow: Any,
+        parameters: dict[str, Any] | None = None,
+        auto_approve: list[str] | None = None,
+    ) -> str:
         """Execute a workflow with agent-optimized defaults.
 
         Args:
             workflow: Workflow name, path, or IR dict
             parameters: Execution parameters
+            auto_approve: Step names whose approval gates are pre-approved (Task 125).
+                MCP runs cannot prompt, so a gate NOT listed here fails loudly with
+                the ask-your-human remediation ladder. Escalations never pre-approve.
 
         Returns:
             Formatted text output matching CLI (success or error)
@@ -243,6 +251,7 @@ class ExecutionService(BaseService):
             ValueError: If workflow not found (with suggestions) or parameters fail security validation
             RuntimeError: All other failures (validation, compilation, execution)
         """
+        from pflow.execution.gate_prompt import build_gate_resolver
         from pflow.execution.result import RunnerConfig
         from pflow.execution.runner import WorkflowRunner
 
@@ -281,6 +290,11 @@ class ExecutionService(BaseService):
             # is CLI-only in v1; otherwise MCP runs would write to ~/.pflow/debug and become unintended
             # --only / analyze-cache snapshot sources.
             RunnerConfig(trace_enabled=False),
+            # MCP is the production non-TTY surface: output_controller=None means the
+            # resolver honors auto_approve pre-approvals and otherwise raises the
+            # payload-carrying GateNotInteractiveError (never hangs, never silently
+            # approves). Same builder as the CLI — one resolver, every surface.
+            gate_resolver=build_gate_resolver(frozenset(auto_approve or ()), None),
             workflow_manager=wm,
             workflow_name=workflow_name,
         )

@@ -80,6 +80,10 @@ def ir_to_markdown(  # noqa: C901
             cache = node.get("cache")
             if cache is not None:
                 lines.append(f"- cache: {'true' if cache else 'false'}")
+            # Approval gate (Task 125; top-level on node like cache/batch —
+            # silently dropping it would make gated-fixture tests test nothing)
+            if node.get("approval"):
+                lines.append(f"- approval: {node['approval']}")
             # Params
             params = node.get("params", {})
             for key, value in params.items():

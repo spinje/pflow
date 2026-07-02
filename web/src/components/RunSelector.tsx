@@ -27,6 +27,9 @@ export function runMark(run: RunInfo): { glyph: string; cls: string; label: stri
   if (run.final_status === "success") return { glyph: "✓", cls: "run-success", label: "success" };
   if (run.final_status === "degraded") return { glyph: "⊘", cls: "run-degraded", label: "degraded" };
   if (run.final_status === "failed") return { glyph: "✗", cls: "run-failed", label: "failed" };
+  // Task 125: a human denied an approval gate — clean stop, amber like degraded (never the
+  // grey stale fallthrough, which reads as "interrupted/unknown").
+  if (run.final_status === "denied") return { glyph: "⊘", cls: "run-denied", label: "denied" };
   return { glyph: "·", cls: "run-stale", label: run.final_status ?? "done" };
 }
 

@@ -295,6 +295,7 @@ def execute_json_workflow(  # noqa: C901
 
     output_controller = _get_output_controller(ctx)
     progress_enabled = not print_flag
+    gate_resolver = _prepare_gate_resolver(ctx, ir_data, output_controller)
 
     if effective_verbose:
         click.echo(f"cli: Starting workflow execution with {ctx.obj['total_nodes']} node(s)", err=True)
@@ -312,6 +313,7 @@ def execute_json_workflow(  # noqa: C901
             params,
             config,
             progress_callback=progress_callback,
+            gate_resolver=gate_resolver,
             workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
             workflow_name=workflow_name,
         )
@@ -347,6 +349,112 @@ def execute_json_workflow(  # noqa: C901
         _cleanup_temp_files(stdin_data, effective_verbose)
 
 
+def _prepare_gate_resolver(
+    ctx: click.Context,
+    ir_data: dict[str, Any],
+    output_controller: OutputController,
+) -> Any:
+    """Build this run's gate resolver + emit the gate pre-flight warnings.
+
+    Warnings (stderr, suppressed by -p) fire per Task 125 Decision 4:
+    - an ``--auto-approve`` id matching no top-level step (typo guard — child
+      gate ids are legitimate but invisible here, hence "top-level" phrasing);
+    - declared gates that will fail because this run cannot prompt (fail-at-gate
+      is the primary contract; this warning preserves visibility up front).
+    Both scans see TOP-LEVEL nodes only — a gate inside a sub-workflow warns
+    nowhere and fails at the gate (documented limitation).
+    """
+    from pflow.core.suggestion_utils import find_similar_items
+    from pflow.execution.gate_prompt import build_gate_resolver, can_prompt
+
+    auto_approve = frozenset(ctx.obj.get("auto_approve") or ())
+    nodes = ir_data.get("nodes", [])
+    # Defensive: schema validation (which requires "id" on every node) hasn't
+    # run yet at this call site. Filtering falsy ids here (rather than at each
+    # sorted() call below) keeps a malformed node dict from raising TypeError
+    # on a mixed None/str sort.
+    node_ids = {node.get("id") for node in nodes if node.get("id")}
+    # Under --only, only the target executes (upstream is snapshot-seeded) — a gate
+    # anywhere else cannot fire, so warning about it would be a false alarm.
+    only_node = ctx.obj.get("only_node")
+    gated = [
+        node.get("id")
+        for node in nodes
+        if node.get("approval") and node.get("id") and (only_node is None or node.get("id") == only_node)
+    ]
+
+    if not ctx.obj.get("print_flag", False):
+        for flag_id in sorted(auto_approve - node_ids):
+            # This scan sees TOP-LEVEL steps only, but the resolver's namespace is
+            # flat across the workflow tree — a gate inside a sub-workflow (which
+            # the --dry-run footer legitimately names) matches this flag and works.
+            # So this must read as a note covering both cases, never as a
+            # confident "typo" verdict that contradicts the dry-run footer.
+            similar = find_similar_items(flag_id, gated or sorted(node_ids), method="fuzzy", max_results=1)
+            hint = f" If it is a typo: closest top-level match is '{similar[0]}'." if similar else ""
+            gated_list = f" Top-level gated steps: {', '.join(gated)}." if gated else ""
+            click.echo(
+                f"Note: --auto-approve={flag_id} does not name a top-level step. A gate inside a "
+                f"sub-workflow still matches by name.{hint}{gated_list}",
+                err=True,
+            )
+        unapproved = [gate_id for gate_id in gated if gate_id not in auto_approve]
+        if unapproved and not can_prompt(output_controller):
+            flags = " ".join(f"--auto-approve={gate_id}" for gate_id in unapproved)
+            click.echo(
+                f"Warning: this run is non-interactive and will fail at approval "
+                f"gate(s) [{', '.join(unapproved)}] unless pre-approved ({flags}).",
+                err=True,
+            )
+
+    return build_gate_resolver(auto_approve, output_controller)
+
+
+def _display_denied_result(ctx: click.Context, result: Any, output_format: str) -> None:
+    """Render a DENIED run: prose on stderr, or a JSON document on stdout.
+
+    The JSON document exists because the denied branch bypasses ``output_error``
+    (the only path to the failure JSON emitter) — without it, ``--output-format
+    json`` would emit NOTHING on deny.
+    """
+    gate_diag = next(
+        (d for d in result.diagnostics if d.context and d.context.get("category") == "gate"),
+        None,
+    )
+    node_id = gate_diag.node_id if gate_diag else None
+    message = gate_diag.message if gate_diag else "Denied at gate."
+
+    if output_format == "json":
+        # A strict superset of the unified `success: false` shape (error_output.py
+        # emits {success, status, error, errors, diagnostics, ...}) — agents that
+        # branch on success==false and iterate .diagnostics/.errors must find the
+        # denial there, not only in the bespoke `gate` key.
+        diagnostics = [d.to_dict() for d in result.diagnostics]
+        document = {
+            "success": False,
+            "status": "denied",
+            "error": message,
+            "errors": [d.to_dict() for d in result.errors],
+            "diagnostics": diagnostics,
+            "gate": gate_diag.context.get("gate") if gate_diag else None,
+        }
+        click.echo(json.dumps(document, indent=2, default=str))
+        return
+
+    execution = result.shared_after.get("__execution__", {}) if result.shared_after else {}
+    completed = len(execution.get("completed_nodes", []))
+    total = ctx.obj.get("total_nodes") if ctx.obj else None
+    progress = f" Steps completed: {completed} of {total}." if total else ""
+    gate_name = f" '{node_id}'" if node_id else ""
+    click.echo(
+        click.style(
+            f"✗ Denied at gate{gate_name}. Workflow stopped cleanly before the step ran.{progress} (exit 3)",
+            fg="yellow",
+        ),
+        err=True,
+    )
+
+
 def _emit_failure_tag(ctx: click.Context, metrics: Any | None) -> None:
     """Emit one-line failure tag to stderr for agent observability."""
     print_flag = ctx.obj.get("print_flag", False) if ctx.obj else False
@@ -365,6 +473,14 @@ def _display_execution_result(
 ) -> None:
     """Display execution result and set exit code."""
     from pflow.cli.error_output import output_error
+    from pflow.core.workflow.status import WorkflowStatus
+
+    if result.status is WorkflowStatus.DENIED:
+        # A human's "no" at an approval gate (Task 125 Decision 5): clean stop,
+        # its own rendering + exit code 3 — never the failure path (no ❌ tag,
+        # no error formatter; a workflow must not read denial as a failure).
+        _display_denied_result(ctx, result, output_format)
+        ctx.exit(3)
 
     if result.success:
         _handle_workflow_success(
@@ -536,6 +652,7 @@ _PFLOW_FLAGS = frozenset({
     "--cache",
     "--no-cache",
     "--only",
+    "--auto-approve",
 })
 
 
@@ -1007,6 +1124,17 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
     default=None,
     help="Re-run just this node against a snapshot of the most recent full run — upstream is restored, not re-executed, so side-effecting upstream does not re-fire. Requires a prior full run (errors otherwise). Targeting a node inside a sub-workflow is not supported. A loop node runs one iteration.",
 )
+@click.option(
+    "--auto-approve",
+    "auto_approve",
+    multiple=True,
+    metavar="NODE_ID",
+    help=(
+        "Pre-approve ONE approval gate by step name (repeatable; no blanket form). "
+        "For AI agents: ask your human before passing this — the gate exists so a "
+        "person reviews the action. Escalations cannot be pre-approved."
+    ),
+)
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def run(
     ctx: click.Context,
@@ -1020,6 +1148,7 @@ def run(
     dry_run: bool,
     cache: bool,
     only_node: str | None,
+    auto_approve: tuple[str, ...],
     workflow: tuple[str, ...],
 ) -> None:
     """Execute a workflow file or saved workflow."""
@@ -1047,6 +1176,7 @@ def run(
         ctx.obj["report"] = report_dir or ("auto" if report_enabled else None)
         ctx.obj["cache"] = cache
         ctx.obj["only_node"] = only_node
+        ctx.obj["auto_approve"] = auto_approve
 
         print_flag = ctx.obj.get("print_flag", False)
         output_format = ctx.obj.get("output_format", "text")

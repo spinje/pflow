@@ -49,6 +49,28 @@ Any approval surface = **read the gate → render `GateRequest` → deliver the 
 Earlier sizing estimate: ~50 lines of bridge. If it grows past "small," something is wrong — the
 engine and payload were designed so surfaces are cheap (the payload is the seam).
 
+## The agent-operated run (added 2026-07-02 — from the 125 planning session)
+
+The scenario this bridge really serves: the run's *operator* is an AI agent (Claude Code via
+shell, or the MCP server), but the gate's *approver* must be the human behind it. Named
+honestly during 125 planning:
+
+- **The gate is not a security boundary against the operating agent.** An agent with shell
+  access under the user's account can pass `--auto-approve=<node-id>`, run `pflow resume
+  <token> --approve`, or simply edit the workflow to delete the gate. No local design
+  prevents this — true prevention needs a secret outside the agent's reach, which doesn't
+  exist within one account.
+- What the design provides instead is **deliberate + visible + auditable** bypass: the flag
+  names the exact gate (and appears verbatim in the command the agent's own harness asks the
+  human to approve, one layer up); every gate resolution event carries `resolved_via:
+  prompt | flag | ui` (125 ships `prompt|flag`; this task adds `ui`), so "which gates were
+  self-approved by an agent" is a trivial trace audit; and 125's non-TTY gate error
+  explicitly instructs agents to ask their human before using `--auto-approve`.
+- This task's UI button is the **convenient human path** for agent-operated runs: the agent
+  relays the link, the human clicks approve in a surface the agent isn't driving. That's the
+  practical answer to "how does the human stay in the loop when an agent runs the workflow"
+  — convenience + audit, not enforcement.
+
 ## Explicitly out of scope
 
 - **Slack / email / webhook / any external surface.** Deliberately NOT tasked (Core Directive:

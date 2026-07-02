@@ -14,6 +14,7 @@ core/workflow/
 ├── validator.py             # Unified 10-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
 ├── loop_validation.py        # check_loop_polarity: shared while/until exactly-one-of rule (compiler + validate path)
+├── gate_validation.py        # Task 125 — check_approval_allowed: shared approval-not-on-batch rule (compiler + validate path)
 ├── graph/                   # Renderer-agnostic workflow graph model + renderers
 │   ├── __init__.py          # Re-exports build_graph, render_mermaid, model dataclasses
 │   ├── model.py             # GraphModel, NodeId, Node/Edge/Container dataclasses
@@ -24,7 +25,7 @@ core/workflow/
 │       └── react_flow.py    # GraphModel -> React Flow JSON contract (Task 168)
 ├── mermaid/                 # Compatibility shim for generate_mermaid
 │   └── __init__.py          # Delegates to graph.build_graph + graph.render_mermaid
-├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
+├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED/DENIED
 ├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
 ├── context.py               # Build workflow context for discovery (build_workflows_context)
 ├── discovery.py             # LLM-powered workflow discovery (find_workflow → WorkflowMatch)
@@ -76,7 +77,7 @@ No cycles. All heavy imports are lazy (inside functions).
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
 | `graph/` | `build_graph`, `render_mermaid`, `render_react_flow`, `GraphModel`, `NodeId`, `EdgeKind` |
 | `mermaid/` | `generate_mermaid` |
-| `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
+| `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED, DENIED) |
 | `skill_service.py` | `SkillInfo`, `enrich_workflow`, `create_skill_symlink`, `find_pflow_skills`, `remove_skill`, `re_enrich_if_skill` |
 
 ## External Consumers
@@ -167,7 +168,7 @@ Publishes workflows as AI agent skills for Claude Code, Cursor, Codex, Copilot. 
 
 ### status.py
 
-Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g., unresolved templates in permissive mode), `FAILED` (errors).
+Four states: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g., unresolved templates in permissive mode), `FAILED` (errors), `DENIED` (a human denied an approval gate — Task 125; exit 3, never error-routed).
 
 ## Known Issues
 

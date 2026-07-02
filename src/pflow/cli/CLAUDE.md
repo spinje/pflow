@@ -139,7 +139,7 @@ Error output is unified: `output_error()` in `error_output.py` handles JSON/text
 
 ### Exit Codes
 
-Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runtime warnings. Failed workflows exit `1`; interrupted workflows exit `130`. Warning/degraded status remains visible through stderr, JSON, trace, and reports.
+Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runtime warnings. Failed workflows exit `1`; interrupted workflows exit `130`; a run DENIED at an approval gate exits `3` (Task 125 — a human verdict, not a failure; click owns `2` for usage errors). The denied branch in `_display_execution_result` renders its own output (text prose on stderr, or a JSON document with the `gate` payload on stdout) and never routes through `output_error`/`_emit_failure_tag`. Warning/degraded status remains visible through stderr, JSON, trace, and reports.
 
 ## Command Flags
 
@@ -157,6 +157,7 @@ Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runt
 --no-trace             # Disable automatic workflow trace saving
 --cache/--no-cache     # Enable/disable memoization cache reads (default: --cache). Writes always happen.
 --only <node>          # Re-run just this node against a snapshot of the most recent full run (upstream restored, not re-executed — no re-fire). Needs a prior full run; dotted/nested targets rejected (issue #443).
+--auto-approve <id>    # Pre-approve ONE approval gate by step name (repeatable, per-node only — no blanket form by design, Task 125). Escalations never pre-approve. Flat namespace across the workflow tree: a nested gate matches by name. An id naming no TOP-LEVEL step → informational note (closest match + gated list), never an error — it may be a legitimate nested gate.
 --validate-only        # Validate without executing (exit 0/1), auto-normalizes IR
 --dry-run              # Build execution plan without side effects
 --report               # Generate execution report
@@ -259,7 +260,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 | Source file | Primary test file(s) |
 |------------|---------------------|
 | `main.py` | `test_cli.py`, `test_main.py` |
-| `commands/run.py` | `test_workflow_resolution.py`, `test_dual_mode_stdin.py`, `test_parse_error_handling.py`, `test_workflow_output_handling.py`, `test_validate_only.py`, `test_validation_before_execution.py`, `test_dry_run.py` |
+| `commands/run.py` | `test_workflow_resolution.py`, `test_dual_mode_stdin.py`, `test_parse_error_handling.py`, `test_workflow_output_handling.py`, `test_validate_only.py`, `test_validation_before_execution.py`, `test_dry_run.py`, `test_approval_gate_cli.py` |
 | `error_output.py` | `test_unified_error_output.py`, `test_enhanced_error_output.py` |
 | `workflow_output.py` | `test_shell_stderr_warnings.py`, `test_direct_execution_helpers.py`, `test_workflow_output_source_simple.py` |
 | `workflow_resolution.py` | `test_workflow_resolution.py` |

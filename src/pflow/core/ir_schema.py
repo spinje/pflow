@@ -282,6 +282,16 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                             "as cache reads."
                         ),
                     },
+                    "approval": {
+                        "type": "string",
+                        "enum": ["required"],
+                        "description": (
+                            "Human approval gate (Task 125). `approval: required` pauses the run before "
+                            "this step executes, shows the resolved params, and waits for a human "
+                            "approve/deny. Not supported on batch steps — gate a step before or after "
+                            "the batch instead."
+                        ),
+                    },
                     "_source_line": {
                         "type": "integer",
                         "description": (
@@ -603,27 +613,34 @@ def _get_suggestion(error: JsonSchemaValidationError) -> tuple[str, dict[str, An
     if "outputs" in path_str:
         return _get_output_suggestion(error, path_str), {}
 
-    # GENERAL ERROR HANDLING (existing cases)
+    # `approval:` (Task 125) — the likeliest agent mistake is `- approval: true`
+    # (YAML-coerced to bool); the generic type-arm would suggest the string "true",
+    # which then fails the enum. One arm covers both the type and enum shapes.
+    if path_list and path_list[-1] == "approval":
+        return "The only supported value is `approval: required`", {}
+
+    return _suggest_for_general_error(error, path_str), {}
+
+
+def _suggest_for_general_error(error: JsonSchemaValidationError, path_str: str) -> str:
+    """Validator-keyword fallback suggestions (no field-specific knowledge)."""
     if error.validator == "required":
         # Extract field name from message like "'field_name' is a required property"
         match = error.message.split("'")
         if len(match) >= 2:
-            field_name = match[1]
-            return f"Add the required field '{field_name}'", {}
-        return "Add the missing required field", {}
-    elif error.validator == "type":
+            return f"Add the required field '{match[1]}'"
+        return "Add the missing required field"
+    if error.validator == "type":
         expected = error.validator_value
         actual = type(error.instance).__name__
-        return f"Change type from '{actual}' to '{expected}'", {}
-    elif error.validator == "pattern":
-        if "ir_version" in path_str:
-            return "Use semantic versioning format, e.g., '0.1.0'", {}
-    elif error.validator == "additionalProperties":
-        return "Remove unknown properties or check field names", {}
-    elif error.validator == "minItems":
-        return "Add at least one node to the workflow", {}
-
-    return "", {}
+        return f"Change type from '{actual}' to '{expected}'"
+    if error.validator == "pattern" and "ir_version" in path_str:
+        return "Use semantic versioning format, e.g., '0.1.0'"
+    if error.validator == "additionalProperties":
+        return "Remove unknown properties or check field names"
+    if error.validator == "minItems":
+        return "Add at least one node to the workflow"
+    return ""
 
 
 def validate_ir(data: Union[dict[str, Any], str]) -> None:

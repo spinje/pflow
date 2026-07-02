@@ -229,3 +229,56 @@ def test_empty_input_batch_emits_non_degrading_info_advisory():
         if d.severity == Severity.INFO and d.node_id == "consume" and "0 items" in d.message
     ]
     assert len(advisories) == 1, [(d.severity, d.message) for d in result.diagnostics]
+
+
+# ---------------------------------------------------------------------------
+# Task 125: MCP is the production non-TTY gate surface (split-session braindump).
+# Parity contract: a gated workflow through ExecutionService fails loudly with the
+# SAME payload-carrying, ask-your-human text the CLI shows, and `auto_approve`
+# pre-approves per-node exactly like `--auto-approve` — including when the engine
+# runs off the main thread (asyncio.to_thread, the real MCP tool bridge), which
+# pins the no-thread-guard design (a main-thread check would break MCP here).
+# ---------------------------------------------------------------------------
+
+
+def _gated_ir() -> dict[str, Any]:
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "make-value",
+                "type": "shell",
+                "purpose": "Produce a value first.",
+                "params": {"command": "echo hello"},
+            },
+            {
+                "id": "guarded-step",
+                "type": "shell",
+                "purpose": "Side-effecting step behind an approval gate.",
+                "params": {"command": "echo posting-${make-value.stdout}"},
+                "approval": "required",
+            },
+        ],
+        "edges": [{"from": "make-value", "to": "guarded-step"}],
+        "start_node": "make-value",
+    }
+
+
+def test_mcp_gated_workflow_fails_loudly_with_remediation_ladder():
+    from pflow.mcp_server.services.execution_service import ExecutionService
+
+    with pytest.raises(RuntimeError) as exc_info:
+        ExecutionService.execute_workflow(_gated_ir(), {})
+    text = str(exc_info.value)
+    assert "requires a human approval decision" in text
+    assert "ask your human" in text
+    assert 'auto_approve=["guarded-step"]' in text
+
+
+def test_mcp_auto_approve_pre_approves_off_main_thread():
+    import asyncio
+
+    from pflow.mcp_server.services.execution_service import ExecutionService
+
+    text = asyncio.run(asyncio.to_thread(ExecutionService.execute_workflow, _gated_ir(), {}, ["guarded-step"]))
+    assert "posting-hello" in text

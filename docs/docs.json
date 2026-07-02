@@ -123,6 +123,7 @@
           "how-it-works/template-variables",
           "how-it-works/loops",
           "how-it-works/batch-processing",
+          "how-it-works/approval-gates",
           "how-it-works/prompt-caching"
         ]
       },

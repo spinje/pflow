@@ -20,7 +20,14 @@ from types import MappingProxyType
 from typing import Any, Literal, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.exceptions import CompilationError, LoopCarryError, LoopConditionError
+from pflow.core.exceptions import (
+    CompilationError,
+    GateDenied,
+    GateNotInteractiveError,
+    GateResolverError,
+    LoopCarryError,
+    LoopConditionError,
+)
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
@@ -40,6 +47,7 @@ from pflow.runtime.template_resolver import TemplateResolver
 
 from .api_warning_detector import detect_api_warning
 from .batch_executor import _collect_batch_trace, execute_batch
+from .gate import detect_escalation, run_approval_gate, run_escalation_gate, scan_batch_escalations
 from .instrumentation import (
     apply_memo_hit,
     cache_result,
@@ -1096,6 +1104,22 @@ class WorkflowEngine:
                 if cached_hash != plan.config_hash:
                     invalidate_cache(config.node_id, shared)
 
+            # 7.5 Approval gate (Task 125): pause BEFORE the start callback and the
+            # node.start marker, so a denied node never appears in the trace and no
+            # progress partial line is open at prompt time. Cached nodes never reach
+            # here (early-return above) — a cache hit performs no action, so there
+            # is nothing to approve. Preview = resolved params; static params for
+            # no-template nodes (plan.resolved_params is None then). Raises
+            # GateDenied / GateNotInteractiveError — both exempted in the except
+            # arm below (a gate verdict is not a node failure).
+            if config.approval:
+                run_approval_gate(
+                    config,
+                    resolved_params if resolved_params is not None else node.params,
+                    shared,
+                    self.trace,
+                )
+
             # 8. Progress callback (node_start)
             call_start_callback(config.node_id, shared)
 
@@ -1117,6 +1141,11 @@ class WorkflowEngine:
                 # detect_api_warning, metrics) raised — the except handler's drain
                 # would then pop an already-empty buffer. Symmetry with the except
                 # path is the whole point of Bundle 8's shared-store recovery channel.
+                # Task 125: a direct batch host has no per-item gate seam — an
+                # UNDECIDED escalation marker in an item's result would be silently
+                # ignored. Fail loudly instead (decided markers, answered inside a
+                # sequential sub-workflow item, are skipped).
+                scan_batch_escalations(shared, config.node_id)
             else:
                 # Set resolved params on node and execute
                 if resolved_params is not None:
@@ -1168,15 +1197,27 @@ class WorkflowEngine:
                     frame=host_frame or start_frame,
                 )
 
+            # 10.5 Escalation detection (Task 125). Non-batch, clean-success only:
+            # an error action's data is archived by step 17.5 (pausing after that
+            # would break the shared-XOR-__failures__ invariant), and the
+            # api-warning early-return above already ended warning verdicts. The
+            # PAUSE happens at step 17.7 (after the node's own completion trace
+            # and callback); detection must run here because an escalating result
+            # is an incomplete work product and must not enter either cache below.
+            escalation = None
+            if not config.batch_config and (action is None or str(action) in _CLEAN_SUCCESS_ACTIONS):
+                escalation = detect_escalation(shared, config.node_id)
+
             # 11. Cache result (in-process only — not gated by cache_enabled)
-            cache_result(config.node_id, config_hash, action, shared)
+            if escalation is None:
+                cache_result(config.node_id, config_hash, action, shared)
 
             # 12. Duration (computed here so the memo cache write can record it
             # for --dry-run historical estimates — see plan_formatter.py).
             duration_ms = (time.perf_counter() - start_time) * 1000
 
             # 13. Memo cache write (skip for nodes with cache: false)
-            if config.cache_enabled:
+            if config.cache_enabled and escalation is None:
                 write_memo_cache(
                     config.node_id,
                     shared,
@@ -1271,7 +1312,64 @@ class WorkflowEngine:
                     warning=recovery_warning,
                 )
 
+            # 17.7 Escalation pause (Task 125). After the node's own completion
+            # trace/callback (its success record stands untouched) and before
+            # returning to the walk, whose loop-re-entry check must see the
+            # human's decision in the store. Mutually exclusive with step 17.5
+            # (detection is clean-success-only).
+            if escalation is not None:
+                run_escalation_gate(config, escalation, shared, self.trace)
+
             return action
+
+        except (GateDenied, GateNotInteractiveError, GateResolverError) as gate_exc:
+            # Task 125: a gate verdict is control flow, NOT a node failure — no
+            # error trace event, no error callback, no mark_node_failed, no
+            # _pflow_node_id. (A denied node never ran; a non-interactive
+            # escalation's node already has its honest success record.) The
+            # trailer channel: _determine_trace_status derives from node events
+            # only, so without this flag a denied run's own trace would read
+            # "success". Set here (every engine level passes through, root last)
+            # so the flag lands on the run-scoped collector even when the gate
+            # fired under a buffered child collector.
+            if self.trace is not None:
+                self.trace.gate_outcome = "denied" if isinstance(gate_exc, GateDenied) else "failed"
+
+                # Code-review fix: a sub-workflow HOST's own completion event is
+                # normally recorded at step 16 below, reusing the seq
+                # WorkflowExecutor.exec() reserved via trace.descend(). Re-raising
+                # here means node._run() never returns, so step 16 never runs —
+                # the reserved seq gets no event. If a SIBLING step inside that
+                # sub-workflow already recorded before the gate fired, its event's
+                # parent_id now points at nothing: an in-memory tree() rebuild
+                # (finalize(), or any caller of collect_llm_calls()) raises
+                # "orphan event" — silently losing the run's own trace file (or
+                # crashing a caller that hits tree() directly). Recording the
+                # host's event here closes the reservation. success=True: the
+                # WorkflowExecutor node itself didn't error — the run's
+                # denied/failed verdict is carried independently by gate_outcome
+                # above, not by this per-node flag. Fires once per nesting level
+                # (each ancestor's own _execute_node catches this exception and
+                # checks its own node's _host_frame as it re-raises in turn).
+                # Batch hosts stay None here: batch-item children run under
+                # buffered collectors (descend() is never called on that path).
+                host_frame = getattr(node, "_host_frame", None)
+                if host_frame is not None:
+                    record_trace(
+                        config.node_id,
+                        config.node_type_name,
+                        shared,
+                        start_time,
+                        shared_keys_before,
+                        last_resolutions,
+                        batch_trace_items,
+                        child_trace_events,
+                        node.params,
+                        self.trace,
+                        success=True,
+                        frame=host_frame,
+                    )
+            raise
 
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000

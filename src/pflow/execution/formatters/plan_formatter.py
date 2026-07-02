@@ -121,6 +121,8 @@ def format_plan_text(plan: Plan) -> str:
             "totals above exclude their cost/duration"
         )
 
+    _append_gate_footer(lines, plan.entries)
+
     if plan.diagnostics:
         lines.append("")
         for diagnostic in plan.diagnostics:
@@ -218,17 +220,18 @@ def _render_entry_line(entry: PlanEntry, indent: str) -> str:
         return f"{indent}{click.style('↻', fg='blue', dim=True)} {entry.node_id}{age}"
 
     tag = f"  [{_tag_from_entry(entry)}]"
+    approval_tag = ", approval" if entry.approval else ""
     if entry.status == "sub_workflow":
         ref = entry.sub_plan.workflow if entry.sub_plan else "<unknown>"
         count = entry.sub_plan.summary.total if entry.sub_plan else 0
         suffix = "s" if count != 1 else ""
-        return f"{indent}▸ {entry.node_id}  [sub-workflow '{ref}' ({count} node{suffix})]"
+        return f"{indent}▸ {entry.node_id}  [sub-workflow '{ref}' ({count} node{suffix}){approval_tag}]"
 
     if entry.status == "opaque":
         reason = (
             "batch downstream, item count unreliable" if entry.cause == "downstream_batch" else "dynamic, cannot plan"
         )
-        return f"{indent}▸ {entry.node_id}  [sub-workflow: {reason}]"
+        return f"{indent}▸ {entry.node_id}  [sub-workflow: {reason}{approval_tag}]"
 
     if entry.status == "routing_error":
         return f"{indent}▸ {entry.node_id}{tag}  [routing error]"
@@ -296,6 +299,41 @@ def _format_stats_annotation(entry: PlanEntry) -> str | None:
     return body
 
 
+def _append_gate_footer(lines: list[str], entries: list[PlanEntry]) -> None:
+    """Task 125: one footer line naming every gated step + its pre-approve flag.
+
+    Makes the agent-operator playbook self-discoverable — the plan is where an
+    agent learns a run will pause, BEFORE side effects fire. No-op when nothing
+    is gated.
+    """
+    gated = _collect_gated_node_ids(entries)
+    if not gated:
+        return
+    flags = " ".join(f"--auto-approve={node_id}" for node_id in gated)
+    plural = "s" if len(gated) != 1 else ""
+    lines.append(
+        f"⏸ {len(gated)} step{plural} pause{'' if plural else 's'} for approval at run time "
+        f"({', '.join(gated)}); non-interactive runs need {flags}"
+    )
+
+
+def _collect_gated_node_ids(entries: list[PlanEntry]) -> list[str]:
+    """All gated node ids in plan order, including inside nested sub-plans.
+
+    First-seen dedup: a child workflow planned per batch item (or reached via
+    several paths) must not repeat its gate in the footer.
+    """
+    seen: list[str] = []
+    for entry in entries:
+        if entry.approval and entry.node_id not in seen:
+            seen.append(entry.node_id)
+        if entry.sub_plan is not None:
+            for child_id in _collect_gated_node_ids(entry.sub_plan.entries):
+                if child_id not in seen:
+                    seen.append(child_id)
+    return seen
+
+
 def _is_llm_entry(entry: PlanEntry) -> bool:
     """Identify LLM-family entries for cost rendering."""
     return entry.node_type in ("LLMNode", "ClaudeCodeNode")
@@ -312,6 +350,11 @@ def _tag_from_entry(entry: PlanEntry) -> str:
     tag = node_type_tag(entry.node_type)
     if entry.cause == "cache_disabled" and entry.node_type == "LLMNode":
         tag = f"{tag}, cache: false"
+    if entry.approval:
+        # Task 125: dry-run must show gated nodes as would-pause — a plan that
+        # renders a gated node as plain execute is a parity lie (the cached
+        # path correctly skips this: a cache hit never gates).
+        tag = f"{tag}, approval"
     return tag
 
 
@@ -371,6 +414,10 @@ def _entry_to_dict(entry: PlanEntry) -> dict[str, Any]:
         result["sub_plan"] = format_plan_json(entry.sub_plan)
     if entry.diagnostic is not None:
         result["diagnostic"] = entry.diagnostic.to_dict()
+    if entry.approval:
+        # Task 125: JSON dry-run is the gate-discovery surface for agent
+        # operators (discover gates → ask your human → --auto-approve).
+        result["approval"] = True
     return result
 
 

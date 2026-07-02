@@ -140,6 +140,16 @@ class OutputController:
         # Rules 2 & 3: Both stdin AND stdout must be TTY for interactive
         return self.stdin_tty and self.stdout_tty
 
+    def prepare_for_prompt(self) -> None:
+        """Public seam for interactive prompts (Task 125 gate prompt).
+
+        Terminates any open ``node_id...`` partial line (which also carries the
+        batch ``\\r`` counter rewrites — they ride the same physical line) so a
+        prompt renders on a fresh line instead of concatenating onto progress
+        output. Safe to call when no line is open.
+        """
+        self._close_partial_line()
+
     def _close_partial_line(self) -> None:
         """Terminate any open partial line so the next write starts fresh.
 

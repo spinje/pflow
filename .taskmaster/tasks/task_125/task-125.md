@@ -9,7 +9,10 @@ Add pause/resume capability to pflow workflows so execution halts at designated 
 > **Refreshed 2026-07-02 against main (post Tasks 172/173/175, #529/#531/#539/#540)** — see task_164's lineage section for the attempt-chain design.
 
 ## Status
-not started
+done
+
+## Completed
+2026-07-02
 
 ## Priority
 

@@ -752,6 +752,14 @@ def _execute_parallel(
         item_shared[batch_config.item_alias] = item
         item_shared["__index__"] = idx
 
+        # Task 125: a parallel worker cannot host an interactive gate prompt
+        # (its progress is buffered below; stdin is not shareable across
+        # threads). The flag reaches descendant sub-workflow engines via
+        # _PROPAGATED_KEYS. The resolver still auto-approves from its flag set —
+        # only prompting is off; unresolvable gates raise loudly
+        # (GateNotInteractiveError with parallel_batch=True), never hang.
+        item_shared["__gate_prompt_allowed__"] = False
+
         # Replace the inherited progress callback with a per-worker buffer.
         # The sub-workflow's child engine will fire its events into this
         # buffer instead of touching the shared OutputController. The main

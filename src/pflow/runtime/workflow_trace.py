@@ -638,6 +638,53 @@ class WorkflowTraceCollector:
         # as ``node_params``); redaction happens on read. ``None`` until stamped,
         # ``{}`` for a no-input workflow.
         self.inputs: dict[str, Any] | None = None
+        # Task 125: terminal gate outcome for the trailer. _determine_trace_status
+        # derives from node events only, and a gated stop leaves NO failed node
+        # event (a denied node never ran; a non-interactive escalation's node
+        # succeeded) — without this channel a gate-stopped run's own trace would
+        # read "success". "denied" → trailer "denied"; "failed" → trailer
+        # "failed". Set by record_gate AND by the engine's gate-exception
+        # re-raise arm (which covers gates fired under buffered child collectors).
+        self.gate_outcome: str | None = None
+
+    def record_gate(
+        self,
+        node_id: str,
+        *,
+        phase: str,
+        gate_kind: str,
+        request: Any = None,
+        resolution: str | None = None,
+        resolved_via: str | None = None,
+        decision: dict[str, Any] | None = None,
+    ) -> None:
+        """Task 125: stream one ``gate`` line (``phase="pause"`` carrying the
+        GateRequest payload, or ``phase="resolution"`` carrying the verdict).
+
+        DISK-ONLY, exactly like ``node.start``: never appended to ``self.events``
+        — a gate line in the event stream would become the node's "final event"
+        in ``final_events_by_node`` and (having no ``node_output``) make
+        ``seed_snapshot_into_shared`` silently skip seeding that node for
+        ``--only``. The reconstruct reader ignores the kind
+        (``trace_io._partition_trace_lines``); Task 171 reads gate lines with
+        its own explicit reader.
+        """
+        if resolution == "denied":
+            self.gate_outcome = "denied"
+        elif resolution in ("non_interactive", "error"):
+            self.gate_outcome = "failed"
+        self._assert_owner_thread()
+        self._open_stream()
+        line: dict[str, Any] = {"kind": "gate", "node_id": node_id, "phase": phase, "gate_kind": gate_kind}
+        if request is not None:
+            line["request"] = request.to_dict()
+        if resolution is not None:
+            line["resolution"] = resolution
+        if resolved_via is not None:
+            line["resolved_via"] = resolved_via
+        if decision is not None:
+            line["decision"] = decision
+        self._flush_line(line)
 
     def record_node_execution(
         self,
@@ -1335,6 +1382,12 @@ class WorkflowTraceCollector:
         Returns:
             Status string: "success", "degraded", or "failed"
         """
+        # Task 125: a gate-stopped run leaves no failed node event — the gate
+        # outcome channel is the only honest signal (see gate_outcome in __init__).
+        if self.gate_outcome == "denied":
+            return "denied"
+        if self.gate_outcome == "failed":
+            return "failed"
         if final_events is None:
             final_events = final_events_by_node(self._top_level_events())
         execution_warnings = self.execution_warnings or []

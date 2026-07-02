@@ -4,7 +4,10 @@ Renderer-agnostic workflow structure for Task 155. This package is the static
 "see" substrate: it carries nodes, edges, containers, loop/batch metadata,
 authored params, and source pointers. It must not carry runtime status, outputs,
 timings, or render syntax (Mermaid / React Flow / ELK layout) — that purity is
-mechanized by `tests/test_core/test_graph_model_purity.py`.
+mechanized by `tests/test_core/test_graph_model_purity.py`. The `approval:` gate
+field (Task 125) is deliberately NOT surfaced on GraphNode — the visual gate
+marker is deferred to the Task 155/176 web-approval work; its absence is a
+decision, not a miss.
 
 ## File Map
 

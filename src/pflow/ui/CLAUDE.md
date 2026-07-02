@@ -102,7 +102,7 @@ fixing save).
 only_node, trace_file, git_root}]` — runs scanned from `~/.pflow/debug`, newest-first (Task 173 D6 run
 navigation). Bare = every run; `?workflow=X` = that workflow's history (matched on the recorded
 `meta.workflow_path`). RAW facts (the UI composes the badge): `complete` = has a `run.complete`
-trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`) or `null` while
+trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`/`denied` — the last via Task 125's gate_outcome channel) or `null` while
 not complete; `live` = not complete AND the writer still holds the trace's advisory lock (EXACT
 `flock` liveness via `is_trace_locked` — the old `_STALE_RUN_S` mtime heuristic is deleted; a
 no-`fcntl` FS falls back to "incomplete = live"); `only_node` LABELS `--only` runs (they are kept

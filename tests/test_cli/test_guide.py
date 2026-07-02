@@ -551,6 +551,15 @@ def test_detect_batch() -> None:
     assert "llm" in topics
 
 
+def test_detect_approval_gate() -> None:
+    # Task 125: `approval: required` (top-level node field) surfaces the approval guide.
+    ir = {
+        "nodes": [{"id": "g", "type": "shell", "params": {}, "approval": "required"}],
+        "edges": [],
+    }
+    assert "approval" in detect_topics_from_ir(ir)
+
+
 def test_detect_error_handling_via_error_edge() -> None:
     # An `on-error:` edge routes to the error-handling topic, not branching.
     ir = {

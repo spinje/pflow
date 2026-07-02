@@ -147,11 +147,14 @@ def _partition_trace_lines(
             meta = line
         elif kind == "event":
             event_lines.append(line)
-        elif kind == "node.start":
-            # Task 173: a LIVE-ONLY in-flight marker the overlay tailer consumes (a node has BEGUN but
-            # not completed). It carries no completion data and is deliberately DROPPED from the
-            # reconstructed trace — the matching `event` line (which reuses its seq) is the source of
-            # truth. Known-but-ignored here, NOT unknown-kind corruption: skip without bucketing.
+        elif kind in ("node.start", "gate"):
+            # DISK-ONLY sideband kinds, known-but-ignored (NOT unknown-kind corruption):
+            # - `node.start` (Task 173): a LIVE-ONLY in-flight marker the overlay tailer consumes.
+            #   It carries no completion data; the matching `event` line (which reuses its seq) is
+            #   the source of truth.
+            # - `gate` (Task 125): a human-decision pause/resolution record. Bucketing it into
+            #   event_lines would make a gate resolution the node's "final event" and break --only
+            #   snapshot seeding; Task 171's resume reader consumes gate lines explicitly.
             continue
         elif kind == "run.complete":
             run_complete = line

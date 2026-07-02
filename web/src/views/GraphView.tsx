@@ -909,7 +909,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
             </div>
           )}
           {runBanner && (
-            // Task 173: the run outcome banner (final_status: success | degraded | failed). The live
+            // Task 173: the run outcome banner (final_status: success | degraded | failed | denied). The live
             // per-node state shows on the nodes themselves; this is the run-level summary.
             <div className={`run-banner run-${runBanner.final_status ?? "running"}`} role="status">
               Run {runBanner.final_status ?? "running"}

@@ -26,6 +26,17 @@ async def workflow_execute(
         dict[str, Any] | None,
         Field(description="Input parameters as key-value pairs matching the workflow's declared inputs"),
     ] = None,
+    auto_approve: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Step names whose `approval: required` gates are pre-approved (one per gate; "
+                "no blanket form). MCP runs cannot prompt a human, so a gated step NOT listed "
+                "here fails with instructions. ASK YOUR HUMAN before passing this — the gate "
+                "exists so a person reviews the action first."
+            )
+        ),
+    ] = None,
 ) -> str:
     """Execute a workflow with natural language output.
 
@@ -41,6 +52,9 @@ async def workflow_execute(
       the workflow via the `pflow` CLI to get a saved trace for `pflow report` /
       `analyze-cache`).
     - Returns explicit errors with suggestions for fixing
+    - Steps declaring `approval: required` pause for a human. MCP runs cannot
+      prompt, so such a step fails with instructions unless its name is in
+      `auto_approve` — ask your human before pre-approving.
 
     Before executing:
     1. Call workflow_describe to understand required parameters
@@ -81,7 +95,7 @@ async def workflow_execute(
 
     def _sync_execute() -> str:
         """Synchronous execution operation."""
-        return ExecutionService.execute_workflow(workflow, parameters)
+        return ExecutionService.execute_workflow(workflow, parameters, auto_approve)
 
     # Run in thread pool to avoid blocking
     result = await asyncio.to_thread(_sync_execute)

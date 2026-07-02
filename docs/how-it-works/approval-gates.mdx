@@ -1,0 +1,56 @@
+---
+title: "Approval Gates"
+description: "Pause a workflow for a human decision with approval: required"
+---
+
+Add `approval: required` to any step and the run pauses before that step, shows what is about to happen, and waits for a yes/no. This is how you trust a workflow with real-world actions — sending messages, creating issues, deploying — without giving up the final say.
+
+```md
+### notify-slack
+
+Post the release summary to Slack.
+
+- type: mcp-composio-slack-SLACK_SEND_MESSAGE
+- channel: ${slack_channel}
+- markdown_text: ${create-summary.result}
+- approval: required
+```
+
+At a terminal:
+
+```text
+⏸  Approval required: notify-slack (mcp-composio-slack-SLACK_SEND_MESSAGE)
+
+   channel:        #releases
+   markdown_text:  v0.9.0 released with 3 features: …
+
+   Run this step? [y/N]:
+```
+
+The preview shows **resolved values** — the actual message text, not `${...}` templates. You approve what will happen, not the abstract definition.
+
+## Denying
+
+Answering no stops the run cleanly **before the step runs**: nothing fired, nothing failed. The exit code is `3` (distinct from `1` for failures — a human verdict is not an error), and the trace records `final_status: "denied"`.
+
+## Pre-approving gates
+
+For CI or agent-operated runs, pre-approve specific gates by step name:
+
+```bash
+pflow my-workflow --auto-approve=notify-slack
+```
+
+The flag is per-step and repeatable — there is deliberately no approve-everything form. Each pre-approval is recorded in the trace (`resolved_via: flag`), so you can always audit which gates a human answered live versus approved in advance.
+
+## Non-interactive runs
+
+A run with no terminal (piped, launched from the web UI, or via the MCP server) cannot prompt. A gate reached without pre-approval fails immediately and loudly — never hangs — with instructions that tell an operating AI agent to ask its human before continuing. A warning also fires at run start when the workflow has unapproved top-level gates.
+
+Use `--dry-run` to discover gates before running: gated steps are tagged `[…, approval]` and summarized in a `⏸` footer.
+
+## Escalations — the agent asks you
+
+The second gate kind is raised by an agent step at runtime instead of declared by you. When a `claude-code` step discovers a decision it should not make alone, it returns an `escalation` object (question, options, recommendation) in its structured output — the run pauses, you choose (pick an option or type an answer), and your decision is written back into the step's result for the workflow to act on, typically by re-running the agent with the decision via `loop:`.
+
+See `pflow guide approval` for the escalation contract, the re-fork recipe, and the full rules (batch steps can't be gated — gate around them; loop steps prompt every iteration; cached steps never prompt).
