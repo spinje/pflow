@@ -595,3 +595,84 @@ Evaluated claude[bot]'s review of 9fe66c96 (PR #554): no blockers, 1 Warning,
   naturally excludes it — no code change existed); integration point corrected
   from `sanitize_parameters` to `is_sensitive_parameter`; engine handler tuple
   and Read First list updated for GateResolverError/masked_preview.
+
+## 2026-07-02 — Session 5: adversarial end-to-end CLI verification (no code changes)
+
+Owner asked for a break-it verification pass driving the REAL `pflow` CLI with
+hand-written `.pflow.md` workflows — treating the test suite as context, not
+evidence (an LLM's own tests can be happy-path / mock-heavy). 17 throwaway
+workflows + a **PTY harness** (`pty.fork`) to exercise live prompts that unit
+tests structurally cannot reach (stdin+stderr both real TTYs). **No real defects
+found; no code changed.** Scratchpad deleted afterward.
+
+### What was driven through the real CLI (all as documented)
+
+- **Validation/static**: batch-host `approval:` rejected at `--validate-only`,
+  `run`, AND `--dry-run` (three paths); `approval: banana` and `approval: true`
+  (YAML bool trap) both give the `nodes[N].approval` schema error + "only
+  supported value is `required`" suggestion; `--dry-run` text (`[shell,
+  approval]` tag + `⏸` footer) and JSON (`"approval": true`, sparse) parity.
+- **Approval, non-interactive**: upstream runs, then loud fail exit 1, marker
+  file never written, full ask-your-human ladder; run-start warning fires;
+  trace trailer `failed` with `nodes_failed: 0`; gate pause line carries the
+  RESOLVED command (not `${...}`); `pflow report` renders the trace.
+- **Approval, real TTY (PTY)**: approve (`y`) → node runs, exit 0, `resolution
+  approved via prompt`, trailer `success`. Deny (`n`) → **exit 3**, clean amber
+  "stopped cleanly" line, marker not written, `resolution denied via prompt`,
+  trailer `denied`, node never traced. `--auto-approve` → `via flag`.
+- **Sub-workflow denial NOT error-routed** (the load-bearing security claim): a
+  gated child under a parent with `on-error: recover` — denial (TTY exit 3) and
+  non-interactive (exit 1) both STOP the run; the `recover` handler never fired.
+- **Orphan-trace regression**: sibling step recorded before a gate in a child,
+  then deny → trace stays complete & readable (`run.complete` present,
+  `final_status: denied`, `pflow report` rebuilds — no silent trace loss).
+- **Escalation** (via `code` node, node-type-agnostic path): non-interactive →
+  step runs then escalation-specific loud fail; TTY → numbered options + `(rec)`,
+  choosing `2` maps to the option LABEL (`chosen: "per-env"`), flows downstream;
+  empty-dict marker → degrading warning, no pause; already-`decision`ed marker →
+  no re-pause (idempotent); escalation inside a batch → loud `PflowError` naming
+  the original item index.
+- **Loop gate** prompts every iteration (2 prompts, counter=2).
+- **Auto-approve scoping**: `--auto-approve=gate-one` runs only that gate,
+  gate-two still blocks; unknown id → neutral flat-namespace note + fuzzy
+  suggestion; both flags → exit 0.
+- **Denied `--output-format json`**: parseable doc (`status: "denied"` +
+  `errors[]`/`diagnostics[]` with the full resolved `gate` payload).
+- **Ctrl-C at prompt** → exit 130, marker not written.
+- **Sequential batch** deny → 1 prompt then whole-run stop, no re-prompt
+  (`retriable=False`); **parallel batch** worker can't prompt even at a TTY →
+  non-interactive fail with batch-specific remediation.
+- **No-regression**: a plain non-gated workflow behaves identically (no warnings,
+  no gate lines); mermaid renders a gated workflow without choking on `approval`.
+
+### Two false alarms chased down (both VALIDATE the design)
+
+1. "Auto-approve success run's trailer said `failed`" → a shell `ls`→`eza` alias
+   mis-sorted `-t`, selecting a stale trace. Reliable `stat`-based selection:
+   `approved`/`success`. No bug.
+2. "Denied JSON exited 1 not 3" → the probe used `2>/dev/null`, removing the
+   stderr TTY, which CORRECTLY makes the run non-interactive (exit 1). Isolated
+   deny+JSON+TTY = exit 3. This precisely confirms Decision 14 (a prompt needs
+   stdin AND stderr at a terminal; stdout piping alone doesn't disable gates —
+   separately confirmed by a stdout→file deny that still prompted).
+
+### Honest gaps (environment-bound, not avoidance)
+
+- Cached-node-never-gates not exercised at runtime (needs an `llm` cache hit; no
+  API here) — the safe direction (gate fails to fire, not fires wrongly), covered
+  by `test_cached_gated_node_not_stamped_and_engine_skips_gate` + confirmed
+  dry-run doesn't stamp cached entries.
+- MCP `workflow_execute auto_approve` and web-UI amber denial not driven (no MCP
+  server / browser) — covered by `test_cli_mcp_parity.py` + vitest/screenshot
+  pins; the shared `build_gate_resolver` both use WAS exercised via the CLI.
+- claude-code-specific `_schema_error` prose-swallow warning branch not hit
+  (used `code`-node escalation, same detect/pause/resolve machinery).
+
+### Suite (context, not evidence)
+
+Gate-specific: 138 passed (`test_approval_gate` / `test_gate_trace` /
+`test_gate_prompt` / `test_approval_gate_cli` / `test_approval_field` /
+`test_plan_drift`). Adjacent regression slice: 395 passed
+(`test_workflow_executor` / `test_batch_node` / `test_loop_control` /
+`test_plan_drift` / `test_plan_batch_sub_workflow` / `test_runner`). Consistent
+with observed behavior.
