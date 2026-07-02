@@ -324,6 +324,99 @@ class TestEscalation:
         assert shared2["__cache_hits__"] == ["agent"]
 
 
+class TestEscalationContinueSemantics:
+    """The escalation CONTINUE mechanism — the reason escalation exists.
+
+    Pins the two timing claims the whole design rests on: the human's decision is
+    written to the store BEFORE the walk's loop-re-entry check evaluates `while:`,
+    and BEFORE iteration 2's carry resolution reads it. If either ordering broke,
+    escalation would pause correctly but the answer would never reach the work.
+    """
+
+    def test_escalation_decision_feeds_loop_carry_reentry(self):
+        code = (
+            "answer: str\n"
+            "needs_human = answer == 'none'\n"
+            "result: dict = (\n"
+            "    {'escalation': {'question': 'which layout?'}, 'go': True}\n"
+            "    if needs_human\n"
+            "    else {'go': False, 'used': answer}\n"
+            ")\n"
+        )
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "agent",
+                    "type": "code",
+                    "params": {"code": code, "inputs": {"answer": "none"}},
+                    "loop": {
+                        "while": "${agent.result.go}",
+                        "max_iterations": 5,
+                        "carry": {"answer": "${agent.result.escalation.decision.chosen}"},
+                    },
+                }
+            ],
+            "edges": [],
+        }
+        resolver = RecordingResolver(chosen="split")
+        shared: dict[str, Any] = {"__gate_resolver__": resolver}
+        action = _run(ir, shared)
+        assert action == "default"
+        # Iteration 1 escalated exactly once; iteration 2 got the human's answer via
+        # carry and finished the work with it.
+        assert len(resolver.calls) == 1
+        assert shared["agent"]["result"] == {"go": False, "used": "split"}
+        assert shared["__execution__"]["node_visit_counts"]["agent"] == 2
+
+
+class TestRunnerBoundary:
+    """End-to-end through WorkflowRunner (tests/CLAUDE.md pitfall #20: engine-level
+    tests can pass while the real pipeline breaks).
+
+    Pins TODAY's production behavior for a gated run with no resolver installed
+    (which is every CLI/MCP run until Phase 3): the run fails as a result (never a
+    propagated exception — the CLI's trace finalize depends on a non-None result),
+    the payload-carrying gate diagnostic survives runner conversion intact, and it
+    is JSON-serializable end to end (the MCP/JSON formatters serialize it verbatim).
+    Phase 3 will CHANGE the denied half of this boundary — these assertions are the
+    contract its edits must consciously update, not silently break.
+    """
+
+    def test_noninteractive_gate_through_runner_keeps_payload_diagnostics(self):
+        import json as _json
+
+        from pflow.execution import WorkflowRunner
+        from pflow.execution.result import RunnerConfig
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "a", "type": "shell", "params": {"command": "echo hello"}},
+                {
+                    "id": "b",
+                    "type": "shell",
+                    "params": {"command": "echo from-${a.stdout}"},
+                    "approval": "required",
+                },
+            ],
+            "edges": [{"from": "a", "to": "b"}],
+        }
+        result = WorkflowRunner().run(ir, {}, config=RunnerConfig(trace_enabled=False))
+        assert result.success is False
+        gate_diags = [d for d in result.diagnostics if (d.context or {}).get("category") == "gate"]
+        assert gate_diags, f"gate diagnostic lost in runner conversion: {result.diagnostics}"
+        diag = gate_diags[0]
+        # The operating agent must see WHAT was about to happen — resolved, not raw.
+        assert diag.context["gate"]["preview"]["command"] == "echo from-hello"
+        assert any("ask your human" in s for s in (diag.suggestions or []))
+        _json.dumps(diag.to_dict())  # must survive the JSON/MCP serialization path
+        # Upstream work is preserved and the gated node never ran / never "failed".
+        assert "hello" in result.shared_after["a"]["stdout"]
+        assert "b" not in result.shared_after
+        assert not result.shared_after.get("__failures__")
+
+
 class TestBatchInteractions:
     def _batch_escalation_ir(self, *, decided: bool = False) -> dict[str, Any]:
         decision = ", 'decision': {'chosen': 'x'}" if decided else ""

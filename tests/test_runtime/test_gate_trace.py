@@ -142,6 +142,72 @@ class TestGateTraceEvents:
         )
         assert resolution["resolution"] == "non_interactive"
 
+    def test_nested_child_gate_events_land_in_run_stream(self, tmp_path, monkeypatch):
+        """A gate inside a sub-workflow (the harness's primary shape) with a REAL
+        run-scoped collector: NEW-path children share the run collector, so the
+        child gate's pause/resolution lines must appear in the streamed trace —
+        and the trace must stay fully readable."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        child = tmp_path / "child.pflow.md"
+        child.write_text(
+            "# Child\n\nChild with a gated step.\n\n## Steps\n\n### gated-step\n\n"
+            "Do the child action.\n\n- type: shell\n- command: echo child-action\n- approval: required\n"
+        )
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "sub", "type": "workflow", "params": {"workflow": str(child)}}],
+            "edges": [],
+        }
+        collector, _ = _run_streamed(ir, _approver, tmp_path)
+        gate_lines = [ln for ln in _read_lines(collector._stream_path) if ln["kind"] == "gate"]
+        assert [(ln["phase"], ln["node_id"]) for ln in gate_lines] == [
+            ("pause", "gated-step"),
+            ("resolution", "gated-step"),
+        ]
+        trace = load_trace_file(collector._stream_path)
+        assert trace["final_status"] == "success"
+
+    def test_parallel_batch_child_gate_with_live_collector_never_crashes(self, tmp_path, monkeypatch):
+        """Worker-thread safety with a REAL streaming collector: batch-item children
+        get buffer collectors (owner=None), so a worker-thread record_gate must be a
+        silent no-op — NOT an owner-thread assertion crash. Pins the production
+        combination (CLI streaming + parallel batch + pre-approved child gate) that
+        the traceless engine tests cannot see."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        child = tmp_path / "child.pflow.md"
+        child.write_text(
+            "# Child\n\nChild with a gated step.\n\n## Steps\n\n### gated-step\n\n"
+            "Do the child action.\n\n- type: shell\n- command: echo child-action\n- approval: required\n"
+        )
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fan",
+                    "type": "workflow",
+                    "params": {"workflow": str(child)},
+                    "batch": {"items": "${items}", "as": "item", "parallel": True},
+                }
+            ],
+            "edges": [],
+        }
+
+        def flag_approver(request, *, allow_prompt):
+            if request.node_id == "gated-step":
+                return GateResolution(approved=True, resolved_via="flag")
+            raise AssertionError(f"unexpected gate: {request.node_id}")
+
+        collector = WorkflowTraceCollector(
+            "batched", workflow_path=str(tmp_path / "batched.pflow.md"), is_run_scoped=True, stream_to_disk=True
+        )
+        compiled = compile_workflow(ir, Registry())
+        shared: dict[str, Any] = {"items": [1, 2, 3], "__gate_resolver__": flag_approver}
+        WorkflowEngine(trace_collector=collector).run(compiled, shared)
+        collector.finalize()
+        assert shared["fan"]["success_count"] == 3
+        trace = load_trace_file(collector._stream_path)
+        assert trace["final_status"] == "success"
+
     def test_escalation_gate_lines_carry_decision(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         ir = {

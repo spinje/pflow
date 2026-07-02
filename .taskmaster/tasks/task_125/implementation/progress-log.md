@@ -154,6 +154,32 @@ Tests (+47, all green; full suite 8330 passed / 0 failed):
 - Still uncommitted anywhere: nothing. Still unpushed: everything (no push
   instruction given).
 
+### High-value test audit (owner: "the bar isn't passing, it's passing the right thing")
+
+Stepped back and asked: where do the existing tests verify a CLAIM I made by reading
+code rather than BEHAVIOR I proved? Four gaps found, four tests added (+4, suite 8335):
+
+1. `test_escalation_decision_feeds_loop_carry_reentry` — the escalate → decide →
+   carry re-entry round trip (the continue mechanism, i.e. the reason escalation
+   exists) had NEVER been executed; the decision-before-loop-eval and
+   decision-before-carry-resolution orderings were line-number reasoning until now.
+2. `test_parallel_batch_child_gate_with_live_collector_never_crashes` — the traceless
+   parallel test could not see the worker-thread `record_gate` path; if a parallel
+   child ever got the run collector instead of a buffer, `_assert_owner_thread` would
+   CRASH production runs. Now pinned with a real streaming collector.
+3. `test_nested_child_gate_events_land_in_run_stream` — the plan's pending Phase 4
+   item: child gates (the harness's primary shape) share the run collector, gate
+   lines land in the stream, trace stays readable.
+4. `test_noninteractive_gate_through_runner_keeps_payload_diagnostics` — first test
+   through `WorkflowRunner` (tests/CLAUDE.md pitfall #20): the gate diagnostic
+   survives runner conversion with its payload, is JSON-serializable, and the run
+   fails as a RESULT not a propagated exception. Explicitly documents that Phase 3
+   must consciously update the denied half of this contract.
+
+Shallowness audit verdict: no existing test asserts the wrong thing; none removed.
+The one under-asserting test (traceless parallel gate) is kept for its resolver-level
+pins and superseded on the trace dimension by #2.
+
 ### Behavioral note discovered while implementing
 
 Escalation detection requires a CLEAN-SUCCESS action (`""`/`"default"`/`"end"`/None),
