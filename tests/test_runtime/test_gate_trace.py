@@ -142,6 +142,30 @@ class TestGateTraceEvents:
         )
         assert resolution["resolution"] == "non_interactive"
 
+    def test_resolver_crash_emits_error_resolution_and_trailer_says_failed(self, tmp_path, monkeypatch):
+        """A resolver bug still leaves an honest trace: a resolution line
+        (``"error"``) is emitted before the exception escapes, and the trailer
+        reads ``failed`` via the gate_outcome channel — never ``success``."""
+        from pflow.core.exceptions import GateResolverError
+
+        def crasher(request, *, allow_prompt):
+            raise RuntimeError("resolver bug")
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        collector = WorkflowTraceCollector(
+            "gated", workflow_path=str(tmp_path / "gated.pflow.md"), is_run_scoped=True, stream_to_disk=True
+        )
+        compiled = compile_workflow(_gated_ir(), Registry())
+        with pytest.raises(GateResolverError):
+            WorkflowEngine(trace_collector=collector).run(compiled, {"__gate_resolver__": crasher})
+        collector.finalize()
+        trace = load_trace_file(collector._stream_path)
+        assert trace["final_status"] == "failed"
+        resolution = next(
+            ln for ln in _read_lines(collector._stream_path) if ln["kind"] == "gate" and ln["phase"] == "resolution"
+        )
+        assert resolution["resolution"] == "error"
+
     def _nested_gate_after_sibling_ir(self, tmp_path: Path, name: str) -> dict[str, Any]:
         """A sub-workflow with an EARLIER sibling step (records an event under the
         host) followed by a LATER gated step — the shape that orphans a trace event

@@ -24,6 +24,7 @@ from pflow.core.exceptions import (
     CompilationError,
     GateDenied,
     GateNotInteractiveError,
+    GateResolverError,
     LoopCarryError,
     LoopConditionError,
 )
@@ -1321,7 +1322,7 @@ class WorkflowEngine:
 
             return action
 
-        except (GateDenied, GateNotInteractiveError) as gate_exc:
+        except (GateDenied, GateNotInteractiveError, GateResolverError) as gate_exc:
             # Task 125: a gate verdict is control flow, NOT a node failure — no
             # error trace event, no error callback, no mark_node_failed, no
             # _pflow_node_id. (A denied node never ran; a non-interactive

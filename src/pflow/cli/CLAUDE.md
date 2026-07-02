@@ -260,7 +260,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 | Source file | Primary test file(s) |
 |------------|---------------------|
 | `main.py` | `test_cli.py`, `test_main.py` |
-| `commands/run.py` | `test_workflow_resolution.py`, `test_dual_mode_stdin.py`, `test_parse_error_handling.py`, `test_workflow_output_handling.py`, `test_validate_only.py`, `test_validation_before_execution.py`, `test_dry_run.py` |
+| `commands/run.py` | `test_workflow_resolution.py`, `test_dual_mode_stdin.py`, `test_parse_error_handling.py`, `test_workflow_output_handling.py`, `test_validate_only.py`, `test_validation_before_execution.py`, `test_dry_run.py`, `test_approval_gate_cli.py` |
 | `error_output.py` | `test_unified_error_output.py`, `test_enhanced_error_output.py` |
 | `workflow_output.py` | `test_shell_stderr_warnings.py`, `test_direct_execution_helpers.py`, `test_workflow_output_source_simple.py` |
 | `workflow_resolution.py` | `test_workflow_resolution.py` |

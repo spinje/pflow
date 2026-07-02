@@ -186,8 +186,9 @@ shared["__failures__"] = {
 shared["__trace_collector__"] = WorkflowTraceCollector
 shared["__progress_callback__"] = func
 shared["__gate_resolver__"] = func            # Task 125: resolver(request, *, allow_prompt) -> GateResolution.
-                                              # Installed by the CLI/MCP layer (Phase 3); absent → any gate
-                                              # raises GateNotInteractiveError (loud, payload-carrying). In
+                                              # Installed by the CLI/MCP layer (execution/gate_prompt.py via
+                                              # runner.run(gate_resolver=...)); absent → any gate raises
+                                              # GateNotInteractiveError (loud, payload-carrying). In
                                               # _PROPAGATED_KEYS so nested gates prompt through the same channel.
 shared["__gate_prompt_allowed__"] = bool      # Task 125: False ONLY inside parallel-batch worker stores (set by
                                               # batch_executor.process_item) — the resolver may still auto-approve

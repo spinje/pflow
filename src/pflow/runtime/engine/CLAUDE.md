@@ -40,7 +40,8 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │  7.5. Task 125: if config.approval → run_approval_gate (gate.py) — pause,
         │      resolve via shared["__gate_resolver__"], gate events streamed. BEFORE
         │      step 8/8.5 so a denied node never appears in trace/progress. Deny →
-        │      GateDenied; no resolver → GateNotInteractiveError (both exempted below).
+        │      GateDenied; no resolver → GateNotInteractiveError; resolver crash /
+        │      wrong return type → GateResolverError (all exempted below).
         │      Cache hits early-return upstream — cached nodes never gate.
         │  8. call_start_callback
         │  9. execute: batch → execute_batch() + scan_batch_escalations (an UNDECIDED
@@ -67,12 +68,17 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │  (17.6 loop re-entry lives in _run_inner, after _execute_node returns)
         │
         └─ EXCEPT:
-           (GateDenied, GateNotInteractiveError) → stamp trace.gate_outcome
+           (GateDenied, GateNotInteractiveError, GateResolverError) → stamp trace.gate_outcome
            ("denied"/"failed" — the trailer channel; _determine_trace_status has no
            other signal for a gate stop) and re-raise UNTOUCHED: no record_trace(error),
            no error callback, no mark_node_failed — a gate verdict is control flow,
-           not a node failure. Same re-raise arm exists in WorkflowExecutor.exec, and
-           both exceptions carry retriable=False so batch retry loops re-raise too.
+           not a node failure. ONE deliberate trace write in this arm: when the node is
+           a sub-workflow HOST (getattr(node, "_host_frame")), record_trace(success=True,
+           frame=host_frame) closes the seq reserved by WorkflowExecutor's descend() —
+           without it an earlier sibling child event orphans and finalize()/tree() raise,
+           silently losing the trace file. Same re-raise arm exists in
+           WorkflowExecutor.exec, and all three exceptions carry retriable=False so
+           batch retry loops re-raise too.
            Generic error path (everything else):
            metrics, record_trace(error=e),
            call_completion_callback(action="error", error=e),

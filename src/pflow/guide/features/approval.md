@@ -67,7 +67,7 @@ The contract — `result.escalation`, with this shape:
 - **On a `claude-code` step, declare `output_schema` and put `escalation` in it** (nullable). Without a schema, an agentic session that ends on prose loses the marker — pflow then emits a degrading warning ("an escalation attempt may have been swallowed") instead of pausing. A plain string `escalation` value also works (it becomes the question).
 - After the human answers, the marker gains `decision`: `result.escalation.decision = {"chosen": ..., "notes": ...}`. A marker that already carries `decision` never re-prompts.
 - The escalating step must end on a **clean success** (`default` action). A `code` step that routes via `next:` cannot escalate from the same execution — escalate from the agent step, route on the decision downstream.
-- Escalations **cannot be pre-approved** (`--auto-approve` does not apply — the question is unknown in advance). Non-interactive runs fail loudly at the escalation.
+- Escalations **cannot be pre-approved** (`--auto-approve` does not apply — the question is unknown in advance). Non-interactive runs fail loudly at the escalation — **after the step has already run**, and the escalating result is deliberately never cached (a cached escalation would replay on a later run as resolved-without-a-decision). A re-run re-executes the escalating step from scratch, so an expensive agent step's work is discarded. If a workflow may escalate, run it interactively.
 - Not supported from inside a `batch:` step — the run fails with a clear error; restructure so the escalating step runs outside the batch.
 
 ### Continuing from the decision — the re-fork recipe

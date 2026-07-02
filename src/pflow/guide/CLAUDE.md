@@ -18,7 +18,7 @@ src/pflow/guide/
 ├── nodes/               # Per-node-type guides (static prose + dynamic interface from registry)
 │   ├── http.md, llm.md, claude-code.md, code.md, shell.md, file.md, mcp.md
 └── features/            # Per-feature guides (static content only)
-    ├── batch.md, branching.md, error-handling.md, loop.md, patterns.md, prompt-caching.md, sub-workflows.md
+    ├── approval.md, batch.md, branching.md, error-handling.md, loop.md, patterns.md, prompt-caching.md, sub-workflows.md, ui.md
 ```
 
 ## Topic Resolution
@@ -46,7 +46,7 @@ The topic is automatically discoverable — `list_topics()` scans the filesystem
 
 `detect_topics_from_ir()` walks a single IR to find relevant topics:
 - Node `type` → topic (via `_NODE_TYPE_TO_TOPIC` for non-1:1 mappings, `mcp-*` prefix → `mcp`)
-- `node["batch"]` present → `batch`; `node["loop"]` → `loop`; `node["retry"]` → `error-handling`
+- `node["batch"]` present → `batch`; `node["loop"]` → `loop`; `node["retry"]` → `error-handling`; `node["approval"]` → `approval`
 - `node["prompt_cache"]` or `node["prewarm"]` present (presence, not truthiness) → `prompt-caching`
 - Top-level `ir["cache"]` (parsed `## Cache` block) → `prompt-caching`
 - Edge with `action == "error"` → `error-handling`; any other non-`default` action → `branching`

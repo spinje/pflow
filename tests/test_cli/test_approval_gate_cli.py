@@ -150,3 +150,23 @@ def test_completion_status_denied_arm_never_renders_checkmark():
     line = _format_workflow_completion_status(1.5, "denied", False)
     assert line.startswith("✗") and "denied at gate" in line
     assert "✓" not in line
+
+
+class TestCtrlCAtGate:
+    def test_ctrl_c_at_gate_prompt_exits_130_and_step_never_runs(self, gated_workflow, monkeypatch):
+        """End-to-end pin for the interrupt seam: click Abort at the prompt →
+        resolver raises KeyboardInterrupt → engine/runner pass it through
+        (BaseException) → CLI exits 130. Both halves were unit-tested; this
+        pins the integration, which a future `except Exception` between the
+        gate and run.py would silently break."""
+        import click
+
+        def abort(*args, **kwargs):
+            raise click.exceptions.Abort()
+
+        path, proof = gated_workflow
+        monkeypatch.setattr("pflow.execution.gate_prompt.can_prompt", lambda oc: True)
+        monkeypatch.setattr("pflow.execution.gate_prompt.click.confirm", abort)
+        result = invoke_cli(["--no-trace", str(path)])
+        assert result.exit_code == 130
+        assert not proof.exists(), "interrupted gate must never run the step"

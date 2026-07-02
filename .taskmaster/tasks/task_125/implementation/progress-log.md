@@ -500,3 +500,63 @@ stash, per the session-1 lesson).
 
 Next: update this log (done) → `/create-pr` follow-up (push + note on the existing
 PR #554, since it already exists — no new PR).
+
+## 2026-07-02 — Session 4: post-implementation verification sweep + fixes
+
+Owner asked for an independent plan-vs-code verification of the whole task
+(6 parallel searcher agents + direct confirmation of the consequential claims).
+Verdict: all 7 phases, all 14 locked decisions, and all recorded deviations
+check out against the code; the four criticals from the plan review all landed.
+The sweep surfaced 6 new findings (none critical); owner said fix all — all
+fixed this session:
+
+1. **Batch-escalation error named the wrong item number** (real bug, message-only):
+   `scan_batch_escalations` indexed the success-filtered `results` list, so with
+   an earlier failed item the escalating item's reported position was off.
+   Fixed by reconstructing original indices from the authoritative `errors[].index`
+   set. Test (mutation-verified — old `i+1` math fails it):
+   `test_batch_escalation_reports_original_item_index_when_earlier_item_failed`.
+2. **Unexpected resolver exception corrupted the node record** (design smell →
+   hardened): a resolver bug at the post-exec escalation seam fell to the
+   generic except arm — duplicate error trace event + a genuinely successful
+   node archived into `__failures__`. The wrong-return-type case raised a plain
+   `PflowError` with the same conversion hazard. New `GateResolverError`
+   (`retriable=False`, carries the request, payload-masked diagnostics) raised
+   by `resolve_gate` for both cases; added to BOTH boundary re-raise tuples
+   (engine gate arm — which also gives it the host-frame orphan fix + the
+   `gate_outcome="failed"` stamp — and `WorkflowExecutor.exec`); gate seams emit
+   a `resolution: "error"` gate line before it escapes; `record_gate` maps
+   `"error"` → trailer `"failed"`. Tests (mutation-verified — removing the
+   exception from the engine tuple fails both): `TestGateResolverFailure` (node
+   success record stands, no `__failures__` entry) +
+   `test_resolver_crash_emits_error_resolution_and_trailer_says_failed`.
+3. **Escalation cost trap undocumented**: non-interactive escalation aborts
+   AFTER the step ran and the escalating result is (correctly — Decision 10)
+   never cached, so a re-run re-pays the whole agent step. Verified Decision 10
+   is the right side of the tradeoff (a cached escalation would replay as
+   resolved-without-a-decision because the cache-hit early-return precedes the
+   detect seam); the gap was documentation only. `guide/features/approval.md`
+   now states the discarded-work cost explicitly.
+4. **Latent denied→✓ fallthrough in `format_success_as_text`** (unreachable
+   today): defensive `denied` arm added + pin
+   (`TestDeniedStatusRendering`) so a future routing change can't render a
+   denied run as success.
+5. **Missing end-to-end Ctrl-C-at-gate pin**: added
+   `test_ctrl_c_at_gate_prompt_exits_130_and_step_never_runs` (CliRunner,
+   Abort at the prompt → exit 130, step never runs) — pins the resolver→engine→
+   runner→CLI interrupt seam whose halves were only unit-tested.
+6. **Stale docs**: `core/workflow/CLAUDE.md` + `core/CLAUDE.md` still called
+   `WorkflowStatus` tri-state (now four states incl. DENIED); `guide/CLAUDE.md`
+   features inventory was missing `approval.md`/`ui.md`; task-review invariant
+   updated for the third gate exception. CLAUDE.md exception tree + engine seam
+   diagram updated for `GateResolverError`.
+
+Also verified and left as-is: worker gate-line drop (documented v1 audit
+limitation), `__gate_prompt_allowed__` cannot leak to the parent store,
+nested denial trailers, warning/resolver `can_prompt` consistency (same
+function by construction), no double-prompt under node retries.
+
+Process note: repeated the session-1 git lesson the hard way — a
+`git checkout -- <file>` used to revert a mutation also wiped the session's
+uncommitted edits to that file (re-applied immediately; later mutations used
+temporary Edit + revert as the log already prescribes).

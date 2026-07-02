@@ -9,6 +9,7 @@ from pflow.core.diagnostic import Diagnostic, format_child_provenance, normalize
 from pflow.core.exceptions import (
     GateDenied,
     GateNotInteractiveError,
+    GateResolverError,
     MarkdownParseError,
     PflowError,
     WorkflowNotFoundError,
@@ -449,7 +450,7 @@ class WorkflowExecutor(BaseNode):
                 return self._child_failure_result(prep_res, child_storage, workflow_path)
 
             return {"success": True, "result": result, "child_storage": child_storage}
-        except (GateDenied, GateNotInteractiveError):
+        except (GateDenied, GateNotInteractiveError, GateResolverError):
             # Task 125: a gate verdict from inside the child must cross this
             # boundary UN-converted. Folding it into _child_failure_result would
             # make it error_action-routable — a workflow continuing past a

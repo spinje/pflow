@@ -135,11 +135,16 @@ Load-bearing: without recursion in BFS mode, any sub-workflow reached post-first
 
 ### Cross-cutting entry stamps (`_annotate_entry` — the shared funnel)
 
-EVERY entry, standard and sub-workflow alike, routes through `_annotate_entry` — the one place
-plan-time NodeConfig facts land on entries. It stamps `approval` (Task 125: gated nodes render
-`[<type>, approval]` + the footer pause line; dry-run is the agent's gate-discovery surface, and
-the drift suite pins plan-says-pause ⟺ engine-pauses) and `loop_iterations` (below). Stamping in
-`_plan_standard_node` instead would miss gated workflow-type nodes — a parity lie.
+EVERY walked entry, standard and sub-workflow alike, routes through `_annotate_entry` — the one
+place plan-time NodeConfig facts land on entries. It stamps `approval` (Task 125: gated nodes
+render `[<type>, approval]` + the footer pause line; dry-run is the agent's gate-discovery
+surface, and the drift suite pins plan-says-pause ⟺ engine-pauses) and `loop_iterations` (below).
+Stamping in `_plan_standard_node` instead would miss gated workflow-type nodes — a parity lie.
+Two traps: (1) `approval` is NOT stamped on `cached` entries — the engine's gate seam sits after
+the cache early-return, so a cache hit never pauses and stamping would promise one; (2)
+`_aggregate_batch_child_plans` builds fresh synthetic `PlanEntry`s that do NOT inherit funnel
+stamps — every flag needing dry-run visibility must be forwarded there explicitly
+(`approval=any(...)`; it already silently dropped `approval` once).
 
 ### Loop-node planning (issue #445)
 

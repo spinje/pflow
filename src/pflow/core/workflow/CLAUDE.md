@@ -25,7 +25,7 @@ core/workflow/
 │       └── react_flow.py    # GraphModel -> React Flow JSON contract (Task 168)
 ├── mermaid/                 # Compatibility shim for generate_mermaid
 │   └── __init__.py          # Delegates to graph.build_graph + graph.render_mermaid
-├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
+├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED/DENIED
 ├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
 ├── context.py               # Build workflow context for discovery (build_workflows_context)
 ├── discovery.py             # LLM-powered workflow discovery (find_workflow → WorkflowMatch)
@@ -77,7 +77,7 @@ No cycles. All heavy imports are lazy (inside functions).
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
 | `graph/` | `build_graph`, `render_mermaid`, `render_react_flow`, `GraphModel`, `NodeId`, `EdgeKind` |
 | `mermaid/` | `generate_mermaid` |
-| `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
+| `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED, DENIED) |
 | `skill_service.py` | `SkillInfo`, `enrich_workflow`, `create_skill_symlink`, `find_pflow_skills`, `remove_skill`, `re_enrich_if_skill` |
 
 ## External Consumers
@@ -168,7 +168,7 @@ Publishes workflows as AI agent skills for Claude Code, Cursor, Codex, Copilot. 
 
 ### status.py
 
-Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g., unresolved templates in permissive mode), `FAILED` (errors).
+Four states: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g., unresolved templates in permissive mode), `FAILED` (errors), `DENIED` (a human denied an approval gate — Task 125; exit 3, never error-routed).
 
 ## Known Issues
 

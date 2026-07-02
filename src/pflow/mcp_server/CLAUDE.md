@@ -73,7 +73,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 - `registry_discover(task)` — Find nodes via LLM selection. Pass full task description.
 
 **execution_tools.py** (7 tools):
-- `workflow_execute(workflow, parameters)` — Execute with agent defaults (no repair, silent, traces saved)
+- `workflow_execute(workflow, parameters, auto_approve)` — Execute with agent defaults (no repair, silent, traces saved). MCP runs are non-interactive: a workflow with an `approval:` gate fails loudly with the gate payload unless that gate's step name is listed in `auto_approve` (ask your human first; escalations can never be pre-approved)
 - `workflow_validate(workflow)` — Static validation without execution (10 checks including sub-workflow validation)
 - `plan_workflow(workflow, parameters)` — Build execution plan JSON without side effects
 - `workflow_save(workflow, name, force)` — Save to library (accepts raw markdown or file path)

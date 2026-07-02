@@ -54,6 +54,7 @@ This is where bare nodes get created and configured. The step order is load-bear
 12. Build `BatchConfig` (if batch) then `_build_loop_config()` (if `loop:`). **Batch and loop are mutually exclusive** — both set raises `CompilationError`. Loop enforces single `while:`/`until:` polarity and bounds a literal `max_iterations` to `[1, MAX_NODE_VISITS]`; a `${template}` `max_iterations` is deferred to runtime.
 13. Build `TemplateConfig` (if any templates, OR a carry loop — round-2 carry inputs become template_params).
 14. Extract per-node cache fields (LLM nodes only): `_extract_prompt_cache_items` reads top-level `prompt_cache:` into a tuple of chunk names (rejects non-list and `tuple("string")` silent-splat); `_extract_prewarm` reads top-level `prewarm:` strict-bool. Both feed `NodeConfig.prompt_cache_items` / `NodeConfig.prewarm` (defaults: empty tuple / False).
+14.5. `_extract_approval` (Task 125) reads top-level `approval:` — only the literal string `"required"` passes (anything else → `CompilationError`) — and re-checks the shared batch-host rule (`core/workflow/gate_validation.check_approval_allowed`) as a fail-fast mirror for programmatic IRs that skip validation → `NodeConfig.approval`.
 15. Build and return `NodeConfig`
 
 ### Other functions

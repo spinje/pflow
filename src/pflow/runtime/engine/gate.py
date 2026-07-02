@@ -30,7 +30,7 @@ import logging
 from typing import Any, Optional, Union
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.exceptions import GateDenied, GateNotInteractiveError, PflowError
+from pflow.core.exceptions import GateDenied, GateNotInteractiveError, GateResolverError, PflowError
 from pflow.core.gate import (
     GateRequest,
     GateResolution,
@@ -59,11 +59,22 @@ def resolve_gate(request: GateRequest, shared: dict[str, Any]) -> GateResolution
     allow_prompt = bool(shared.get(GATE_PROMPT_ALLOWED_KEY, True))
     if resolver is None:
         raise GateNotInteractiveError(request, parallel_batch=not allow_prompt)
-    resolution = resolver(request, allow_prompt=allow_prompt)
+    try:
+        resolution = resolver(request, allow_prompt=allow_prompt)
+    except (GateDenied, GateNotInteractiveError):
+        raise
+    except Exception as exc:
+        # A resolver bug must not fall to the engine's generic except arm: at
+        # the post-exec escalation seam the node's success was already traced,
+        # and the generic arm would record a duplicate error event and archive
+        # the successful output into __failures__. GateResolverError shares the
+        # gate exceptions' exemptions so the run fails without rewriting the
+        # node's honest record. (KeyboardInterrupt is BaseException — passes.)
+        raise GateResolverError(request, detail=f"{type(exc).__name__}: {exc}") from exc
     if not isinstance(resolution, GateResolution):
-        raise PflowError(
-            f"gate resolver returned {type(resolution).__name__} instead of GateResolution "
-            f"for gate '{request.node_id}' — broken resolver installation"
+        raise GateResolverError(
+            request,
+            detail=f"returned {type(resolution).__name__} instead of GateResolution — broken resolver installation",
         )
     return resolution
 
@@ -80,6 +91,9 @@ def run_approval_gate(config: Any, params: Any, shared: dict[str, Any], trace: A
         resolution = resolve_gate(request, shared)
     except GateNotInteractiveError:
         _record_gate(trace, request, phase="resolution", resolution="non_interactive")
+        raise
+    except GateResolverError:
+        _record_gate(trace, request, phase="resolution", resolution="error")
         raise
     if not resolution.approved:
         _record_gate(trace, request, phase="resolution", resolution="denied", resolved_via=resolution.resolved_via)
@@ -150,6 +164,9 @@ def run_escalation_gate(config: Any, marker: Union[dict[str, Any], str], shared:
     except GateNotInteractiveError:
         _record_gate(trace, request, phase="resolution", resolution="non_interactive")
         raise
+    except GateResolverError:
+        _record_gate(trace, request, phase="resolution", resolution="error")
+        raise
     decision = {"chosen": resolution.chosen, "notes": resolution.notes}
     result = shared[config.node_id]["result"]
     if isinstance(marker, str):
@@ -181,6 +198,12 @@ def scan_batch_escalations(shared: dict[str, Any], node_id: str) -> None:
     if not isinstance(results, list):
         return
     total = output.get("count", len(results))
+    # `results` is filtered to successes, so position i is NOT the original item
+    # number when earlier items failed. Reconstruct original indices from the
+    # authoritative errors list (each error carries its original "index").
+    errors = output.get("errors")
+    error_indices = {e.get("index") for e in errors if isinstance(e, dict)} if isinstance(errors, list) else set()
+    original_indices = [idx for idx in range(total) if idx not in error_indices]
     for i, item_ns in enumerate(results):
         if not isinstance(item_ns, dict):
             continue
@@ -190,10 +213,11 @@ def scan_batch_escalations(shared: dict[str, Any], node_id: str) -> None:
         marker = result.get("escalation")
         if not marker or (isinstance(marker, dict) and "decision" in marker):
             continue
+        item_number = original_indices[i] + 1 if i < len(original_indices) else i + 1
         question = marker.get("question") if isinstance(marker, dict) else marker
         preview = str(question)[:_QUESTION_PREVIEW_CHARS] if question else "<no question>"
         raise PflowError(
-            f"Step '{node_id}' raised an escalation from batch item {i + 1} of {total}: "
+            f"Step '{node_id}' raised an escalation from batch item {item_number} of {total}: "
             f'"{preview}" — escalations inside a batch are not supported; restructure so '
             f"the escalating step runs outside the batch."
         )

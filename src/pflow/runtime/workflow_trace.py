@@ -671,7 +671,7 @@ class WorkflowTraceCollector:
         """
         if resolution == "denied":
             self.gate_outcome = "denied"
-        elif resolution == "non_interactive":
+        elif resolution in ("non_interactive", "error"):
             self.gate_outcome = "failed"
         self._assert_owner_thread()
         self._open_stream()

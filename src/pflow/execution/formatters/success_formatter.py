@@ -315,6 +315,11 @@ def format_success_as_text(  # noqa: C901
 
     if status == "degraded":
         lines.append(f"⚠️ Workflow completed with warnings in {duration_sec:.3f}s{cache_suffix}")
+    elif status == "denied":
+        # Defensive: denied results normally route through the error path (CLI
+        # intercepts DENIED before this formatter; MCP goes via success=False),
+        # but a denied run must never render the success ✓ if that ever changes.
+        lines.append(f"⊘ Workflow denied at an approval gate after {duration_sec:.3f}s{cache_suffix}")
     elif status == "failed":
         if warning_count:
             lines.append(f"❌ Workflow failed ({warning_count} warnings) after {duration_sec:.3f}s{cache_suffix}")

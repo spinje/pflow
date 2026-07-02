@@ -1500,3 +1500,20 @@ class TestFindAutoOutputNamespaceAware:
             "user",
             "wants",
         ]
+
+
+class TestDeniedStatusRendering:
+    """Defensive: denied results normally route through the error path (CLI
+    intercepts DENIED; MCP goes via success=False), but if a denied result ever
+    reaches the success text formatter it must never render the success ✓."""
+
+    def test_denied_status_never_renders_success_checkmark(self):
+        result_dict = {
+            "success": False,
+            "status": "denied",
+            "duration_ms": 120,
+            "execution": {"nodes_executed": 1, "steps": []},
+        }
+        text = format_success_as_text(result_dict)
+        assert "denied at an approval gate" in text
+        assert "✓ Workflow completed" not in text

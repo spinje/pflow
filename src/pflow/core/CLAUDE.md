@@ -56,7 +56,7 @@ src/pflow/core/
 │   ├── save_service.py      # Shared save operations (CLI + MCP)
 │   ├── validator.py         # Unified validation orchestrator
 │   ├── data_flow.py         # Execution order and dependency validation
-│   ├── status.py            # SUCCESS/DEGRADED/FAILED tri-state enum
+│   ├── status.py            # SUCCESS/DEGRADED/FAILED/DENIED status enum
 │   ├── skill_service.py     # Publish workflows as AI agent skills (symlinks)
 │   ├── context.py           # Workflow context for discovery (build_workflows_context)
 │   ├── discovery.py         # LLM-powered workflow discovery (find_workflow)
@@ -87,6 +87,10 @@ PflowError(Exception)                    <- base for all pflow errors
   |- GateNotInteractiveError             <- Task 125: gate fired with no human channel (no resolver / parallel-batch
   |                                         worker). retriable=False, same exemptions. to_diagnostics() carries the
   |                                         full GateRequest (secrets masked) + the ask-your-human remediation ladder
+  |- GateResolverError                   <- Task 125: the resolver itself raised or returned a non-GateResolution
+  |                                         (a resolver-installation bug). retriable=False, same exemptions — at the
+  |                                         post-exec escalation seam the node's success is already traced, and the
+  |                                         generic arm would archive a successful node into __failures__
   |- LoopConditionError                  <- loop `until`/condition evaluation failed (raised by runtime/engine/loop_control.py)
   |- LoopCarryError                      <- loop carry-state propagation failed (raised by runtime/engine/loop_control.py)
   |- LLMCallError                        <- LLM adapter base for ALL provider errors (raised by llm_client)

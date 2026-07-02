@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.exceptions import GateDenied, GateNotInteractiveError, PflowError
+from pflow.core.exceptions import GateDenied, GateNotInteractiveError, GateResolverError, PflowError
 from pflow.core.gate import GateRequest, GateResolution
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
@@ -207,8 +207,38 @@ class TestApprovalGate:
 
     def test_broken_resolver_return_type_is_loud(self):
         shared: dict[str, Any] = {"__gate_resolver__": lambda request, *, allow_prompt: "yes"}
-        with pytest.raises(PflowError, match="broken resolver installation"):
+        with pytest.raises(GateResolverError, match="broken resolver installation"):
             _run(_shell_ir(), shared)
+
+
+class TestGateResolverFailure:
+    """A resolver bug is gate-scoped control flow, never a node failure.
+
+    Without the GateResolverError exemption, an unexpected resolver exception
+    falls to the engine's generic except arm — which at the POST-exec escalation
+    seam records a duplicate error event and archives the node's genuinely
+    successful output into __failures__.
+    """
+
+    @staticmethod
+    def _crashing_resolver(request: GateRequest, *, allow_prompt: bool) -> GateResolution:
+        raise RuntimeError("resolver bug")
+
+    def test_resolver_crash_at_approval_gate_is_gate_scoped(self):
+        shared: dict[str, Any] = {"__gate_resolver__": self._crashing_resolver}
+        with pytest.raises(GateResolverError, match="RuntimeError: resolver bug"):
+            _run(_shell_ir(), shared)
+        # The gated node never ran and was NOT archived as a node failure.
+        assert "b" not in shared
+        assert "b" not in shared.get("__failures__", {})
+
+    def test_resolver_crash_at_escalation_keeps_node_success_record(self):
+        shared: dict[str, Any] = {"__gate_resolver__": self._crashing_resolver}
+        with pytest.raises(GateResolverError, match="RuntimeError: resolver bug"):
+            _run(_code_ir(ESCALATION_CODE), shared)
+        # The node's honest success record stands: output in place, no failure archive.
+        assert shared["agent"]["result"]["work"] == "partial"
+        assert "agent" not in shared.get("__failures__", {})
 
 
 ESCALATION_CODE = (
@@ -527,6 +557,35 @@ class TestBatchInteractions:
         assert "batch item 1 of 2" in message
         assert "item asks: alpha" in message
         assert "outside the batch" in message
+
+    def test_batch_escalation_reports_original_item_index_when_earlier_item_failed(self):
+        # `results` holds successes only — with item 1 (alpha) failing, the
+        # escalating item 2 (beta) sits at results[0]. The error must still
+        # name it "batch item 2 of 2", not "1 of 2".
+        code = (
+            "item: str\n"
+            "if item == 'alpha':\n"
+            "    raise ValueError('boom')\n"
+            "result: dict = {'escalation': {'question': 'item asks: ' + str(item)}}"
+        )
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "worker",
+                    "type": "code",
+                    "params": {"code": code, "inputs": {"item": "${item}"}},
+                    "batch": {"items": "${items}", "as": "item", "error_handling": "continue"},
+                }
+            ],
+            "edges": [],
+        }
+        shared: dict[str, Any] = {"items": ["alpha", "beta"], "__gate_resolver__": RecordingResolver()}
+        with pytest.raises(PflowError) as exc_info:
+            _run(ir, shared)
+        message = str(exc_info.value)
+        assert "batch item 2 of 2" in message
+        assert "item asks: beta" in message
 
     def test_decided_escalation_in_batch_item_is_skipped(self):
         shared: dict[str, Any] = {"items": ["alpha"], "__gate_resolver__": RecordingResolver()}

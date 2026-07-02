@@ -1035,6 +1035,42 @@ class GateNotInteractiveError(PflowError):
         ]
 
 
+class GateResolverError(PflowError):
+    """The installed gate resolver itself failed (Task 125).
+
+    Raised when a resolver raises an unexpected exception or returns the wrong
+    type — a bug in the resolver installation, NOT a human verdict and NOT a
+    node failure. It shares the gate exceptions' exemptions (``retriable=False``,
+    re-raised untouched at every generic boundary) for one reason: the post-exec
+    escalation seam runs AFTER the node's success was traced, and the generic
+    arm would record a second (error) event for the node and archive its
+    genuinely-successful output into ``__failures__``. The run still fails —
+    the runner surfaces it as a normal FAILED result.
+    """
+
+    retriable = False
+
+    def __init__(self, request: GateRequest, *, detail: str):
+        self.request = request
+        super().__init__(f"Gate resolver failed at gate '{request.node_id}': {detail}")
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Gate resolver failed",
+                node_id=self.request.node_id,
+                source="runtime",
+                suggestions=[
+                    "This is a bug in the gate resolver installation (CLI, MCP, or a custom surface), "
+                    "not in the workflow — the gated step was not silently approved or denied."
+                ],
+                context={"category": "gate", "gate": _masked_gate_payload(self.request)},
+            )
+        ]
+
+
 def _masked_gate_payload(request: GateRequest) -> dict[str, Any]:
     """GateRequest as a dict with secret-like preview values redacted.
 

@@ -39,11 +39,14 @@ scope** — Task 171 builds on this substrate without changing the payload shape
 - **Gate trace lines (`kind: "gate"`) must stay DISK-ONLY** — never appended to
   `collector.events`. Violating this makes a gate line the node's "final event" in
   `final_events_by_node`, and `--only` snapshot seeding silently skips that node.
-- **`GateDenied`/`GateNotInteractiveError` must be re-raised UN-converted at every generic
-  `except Exception`** between the gate and the runner (engine `_execute_node`,
+- **`GateDenied`/`GateNotInteractiveError`/`GateResolverError` must be re-raised UN-converted at
+  every generic `except Exception`** between the gate and the runner (engine `_execute_node`,
   `WorkflowExecutor.exec`, batch retry loops via `retriable=False`). Losing this exemption at
   any ONE of these four boundaries makes a human's "no" become error-routable —
-  `error_action: continue` would silently run past a denial.
+  `error_action: continue` would silently run past a denial. (`GateResolverError` — a resolver
+  bug, added post-review — needs the same exemption for a different reason: at the post-exec
+  escalation seam the node's success is already traced, and the generic arm would archive a
+  successful node into `__failures__` with a duplicate error event.)
 - **A sub-workflow host's own trace event must be recorded even on a gate stop** (see Gotchas
   below) — skipping this orphans any sibling event recorded before the gate fired, and
   `finalize()`/`tree()` raise in-memory, silently losing the run's trace file.
