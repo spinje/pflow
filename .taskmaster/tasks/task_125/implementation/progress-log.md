@@ -138,6 +138,22 @@ Tests (+47, all green; full suite 8330 passed / 0 failed):
   restored from HEAD; the stash list is intact (pop-on-conflict never drops).
   Lesson recorded: never mutation-verify via git stash on untracked files.
 
+### Session 1 committed
+
+- **Commit `2e533e2f`** on `feat/human-loop-approval-gates` (owner-instructed):
+  phases 1–2 substrate + tests + plan/progress-log/handoff-braindump. 26 files,
+  +2544/−37. Working tree clean after commit.
+- Pre-commit caught two `Optional[str]` annotations (UP007) and one unused unpack
+  (RUF059) in the new test file + reformatted two files — fixed, all hooks green
+  on the committing run.
+- Handoff artifacts for the next agent (all committed):
+  `starting-context/braindump-2026-07-02-phase12-handoff.md` (read FIRST — carries
+  the standing-order changes: NO fable for subagents; phased human-review cadence),
+  then `implementation/implementation-plan.md`, then this log. The 48 tests are the
+  substrate's behavior spec.
+- Still uncommitted anywhere: nothing. Still unpushed: everything (no push
+  instruction given).
+
 ### Behavioral note discovered while implementing
 
 Escalation detection requires a CLEAN-SUCCESS action (`""`/`"default"`/`"end"`/None),
