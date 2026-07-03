@@ -47,6 +47,10 @@ agent session pointed at the new worktree.
   wouldn't exist in a fresh checkout.
 - **Which agent**: defaults to `agent=codex` from this skill. Pass
   `agent=claude` if the user asks for Claude Code.
+- **Model**: if the user specifies a model for the coding agent (e.g. "use
+  opus", "on sonnet"), add `model=<model>` — passed through as `--model` to
+  whichever agent launches (both `claude` and `codex` accept it). Accepts an
+  alias (`opus`, `sonnet`) or a full model id; omit to use the agent's default.
 - **Don't open things**: `open_claude=false` skips launching the coding agent
   entirely (this gate applies to whichever `agent` is selected);
   `open_cursor=false` skips opening Cursor.
