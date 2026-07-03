@@ -91,7 +91,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"message": 42, "status": True}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["message"] == "42"
         assert coerced["status"] == "True"
@@ -125,7 +125,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"continue": "maybe"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
 
         assert conforming is False
         assert coerced["continue"] == "maybe"  # Unchanged
@@ -149,7 +149,7 @@ class TestSchemaCoercion:
             "top_level": "true",
             "nested": {"inner": "false"},  # Nested, should NOT be coerced
         }
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, _conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["top_level"] is True  # Top-level coerced
         assert coerced["nested"]["inner"] == "false"  # Nested NOT coerced
@@ -169,7 +169,7 @@ class TestSchemaCoercion:
             "required_field": "true",
             "extra_field": "value",
         }
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["required_field"] is True
         assert coerced["extra_field"] == "value"  # Preserved
@@ -186,7 +186,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"other_field": "value"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        _coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
 
         assert conforming is False
 
@@ -289,7 +289,7 @@ class TestSchemaCoercion:
         original = {"field": "true"}
         original_copy = original.copy()
 
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(original, schema)
+        coerced, _conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(original, schema)
 
         # Original should be unchanged
         assert original == original_copy

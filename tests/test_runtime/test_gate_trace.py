@@ -319,7 +319,7 @@ class TestGateTraceEvents:
         def chooser(request, *, allow_prompt):
             return GateResolution(approved=True, resolved_via="prompt", chosen="a", notes="n")
 
-        collector, shared = _run_streamed(ir, chooser, tmp_path)
+        collector, _shared = _run_streamed(ir, chooser, tmp_path)
         lines = _read_lines(collector._stream_path)
         gate_lines = [ln for ln in lines if ln["kind"] == "gate"]
         assert [ln["phase"] for ln in gate_lines] == ["pause", "resolution"]

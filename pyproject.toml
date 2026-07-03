@@ -63,7 +63,7 @@ dev = [
     "tox-uv>=1.11.3",
     "deptry>=0.23.0",
     "mypy>=0.991",
-    "ruff>=0.11.5",
+    "ruff>=0.15.0",
     "PyYAML>=6.0.0",
     "types-PyYAML>=6.0.0",
     "types-jsonschema>=4.25.0.20250809",
@@ -145,10 +145,19 @@ markers = [
 # Use 'make test' for parallel or 'make test-debug' for sequential
 
 [tool.ruff]
+# STALE: requires-python is >=3.10 — deleting this line unlocks ~500 auto-fixable
+# modernization rewrites (Optional[X] -> X | None etc.); tracked in issue #555.
 target-version = "py39"
 line-length = 120
-fix = true
-exclude = ["src/pflow/pocketflow/*", "tests/pocketflow/*", "scripts/*", ".claude/*", "scratchpads/*", "examples/*"]
+exclude = [
+    "src/pflow/pocketflow/*",
+    "tests/pocketflow/*",
+    "scripts/*",
+    ".claude/*",
+    ".taskmaster/*",
+    "scratchpads/*",
+    "examples/*",
+]
 
 [tool.ruff.lint]
 select = [
@@ -164,6 +173,12 @@ select = [
     "C4",
     # flake8-debugger
     "T10",
+    # flake8-implicit-str-concat
+    "ISC",
+    # flake8-logging
+    "LOG",
+    # flake8-print
+    "T20",
     # flake8-simplify
     "SIM",
     # isort
@@ -184,6 +199,8 @@ select = [
     "TRY",
 ]
 ignore = [
+    # Single-line implicit string concatenation — conflicts with ruff format
+    "ISC001",
     # LineTooLong
     "E501",
     # DoNotAssignLambda
@@ -197,7 +214,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]
+# Tests are a different context: asserts are the point (S101) and print is fine (T20).
+"tests/*" = ["S101", "T20"]
 "tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
 "src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
 "src/pflow/core/prompt_cache_analysis/*" = ["RUF001", "RUF002"]  # `×` (multiplication sign) is spec-mandated for agent-facing output: `(×N)` batch annotation, `0.1×`/`1.25×`/`2×` cost ratios.

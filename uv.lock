@@ -1526,7 +1526,7 @@ dev = [
     { name = "pytest", specifier = ">=7.2.0" },
     { name = "pytest-xdist", specifier = ">=3.2.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
-    { name = "ruff", specifier = ">=0.11.5" },
+    { name = "ruff", specifier = ">=0.15.0" },
     { name = "starlette", specifier = ">=0.40" },
     { name = "tox-uv", specifier = ">=1.11.3" },
     { name = "types-jsonschema", specifier = ">=4.25.0.20250809" },

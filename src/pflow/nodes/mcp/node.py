@@ -451,7 +451,7 @@ class MCPNode(Node):
             error_msg += f" {diagnostic.suggestions[0]}"
         logger.debug(
             error_msg,
-            exc_info=True,
+            exc_info=exc,
             extra={
                 "server": prep_res.get("server"),
                 "tool": prep_res.get("tool"),

@@ -463,7 +463,7 @@ def test_reconstruct_rejects_content_after_run_complete() -> None:
         _RUN_COMPLETE,
         _event_line("late", eid=1, parent_id=None),
     ]
-    with pytest.raises(json.JSONDecodeError, match="after run.complete"):
+    with pytest.raises(json.JSONDecodeError, match=r"after run\.complete"):
         reconstruct_trace_from_lines(lines)
 
 

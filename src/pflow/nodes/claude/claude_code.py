@@ -1128,7 +1128,7 @@ class ClaudeCodeNode(Node):
         error_msg = str(exc)
         exc_type = type(exc).__name__
 
-        logger.error(f"Claude Code execution failed: {error_msg}", exc_info=True)
+        logger.error(f"Claude Code execution failed: {error_msg}", exc_info=exc)
 
         # Handle specific SDK exceptions (check if exception classes are available)
         if (CLINotFoundError is not None and isinstance(exc, CLINotFoundError)) or "CLINotFoundError" in exc_type:
