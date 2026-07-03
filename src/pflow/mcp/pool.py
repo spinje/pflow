@@ -19,7 +19,7 @@ import sys
 import threading
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Any, Optional
+from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -67,8 +67,8 @@ class MCPConnectionPool:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
         self._sessions: dict[str, ClientSession] = {}
         self._stacks: dict[str, AsyncExitStack] = {}
         self._shutting_down = False

@@ -9,7 +9,7 @@ agent-friendly error dicts.
 import json
 import logging
 from dataclasses import replace
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import (
     CATEGORY_TITLES,
@@ -51,7 +51,7 @@ _FAILURE_CATEGORY_MAP: dict[str, str] = {
 }
 
 
-def build_error_list(success: bool, action_result: Optional[str], shared_store: dict[str, Any]) -> list[Diagnostic]:
+def build_error_list(success: bool, action_result: str | None, shared_store: dict[str, Any]) -> list[Diagnostic]:
     """Build error list from a failed workflow execution.
 
     Args:
@@ -208,7 +208,7 @@ def determine_error_category(error_message: str) -> str:
 # --- Internal helpers ---
 
 
-def _extract_error_info(action_result: Optional[str], shared_store: dict[str, Any]) -> dict[str, Optional[str]]:
+def _extract_error_info(action_result: str | None, shared_store: dict[str, Any]) -> dict[str, str | None]:
     """Extract error message and failed node from shared store.
 
     Priority order (most authoritative first):
@@ -254,7 +254,7 @@ def _extract_error_info(action_result: Optional[str], shared_store: dict[str, An
     }
 
 
-def _get_failed_node(shared_store: dict[str, Any]) -> Optional[str]:
+def _get_failed_node(shared_store: dict[str, Any]) -> str | None:
     """Get failed node ID from execution checkpoint."""
     if "__execution__" in shared_store:
         execution_data = shared_store.get("__execution__", {})
@@ -263,7 +263,7 @@ def _get_failed_node(shared_store: dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _extract_root_level_error(shared_store: dict[str, Any]) -> Optional[dict[str, str]]:
+def _extract_root_level_error(shared_store: dict[str, Any]) -> dict[str, str] | None:
     """Extract error from root level of shared store."""
     if "error" not in shared_store:
         return None
@@ -278,7 +278,7 @@ def _extract_root_level_error(shared_store: dict[str, Any]) -> Optional[dict[str
     return result
 
 
-def _extract_node_level_error(failed_node: Optional[str], shared_store: dict[str, Any]) -> Optional[str]:
+def _extract_node_level_error(failed_node: str | None, shared_store: dict[str, Any]) -> str | None:
     """Extract error from failed node's output (succeeded namespace OR __failures__)."""
     if not failed_node:
         return None
@@ -303,7 +303,7 @@ def _extract_node_level_error(failed_node: Optional[str], shared_store: dict[str
     return None
 
 
-def _extract_error_from_mcp_result(result: Any) -> Optional[str]:
+def _extract_error_from_mcp_result(result: Any) -> str | None:
     """Extract error from MCP result format.
 
     Handles nested payloads like Slack/Discord responses:

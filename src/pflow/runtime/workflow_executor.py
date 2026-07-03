@@ -3,7 +3,7 @@
 import copy
 import logging
 from pathlib import Path
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
 from pflow.core.diagnostic import Diagnostic, format_child_provenance, normalize_runtime_warning
 from pflow.core.exceptions import (
@@ -281,7 +281,7 @@ class WorkflowExecutor(BaseNode):
     def _validate_and_compile_child(
         workflow_ir: dict[str, Any],
         workflow_path: str,
-        registry: Optional[Registry],
+        registry: Registry | None,
         child_params: dict[str, Any],
         cacheable: bool,
     ) -> Any:
@@ -739,7 +739,7 @@ class WorkflowExecutor(BaseNode):
 
     def _load_workflow(
         self, shared: dict[str, Any], execution_stack: list[str]
-    ) -> tuple[dict[str, Any], Optional[Path], str, list[Diagnostic]]:
+    ) -> tuple[dict[str, Any], Path | None, str, list[Diagnostic]]:
         """Load the workflow from file path or saved name.
 
         Returns:

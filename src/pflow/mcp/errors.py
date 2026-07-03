@@ -7,7 +7,6 @@ MCP tool execution (MCPNode) and MCP server discovery.
 
 import asyncio
 import re
-from typing import Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity
 
@@ -19,13 +18,13 @@ def unwrap_exception_group(exc: BaseException) -> BaseException:
     inside a task group, Python wraps it in an ExceptionGroup. This extracts
     the actual exception so it can be classified by type.
     """
-    exceptions: Optional[tuple[BaseException, ...]] = getattr(exc, "exceptions", None)
+    exceptions: tuple[BaseException, ...] | None = getattr(exc, "exceptions", None)
     if exceptions:
         return unwrap_exception_group(exceptions[0])
     return exc
 
 
-def describe_mcp_error(exc: BaseException, *, timeout: Optional[int] = None) -> Diagnostic:
+def describe_mcp_error(exc: BaseException, *, timeout: int | None = None) -> Diagnostic:
     """Turn any MCP SDK exception into a structured Diagnostic.
 
     Unwraps ExceptionGroups, classifies by exception type, returns an

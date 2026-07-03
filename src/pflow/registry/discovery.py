@@ -8,7 +8,7 @@ Replaces the PocketFlow-based ComponentBrowsingNode with a plain function.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -42,8 +42,8 @@ class ComponentSelection:
 
 def find_components(
     task: str,
-    model_name: Optional[str] = None,
-    registry_metadata: Optional[dict[str, Any]] = None,
+    model_name: str | None = None,
+    registry_metadata: dict[str, Any] | None = None,
     include_workflows: bool = True,
 ) -> ComponentSelection:
     """Discover components (nodes) needed for building a workflow.

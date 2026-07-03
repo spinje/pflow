@@ -6,7 +6,7 @@ and node testing operations.
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
@@ -533,7 +533,7 @@ class ExecutionService(BaseService):
             raise ValueError(f"Invalid workflow name: {error}")
 
         # Determine markdown content from input
-        source_path: Optional[Path] = None
+        source_path: Path | None = None
         if "\n" in workflow:
             # Raw markdown content
             markdown_content = workflow
@@ -567,7 +567,7 @@ class ExecutionService(BaseService):
         name: str,
         markdown_content: str,
         force: bool,
-        source_path: Optional[Path] = None,
+        source_path: Path | None = None,
     ) -> str:
         """Save workflow and format success message.
 

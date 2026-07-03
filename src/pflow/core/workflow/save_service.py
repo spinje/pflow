@@ -7,7 +7,7 @@ separate interfaces optimized for each use case.
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import MarkdownParseError, WorkflowValidationError
@@ -65,7 +65,7 @@ RESERVED_WORKFLOW_NAMES: frozenset[str] = frozenset({
 })
 
 
-def validate_workflow_name(name: str) -> tuple[bool, Optional[str]]:
+def validate_workflow_name(name: str) -> tuple[bool, str | None]:
     """Validate workflow name meets format requirements.
 
     Unified validation used by both CLI and MCP. Uses CLI rules (50 char max,
@@ -114,7 +114,7 @@ def validate_workflow_name(name: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
-def _resolve_for_validation(workflow_ir: dict[str, Any], source_path: Optional[Path]) -> dict[str, Any]:
+def _resolve_for_validation(workflow_ir: dict[str, Any], source_path: Path | None) -> dict[str, Any]:
     """Return an IR copy with file references resolved, for validation only.
 
     The input IR keeps its literal file path strings (e.g.
@@ -154,7 +154,7 @@ def _validate_and_normalize_ir(
     workflow_ir: dict[str, Any],
     auto_normalize: bool,
     source_desc: str,
-    source_path: Optional[Path] = None,
+    source_path: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and optionally normalize workflow IR.
 
@@ -338,7 +338,7 @@ def load_and_validate_workflow(
 
 def _discover_and_bundle_deps(
     name: str, workflow_ir: dict[str, Any], source_path: Path
-) -> tuple[Optional[list[tuple[str, Path]]], list[str]]:
+) -> tuple[list[tuple[str, Path]] | None, list[str]]:
     """Discover file dependencies and compute bundle-relative paths.
 
     Args:
@@ -427,8 +427,8 @@ def save_workflow_with_options(
     markdown_content: str,
     *,
     force: bool = False,
-    metadata: Optional[dict[str, Any]] = None,
-    source_path: Optional[Path] = None,
+    metadata: dict[str, Any] | None = None,
+    source_path: Path | None = None,
 ) -> tuple[Path, list[str], dict[str, Any]]:
     """Parse, validate, and save a workflow with dependency bundling and overwrite handling.
 
@@ -479,7 +479,7 @@ def save_workflow_with_options(
             raise WorkflowValidationError(f"Failed to delete existing workflow '{name}': {e}") from e
 
     # Discover dependencies if source path is provided
-    dependencies: Optional[list[tuple[str, Path]]] = None
+    dependencies: list[tuple[str, Path]] | None = None
     bundled_files: list[str] = []
 
     if source_path is not None:
@@ -505,9 +505,7 @@ def save_workflow_with_options(
     return Path(saved_path), bundled_files, validated_ir
 
 
-def generate_workflow_metadata(
-    workflow_ir: dict[str, Any], model_name: Optional[str] = None
-) -> Optional[dict[str, Any]]:
+def generate_workflow_metadata(workflow_ir: dict[str, Any], model_name: str | None = None) -> dict[str, Any] | None:
     """Generate rich metadata for workflow using LLM.
 
     Stub — rich metadata generation is currently disabled.

@@ -5,7 +5,7 @@ ensuring that resolved values match expected parameter types.
 """
 
 import re
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.types import outer_base_type
 from pflow.registry.registry import Registry
@@ -117,7 +117,7 @@ def is_type_compatible(source_type: str, target_type: str) -> bool:
 
 def infer_template_type(  # noqa: C901
     template: str, workflow_ir: dict[str, Any], node_outputs: dict[str, Any]
-) -> Optional[str]:
+) -> str | None:
     """Infer the type of a template variable path.
 
     Args:
@@ -204,7 +204,7 @@ def infer_template_type(  # noqa: C901
     return None
 
 
-def _infer_nested_type(path_parts: list[str], output_info: dict[str, Any]) -> Optional[str]:
+def _infer_nested_type(path_parts: list[str], output_info: dict[str, Any]) -> str | None:
     """Infer type by traversing nested structure.
 
     Args:
@@ -256,7 +256,7 @@ def _infer_nested_type(path_parts: list[str], output_info: dict[str, Any]) -> Op
     return None
 
 
-def get_parameter_type(node_type: str, param_name: str, registry: Registry) -> Optional[str]:
+def get_parameter_type(node_type: str, param_name: str, registry: Registry) -> str | None:
     """Get expected type for a node parameter.
 
     Args:

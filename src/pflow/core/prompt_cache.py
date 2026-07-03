@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Final, Union
+from typing import Any, Final
 
 from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.llm_capabilities import get_breakpoint_budget
@@ -98,7 +98,7 @@ _CHUNK_ABSENT: Final = _ChunkAbsentSentinel()
 # representation OR the absent sentinel. Filter sites pattern-match on
 # ``isinstance(result, _ChunkAbsentSentinel)`` to drop absent chunks before
 # they reach the cache hash or the rendered system blocks.
-ChunkRenderResult = Union[str, _ChunkAbsentSentinel]
+ChunkRenderResult = str | _ChunkAbsentSentinel
 
 
 # --- Deterministic serialization (single source of truth) ------------------

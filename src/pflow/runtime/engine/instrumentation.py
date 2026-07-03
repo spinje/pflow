@@ -11,7 +11,7 @@ import hashlib
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MaxNodeVisitsError
@@ -142,9 +142,9 @@ def compute_node_config(
     node_type_name: str,
     static_params: dict,
     template_params: dict,
-    batch_config: Optional[BatchConfig],
+    batch_config: BatchConfig | None,
     *,
-    prompt_cache_content: Optional[list[dict[str, Any]]] = None,
+    prompt_cache_content: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build config dict for cache key.
 
@@ -195,10 +195,10 @@ def compute_config_hash(config: dict[str, Any]) -> str:
 
 def _compute_memo_cache_key(
     config_hash: str,
-    batch_config: Optional[BatchConfig],
+    batch_config: BatchConfig | None,
     shared: dict,
-    resolved_params: Optional[dict],
-) -> Optional[str]:
+    resolved_params: dict | None,
+) -> str | None:
     """Compute the memo cache key for a node, or None when no usable key exists.
 
     Batch nodes fold the resolved item list + semantic config into the key; a
@@ -240,11 +240,11 @@ def memo_cache_lookup(
     node_id: str,
     node_type_name: str,
     config_hash: str,
-    batch_config: Optional[BatchConfig],
+    batch_config: BatchConfig | None,
     shared: dict,
     visit_counts: dict,
-    resolved_params: Optional[dict] = None,
-) -> tuple[bool, Optional[str], Optional[tuple[str, dict, Optional[float]]]]:
+    resolved_params: dict | None = None,
+) -> tuple[bool, str | None, tuple[str, dict, float | None] | None]:
     """Pure read: check SQLite memo cache without mutating shared state.
 
     Task 159 E.1: the success-shape third element is now a 3-tuple
@@ -336,9 +336,9 @@ def _augment_llm_usage_with_cache_metadata(
     shared: dict,
     node_id: str,
     *,
-    cache_source: Optional[str],
-    cache_key: Optional[str],
-    cache_age_sec: Optional[float],
+    cache_source: str | None,
+    cache_key: str | None,
+    cache_age_sec: float | None,
 ) -> None:
     """Write cache-metadata fields into ``shared[node_id]['llm_usage']``.
 
@@ -369,8 +369,8 @@ def apply_memo_hit(
     config_hash: str,
     *,
     node_type_name: str,
-    cache_key: Optional[str] = None,
-    created_at: Optional[float] = None,
+    cache_key: str | None = None,
+    created_at: float | None = None,
 ) -> None:
     """Apply a memoization cache hit to shared state.
 
@@ -425,11 +425,11 @@ def check_memo_cache(
     node_id: str,
     node_type_name: str,
     config_hash: str,
-    batch_config: Optional[BatchConfig],
+    batch_config: BatchConfig | None,
     shared: dict,
     visit_counts: dict,
-    resolved_params: Optional[dict] = None,
-) -> tuple[bool, Any, Optional[str]]:
+    resolved_params: dict | None = None,
+) -> tuple[bool, Any, str | None]:
     """Backwards-compatible wrapper: lookup + apply memo hit."""
     hit, cache_key, cached_data = memo_cache_lookup(
         node_id=node_id,
@@ -459,10 +459,10 @@ def check_memo_cache(
 def write_memo_cache(
     node_id: str,
     shared: dict,
-    cache_key: Optional[str],
+    cache_key: str | None,
     action: str = "default",
     *,
-    duration_ms: Optional[float] = None,
+    duration_ms: float | None = None,
     node_type_name: str,
 ) -> None:
     """Write to SQLite cache after successful execution. Skips error results.
@@ -524,13 +524,13 @@ def record_trace(
     start_time: float,
     shared_keys_before: set,
     last_resolutions: dict,
-    batch_trace_items: Optional[list],
-    child_trace_events: Optional[list],
+    batch_trace_items: list | None,
+    child_trace_events: list | None,
     node_params: dict,
     trace_collector: Any,
     cached: bool = False,
-    error: Optional[Exception | str] = None,
-    success: Optional[bool] = None,
+    error: Exception | str | None = None,
+    success: bool | None = None,
     frame: Any = None,
 ) -> None:
     """Record trace event. Receives data directly, no chain traversal.
@@ -619,7 +619,7 @@ def call_completion_callback(
     shared: dict,
     action: str,
     duration_ms: float,
-    error: Optional[Exception] = None,
+    error: Exception | None = None,
     ignore_errors: bool = False,
 ) -> None:
     """Call progress callback with node_complete."""
@@ -680,8 +680,8 @@ def handle_cached_execution(
     node_params: dict,
     trace_collector: Any,
     *,
-    cache_source: Optional[str] = None,
-    template_resolutions: Optional[dict] = None,
+    cache_source: str | None = None,
+    template_resolutions: dict | None = None,
 ) -> Any:
     """Handle cached node execution: record trace, call callbacks.
 

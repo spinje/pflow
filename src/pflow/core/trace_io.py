@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 INTERN_MIN_BYTES = 1024
 BLOB_SENTINEL = "$pflow_blob"

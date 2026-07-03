@@ -21,7 +21,7 @@ Usage:
 """
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
@@ -70,7 +70,7 @@ def format_node_output(
     registry: Registry,
     format_type: str = "text",
     verbose: bool = False,
-    execution_id: Optional[str] = None,
+    execution_id: str | None = None,
     output_mode: str = "smart",
 ) -> str | dict[str, Any]:
     """Format node execution results for display.
@@ -272,7 +272,7 @@ def format_structure_output(
     execution_time_ms: int,
     verbose: bool = False,
     include_values: bool = False,
-    execution_id: Optional[str] = None,
+    execution_id: str | None = None,
     output_mode: str = "smart",
 ) -> str:
     """Format flattened output structure for template variable discovery.

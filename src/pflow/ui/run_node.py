@@ -261,7 +261,7 @@ def _ancestor_paths_equal(a: list[Any], b: list[Any]) -> bool:
         and isinstance(pb, dict)
         and pa.get("node_id") == pb.get("node_id")
         and pa.get("batch_index") == pb.get("batch_index")
-        for pa, pb in zip(a, b)
+        for pa, pb in zip(a, b, strict=True)
     )
 
 

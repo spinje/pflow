@@ -6,7 +6,7 @@ for component discovery and workflow authoring.
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.workflow.manager import WorkflowManager
 
@@ -227,8 +227,8 @@ def _format_structure_combined(
 
 
 def build_nodes_context(
-    node_ids: Optional[list[str]] = None,
-    registry_metadata: Optional[dict[str, dict[str, Any]]] = None,
+    node_ids: list[str] | None = None,
+    registry_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """Build context containing only node information as a numbered list.
 
@@ -330,7 +330,7 @@ def _validate_component_context_inputs(
     selected_node_ids: list[str],
     selected_workflow_names: list[str],
     registry_metadata: dict[str, dict[str, Any]],
-    saved_workflows: Optional[list[dict[str, Any]]],
+    saved_workflows: list[dict[str, Any]] | None,
 ) -> None:
     """Validate inputs for build_component_context."""
     if not isinstance(selected_node_ids, list):
@@ -375,8 +375,8 @@ def build_component_context(
     selected_node_ids: list[str],
     selected_workflow_names: list[str],
     registry_metadata: dict[str, dict[str, Any]],
-    saved_workflows: Optional[list[dict[str, Any]]] = None,
-    workflow_manager: Optional[WorkflowManager] = None,
+    saved_workflows: list[dict[str, Any]] | None = None,
+    workflow_manager: WorkflowManager | None = None,
 ) -> str | dict[str, Any]:
     """Build detailed component context for selected components.
 

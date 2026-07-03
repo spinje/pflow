@@ -8,11 +8,11 @@ import re
 import threading
 import uuid
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, TextIO
+from typing import Any, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
@@ -692,15 +692,15 @@ class WorkflowTraceCollector:
         node_type: str,
         duration_ms: float,
         success: bool,
-        error: Optional[str] = None,
-        node_params: Optional[dict[str, Any]] = None,
-        template_resolutions: Optional[dict[str, Any]] = None,
-        node_output: Optional[dict[str, Any]] = None,
-        mutations: Optional[dict[str, list[str]]] = None,
-        batch_items: Optional[list[dict[str, Any]]] = None,
-        sub_workflow_events: Optional[list[dict[str, Any]]] = None,
+        error: str | None = None,
+        node_params: dict[str, Any] | None = None,
+        template_resolutions: dict[str, Any] | None = None,
+        node_output: dict[str, Any] | None = None,
+        mutations: dict[str, list[str]] | None = None,
+        batch_items: list[dict[str, Any]] | None = None,
+        sub_workflow_events: list[dict[str, Any]] | None = None,
         cached: bool = False,
-        frame: Optional[_HostFrame] = None,
+        frame: _HostFrame | None = None,
     ) -> None:
         """Record detailed node execution data.
 

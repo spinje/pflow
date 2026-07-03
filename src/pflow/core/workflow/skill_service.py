@@ -17,7 +17,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.workflow.manager import WorkflowManager
 
@@ -187,7 +187,7 @@ def enrich_workflow(workflow_path: Path, name: str, description: str, ir: dict[s
 def _get_skills_base_dir(
     scope: str,
     target: str = DEFAULT_TARGET,
-    project_dir: Optional[Path] = None,
+    project_dir: Path | None = None,
 ) -> Path:
     """Get the base directory for skills based on scope and target.
 
@@ -216,7 +216,7 @@ def create_skill_symlink(
     skill_name: str,
     scope: str,
     target: str = DEFAULT_TARGET,
-    project_dir: Optional[Path] = None,
+    project_dir: Path | None = None,
 ) -> Path:
     """Create a symlink from a tool's skills directory to the saved workflow.
 
@@ -256,7 +256,7 @@ def remove_skill(
     skill_name: str,
     scope: str,
     target: str = DEFAULT_TARGET,
-    project_dir: Optional[Path] = None,
+    project_dir: Path | None = None,
 ) -> bool:
     """Remove a skill symlink and its parent directory.
 
@@ -289,7 +289,7 @@ def remove_skill(
     return True
 
 
-def _resolve_symlink_target(symlink_path: Path) -> Optional[Path]:
+def _resolve_symlink_target(symlink_path: Path) -> Path | None:
     """Resolve symlink target to absolute path, or None if unreadable."""
     try:
         target = Path(os.readlink(symlink_path))
@@ -307,9 +307,9 @@ def _is_pflow_skill(target: Path, workflows_dir: Path) -> bool:
 
 
 def find_pflow_skills(
-    project_dir: Optional[Path] = None,
-    workflows_dir: Optional[Path] = None,
-    targets: Optional[list[str]] = None,
+    project_dir: Path | None = None,
+    workflows_dir: Path | None = None,
+    targets: list[str] | None = None,
 ) -> list[SkillInfo]:
     """Scan skill directories for pflow-managed symlinks.
 
@@ -362,9 +362,9 @@ def find_pflow_skills(
 
 def find_skill_for_workflow(
     workflow_name: str,
-    project_dir: Optional[Path] = None,
-    workflows_dir: Optional[Path] = None,
-    targets: Optional[list[str]] = None,
+    project_dir: Path | None = None,
+    workflows_dir: Path | None = None,
+    targets: list[str] | None = None,
 ) -> list[SkillInfo]:
     """Find skills that point to a specific workflow.
 
@@ -386,7 +386,7 @@ def find_skill_for_workflow(
 
 def re_enrich_if_skill(
     workflow_name: str,
-    project_dir: Optional[Path] = None,
+    project_dir: Path | None = None,
 ) -> None:
     """Re-enrich a workflow if it's published as a skill.
 

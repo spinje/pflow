@@ -13,7 +13,7 @@ import json
 import secrets
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.security_utils import is_sensitive_parameter, mask_sensitive_value
 
@@ -95,7 +95,7 @@ class ExecutionCache:
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(cache_data, f, indent=2, default=str)
 
-    def retrieve(self, execution_id: str) -> Optional[dict[str, Any]]:
+    def retrieve(self, execution_id: str) -> dict[str, Any] | None:
         """Retrieve cached execution results.
 
         Args:

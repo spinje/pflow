@@ -35,7 +35,7 @@ site in ``workflow_resolver.py``.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 
@@ -51,14 +51,14 @@ class SubWorkflowResult:
     """
 
     ir: dict[str, Any]
-    path: Optional[Path]
+    path: Path | None
     warnings: tuple[Diagnostic, ...]
 
 
 def resolve_sub_workflow(
     params: dict[str, Any],
-    base_path: Optional[Path] = None,
-) -> Optional[SubWorkflowResult]:
+    base_path: Path | None = None,
+) -> SubWorkflowResult | None:
     """Resolve a sub-workflow reference from node params.
 
     Handles two resolution modes:
@@ -101,7 +101,7 @@ def resolve_sub_workflow(
     return _resolve_from_saved(workflow_ref)
 
 
-def _resolve_file_refs_at_boundary(ir: dict[str, Any], path: Optional[Path]) -> dict[str, Any]:
+def _resolve_file_refs_at_boundary(ir: dict[str, Any], path: Path | None) -> dict[str, Any]:
     """Apply file resolution per the boundary contract.
 
     Mirrors the ROOT-workflow boundary in ``execution/workflow_resolver.py``:
@@ -127,7 +127,7 @@ def _resolve_file_refs_at_boundary(ir: dict[str, Any], path: Optional[Path]) -> 
 
 def _resolve_from_file(
     workflow_ref: str,
-    base_path: Optional[Path],
+    base_path: Path | None,
 ) -> SubWorkflowResult:
     """Resolve a file reference to a sub-workflow IR.
 

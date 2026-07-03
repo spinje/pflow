@@ -9,12 +9,12 @@ resolved (e.g., references a node that didn't execute). Coalesce expressions
 explicitly opted into fallthrough behavior.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from pflow.runtime.template_resolver import TemplateResolver
 
 
-def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Optional[Any]:
+def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:
     """Resolve a source expression to get output value.
 
     Handles multiple source expression formats:

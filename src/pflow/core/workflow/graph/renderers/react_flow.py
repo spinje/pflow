@@ -1220,7 +1220,7 @@ def _literal_dict_keys(assignments: list[ast.AST], scope: _TypeScope) -> list[RF
     arms: list[dict[str, ast.expr]] = []
     for d in dicts:
         arm: dict[str, ast.expr] = {}
-        for k, v in zip(d.keys, d.values):
+        for k, v in zip(d.keys, d.values, strict=True):
             if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
                 return None  # **spread or non-string key — the full list is uncertain
             arm[k.value] = v

@@ -18,7 +18,7 @@ must raise ``GateNotInteractiveError(..., parallel_batch=True)`` instead of prom
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pflow.core.security_utils import is_sensitive_parameter
 
@@ -45,9 +45,9 @@ class GateRequest:
     # Approval: the node's resolved params — what is ABOUT to happen.
     preview: dict[str, Any] = field(default_factory=dict)
     # Escalation: the decision the agent raised. All optional — render leniently.
-    question: Optional[str] = None
+    question: str | None = None
     options: tuple[dict[str, Any], ...] = ()
-    recommendation: Optional[str] = None
+    recommendation: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -62,8 +62,8 @@ class GateResolution:
     approved: bool
     resolved_via: Literal["prompt", "flag"]
     # Escalation only: the chosen option label (or free text), plus any extra notes.
-    chosen: Optional[str] = None
-    notes: Optional[str] = None
+    chosen: str | None = None
+    notes: str | None = None
 
 
 def build_approval_request(node_id: str, node_type: str, params: Any) -> GateRequest:
@@ -113,7 +113,7 @@ def masked_preview(preview: dict[str, Any]) -> dict[str, Any]:
     the approver to what they were approving (PR #554 review warning).
     """
 
-    def mask(key: Optional[str], value: Any) -> Any:
+    def mask(key: str | None, value: Any) -> Any:
         if key is not None and is_sensitive_parameter(key):
             return "<REDACTED>"
         if isinstance(value, dict):

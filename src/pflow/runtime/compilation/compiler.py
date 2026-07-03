@@ -14,7 +14,7 @@ Supporting concerns are in sibling modules:
 import json
 import logging
 import math
-from typing import Any, Optional, Union
+from typing import Any
 
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 _RETRY_CONFIG_KEYS = frozenset({"max", "wait", "backoff"})
 
 
-def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
+def _parse_ir_input(ir_json: str | dict[str, Any]) -> dict[str, Any]:
     """Parse IR from string or pass through dict.
 
     Args:
@@ -388,7 +388,7 @@ def _create_node_and_config(
     return node_instance, node_config
 
 
-def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[LoopConfig]:
+def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> LoopConfig | None:
     """Build a ``LoopConfig`` from the node's top-level ``loop:`` block (issue #445).
 
     Returns None when no ``loop:`` is declared. Enforces:
@@ -428,8 +428,8 @@ def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[L
     while_template, until_template = _extract_loop_polarity(loop_data, node_id, node_type)
     carry = _extract_loop_carry(loop_data, node_id, node_type)
 
-    max_iterations: Optional[int] = None
-    max_iterations_template: Optional[str] = None
+    max_iterations: int | None = None
+    max_iterations_template: str | None = None
     raw_max = loop_data.get("max_iterations")
     if isinstance(raw_max, str) and "${" in raw_max:
         max_iterations_template = raw_max
@@ -447,8 +447,8 @@ def _build_loop_config(node_data: dict[str, Any], has_batch: bool) -> Optional[L
 
 
 def _extract_loop_polarity(
-    loop_data: dict[str, Any], node_id: Optional[str], node_type: Optional[str]
-) -> tuple[Optional[str], Optional[str]]:
+    loop_data: dict[str, Any], node_id: str | None, node_type: str | None
+) -> tuple[str | None, str | None]:
     polarity_error = check_loop_polarity(loop_data)
     if polarity_error is not None:
         raise CompilationError(
@@ -480,7 +480,7 @@ def _extract_loop_polarity(
     return while_template or None, until_template or None
 
 
-def _extract_loop_carry(loop_data: dict[str, Any], node_id: Optional[str], node_type: Optional[str]) -> dict[str, str]:
+def _extract_loop_carry(loop_data: dict[str, Any], node_id: str | None, node_type: str | None) -> dict[str, str]:
     carry = loop_data.get("carry") or {}
     if not isinstance(carry, dict):
         raise CompilationError(
@@ -502,7 +502,7 @@ def _extract_loop_carry(loop_data: dict[str, Any], node_id: Optional[str], node_
     return dict(carry)
 
 
-def _coerce_loop_cap_int(value: Any, node_id: Optional[str], node_type: Optional[str]) -> int:
+def _coerce_loop_cap_int(value: Any, node_id: str | None, node_type: str | None) -> int:
     """Coerce a literal ``max_iterations`` to int (bool/int/float/numeric-string).
 
     Loop-specific sibling of ``_coerce_int`` so the error message speaks ``loop:``
@@ -528,7 +528,7 @@ def _coerce_loop_cap_int(value: Any, node_id: Optional[str], node_type: Optional
     )
 
 
-def _validate_loop_cap(value: int, node_id: Optional[str], node_type: Optional[str]) -> int:
+def _validate_loop_cap(value: int, node_id: str | None, node_type: str | None) -> int:
     """Bound a resolved loop cap to ``[1, MAX_NODE_VISITS]``; raise ``CompilationError`` otherwise.
 
     Shared by the literal (compile-time) branch and — at runtime — the template
@@ -720,7 +720,7 @@ def _extract_approval(node_data: dict[str, Any]) -> bool:
     return True
 
 
-def _build_cache_block(ir_dict: dict[str, Any]) -> Optional[CacheBlockIR]:
+def _build_cache_block(ir_dict: dict[str, Any]) -> CacheBlockIR | None:
     """Build the workflow-level ``CacheBlockIR`` from the IR's top-level ``cache`` field.
 
     Returns None when no ``## Cache`` block was declared. Schema enforces shape
@@ -861,9 +861,9 @@ def _instantiate_nodes_for_workflow(
 
 
 def compile_workflow(
-    ir_json: Union[str, dict[str, Any]],
+    ir_json: str | dict[str, Any],
     registry: Registry,
-    initial_params: Optional[dict[str, Any]] = None,
+    initial_params: dict[str, Any] | None = None,
 ) -> CompiledWorkflow:
     """Compile IR to CompiledWorkflow. No runtime state baked in.
 

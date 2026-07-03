@@ -1,7 +1,7 @@
 """Tests for mermaid flowchart generation from workflow IR."""
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.workflow.mermaid import generate_mermaid
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
@@ -13,8 +13,8 @@ from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 
 def _ir(
     nodes: list[dict[str, Any]],
-    edges: Optional[list[dict[str, Any]]] = None,
-    inputs: Optional[dict[str, Any]] = None,
+    edges: list[dict[str, Any]] | None = None,
+    inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a minimal workflow IR dict."""
     ir: dict[str, Any] = {"nodes": nodes}
@@ -160,7 +160,7 @@ def test_sub_workflow_expansion() -> None:
         edges=[{"from": "inner_a", "to": "inner_b"}],
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -199,7 +199,7 @@ def test_depth_zero_no_expansion() -> None:
     """max_depth=0 renders workflow nodes as regular opaque nodes."""
     called = False
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         nonlocal called
         called = True
         return SubWorkflowResult(ir=_ir(nodes=[_node("x")]), path=None, warnings=())
@@ -229,7 +229,7 @@ def test_depth_limit() -> None:
         ],
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         wf = params.get("workflow", "")
         if wf == "child":
             return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
@@ -299,7 +299,7 @@ def test_cycle_detection() -> None:
     shared_path = Path("/fake/shared.pflow.md")
     call_count = 0
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         nonlocal call_count
         call_count += 1
         # Every workflow node resolves to the same path with another
@@ -338,7 +338,7 @@ def test_sibling_same_child_both_expand() -> None:
     child_ir = _ir(nodes=[{"id": "inner", "type": "shell", "params": {}}])
     shared_path = Path("/fake/child.pflow.md")
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=shared_path, warnings=())
 
     ir = _ir(
@@ -365,7 +365,7 @@ def test_sibling_same_child_both_expand() -> None:
 def test_resolve_failure_degrades_gracefully() -> None:
     """Resolver that raises renders the node as an opaque regular node."""
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         raise FileNotFoundError("workflow not found")
 
     ir = _ir(
@@ -667,7 +667,7 @@ def test_batch_workflow_dynamic_subgraph_label() -> None:
     """Workflow node with dynamic batch that expands shows batch info in subgraph label."""
     child_ir = _ir(nodes=[_node("inner", "llm")])
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     ir = _ir(
@@ -719,7 +719,7 @@ def test_batch_item_workflow_expansion() -> None:
     """Batch items with literal workflow paths are expanded as subgraphs."""
     child_ir = _ir(nodes=[_node("review-step", "llm")])
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/review.pflow.md"), warnings=())
 
     ir = _ir(
@@ -874,7 +874,7 @@ def test_subworkflow_outputs_replace_end_node() -> None:
     )
     child_ir["outputs"] = {"result": {"source": "${a.stdout ?? b.stdout}"}}
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -899,7 +899,7 @@ def test_subworkflow_inputs_rendered_inside() -> None:
         inputs={"text": {"type": "string"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -921,7 +921,7 @@ def test_subworkflow_linear_outputs_connected() -> None:
     )
     child_ir["outputs"] = {"analysis": {"source": "${step2.result}"}}
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -951,7 +951,7 @@ def test_data_flow_edges_from_params() -> None:
         inputs={"data": {"type": "string"}, "config": {"type": "object"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1022,7 +1022,7 @@ def test_structural_arrow_into_literal_batch_survives_input_only_bindings() -> N
         inputs={"text": {"type": "string"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1065,7 +1065,7 @@ def test_structural_edge_not_suppressed_when_subwf_inputs_are_only_from_parent()
         inputs={"config": {"type": "string"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     # prepare → subwf, but subwf's only input references a workflow input (not prepare)
@@ -1097,7 +1097,7 @@ def test_data_flow_skips_item_refs() -> None:
         inputs={"text": {"type": "string"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1177,7 +1177,7 @@ def test_descriptions_on_subgraph() -> None:
     """With descriptions=True, sub-workflow subgraph label includes purpose."""
     child_ir = _ir(nodes=[_node("inner", "code")])
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1272,7 +1272,7 @@ def test_nested_subworkflow_output_routes_through_child_output() -> None:
 
     call_count = 0
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         nonlocal call_count
         wf = params.get("workflow", "")
         if "inner" in wf:
@@ -1315,7 +1315,7 @@ def test_suppression_without_replacement_keeps_structural_edge() -> None:
         inputs={"data": {"type": "string"}},  # "data" != "result" — no name match
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         wf = params.get("workflow", "")
         if wf == "a.pflow.md":
             return SubWorkflowResult(ir=child_a_ir, path=Path("/fake/a.pflow.md"), warnings=())
@@ -1361,7 +1361,7 @@ def test_external_io_does_not_duplicate_with_internal_io() -> None:
     )
     child_ir["outputs"] = {"out": {"source": "${step.stdout}"}}
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1428,7 +1428,7 @@ def test_opaque_template_inputs_fall_through_gracefully() -> None:
         inputs={"x": {"type": "string"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1472,7 +1472,7 @@ def test_batch_data_flow_with_inputs_dict() -> None:
         inputs={"summary": {"type": "string"}, "aspect": {"type": "string"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/review.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1522,7 +1522,7 @@ def test_coalesce_in_data_flow_binding() -> None:
         inputs={"val": {"type": "string"}},
     )
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1601,7 +1601,7 @@ def test_output_source_from_input_in_subworkflow() -> None:
     )
     child_ir["outputs"] = {"echo": {"source": "${data}"}}
 
-    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1646,7 +1646,7 @@ def test_loop_renders_on_subworkflow_subgraph_title() -> None:
     # `loop:` on a sub-workflow node (multinode body) badges the subgraph title.
     child_ir = _ir(nodes=[{"id": "judge", "type": "code", "params": {}}])
 
-    def resolver(params: dict[str, Any], base_path: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base_path: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/x/round.pflow.md"), warnings=())
 
     parent_ir = _ir(
@@ -1707,7 +1707,7 @@ def test_subworkflow_loop_badge_precedes_description_in_subgraph_title() -> None
     # _format_label — this is the path where mermaid's subgraph-title clip actually bites.
     child_ir = _ir(nodes=[{"id": "judge", "type": "code", "params": {}}])
 
-    def resolver(params: dict[str, Any], base_path: Optional[Path]) -> Optional[SubWorkflowResult]:
+    def resolver(params: dict[str, Any], base_path: Path | None) -> SubWorkflowResult | None:
         return SubWorkflowResult(ir=child_ir, path=Path("/x/round.pflow.md"), warnings=())
 
     parent_ir = _ir(

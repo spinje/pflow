@@ -26,7 +26,7 @@ These are REAL integration tests that use actual files and execution.
 
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
@@ -40,7 +40,7 @@ def _compile_and_run(
     workflow_ir: dict[str, Any],
     registry: Registry,
     shared: dict[str, Any],
-    initial_params: Optional[dict[str, Any]] = None,
+    initial_params: dict[str, Any] | None = None,
 ) -> None:
     """Compile workflow and run via WorkflowEngine, seeding shared store."""
     workflow = compile_workflow(workflow_ir, registry, initial_params=initial_params)

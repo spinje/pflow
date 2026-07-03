@@ -27,7 +27,7 @@ snapshot — can never re-trigger the prompt (idempotent by construction).
 """
 
 import logging
-from typing import Any, Optional, Union
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import GateDenied, GateNotInteractiveError, GateResolverError, PflowError
@@ -101,7 +101,7 @@ def run_approval_gate(config: Any, params: Any, shared: dict[str, Any], trace: A
     _record_gate(trace, request, phase="resolution", resolution="approved", resolved_via=resolution.resolved_via)
 
 
-def detect_escalation(shared: dict[str, Any], node_id: str) -> Optional[Union[dict[str, Any], str]]:
+def detect_escalation(shared: dict[str, Any], node_id: str) -> dict[str, Any] | str | None:
     """Return the node's undecided escalation marker, or ``None``.
 
     Applies the shape ladder above; unusable-but-clearly-intended shapes write a
@@ -149,7 +149,7 @@ def detect_escalation(shared: dict[str, Any], node_id: str) -> Optional[Union[di
     return None
 
 
-def run_escalation_gate(config: Any, marker: Union[dict[str, Any], str], shared: dict[str, Any], trace: Any) -> None:
+def run_escalation_gate(config: Any, marker: dict[str, Any] | str, shared: dict[str, Any], trace: Any) -> None:
     """Post-exec escalation gate: pause → human chooses → decision written into the marker.
 
     Runs AFTER the node's own completion trace/callbacks (its success record
@@ -228,9 +228,9 @@ def _record_gate(
     request: GateRequest,
     *,
     phase: str,
-    resolution: Optional[str] = None,
-    resolved_via: Optional[str] = None,
-    decision: Optional[dict[str, Any]] = None,
+    resolution: str | None = None,
+    resolved_via: str | None = None,
+    decision: dict[str, Any] | None = None,
 ) -> None:
     if trace is None:
         return

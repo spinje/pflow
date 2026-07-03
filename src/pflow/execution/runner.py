@@ -3,9 +3,10 @@
 import contextlib
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from pflow.core.diagnostic import (
     LLM_WARNING_CATEGORY,
@@ -93,10 +94,10 @@ class WorkflowRunner:
         params: dict[str, Any],
         config: RunnerConfig,
         *,
-        progress_callback: Optional[Callable] = None,
-        gate_resolver: Optional[Callable] = None,
-        workflow_manager: Optional[WorkflowManager] = None,
-        workflow_name: Optional[str] = None,
+        progress_callback: Callable | None = None,
+        gate_resolver: Callable | None = None,
+        workflow_manager: WorkflowManager | None = None,
+        workflow_name: str | None = None,
     ) -> ExecutionResult:
         """Execute a workflow and return structured results.
 
@@ -247,10 +248,10 @@ class WorkflowRunner:
         resolved: ResolvedWorkflow,
         params: dict[str, Any],
         config: RunnerConfig,
-        progress_callback: Optional[Callable],
-        gate_resolver: Optional[Callable],
-        workflow_manager: Optional[WorkflowManager],
-        workflow_name: Optional[str],
+        progress_callback: Callable | None,
+        gate_resolver: Callable | None,
+        workflow_manager: WorkflowManager | None,
+        workflow_name: str | None,
         validation_warnings: list[Diagnostic],
         start_time: float,
         metrics_collector: Any,
@@ -371,7 +372,7 @@ class WorkflowRunner:
         workflow: str | dict[str, Any] | ResolvedWorkflow,
         params: dict[str, Any],
         *,
-        source_file_path: Optional[str] = None,
+        source_file_path: str | None = None,
     ) -> ValidationResult:
         """Validate a workflow without executing it.
 
@@ -580,8 +581,8 @@ class WorkflowRunner:
         self,
         params: dict[str, Any],
         verbose: bool,
-        progress_callback: Optional[Callable],
-        gate_resolver: Optional[Callable],
+        progress_callback: Callable | None,
+        gate_resolver: Callable | None,
         mcp_pool: Any,
         cache: Any,
         trace_collector: Any,
@@ -722,8 +723,8 @@ class WorkflowRunner:
     def _update_metadata(
         self,
         success: bool,
-        workflow_manager: Optional[WorkflowManager],
-        workflow_name: Optional[str],
+        workflow_manager: WorkflowManager | None,
+        workflow_name: str | None,
         params: dict[str, Any],
         duration: float,
     ) -> None:

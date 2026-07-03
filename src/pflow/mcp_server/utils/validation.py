@@ -8,14 +8,14 @@ for reuse across CLI and MCP.
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.validation_utils import generate_dummy_parameters  # noqa: F401 - Re-export for compatibility
 
 logger = logging.getLogger(__name__)
 
 
-def validate_execution_parameters(params: dict[str, Any]) -> tuple[bool, Optional[str]]:
+def validate_execution_parameters(params: dict[str, Any]) -> tuple[bool, str | None]:
     """Validate execution parameters for safety.
 
     Checks for:

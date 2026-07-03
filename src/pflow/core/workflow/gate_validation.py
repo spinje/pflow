@@ -1,9 +1,9 @@
 """Shared validation helpers for the ``approval:`` gate field (Task 125)."""
 
-from typing import Any, Optional
+from typing import Any
 
 
-def check_approval_allowed(node_data: dict[str, Any]) -> Optional[str]:
+def check_approval_allowed(node_data: dict[str, Any]) -> str | None:
     """Return an error message when ``approval:`` is declared on a batch step, else ``None``.
 
     A batch host skips top-level template resolution (per-item resolution happens

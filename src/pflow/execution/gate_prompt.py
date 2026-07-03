@@ -18,7 +18,8 @@ would archive as a node failure) — converted to ``KeyboardInterrupt`` so it ri
 the existing clean interrupt path (exit 130, incomplete-but-readable trace).
 """
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import click
 
@@ -33,7 +34,7 @@ GateResolver = Callable[..., GateResolution]
 _PREVIEW_VALUE_CHARS = 200
 
 
-def can_prompt(output_controller: Optional[OutputController]) -> bool:
+def can_prompt(output_controller: OutputController | None) -> bool:
     """True when a gate prompt can render (stderr) and be answered (stdin).
 
     Deliberately NOT ``is_interactive()`` — that requires stdout to be a TTY,
@@ -47,7 +48,7 @@ def can_prompt(output_controller: Optional[OutputController]) -> bool:
 
 def build_gate_resolver(
     auto_approve: frozenset[str],
-    output_controller: Optional[OutputController],
+    output_controller: OutputController | None,
 ) -> GateResolver:
     """Build the ``__gate_resolver__`` callable for this run.
 
@@ -68,7 +69,7 @@ def build_gate_resolver(
     return resolver
 
 
-def _echo_auto_approved(request: GateRequest, output_controller: Optional[OutputController]) -> None:
+def _echo_auto_approved(request: GateRequest, output_controller: OutputController | None) -> None:
     """One stderr line so a pre-approved gate is visible, never silent.
 
     Code-review fix: the CALLER gates this on ``allow_prompt`` — ``allow_prompt=

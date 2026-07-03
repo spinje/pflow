@@ -3,7 +3,7 @@
 import logging
 import sys
 import weakref
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import click
 
@@ -59,9 +59,9 @@ class OutputController:
     def __init__(
         self,
         print_flag: bool = False,
-        stdin_tty: Optional[bool] = None,
-        stdout_tty: Optional[bool] = None,
-        stderr_tty: Optional[bool] = None,
+        stdin_tty: bool | None = None,
+        stdout_tty: bool | None = None,
+        stderr_tty: bool | None = None,
     ):
         """Initialize output controller with execution mode parameters.
 
@@ -187,7 +187,7 @@ class OutputController:
         status = click.style("✓", fg="green") if batch_success else click.style("✗", fg="red")
         click.echo(f"\r{indent}  {node_id}... {batch_current}/{batch_total} {status}", err=True, nl=False)
 
-    def _build_smart_handled_tag(self, smart_handled: bool, smart_handled_reason: Optional[str]) -> str:
+    def _build_smart_handled_tag(self, smart_handled: bool, smart_handled_reason: str | None) -> str:
         """Build display suffix for smart-handled shell outcomes.
 
         Reason-string matching is pinned by the ``shell.py:200`` contract:
@@ -232,8 +232,8 @@ class OutputController:
 
     def _emit_non_batch_completion(
         self,
-        duration_ms: Optional[float],
-        error_message: Optional[str],
+        duration_ms: float | None,
+        error_message: str | None,
         ignore_errors: bool,
         tag_suffix: str,
     ) -> None:
@@ -261,15 +261,15 @@ class OutputController:
         self,
         node_id: str,
         indent: str,
-        duration_ms: Optional[float],
-        error_message: Optional[str],
+        duration_ms: float | None,
+        error_message: str | None,
         ignore_errors: bool,
         is_error: bool,
         is_batch: bool = False,
-        batch_total: Optional[int] = None,
-        batch_success_count: Optional[int] = None,
+        batch_total: int | None = None,
+        batch_success_count: int | None = None,
         smart_handled: bool = False,
-        smart_handled_reason: Optional[str] = None,
+        smart_handled_reason: str | None = None,
     ) -> None:
         """Handle node_complete event display.
 
@@ -318,7 +318,7 @@ class OutputController:
         click.echo(click.style(" ↻ cached", fg="blue", dim=True), err=True)
         self._partial_line_open = False
 
-    def _handle_node_warning(self, node_id: str, indent: str, warning_message: Optional[str]) -> None:
+    def _handle_node_warning(self, node_id: str, indent: str, warning_message: str | None) -> None:
         """Handle node_warning event display.
 
         Renders a yellow ⚠️ marker on the live progress line and closes
@@ -385,19 +385,19 @@ class OutputController:
         def progress_callback(
             node_id: str,
             event: str,
-            duration_ms: Optional[float] = None,
+            duration_ms: float | None = None,
             depth: int = 0,
-            error_message: Optional[str] = None,
+            error_message: str | None = None,
             ignore_errors: bool = False,
             is_error: bool = False,
             # Batch progress parameters
-            batch_current: Optional[int] = None,
-            batch_total: Optional[int] = None,
-            batch_success: Optional[bool] = None,
+            batch_current: int | None = None,
+            batch_total: int | None = None,
+            batch_success: bool | None = None,
             is_batch: bool = False,
-            batch_success_count: Optional[int] = None,
+            batch_success_count: int | None = None,
             smart_handled: bool = False,
-            smart_handled_reason: Optional[str] = None,
+            smart_handled_reason: str | None = None,
         ) -> None:
             """Display progress for node execution.
 

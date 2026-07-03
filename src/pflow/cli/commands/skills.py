@@ -5,8 +5,9 @@ the workflow file and creating symlinks from tool-specific skill directories.
 """
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 import click
 

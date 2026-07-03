@@ -21,13 +21,13 @@ Usage:
 """
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 
 def format_execution_history(
     metadata: dict[str, Any],
     mode: str = "compact",
-) -> Optional[str]:
+) -> str | None:
     """Format execution history from workflow metadata.
 
     Args:
@@ -70,10 +70,10 @@ def format_execution_history(
 
 def _format_compact(
     execution_count: int,
-    timestamp: Optional[str],
+    timestamp: str | None,
     success: bool,
-    duration: Optional[float] = None,
-    avg_duration: Optional[float] = None,
+    duration: float | None = None,
+    avg_duration: float | None = None,
 ) -> str:
     """Format execution history as single line.
 
@@ -115,10 +115,10 @@ def _format_compact(
 
 def _format_detailed(
     execution_count: int,
-    timestamp: Optional[str],
+    timestamp: str | None,
     success: bool,
-    duration: Optional[float],
-    avg_duration: Optional[float],
+    duration: float | None,
+    avg_duration: float | None,
     last_params: dict[str, Any],
 ) -> str:
     """Format execution history with parameters.

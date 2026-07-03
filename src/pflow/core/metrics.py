@@ -4,7 +4,7 @@ import time
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
@@ -78,8 +78,8 @@ class MetricsCollector:
     """Lightweight metrics aggregation for pflow execution."""
 
     start_time: float = field(default_factory=time.perf_counter)
-    workflow_start: Optional[float] = None
-    workflow_end: Optional[float] = None
+    workflow_start: float | None = None
+    workflow_end: float | None = None
 
     # Node execution timings (node_id -> duration_ms)
     workflow_nodes: dict[str, float] = field(default_factory=dict)
@@ -162,7 +162,7 @@ class MetricsCollector:
                 "pricing_available": True,
             }
 
-    def _calculate_durations(self) -> tuple[float, Optional[float]]:
+    def _calculate_durations(self) -> tuple[float, float | None]:
         """Calculate total and workflow durations.
 
         Returns:
@@ -198,7 +198,7 @@ class MetricsCollector:
         self,
         llm_calls: list[dict[str, Any]],
         node_timings: dict[str, float],
-        duration: Optional[float],
+        duration: float | None,
     ) -> dict[str, Any]:
         """Build metrics for workflow execution.
 

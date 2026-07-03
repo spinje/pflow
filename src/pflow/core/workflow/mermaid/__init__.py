@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from pflow.core.workflow.graph import build_graph, render_mermaid
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult

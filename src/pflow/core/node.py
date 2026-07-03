@@ -10,7 +10,7 @@ Rewritten from scratch in Task 135 (Execution Core Redesign, 2026-03-31).
 
 import time
 import warnings
-from typing import Any, Optional
+from typing import Any
 
 _MAX_RETRY_BACKOFF_SECONDS: float = 60.0
 
@@ -35,18 +35,18 @@ class BaseNode:
     def exec(self, prep_res: Any) -> Any:
         pass
 
-    def post(self, shared: dict[str, Any], prep_res: Any, exec_res: Any) -> Optional[str]:
+    def post(self, shared: dict[str, Any], prep_res: Any, exec_res: Any) -> str | None:
         pass
 
     def _exec(self, prep_res: Any) -> Any:
         return self.exec(prep_res)
 
-    def _run(self, shared: dict[str, Any]) -> Optional[str]:
+    def _run(self, shared: dict[str, Any]) -> str | None:
         p = self.prep(shared)
         e = self._exec(p)
         return self.post(shared, p, e)
 
-    def run(self, shared: dict[str, Any]) -> Optional[str]:
+    def run(self, shared: dict[str, Any]) -> str | None:
         if self.successors:
             warnings.warn("Node won't run successors. Use WorkflowEngine.", stacklevel=2)
         return self._run(shared)

@@ -32,7 +32,7 @@ import traceback
 import typing as _typing_module
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.node import Node
 from pflow.core.types import PYTHON_ALIASES_AT_S1
@@ -95,7 +95,7 @@ def _is_optional_type(type_str: str) -> bool:
     return "None" in parts
 
 
-def _get_inner_optional_type(type_str: str) -> Optional[str]:
+def _get_inner_optional_type(type_str: str) -> str | None:
     """Extract the inner type from an Optional annotation.
 
     Returns the inner type string if the annotation is optional, else None.
@@ -169,7 +169,7 @@ def _get_outer_type(type_str: str) -> type | tuple[type, ...] | None:
 _PYTHON_TO_S1_CANONICAL: dict[str, str] = dict(PYTHON_ALIASES_AT_S1)
 
 
-def _get_outer_type_name(type_str: str) -> Optional[str]:
+def _get_outer_type_name(type_str: str) -> str | None:
     """Resolve a type annotation string to its S1 canonical name, or None.
 
     Returns None for types without an S1 equivalent: ``Any``, typing-module
@@ -190,7 +190,7 @@ def _get_outer_type_name(type_str: str) -> Optional[str]:
     return _PYTHON_TO_S1_CANONICAL.get(_annotation_outer_base(type_str))
 
 
-def extract_code_annotation_type(code: str, key: str) -> Optional[str]:
+def extract_code_annotation_type(code: str, key: str) -> str | None:
     """Return the S1 canonical type name for ``key`` in a code block, or None.
 
     Returns None as a skip-check signal when the code is malformed, the key is

@@ -6,7 +6,7 @@ and all error formatting for path-related issues.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.registry import Registry
@@ -76,7 +76,7 @@ def validate_template_path(
     node_outputs: dict[str, Any],
     workflow_ir: dict[str, Any],
     registry: Registry,
-) -> tuple[bool, Optional[Diagnostic]]:
+) -> tuple[bool, Diagnostic | None]:
     """Validate a template path exists in available sources.
 
     With namespacing enabled, we need to distinguish between:
@@ -128,7 +128,7 @@ def validate_template_path(
 
 def _batch_results_index_error(
     output_info: dict[str, Any], base_var: str, template: str
-) -> tuple[bool, Optional[Diagnostic]]:
+) -> tuple[bool, Diagnostic | None]:
     """Build ERROR diagnostic for index access on continue-mode batch results."""
     node_id = output_info.get("node_id", base_var)
     return (
@@ -160,7 +160,7 @@ def _validate_array_access(
     base_output: str,
     output_info: dict[str, Any],
     template: str,
-) -> tuple[bool, Optional[Diagnostic]]:
+) -> tuple[bool, Diagnostic | None]:
     """Validate array index access on a node output (e.g., results[0].field)."""
     # Block index access on results when upstream uses error_handling: continue.
     # Results only contains successful items — positional indices don't correspond
@@ -209,7 +209,7 @@ def validate_namespaced_output(
     base_var: str,
     node_outputs: dict[str, Any],
     template: str,
-) -> tuple[bool, Optional[Diagnostic]]:
+) -> tuple[bool, Diagnostic | None]:
     """Validate a namespaced node output reference with array index support.
 
     Handles patterns like:
@@ -252,7 +252,7 @@ def validate_namespaced_output(
 
 def validate_nested_path(
     path_parts: list[str], output_info: dict[str, Any], full_template: str = "", output_key: str = ""
-) -> tuple[bool, Optional[Diagnostic]]:
+) -> tuple[bool, Diagnostic | None]:
     """Validate a nested path exists in the output structure.
 
     Args:
@@ -304,7 +304,7 @@ def validate_nested_path(
 
 def check_type_allows_traversal(
     output_type: str, path_parts: list[str], output_info: dict[str, Any], full_template: str, output_key: str
-) -> tuple[bool, Optional[Diagnostic]]:
+) -> tuple[bool, Diagnostic | None]:
     """Check if output type allows traversal and generate warning if needed.
 
     Args:
@@ -411,7 +411,7 @@ def create_template_diagnostic(
 # ---------------------------------------------------------------------------
 
 
-def _find_template_source_file(template: str, workflow_ir: dict[str, Any]) -> Optional[str]:
+def _find_template_source_file(template: str, workflow_ir: dict[str, Any]) -> str | None:
     """Find the external source file for a template variable, if any.
 
     Scans all nodes to find which node's param contains this template,
@@ -435,7 +435,7 @@ def _find_template_source_file(template: str, workflow_ir: dict[str, Any]) -> Op
     return None
 
 
-def _search_params_for_source(search_pattern: str, node: dict[str, Any], source_files: dict[str, str]) -> Optional[str]:
+def _search_params_for_source(search_pattern: str, node: dict[str, Any], source_files: dict[str, str]) -> str | None:
     """Check node params for a template pattern and return its source file."""
     for param_name, param_value in node.get("params", {}).items():
         if isinstance(param_value, str) and search_pattern in param_value and param_name in source_files:
@@ -445,7 +445,7 @@ def _search_params_for_source(search_pattern: str, node: dict[str, Any], source_
 
 def _search_batch_items_for_source(
     search_pattern: str, node: dict[str, Any], source_files: dict[str, str]
-) -> Optional[str]:
+) -> str | None:
     """Check batch items for a template pattern and return its source file."""
     batch = node.get("batch")
     if not isinstance(batch, dict):

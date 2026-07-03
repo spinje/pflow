@@ -64,7 +64,7 @@ For comprehensive examples, see the examples/ directory.
 
 import json
 import math
-from typing import Any, Union
+from typing import Any
 
 import jsonschema
 from jsonschema import Draft7Validator
@@ -643,7 +643,7 @@ def _suggest_for_general_error(error: JsonSchemaValidationError, path_str: str) 
     return ""
 
 
-def validate_ir(data: Union[dict[str, Any], str]) -> None:
+def validate_ir(data: dict[str, Any] | str) -> None:
     """Validate workflow IR against the schema.
 
     This function performs both structural validation (via JSON Schema) and

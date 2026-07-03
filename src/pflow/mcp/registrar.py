@@ -1,7 +1,7 @@
 """MCP tool registration for pflow registry."""
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from pflow.registry import Registry
 
@@ -20,9 +20,9 @@ class MCPRegistrar:
 
     def __init__(
         self,
-        registry: Optional[Registry] = None,
-        manager: Optional[MCPServerManager] = None,
-        discovery: Optional[MCPDiscovery] = None,
+        registry: Registry | None = None,
+        manager: MCPServerManager | None = None,
+        discovery: MCPDiscovery | None = None,
     ):
         """Initialize MCPRegistrar.
 
@@ -34,7 +34,7 @@ class MCPRegistrar:
         self.registry = registry or Registry()
         self.manager = manager or MCPServerManager()
         self.discovery = discovery or MCPDiscovery(self.manager)
-        self._settings_manager: Optional[Any] = None
+        self._settings_manager: Any | None = None
 
     @property
     def settings_manager(self) -> Any:
@@ -276,7 +276,7 @@ class MCPRegistrar:
 
         return entry
 
-    def list_registered_tools(self, server_name: Optional[str] = None) -> list[str]:
+    def list_registered_tools(self, server_name: str | None = None) -> list[str]:
         """List all registered MCP tools in the registry.
 
         Args:
@@ -294,7 +294,7 @@ class MCPRegistrar:
             # All MCP nodes
             return [node_name for node_name in nodes if node_name.startswith("mcp-")]
 
-    def get_tool_info(self, node_name: str) -> Optional[dict[str, Any]]:
+    def get_tool_info(self, node_name: str) -> dict[str, Any] | None:
         """Get detailed information about a registered MCP tool.
 
         Args:

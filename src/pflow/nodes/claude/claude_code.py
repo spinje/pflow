@@ -53,7 +53,7 @@ import json
 import logging
 import os
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.node import Node
 from pflow.nodes.claude.schema_validation import (
@@ -379,7 +379,7 @@ class ClaudeCodeNode(Node):
         else:
             shared.setdefault("_schema_error", msg)
 
-    def _validate_cwd(self, cwd: Optional[str]) -> str:
+    def _validate_cwd(self, cwd: str | None) -> str:
         """Validate and normalize working directory."""
         if not cwd:
             return os.getcwd()
@@ -398,7 +398,7 @@ class ClaudeCodeNode(Node):
             raise ValueError(f"Restricted directory: {cwd}")
         return cwd
 
-    def _validate_optional_tool_list(self, value: Optional[list], param_name: str) -> Optional[list]:
+    def _validate_optional_tool_list(self, value: list | None, param_name: str) -> list | None:
         """Validate a tool-list parameter.
 
         Empty / falsy → ``None`` (SDK default applies — meaning differs by
@@ -412,10 +412,10 @@ class ClaudeCodeNode(Node):
             raise TypeError(f"{param_name} must be a list, got {type(value).__name__}")
         return value
 
-    def _validate_tools(self, allowed_tools: Optional[list]) -> Optional[list]:
+    def _validate_tools(self, allowed_tools: list | None) -> list | None:
         return self._validate_optional_tool_list(allowed_tools, "allowed_tools")
 
-    def _validate_disallowed_tools(self, disallowed_tools: Optional[list]) -> Optional[list]:
+    def _validate_disallowed_tools(self, disallowed_tools: list | None) -> list | None:
         return self._validate_optional_tool_list(disallowed_tools, "disallowed_tools")
 
     def _validate_max_turns(self, max_turns: Any) -> int:
@@ -459,7 +459,7 @@ class ClaudeCodeNode(Node):
         except (ValueError, TypeError):
             raise ValueError(f"Invalid timeout: {timeout}. Must be integer between 30 and 3600 seconds.") from None
 
-    def _validate_resume(self, resume: Any) -> Optional[str]:
+    def _validate_resume(self, resume: Any) -> str | None:
         """Validate resume session ID parameter."""
         if not resume:
             return None
@@ -537,7 +537,7 @@ class ClaudeCodeNode(Node):
             raise ValueError(f"schema_retries cannot exceed 5 (cap to prevent runaway costs; got {retries_int}).")
         return retries_int
 
-    def _validate_sandbox(self, sandbox: Any) -> Optional[dict]:
+    def _validate_sandbox(self, sandbox: Any) -> dict | None:
         """Validate sandbox configuration parameter.
 
         Sandbox settings control command execution isolation via the Claude Agent SDK.
@@ -798,7 +798,7 @@ class ClaudeCodeNode(Node):
         return exec_res
 
     @staticmethod
-    def _usage_record_from(exec_res: dict[str, Any], model: str) -> Optional[dict[str, Any]]:
+    def _usage_record_from(exec_res: dict[str, Any], model: str) -> dict[str, Any] | None:
         """Build a per-attempt usage record from an exec_res's metadata.
 
         Used to record a superseded attempt into ``llm_usage["retries"]`` when a schema
@@ -1128,7 +1128,7 @@ class ClaudeCodeNode(Node):
         error_msg = str(exc)
         exc_type = type(exc).__name__
 
-        logger.error(f"Claude Code execution failed: {error_msg}", exc_info=True)
+        logger.error(f"Claude Code execution failed: {error_msg}", exc_info=exc)
 
         # Handle specific SDK exceptions (check if exception classes are available)
         if (CLINotFoundError is not None and isinstance(exc, CLINotFoundError)) or "CLINotFoundError" in exc_type:
@@ -1186,8 +1186,8 @@ class ClaudeCodeNode(Node):
         exc_type_name: str,
         is_error_from_sdk: bool,
         result_text: str,
-        api_error_status: Optional[int],
-    ) -> Optional[Exception]:
+        api_error_status: int | None,
+    ) -> Exception | None:
         """Recover the real error detail the SDK drops from an error-result.
 
         When the CLI reports an error result then exits, the SDK raises a *bare*

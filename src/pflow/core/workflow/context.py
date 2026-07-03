@@ -5,7 +5,7 @@ in workflow discovery and component browsing.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from .manager import WorkflowManager
 
@@ -29,7 +29,7 @@ def _extract_workflow_description(workflow: dict[str, Any]) -> str:
 
 def _find_flow_start(
     nodes: list[dict[str, Any]], edges: list[dict[str, Any]], workflow_ir: dict[str, Any]
-) -> Optional[str]:
+) -> str | None:
     """Find the starting node for the workflow flow."""
     # Find nodes with no incoming edges
     has_incoming = {str(edge["to"]) for edge in edges}
@@ -52,7 +52,7 @@ def _build_linear_flow(start_id: str, node_types: dict[str, str], graph: dict[st
     """Build a linear flow from a starting node."""
     flow: list[str] = []
     visited: set[str] = set()
-    current: Optional[str] = start_id
+    current: str | None = start_id
 
     while current and current not in visited and current in node_types:
         visited.add(current)
@@ -167,8 +167,8 @@ def _build_workflow_entry(idx: int, workflow: dict[str, Any]) -> str:
 
 
 def build_workflows_context(
-    workflow_names: Optional[list[str]] = None,
-    workflow_manager: Optional[WorkflowManager] = None,
+    workflow_names: list[str] | None = None,
+    workflow_manager: WorkflowManager | None = None,
 ) -> str:
     """Build context containing only workflow information as a numbered list.
 

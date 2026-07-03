@@ -1,17 +1,17 @@
 """Type definitions for MCP integration."""
 
-from typing import Any, Literal, Optional, TypedDict
+from typing import Any, Literal, TypedDict
 
 
 class AuthConfig(TypedDict, total=False):
     """Authentication configuration for HTTP transport."""
 
     type: Literal["bearer", "api_key", "basic"]
-    token: Optional[str]
-    key: Optional[str]
-    header: Optional[str]
-    username: Optional[str]
-    password: Optional[str]
+    token: str | None
+    key: str | None
+    header: str | None
+    username: str | None
+    password: str | None
 
 
 class StdioServerConfig(TypedDict):
@@ -30,11 +30,11 @@ class HTTPServerConfig(TypedDict, total=False):
 
     transport: Literal["http"]
     url: str
-    auth: Optional[AuthConfig]
-    headers: Optional[dict[str, str]]
-    timeout: Optional[int]
-    sse_timeout: Optional[int]
-    env: Optional[dict[str, str]]
+    auth: AuthConfig | None
+    headers: dict[str, str] | None
+    timeout: int | None
+    sse_timeout: int | None
+    env: dict[str, str] | None
     created_at: str
     updated_at: str
 
@@ -47,10 +47,10 @@ class ToolSchema(TypedDict, total=False):
     """MCP tool schema from discovery."""
 
     name: str
-    description: Optional[str]
+    description: str | None
     server: str
     inputSchema: dict[str, Any]
-    outputSchema: Optional[dict[str, Any]]
+    outputSchema: dict[str, Any] | None
 
 
 class ParamSchema(TypedDict, total=False):
@@ -59,9 +59,9 @@ class ParamSchema(TypedDict, total=False):
     key: str
     type: str
     required: bool
-    description: Optional[str]
+    description: str | None
     default: Any
-    enum: Optional[list[Any]]
+    enum: list[Any] | None
 
 
 class InterfaceSchema(TypedDict, total=False):
