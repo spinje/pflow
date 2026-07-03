@@ -55,7 +55,12 @@ debt cluster that must be *seen* even when it's deliberately deferred.
 - **Parallel subagents** for the legwork: `pflow-codebase-searcher` for verification sweeps and
   doc-vs-code reconciliation; give HARD design questions their own agent with the question framed
   adversarially ("re-derive the simplest final design given what NOW exists; classify every spec
-  claim STILL TRUE / STALE"). Always `model: fable` (standing user rule: **never sonnet 4.6**).
+  claim STILL TRUE / STALE"). **Model rule (standing, user-set 2026-07-03): never override to
+  `fable`.** Default = inherit (subagent defs are `opus` since `3f3286f9`). The ONE sanctioned
+  override is `model: sonnet` (plain `sonnet` → Sonnet 5) for `pflow-codebase-searcher` on *easy,
+  mechanical* asks — locating a symbol/file, a grep-shaped lookup. **Never** for judgement-heavy
+  work (design audits, spec STILL-TRUE/STALE classification, doc-vs-code reconciliation) — those
+  stay on opus.
 - **The step-back audit — do it BEFORE the user asks** (they will): *"Is there an overarching
   seam that doesn't exist yet but should? Does any part of this design make me uneasy?"* Walk the
   design end-to-end and stress the boundaries (lifecycle, concurrency, retention, identity).

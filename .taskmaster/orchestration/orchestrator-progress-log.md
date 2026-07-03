@@ -4,24 +4,29 @@ _Mutable state companion to `orchestrator-kickoff.md`. **`## Now` is edited in p
 always be true** (correct it the moment reality diverges); **`## Log` is append-only** (newest
 entry first). Every claim here is a pointer — verify against git/gh/`./scripts/tasks` at boot._
 
-## Now (last verified: 2026-07-02)
+## Now (last verified: 2026-07-03)
 
-**Current arc: resume/HITL — build order 125 → 164 → 171 → 176 (→ 174).** Prep is complete;
-build has NOT started.
+**Current arc: resume/HITL — build order 125 ✅ → 164 (next) → 171 → 176 (→ 174).**
 
-**Next action: create the Task 125 worktree** (blocking approval gates). The braindump + spec are
-committed, so they travel with the checkout — the launch brief can be thin (point at them + the
-pre-flight). All inputs ready on `main` (`c02a4bde`):
-- Specs 125/164/171 refreshed 2026-07-02 against main (four fable code-audits) + personally
-  verified. `task-125.md` is authoritative; the tacit layer is
-  `task_125/starting-context/braindump-2026-07-02-decision-session.md` (read it — it carries the
-  locked-decision rationales, the escalation-trigger scoping trap, and the implementation
-  checklist).
-- 125 decisions **1–3 LOCKED** (gate event in scope · `--auto-approve=<node-id>` scoped ·
-  batch-host `approval:` rejected at validation); **4–5 open-with-rec** (non-TTY failure timing ·
-  denial semantics) — confirm at plan time.
-- ADR-0009 (approval surfaces = out-of-process bridges) accepted. Task 176 (web bridge) drafted,
-  thin, blocked on the arc.
+**Next action: create the Task 164 worktree** (resume-from-failed-node) — all prep done, awaiting
+user go. 125 shipped clean (#554); the checkpoint→restore→continue substrate is now 164's to build.
+Launch-ready inputs (all on `main`, uncommitted where noted):
+- **Spec re-audited 2026-07-03** against `1d9c6b2c` (3 parallel opus audits: engine/trace/planner).
+  Substrate structurally intact post-125 + post-#557; `task-164.md` banner + run-query section
+  updated (the "five consumers" claim was wrong — corrected to 3 independent + 1 delegating).
+  Line refs drift small; re-verify at impl time.
+- **All 5 decisions DECIDED 2026-07-03** and recorded as a ledger in `task-164.md` (do not
+  re-litigate): CLI = `pflow resume <wf|exec-id>` subcommand · `--dry-run`×resume IN · incomplete-
+  trace resume PREFERRED-IN (complexity assessed at plan time — scope change vs old "no") · side-
+  effecting-K = taxonomy-keyed, **non-TTY = hard error not prompt** · fidelity = loud-caveat guard,
+  snapshot store declined (binary round-trips via base64, verified). `pflow run` rename scoped OUT.
+- **ADR-0010 written** (`context/adr/0010-164-resume-trace-checkpoint.md`, accepted).
+- **Brief + braindump** in `scratchpads/task-164-resume/` (travel into the worktree via copy_folder).
+- 164 folds in **#255 (open)** — trust `task_164/research/255-failure-state-edge-cases.md` over the
+  stale issue body; close #255 when 164 ships.
+- Launch cmd: `uv run pflow git-worktree-task-creator task_description='Task 164 — Resume Workflow
+  From a Failed Node' work_type=task copy_folder=scratchpads/task-164-resume`. **164 is the sole
+  engine toucher — no live collision** (#546 held, UI-only; Task 170 not in flight).
 
 **Decision schedule (get these from the user at the named moment, not before):**
 - **164 start:** CLI surface (`pflow resume` subcommand rec; spans 164+171) · `--dry-run`×resume ·
@@ -66,6 +71,21 @@ prune so nobody builds on it.
   implementation time.
 
 ## Log (append-only, newest first)
+
+### 2026-07-03 — boot: reconciled state after 125 shipped
+Boot verification found `## Now` stale on two counts. (1) **Task 125 shipped clean** (#554, merged
+2026-07-02) — read the task-review (`task_125/task-review.md`): payload-is-the-seam (ADR-0009) held,
+escalation landed in scope via `result.escalation`, the orphaned-trace-event bug is the sharpest
+gotcha (engine reaches `WorkflowExecutor._host_frame`). 171 depends on `GateRequest`/
+`GateResolution` **unchanged**. (2) **Subagent model rule flipped fable→opus** (`3f3286f9`); user
+set the durable rule 2026-07-03 (never fable; sonnet only for mechanical searcher lookups) — folded
+into kickoff §3. Also shipped since last log: **#557** (single-source ruff +
+py310 modernization, repo-wide format pass — drifts all spec file:line refs) and **v0.14.0**
+(release). Next: refresh 164 spec against `1d9c6b2c`, confirm the 5 open decisions + fidelity, then
+launch 164. **Left off: discussing next options with the user; 164 not yet launched.**
+Ledger note: **#541** (ruff drift) is effectively resolved by #557's single-sourcing but still
+OPEN — verify + close. `feat-unified-node-storage` worktree (rejected Task-133 premise) still
+present — still a prune candidate.
 
 ### 2026-07-02 — resume/HITL arc prep completed (the decision session)
 Verified 125/164/171 spec claims against main via four parallel fable investigations; found the

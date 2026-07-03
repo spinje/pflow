@@ -8,6 +8,18 @@ the failed node onward — instead of re-running the whole workflow from scratch
 > **Refreshed 2026-07-02 against main — hard-kill claim corrected, Task 173/175 inheritance
 > added, attempt-chain lineage added (approved 2026-07-02).** Basis: four parallel code audits
 > against current `main` (post Tasks 172/173/175 + #531).
+>
+> **Re-audited 2026-07-03 against `main` (`1d9c6b2c`), post-125 (#554) + post-#557 (repo-wide
+> `ruff format`).** Three parallel opus audits (engine re-entry / trace-persistence /
+> planner-parity). Verdict: **substrate structurally intact — every semantic claim STILL TRUE**;
+> file:line refs drift small+uniform (~+8-10 in `engine.py`, 0-2 elsewhere) — NOT re-pinned here
+> (re-verify at impl time, as already caveated below). Two post-125 facts folded in: (1) `engine.py`
+> is now 1450 lines and `_execute_node` (now ~1002-1428) carries 125's three gate seams
+> (pre-exec approval, post-exec escalation detect+pause, gate-exception `except`) — **all
+> config-guarded, so a non-gated resume node walks through unchanged**; the seed/`find_node_by_id`/
+> `route_action`/visit-count-reset re-entry surface is untouched. (2) 125 made PlanEntry stamping a
+> **three-path** funnel (see Run-query extraction + parity-plan point 1). One factual correction to
+> the Run-query section (consumer inventory) applied below.
 
 ## Status
 not started
@@ -109,11 +121,26 @@ Rules:
 
 This mirrors Temporal's workflow-id/run-id split and n8n's retries-pointing-at-parent.
 
-## Run-query extraction (Phase 0 opportunity, added 2026-07-02)
-Five consumers now glob `~/.pflow/debug` + parse the meta line + apply their own status
-policy: `_iter_workflow_traces`, the UI's `scan_traces`, analyze-cache autoload, this task's
-`load_resume_source`, and 171's `resume list`. Fold these into one sanctioned query home
-during Phase 0 — an extraction of existing code, not new architecture.
+## Run-query extraction (Phase 0 opportunity, added 2026-07-02; inventory corrected 2026-07-03)
+Trace-directory query logic is spread across several sites, each applying its own status policy.
+The 2026-07-03 audit corrected the earlier "five consumers" framing (it double-counted an unbuilt
+task, mislabeled a delegating consumer as an independent glob, and **missed `report.py`**). Actual
+reality today:
+- **3 independent glob-and-parse sites** (built): `_iter_workflow_traces`
+  (`workflow_trace.py:110`, the shared candidate iterator), the UI's `scan_traces`
+  (`ui/run_tailer.py:248`, cheap head+tail, `_SCAN_CACHE`-backed), and `report.py`'s
+  default-newest picker (`cli/commands/report.py:57` — **was omitted from the original list**).
+- **1 delegating consumer** (built, NOT its own glob): analyze-cache autoload
+  (`prompt_cache_analysis/trace_loading.py::_collect_candidate_traces`) iterates
+  `_iter_workflow_traces` and layers its own `failed`-bucket status policy — exactly the case the
+  iterator's "MUST NOT filter final_status" invariant exists to serve.
+- **2 unbuilt** (future callers, not consolidation targets yet): this task's `load_resume_source`
+  and 171's `resume list`.
+
+Phase-0 opportunity stands — fold the **3 independent globs** into one sanctioned query home (an
+extraction of existing code, not new architecture), with the delegating consumer and the two future
+callers as additional users of it. Scope guard: this is an extraction; if it grows a status-policy
+parameter it has overreached (status policy stays with each consumer, per the iterator invariant).
 
 ## Engine/planner parity plan (added 2026-06-11 — from the planner-mirror refactor, issue #504 / PR #505)
 
@@ -199,7 +226,9 @@ surface. Consequences for this task's implementation plan:
   Note `"incomplete"` is reader-synthesized, never producer-written — no on-disk `incomplete`
   trailer exists. The graceful/hard-kill discriminator is therefore **`run.complete` present
   vs absent** — NOT trace-exists vs not. Resume-after-Ctrl+C is now physically possible;
-  whether v1 supports it is an open USER decision (rec: NO — see Open decisions).
+  **DECIDED (Decision 3): preferred in-scope, but entry-node identification for an incomplete
+  tail is the open complexity — assessed at implementation-plan time; surface-then-decide if
+  disproportionate.**
 - **Nested / sub-workflow resume is OUT of scope (v1).** Dotted `--only parent.child` is
   rejected on every live path today; the child plumbing (`_pflow_child_only_node`) exists but
   is dormant (#443). Resuming *into* a sub-workflow is a deferred follow-up. v1 resumes only
@@ -210,35 +239,48 @@ surface. Consequences for this task's implementation plan:
   `prompt`/`system` strip (`:209-224`). Mitigated at seed time by the fidelity guard (delta
   item 7). Shared with Task 125.
 
-## CLI Surface (open — spans 164+171; decide at 164 start)
-`pflow resume` is a name Task 171 also wants (for resuming a paused gate via token). Two
-candidates:
-- **`pflow resume [<workflow>|<execution-id>]`** — bare = newest failed run; an
-  `execution-id` = that exact attempt; the same surface serves 171's token addressing.
-- **`pflow <workflow> --resume` / `--from-failed`** — flag on the existing run surface.
-Resolve jointly with 171 (flagged in task-171.md Dependencies too); recommendation recorded
-in Open decisions below.
+## CLI Surface — DECIDED 2026-07-03 (Decision 1)
+**`pflow resume [<workflow>|<execution-id>]`** subcommand: bare = newest failed run;
+`execution-id` = that exact attempt. The same surface serves 171's token addressing (a paused
+gate resumes by execution-id/token) — build the subcommand here, 171 extends it. A `--resume`
+flag on the run surface was rejected. Carry this into task-171.md (its Dependencies flagged the
+joint decision).
 
-## Open decisions (USER — recorded 2026-07-02, each with a recommendation)
-None of these are silently decided; the task owner decides at 164 start.
-1. **CLI surface** — `pflow resume [<workflow>|<execution-id>]` vs a `--resume` flag (see CLI
-   Surface above). Spans 164+171. **Rec: the `pflow resume` subcommand** — one surface serves
-   both tasks (bare = newest failed; id = exact attempt; token-addressable for 171).
-2. **`--dry-run` × resume** — in or out of v1? If in, the planner becomes the shared helper's
-   fourth caller via `_resolve_walk_start`; if out, record it explicitly so the planner
-   doesn't silently lie about resume runs (parity plan point 2). **Rec: in** — the planner
-   already composes seed→start-at-K, so it's cheap, and it keeps `--dry-run` honest.
-3. **Incomplete-trace resume (Ctrl+C/SIGKILL tails)** — physically possible post-Task-172
-   (see Known Hard Problems). **Rec: NO for v1** — entry-node identification is ambiguous for
-   incomplete tails (no `failed_node_ids`; the last-seen node may have half-run). Deliberate
-   scoping, revisit later.
-4. **Side-effecting-K policy** — confirm-prompt vs `--force`, keyed off the
-   `_default_cache_for_node_type`-style side-effect taxonomy (`compiler.py:641`). **Rec:**
-   confirm-prompt in a TTY, require `--force` non-TTY, only when K's node type is classified
-   side-effecting; idempotent K (e.g. `llm`) resumes without ceremony.
-5. **Snapshot fidelity** — loud-caveat (fidelity guard, delta item 7) vs ADR-0002's dedicated
-   snapshot store escape hatch. **Rec: loud-caveat** — a second persistence format is not
-   earned (deletion test); revisit only if the guard fires often in practice.
+## Decisions (all DECIDED 2026-07-03 by the task owner — do not re-litigate)
+Recorded at the 164-start sitting. Rationales the owner approved on are captured verbatim in the
+starting-context braindump; this ledger is the durable record.
+1. **CLI surface → `pflow resume [<workflow>|<execution-id>]` subcommand.** Bare = newest failed
+   run; `execution-id` = that exact attempt; the same surface serves 171's token addressing. A
+   `--resume` flag was rejected. **Adjacent (NOT in 164 scope):** the owner is considering
+   renaming normal execution `pflow <wf>` → `pflow run <wf>`; the `resume` subcommand is
+   deliberately consistent with that direction (sibling verbs), but the `pflow run` rename is a
+   separate, larger CLI decision (Task 151 surface) to be specced on its own — do not fold it in.
+2. **`--dry-run` × resume → IN (v1).** The planner becomes the shared seed-helper's fourth caller
+   via `_resolve_walk_start` (parity-plan point 2); keeps `--dry-run` honest about resumed runs.
+3. **Incomplete-trace resume (Ctrl+C/SIGKILL tails) → PREFERRED IN-SCOPE; complexity assessed at
+   implementation-plan time.** (Revised from the earlier "NO for v1" rec.) The crux the plan must
+   solve: an incomplete tail has no `failed_node_ids`, so entry-node identification is ambiguous
+   (the last-seen node may have half-run). The plan phase estimates that complexity; if it proves
+   disproportionate, that is a **surface-it-then-decide** moment (bring the tradeoff back), NOT a
+   silent drop.
+4. **Side-effecting-K policy → side-effect-taxonomy-keyed, agent-first.** Keyed off
+   `_default_cache_for_node_type` (`compiler.py`, `_default_cache_for_node_type`): idempotent K
+   (`llm`) resumes silently. Side-effecting K (`shell`/`code`/`claude-code`/file-ops/`mcp`;
+   `http` reads external state): **TTY** → confirm-prompt `[y/N]`; **non-TTY (agent)** → a **hard
+   error, never a prompt or hang** — actionable message telling the agent that K's side effects
+   would repeat, to confirm with its user, then re-run with `--force`. `--force` bypasses in both
+   modes. This mirrors Task 125's non-TTY gate philosophy (`GateNotInteractiveError` → actionable
+   diagnostic, not a blocking prompt).
+5. **Snapshot fidelity → loud-caveat fidelity guard; NO dedicated snapshot store.** ADR-0002's
+   dedicated-store escape hatch is explicitly **declined**: binary data round-trips losslessly
+   already (verified 2026-07-03 — `read-file`/`http`/`shell` base64-encode to `str` before the
+   shared-store write; strings survive via the trace blob mechanism), so a second persistence
+   format solves a non-problem (deletion test). The guard is a **narrow backstop** for the only
+   lossy vector — a genuine raw-`bytes` value in the store, which in practice only a `code`/python
+   node can produce: at seed time, detect the `"<binary data: N bytes>"` placeholder and refuse
+   with an actionable error rather than resume with corrupt state. Document that normal binary
+   flows resume cleanly. **Impl-plan follow-up:** confirm the python-node raw-`bytes` path is the
+   *only* way such a value reaches the store, and pin the guard's trigger there.
 
 ## Dependencies
 - **Task 125** — shares the checkpoint/resume substrate; build order **125 → this → 171**.
@@ -264,8 +306,9 @@ None of these are silently decided; the task owner decides at 164 start.
 - `restored_nodes` shows upstream-of-K as not_executed; K-onward as executed.
 - No prior failed trace → clear error (`OnlySnapshotMissingError`-style), not a silent re-run.
 - Incomplete trace (Ctrl+C/SIGKILL tail — `run.complete` absent, reader-synthesized
-  `incomplete`) → rejected with a clear "v1 doesn't resume incomplete runs" error (deliberate
-  scoping, see Open decisions), not a crash or silent re-run.
+  `incomplete`): behavior per Decision 3 (preferred resumable; entry-node identification resolved
+  at plan time). Whichever way the plan lands, an unsupported incomplete-resume must be a clear
+  actionable error — never a crash or silent re-run.
 - Resumed attempt writes a NEW trace with a new `execution_id` and `resumed_from` on the meta
   line; the source trace is never appended to. Resume targets the newest attempt in a chain.
 - Resuming a still-running run is rejected (advisory-flock liveness probe, `is_trace_locked`).
