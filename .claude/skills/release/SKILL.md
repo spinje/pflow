@@ -198,5 +198,4 @@ After creating the release:
 
 - The changelog workflow is **context-blind** — it doesn't know if this is a first release vs. a patch. Review the framing of entries carefully.
 - LLM classification occasionally misclassifies changes. Always check the skipped list in the context file.
-- The Mintlify docs (`docs.pflow.run`) require separate deployment — changes to `docs/changelog.mdx` won't be live until deployed.
 - Cost scales with commit count (~$0.003 per commit for LLM classification).
